@@ -51,6 +51,13 @@
         </div>
 
         <div class="flex items-center gap-2">
+            <button id="btn-back-to-office"
+                    class="hidden items-center gap-2 px-3 py-1.5 border border-bm-border text-bm-text rounded-lg
+                           hover:bg-slate-50 transition-colors text-sm font-medium"
+                    aria-label="Back to office">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                Back to Office
+            </button>
             <button id="btn-new-agent"
                     class="hidden sm:flex items-center gap-2 px-3 py-1.5 border border-bm-border text-bm-text rounded-lg
                            hover:bg-slate-50 transition-colors text-sm font-medium"
@@ -66,6 +73,16 @@
             </button>
         </div>
     </nav>
+
+    <!-- ═══════════════ SETTINGS VIEW (hidden by default) ═══════════════ -->
+    <div id="settings-layout" class="flex-1 flex overflow-hidden hidden">
+        <!-- Settings nav -->
+        <div class="w-56 shrink-0 bg-bm-surface border-r border-bm-border p-3 overflow-y-auto">
+            <div id="settings-nav" class="space-y-1"></div>
+        </div>
+        <!-- Settings content -->
+        <div id="settings-content" class="flex-1 overflow-y-auto p-6 bg-bm-bg"></div>
+    </div>
 
     <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
     <!-- Desktop: side-by-side with Split.js. Mobile: stacked with bottom sheet. -->
@@ -209,42 +226,14 @@
         </div>
     </div>
 
-    <!-- ═══════════════ SETTINGS PANEL OVERLAY ═══════════════ -->
-    <div id="settings-panel-overlay" class="fixed inset-0 z-50 hidden">
-        <div id="settings-panel-backdrop"
-             class="absolute inset-0 bg-black/30 transition-opacity"></div>
-
-        <div id="settings-panel"
-             class="absolute top-0 right-0 h-full w-full sm:w-[28rem] bg-bm-surface shadow-2xl
-                    transform translate-x-full transition-transform duration-300 ease-out
-                    flex flex-col">
-
-            <div class="flex items-center justify-between px-4 py-3 border-b border-bm-border">
-                <h2 class="font-semibold text-lg flex items-center gap-2">
-                    <i data-lucide="settings" class="w-5 h-5 text-bm-accent"></i>
-                    Settings
-                </h2>
-                <button id="settings-panel-close"
-                        class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
-            </div>
-
-            <div id="settings-panel-body" class="flex-1 overflow-y-auto p-4">
-                <div class="text-bm-muted text-sm text-center mt-8">
-                    <i data-lucide="loader" class="w-8 h-8 mx-auto mb-2 opacity-40 animate-spin"></i>
-                    <p>Loading settings...</p>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Settings panel overlay removed — replaced by full settings view -->
 
     <!-- ═══════════════ SCRIPTS ═══════════════ -->
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/activity.js"></script>
     <script src="/static/js/canvas.js"></script>
     <script src="/static/js/agent-panel.js"></script>
-    <script src="/static/js/settings-panel.js"></script>
+    <script src="/static/js/settings-view.js"></script>
     <script src="/static/js/app.js"></script>
 
 </body>

@@ -33,6 +33,33 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── Context window ──
     ("context_window_messages", "30", "context"),
+
+    # ── System prompt template (advanced) ──
+    ("system_prompt_template", """{{personality}}
+
+---
+
+## Your Current Context
+{{memory}}
+
+## Location & Nearby Agents
+{{location}}
+
+## Current Task
+{{task}}
+
+---
+
+## Available Actions
+{{available_actions}}
+
+---
+
+## Hard Constraints
+- You MUST respond with valid JSON only — no markdown, no extra text.
+- Choose the SINGLE most appropriate action for this turn.
+- The "thought" field is your internal reasoning (visible to admins).
+- If you have nothing to do, use "idle".""", "advanced"),
 ]
 
 

@@ -132,6 +132,30 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
+-- AI Connections — saved LLM provider configurations
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS ai_connections (
+    id           VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    name         VARCHAR NOT NULL,
+    api_base_url VARCHAR NOT NULL,
+    api_key      VARCHAR,
+    model        VARCHAR,
+    created_at   TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- AI Personalities — reusable prompt templates for agent roles
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS ai_personalities (
+    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR NOT NULL,
+    prompt_template TEXT    NOT NULL,
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
 -- Activity log — persistent event history for the UI activity feed
 -- ───────────────────────────────────────────────────────────────────────────
 

@@ -253,18 +253,55 @@ const BossModApp = (() => {
 
     function initNavButtons() {
         const settingsBtn = document.getElementById('btn-settings');
+        const backBtn = document.getElementById('btn-back-to-office');
+        const newAgentBtn = document.getElementById('btn-new-agent');
+
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
-                if (typeof SettingsPanel !== 'undefined') {
-                    SettingsPanel.open();
+                if (typeof SettingsView !== 'undefined') {
+                    SettingsView.open();
+                    updateNavForSettings(true);
                 }
             });
         }
 
-        const newAgentBtn = document.getElementById('btn-new-agent');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                if (typeof SettingsView !== 'undefined') {
+                    SettingsView.close();
+                    updateNavForSettings(false);
+                    // Re-render canvas after returning
+                    if (typeof OfficeCanvas !== 'undefined') {
+                        window.dispatchEvent(new Event('panel-resize'));
+                    }
+                }
+            });
+        }
+
         if (newAgentBtn) {
             newAgentBtn.addEventListener('click', () => openAgentPanel({}));
         }
+    }
+
+    function updateNavForSettings(inSettings) {
+        const backBtn = document.getElementById('btn-back-to-office');
+        const settingsBtn = document.getElementById('btn-settings');
+        const newAgentBtn = document.getElementById('btn-new-agent');
+
+        if (inSettings) {
+            backBtn.classList.remove('hidden');
+            backBtn.classList.add('flex');
+            settingsBtn.classList.add('hidden');
+            newAgentBtn.classList.add('hidden');
+        } else {
+            backBtn.classList.add('hidden');
+            backBtn.classList.remove('flex');
+            settingsBtn.classList.remove('hidden');
+            newAgentBtn.classList.remove('hidden');
+            newAgentBtn.classList.add('sm:flex');
+        }
+
+        if (window.lucide) lucide.createIcons();
     }
 
     function init() {

@@ -34,6 +34,24 @@ from db.settings import get_settings, set_setting
 # Activity log
 from db.activity import create_activity, get_recent_activity
 
+# AI Connections
+from db.ai_connections import (
+    create_connection,
+    delete_connection,
+    get_connection_by_id,
+    list_connections,
+    update_connection,
+)
+
+# AI Personalities
+from db.ai_personalities import (
+    create_personality,
+    delete_personality,
+    get_personality,
+    list_personalities,
+    update_personality,
+)
+
 # World state + spatial
 from db.world import get_nearby_agents, get_world_state
 
@@ -72,6 +90,18 @@ __all__ = [
     # Activity
     "create_activity",
     "get_recent_activity",
+    # AI Connections
+    "create_connection",
+    "delete_connection",
+    "get_connection_by_id",
+    "list_connections",
+    "update_connection",
+    # AI Personalities
+    "create_personality",
+    "delete_personality",
+    "get_personality",
+    "list_personalities",
+    "update_personality",
     # World
     "get_nearby_agents",
     "get_world_state",

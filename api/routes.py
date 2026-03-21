@@ -4,6 +4,7 @@ Agent CRUD, map data, world state, settings, and real-time
 WebSocket broadcasting for live Canvas and Activity updates.
 """
 
+import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
@@ -12,7 +13,19 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.agent_loop.loop import run_turn
-from core.models import Agent, AgentCreate, AgentUpdate, Task, TaskCreate
+from core.models import (
+    Agent,
+    AgentCreate,
+    AgentUpdate,
+    AIConnection,
+    AIConnectionCreate,
+    AIConnectionUpdate,
+    AIPersonality,
+    AIPersonalityCreate,
+    AIPersonalityUpdate,
+    Task,
+    TaskCreate,
+)
 from core.world.simulation import simulation
 from core.world.tilemap import get_map_data
 import db
@@ -205,3 +218,150 @@ async def set_setting(key: str, value: str, category: str = "general"):
     result = db.set_setting(key, value, category)
     config.reload()  # Invalidate cache so changes take effect immediately
     return result
+
+
+# ─── AI Connections CRUD ───
+
+@router.get("/connections")
+async def list_connections() -> list[AIConnection]:
+    return db.list_connections()
+
+
+@router.get("/connections/{connection_id}")
+async def get_connection(connection_id: str) -> AIConnection:
+    conn = db.get_connection_by_id(connection_id)
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+    return conn
+
+
+@router.post("/connections", status_code=201)
+async def create_connection(body: AIConnectionCreate) -> AIConnection:
+    return db.create_connection(
+        name=body.name,
+        api_base_url=body.api_base_url,
+        api_key=body.api_key,
+        model=body.model,
+    )
+
+
+@router.patch("/connections/{connection_id}")
+async def update_connection(connection_id: str, body: AIConnectionUpdate) -> AIConnection:
+    fields = body.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    conn = db.update_connection(connection_id, **fields)
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+    return conn
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+async def delete_connection(connection_id: str):
+    if not db.delete_connection(connection_id):
+        raise HTTPException(404, "Connection not found")
+
+
+class TestConnectionBody(BaseModel):
+    api_base_url: str
+    api_key: str | None = None
+    model: str | None = None
+
+
+@router.post("/connections/test")
+async def test_connection(body: TestConnectionBody):
+    """Test an AI connection by hitting GET {base_url}/models.
+
+    Verifies the host is reachable, auth works, and the response
+    is OpenAI-compatible. Optionally checks the model exists.
+    """
+    url = body.api_base_url.rstrip("/")
+    # Normalize: if URL ends with /v1, use it; otherwise append /v1
+    if not url.endswith("/v1"):
+        url += "/v1"
+    url += "/models"
+
+    headers = {}
+    if body.api_key:
+        headers["Authorization"] = f"Bearer {body.api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.ConnectError:
+        return {"ok": False, "error": "Connection failed — check the URL"}
+    except httpx.TimeoutException:
+        return {"ok": False, "error": "Connection timed out after 10s"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Request failed: {exc}"}
+
+    if resp.status_code == 401:
+        return {"ok": False, "error": "Authentication failed — check your API key"}
+    if resp.status_code == 403:
+        return {"ok": False, "error": "Access denied — API key lacks permissions"}
+    if resp.status_code >= 400:
+        return {"ok": False, "error": f"Server returned {resp.status_code}"}
+
+    try:
+        data = resp.json()
+    except Exception:
+        return {"ok": False, "error": "Response is not valid JSON"}
+
+    models_list = data.get("data")
+    if not isinstance(models_list, list):
+        return {"ok": False, "error": "Response missing 'data' array — may not be OpenAI-compatible"}
+
+    model_ids = [m.get("id", "") for m in models_list]
+
+    if body.model and body.model not in model_ids:
+        return {
+            "ok": True,
+            "warning": f"Connected, but model '{body.model}' not found in {len(model_ids)} available models",
+            "models": model_ids[:20],
+        }
+
+    return {
+        "ok": True,
+        "models_count": len(model_ids),
+        "models": model_ids[:20],
+    }
+
+
+# ─── AI Personalities CRUD ───
+
+@router.get("/personalities")
+async def list_personalities() -> list[AIPersonality]:
+    return db.list_personalities()
+
+
+@router.get("/personalities/{personality_id}")
+async def get_personality(personality_id: str) -> AIPersonality:
+    p = db.get_personality(personality_id)
+    if not p:
+        raise HTTPException(404, "Personality not found")
+    return p
+
+
+@router.post("/personalities", status_code=201)
+async def create_personality(body: AIPersonalityCreate) -> AIPersonality:
+    return db.create_personality(
+        name=body.name,
+        prompt_template=body.prompt_template,
+    )
+
+
+@router.patch("/personalities/{personality_id}")
+async def update_personality(personality_id: str, body: AIPersonalityUpdate) -> AIPersonality:
+    fields = body.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    p = db.update_personality(personality_id, **fields)
+    if not p:
+        raise HTTPException(404, "Personality not found")
+    return p
+
+
+@router.delete("/personalities/{personality_id}", status_code=204)
+async def delete_personality(personality_id: str):
+    if not db.delete_personality(personality_id):
+        raise HTTPException(404, "Personality not found")
