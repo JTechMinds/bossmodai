@@ -2,7 +2,8 @@
  * BossMod AI — Agent panel overlay.
  *
  * Handles the slide-in panel for viewing, creating, editing,
- * and deleting agents. Communicates with /api/agents endpoints.
+ * and deleting agents. Uses AI Connections and Personalities
+ * from Settings for model and prompt selection.
  */
 
 const AgentPanel = (() => {
@@ -34,12 +35,16 @@ const AgentPanel = (() => {
         { id: 'desk_8', x: 11, y: 15, label: 'Desk 8 — South NE' },
     ];
 
-    // ─── API calls ───
+    // Model assignment types
+    const MODEL_TYPES = [
+        { key: 'model_social',     label: 'Social (cheap)' },
+        { key: 'model_work',       label: 'Work (routine)' },
+        { key: 'model_reasoning',  label: 'Reasoning (deep)' },
+        { key: 'model_extraction', label: 'Extraction' },
+        { key: 'model_self_queue', label: 'Self-queue' },
+    ];
 
-    async function fetchAgents() {
-        const res = await fetch('/api/agents');
-        return res.json();
-    }
+    // ─── API calls ───
 
     async function fetchAgent(id) {
         const res = await fetch(`/api/agents/${id}`);
@@ -72,16 +77,23 @@ const AgentPanel = (() => {
         if (!res.ok) throw new Error(await res.text());
     }
 
-    // ─── Render panel body ───
+    // ─── Build form HTML into a container ───
 
-    function renderForm(agent = null) {
-        isCreating = !agent;
-        currentAgentId = agent?.id || null;
+    async function buildFormHTML(container, agent = null) {
 
-        const title = document.getElementById('agent-panel-title');
-        title.textContent = agent ? agent.name : 'New Agent';
-
-        const body = document.querySelector('#agent-panel .flex-1.overflow-y-auto');
+        // Fetch connections and personalities for dropdowns
+        let connections = [];
+        let personalities = [];
+        try {
+            const [connRes, persRes] = await Promise.all([
+                fetch('/api/connections'),
+                fetch('/api/personalities'),
+            ]);
+            connections = await connRes.json();
+            personalities = await persRes.json();
+        } catch (err) {
+            console.error('[AgentPanel] Failed to load connections/personalities:', err);
+        }
 
         const colorOptions = AGENT_COLORS.map(c => {
             const selected = (agent?.color || '#3b82f6') === c.value;
@@ -100,7 +112,36 @@ const AgentPanel = (() => {
             return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}</option>`;
         }).join('');
 
-        body.innerHTML = `
+        // Personality dropdown
+        const personalityOptions = personalities.map(p =>
+            `<option value="${p.id}">${BossModUtils.escapeHtml(p.name)}</option>`
+        ).join('');
+
+        // Connection dropdown builder (for each model type)
+        function connectionSelect(modelKey, currentValue) {
+            const opts = connections.map(c => {
+                const label = c.model
+                    ? `${c.name} (${c.model})`
+                    : c.name;
+                // Match by combining connection fields into what would have been stored
+                const selected = currentValue && (
+                    currentValue === c.model ||
+                    currentValue === c.name
+                );
+                return `<option value="${c.id}" ${selected ? 'selected' : ''}>${BossModUtils.escapeHtml(label)}</option>`;
+            }).join('');
+            return `<select name="${modelKey}"
+                        class="flex-1 px-2 py-1.5 text-xs border border-bm-border rounded
+                               bg-bm-bg focus:outline-none focus:ring-1 focus:ring-bm-accent/30">
+                    <option value="">None</option>
+                    ${opts}
+                </select>`;
+        }
+
+        const noConnections = connections.length === 0;
+        const noPersonalities = personalities.length === 0;
+
+        container.innerHTML = `
         <form id="agent-form" class="space-y-4">
             <!-- Name -->
             <div>
@@ -124,6 +165,23 @@ const AgentPanel = (() => {
                               focus:border-bm-accent">
             </div>
 
+            <!-- Personality -->
+            <div>
+                <label class="block text-sm font-medium mb-1">Personality</label>
+                ${noPersonalities
+                    ? `<p class="text-xs text-bm-muted mb-1.5">No personalities configured.
+                         <button type="button" id="btn-goto-personalities" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
+                    : `<p class="text-xs text-bm-muted mb-1.5">Copies the prompt template into this agent.</p>
+                       <select name="personality_id"
+                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                           <option value="">No personality</option>
+                           ${personalityOptions}
+                       </select>`
+                }
+            </div>
+
             <!-- Color -->
             <div>
                 <label class="block text-sm font-medium mb-1">Color</label>
@@ -142,26 +200,22 @@ const AgentPanel = (() => {
                 </select>
             </div>
 
-            <!-- Prompt Template -->
+            <!-- AI Connections (Model Matrix) -->
             <div>
-                <label class="block text-sm font-medium mb-1">Prompt Template</label>
-                <textarea name="prompt_template" rows="4"
-                          placeholder="System prompt for this agent..."
-                          class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                 bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                 focus:border-bm-accent resize-y">${BossModUtils.escapeHtml(agent?.prompt_template || '')}</textarea>
-            </div>
-
-            <!-- Model Matrix -->
-            <div>
-                <label class="block text-sm font-medium mb-2">Model Matrix</label>
-                <div class="space-y-2">
-                    ${renderModelField('Social (cheap)', 'model_social', agent?.model_social)}
-                    ${renderModelField('Work (routine)', 'model_work', agent?.model_work)}
-                    ${renderModelField('Reasoning (deep)', 'model_reasoning', agent?.model_reasoning)}
-                    ${renderModelField('Extraction', 'model_extraction', agent?.model_extraction)}
-                    ${renderModelField('Self-queue', 'model_self_queue', agent?.model_self_queue)}
-                </div>
+                <label class="block text-sm font-medium mb-2">AI Connections</label>
+                ${noConnections
+                    ? `<p class="text-xs text-bm-muted">No connections configured.
+                         <button type="button" id="btn-goto-connections" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
+                    : `<p class="text-xs text-bm-muted mb-2">Assign an AI connection to each activation type.</p>
+                       <div class="space-y-2">
+                           ${MODEL_TYPES.map(t => `
+                               <div class="flex items-center gap-2">
+                                   <span class="text-xs text-bm-muted w-28 shrink-0">${t.label}</span>
+                                   ${connectionSelect(t.key, agent?.[t.key])}
+                               </div>
+                           `).join('')}
+                       </div>`
+                }
             </div>
 
             <!-- Status (read-only for existing agents) -->
@@ -170,8 +224,8 @@ const AgentPanel = (() => {
                 <div class="flex items-center justify-between text-sm">
                     <span class="text-bm-muted">Status</span>
                     <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
-                                 ${getStatusClasses(agent.status || 'idle')}">
-                        <span class="w-1.5 h-1.5 rounded-full ${getStatusDot(agent.status || 'idle')}"></span>
+                                 ${BossModUtils.getStatusClasses(agent.status || 'idle')}">
+                        <span class="w-1.5 h-1.5 rounded-full ${BossModUtils.getStatusDot(agent.status || 'idle')}"></span>
                         ${agent.status || 'idle'}
                     </span>
                 </div>
@@ -194,37 +248,22 @@ const AgentPanel = (() => {
         </form>
         `;
 
-        // Bind events
-        document.getElementById('agent-form').addEventListener('submit', handleSubmit);
-        const deleteBtn = document.getElementById('btn-delete-agent');
-        if (deleteBtn) deleteBtn.addEventListener('click', handleDelete);
+        // Settings navigation links
+        const gotoSettings = () => {
+            if (typeof SettingsView !== 'undefined') {
+                SettingsView.open();
+                BossModApp.updateNavForSettings(true);
+            }
+        };
+        const gotoConn = container.querySelector('#btn-goto-connections');
+        if (gotoConn) gotoConn.addEventListener('click', gotoSettings);
+        const gotoPers = container.querySelector('#btn-goto-personalities');
+        if (gotoPers) gotoPers.addEventListener('click', gotoSettings);
     }
 
-    function renderModelField(label, name, value) {
-        return `
-        <div class="flex items-center gap-2">
-            <span class="text-xs text-bm-muted w-24 shrink-0">${label}</span>
-            <input type="text" name="${name}"
-                   value="${BossModUtils.escapeHtml(value || '')}"
-                   placeholder="e.g. gpt-4o, claude-sonnet, ollama/llama3"
-                   class="flex-1 px-2 py-1 text-xs border border-bm-border rounded
-                          bg-bm-bg focus:outline-none focus:ring-1 focus:ring-bm-accent/30">
-        </div>`;
-    }
+    // ─── Build submit data from form ───
 
-    function getStatusClasses(status) {
-        return BossModUtils.getStatusClasses(status);
-    }
-
-    function getStatusDot(status) {
-        return BossModUtils.getStatusDot(status);
-    }
-
-    // ─── Event handlers ───
-
-    async function handleSubmit(e) {
-        e.preventDefault();
-        const form = e.target;
+    async function buildSubmitData(form, connections) {
         const formData = new FormData(form);
 
         const deskValue = formData.get('desk');
@@ -241,40 +280,37 @@ const AgentPanel = (() => {
             desk_y,
         };
 
-        try {
-            if (isCreating) {
-                const agent = await apiCreateAgent(data);
-                currentAgentId = agent.id;
-                isCreating = false;
+        // Resolve personality → copy prompt_template
+        const personalityId = formData.get('personality_id');
+        if (personalityId) {
+            try {
+                const res = await fetch(`/api/personalities/${personalityId}`);
+                if (res.ok) {
+                    const personality = await res.json();
+                    data.prompt_template = personality.prompt_template;
+                }
+            } catch { /* use null */ }
+        }
+
+        // Resolve connection IDs → copy api_base_url, api_key, model into agent fields
+        const connMap = {};
+        for (const c of connections) connMap[c.id] = c;
+
+        for (const t of MODEL_TYPES) {
+            const connId = formData.get(t.key);
+            if (connId && connMap[connId]) {
+                const conn = connMap[connId];
+                data[t.key] = conn.model || conn.name;
+                if (!data.api_base_url) {
+                    data.api_base_url = conn.api_base_url;
+                    data.api_key = conn.api_key || null;
+                }
             } else {
-                // Include model matrix and prompt for updates
-                data.prompt_template = formData.get('prompt_template') || null;
-                data.model_social = formData.get('model_social') || null;
-                data.model_work = formData.get('model_work') || null;
-                data.model_reasoning = formData.get('model_reasoning') || null;
-                data.model_extraction = formData.get('model_extraction') || null;
-                data.model_self_queue = formData.get('model_self_queue') || null;
-                await apiUpdateAgent(currentAgentId, data);
+                data[t.key] = null;
             }
-            await refreshCanvas();
-            BossModApp.closeAgentPanel();
-        } catch (err) {
-            console.error('[AgentPanel] Save failed:', err);
         }
-    }
 
-    async function handleDelete() {
-        if (!currentAgentId) return;
-        if (!confirm('Delete this agent? This cannot be undone.')) return;
-
-        try {
-            await apiDeleteAgent(currentAgentId);
-            currentAgentId = null;
-            await refreshCanvas();
-            BossModApp.closeAgentPanel();
-        } catch (err) {
-            console.error('[AgentPanel] Delete failed:', err);
-        }
+        return data;
     }
 
     // ─── Refresh canvas agents from API ───
@@ -283,31 +319,81 @@ const AgentPanel = (() => {
         try {
             const world = await (await fetch('/api/world')).json();
             const agents = world.map(BossModUtils.normalizeAgent);
-            OfficeCanvas.updateAgents(agents);
+            if (typeof OfficeCanvas !== 'undefined') {
+                OfficeCanvas.updateAgents(agents);
+            }
         } catch (err) {
             console.error('[AgentPanel] Failed to refresh canvas:', err);
         }
     }
 
+    // ─── Render inline (for left panel Edit sub-view) ───
+
+    async function renderInline(container, agent, onSave, onDelete) {
+        isCreating = !agent;
+        currentAgentId = agent?.id || null;
+
+        await buildFormHTML(container, agent);
+
+        const form = container.querySelector('#agent-form');
+        const deleteBtn = container.querySelector('#btn-delete-agent');
+
+        // Fetch connections for submit resolution
+        let connections = [];
+        try {
+            const res = await fetch('/api/connections');
+            connections = await res.json();
+        } catch { /* empty */ }
+
+        // Add feedback element after the form actions
+        const feedbackEl = document.createElement('div');
+        feedbackEl.id = 'agent-save-feedback';
+        feedbackEl.className = 'hidden mt-3 p-3 rounded-lg text-sm';
+        form.appendChild(feedbackEl);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+            feedbackEl.textContent = 'Saving...';
+
+            const data = await buildSubmitData(form, connections);
+            try {
+                if (isCreating) {
+                    await apiCreateAgent(data);
+                } else {
+                    await apiUpdateAgent(currentAgentId, data);
+                }
+                await refreshCanvas();
+                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
+                feedbackEl.textContent = 'Saved successfully';
+                setTimeout(() => { feedbackEl.className = 'hidden'; }, 3000);
+                if (onSave) onSave();
+            } catch (err) {
+                console.error('[AgentPanel] Save failed:', err);
+                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                feedbackEl.textContent = 'Save failed — check console for details';
+            }
+        });
+
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', async () => {
+                if (!currentAgentId) return;
+                if (!confirm('Delete this agent? This cannot be undone.')) return;
+                try {
+                    await apiDeleteAgent(currentAgentId);
+                    await refreshCanvas();
+                    if (onDelete) onDelete();
+                } catch (err) {
+                    console.error('[AgentPanel] Delete failed:', err);
+                }
+            });
+        }
+    }
+
     // ─── Public API ───
 
-    function openForAgent(agentData) {
-        renderForm(agentData);
-    }
-
-    function openForCreate() {
-        renderForm(null);
-    }
-
-    async function openForAgentId(agentId) {
-        const agent = await fetchAgent(agentId);
-        if (agent) renderForm(agent);
-    }
-
     return {
-        openForAgent,
-        openForCreate,
-        openForAgentId,
+        renderInline,
         refreshCanvas,
     };
 })();

@@ -58,4 +58,7 @@ def init_db() -> None:
     from db.settings import seed_defaults
     seed_defaults()
 
+    from db.ai_personalities import seed_default_personalities
+    seed_default_personalities()
+
     logger.info("Database initialised")

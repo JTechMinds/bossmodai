@@ -64,8 +64,13 @@ def build_context(
     # ─── System prompt ───
     system_parts: list[str] = []
 
-    # Role identity
+    # Role identity — resolve template variables at runtime
     role_text = agent.prompt_template or _default_role_prompt(agent)
+    role_text = (
+        role_text
+        .replace("{{agent_name}}", agent.name)
+        .replace("{{role}}", agent.role or "AI Assistant")
+    )
     system_parts.append(role_text)
 
     # Available actions

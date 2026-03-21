@@ -23,6 +23,7 @@ from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
+from core.models.message import HUMAN_SENDER_ID
 import db
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,11 @@ async def run_turn(
 
     # 7. Broadcast
     await manager.broadcast_world_state()
-    await manager.broadcast_activity(**result)
+    await manager.broadcast_activity(
+        event=result.get("event", "agent_updated"),
+        detail=result.get("detail", ""),
+        agent_name=result.get("agent_name"),
+    )
 
     return result
 
@@ -142,10 +147,14 @@ def _get_message_window(agent_id: str) -> list[dict[str, Any]]:
 
     result = []
     for msg in messages:
-        sender = agents_map.get(msg.from_agent)
+        if msg.from_agent == HUMAN_SENDER_ID:
+            from_name = "Human Operator"
+        else:
+            sender = agents_map.get(msg.from_agent)
+            from_name = sender.name if sender else "Unknown"
         result.append({
             "from_agent": msg.from_agent,
-            "from_name": sender.name if sender else "Unknown",
+            "from_name": from_name,
             "to_agent": msg.to_agent,
             "content": msg.content,
             "message_type": msg.message_type,

@@ -16,6 +16,10 @@ from pydantic import BaseModel, ConfigDict
 # Literal type for message classification
 # ---------------------------------------------------------------------------
 
+# Sentinel value for human operator in from_agent field
+HUMAN_SENDER_ID = "__human__"
+
+
 MessageType = Literal[
     "work",         # Task-related direct message
     "social",       # Casual / social conversation between agents

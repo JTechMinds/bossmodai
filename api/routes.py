@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.agent_loop.loop import run_turn
+from core.models.message import HUMAN_SENDER_ID
 from core.models import (
     Agent,
     AgentCreate,
@@ -95,9 +96,17 @@ async def create_agent(body: AgentCreate) -> Agent:
     agent = db.create_agent(
         name=body.name,
         role=body.role,
+        prompt_template=body.prompt_template,
         color=body.color,
         desk_x=body.desk_x,
         desk_y=body.desk_y,
+        model_social=body.model_social,
+        model_work=body.model_work,
+        model_reasoning=body.model_reasoning,
+        model_extraction=body.model_extraction,
+        model_self_queue=body.model_self_queue,
+        api_base_url=body.api_base_url,
+        api_key=body.api_key,
     )
     # Broadcast to all connected clients
     await manager.broadcast_world_state()
@@ -144,6 +153,47 @@ async def delete_agent(agent_id: str):
     )
 
 
+# ─── Agent messages ───
+
+@router.get("/agents/{agent_id}/messages")
+async def get_agent_messages(agent_id: str, limit: int = 50):
+    """Return formatted chat history for an agent, ready for frontend rendering."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    limit = min(limit, 200)
+    messages = db.get_messages_for_agent(agent_id, limit=limit)
+
+    # Batch-resolve sender names
+    sender_ids = list({m.from_agent for m in messages if m.from_agent != HUMAN_SENDER_ID})
+    agents_map = db.get_agents_by_ids(sender_ids)
+
+    result = []
+    for msg in messages:
+        if msg.from_agent == HUMAN_SENDER_ID:
+            from_type = "human"
+            from_name = "You"
+        elif msg.from_agent == agent_id:
+            from_type = "agent"
+            from_name = agent.name
+        else:
+            sender = agents_map.get(msg.from_agent)
+            from_type = "other"
+            from_name = sender.name if sender else "Unknown"
+
+        result.append({
+            "id": msg.id,
+            "content": msg.content,
+            "from": from_type,
+            "from_name": from_name,
+            "message_type": msg.message_type,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        })
+
+    return result
+
+
 # ─── Tasks CRUD ───
 
 @router.get("/tasks")
@@ -185,7 +235,7 @@ class ActivationBody(BaseModel):
 
 @router.post("/agents/{agent_id}/activate")
 async def activate_agent(agent_id: str, body: ActivationBody | None = None):
-    """Manually trigger an agent turn."""
+    """Trigger an agent turn via human chat message."""
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
@@ -195,7 +245,27 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         raise HTTPException(500, "Agent state not found")
 
     content = body.content if body else "You have been manually activated."
-    trigger = {"type": "manual", "content": content}
+
+    # Persist the human message
+    human_msg = db.create_message(
+        from_agent=HUMAN_SENDER_ID,
+        to_agent=agent_id,
+        content=content,
+        message_type="human",
+    )
+
+    # Broadcast human message to all connected clients
+    await manager.broadcast_chat_message(
+        agent_id=agent_id,
+        content=content,
+        from_type="human",
+        from_name="You",
+        message_id=human_msg.id,
+        created_at=human_msg.created_at,
+    )
+
+    # Use "message" trigger so context_builder formats as [Human Operator]: content
+    trigger = {"type": "message", "from_name": "Human Operator", "content": content}
 
     result = await run_turn(agent, state, trigger)
 
@@ -203,7 +273,17 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
     if result.get("path") and result.get("agent_id"):
         simulation.set_agent_path(result["agent_id"], result["path"])
 
-    return {"status": "ok", "result": result}
+    # Broadcast agent reply if the action produced content
+    reply_content = result.get("content")
+    if reply_content:
+        await manager.broadcast_chat_message(
+            agent_id=agent_id,
+            content=reply_content,
+            from_type="agent",
+            from_name=agent.name,
+        )
+
+    return {"status": "ok", "result": result, "reply": reply_content}
 
 
 # ─── Settings ───

@@ -71,19 +71,18 @@
     opacity: 1;
 }
 
-/* ─── Slide-in panel overlay transitions ───
-   !important needed to override Tailwind CDN's translate-x-full */
-#agent-panel-overlay.open,
-#settings-panel-overlay.open {
-    display: block !important;
+/* ─── Agent sub-view toolbar ─── */
+.agent-subview-btn {
+    color: #64748b;
+    border-bottom: 2px solid transparent;
 }
-#agent-panel-overlay.open #agent-panel-backdrop,
-#settings-panel-overlay.open #settings-panel-backdrop {
-    opacity: 1 !important;
+.agent-subview-btn:hover {
+    color: #1e293b;
+    background-color: #f8fafc;
 }
-#agent-panel-overlay.open #agent-panel,
-#settings-panel-overlay.open #settings-panel {
-    transform: translateX(0) !important;
+.agent-subview-btn.active {
+    color: #2563eb;
+    border-bottom-color: #2563eb;
 }
 
 /* ─── Mobile bottom sheet states ─── */
@@ -133,6 +132,7 @@
     font-size: 0.875rem;
     line-height: 1.5;
     word-wrap: break-word;
+    white-space: pre-wrap;
 }
 .chat-msg.from-human {
     background-color: #2563eb;
@@ -144,6 +144,15 @@
     background-color: #f1f5f9;
     color: #1e293b;
     border-bottom-left-radius: 0.25rem;
+}
+
+/* ─── Chat typing indicator ─── */
+#chat-typing-indicator {
+    animation: bm-pulse 1.5s ease-in-out infinite;
+}
+@keyframes bm-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
 }
 
 /* ─── Responsive: hide gutter on mobile ─── */

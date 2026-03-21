@@ -29,42 +29,19 @@ const BossModApp = (() => {
         } catch { /* storage full or unavailable */ }
     }
 
-    // ─── Tab switching ───
+    // ─── Tab switching (mobile only — desktop tabs managed by AgentContext) ───
 
     function initTabs() {
-        // Desktop tabs
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => switchTab(btn.dataset.tab, 'desktop'));
-        });
-
-        // Mobile tabs
         document.querySelectorAll('.mobile-tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => switchTab(btn.dataset.tab, 'mobile'));
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.mobile-tab-btn').forEach(b =>
+                    b.classList.toggle('active', b.dataset.tab === btn.dataset.tab)
+                );
+            });
         });
-
-        // Restore saved tab
-        switchTab(prefs.activeTab, 'both');
     }
 
-    function switchTab(tabName, scope) {
-        prefs.activeTab = tabName;
-        savePrefs();
-
-        if (scope === 'desktop' || scope === 'both') {
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.tab === tabName);
-            });
-            document.querySelectorAll('.tab-content').forEach(panel => {
-                panel.classList.toggle('active', panel.id === `tab-${tabName}`);
-            });
-        }
-
-        if (scope === 'mobile' || scope === 'both') {
-            document.querySelectorAll('.mobile-tab-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.tab === tabName);
-            });
-        }
-    }
+    function switchTab() { /* managed by AgentContext */ }
 
     // ─── Split.js (resizable panels) ───
 
@@ -91,41 +68,12 @@ const BossModApp = (() => {
         });
     }
 
-    // ─── Agent panel overlay ───
+    // ─── Agent selection (via canvas click) ───
 
-    function initAgentPanel() {
-        const overlay = document.getElementById('agent-panel-overlay');
-        const backdrop = document.getElementById('agent-panel-backdrop');
-        const closeBtn = document.getElementById('agent-panel-close');
-
-        if (!overlay) return;
-
-        // Close on backdrop click
-        backdrop.addEventListener('click', closeAgentPanel);
-
-        // Close on button click
-        closeBtn.addEventListener('click', closeAgentPanel);
-
-        // Close on Escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && overlay.classList.contains('open')) {
-                closeAgentPanel();
-            }
-        });
-    }
-
-    function openAgentPanel(agentData) {
-        BossModUtils.openOverlay('agent-panel-overlay');
-
-        if (agentData && agentData.id) {
-            AgentPanel.openForAgentId(agentData.id);
-        } else {
-            AgentPanel.openForCreate();
+    function selectAgent(agentData) {
+        if (typeof AgentContext !== 'undefined') {
+            AgentContext.selectAgent(agentData);
         }
-    }
-
-    function closeAgentPanel() {
-        BossModUtils.closeOverlay('agent-panel-overlay', 'agent-panel');
     }
 
     // ─── Mobile bottom sheet ───
@@ -226,6 +174,12 @@ const BossModApp = (() => {
                     ActivityLog.loadHistory(msg.data);
                 }
                 break;
+
+            case 'chat_message':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleChatMessage(msg.data);
+                }
+                break;
         }
     }
 
@@ -279,7 +233,10 @@ const BossModApp = (() => {
         }
 
         if (newAgentBtn) {
-            newAgentBtn.addEventListener('click', () => openAgentPanel({}));
+            newAgentBtn.addEventListener('click', () => {
+                // TODO: open a create-agent flow (for now, just log)
+                console.log('[BossMod] New agent — use Settings > AI Personalities first');
+            });
         }
     }
 
@@ -308,7 +265,6 @@ const BossModApp = (() => {
         initIcons();
         initTabs();
         initSplit();
-        initAgentPanel();
         initNavButtons();
         initMobileSheet();
         initResize();
@@ -319,9 +275,9 @@ const BossModApp = (() => {
 
     return {
         init,
-        openAgentPanel,
-        closeAgentPanel,
+        selectAgent,
         switchTab,
+        updateNavForSettings,
     };
 })();
 

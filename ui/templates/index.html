@@ -92,8 +92,8 @@
         <div id="panel-left" class="flex flex-col bg-bm-surface border-r border-bm-border
                                      max-sm:hidden">
 
-            <!-- Tab headers -->
-            <div class="flex border-b border-bm-border shrink-0">
+            <!-- Tab headers (dynamic — managed by AgentContext) -->
+            <div id="left-panel-tabs" class="flex border-b border-bm-border shrink-0">
                 <button class="tab-btn active flex-1 px-4 py-2.5 text-sm font-medium
                                transition-colors relative"
                         data-tab="chat">
@@ -112,34 +112,65 @@
                 </button>
             </div>
 
-            <!-- Tab content -->
-            <div class="flex-1 overflow-hidden relative">
-                <div id="tab-chat" class="tab-content active absolute inset-0 flex flex-col">
+            <!-- Sub-view toolbar (hidden until agent selected) -->
+            <div id="agent-toolbar" class="hidden border-b border-bm-border shrink-0">
+                <div class="flex">
+                    <button data-subview="chat"
+                            class="agent-subview-btn active flex-1 flex items-center justify-center gap-1.5
+                                   px-3 py-2 text-xs font-medium transition-colors">
+                        <i data-lucide="message-circle" class="w-3.5 h-3.5"></i> Chat
+                    </button>
+                    <button data-subview="edit"
+                            class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
+                                   px-3 py-2 text-xs font-medium transition-colors">
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit
+                    </button>
+                    <button data-subview="tasks"
+                            class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
+                                   px-3 py-2 text-xs font-medium transition-colors">
+                        <i data-lucide="list-todo" class="w-3.5 h-3.5"></i> Tasks
+                    </button>
+                </div>
+            </div>
+
+            <!-- Content area -->
+            <div id="left-panel-content" class="flex-1 overflow-hidden relative">
+                <!-- Default empty state -->
+                <div id="panel-empty-state" class="absolute inset-0 flex flex-col">
                     <div class="flex-1 overflow-y-auto p-4">
                         <div class="text-bm-muted text-sm text-center mt-8">
                             <i data-lucide="message-circle" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
-                            <p>Click an agent to start a conversation</p>
+                            <p>Click an agent on the map to start</p>
                         </div>
                     </div>
+                </div>
+
+                <!-- Agent chat sub-view -->
+                <div id="subview-chat" class="absolute inset-0 flex flex-col hidden">
+                    <div id="chat-messages" class="flex-1 overflow-y-auto p-4"></div>
                     <div class="p-3 border-t border-bm-border">
-                        <div class="flex gap-2">
-                            <input type="text" id="chat-input"
-                                   placeholder="Type a message..."
-                                   disabled
-                                   class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                          focus:border-bm-accent disabled:opacity-50 disabled:cursor-not-allowed">
+                        <div class="flex gap-2 items-end">
+                            <textarea id="chat-input" rows="1"
+                                      placeholder="Type a message... (Shift+Enter for new line)"
+                                      class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                             bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                             focus:border-bm-accent resize-none overflow-hidden"></textarea>
                             <button id="chat-send"
-                                    disabled
                                     class="px-3 py-2 bg-bm-accent text-white rounded-lg
-                                           hover:bg-bm-accent-hover transition-colors
-                                           disabled:opacity-50 disabled:cursor-not-allowed">
+                                           hover:bg-bm-accent-hover transition-colors shrink-0">
                                 <i data-lucide="send" class="w-4 h-4"></i>
                             </button>
                         </div>
                     </div>
                 </div>
 
+                <!-- Agent edit sub-view -->
+                <div id="subview-edit" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
+
+                <!-- Agent tasks sub-view -->
+                <div id="subview-tasks" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
+
+                <!-- Activity tab -->
                 <div id="tab-activity" class="tab-content absolute inset-0 flex flex-col">
                     <div class="flex-1 overflow-y-auto p-4">
                         <div class="text-bm-muted text-sm text-center mt-8">
@@ -192,39 +223,7 @@
         </div>
     </div>
 
-    <!-- ═══════════════ AGENT PANEL OVERLAY ═══════════════ -->
-    <div id="agent-panel-overlay" class="fixed inset-0 z-50 hidden">
-        <!-- Backdrop -->
-        <div id="agent-panel-backdrop"
-             class="absolute inset-0 bg-black/30 transition-opacity"></div>
-
-        <!-- Slide-in panel -->
-        <div id="agent-panel"
-             class="absolute top-0 right-0 h-full w-full sm:w-96 bg-bm-surface shadow-2xl
-                    transform translate-x-full transition-transform duration-300 ease-out
-                    flex flex-col">
-
-            <!-- Header -->
-            <div class="flex items-center justify-between px-4 py-3 border-b border-bm-border">
-                <h2 class="font-semibold text-lg flex items-center gap-2">
-                    <i data-lucide="user-circle" class="w-5 h-5 text-bm-accent"></i>
-                    <span id="agent-panel-title">Agent Details</span>
-                </h2>
-                <button id="agent-panel-close"
-                        class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
-            </div>
-
-            <!-- Body (scrollable) -->
-            <div class="flex-1 overflow-y-auto p-4">
-                <div class="text-bm-muted text-sm text-center mt-8">
-                    <i data-lucide="user-circle" class="w-12 h-12 mx-auto mb-3 opacity-40"></i>
-                    <p>Select an agent on the map to view details</p>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Agent panel overlay removed — Edit is now inline in the left panel -->
 
     <!-- Settings panel overlay removed — replaced by full settings view -->
 
@@ -233,6 +232,7 @@
     <script src="/static/js/activity.js"></script>
     <script src="/static/js/canvas.js"></script>
     <script src="/static/js/agent-panel.js"></script>
+    <script src="/static/js/agent-context.js"></script>
     <script src="/static/js/settings-view.js"></script>
     <script src="/static/js/app.js"></script>
 

@@ -58,9 +58,16 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         logger.warning("No 'action' key in response: %s", parsed)
         return {"thought": parsed.get("thought", ""), "action": "idle", "params": {}}
 
+    action_value = parsed["action"]
+
+    # Guard against LLMs returning action as a nested object instead of a string
+    if not isinstance(action_value, str):
+        logger.warning("Action is not a string (%s): %s", type(action_value).__name__, parsed)
+        return {"thought": parsed.get("thought", ""), "action": "idle", "params": {}}
+
     return {
         "thought": parsed.get("thought", ""),
-        "action": parsed["action"],
+        "action": action_value,
         "params": parsed.get("params", {}),
     }
 
@@ -166,6 +173,7 @@ async def _handle_send_message(
         "event": "message_sent",
         "detail": f"{agent.name} → {to_display}: {content[:80]}{'...' if len(content) > 80 else ''}",
         "agent_name": agent.name,
+        "content": content,
     }
 
 
@@ -195,6 +203,7 @@ async def _handle_work(
         "event": "agent_updated",
         "detail": f"{agent.name} produced work output ({len(output)} chars)",
         "agent_name": agent.name,
+        "content": output,
     }
 
 

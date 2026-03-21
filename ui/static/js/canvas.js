@@ -295,7 +295,7 @@ const OfficeCanvas = (() => {
 
         const agent = getAgentAt(x, y);
         if (agent) {
-            BossModApp.openAgentPanel(agent);
+            BossModApp.selectAgent(agent);
         }
     }
 

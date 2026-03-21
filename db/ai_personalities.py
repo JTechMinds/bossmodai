@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from core.models import AIPersonality
-from db.crud import build_update, execute, fetch_all, fetch_one, insert_returning
+from db.crud import build_update, execute, fetch_all, fetch_one, insert_returning, query
+
+logger = logging.getLogger(__name__)
 
 _COLUMNS = "id, name, prompt_template, created_at"
 
@@ -58,3 +61,22 @@ def delete_personality(personality_id: str) -> bool:
         return False
     execute("DELETE FROM ai_personalities WHERE id = $1", [personality_id])
     return True
+
+
+# ---------------------------------------------------------------------------
+# Seed defaults
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PERSONALITIES = [
+    ("Research Assistant", "You are a research assistant named {{agent_name}}. You gather information, synthesize findings, and present clear summaries to help the team make informed decisions."),
+]
+
+
+def seed_default_personalities() -> None:
+    """Create default personalities if none exist yet."""
+    existing = query("SELECT COUNT(*) AS cnt FROM ai_personalities")
+    if existing and existing[0]["cnt"] > 0:
+        return
+    for name, prompt in _DEFAULT_PERSONALITIES:
+        create_personality(name=name, prompt_template=prompt)
+    logger.info("Seeded %d default personalities", len(_DEFAULT_PERSONALITIES))

@@ -85,9 +85,19 @@ class AgentCreate(BaseModel):
 
     name: str
     role: str | None = None
+    prompt_template: str | None = None
     color: str = "#3b82f6"
     desk_x: int | None = None
     desk_y: int | None = None
+
+    model_social: str | None = None
+    model_work: str | None = None
+    model_reasoning: str | None = None
+    model_extraction: str | None = None
+    model_self_queue: str | None = None
+
+    api_base_url: str | None = None
+    api_key: str | None = None
 
 
 class AgentUpdate(BaseModel):

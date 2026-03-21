@@ -65,6 +65,11 @@ async def completion(
     if max_tokens is None:
         max_tokens = config.get_int("default_max_tokens") or 2048
 
+    # When using a custom base URL, litellm needs a provider prefix.
+    # Auto-add "openai/" for OpenAI-compatible endpoints if no prefix present.
+    if api_base and "/" not in model:
+        model = f"openai/{model}"
+
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -74,7 +79,9 @@ async def completion(
 
     if api_base:
         kwargs["api_base"] = api_base
-    if api_key:
+        # LiteLLM requires an api_key even for local servers that don't need one
+        kwargs["api_key"] = api_key or "not-needed"
+    elif api_key:
         kwargs["api_key"] = api_key
 
     try:

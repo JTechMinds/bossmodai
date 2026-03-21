@@ -76,6 +76,32 @@ class ConnectionManager:
         world = db.get_world_state()
         await self.broadcast({"type": "world_update", "data": world})
 
+    async def broadcast_chat_message(
+        self,
+        agent_id: str,
+        content: str,
+        from_type: str,
+        from_name: str,
+        message_id: str | None = None,
+        created_at: Any = None,
+    ) -> None:
+        """Broadcast a chat message to all connected clients.
+
+        Does NOT persist to activity log — chat messages live in the messages table.
+        The ``agent_id`` tells the frontend which agent's chat panel this belongs to.
+        """
+        await self.broadcast({
+            "type": "chat_message",
+            "data": {
+                "agent_id": agent_id,
+                "content": content,
+                "from": from_type,
+                "from_name": from_name,
+                "message_id": message_id,
+                "created_at": created_at,
+            },
+        })
+
     async def broadcast_activity(
         self,
         event: str,

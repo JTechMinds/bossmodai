@@ -35,4 +35,5 @@ desktop/gen/
 artifacts/
 
 # Superpowers brainstorming sessions
-.superpowers/
+.superpowers/*
+docs/*
