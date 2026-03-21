@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BossMod AI</title>
+
+    <!-- Tailwind CSS (CDN, no build step) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        bm: {
+                            bg: '#f8fafc',
+                            surface: '#ffffff',
+                            border: '#e2e8f0',
+                            text: '#1e293b',
+                            muted: '#64748b',
+                            accent: '#2563eb',
+                            'accent-hover': '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Lucide Icons (CDN) -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <!-- Split.js (CDN, 2KB) -->
+    <script src="https://unpkg.com/split.js@1.6.5/dist/split.min.js"></script>
+
+    <!-- Custom styles -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden">
+
+    <!-- ═══════════════ TOP NAV BAR ═══════════════ -->
+    <nav class="bg-bm-surface border-b border-bm-border px-4 py-2 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-bm-accent rounded-lg flex items-center justify-center">
+                    <i data-lucide="bot" class="w-5 h-5 text-white"></i>
+                </div>
+                <span class="font-bold text-lg">BossMod</span>
+                <span class="text-xs text-bm-muted font-mono">v0.1</span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button id="btn-new-agent"
+                    class="hidden sm:flex items-center gap-2 px-3 py-1.5 border border-bm-border text-bm-text rounded-lg
+                           hover:bg-slate-50 transition-colors text-sm font-medium"
+                    aria-label="Create new agent">
+                <i data-lucide="user-plus" class="w-4 h-4"></i>
+                New Agent
+            </button>
+            <button id="btn-settings"
+                    class="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                    title="Settings"
+                    aria-label="Open settings">
+                <i data-lucide="settings" class="w-5 h-5 text-bm-muted"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+    <!-- Desktop: side-by-side with Split.js. Mobile: stacked with bottom sheet. -->
+    <div id="main-layout" class="flex-1 flex overflow-hidden">
+
+        <!-- ─── LEFT PANEL (30%) ─── -->
+        <div id="panel-left" class="flex flex-col bg-bm-surface border-r border-bm-border
+                                     max-sm:hidden">
+
+            <!-- Tab headers -->
+            <div class="flex border-b border-bm-border shrink-0">
+                <button class="tab-btn active flex-1 px-4 py-2.5 text-sm font-medium
+                               transition-colors relative"
+                        data-tab="chat">
+                    <span class="flex items-center justify-center gap-1.5">
+                        <i data-lucide="message-circle" class="w-4 h-4"></i>
+                        Chat
+                    </span>
+                </button>
+                <button class="tab-btn flex-1 px-4 py-2.5 text-sm font-medium
+                               transition-colors relative"
+                        data-tab="activity">
+                    <span class="flex items-center justify-center gap-1.5">
+                        <i data-lucide="activity" class="w-4 h-4"></i>
+                        Activity
+                    </span>
+                </button>
+            </div>
+
+            <!-- Tab content -->
+            <div class="flex-1 overflow-hidden relative">
+                <div id="tab-chat" class="tab-content active absolute inset-0 flex flex-col">
+                    <div class="flex-1 overflow-y-auto p-4">
+                        <div class="text-bm-muted text-sm text-center mt-8">
+                            <i data-lucide="message-circle" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+                            <p>Click an agent to start a conversation</p>
+                        </div>
+                    </div>
+                    <div class="p-3 border-t border-bm-border">
+                        <div class="flex gap-2">
+                            <input type="text" id="chat-input"
+                                   placeholder="Type a message..."
+                                   disabled
+                                   class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button id="chat-send"
+                                    disabled
+                                    class="px-3 py-2 bg-bm-accent text-white rounded-lg
+                                           hover:bg-bm-accent-hover transition-colors
+                                           disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i data-lucide="send" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-activity" class="tab-content absolute inset-0 flex flex-col">
+                    <div class="flex-1 overflow-y-auto p-4">
+                        <div class="text-bm-muted text-sm text-center mt-8">
+                            <i data-lucide="activity" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+                            <p>Agent activity will appear here</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Split handle is managed by Split.js ─── -->
+
+        <!-- ─── RIGHT PANEL: OFFICE MAP (70%) ─── -->
+        <div id="panel-map" class="flex-1 flex items-center justify-center bg-bm-bg p-2 sm:p-4">
+            <div id="canvas-container" class="w-full h-full flex items-center justify-center">
+                <canvas id="office-canvas" class="rounded-xl shadow-sm border border-bm-border bg-white">
+                    Your browser does not support canvas.
+                </canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ MOBILE BOTTOM SHEET ═══════════════ -->
+    <div id="mobile-sheet" class="sm:hidden fixed inset-x-0 bottom-0 bg-bm-surface rounded-t-2xl
+                                   shadow-[0_-4px_20px_rgba(0,0,0,0.1)] border-t border-bm-border
+                                   transition-transform duration-300 ease-out z-40"
+         style="transform: translateY(calc(100% - 3rem));">
+
+        <!-- Drag handle -->
+        <div id="sheet-handle" class="flex justify-center py-2 cursor-grab">
+            <div class="w-10 h-1 bg-slate-300 rounded-full"></div>
+        </div>
+
+        <!-- Mobile tabs -->
+        <div class="flex border-b border-bm-border">
+            <button class="mobile-tab-btn active flex-1 px-4 py-2 text-sm font-medium" data-tab="chat">
+                <i data-lucide="message-circle" class="w-4 h-4 inline"></i> Chat
+            </button>
+            <button class="mobile-tab-btn flex-1 px-4 py-2 text-sm font-medium" data-tab="activity">
+                <i data-lucide="activity" class="w-4 h-4 inline"></i> Activity
+            </button>
+        </div>
+
+        <!-- Mobile tab content -->
+        <div class="h-64 overflow-y-auto p-4">
+            <div class="text-bm-muted text-sm text-center mt-4">
+                <p>Swipe up to expand</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ AGENT PANEL OVERLAY ═══════════════ -->
+    <div id="agent-panel-overlay" class="fixed inset-0 z-50 hidden">
+        <!-- Backdrop -->
+        <div id="agent-panel-backdrop"
+             class="absolute inset-0 bg-black/30 transition-opacity"></div>
+
+        <!-- Slide-in panel -->
+        <div id="agent-panel"
+             class="absolute top-0 right-0 h-full w-full sm:w-96 bg-bm-surface shadow-2xl
+                    transform translate-x-full transition-transform duration-300 ease-out
+                    flex flex-col">
+
+            <!-- Header -->
+            <div class="flex items-center justify-between px-4 py-3 border-b border-bm-border">
+                <h2 class="font-semibold text-lg flex items-center gap-2">
+                    <i data-lucide="user-circle" class="w-5 h-5 text-bm-accent"></i>
+                    <span id="agent-panel-title">Agent Details</span>
+                </h2>
+                <button id="agent-panel-close"
+                        class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Body (scrollable) -->
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="text-bm-muted text-sm text-center mt-8">
+                    <i data-lucide="user-circle" class="w-12 h-12 mx-auto mb-3 opacity-40"></i>
+                    <p>Select an agent on the map to view details</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ SETTINGS PANEL OVERLAY ═══════════════ -->
+    <div id="settings-panel-overlay" class="fixed inset-0 z-50 hidden">
+        <div id="settings-panel-backdrop"
+             class="absolute inset-0 bg-black/30 transition-opacity"></div>
+
+        <div id="settings-panel"
+             class="absolute top-0 right-0 h-full w-full sm:w-[28rem] bg-bm-surface shadow-2xl
+                    transform translate-x-full transition-transform duration-300 ease-out
+                    flex flex-col">
+
+            <div class="flex items-center justify-between px-4 py-3 border-b border-bm-border">
+                <h2 class="font-semibold text-lg flex items-center gap-2">
+                    <i data-lucide="settings" class="w-5 h-5 text-bm-accent"></i>
+                    Settings
+                </h2>
+                <button id="settings-panel-close"
+                        class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div id="settings-panel-body" class="flex-1 overflow-y-auto p-4">
+                <div class="text-bm-muted text-sm text-center mt-8">
+                    <i data-lucide="loader" class="w-8 h-8 mx-auto mb-2 opacity-40 animate-spin"></i>
+                    <p>Loading settings...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ SCRIPTS ═══════════════ -->
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/activity.js"></script>
+    <script src="/static/js/canvas.js"></script>
+    <script src="/static/js/agent-panel.js"></script>
+    <script src="/static/js/settings-panel.js"></script>
+    <script src="/static/js/app.js"></script>
+
+</body>
+</html>

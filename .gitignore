@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Database
+*.db
+*.db.wal
+
+# Environment / secrets
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust / Tauri build output
+desktop/target/
+desktop/gen/
+
+# BossMod runtime data
+artifacts/
+
+# Superpowers brainstorming sessions
+.superpowers/

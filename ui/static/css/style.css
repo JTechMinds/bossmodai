@@ -1,0 +1,157 @@
+/* ═══════════════════════════════════════════════════
+   BossMod AI — Custom Styles
+   Tailwind handles layout/utilities. This file covers
+   component states and animations Tailwind can't.
+   ═══════════════════════════════════════════════════ */
+
+/* ─── Tab buttons ─── */
+.tab-btn {
+    color: #64748b; /* muted */
+}
+.tab-btn:hover {
+    color: #1e293b;
+    background-color: #f8fafc;
+}
+.tab-btn.active {
+    color: #2563eb;
+}
+.tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: #2563eb;
+    border-radius: 2px 2px 0 0;
+}
+
+/* ─── Tab content panels ─── */
+/* !important needed to override Tailwind's `flex` utility class */
+.tab-content {
+    display: none !important;
+}
+.tab-content.active {
+    display: flex !important;
+}
+
+/* ─── Mobile tab buttons ─── */
+.mobile-tab-btn {
+    color: #64748b;
+}
+.mobile-tab-btn.active {
+    color: #2563eb;
+    border-bottom: 2px solid #2563eb;
+}
+
+/* ─── Split.js gutter (draggable divider) ─── */
+.gutter {
+    background-color: #e2e8f0;
+    cursor: col-resize;
+    position: relative;
+    transition: background-color 0.15s;
+}
+.gutter:hover {
+    background-color: #cbd5e1;
+}
+.gutter::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 4px;
+    height: 32px;
+    background: #94a3b8;
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.gutter:hover::after {
+    opacity: 1;
+}
+
+/* ─── Slide-in panel overlay transitions ───
+   !important needed to override Tailwind CDN's translate-x-full */
+#agent-panel-overlay.open,
+#settings-panel-overlay.open {
+    display: block !important;
+}
+#agent-panel-overlay.open #agent-panel-backdrop,
+#settings-panel-overlay.open #settings-panel-backdrop {
+    opacity: 1 !important;
+}
+#agent-panel-overlay.open #agent-panel,
+#settings-panel-overlay.open #settings-panel {
+    transform: translateX(0) !important;
+}
+
+/* ─── Mobile bottom sheet states ─── */
+#mobile-sheet.expanded {
+    transform: translateY(0) !important;
+}
+#mobile-sheet.peek {
+    transform: translateY(calc(100% - 3rem)) !important;
+}
+
+/* ─── Canvas container ─── */
+#office-canvas {
+    image-rendering: pixelated; /* crisp pixels when we add sprite art */
+}
+
+/* ─── Scrollbar styling (subtle) ─── */
+.overflow-y-auto::-webkit-scrollbar {
+    width: 6px;
+}
+.overflow-y-auto::-webkit-scrollbar-track {
+    background: transparent;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 3px;
+}
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+}
+
+/* ─── Activity log entry ─── */
+.activity-entry {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+}
+.activity-entry:last-child {
+    border-bottom: none;
+}
+
+/* ─── Chat message bubbles ─── */
+.chat-msg {
+    max-width: 85%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+.chat-msg.from-human {
+    background-color: #2563eb;
+    color: white;
+    margin-left: auto;
+    border-bottom-right-radius: 0.25rem;
+}
+.chat-msg.from-agent {
+    background-color: #f1f5f9;
+    color: #1e293b;
+    border-bottom-left-radius: 0.25rem;
+}
+
+/* ─── Responsive: hide gutter on mobile ─── */
+@media (max-width: 639px) {
+    .gutter {
+        display: none;
+    }
+    #panel-map {
+        height: calc(100vh - 3.5rem - 3rem); /* nav height - sheet peek */
+    }
+}

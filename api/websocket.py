@@ -1,0 +1,101 @@
+"""BossMod AI — WebSocket connection manager and event broadcasting.
+
+Manages active WebSocket connections, broadcasts world state updates
+and activity events to all connected clients in real-time.
+Activity events are persisted to the database for history across restarts.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastapi import WebSocket
+from fastapi.encoders import jsonable_encoder
+
+import db
+
+logger = logging.getLogger(__name__)
+
+
+class ConnectionManager:
+    """Tracks active WebSocket connections and broadcasts messages."""
+
+    def __init__(self) -> None:
+        self._connections: list[WebSocket] = []
+        self._max_log_size = 200
+
+    @property
+    def connection_count(self) -> int:
+        return len(self._connections)
+
+    @property
+    def activity_log(self) -> list[dict[str, Any]]:
+        """Load recent activity from the database."""
+        rows = db.get_recent_activity(self._max_log_size)
+        return [
+            {
+                "event": r["event"],
+                "detail": r["detail"],
+                "agent_name": r.get("agent_name"),
+                "timestamp": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in rows
+        ]
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self._connections.append(websocket)
+        logger.info("WebSocket connected (%d active)", len(self._connections))
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        if websocket in self._connections:
+            self._connections.remove(websocket)
+        logger.info("WebSocket disconnected (%d active)", len(self._connections))
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        """Send a JSON message to all connected clients.
+
+        Uses ``jsonable_encoder`` to handle datetime and Pydantic objects.
+        Automatically removes dead connections.
+        """
+        encoded = jsonable_encoder(message)
+        dead: list[WebSocket] = []
+        for ws in self._connections:
+            try:
+                await ws.send_json(encoded)
+            except (ConnectionError, RuntimeError) as exc:
+                logger.debug("WebSocket send failed, marking dead: %s", exc)
+                dead.append(ws)
+        for ws in dead:
+            if ws in self._connections:
+                self._connections.remove(ws)
+
+    async def broadcast_world_state(self) -> None:
+        """Fetch current world state from DB and broadcast to all clients."""
+        world = db.get_world_state()
+        await self.broadcast({"type": "world_update", "data": world})
+
+    async def broadcast_activity(
+        self,
+        event: str,
+        detail: str,
+        agent_name: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist an activity event to the database and broadcast to all clients."""
+        db.create_activity(event=event, detail=detail, agent_name=agent_name)
+
+        entry: dict[str, Any] = {
+            "event": event,
+            "detail": detail,
+            "agent_name": agent_name,
+        }
+        if extra:
+            entry.update(extra)
+
+        await self.broadcast({"type": "activity", "data": entry})
+
+
+# Module-level singleton — imported by routes.py
+manager = ConnectionManager()

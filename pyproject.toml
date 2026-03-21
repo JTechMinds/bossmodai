@@ -1,0 +1,28 @@
+[project]
+name = "bossmodai"
+version = "0.1.0"
+description = "Self-hosted platform for autonomous AI agent teams with visual 2D office"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "jinja2>=3.1.0",
+    "duckdb>=1.2.0",
+    "pydantic>=2.10.0",
+    "litellm>=1.60.0",
+    "pathfinding>=1.0.0",
+]
+
+[project.optional-dependencies]
+notifications = [
+    "python-telegram-bot>=22.0",
+    "twilio>=9.0.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+    "httpx>=0.28.0",
+]
