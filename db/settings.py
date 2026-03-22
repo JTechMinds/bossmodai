@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from core.agent_loop.action_contract import render_action_contract
 from core.models import Setting
 from db.crud import execute, fetch_all, query_one
 
@@ -33,6 +34,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── Context window ──
     ("context_window_messages", "30", "context"),
+    ("context_recent_work_artifacts", "5", "context"),
+    ("context_recent_completed_tasks", "3", "context"),
 
     # ── Diagnostics ──
     ("diagnostics_enabled", "false", "advanced"),
@@ -45,48 +48,17 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("sim_error_threshold", "10", "simulation"),
     ("sim_error_backoff_seconds", "30", "simulation"),
 
+    # ── Watchdog ──
+    ("watchdog_check_interval_seconds", "5", "simulation"),
+    ("watchdog_soft_ping_minutes", "15", "simulation"),
+    ("watchdog_escalation_minutes", "15", "simulation"),
+
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),
 
     # ── API limits ──
     ("api_message_limit_max", "200", "advanced"),
     ("api_diagnostics_limit_max", "200", "advanced"),
-
-    # ── Available actions schema (advanced) ──
-    ("available_actions_schema", """You are an AI agent in a virtual office. You control an avatar that represents your physical presence. You are free to think, reason, and produce any work you need — your capabilities are not limited to the actions below.
-
-Each turn you receive a WORLD STATUS and must respond with a single JSON action.
-
-ACTIONS:
-  work           — Produce work output. System moves your avatar to your desk.
-  message        — Send a message to another agent or the human operator.
-  walkTo         — Move your avatar to a destination.
-  remoteMeeting  — Start a remote meeting with another agent from your desk.
-  idle           — Nothing to do. Return to idle state.
-  complete       — Mark current task as done.
-  blocked        — Mark current task as blocked.
-  delegated      — Hand current task to another agent.
-  abandoned      — Abandon current task.
-
-DESTINATIONS (for walkTo):
-  desk, meetingRoom, breakRoom, mainWorkspace, southWorkspace, hallway
-
-RESPONSE FORMAT — respond with exactly ONE JSON object:
-  {"action":"work","output":"your work product","thought":"reasoning"}
-  {"action":"message","to":"agentName","content":"message text","thought":"reasoning"}
-  {"action":"walkTo","destination":"breakRoom","thought":"reasoning"}
-  {"action":"remoteMeeting","with":"agentName","topic":"topic","thought":"reasoning"}
-  {"action":"idle","thought":"reasoning"}
-  {"action":"complete","taskId":"id","summary":"what was done","thought":"reasoning"}
-  {"action":"blocked","taskId":"id","reason":"why blocked","thought":"reasoning"}
-  {"action":"delegated","taskId":"id","to":"agentName","thought":"reasoning"}
-  {"action":"abandoned","taskId":"id","reason":"why abandoned","thought":"reasoning"}
-
-RULES:
-- Valid JSON only, no markdown or extra text.
-- Finish work before changing state.
-- If a meeting is called, walk to the meeting room.
-- "thought" is your internal reasoning (visible to admins).""", "advanced"),
 
     # ── System prompt template (advanced) ──
     ("system_prompt_template", """{{personality}}
@@ -97,9 +69,12 @@ RULES:
 
 {{task}}
 
+{{references}}
+
 ---
 
-{{available_actions}}""", "advanced"),
+{{action_contract}}""", "advanced"),
+    ("action_contract_template", render_action_contract(), "advanced"),
 ]
 
 

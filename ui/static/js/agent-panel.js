@@ -77,6 +77,18 @@ const AgentPanel = (() => {
         if (!res.ok) throw new Error(await res.text());
     }
 
+    async function apiClearChatHistory(id) {
+        const res = await fetch(`/api/agents/${id}/chat-history`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    async function apiResetRuntime(id) {
+        const res = await fetch(`/api/agents/${id}/reset-runtime`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
     // ─── Build form HTML into a container ───
 
     async function buildFormHTML(container, agent = null) {
@@ -229,6 +241,29 @@ const AgentPanel = (() => {
                         ${agent.status || 'idle'}
                     </span>
                 </div>
+            </div>
+
+            <div class="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-3">
+                <div>
+                    <h3 class="text-sm font-semibold text-amber-900">Recovery Tools</h3>
+                    <p class="text-xs text-amber-800 mt-1">These actions are destructive and cannot be undone.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button type="button" id="btn-clear-chat-history"
+                            class="px-3 py-1.5 border border-amber-300 text-amber-900 rounded-lg
+                                   hover:bg-amber-100 transition-colors text-sm font-medium">
+                        Clear Chat History
+                    </button>
+                    <button type="button" id="btn-reset-runtime"
+                            class="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg
+                                   hover:bg-red-50 transition-colors text-sm font-medium">
+                        Reset Runtime
+                    </button>
+                </div>
+                <div class="text-xs text-amber-900 space-y-1">
+                    <p><strong>Clear Chat History</strong> deletes only the direct human chat thread for this agent.</p>
+                    <p><strong>Reset Runtime</strong> cancels active work, clears queued triggers, resets the agent to idle, and may block the active task.</p>
+                </div>
             </div>` : ''}
 
             <!-- Actions -->
@@ -338,6 +373,8 @@ const AgentPanel = (() => {
 
         const form = container.querySelector('#agent-form');
         const deleteBtn = container.querySelector('#btn-delete-agent');
+        const clearChatBtn = container.querySelector('#btn-clear-chat-history');
+        const resetRuntimeBtn = container.querySelector('#btn-reset-runtime');
 
         // Fetch connections for submit resolution
         let connections = [];
@@ -359,16 +396,17 @@ const AgentPanel = (() => {
 
             const data = await buildSubmitData(form, connections);
             try {
+                let savedAgent = null;
                 if (isCreating) {
-                    await apiCreateAgent(data);
+                    savedAgent = await apiCreateAgent(data);
                 } else {
-                    await apiUpdateAgent(currentAgentId, data);
+                    savedAgent = await apiUpdateAgent(currentAgentId, data);
                 }
                 await refreshCanvas();
                 feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
                 feedbackEl.textContent = 'Saved successfully';
                 setTimeout(() => { feedbackEl.className = 'hidden'; }, 3000);
-                if (onSave) onSave();
+                if (onSave) onSave(savedAgent);
             } catch (err) {
                 console.error('[AgentPanel] Save failed:', err);
                 feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
@@ -386,6 +424,45 @@ const AgentPanel = (() => {
                     if (onDelete) onDelete();
                 } catch (err) {
                     console.error('[AgentPanel] Delete failed:', err);
+                }
+            });
+        }
+
+        if (clearChatBtn) {
+            clearChatBtn.addEventListener('click', async () => {
+                if (!currentAgentId) return;
+                if (!confirm("This permanently deletes this agent's direct chat history with the human operator. Completed work, artifacts, and diagnostics are preserved. Continue?")) return;
+                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+                feedbackEl.textContent = 'Clearing chat history...';
+                try {
+                    const result = await apiClearChatHistory(currentAgentId);
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
+                    feedbackEl.textContent = `Cleared ${result.deleted_messages} chat message${result.deleted_messages === 1 ? '' : 's'}.`;
+                    if (onSave) onSave();
+                } catch (err) {
+                    console.error('[AgentPanel] Clear chat failed:', err);
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                    feedbackEl.textContent = 'Clear chat failed — check console for details';
+                }
+            });
+        }
+
+        if (resetRuntimeBtn) {
+            resetRuntimeBtn.addEventListener('click', async () => {
+                if (!currentAgentId) return;
+                if (!confirm('This forcibly resets the agent runtime, clears queued triggers, and may block the active task. Completed work history is preserved. Continue?')) return;
+                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+                feedbackEl.textContent = 'Resetting runtime...';
+                try {
+                    const result = await apiResetRuntime(currentAgentId);
+                    await refreshCanvas();
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
+                    feedbackEl.textContent = `Runtime reset. Cleared ${result.deleted_triggers} open trigger${result.deleted_triggers === 1 ? '' : 's'}.`;
+                    if (onSave) onSave();
+                } catch (err) {
+                    console.error('[AgentPanel] Reset runtime failed:', err);
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                    feedbackEl.textContent = 'Runtime reset failed — check console for details';
                 }
             });
         }

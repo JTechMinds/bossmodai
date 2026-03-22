@@ -106,6 +106,13 @@ class ConnectionManager:
             },
         })
 
+    async def broadcast_chat_reset(self, agent_id: str) -> None:
+        """Broadcast that an agent's chat history was cleared."""
+        await self.broadcast({
+            "type": "chat_reset",
+            "data": {"agent_id": agent_id},
+        })
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         """Broadcast a diagnostic summary to all connected clients."""
         await self.broadcast({"type": "diagnostic", "data": summary})

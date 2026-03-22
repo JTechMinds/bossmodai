@@ -19,7 +19,7 @@ const SettingsView = (() => {
     const ADVANCED_ITEMS = [
         { id: 'advanced-system', label: 'Advanced System Settings', icon: 'shield' },
         { id: 'prompt-template', label: 'System Prompt Template', icon: 'file-code' },
-        { id: 'actions-schema', label: 'Actions Schema', icon: 'braces' },
+        { id: 'action-contract', label: 'Action Contract', icon: 'braces' },
     ];
 
     // ─── Open / Close ───
@@ -106,8 +106,8 @@ const SettingsView = (() => {
             case 'prompt-template':
                 PromptTemplateSection.render(content);
                 break;
-            case 'actions-schema':
-                ActionsSchemaSection.render(content);
+            case 'action-contract':
+                ActionContractSection.render(content);
                 break;
         }
     }
@@ -676,11 +676,13 @@ const PromptTemplateSection = (() => {
                     <span>{{agent_name}}</span><span>Agent's display name</span>
                     <span>{{role}}</span><span>Agent's role title</span>
                     <span>{{memory}}</span><span>Knowledge graph context</span>
-                    <span>{{worldStatus}}</span><span>Location, status, nearby agents, pending messages</span>
+                    <span>{{worldStatus}}</span><span>Location, status, nearby agents, pending triggers</span>
                     <span>{{task}}</span><span>Current task details</span>
-                    <span>{{available_actions}}</span><span>Actions schema (from Settings)</span>
+                    <span>{{references}}</span><span>Recent work summaries and artifacts</span>
+                    <span>{{action_contract}}</span><span>Editable action contract setting</span>
                 </div>
             </div>
+            <p class="text-xs text-amber-700 mt-3 mb-3">Only variables present in this template will be injected. Nothing is appended behind the scenes.</p>
             <textarea id="system-prompt-textarea" rows="20"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -782,7 +784,7 @@ const AdvancedSystemSection = (() => {
 
         // Reseed handler
         document.getElementById('btn-reseed-settings').addEventListener('click', async () => {
-            if (!confirm('Reset all seed settings to defaults? This will overwrite your changes to system prompt template, actions schema, and all other seed settings.')) return;
+            if (!confirm('Reset all seed settings to defaults? This will overwrite your changes to the system prompt template and other seed settings.')) return;
             try {
                 await fetch('/api/settings/reseed', { method: 'POST' });
                 render(el); // Re-render to show updated values
@@ -826,46 +828,49 @@ const AdvancedSystemSection = (() => {
 
 
 // ═══════════════════════════════════════════════════════════════
-// Actions Schema Section (Advanced)
+// Action Contract Section (Advanced)
 // ═══════════════════════════════════════════════════════════════
 
-const ActionsSchemaSection = (() => {
+const ActionContractSection = (() => {
     async function render(el) {
         let settings = [];
         try {
             const res = await fetch('/api/settings?category=advanced');
             settings = await res.json();
         } catch {
-            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load schema.</p>';
+            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load action contract.</p>';
             return;
         }
 
-        const schemaSetting = settings.find(s => s.key === 'available_actions_schema');
-        const schemaValue = schemaSetting?.value || '';
+        const contractSetting = settings.find(s => s.key === 'action_contract_template');
+        const contractValue = contractSetting?.value || '';
 
         el.innerHTML = `
             <div class="mb-6">
-                <h2 class="text-lg font-semibold">Actions Schema</h2>
-                <p class="text-sm text-bm-muted mt-0.5">The action JSON schema injected into every agent's system prompt via <code class="bg-slate-100 px-1 rounded text-xs">{{available_actions}}</code>. Defines what actions agents can take each turn.</p>
+                <h2 class="text-lg font-semibold">Action Contract</h2>
+                <p class="text-sm text-bm-muted mt-0.5">This is the prompt-visible action contract. It is editable. Backend validation still enforces the real runtime schema.</p>
             </div>
-            <textarea id="actions-schema-textarea" rows="14"
+            <p class="text-xs text-amber-700 mb-3">This text is not hidden. Agents only see what is saved here and what your system prompt template includes via <span class="font-mono">{{action_contract}}</span>.</p>
+            <textarea id="action-contract-textarea" rows="18"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                             focus:border-bm-accent resize-y font-mono leading-relaxed">${BossModUtils.escapeHtml(schemaValue)}</textarea>
+                             focus:border-bm-accent resize-y font-mono leading-relaxed">${BossModUtils.escapeHtml(contractValue)}</textarea>
             <div class="flex items-center gap-3 mt-4">
-                <button id="btn-save-actions-schema"
+                <button id="btn-save-action-contract"
                         class="px-4 py-2 bg-bm-accent text-white rounded-lg
                                hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    Save Schema
+                    Save Contract
                 </button>
-                <span id="actions-schema-status" class="text-sm text-bm-muted"></span>
+                <span id="action-contract-save-status" class="text-sm text-bm-muted"></span>
             </div>`;
 
-        document.getElementById('btn-save-actions-schema').addEventListener('click', async () => {
-            const value = document.getElementById('actions-schema-textarea').value;
-            const status = document.getElementById('actions-schema-status');
+        document.getElementById('btn-save-action-contract').addEventListener('click', async () => {
+            const value = document.getElementById('action-contract-textarea').value;
+            const status = document.getElementById('action-contract-save-status');
             try {
-                await fetch(`/api/settings/available_actions_schema?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                await fetch(`/api/settings/action_contract_template?value=${encodeURIComponent(value)}&category=advanced`, {
+                    method: 'PUT',
+                });
                 status.textContent = 'Saved';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);

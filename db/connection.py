@@ -43,7 +43,10 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
     migrations = [
         ("agents", "extra_body", "ALTER TABLE agents ADD COLUMN extra_body TEXT"),
         ("ai_connections", "extra_body", "ALTER TABLE ai_connections ADD COLUMN extra_body TEXT"),
-        ("diagnostics", "status", None),  # widen CHECK to include new statuses
+        ("tasks", "completion_summary", "ALTER TABLE tasks ADD COLUMN completion_summary TEXT"),
+        ("tasks", "status_note", "ALTER TABLE tasks ADD COLUMN status_note TEXT"),
+        ("tasks", "watchdog_pinged_at", "ALTER TABLE tasks ADD COLUMN watchdog_pinged_at TIMESTAMP"),
+        ("diagnostics", "status", None),
     ]
     for table, column, ddl in migrations:
         if ddl is None:

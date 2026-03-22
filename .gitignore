@@ -37,3 +37,4 @@ artifacts/
 # Superpowers brainstorming sessions
 .superpowers/*
 docs/*
+strategy-docs/*

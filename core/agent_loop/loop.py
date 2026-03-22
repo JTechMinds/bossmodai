@@ -64,19 +64,24 @@ async def run_turn(
     api_config = routing.get_api_config(agent)
 
     # 3. Build initial context
-    messages_window = _get_message_window(agent.id)
+    conversation_history = _get_conversation_history(agent.id, trigger)
     nearby = _get_nearby_agents(agent.id, state)
     current_task = _get_current_task(state)
+    reference_materials = _get_reference_materials(agent.id)
 
-    # Count pending messages for world status (only meaningful on first turn)
-    unread = db.get_unread_messages(agent.id, since=state.last_active_at)
-    pending_count = len(unread) if unread else 0
+    pending_count = max(db.count_queued_triggers(agent.id) - 1, 0)
 
     context = context_builder.build_context(
-        agent=agent, state=state, trigger=trigger,
-        messages_window=messages_window,
-        nearby_agents=nearby, current_task=current_task,
-        pending_message_count=pending_count,
+        context_builder.TurnContext(
+            agent=agent,
+            state=state,
+            trigger=trigger,
+            conversation_history=conversation_history,
+            reference_materials=reference_materials,
+            nearby_agents=nearby,
+            current_task=current_task,
+            pending_trigger_count=pending_count,
+        )
     )
     initial_context_json = json.dumps(context)
 
@@ -90,6 +95,7 @@ async def run_turn(
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
+    diagnostic_error: str | None = None
 
     while True:
         action_count += 1
@@ -105,6 +111,15 @@ async def run_turn(
         except client.LLMError as exc:
             logger.error("LLM call failed for %s: %s", agent.name, exc)
             diagnostic_status = "error"
+            diagnostic_error = str(exc)
+            if state.current_task_id:
+                db.update_task(
+                    state.current_task_id,
+                    status="blocked",
+                    status_note=f"System provider failure: {exc}",
+                    watchdog_pinged_at=None,
+                )
+                state = db.update_agent_state(agent.id, current_task_id=None) or state
             result = {
                 "event": "agent_updated",
                 "detail": f"{agent.name} LLM call failed: {exc}",
@@ -128,10 +143,14 @@ async def run_turn(
         action_name = action["action"]
         last_action_name = action_name
 
+        if not state.current_task_id:
+            state = _maybe_start_implicit_task(agent, state, trigger, action)
+
         # Handle parse failure
         if action_name == "_parse_failed":
             logger.warning("Parse failure for %s: %s", agent.name, action.get("_raw_snippet", ""))
-            diagnostic_status = "parse_error"
+            diagnostic_status = "error"
+            diagnostic_error = f"Failed to parse action JSON: {action.get('_raw_snippet', '')}"
             action["action"] = "idle"
             action_name = "idle"
             result = await execute_action(action, agent, state)
@@ -153,31 +172,41 @@ async def run_turn(
             agent_name=result.get("agent_name"),
         )
 
-        # Persist and broadcast reply for human-facing content
-        reply_content = result.get("content")
-        if reply_content:
-            agent_msg = db.create_message(
-                from_agent=agent.id,
-                to_agent=HUMAN_SENDER_ID,
-                content=reply_content,
-                message_type="work",
-                location_x=state.x,
-                location_y=state.y,
-            )
+        chat_message = result.get("chat_message")
+        if chat_message:
             await manager.broadcast_chat_message(
-                agent_id=agent.id,
-                content=reply_content,
-                from_type="agent",
-                from_name=agent.name,
-                message_id=agent_msg.id,
-                created_at=agent_msg.created_at,
+                agent_id=chat_message["agent_id"],
+                content=chat_message["content"],
+                from_type=chat_message["from_type"],
+                from_name=chat_message["from_name"],
+                message_id=chat_message.get("message_id"),
+                created_at=chat_message.get("created_at"),
+            )
+
+        for queued in result.get("queued_triggers", []):
+            from core.agent_loop.dispatcher import dispatcher
+
+            dispatcher.enqueue_trigger(
+                agent_id=queued["agent_id"],
+                trigger_type=queued["trigger_type"],
+                source_channel=queued["source_channel"],
+                payload=queued["payload"],
+                task_id=queued.get("task_id"),
+            )
+
+        if state.current_task_id:
+            db.update_task(
+                state.current_task_id,
+                last_activity=datetime.now(timezone.utc),
+                watchdog_pinged_at=None,
             )
 
         # Guardian hard-stop checks (token explosion, velocity, repetition)
         violation = check_post_action(agent, action, response.content)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            diagnostic_status = "guardian_blocked"
+            diagnostic_status = "error"
+            diagnostic_error = f"Guardian [{violation.rule}]: {violation.detail}"
             await manager.broadcast_activity(
                 event="guardian_violation",
                 detail=f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
@@ -189,7 +218,8 @@ async def run_turn(
         violation = check_no_progress(agent, action_count)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            diagnostic_status = "guardian_blocked"
+            diagnostic_status = "error"
+            diagnostic_error = f"Guardian [{violation.rule}]: {violation.detail}"
             await manager.broadcast_activity(
                 event="guardian_violation",
                 detail=f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
@@ -234,6 +264,7 @@ async def run_turn(
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
+        error=diagnostic_error,
         duration_ms=int((time.monotonic() - start) * 1000),
     )
     await manager.broadcast_diagnostic(diag)
@@ -267,6 +298,15 @@ async def _skip_turn(
     }
     await manager.broadcast_activity(**result)
 
+    if trigger.get("task_id"):
+        db.update_task(
+            trigger["task_id"],
+            status="blocked",
+            status_note=f"No model configured for '{mode}' mode",
+            watchdog_pinged_at=None,
+        )
+        db.update_agent_state(agent.id, current_task_id=None)
+
     db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
 
     diag = db.create_diagnostic(
@@ -287,17 +327,23 @@ def _determine_mode(trigger: dict[str, Any]) -> routing.ActivationMode:
     if trigger_type == "social":
         return "social"
 
-    msg_type = trigger.get("message_type", "")
-    if msg_type == "social":
-        return "social"
-
     return "work"
 
 
-def _get_message_window(agent_id: str) -> list[dict[str, Any]]:
-    """Fetch recent messages for the rolling context window."""
-    limit = config.get_int("context_window_messages") or 30
-    return db.get_formatted_messages(agent_id, limit=limit, human_label="Human Operator")
+def _get_conversation_history(agent_id: str, trigger: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fetch the relevant direct conversation history for this trigger."""
+    trigger_type = trigger.get("type")
+    limit = 50
+
+    if trigger_type in ("human_chat", "watchdog_status_ping", "task_resumed", "task_attention_required"):
+        thread = db.get_human_chat_thread(agent_id, limit=limit)
+        return db.get_formatted_messages(thread, human_label="Human Operator")
+
+    if trigger_type == "peer_message" and trigger.get("from_agent"):
+        thread = db.get_agent_direct_thread(agent_id, trigger["from_agent"], limit=limit)
+        return db.get_formatted_messages(thread, human_label="Human Operator")
+
+    return []
 
 
 def _get_nearby_agents(
@@ -324,4 +370,72 @@ def _get_current_task(state: AgentState) -> dict[str, Any] | None:
         "description": task.description,
         "status": task.status,
         "project": task.project,
+        "completion_summary": task.completion_summary,
+        "status_note": task.status_note,
     }
+
+
+def _get_reference_materials(agent_id: str) -> list[str]:
+    """Build non-chat references for the turn."""
+    materials: list[str] = []
+
+    teammates = [agent for agent in db.list_agents() if agent.id != agent_id]
+    if teammates:
+        directory_lines = [
+            "TEAM DIRECTORY: use exact agentId values for agent-targeted actions.",
+        ]
+        for teammate in teammates:
+            role = f" ({teammate.role})" if teammate.role else ""
+            directory_lines.append(f"- {teammate.name}{role} — agentId: {teammate.id}")
+        materials.append("\n".join(directory_lines))
+
+    for task in db.get_recent_completed_tasks(
+        agent_id,
+        limit=(config.get_int("context_recent_completed_tasks") or 3),
+    ):
+        summary = task.get("completion_summary") or task.get("status_note") or "No summary"
+        materials.append(f"- Completed task: {task.get('title')} [{task.get('status')}]: {summary}")
+
+    for artifact in db.get_recent_work_artifacts(
+        agent_id,
+        limit=(config.get_int("context_recent_work_artifacts") or 5),
+    ):
+        snippet = (artifact.content or "").strip().replace("\n", " ")
+        if len(snippet) > 200:
+            snippet = snippet[:200] + "..."
+        materials.append(f"- Work artifact ({artifact.created_at.isoformat()}): {snippet}")
+
+    return materials
+
+
+def _maybe_start_implicit_task(
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+    action: dict[str, Any],
+) -> AgentState:
+    """Promote substantive human requests into a durable task when work begins."""
+    if trigger.get("type") != "human_chat":
+        return state
+
+    action_name = action.get("action", "")
+    if action_name not in {"work", "walkTo", "remoteMeeting", "complete", "blocked", "delegated", "abandoned"}:
+        return state
+
+    tracking = (action.get("tracking") or "").strip().lower()
+    if tracking != "task":
+        return state
+
+    content = (trigger.get("content") or "").strip()
+    title = content or "Human request"
+    if len(title) > 80:
+        title = title[:77] + "..."
+
+    task = db.create_task(
+        title=title or "Human request",
+        description=trigger.get("content"),
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    return db.update_agent_state(agent.id, current_task_id=task.id) or state

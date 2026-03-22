@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS tasks (
                                          'stalled', 'abandoned', 'delegated')),
     parent_task_id VARCHAR,
     cost_ceiling   DECIMAL,
+    completion_summary TEXT,
+    status_note    TEXT,
+    watchdog_pinged_at TIMESTAMP,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
@@ -215,6 +218,27 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_run_at     TIMESTAMP,
     next_run_at     TIMESTAMP,
     created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Agent triggers — durable wake-up queue
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS agent_triggers (
+    id             VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id       VARCHAR NOT NULL REFERENCES agents(id),
+    trigger_type   VARCHAR NOT NULL,
+    source_channel VARCHAR NOT NULL
+                      CHECK (source_channel IN ('chat', 'work', 'system')),
+    payload        TEXT NOT NULL,
+    task_id        VARCHAR,
+    status         VARCHAR NOT NULL DEFAULT 'queued'
+                      CHECK (status IN ('queued', 'claimed', 'completed', 'failed')),
+    failure_reason TEXT,
+    claimed_at     TIMESTAMP,
+    completed_at   TIMESTAMP,
+    failed_at      TIMESTAMP,
+    created_at     TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────

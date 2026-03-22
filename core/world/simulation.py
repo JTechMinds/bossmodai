@@ -1,12 +1,8 @@
 """BossMod AI — World simulation tick loop.
 
 Runs as a background asyncio task during the application lifespan.
-Every tick (interval from ``tick_interval`` setting):
-  1. Advance agents that are in transit (``steps_per_tick`` setting)
-  2. Check activation triggers for idle agents
-  3. Launch agent turns as concurrent tasks (non-blocking)
-
-All timing and movement values come from the settings table.
+The simulation now owns movement only; agent wake-ups are handled by the
+dispatcher-backed trigger queue.
 """
 
 from __future__ import annotations
@@ -17,8 +13,6 @@ from typing import Any
 
 from api.websocket import manager
 from core import config
-from core.agent_loop.activation import check_activation
-from core.agent_loop.loop import run_turn
 from core.world.tilemap import get_room_at
 import db
 
@@ -31,7 +25,6 @@ class WorldSimulation:
     def __init__(self) -> None:
         self._running = False
         self._task: asyncio.Task[None] | None = None
-        self._active_turns: dict[str, asyncio.Task[Any]] = {}
         self._agent_paths: dict[str, list[tuple[int, int]]] = {}
 
     @property
@@ -53,9 +46,6 @@ class WorldSimulation:
             self._task.cancel()
             self._task = None
 
-        for task in self._active_turns.values():
-            task.cancel()
-        self._active_turns.clear()
         self._agent_paths.clear()
 
         logger.info("World simulation stopped")
@@ -70,6 +60,10 @@ class WorldSimulation:
         Skips the first element (current position).
         """
         self._agent_paths[agent_id] = path[1:] if path else []
+
+    def clear_agent_path(self, agent_id: str) -> None:
+        """Stop any in-progress movement for an agent."""
+        self._agent_paths.pop(agent_id, None)
 
     # ─── Main loop ───
 
@@ -100,17 +94,7 @@ class WorldSimulation:
     async def _tick(self) -> None:
         """Execute one simulation tick."""
         # Clean up finished agent turns
-        finished = [
-            aid for aid, task in self._active_turns.items()
-            if task.done()
-        ]
-        for aid in finished:
-            task = self._active_turns.pop(aid)
-            if not task.cancelled() and task.exception():
-                logger.error("Agent turn failed for %s: %s", aid, task.exception())
-
         await self._advance_movement()
-        await self._check_activations()
 
     # ─── Movement ───
 
@@ -140,74 +124,48 @@ class WorldSimulation:
                 db.update_agent_state(agent_id, status="idle")
 
                 agent = db.get_agent(agent_id)
+                room = get_room_at(state.x, state.y)
+                room_name = room["name"] if room else "destination"
                 if agent:
-                    room = get_room_at(state.x, state.y)
-                    room_name = room["name"] if room else "destination"
                     await manager.broadcast_activity(
                         event="agent_moved",
                         detail=f"{agent.name} arrived at {room_name}",
                         agent_name=agent.name,
                     )
+                task = db.get_task(state.current_task_id) if state.current_task_id else None
+                from core.agent_loop.dispatcher import dispatcher
+
+                if task and task.status == "active":
+                    trigger_type = "task_resumed"
+                    payload = {
+                        "task_title": task.title,
+                        "task_description": task.description or "",
+                        "content": f'You arrived at your destination. Resume work on "{task.title}".',
+                    }
+                    if not room or room["room_type"] != "workspace":
+                        trigger_type = "task_attention_required"
+                        payload = {
+                            "task_title": task.title,
+                            "task_description": task.description or "",
+                            "room_name": room_name,
+                            "content": (
+                                f'You arrived in the {room_name} while "{task.title}" is still active. '
+                                "You cannot produce work here. Either walk to your desk, send a status update, "
+                                "or sign off with complete/blocked/delegated/abandoned."
+                            ),
+                        }
+                    dispatcher.enqueue_trigger(
+                        agent_id=agent_id,
+                        trigger_type=trigger_type,
+                        source_channel="work",
+                        payload=payload,
+                        task_id=task.id,
+                    )
+                else:
+                    dispatcher.notify_agent_idle(agent_id)
 
         if completed:
             await manager.broadcast_world_state()
-
-    # ─── Activation checks ───
-
-    async def _check_activations(self) -> None:
-        """Check idle agents for triggers and launch turns."""
-        agents = db.list_agents()
-
-        for agent in agents:
-            if agent.id in self._active_turns:
-                continue
-
-            state = db.get_agent_state(agent.id)
-            if not state or state.status != "idle":
-                continue
-
-            trigger = await check_activation(agent, state)
-            if trigger:
-                task = asyncio.create_task(
-                    self._safe_turn(agent, state, trigger)
-                )
-                self._active_turns[agent.id] = task
-
-    async def _safe_turn(
-        self,
-        agent: Any,
-        state: Any,
-        trigger: dict[str, Any],
-    ) -> None:
-        """Run an agent turn with error handling.
-
-        If the turn produces a ``walk_to`` result with path data,
-        register it for the movement system.
-        """
-        try:
-            result = await run_turn(agent, state, trigger)
-
-            # If the action was walk_to, consume the path data
-            if result.get("path") and result.get("agent_id"):
-                self.set_agent_path(result["agent_id"], result["path"])
-
-        except Exception:
-            logger.exception("Agent turn failed for %s", agent.name)
-            try:
-                db.update_agent_state(agent.id, status="idle")
-            except Exception:
-                logger.error(
-                    "Failed to reset agent %s to idle — agent may be stuck",
-                    agent.name,
-                )
-                try:
-                    await manager.broadcast_activity(
-                        event="agent_error",
-                        detail=f"{agent.name} is stuck — manual reset may be required",
-                        agent_name=agent.name,
-                    )
-                except Exception:
-                    pass
 
 
 # Module-level singleton

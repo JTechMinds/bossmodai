@@ -1,21 +1,8 @@
-"""BossMod AI — LLM context assembly.
-
-Builds the full message list for an LLM call by resolving the
-system_prompt_template from settings with runtime variables:
-
-  {{personality}}        — agent's role prompt
-  {{agent_name}}         — agent's display name
-  {{role}}               — agent's role title
-  {{memory}}             — relevant knowledge graph nodes
-  {{worldStatus}}        — structured world status block
-  {{task}}               — current task details (blank if none)
-  {{available_actions}}  — action schema from settings
-
-All prompts are editable via Settings. No hardcoded prompt text.
-"""
+"""BossMod AI — LLM context assembly."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Any
 
@@ -26,10 +13,8 @@ from core.world.tilemap import get_room_at
 logger = logging.getLogger(__name__)
 
 _FALLBACK_TEMPLATE = (
-    "{{personality}}\n\n{{worldStatus}}\n\n{{task}}\n\n---\n\n{{available_actions}}"
+    "{{personality}}\n\n{{worldStatus}}\n\n{{task}}\n\n{{references}}\n\n---\n\n{{action_contract}}"
 )
-
-_FALLBACK_ACTIONS = 'Respond with JSON: {"action":"idle","thought":"..."}'
 
 _STATUS_LABELS = {
     "idle": "idle",
@@ -39,36 +24,49 @@ _STATUS_LABELS = {
 }
 
 
-def build_context(
-    agent: Agent,
-    state: AgentState,
-    trigger: dict[str, Any],
-    messages_window: list[dict[str, Any]],
-    memory_nodes: list[dict[str, Any]] | None = None,
-    nearby_agents: list[dict[str, Any]] | None = None,
-    current_task: dict[str, Any] | None = None,
-    pending_message_count: int = 0,
-) -> list[dict[str, str]]:
-    """Assemble the full LLM message list for an agent turn."""
+@dataclass
+class TurnContext:
+    """Structured input for building an agent prompt."""
+
+    agent: Agent
+    state: AgentState
+    trigger: dict[str, Any]
+    conversation_history: list[dict[str, Any]]
+    reference_materials: list[str]
+    current_task: dict[str, Any] | None = None
+    memory_nodes: list[dict[str, Any]] | None = None
+    nearby_agents: list[dict[str, Any]] | None = None
+    pending_trigger_count: int = 0
+
+
+def build_context(turn: TurnContext) -> list[dict[str, str]]:
+    """Assemble the full message list for an agent turn."""
     window_size = config.get_int("context_window_messages") or 30
     messages: list[dict[str, str]] = []
 
     # ─── Build template variables ───
-    personality = agent.prompt_template or _default_role_prompt(agent)
+    personality = turn.agent.prompt_template or _default_role_prompt(turn.agent)
     personality = (
         personality
-        .replace("{{agent_name}}", agent.name)
-        .replace("{{role}}", agent.role or "AI Assistant")
+        .replace("{{agent_name}}", turn.agent.name)
+        .replace("{{role}}", turn.agent.role or "AI Assistant")
     )
 
     variables = {
         "{{personality}}": personality,
-        "{{agent_name}}": agent.name,
-        "{{role}}": agent.role or "AI Assistant",
-        "{{memory}}": _format_memory(memory_nodes) if memory_nodes else "",
-        "{{worldStatus}}": _format_world_status(agent, state, nearby_agents, current_task, pending_message_count),
-        "{{task}}": _format_task(current_task) if current_task else "",
-        "{{available_actions}}": config.get("available_actions_schema") or _FALLBACK_ACTIONS,
+        "{{agent_name}}": turn.agent.name,
+        "{{role}}": turn.agent.role or "AI Assistant",
+        "{{memory}}": _format_memory(turn.memory_nodes) if turn.memory_nodes else "",
+        "{{worldStatus}}": _format_world_status(
+            turn.agent,
+            turn.state,
+            turn.nearby_agents,
+            turn.current_task,
+            turn.pending_trigger_count,
+        ),
+        "{{task}}": _format_task(turn.current_task) if turn.current_task else "",
+        "{{references}}": _format_references(turn.reference_materials),
+        "{{action_contract}}": config.get("action_contract_template") or "",
     }
 
     # ─── Resolve template from settings ───
@@ -79,9 +77,8 @@ def build_context(
 
     messages.append({"role": "system", "content": system_prompt})
 
-    # ─── Message history (rolling window) ───
-    for msg in messages_window[-window_size:]:
-        role = "assistant" if msg.get("from_agent") == agent.id else "user"
+    for msg in turn.conversation_history[-window_size:]:
+        role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
         sender = msg.get("from_name", "Unknown")
         content = msg.get("content", "")
 
@@ -91,7 +88,7 @@ def build_context(
             messages.append({"role": "assistant", "content": content})
 
     # ─── Trigger event ───
-    messages.append({"role": "user", "content": _format_trigger(trigger)})
+    messages.append({"role": "user", "content": _format_trigger(turn.trigger)})
 
     return messages
 
@@ -112,14 +109,14 @@ def _format_world_status(
     state: AgentState,
     nearby_agents: list[dict[str, Any]] | None = None,
     current_task: dict[str, Any] | None = None,
-    pending_message_count: int = 0,
+    pending_trigger_count: int = 0,
 ) -> str:
     """Build the structured world status block."""
     room = get_room_at(state.x, state.y)
     room_name = room["name"] if room else "unknown"
     status_label = _STATUS_LABELS.get(state.status, state.status)
 
-    pending_count = pending_message_count
+    pending_count = pending_trigger_count
 
     # Nearby agents
     nearby_str = "none"
@@ -137,7 +134,7 @@ def _format_world_status(
         f"  location: {room_name}\n"
         f"  status: {status_label}\n"
         f"  nearby: {nearby_str}\n"
-        f"  pendingMessages: {pending_count}\n"
+        f"  pendingTriggers: {pending_count}\n"
         f"  currentTask: {task_str}"
     )
 
@@ -157,32 +154,55 @@ def _format_task(task: dict[str, Any]) -> str:
     title = task.get("title", "Untitled")
     desc = task.get("description", "No description")
     status = task.get("status", "unknown")
-    return f"{title} (status: {status})\n{desc}"
+    summary = task.get("completion_summary") or task.get("status_note")
+    details = [f"{title} (status: {status})", desc]
+    if summary:
+        details.append(f"Latest summary: {summary}")
+    return "\n".join([part for part in details if part])
+
+
+def _format_references(reference_materials: list[str]) -> str:
+    if not reference_materials:
+        return ""
+    lines = ["REFERENCE MATERIALS:"]
+    for item in reference_materials:
+        lines.append(item)
+    return "\n".join(lines)
 
 
 def _format_trigger(trigger: dict[str, Any]) -> str:
     """Format the trigger event. No 'respond with JSON' — the schema handles that."""
     trigger_type = trigger.get("type", "unknown")
 
-    if trigger_type == "message":
+    if trigger_type in ("message", "human_chat", "peer_message"):
         sender = trigger.get("from_name", "Someone")
         content = trigger.get("content", "")
-        return f"[{sender}]: {content}"
+        return f"CURRENT REQUEST FROM [{sender}]: {content}"
 
-    if trigger_type == "task_assigned":
+    if trigger_type in ("task_assigned", "task_resumed", "task_attention_required"):
         title = trigger.get("task_title", "a task")
-        return f"You have been assigned a new task: \"{title}\""
+        desc = trigger.get("task_description", "")
+        extra = f"\nTask description: {desc}" if desc else ""
+        if trigger_type == "task_resumed":
+            return f'You arrived and should resume your active task: "{title}".{extra}'
+        if trigger_type == "task_attention_required":
+            room_name = trigger.get("room_name", "current location")
+            return (
+                f'You still have an active task: "{title}", but you are in the {room_name}. '
+                f'You cannot produce work there.{extra}\nChoose the next valid step: walk to your desk, '
+                "message the human operator with a status update, or sign off with complete/blocked/delegated/abandoned."
+            )
+        return f"You have been assigned a new task: \"{title}\".{extra}"
 
     if trigger_type == "social":
         nearby = trigger.get("nearby_names", [])
         return f"You're idle and nearby: {', '.join(nearby)}. Consider a brief social interaction."
 
-    if trigger_type == "schedule":
-        desc = trigger.get("description", "scheduled task")
-        return f"Scheduled trigger: {desc}"
-
-    if trigger_type == "manual":
-        content = trigger.get("content", "You have been manually activated.")
-        return content
+    if trigger_type == "watchdog_status_ping":
+        title = trigger.get("task_title", "your current task")
+        return (
+            f"Watchdog status check: you have been quiet on \"{title}\". "
+            "Reply to the human operator with a status update or sign off with complete/blocked/delegated/abandoned."
+        )
 
     return "You have been activated."

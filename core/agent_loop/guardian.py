@@ -50,13 +50,17 @@ def check_post_action(
         )
 
     # 2. Velocity burst — too many messages sent per minute
-    # Use naive UTC to match DuckDB's naive timestamps
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     one_min_ago = now - timedelta(seconds=60)
-    recent = db.get_messages_for_agent(agent.id, limit=agent.guardian_velocity_limit + 5)
+    recent = db.get_recent_authored_messages(agent.id, limit=agent.guardian_velocity_limit + 5)
     recent_sent = [
         m for m in recent
-        if m.from_agent == agent.id and m.created_at and m.created_at > one_min_ago
+        if m.from_agent == agent.id
+        and m.created_at
+        and (
+            (m.created_at.replace(tzinfo=timezone.utc) if m.created_at.tzinfo is None else m.created_at)
+            > one_min_ago
+        )
     ]
     if len(recent_sent) >= agent.guardian_velocity_limit:
         return GuardianViolation(

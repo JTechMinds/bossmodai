@@ -10,12 +10,14 @@ from db.crud import build_update, fetch_all, fetch_one, insert_returning
 
 _TASK_COLUMNS = (
     "id, title, description, project, assigned_to, created_by, "
-    "status, parent_task_id, cost_ceiling, last_activity, created_at"
+    "status, parent_task_id, cost_ceiling, completion_summary, "
+    "status_note, watchdog_pinged_at, last_activity, created_at"
 )
 
 _TASK_VALID_COLUMNS = {
     "title", "description", "project", "assigned_to",
-    "status", "parent_task_id", "cost_ceiling", "last_activity",
+    "status", "parent_task_id", "cost_ceiling", "completion_summary",
+    "status_note", "watchdog_pinged_at", "last_activity",
 }
 
 
@@ -73,7 +75,7 @@ def list_tasks(
 
 def update_task(task_id: str, **fields: Any) -> Task | None:
     """Update task fields. Auto-updates last_activity on status change."""
-    if "status" in fields:
+    if "status" in fields or "completion_summary" in fields or "status_note" in fields:
         fields.setdefault("last_activity", datetime.now(timezone.utc))
 
     build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)

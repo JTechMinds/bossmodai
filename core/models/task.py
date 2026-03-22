@@ -46,6 +46,9 @@ class Task(BaseModel):
     status: TaskStatus = "pending"
     parent_task_id: str | None = None
     cost_ceiling: float | None = None
+    completion_summary: str | None = None
+    status_note: str | None = None
+    watchdog_pinged_at: datetime | None = None
     last_activity: datetime
     created_at: datetime
 

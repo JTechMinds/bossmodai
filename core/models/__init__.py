@@ -19,6 +19,7 @@ from core.models.settings import (
     AIPersonalityUpdate,
 )
 from core.models.task import Task, TaskCreate
+from core.models.trigger import AgentTrigger
 
 __all__ = [
     # Agent
@@ -29,6 +30,7 @@ __all__ = [
     # Task
     "Task",
     "TaskCreate",
+    "AgentTrigger",
     # Message
     "Message",
     "MessageCreate",

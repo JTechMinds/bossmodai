@@ -8,11 +8,13 @@
 
 const AgentContext = (() => {
     let selectedAgent = null;
+    let creatingAgent = false;
     let activeSubview = 'chat';
 
     // ─── Select / Deselect ───
 
     async function selectAgent(agentData) {
+        creatingAgent = false;
         // Fetch full agent details
         try {
             const res = await fetch(`/api/agents/${agentData.id}`);
@@ -30,10 +32,20 @@ const AgentContext = (() => {
 
     function deselectAgent() {
         selectedAgent = null;
+        creatingAgent = false;
         activeSubview = 'chat';
         updateTabs();
         hideToolbar();
         showEmptyState();
+    }
+
+    function startCreateAgent() {
+        selectedAgent = null;
+        creatingAgent = true;
+        activeSubview = 'edit';
+        updateTabs();
+        hideToolbar();
+        switchSubview('edit');
     }
 
     function getSelectedAgent() {
@@ -46,13 +58,15 @@ const AgentContext = (() => {
         const tabsEl = document.getElementById('left-panel-tabs');
         const esc = BossModUtils.escapeHtml;
 
-        if (selectedAgent) {
+        if (selectedAgent || creatingAgent) {
+            const tabColor = selectedAgent?.color || '#3b82f6';
+            const tabLabel = selectedAgent ? esc(selectedAgent.name) : 'New Agent';
             tabsEl.innerHTML = `
                 <button class="tab-btn active flex-1 px-4 py-2.5 text-sm font-medium
                                transition-colors relative" data-tab="agent">
                     <span class="flex items-center justify-center gap-1.5">
-                        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${selectedAgent.color || '#3b82f6'}"></span>
-                        <span class="truncate">${esc(selectedAgent.name)}</span>
+                        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${tabColor}"></span>
+                        <span class="truncate">${tabLabel}</span>
                         <button id="btn-deselect-agent" class="ml-1 p-0.5 rounded hover:bg-slate-200 transition-colors"
                                 title="Deselect agent">
                             <i data-lucide="x" class="w-3.5 h-3.5"></i>
@@ -103,8 +117,9 @@ const AgentContext = (() => {
                     document.getElementById('panel-empty-state')?.classList.add('hidden');
                 } else {
                     document.getElementById('tab-activity').classList.remove('active');
-                    if (selectedAgent) {
-                        showToolbar();
+                    if (selectedAgent || creatingAgent) {
+                        if (selectedAgent) showToolbar();
+                        else hideToolbar();
                         switchSubview(activeSubview);
                     } else {
                         showEmptyState();
@@ -297,6 +312,14 @@ const AgentContext = (() => {
         appendChatMessage(data.content, data.from);
     }
 
+    async function handleChatReset(data) {
+        if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
+        hideTypingIndicator();
+        if (activeSubview === 'chat') {
+            await renderChat();
+        }
+    }
+
     function showTypingIndicator() {
         const messagesEl = document.getElementById('chat-messages');
         hideTypingIndicator();
@@ -318,14 +341,35 @@ const AgentContext = (() => {
 
     async function renderEdit() {
         const container = document.getElementById('subview-edit');
-        if (!selectedAgent) return;
+        if (!selectedAgent && !creatingAgent) return;
+
+        if (selectedAgent?.id) {
+            try {
+                const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
+                if (res.ok) {
+                    selectedAgent = await res.json();
+                    updateTabs();
+                }
+            } catch {
+                // Fall back to the currently selected agent snapshot.
+            }
+        }
 
         // Reuse AgentPanel's renderForm logic but target the inline container
         if (typeof AgentPanel !== 'undefined') {
-            AgentPanel.renderInline(container, selectedAgent, async () => {
-                // On save: refresh agent data
+            await AgentPanel.renderInline(container, selectedAgent, async (savedAgent) => {
+                creatingAgent = false;
+
+                if (savedAgent) {
+                    selectedAgent = savedAgent;
+                    updateTabs();
+                    showToolbar();
+                    return;
+                }
+
+                if (!selectedAgent?.id) return;
                 try {
-                    const res = await fetch(`/api/agents/${selectedAgent.id}`);
+                    const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
                     if (res.ok) {
                         selectedAgent = await res.json();
                         updateTabs();
@@ -335,6 +379,11 @@ const AgentContext = (() => {
                 // On delete: deselect
                 deselectAgent();
             });
+        } else {
+            container.innerHTML = `
+                <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    Agent editor failed to load. Refresh the page and try again.
+                </div>`;
         }
     }
 
@@ -389,9 +438,11 @@ const AgentContext = (() => {
     return {
         init,
         selectAgent,
+        startCreateAgent,
         deselectAgent,
         getSelectedAgent,
         handleChatMessage,
+        handleChatReset,
     };
 })();
 

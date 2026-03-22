@@ -181,6 +181,12 @@ const BossModApp = (() => {
                 }
                 break;
 
+            case 'chat_reset':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleChatReset(msg.data);
+                }
+                break;
+
             case 'diagnostic':
                 if (typeof DiagnosticsView !== 'undefined') {
                     DiagnosticsView.addEntry(msg.data);
@@ -240,8 +246,9 @@ const BossModApp = (() => {
 
         if (newAgentBtn) {
             newAgentBtn.addEventListener('click', () => {
-                // TODO: open a create-agent flow (for now, just log)
-                console.log('[BossMod] New agent — use Settings > AI Personalities first');
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.startCreateAgent();
+                }
             });
         }
     }

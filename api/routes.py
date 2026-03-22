@@ -4,7 +4,6 @@ Agent CRUD, map data, world state, settings, and real-time
 WebSocket broadcasting for live Canvas and Activity updates.
 """
 
-import asyncio
 import logging
 
 import httpx
@@ -15,7 +14,8 @@ from pydantic import BaseModel
 
 from api.websocket import manager
 from core import config
-from core.agent_loop.loop import run_turn
+from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.dispatcher import dispatcher
 from core.llm.client import normalize_api_base
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
@@ -31,8 +31,8 @@ from core.models import (
     Task,
     TaskCreate,
 )
-from core.world.simulation import simulation
 from core.world.tilemap import get_map_data
+from core.world.simulation import simulation
 import db
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,8 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
 
     max_limit = config.get_int("api_message_limit_max") or 200
     limit = min(limit, max_limit)
-    formatted = db.get_formatted_messages(agent_id, limit=limit, human_label="You")
+    thread = db.get_human_chat_thread(agent_id, limit=limit)
+    formatted = db.get_formatted_messages(thread, human_label="You")
 
     # Add from_type classification for the frontend
     result = []
@@ -222,6 +223,18 @@ async def create_task(body: TaskCreate) -> Task:
         project=body.project,
         assigned_to=body.assigned_to,
     )
+    if body.assigned_to:
+        dispatcher.enqueue_trigger(
+            agent_id=body.assigned_to,
+            trigger_type="task_assigned",
+            source_channel="work",
+            payload={
+                "task_title": body.title,
+                "task_description": body.description or "",
+                "project": body.project,
+            },
+            task_id=task.id,
+        )
     await manager.broadcast_activity(
         event="task_created",
         detail=f"Task \"{task.title}\" created" + (f" → {body.assigned_to}" if body.assigned_to else ""),
@@ -245,22 +258,10 @@ class ActivationBody(BaseModel):
 
 @router.post("/agents/{agent_id}/activate")
 async def activate_agent(agent_id: str, body: ActivationBody | None = None):
-    """Trigger an agent turn via human chat message.
-
-    Non-blocking: persists the message, starts the turn as a background
-    task, and returns immediately. Agent replies arrive via WebSocket.
-    """
+    """Queue a human chat trigger for an agent."""
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
-
-    state = db.get_agent_state(agent_id)
-    if not state:
-        raise HTTPException(500, "Agent state not found")
-
-    # Race condition guard — single source of truth for active turns
-    if agent_id in simulation._active_turns:
-        raise HTTPException(409, "Agent is already executing a turn")
 
     content = body.content if body else "You have been manually activated."
 
@@ -282,38 +283,81 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         created_at=human_msg.created_at,
     )
 
-    # Mark agent as busy so the simulation tick doesn't also trigger a turn
-    db.update_agent_state(agent_id, status="work_active")
+    dispatcher.enqueue_trigger(
+        agent_id=agent_id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={
+            "content": content,
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
 
-    # Use "message" trigger so context_builder formats as [Human Operator]: content
-    trigger = {"type": "message", "from_name": "Human Operator", "content": content}
+    return {"status": "ok", "message": "Message queued"}
 
-    # Launch turn as background task — register with simulation._active_turns
-    # to prevent race conditions with the simulation loop
-    async def _run_and_cleanup() -> None:
-        try:
-            result = await run_turn(agent, state, trigger)
-            # If the action was walk_to, register path with simulation
-            if result.get("path") and result.get("agent_id"):
-                simulation.set_agent_path(result["agent_id"], result["path"])
-        except Exception:
-            logger.exception("Background turn failed for %s", agent.name)
-            try:
-                db.update_agent_state(agent_id, status="idle")
-                await manager.broadcast_activity(
-                    event="agent_error",
-                    detail=f"{agent.name} turn failed unexpectedly",
-                    agent_name=agent.name,
-                )
-            except Exception:
-                pass
-        finally:
-            simulation._active_turns.pop(agent_id, None)
 
-    task = asyncio.create_task(_run_and_cleanup())
-    simulation._active_turns[agent_id] = task
+@router.delete("/agents/{agent_id}/chat-history")
+async def clear_agent_chat_history(agent_id: str):
+    """Delete the direct human <-> agent chat thread."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
 
-    return {"status": "ok", "message": "Turn started"}
+    deleted = db.delete_human_chat_thread(agent_id)
+    await manager.broadcast_chat_reset(agent_id)
+    await manager.broadcast_activity(
+        event="chat_history_cleared",
+        detail=f'Chat history cleared for "{agent.name}"',
+        agent_name=agent.name,
+    )
+    return {"status": "ok", "deleted_messages": deleted}
+
+
+@router.post("/agents/{agent_id}/reset-runtime")
+async def reset_agent_runtime(agent_id: str):
+    """Force-reset an agent's active runtime state and open trigger queue."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    state = db.get_agent_state(agent_id)
+    if not state:
+        raise HTTPException(500, "Agent state not found")
+
+    await dispatcher.reset_agent(agent_id)
+    simulation.clear_agent_path(agent_id)
+
+    blocked_task_id = None
+    if state.current_task_id:
+        task = db.get_task(state.current_task_id)
+        if task and task.status in ("pending", "active"):
+            db.update_task(
+                task.id,
+                status="blocked",
+                status_note="Runtime reset by human operator.",
+                watchdog_pinged_at=None,
+            )
+            blocked_task_id = task.id
+
+    deleted_triggers = db.delete_open_triggers(agent_id)
+    db.update_agent_state(agent_id, status="idle", current_task_id=None)
+    await manager.broadcast_world_state()
+    await manager.broadcast_activity(
+        event="agent_runtime_reset",
+        detail=f'Runtime reset for "{agent.name}"',
+        agent_name=agent.name,
+        extra={
+            "deleted_triggers": deleted_triggers,
+            "blocked_task_id": blocked_task_id,
+        },
+    )
+
+    return {
+        "status": "ok",
+        "deleted_triggers": deleted_triggers,
+        "blocked_task_id": blocked_task_id,
+    }
 
 
 # ─── Diagnostics ───
@@ -340,6 +384,11 @@ async def get_diagnostic_detail(diagnostic_id: str):
 @router.get("/settings")
 async def get_settings(category: str | None = None):
     return db.get_settings(category)
+
+
+@router.get("/runtime/action-contract")
+async def get_action_contract():
+    return {"content": render_action_contract()}
 
 
 @router.post("/settings/reseed")

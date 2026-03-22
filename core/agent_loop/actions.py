@@ -4,8 +4,8 @@ Parses flat JSON actions from LLM responses and executes them.
 Actions are intent declarations — the system handles avatar mechanics.
 
 Flat JSON format (no nested params):
-  {"action": "work", "output": "...", "thought": "..."}
-  {"action": "walkTo", "destination": "breakRoom", "thought": "..."}
+  {"action": "work", "output": "...", "tracking": "task", "thought": "..."}
+  {"action": "walkTo", "destination": "breakRoom", "tracking": "chat", "thought": "..."}
 """
 
 from __future__ import annotations
@@ -34,6 +34,10 @@ _DESTINATIONS = {
     "southWorkspace": "workspace_south",
     "hallway": "hallway_main",
 }
+
+_TRACKING_REQUIRED_ACTIONS = {"work", "walkTo", "remoteMeeting"}
+_VALID_TRACKING = {"chat", "task"}
+_VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +73,10 @@ def parse_action(raw_response: str) -> dict[str, Any]:
             logger.warning("No JSON found in response: %s", text[:200])
             return {"action": "_parse_failed", "thought": "No action in response", "_raw_snippet": text[:200]}
 
+    if not isinstance(parsed, dict):
+        logger.warning("Parsed action is not an object: %s", parsed)
+        return {"action": "_parse_failed", "thought": "", "_raw_snippet": "Action payload must be a JSON object"}
+
     if "action" not in parsed:
         logger.warning("No 'action' key in response: %s", parsed)
         return {"action": "_parse_failed", "thought": parsed.get("thought", ""), "_raw_snippet": str(parsed)[:200]}
@@ -77,6 +85,15 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         logger.warning("Action is not a string (%s): %s", type(parsed["action"]).__name__, parsed)
         return {"action": "_parse_failed", "thought": parsed.get("thought", ""), "_raw_snippet": str(parsed)[:200]}
 
+    validation_error = _validate_action_payload(parsed)
+    if validation_error:
+        logger.warning("Invalid action payload for %s: %s", parsed["action"], validation_error)
+        return {
+            "action": "_parse_failed",
+            "thought": parsed.get("thought", ""),
+            "_raw_snippet": f'{parsed["action"]}: {validation_error}'[:200],
+        }
+
     return parsed
 
 
@@ -84,10 +101,42 @@ def parse_action(raw_response: str) -> dict[str, Any]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _find_agent_by_name(name: str) -> Agent | None:
-    """Find an agent by case-insensitive name match."""
-    agents = db.list_agents()
-    return next((a for a in agents if a.name.lower() == name.lower()), None)
+def _validate_action_payload(action: dict[str, Any]) -> str | None:
+    """Validate shape and required fields for parsed actions."""
+    action_name = action["action"]
+
+    if action_name in _TRACKING_REQUIRED_ACTIONS:
+        tracking = action.get("tracking")
+        if not isinstance(tracking, str) or tracking.strip().lower() not in _VALID_TRACKING:
+            return 'missing or invalid "tracking"'
+        if action_name == "work" and tracking.strip().lower() != "task":
+            return '"work" requires tracking="task"'
+
+    if action_name == "message":
+        recipient_type = action.get("recipientType")
+        if not isinstance(recipient_type, str) or recipient_type.strip().lower() not in _VALID_MESSAGE_RECIPIENT_TYPES:
+            return 'missing or invalid "recipientType"'
+        if recipient_type.strip().lower() == "agent":
+            agent_id = action.get("agentId")
+            if not isinstance(agent_id, str) or not agent_id.strip():
+                return '"message" to an agent requires a non-empty "agentId"'
+        else:
+            if action.get("agentId") not in (None, ""):
+                return '"message" to the human operator must not include "agentId"'
+
+    if action_name in {"remoteMeeting", "delegated"}:
+        agent_id = action.get("agentId")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            return f'"{action_name}" requires a non-empty "agentId"'
+
+    return None
+
+
+def _resolve_agent_by_id(agent_id: Any) -> Agent | None:
+    """Resolve an explicit agent ID from an action payload."""
+    if not isinstance(agent_id, str) or not agent_id.strip():
+        return None
+    return db.get_agent(agent_id.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +197,6 @@ async def _handle_work(
         "event": "agent_updated",
         "detail": f"{agent.name} produced work output ({len(output)} chars)",
         "agent_name": agent.name,
-        "content": output,
     }
 
 
@@ -158,7 +206,7 @@ async def _handle_message(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Send a message to another agent. Works from any location."""
-    to_name = action.get("to")
+    recipient_type = (action.get("recipientType") or "").strip().lower()
     content = action.get("content", "")
 
     if not content:
@@ -166,35 +214,56 @@ async def _handle_message(
 
     from core.models.message import HUMAN_SENDER_ID
 
-    to_agent_id = None
-    if to_name:
-        # Recognize "human" / "human operator" as the human operator
-        if to_name.lower() in ("human", "human operator", "operator", "boss"):
-            to_agent_id = HUMAN_SENDER_ID
-        else:
-            target = _find_agent_by_name(to_name)
-            if target:
-                to_agent_id = target.id
-            else:
-                return {"event": "status_changed", "detail": f"Agent not found: {to_name}", "agent_name": agent.name}
+    target = None
+    if recipient_type == "human":
+        to_agent_id = HUMAN_SENDER_ID
+        to_display = "Human Operator"
+    else:
+        target = _resolve_agent_by_id(action.get("agentId"))
+        if target is None:
+            return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
+        to_agent_id = target.id
+        to_display = target.name
 
-    db.create_message(
+    message_type = "social" if state.status == "social_active" else "work"
+    msg = db.create_message(
         from_agent=agent.id,
         to_agent=to_agent_id,
         content=content,
-        message_type="work",
+        message_type=message_type,
         location_x=state.x,
         location_y=state.y,
         token_count=count_tokens(content),
     )
 
-    to_display = to_name or "everyone"
-    return {
+    result = {
         "event": "message_sent",
         "detail": f"{agent.name} → {to_display}: {content[:80]}{'...' if len(content) > 80 else ''}",
         "agent_name": agent.name,
-        "content": content,
     }
+    if to_agent_id == HUMAN_SENDER_ID:
+        result["chat_message"] = {
+            "agent_id": agent.id,
+            "content": content,
+            "from_type": "agent",
+            "from_name": agent.name,
+            "message_id": msg.id,
+            "created_at": msg.created_at,
+        }
+    elif target:
+        result["queued_triggers"] = [{
+            "agent_id": target.id,
+            "trigger_type": "peer_message",
+            "source_channel": "chat" if message_type == "social" else "work",
+            "payload": {
+                "content": content,
+                "from_agent": agent.id,
+                "from_name": agent.name,
+                "message_type": message_type,
+                "source_message_id": msg.id,
+            },
+        }]
+    return result
 
 
 async def _handle_walk_to(
@@ -257,20 +326,24 @@ async def _handle_remote_meeting(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Start a remote meeting from the agent's current location."""
-    with_name = action.get("with", "")
+    target = _resolve_agent_by_id(action.get("agentId"))
     topic = action.get("topic", "")
 
-    if not with_name:
-        return {"event": "status_changed", "detail": "No meeting participant specified", "agent_name": agent.name}
+    if target is None:
+        return {"event": "status_changed", "detail": "No valid meeting participant specified", "agent_name": agent.name}
 
-    # Resolve target agent
-    target = _find_agent_by_name(with_name)
-    if not target:
-        return {"event": "status_changed", "detail": f"Agent not found: {with_name}", "agent_name": agent.name}
+    room = get_room_at(state.x, state.y)
+    if not room or room["room_type"] != "workspace":
+        room_name = room["name"] if room else "unknown area"
+        return {
+            "event": "world_feedback",
+            "detail": f"You're in the {room_name}. Walk to your desk first.",
+            "agent_name": agent.name,
+        }
 
     # Send a meeting request message
     meeting_content = f"Remote meeting requested: {topic}" if topic else "Remote meeting requested"
-    db.create_message(
+    msg = db.create_message(
         from_agent=agent.id,
         to_agent=target.id,
         content=meeting_content,
@@ -282,9 +355,20 @@ async def _handle_remote_meeting(
 
     return {
         "event": "meeting_started",
-        "detail": f"{agent.name} started remote meeting with {with_name}" + (f": {topic}" if topic else ""),
+        "detail": f"{agent.name} started remote meeting with {target.name}" + (f": {topic}" if topic else ""),
         "agent_name": agent.name,
-        "content": meeting_content,
+        "queued_triggers": [{
+            "agent_id": target.id,
+            "trigger_type": "peer_message",
+            "source_channel": "work",
+            "payload": {
+                "content": meeting_content,
+                "from_agent": agent.id,
+                "from_name": agent.name,
+                "message_type": "meeting",
+                "source_message_id": msg.id,
+            },
+        }],
     }
 
 
@@ -312,7 +396,13 @@ async def _handle_complete(
     summary = action.get("summary", "")
 
     if task_id:
-        db.update_task(task_id, status="complete")
+        db.update_task(
+            task_id,
+            status="complete",
+            completion_summary=summary or None,
+            status_note=None,
+            watchdog_pinged_at=None,
+        )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 
@@ -333,7 +423,13 @@ async def _handle_blocked(
     reason = action.get("reason", "")
 
     if task_id:
-        db.update_task(task_id, status="blocked")
+        db.update_task(
+            task_id,
+            status="blocked",
+            status_note=reason or None,
+            completion_summary=None,
+            watchdog_pinged_at=None,
+        )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 
@@ -351,24 +447,23 @@ async def _handle_delegated(
 ) -> dict[str, Any]:
     """Delegate current task to another agent."""
     task_id = action.get("taskId") or state.current_task_id
-    to_name = action.get("to", "")
-
-    if not to_name:
-        return {"event": "status_changed", "detail": "No delegate target specified", "agent_name": agent.name}
-
-    # Resolve target
-    target = _find_agent_by_name(to_name)
-    if not target:
-        return {"event": "status_changed", "detail": f"Agent not found: {to_name}", "agent_name": agent.name}
+    target = _resolve_agent_by_id(action.get("agentId"))
+    if target is None:
+        return {"event": "status_changed", "detail": "No valid delegate target specified", "agent_name": agent.name}
 
     if task_id:
-        db.update_task(task_id, status="delegated")
+        db.update_task(
+            task_id,
+            status="delegated",
+            status_note=f"Delegated to {target.name}",
+            watchdog_pinged_at=None,
+        )
 
         # Create a child task for the target agent (vision doc: delegation
         # creates a formal task record with its own watchdog)
         original_task = db.get_task(task_id)
         if original_task:
-            db.create_task(
+            child = db.create_task(
                 title=original_task.title,
                 description=original_task.description,
                 project=original_task.project,
@@ -376,14 +471,31 @@ async def _handle_delegated(
                 created_by=agent.id,
                 parent_task_id=task_id,
             )
+        else:
+            child = None
+    else:
+        child = None
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 
-    return {
+    result = {
         "event": "status_changed",
-        "detail": f"{agent.name} delegated task to {to_name}",
+        "detail": f"{agent.name} delegated task to {target.name}",
         "agent_name": agent.name,
     }
+    if child:
+        result["queued_triggers"] = [{
+            "agent_id": target.id,
+            "trigger_type": "task_assigned",
+            "source_channel": "work",
+            "task_id": child.id,
+            "payload": {
+                "task_title": child.title,
+                "task_description": child.description or "",
+                "project": child.project,
+            },
+        }]
+    return result
 
 
 async def _handle_abandoned(
@@ -396,7 +508,13 @@ async def _handle_abandoned(
     reason = action.get("reason", "")
 
     if task_id:
-        db.update_task(task_id, status="abandoned")
+        db.update_task(
+            task_id,
+            status="abandoned",
+            status_note=reason or None,
+            completion_summary=None,
+            watchdog_pinged_at=None,
+        )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 

@@ -25,9 +25,25 @@ from db.agents import (
 # Messages
 from db.messages import (
     create_message,
+    delete_human_chat_thread,
+    get_agent_direct_thread,
     get_formatted_messages,
-    get_messages_for_agent,
-    get_unread_messages,
+    get_human_chat_thread,
+    get_recent_authored_messages,
+    get_recent_work_artifacts,
+    get_recent_completed_tasks,
+)
+from db.agent_triggers import (
+    claim_next_trigger,
+    complete_agent_trigger,
+    count_queued_triggers,
+    create_agent_trigger,
+    delete_open_triggers,
+    fail_agent_trigger,
+    get_agent_trigger,
+    get_latest_trigger,
+    has_open_trigger,
+    list_agent_triggers,
 )
 
 # Tasks
@@ -85,9 +101,24 @@ __all__ = [
     "update_agent_state",
     # Messages
     "create_message",
+    "delete_human_chat_thread",
+    "get_agent_direct_thread",
     "get_formatted_messages",
-    "get_messages_for_agent",
-    "get_unread_messages",
+    "get_human_chat_thread",
+    "get_recent_authored_messages",
+    "get_recent_work_artifacts",
+    "get_recent_completed_tasks",
+    # Trigger queue
+    "claim_next_trigger",
+    "complete_agent_trigger",
+    "count_queued_triggers",
+    "create_agent_trigger",
+    "delete_open_triggers",
+    "fail_agent_trigger",
+    "get_agent_trigger",
+    "get_latest_trigger",
+    "has_open_trigger",
+    "list_agent_triggers",
     # Tasks
     "create_task",
     "get_task",
