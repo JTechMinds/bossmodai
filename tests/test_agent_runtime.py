@@ -235,6 +235,30 @@ async def test_attend_meeting_in_room_can_notify_peer(isolated_db):
 
 
 @pytest.mark.asyncio
+async def test_walk_action_includes_activity_path_metadata(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(agent.id, x=20, y=4, status="work_active")
+
+    result = await execute_action(
+        {
+            "action": "walkTo",
+            "destination": "desk",
+            "tracking": "chat",
+            "thought": "heading back",
+        },
+        agent,
+        state,
+    )
+
+    assert result["event"] == "agent_moved"
+    assert result["agent_id"] == agent.id
+    assert result["activity_extra"]["agent_id"] == agent.id
+    assert result["activity_extra"]["path"] == result["path"]
+    assert result["activity_extra"]["tiles_per_second"] > 0
+
+
+@pytest.mark.asyncio
 async def test_watchdog_enqueues_status_ping_for_quiet_active_task(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -377,7 +401,7 @@ async def test_arrival_resumes_active_task_instead_of_waiting_for_watchdog(isola
     monkeypatch.setattr(dispatcher, "notify_agent_idle", lambda agent_id: idle_notifications.append(agent_id))
 
     simulation.set_agent_path(agent.id, [(14, 9), (desk_x, desk_y)])
-    await simulation._advance_movement()
+    await simulation._advance_movement(1.0)
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
@@ -400,7 +424,7 @@ async def test_intermediate_movement_broadcasts_world_state(isolated_db, monkeyp
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
 
     simulation.set_agent_path(agent.id, [(14, 9), (15, 9), (16, 9)])
-    await simulation._advance_movement()
+    await simulation._advance_movement(0.25)
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
@@ -408,6 +432,39 @@ async def test_intermediate_movement_broadcasts_world_state(isolated_db, monkeyp
     assert refreshed_state.y == 9
     assert refreshed_state.status == "in_transit"
     assert world_updates == ["world"]
+
+
+@pytest.mark.asyncio
+async def test_movement_speed_uses_elapsed_time_not_tick_count(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    db.update_agent_state(agent.id, x=14, y=9, status="in_transit")
+
+    original_get_float = config.get_float
+
+    def fake_get_float(key: str):
+        if key == "movement_tiles_per_second":
+            return 4.0
+        return original_get_float(key)
+
+    monkeypatch.setattr(config, "get_float", fake_get_float)
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+
+    simulation.set_agent_path(agent.id, [(14, 9), (15, 9), (16, 9)])
+    await simulation._advance_movement(0.10)
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.x == 14
+    assert refreshed_state.y == 9
+
+    await simulation._advance_movement(0.15)
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.x == 15
+    assert refreshed_state.y == 9
 
 
 @pytest.mark.asyncio
@@ -431,7 +488,7 @@ async def test_arrival_in_break_room_requests_attention_for_active_task(isolated
     monkeypatch.setattr(dispatcher, "notify_agent_idle", lambda agent_id: idle_notifications.append(agent_id))
 
     simulation.set_agent_path(agent.id, [(14, 9), (20, 15)])
-    await simulation._advance_movement()
+    await simulation._advance_movement(3.0)
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None

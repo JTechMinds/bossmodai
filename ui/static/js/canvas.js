@@ -46,8 +46,10 @@ const OfficeCanvas = (() => {
     let ctx = null;
     let mapData = null;
     let agents = [];     // {id, name, x, y, color, status}
+    const agentAnimations = new Map();
     let hoveredAgent = null;
     let scale = 1;
+    let animationFrameId = null;
 
     // ─── Initialization ───
 
@@ -321,14 +323,130 @@ const OfficeCanvas = (() => {
      * @param {Array} newAgents - [{id, name, x, y, color, status}]
      */
     function updateAgents(newAgents) {
-        agents = newAgents;
+        const byId = new Map(agents.map(agent => [agent.id, agent]));
+        agents = newAgents.map((incoming) => {
+            const existing = byId.get(incoming.id);
+            const animating = agentAnimations.has(incoming.id);
+            if (!existing) {
+                return {
+                    ...incoming,
+                    serverX: incoming.x,
+                    serverY: incoming.y,
+                };
+            }
+
+            const merged = {
+                ...existing,
+                ...incoming,
+                serverX: incoming.x,
+                serverY: incoming.y,
+            };
+
+            if (animating && incoming.status === 'in_transit') {
+                merged.status = incoming.status;
+                return merged;
+            }
+
+            if (animating && incoming.status !== 'in_transit') {
+                agentAnimations.delete(incoming.id);
+            }
+
+            merged.x = incoming.x;
+            merged.y = incoming.y;
+            return merged;
+        });
+        ensureAnimationLoop();
         render();
+    }
+
+    function handleActivity(event) {
+        if (!event || event.event !== 'agent_moved' || !Array.isArray(event.path) || !event.agent_id) {
+            return;
+        }
+        startPathAnimation(event.agent_id, event.path, event.tiles_per_second);
+    }
+
+    function startPathAnimation(agentId, path, tilesPerSecond) {
+        if (!Array.isArray(path) || path.length < 2) return;
+
+        const speed = Number(tilesPerSecond) > 0 ? Number(tilesPerSecond) : 4;
+        const now = performance.now();
+        const normalizedPath = path.map(([x, y]) => ({ x, y }));
+
+        const agent = agents.find((item) => item.id === agentId);
+        if (agent) {
+            agent.x = normalizedPath[0].x;
+            agent.y = normalizedPath[0].y;
+            agent.status = 'in_transit';
+        }
+
+        agentAnimations.set(agentId, {
+            path: normalizedPath,
+            startedAt: now,
+            tileDurationMs: 1000 / speed,
+        });
+
+        ensureAnimationLoop();
+        render();
+    }
+
+    function ensureAnimationLoop() {
+        if (animationFrameId || agentAnimations.size === 0) return;
+        animationFrameId = requestAnimationFrame(stepAnimations);
+    }
+
+    function stepAnimations(now) {
+        animationFrameId = null;
+        let needsAnotherFrame = false;
+        let changed = false;
+
+        for (const [agentId, animation] of agentAnimations.entries()) {
+            const agent = agents.find((item) => item.id === agentId);
+            if (!agent) {
+                agentAnimations.delete(agentId);
+                continue;
+            }
+
+            const segmentProgress = (now - animation.startedAt) / animation.tileDurationMs;
+            const segmentIndex = Math.floor(segmentProgress);
+
+            if (segmentIndex >= animation.path.length - 1) {
+                const finalPoint = animation.path[animation.path.length - 1];
+                agent.x = finalPoint.x;
+                agent.y = finalPoint.y;
+                agentAnimations.delete(agentId);
+                changed = true;
+                continue;
+            }
+
+            const start = animation.path[segmentIndex];
+            const end = animation.path[segmentIndex + 1];
+            const t = Math.max(0, Math.min(segmentProgress - segmentIndex, 1));
+            const nextX = start.x + ((end.x - start.x) * t);
+            const nextY = start.y + ((end.y - start.y) * t);
+
+            if (agent.x !== nextX || agent.y !== nextY) {
+                agent.x = nextX;
+                agent.y = nextY;
+                changed = true;
+            }
+            needsAnotherFrame = true;
+        }
+
+        if (changed) {
+            render();
+        }
+
+        if (needsAnotherFrame && agentAnimations.size > 0) {
+            animationFrameId = requestAnimationFrame(stepAnimations);
+        }
     }
 
     return {
         init,
         render,
         updateAgents,
+        handleActivity,
     };
 })();
 

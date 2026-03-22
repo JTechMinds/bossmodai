@@ -17,6 +17,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Simulation ──
     ("tick_interval", "0.25", "simulation"),
     ("steps_per_tick", "1", "simulation"),
+    ("movement_tiles_per_second", "4", "simulation"),
 
     # ── Social triggers ──
     ("social_idle_threshold_minutes", "5", "social"),

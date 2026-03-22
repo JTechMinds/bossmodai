@@ -14,6 +14,7 @@ import json
 import logging
 from typing import Any
 
+from core import config
 from core.llm.client import count_tokens
 from core.models import Agent, AgentState
 from core.world.pathfinding import find_path
@@ -322,6 +323,11 @@ async def _handle_walk_to(
         "agent_name": agent.name,
         "path": path,
         "agent_id": agent.id,
+        "activity_extra": {
+            "agent_id": agent.id,
+            "path": path,
+            "tiles_per_second": config.get_float("movement_tiles_per_second") or 4.0,
+        },
     }
 
 

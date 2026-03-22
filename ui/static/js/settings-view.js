@@ -484,6 +484,7 @@ const PersonalitiesSection = (() => {
                 <form id="personality-form" class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium mb-1">Name</label>
+                        <p class="text-xs text-bm-muted mb-1.5">A short label used in dropdowns and the settings list so people can recognize this personality at a glance.</p>
                         <input type="text" name="name" required
                                value="${BossModUtils.escapeHtml(p?.name || '')}"
                                placeholder="e.g. Product Manager, Code Reviewer"
@@ -553,19 +554,86 @@ const PersonalitiesSection = (() => {
 // ═══════════════════════════════════════════════════════════════
 
 const SystemSection = (() => {
+    let activeCategory = 'simulation';
+
     const CATEGORIES = [
         { key: 'simulation', label: 'Simulation' },
         { key: 'social',     label: 'Social Triggers' },
         { key: 'context',    label: 'Context Window' },
     ];
 
-    const LABELS = {
-        tick_interval:                'Tick Interval (seconds)',
-        steps_per_tick:               'Steps Per Tick',
-        social_idle_threshold_minutes: 'Idle Threshold (minutes)',
-        social_cooldown_minutes:      'Cooldown (minutes)',
-        social_proximity_tiles:       'Proximity (tiles)',
-        context_window_messages:      'Message Window Size',
+    const CATEGORY_DESCRIPTIONS = {
+        simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
+        social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
+        context: 'Controls how much recent conversation and work history is included in each agent turn.',
+    };
+
+    const SETTING_META = {
+        tick_interval: {
+            order: 20,
+            label: 'Tick Interval (seconds)',
+            description: 'How often the world simulation updates. Lower values make movement and presence updates feel smoother, but increase backend and UI update frequency.',
+        },
+        movement_tiles_per_second: {
+            order: 10,
+            label: 'Movement Speed (tiles/sec)',
+            description: 'How fast agents physically travel across the office. This affects arrival timing and should be tuned separately from tick interval.',
+        },
+        sim_error_threshold: {
+            order: 30,
+            label: 'Simulation Error Threshold',
+            description: 'How many consecutive simulation loop failures are allowed before the engine pauses and enters backoff.',
+        },
+        sim_error_backoff_seconds: {
+            order: 40,
+            label: 'Simulation Error Backoff (seconds)',
+            description: 'How long the simulation waits after repeated failures before it tries ticking again.',
+        },
+        watchdog_check_interval_seconds: {
+            order: 50,
+            label: 'Watchdog Check Interval (seconds)',
+            description: 'How often the watchdog scans active tasks for silence or stalls.',
+        },
+        watchdog_soft_ping_minutes: {
+            order: 60,
+            label: 'Watchdog Soft Ping (minutes)',
+            description: 'How long an active task can stay quiet before the system asks the agent for a status update.',
+        },
+        watchdog_escalation_minutes: {
+            order: 70,
+            label: 'Watchdog Escalation Delay (minutes)',
+            description: 'How much additional quiet time is allowed after a soft ping before the task is marked stalled.',
+        },
+        social_idle_threshold_minutes: {
+            order: 10,
+            label: 'Idle Threshold (minutes)',
+            description: 'How long an agent must stay idle before the system considers starting optional social behavior.',
+        },
+        social_cooldown_minutes: {
+            order: 20,
+            label: 'Social Cooldown (minutes)',
+            description: 'Minimum time between automatic social prompts for the same agent.',
+        },
+        social_proximity_tiles: {
+            order: 30,
+            label: 'Proximity Radius (tiles)',
+            description: 'How close agents must be on the map to count as nearby for social triggers.',
+        },
+        context_window_messages: {
+            order: 10,
+            label: 'Message Window Size',
+            description: 'How many recent direct conversation messages are included in the agent prompt for a turn.',
+        },
+        context_recent_work_artifacts: {
+            order: 20,
+            label: 'Recent Work Artifacts',
+            description: 'How many recent work outputs or artifacts are included as reference material in the prompt.',
+        },
+        context_recent_completed_tasks: {
+            order: 30,
+            label: 'Recent Completed Tasks',
+            description: 'How many recently completed task summaries are included as reference material in the prompt.',
+        },
     };
 
     async function render(el) {
@@ -583,45 +651,87 @@ const SystemSection = (() => {
         const shownCats = new Set(CATEGORIES.map(c => c.key));
         for (const s of settings) {
             if (!shownCats.has(s.category)) continue;
+            if (s.key === 'steps_per_tick') continue;
             if (!groups[s.category]) groups[s.category] = [];
             groups[s.category].push(s);
         }
+
+        for (const key of Object.keys(groups)) {
+            groups[key].sort((a, b) => {
+                const aOrder = SETTING_META[a.key]?.order ?? 999;
+                const bOrder = SETTING_META[b.key]?.order ?? 999;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return a.key.localeCompare(b.key);
+            });
+        }
+
+        const availableCategories = CATEGORIES.filter(cat => (groups[cat.key] || []).length > 0);
+        if (!availableCategories.some(cat => cat.key === activeCategory)) {
+            activeCategory = availableCategories[0]?.key || 'simulation';
+        }
+
+        const activeItems = groups[activeCategory] || [];
+        const activeCategoryMeta = CATEGORIES.find(cat => cat.key === activeCategory);
 
         let html = `
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">System Settings</h2>
                 <p class="text-sm text-bm-muted mt-0.5">Configure simulation behavior and social triggers.</p>
             </div>
-            <div class="max-w-lg space-y-8">`;
+            <div class="max-w-7xl">
+                <div class="mb-5 flex flex-wrap gap-2">`;
 
-        for (const cat of CATEGORIES) {
-            const items = groups[cat.key];
-            if (!items || items.length === 0) continue;
-
-            html += `<div>
-                <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide mb-3">${cat.label}</h3>
-                <div class="space-y-3">`;
-
-            for (const s of items) {
-                const label = LABELS[s.key] || s.key;
-                html += `
-                <div>
-                    <label class="block text-sm font-medium mb-1">${BossModUtils.escapeHtml(label)}</label>
-                    <input type="text"
-                           data-setting-key="${BossModUtils.escapeHtml(s.key)}"
-                           data-setting-category="${BossModUtils.escapeHtml(s.category)}"
-                           value="${BossModUtils.escapeHtml(s.value)}"
-                           class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                  focus:border-bm-accent max-w-xs">
-                </div>`;
-            }
-
-            html += '</div></div>';
+        for (const cat of availableCategories) {
+            const active = cat.key === activeCategory;
+            html += `
+                    <button
+                        type="button"
+                        data-system-category="${BossModUtils.escapeHtml(cat.key)}"
+                        class="system-category-tab px-4 py-2 rounded-lg text-sm font-medium border transition-colors
+                               ${active ? 'bg-bm-accent text-white border-bm-accent shadow-sm' : 'bg-white text-bm-text border-bm-border hover:bg-slate-50'}">
+                        ${BossModUtils.escapeHtml(cat.label)}
+                    </button>`;
         }
 
-        html += '</div>';
+        html += `
+                </div>
+                <section class="border border-bm-border rounded-xl bg-white p-5 shadow-sm">
+                    <div class="mb-4">
+                        <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide">${BossModUtils.escapeHtml(activeCategoryMeta?.label || 'Settings')}</h3>
+                        <p class="text-xs text-bm-muted mt-1">${BossModUtils.escapeHtml(CATEGORY_DESCRIPTIONS[activeCategory] || '')}</p>
+                    </div>
+                    <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">`;
+
+        for (const s of activeItems) {
+            const meta = SETTING_META[s.key] || {};
+            const label = meta.label || s.key;
+            const description = meta.description || 'System setting.';
+            html += `
+                    <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
+                        <label class="block text-sm font-medium mb-1">${BossModUtils.escapeHtml(label)}</label>
+                        <p class="text-xs text-bm-muted mb-1.5">${BossModUtils.escapeHtml(description)}</p>
+                        <input type="text"
+                               data-setting-key="${BossModUtils.escapeHtml(s.key)}"
+                               data-setting-category="${BossModUtils.escapeHtml(s.category)}"
+                               value="${BossModUtils.escapeHtml(s.value)}"
+                               class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                    </div>`;
+        }
+
+        html += `
+                    </div>
+                </section>
+            </div>`;
         el.innerHTML = html;
+
+        el.querySelectorAll('[data-system-category]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeCategory = btn.dataset.systemCategory;
+                render(el);
+            });
+        });
 
         el.querySelectorAll('.setting-input').forEach(input => {
             input.addEventListener('change', async (e) => {
@@ -683,6 +793,7 @@ const PromptTemplateSection = (() => {
                 </div>
             </div>
             <p class="text-xs text-amber-700 mt-3 mb-3">Only variables present in this template will be injected. Nothing is appended behind the scenes.</p>
+            <p class="text-xs text-bm-muted mb-1.5">This is the full wrapper prompt sent before every turn. Use it to control role framing, context layout, and the rules the model sees.</p>
             <textarea id="system-prompt-textarea" rows="20"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -741,7 +852,7 @@ const AdvancedSystemSection = (() => {
                 <h2 class="text-lg font-semibold">Advanced System Settings</h2>
                 <p class="text-sm text-bm-muted mt-0.5">Developer tools and system diagnostics.</p>
             </div>
-            <div class="max-w-lg space-y-6">
+            <div class="max-w-6xl grid grid-cols-1 xl:grid-cols-2 gap-5">
                 <div class="border border-bm-border rounded-lg p-4 bg-white">
                     <div class="flex items-center justify-between">
                         <div>
@@ -770,7 +881,7 @@ const AdvancedSystemSection = (() => {
                         </button>
                     </div>
                 </div>
-                <div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
                     <input type="number" id="diag-retention-limit"
@@ -851,6 +962,7 @@ const ActionContractSection = (() => {
                 <p class="text-sm text-bm-muted mt-0.5">This is the prompt-visible action contract. It is editable. Backend validation still enforces the real runtime schema.</p>
             </div>
             <p class="text-xs text-amber-700 mb-3">This text is not hidden. Agents only see what is saved here and what your system prompt template includes via <span class="font-mono">{{action_contract}}</span>.</p>
+            <p class="text-xs text-bm-muted mb-1.5">Use this textarea to define the JSON action shapes and examples the model sees. Keep it aligned with runtime behavior so the agent is nudged toward valid outputs.</p>
             <textarea id="action-contract-textarea" rows="18"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30

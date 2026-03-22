@@ -34,6 +34,7 @@ const AgentContext = (() => {
         selectedAgent = null;
         creatingAgent = false;
         activeSubview = 'chat';
+        if (typeof DiagnosticsView !== 'undefined') DiagnosticsView.closeDetail();
         updateTabs();
         hideToolbar();
         showEmptyState();
@@ -178,6 +179,11 @@ const AgentContext = (() => {
     function switchSubview(subview) {
         activeSubview = subview;
         hideAllSubviews();
+
+        // Close diagnostic detail panel if switching away from diagnostics
+        if (subview !== 'diagnostics' && typeof DiagnosticsView !== 'undefined') {
+            DiagnosticsView.closeDetail();
+        }
 
         // Update toolbar active state
         document.querySelectorAll('.agent-subview-btn').forEach(btn => {

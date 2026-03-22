@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from api.websocket import manager
@@ -26,6 +27,7 @@ class WorldSimulation:
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._agent_paths: dict[str, list[tuple[int, int]]] = {}
+        self._agent_progress: dict[str, float] = {}
 
     @property
     def is_running(self) -> bool:
@@ -47,6 +49,7 @@ class WorldSimulation:
             self._task = None
 
         self._agent_paths.clear()
+        self._agent_progress.clear()
 
         logger.info("World simulation stopped")
 
@@ -60,18 +63,24 @@ class WorldSimulation:
         Skips the first element (current position).
         """
         self._agent_paths[agent_id] = path[1:] if path else []
+        self._agent_progress[agent_id] = 0.0
 
     def clear_agent_path(self, agent_id: str) -> None:
         """Stop any in-progress movement for an agent."""
         self._agent_paths.pop(agent_id, None)
+        self._agent_progress.pop(agent_id, None)
 
     # ─── Main loop ───
 
     async def _loop(self) -> None:
         consecutive_errors = 0
+        last_tick_at = time.monotonic()
         while self._running:
+            tick_started_at = time.monotonic()
+            elapsed = max(tick_started_at - last_tick_at, 0.0)
+            last_tick_at = tick_started_at
             try:
-                await self._tick()
+                await self._tick(elapsed)
                 consecutive_errors = 0
             except asyncio.CancelledError:
                 break
@@ -91,23 +100,27 @@ class WorldSimulation:
             interval = config.get_float("tick_interval") or 3.0
             await asyncio.sleep(interval)
 
-    async def _tick(self) -> None:
+    async def _tick(self, elapsed: float) -> None:
         """Execute one simulation tick."""
         # Clean up finished agent turns
-        await self._advance_movement()
+        await self._advance_movement(elapsed)
 
     # ─── Movement ───
 
-    async def _advance_movement(self) -> None:
+    async def _advance_movement(self, elapsed: float = 0.0) -> None:
         """Move in-transit agents along their paths."""
-        steps = config.get_int("steps_per_tick") or 1
+        movement_speed = config.get_float("movement_tiles_per_second") or 4.0
         completed: list[str] = []
         moved_any = False
 
-        for agent_id, path in self._agent_paths.items():
+        for agent_id, path in list(self._agent_paths.items()):
             if not path:
                 completed.append(agent_id)
                 continue
+
+            progress = self._agent_progress.get(agent_id, 0.0) + (elapsed * movement_speed)
+            steps = int(progress)
+            self._agent_progress[agent_id] = progress - steps
 
             for _ in range(steps):
                 if not path:
@@ -121,6 +134,7 @@ class WorldSimulation:
 
         for agent_id in completed:
             self._agent_paths.pop(agent_id, None)
+            self._agent_progress.pop(agent_id, None)
             state = db.get_agent_state(agent_id)
             if state and state.status == "in_transit":
                 db.update_agent_state(agent_id, status="idle")

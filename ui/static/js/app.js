@@ -167,6 +167,9 @@ const BossModApp = (() => {
                 if (typeof ActivityLog !== 'undefined') {
                     ActivityLog.addEntry(msg.data);
                 }
+                if (typeof OfficeCanvas !== 'undefined') {
+                    OfficeCanvas.handleActivity(msg.data);
+                }
                 break;
 
             case 'activity_log':

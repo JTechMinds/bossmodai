@@ -170,6 +170,7 @@ async def run_turn(
             event=result.get("event", "agent_updated"),
             detail=result.get("detail", ""),
             agent_name=result.get("agent_name"),
+            extra=result.get("activity_extra"),
         )
 
         chat_message = result.get("chat_message")
