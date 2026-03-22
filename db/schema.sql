@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS agents (
     model_self_queue              VARCHAR,
     api_base_url                  VARCHAR,
     api_key                       VARCHAR,
+    extra_body                    TEXT,
     desk_x                        INTEGER,
     desk_y                        INTEGER,
     guardian_token_limit           INTEGER DEFAULT 30000,
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS ai_connections (
     api_base_url VARCHAR NOT NULL,
     api_key      VARCHAR,
     model        VARCHAR,
+    extra_body   TEXT,
     created_at   TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -230,4 +232,32 @@ CREATE TABLE IF NOT EXISTS rooms (
     bounds_x2       INTEGER,
     bounds_y2       INTEGER,
     allowed_actions TEXT
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Diagnostics — one row per agent turn, full trace data
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS diagnostics (
+    id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id            VARCHAR NOT NULL,
+    agent_name          VARCHAR NOT NULL,
+    trigger_type        VARCHAR NOT NULL,
+    trigger_data        TEXT NOT NULL,
+    status              VARCHAR NOT NULL DEFAULT 'success'
+                            CHECK (status IN ('success', 'error', 'skipped')),
+    mode                VARCHAR,
+    model               VARCHAR,
+    model_source        VARCHAR,
+    context             TEXT,
+    raw_response        TEXT,
+    action_name         VARCHAR,
+    parsed_action       TEXT,
+    result              TEXT,
+    prompt_tokens       INTEGER DEFAULT 0,
+    completion_tokens   INTEGER DEFAULT 0,
+    total_tokens        INTEGER DEFAULT 0,
+    error               TEXT,
+    duration_ms         INTEGER DEFAULT 0,
+    created_at          TIMESTAMP DEFAULT current_timestamp
 );

@@ -75,3 +75,40 @@ def get_unread_messages(
         [agent_id],
         Message,
     )
+
+
+def get_formatted_messages(
+    agent_id: str,
+    limit: int = 50,
+    human_label: str = "Human Operator",
+) -> list[dict[str, Any]]:
+    """Fetch messages with resolved sender names.
+
+    Shared helper used by both the agent loop (context building)
+    and the REST API (chat history endpoint).
+    """
+    from core.models.message import HUMAN_SENDER_ID
+    from db.agents import get_agents_by_ids
+
+    messages = get_messages_for_agent(agent_id, limit=limit)
+
+    sender_ids = list({m.from_agent for m in messages if m.from_agent != HUMAN_SENDER_ID})
+    agents_map = get_agents_by_ids(sender_ids)
+
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.from_agent == HUMAN_SENDER_ID:
+            from_name = human_label
+        else:
+            sender = agents_map.get(msg.from_agent)
+            from_name = sender.name if sender else "Unknown"
+        result.append({
+            "id": msg.id,
+            "from_agent": msg.from_agent,
+            "from_name": from_name,
+            "to_agent": msg.to_agent,
+            "content": msg.content,
+            "message_type": msg.message_type,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        })
+    return result

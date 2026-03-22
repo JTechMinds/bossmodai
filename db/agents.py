@@ -19,7 +19,7 @@ from db.crud import (
 _AGENT_COLUMNS = (
     "id, name, role, prompt_template, color, "
     "model_social, model_work, model_reasoning, model_extraction, model_self_queue, "
-    "api_base_url, api_key, desk_x, desk_y, "
+    "api_base_url, api_key, extra_body, desk_x, desk_y, "
     "guardian_token_limit, guardian_velocity_limit, "
     "guardian_repetition_threshold, guardian_no_progress_threshold, "
     "created_at"
@@ -29,7 +29,7 @@ _AGENT_VALID_COLUMNS = {
     "name", "role", "prompt_template", "color",
     "model_social", "model_work", "model_reasoning",
     "model_extraction", "model_self_queue",
-    "api_base_url", "api_key", "desk_x", "desk_y",
+    "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
     "guardian_token_limit", "guardian_velocity_limit",
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
 }
@@ -55,6 +55,7 @@ def create_agent(
     model_self_queue: str | None = None,
     api_base_url: str | None = None,
     api_key: str | None = None,
+    extra_body: str | None = None,
     desk_x: int | None = None,
     desk_y: int | None = None,
     guardian_token_limit: int = 30_000,
@@ -68,16 +69,16 @@ def create_agent(
         INSERT INTO agents (
             name, role, prompt_template, color,
             model_social, model_work, model_reasoning, model_extraction, model_self_queue,
-            api_base_url, api_key, desk_x, desk_y,
+            api_base_url, api_key, extra_body, desk_x, desk_y,
             guardian_token_limit, guardian_velocity_limit,
             guardian_repetition_threshold, guardian_no_progress_threshold
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
         RETURNING {_AGENT_COLUMNS}
         """,
         [
             name, role, prompt_template, color,
             model_social, model_work, model_reasoning, model_extraction, model_self_queue,
-            api_base_url, api_key, desk_x, desk_y,
+            api_base_url, api_key, extra_body, desk_x, desk_y,
             guardian_token_limit, guardian_velocity_limit,
             guardian_repetition_threshold, guardian_no_progress_threshold,
         ],

@@ -17,7 +17,9 @@ const SettingsView = (() => {
     ];
 
     const ADVANCED_ITEMS = [
+        { id: 'advanced-system', label: 'Advanced System Settings', icon: 'shield' },
         { id: 'prompt-template', label: 'System Prompt Template', icon: 'file-code' },
+        { id: 'actions-schema', label: 'Actions Schema', icon: 'braces' },
     ];
 
     // ─── Open / Close ───
@@ -98,8 +100,14 @@ const SettingsView = (() => {
             case 'system':
                 SystemSection.render(content);
                 break;
+            case 'advanced-system':
+                AdvancedSystemSection.render(content);
+                break;
             case 'prompt-template':
                 PromptTemplateSection.render(content);
+                break;
+            case 'actions-schema':
+                ActionsSchemaSection.render(content);
                 break;
         }
     }
@@ -253,6 +261,15 @@ const ConnectionsSection = (() => {
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Extra Body Params</label>
+                        <p class="text-xs text-bm-muted mb-1.5">Optional JSON merged into every request body. For provider-specific fields.</p>
+                        <textarea name="extra_body" rows="3"
+                                  placeholder='e.g. {"stream": false, "thinking": {"type": "disabled"}}'
+                                  class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                         bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                         focus:border-bm-accent font-mono">${BossModUtils.escapeHtml(conn?.extra_body || '')}</textarea>
+                    </div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">
                         <button type="submit"
@@ -338,6 +355,7 @@ const ConnectionsSection = (() => {
                 api_base_url: fd.get('api_base_url'),
                 api_key: fd.get('api_key') || null,
                 model: fd.get('model') || null,
+                extra_body: fd.get('extra_body')?.trim() || null,
             };
             try {
                 if (isEdit) {
@@ -655,10 +673,12 @@ const PromptTemplateSection = (() => {
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Available Template Variables</p>
                 <div class="grid grid-cols-2 gap-1 text-xs font-mono text-bm-muted">
                     <span>{{personality}}</span><span>Agent's personality prompt</span>
+                    <span>{{agent_name}}</span><span>Agent's display name</span>
+                    <span>{{role}}</span><span>Agent's role title</span>
                     <span>{{memory}}</span><span>Knowledge graph context</span>
-                    <span>{{location}}</span><span>Current position & nearby agents</span>
+                    <span>{{worldStatus}}</span><span>Location, status, nearby agents, pending messages</span>
                     <span>{{task}}</span><span>Current task details</span>
-                    <span>{{available_actions}}</span><span>JSON action schema</span>
+                    <span>{{available_actions}}</span><span>Actions schema (from Settings)</span>
                 </div>
             </div>
             <textarea id="system-prompt-textarea" rows="20"
@@ -681,6 +701,171 @@ const PromptTemplateSection = (() => {
                 await fetch(`/api/settings/system_prompt_template?value=${encodeURIComponent(value)}&category=advanced`, {
                     method: 'PUT',
                 });
+                status.textContent = 'Saved';
+                status.className = 'text-sm text-emerald-600';
+                setTimeout(() => { status.textContent = ''; }, 2000);
+            } catch {
+                status.textContent = 'Save failed';
+                status.className = 'text-sm text-red-600';
+            }
+        });
+    }
+
+    return { render };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════
+// Advanced System Settings Section
+// ═══════════════════════════════════════════════════════════════
+
+const AdvancedSystemSection = (() => {
+    async function render(el) {
+        let settings = [];
+        try {
+            const res = await fetch('/api/settings?category=advanced');
+            settings = await res.json();
+        } catch {
+            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
+            return;
+        }
+
+        const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
+        const diagLimit = settings.find(s => s.key === 'diagnostics_retention_limit');
+        const isEnabled = diagEnabled?.value === 'true';
+
+        el.innerHTML = `
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold">Advanced System Settings</h2>
+                <p class="text-sm text-bm-muted mt-0.5">Developer tools and system diagnostics.</p>
+            </div>
+            <div class="max-w-lg space-y-6">
+                <div class="border border-bm-border rounded-lg p-4 bg-white">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold">Enable Diagnostics</h3>
+                            <p class="text-xs text-bm-muted mt-0.5">Show the Diagnostics tab for full AI interaction visibility. Data is always captured regardless of this toggle.</p>
+                        </div>
+                        <button id="btn-toggle-diagnostics"
+                                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                                       ${isEnabled ? 'bg-bm-accent' : 'bg-slate-300'}"
+                                role="switch" aria-checked="${isEnabled}">
+                            <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+                                         ${isEnabled ? 'translate-x-6' : 'translate-x-1'}"></span>
+                        </button>
+                    </div>
+                </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold">Reset Seed Settings</h3>
+                            <p class="text-xs text-bm-muted mt-0.5">Overwrite all seed settings back to their code defaults. Custom settings are preserved.</p>
+                        </div>
+                        <button id="btn-reseed-settings"
+                                class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
+                                       hover:bg-red-50 transition-colors text-sm font-medium">
+                            Reseed
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
+                    <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
+                    <input type="number" id="diag-retention-limit"
+                           value="${BossModUtils.escapeHtml(diagLimit?.value || '5000')}"
+                           min="100" max="50000" step="100"
+                           class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                  focus:border-bm-accent">
+                </div>
+            </div>`;
+
+        // Reseed handler
+        document.getElementById('btn-reseed-settings').addEventListener('click', async () => {
+            if (!confirm('Reset all seed settings to defaults? This will overwrite your changes to system prompt template, actions schema, and all other seed settings.')) return;
+            try {
+                await fetch('/api/settings/reseed', { method: 'POST' });
+                render(el); // Re-render to show updated values
+            } catch {
+                alert('Reseed failed');
+            }
+        });
+
+        // Toggle handler
+        document.getElementById('btn-toggle-diagnostics').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            const nowEnabled = btn.getAttribute('aria-checked') === 'true';
+            const newValue = nowEnabled ? 'false' : 'true';
+
+            await fetch(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`, { method: 'PUT' });
+
+            btn.setAttribute('aria-checked', String(!nowEnabled));
+            btn.classList.toggle('bg-bm-accent', !nowEnabled);
+            btn.classList.toggle('bg-slate-300', nowEnabled);
+            btn.querySelector('span').classList.toggle('translate-x-6', !nowEnabled);
+            btn.querySelector('span').classList.toggle('translate-x-1', nowEnabled);
+        });
+
+        // Retention limit handler
+        document.getElementById('diag-retention-limit').addEventListener('change', async (e) => {
+            const value = e.target.value;
+            try {
+                await fetch(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                e.target.classList.add('border-emerald-400');
+                setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
+            } catch {
+                e.target.classList.add('border-red-400');
+                setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
+            }
+        });
+
+    }
+
+    return { render };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════
+// Actions Schema Section (Advanced)
+// ═══════════════════════════════════════════════════════════════
+
+const ActionsSchemaSection = (() => {
+    async function render(el) {
+        let settings = [];
+        try {
+            const res = await fetch('/api/settings?category=advanced');
+            settings = await res.json();
+        } catch {
+            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load schema.</p>';
+            return;
+        }
+
+        const schemaSetting = settings.find(s => s.key === 'available_actions_schema');
+        const schemaValue = schemaSetting?.value || '';
+
+        el.innerHTML = `
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold">Actions Schema</h2>
+                <p class="text-sm text-bm-muted mt-0.5">The action JSON schema injected into every agent's system prompt via <code class="bg-slate-100 px-1 rounded text-xs">{{available_actions}}</code>. Defines what actions agents can take each turn.</p>
+            </div>
+            <textarea id="actions-schema-textarea" rows="14"
+                      class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
+                             bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                             focus:border-bm-accent resize-y font-mono leading-relaxed">${BossModUtils.escapeHtml(schemaValue)}</textarea>
+            <div class="flex items-center gap-3 mt-4">
+                <button id="btn-save-actions-schema"
+                        class="px-4 py-2 bg-bm-accent text-white rounded-lg
+                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                    Save Schema
+                </button>
+                <span id="actions-schema-status" class="text-sm text-bm-muted"></span>
+            </div>`;
+
+        document.getElementById('btn-save-actions-schema').addEventListener('click', async () => {
+            const value = document.getElementById('actions-schema-textarea').value;
+            const status = document.getElementById('actions-schema-status');
+            try {
+                await fetch(`/api/settings/available_actions_schema?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
                 status.textContent = 'Saved';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);

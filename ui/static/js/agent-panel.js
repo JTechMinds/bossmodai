@@ -304,6 +304,7 @@ const AgentPanel = (() => {
                 if (!data.api_base_url) {
                     data.api_base_url = conn.api_base_url;
                     data.api_key = conn.api_key || null;
+                    data.extra_body = conn.extra_body || null;
                 }
             } else {
                 data[t.key] = null;

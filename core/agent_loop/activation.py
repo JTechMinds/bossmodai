@@ -64,7 +64,11 @@ async def _check_message_trigger(
     agent: Agent,
     state: AgentState,
 ) -> dict[str, Any] | None:
-    """Check for unread messages addressed to this agent."""
+    """Check for unread messages addressed to this agent.
+
+    Only triggers on agent-to-agent messages. Human messages are
+    handled synchronously by the activate endpoint — never here.
+    """
     since = state.last_active_at or state.idle_since
     if not since:
         return None
@@ -73,7 +77,13 @@ async def _check_message_trigger(
     if not messages:
         return None
 
-    msg = messages[0]
+    # Filter out human messages — those are handled by the activate endpoint
+    from core.models.message import HUMAN_SENDER_ID
+    agent_messages = [m for m in messages if m.from_agent != HUMAN_SENDER_ID]
+    if not agent_messages:
+        return None
+
+    msg = agent_messages[0]
     sender = db.get_agent(msg.from_agent)
     sender_name = sender.name if sender else "Unknown"
 

@@ -25,15 +25,16 @@ def create_task(
     project: str | None = None,
     assigned_to: str | None = None,
     created_by: str | None = None,
+    parent_task_id: str | None = None,
 ) -> Task:
     """Insert a new task."""
     return insert_returning(
         f"""
-        INSERT INTO tasks (title, description, project, assigned_to, created_by)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO tasks (title, description, project, assigned_to, created_by, parent_task_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING {_TASK_COLUMNS}
         """,
-        [title, description, project, assigned_to, created_by],
+        [title, description, project, assigned_to, created_by, parent_task_id],
         Task,
     )
 

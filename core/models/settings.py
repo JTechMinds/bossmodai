@@ -24,6 +24,7 @@ class AIConnection(BaseModel):
     api_base_url: str
     api_key: str | None = None
     model: str | None = None
+    extra_body: str | None = None
     created_at: datetime
 
 
@@ -34,6 +35,7 @@ class AIConnectionCreate(BaseModel):
     api_base_url: str
     api_key: str | None = None
     model: str | None = None
+    extra_body: str | None = None
 
 
 class AIConnectionUpdate(BaseModel):
@@ -43,6 +45,7 @@ class AIConnectionUpdate(BaseModel):
     api_base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
+    extra_body: str | None = None
 
 
 # ---------------------------------------------------------------------------

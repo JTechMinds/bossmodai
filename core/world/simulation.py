@@ -74,15 +74,26 @@ class WorldSimulation:
     # ─── Main loop ───
 
     async def _loop(self) -> None:
+        consecutive_errors = 0
         while self._running:
             try:
                 await self._tick()
+                consecutive_errors = 0
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("Error in simulation tick")
+                consecutive_errors += 1
+                threshold = config.get_int("sim_error_threshold") or 10
+                logger.exception("Simulation tick error (%d consecutive)", consecutive_errors)
+                if consecutive_errors >= threshold:
+                    backoff = config.get_int("sim_error_backoff_seconds") or 30
+                    logger.critical(
+                        "%d consecutive tick failures — pausing for %ds",
+                        threshold, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    consecutive_errors = 0
 
-            # Read tick interval from settings each iteration
             interval = config.get_float("tick_interval") or 3.0
             await asyncio.sleep(interval)
 
@@ -185,7 +196,18 @@ class WorldSimulation:
             try:
                 db.update_agent_state(agent.id, status="idle")
             except Exception:
-                logger.warning("Failed to reset agent %s to idle after turn failure", agent.name)
+                logger.error(
+                    "Failed to reset agent %s to idle — agent may be stuck",
+                    agent.name,
+                )
+                try:
+                    await manager.broadcast_activity(
+                        event="agent_error",
+                        detail=f"{agent.name} is stuck — manual reset may be required",
+                        agent_name=agent.name,
+                    )
+                except Exception:
+                    pass
 
 
 # Module-level singleton

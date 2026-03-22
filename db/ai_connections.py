@@ -7,9 +7,9 @@ from typing import Any
 from core.models import AIConnection
 from db.crud import build_update, execute, fetch_all, fetch_one, insert_returning
 
-_COLUMNS = "id, name, api_base_url, api_key, model, created_at"
+_COLUMNS = "id, name, api_base_url, api_key, model, extra_body, created_at"
 
-_VALID_COLUMNS = {"name", "api_base_url", "api_key", "model"}
+_VALID_COLUMNS = {"name", "api_base_url", "api_key", "model", "extra_body"}
 
 
 def create_connection(
@@ -17,15 +17,16 @@ def create_connection(
     api_base_url: str,
     api_key: str | None = None,
     model: str | None = None,
+    extra_body: str | None = None,
 ) -> AIConnection:
     """Insert a new AI connection."""
     return insert_returning(
         f"""
-        INSERT INTO ai_connections (name, api_base_url, api_key, model)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO ai_connections (name, api_base_url, api_key, model, extra_body)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING {_COLUMNS}
         """,
-        [name, api_base_url, api_key, model],
+        [name, api_base_url, api_key, model, extra_body],
         AIConnection,
     )
 

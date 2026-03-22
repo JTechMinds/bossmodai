@@ -180,6 +180,12 @@ const BossModApp = (() => {
                     AgentContext.handleChatMessage(msg.data);
                 }
                 break;
+
+            case 'diagnostic':
+                if (typeof DiagnosticsView !== 'undefined') {
+                    DiagnosticsView.addEntry(msg.data);
+                }
+                break;
         }
     }
 

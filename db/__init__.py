@@ -23,13 +23,18 @@ from db.agents import (
 )
 
 # Messages
-from db.messages import create_message, get_messages_for_agent, get_unread_messages
+from db.messages import (
+    create_message,
+    get_formatted_messages,
+    get_messages_for_agent,
+    get_unread_messages,
+)
 
 # Tasks
 from db.tasks import create_task, get_task, list_tasks, update_task
 
 # Settings
-from db.settings import get_settings, set_setting
+from db.settings import force_reseed, get_settings, set_setting
 
 # Activity log
 from db.activity import create_activity, get_recent_activity
@@ -51,6 +56,9 @@ from db.ai_personalities import (
     list_personalities,
     update_personality,
 )
+
+# Diagnostics
+from db.diagnostics import create_diagnostic, get_diagnostic, get_diagnostics
 
 # World state + spatial
 from db.world import get_nearby_agents, get_world_state
@@ -77,6 +85,7 @@ __all__ = [
     "update_agent_state",
     # Messages
     "create_message",
+    "get_formatted_messages",
     "get_messages_for_agent",
     "get_unread_messages",
     # Tasks
@@ -85,6 +94,7 @@ __all__ = [
     "list_tasks",
     "update_task",
     # Settings
+    "force_reseed",
     "get_settings",
     "set_setting",
     # Activity
@@ -102,6 +112,10 @@ __all__ = [
     "get_personality",
     "list_personalities",
     "update_personality",
+    # Diagnostics
+    "create_diagnostic",
+    "get_diagnostic",
+    "get_diagnostics",
     # World
     "get_nearby_agents",
     "get_world_state",

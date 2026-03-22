@@ -149,6 +149,7 @@ const AgentContext = (() => {
         document.getElementById('subview-chat').classList.add('hidden');
         document.getElementById('subview-edit').classList.add('hidden');
         document.getElementById('subview-tasks').classList.add('hidden');
+        document.getElementById('subview-diagnostics')?.classList.add('hidden');
         document.getElementById('tab-activity').classList.remove('active');
     }
 
@@ -180,6 +181,12 @@ const AgentContext = (() => {
             case 'tasks':
                 document.getElementById('subview-tasks').classList.remove('hidden');
                 renderTasks();
+                break;
+            case 'diagnostics':
+                document.getElementById('subview-diagnostics').classList.remove('hidden');
+                if (typeof DiagnosticsView !== 'undefined') {
+                    DiagnosticsView.load(selectedAgent?.id);
+                }
                 break;
         }
     }

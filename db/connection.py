@@ -34,7 +34,27 @@ def _apply_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Execute the DDL in schema.sql to ensure all tables exist."""
     sql = _SCHEMA_PATH.read_text(encoding="utf-8")
     con.execute(sql)
+    _migrate(con)
     logger.info("Schema applied from %s", _SCHEMA_PATH)
+
+
+def _migrate(con: duckdb.DuckDBPyConnection) -> None:
+    """Add columns that may not exist in older databases."""
+    migrations = [
+        ("agents", "extra_body", "ALTER TABLE agents ADD COLUMN extra_body TEXT"),
+        ("ai_connections", "extra_body", "ALTER TABLE ai_connections ADD COLUMN extra_body TEXT"),
+        ("diagnostics", "status", None),  # widen CHECK to include new statuses
+    ]
+    for table, column, ddl in migrations:
+        if ddl is None:
+            continue
+        try:
+            cols = [r[0] for r in con.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'").fetchall()]
+            if column not in cols:
+                con.execute(ddl)
+                logger.info("Migration: added %s.%s", table, column)
+        except Exception:
+            pass
 
 
 def close_connection() -> None:

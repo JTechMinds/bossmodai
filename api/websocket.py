@@ -7,11 +7,14 @@ Activity events are persisted to the database for history across restarts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from fastapi import WebSocket
 from fastapi.encoders import jsonable_encoder
+
+from core import config
 
 import db
 
@@ -57,14 +60,15 @@ class ConnectionManager:
         """Send a JSON message to all connected clients.
 
         Uses ``jsonable_encoder`` to handle datetime and Pydantic objects.
-        Automatically removes dead connections.
+        Automatically removes dead connections. Times out slow clients.
         """
+        timeout = config.get_float("ws_send_timeout_seconds") or 5.0
         encoded = jsonable_encoder(message)
         dead: list[WebSocket] = []
         for ws in self._connections:
             try:
-                await ws.send_json(encoded)
-            except (ConnectionError, RuntimeError) as exc:
+                await asyncio.wait_for(ws.send_json(encoded), timeout=timeout)
+            except (ConnectionError, RuntimeError, asyncio.TimeoutError) as exc:
                 logger.debug("WebSocket send failed, marking dead: %s", exc)
                 dead.append(ws)
         for ws in dead:
@@ -101,6 +105,10 @@ class ConnectionManager:
                 "created_at": created_at,
             },
         })
+
+    async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
+        """Broadcast a diagnostic summary to all connected clients."""
+        await self.broadcast({"type": "diagnostic", "data": summary})
 
     async def broadcast_activity(
         self,

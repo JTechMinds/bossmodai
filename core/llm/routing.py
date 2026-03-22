@@ -66,6 +66,23 @@ def select_model(agent: Agent, mode: ActivationMode) -> str | None:
     return None
 
 
+def select_model_with_source(
+    agent: Agent, mode: ActivationMode
+) -> tuple[str | None, str]:
+    """Return (model, source) where source is 'agent', 'global', or 'none'."""
+    field = _AGENT_FIELD[mode]
+    agent_model = getattr(agent, field, None)
+    if agent_model:
+        return agent_model, "agent"
+
+    settings_key = _SETTINGS_KEY[mode]
+    global_model = config.get(settings_key)
+    if global_model:
+        return global_model, "global"
+
+    return None, "none"
+
+
 def get_api_config(agent: Agent) -> dict[str, str | None]:
     """Return per-agent API configuration overrides.
 
@@ -74,4 +91,5 @@ def get_api_config(agent: Agent) -> dict[str, str | None]:
     return {
         "api_base": agent.api_base_url,
         "api_key": agent.api_key,
+        "extra_body": agent.extra_body,
     }

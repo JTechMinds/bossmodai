@@ -1,13 +1,17 @@
 """BossMod AI — LLM context assembly.
 
-Builds the full message list for an LLM call by combining:
-  1. System prompt (role + rules + available actions)
-  2. Memory context (relevant knowledge graph nodes)
-  3. Location context (current room, nearby agents)
-  4. Rolling message window (recent conversation history)
-  5. Trigger event (what activated this turn)
+Builds the full message list for an LLM call by resolving the
+system_prompt_template from settings with runtime variables:
 
-Window size is read from the ``context_window_messages`` setting.
+  {{personality}}        — agent's role prompt
+  {{agent_name}}         — agent's display name
+  {{role}}               — agent's role title
+  {{memory}}             — relevant knowledge graph nodes
+  {{worldStatus}}        — structured world status block
+  {{task}}               — current task details (blank if none)
+  {{available_actions}}  — action schema from settings
+
+All prompts are editable via Settings. No hardcoded prompt text.
 """
 
 from __future__ import annotations
@@ -21,31 +25,18 @@ from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
 
-# Available actions an agent can take
-AVAILABLE_ACTIONS = """
-You can respond with ONE of these actions as a JSON object:
+_FALLBACK_TEMPLATE = (
+    "{{personality}}\n\n{{worldStatus}}\n\n{{task}}\n\n---\n\n{{available_actions}}"
+)
 
-1. **work** — Produce work output (analysis, code, writing, etc.)
-   {"thought": "...", "action": "work", "params": {"output": "your work product here"}}
+_FALLBACK_ACTIONS = 'Respond with JSON: {"action":"idle","thought":"..."}'
 
-2. **send_message** — Send a message to another agent
-   {"thought": "...", "action": "send_message", "params": {"to": "agent_name", "content": "message text"}}
-
-3. **walk_to** — Move to a different location
-   {"thought": "...", "action": "walk_to", "params": {"room": "meeting_room|break_room|workspace_main|workspace_south|hallway_main"}}
-
-4. **idle** — Do nothing this turn (wait for new input)
-   {"thought": "...", "action": "idle", "params": {}}
-
-5. **sign_off** — Complete or abandon current work
-   {"thought": "...", "action": "sign_off", "params": {"status": "complete|blocked|delegated|abandoned", "summary": "brief summary"}}
-
-IMPORTANT:
-- Always respond with valid JSON only — no markdown, no extra text.
-- The "thought" field is your internal reasoning (visible to admins).
-- Choose the SINGLE most appropriate action for this turn.
-- If you have nothing to do, use "idle".
-""".strip()
+_STATUS_LABELS = {
+    "idle": "idle",
+    "work_active": "working",
+    "social_active": "socializing",
+    "in_transit": "walking",
+}
 
 
 def build_context(
@@ -56,41 +47,37 @@ def build_context(
     memory_nodes: list[dict[str, Any]] | None = None,
     nearby_agents: list[dict[str, Any]] | None = None,
     current_task: dict[str, Any] | None = None,
+    pending_message_count: int = 0,
 ) -> list[dict[str, str]]:
     """Assemble the full LLM message list for an agent turn."""
     window_size = config.get_int("context_window_messages") or 30
     messages: list[dict[str, str]] = []
 
-    # ─── System prompt ───
-    system_parts: list[str] = []
-
-    # Role identity — resolve template variables at runtime
-    role_text = agent.prompt_template or _default_role_prompt(agent)
-    role_text = (
-        role_text
+    # ─── Build template variables ───
+    personality = agent.prompt_template or _default_role_prompt(agent)
+    personality = (
+        personality
         .replace("{{agent_name}}", agent.name)
         .replace("{{role}}", agent.role or "AI Assistant")
     )
-    system_parts.append(role_text)
 
-    # Available actions
-    system_parts.append(AVAILABLE_ACTIONS)
+    variables = {
+        "{{personality}}": personality,
+        "{{agent_name}}": agent.name,
+        "{{role}}": agent.role or "AI Assistant",
+        "{{memory}}": _format_memory(memory_nodes) if memory_nodes else "",
+        "{{worldStatus}}": _format_world_status(agent, state, nearby_agents, current_task, pending_message_count),
+        "{{task}}": _format_task(current_task) if current_task else "",
+        "{{available_actions}}": config.get("available_actions_schema") or _FALLBACK_ACTIONS,
+    }
 
-    # Memory context
-    if memory_nodes:
-        system_parts.append(_format_memory(memory_nodes))
+    # ─── Resolve template from settings ───
+    template = config.get("system_prompt_template") or _FALLBACK_TEMPLATE
+    system_prompt = template
+    for key, value in variables.items():
+        system_prompt = system_prompt.replace(key, value)
 
-    # Location context
-    system_parts.append(_format_location(state, nearby_agents))
-
-    # Current task
-    if current_task:
-        system_parts.append(_format_task(current_task))
-
-    messages.append({
-        "role": "system",
-        "content": "\n\n---\n\n".join(system_parts),
-    })
+    messages.append({"role": "system", "content": system_prompt})
 
     # ─── Message history (rolling window) ───
     for msg in messages_window[-window_size:]:
@@ -113,16 +100,50 @@ def _default_role_prompt(agent: Agent) -> str:
     """Generate a default system prompt for agents without a custom template."""
     role = agent.role or "AI Assistant"
     return (
-        f"You are {agent.name}, a {role} at BossMod AI.\n"
+        f"You are {agent.name}, a {role} at BossMod AI. "
         f"You work in a virtual office with other AI agents. "
         f"You communicate professionally, stay focused on your tasks, "
-        f"and collaborate effectively with your team.\n"
-        f"Your responses should be concise and actionable."
+        f"and collaborate effectively with your team."
+    )
+
+
+def _format_world_status(
+    agent: Agent,
+    state: AgentState,
+    nearby_agents: list[dict[str, Any]] | None = None,
+    current_task: dict[str, Any] | None = None,
+    pending_message_count: int = 0,
+) -> str:
+    """Build the structured world status block."""
+    room = get_room_at(state.x, state.y)
+    room_name = room["name"] if room else "unknown"
+    status_label = _STATUS_LABELS.get(state.status, state.status)
+
+    pending_count = pending_message_count
+
+    # Nearby agents
+    nearby_str = "none"
+    if nearby_agents:
+        names = [a.get("name", "Unknown") for a in nearby_agents]
+        nearby_str = ", ".join(names)
+
+    # Current task
+    task_str = "none"
+    if current_task:
+        task_str = f"{current_task.get('title', 'Untitled')} ({current_task.get('status', 'unknown')})"
+
+    return (
+        f"WORLD STATUS:\n"
+        f"  location: {room_name}\n"
+        f"  status: {status_label}\n"
+        f"  nearby: {nearby_str}\n"
+        f"  pendingMessages: {pending_count}\n"
+        f"  currentTask: {task_str}"
     )
 
 
 def _format_memory(nodes: list[dict[str, Any]]) -> str:
-    lines = ["## Your Knowledge (from memory)"]
+    lines = []
     for node in nodes[:20]:
         entity = node.get("entity", "")
         attribute = node.get("attribute", "")
@@ -132,61 +153,36 @@ def _format_memory(nodes: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _format_location(
-    state: AgentState,
-    nearby_agents: list[dict[str, Any]] | None = None,
-) -> str:
-    room = get_room_at(state.x, state.y)
-    room_name = room["name"] if room else "unknown area"
-
-    parts = [f"## Current Location\nYou are at tile ({state.x}, {state.y}) in the {room_name}."]
-
-    if nearby_agents:
-        names = [a.get("name", "Unknown") for a in nearby_agents]
-        parts.append(f"Nearby agents: {', '.join(names)}")
-    else:
-        parts.append("No other agents are nearby.")
-
-    return "\n".join(parts)
-
-
 def _format_task(task: dict[str, Any]) -> str:
     title = task.get("title", "Untitled")
     desc = task.get("description", "No description")
     status = task.get("status", "unknown")
-    return f"## Current Task\n**{title}** (status: {status})\n{desc}"
+    return f"{title} (status: {status})\n{desc}"
 
 
 def _format_trigger(trigger: dict[str, Any]) -> str:
+    """Format the trigger event. No 'respond with JSON' — the schema handles that."""
     trigger_type = trigger.get("type", "unknown")
 
     if trigger_type == "message":
         sender = trigger.get("from_name", "Someone")
         content = trigger.get("content", "")
-        return f"[{sender}]: {content}\n\nRespond with your action as JSON."
+        return f"[{sender}]: {content}"
 
     if trigger_type == "task_assigned":
         title = trigger.get("task_title", "a task")
-        return (
-            f"You have been assigned a new task: \"{title}\"\n"
-            f"Review the task details above and decide your next action. "
-            f"Respond with JSON."
-        )
+        return f"You have been assigned a new task: \"{title}\""
 
     if trigger_type == "social":
         nearby = trigger.get("nearby_names", [])
-        return (
-            f"You're idle and nearby: {', '.join(nearby)}. "
-            f"Consider having a brief social interaction, or idle if you prefer. "
-            f"Respond with JSON."
-        )
+        return f"You're idle and nearby: {', '.join(nearby)}. Consider a brief social interaction."
 
     if trigger_type == "schedule":
         desc = trigger.get("description", "scheduled task")
-        return f"Scheduled trigger: {desc}\nRespond with JSON."
+        return f"Scheduled trigger: {desc}"
 
     if trigger_type == "manual":
         content = trigger.get("content", "You have been manually activated.")
-        return f"{content}\nRespond with JSON."
+        return content
 
-    return "You have been activated. Decide your next action. Respond with JSON."
+    return "You have been activated."

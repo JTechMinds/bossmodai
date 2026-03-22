@@ -4,6 +4,9 @@ Agent CRUD, map data, world state, settings, and real-time
 WebSocket broadcasting for live Canvas and Activity updates.
 """
 
+import asyncio
+import logging
+
 import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
@@ -13,6 +16,7 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.agent_loop.loop import run_turn
+from core.llm.client import normalize_api_base
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
     Agent,
@@ -30,6 +34,8 @@ from core.models import (
 from core.world.simulation import simulation
 from core.world.tilemap import get_map_data
 import db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -91,6 +97,15 @@ async def get_agent(agent_id: str) -> Agent:
     return agent
 
 
+@router.get("/agents/{agent_id}/api-key")
+async def get_agent_api_key(agent_id: str):
+    """Return the agent's API key (for the agent editor only)."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    return {"api_key": agent.api_key}
+
+
 @router.post("/agents", status_code=201)
 async def create_agent(body: AgentCreate) -> Agent:
     agent = db.create_agent(
@@ -107,6 +122,7 @@ async def create_agent(body: AgentCreate) -> Agent:
         model_self_queue=body.model_self_queue,
         api_base_url=body.api_base_url,
         api_key=body.api_key,
+        extra_body=body.extra_body,
     )
     # Broadcast to all connected clients
     await manager.broadcast_world_state()
@@ -162,33 +178,27 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     if not agent:
         raise HTTPException(404, "Agent not found")
 
-    limit = min(limit, 200)
-    messages = db.get_messages_for_agent(agent_id, limit=limit)
+    max_limit = config.get_int("api_message_limit_max") or 200
+    limit = min(limit, max_limit)
+    formatted = db.get_formatted_messages(agent_id, limit=limit, human_label="You")
 
-    # Batch-resolve sender names
-    sender_ids = list({m.from_agent for m in messages if m.from_agent != HUMAN_SENDER_ID})
-    agents_map = db.get_agents_by_ids(sender_ids)
-
+    # Add from_type classification for the frontend
     result = []
-    for msg in messages:
-        if msg.from_agent == HUMAN_SENDER_ID:
+    for msg in formatted:
+        if msg["from_agent"] == HUMAN_SENDER_ID:
             from_type = "human"
-            from_name = "You"
-        elif msg.from_agent == agent_id:
+        elif msg["from_agent"] == agent_id:
             from_type = "agent"
-            from_name = agent.name
         else:
-            sender = agents_map.get(msg.from_agent)
             from_type = "other"
-            from_name = sender.name if sender else "Unknown"
 
         result.append({
-            "id": msg.id,
-            "content": msg.content,
+            "id": msg["id"],
+            "content": msg["content"],
             "from": from_type,
-            "from_name": from_name,
-            "message_type": msg.message_type,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "from_name": msg["from_name"],
+            "message_type": msg["message_type"],
+            "created_at": msg["created_at"],
         })
 
     return result
@@ -235,7 +245,11 @@ class ActivationBody(BaseModel):
 
 @router.post("/agents/{agent_id}/activate")
 async def activate_agent(agent_id: str, body: ActivationBody | None = None):
-    """Trigger an agent turn via human chat message."""
+    """Trigger an agent turn via human chat message.
+
+    Non-blocking: persists the message, starts the turn as a background
+    task, and returns immediately. Agent replies arrive via WebSocket.
+    """
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
@@ -243,6 +257,10 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
     state = db.get_agent_state(agent_id)
     if not state:
         raise HTTPException(500, "Agent state not found")
+
+    # Race condition guard — single source of truth for active turns
+    if agent_id in simulation._active_turns:
+        raise HTTPException(409, "Agent is already executing a turn")
 
     content = body.content if body else "You have been manually activated."
 
@@ -264,26 +282,57 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         created_at=human_msg.created_at,
     )
 
+    # Mark agent as busy so the simulation tick doesn't also trigger a turn
+    db.update_agent_state(agent_id, status="work_active")
+
     # Use "message" trigger so context_builder formats as [Human Operator]: content
     trigger = {"type": "message", "from_name": "Human Operator", "content": content}
 
-    result = await run_turn(agent, state, trigger)
+    # Launch turn as background task — register with simulation._active_turns
+    # to prevent race conditions with the simulation loop
+    async def _run_and_cleanup() -> None:
+        try:
+            result = await run_turn(agent, state, trigger)
+            # If the action was walk_to, register path with simulation
+            if result.get("path") and result.get("agent_id"):
+                simulation.set_agent_path(result["agent_id"], result["path"])
+        except Exception:
+            logger.exception("Background turn failed for %s", agent.name)
+            try:
+                db.update_agent_state(agent_id, status="idle")
+                await manager.broadcast_activity(
+                    event="agent_error",
+                    detail=f"{agent.name} turn failed unexpectedly",
+                    agent_name=agent.name,
+                )
+            except Exception:
+                pass
+        finally:
+            simulation._active_turns.pop(agent_id, None)
 
-    # If the action was walk_to, register path with simulation
-    if result.get("path") and result.get("agent_id"):
-        simulation.set_agent_path(result["agent_id"], result["path"])
+    task = asyncio.create_task(_run_and_cleanup())
+    simulation._active_turns[agent_id] = task
 
-    # Broadcast agent reply if the action produced content
-    reply_content = result.get("content")
-    if reply_content:
-        await manager.broadcast_chat_message(
-            agent_id=agent_id,
-            content=reply_content,
-            from_type="agent",
-            from_name=agent.name,
-        )
+    return {"status": "ok", "message": "Turn started"}
 
-    return {"status": "ok", "result": result, "reply": reply_content}
+
+# ─── Diagnostics ───
+
+@router.get("/diagnostics")
+async def list_diagnostics(agent_id: str | None = None, limit: int = 50):
+    """Return recent diagnostic summaries (no context/response blobs)."""
+    max_limit = config.get_int("api_diagnostics_limit_max") or 200
+    limit = min(limit, max_limit)
+    return db.get_diagnostics(agent_id=agent_id, limit=limit)
+
+
+@router.get("/diagnostics/{diagnostic_id}")
+async def get_diagnostic_detail(diagnostic_id: str):
+    """Return a single diagnostic entry with full detail."""
+    entry = db.get_diagnostic(diagnostic_id)
+    if not entry:
+        raise HTTPException(404, "Diagnostic entry not found")
+    return entry
 
 
 # ─── Settings ───
@@ -291,6 +340,14 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
 @router.get("/settings")
 async def get_settings(category: str | None = None):
     return db.get_settings(category)
+
+
+@router.post("/settings/reseed")
+async def reseed_settings():
+    """Force all seed settings back to their defaults."""
+    db.force_reseed()
+    config.reload()
+    return {"status": "ok", "detail": "All seed settings reset to defaults"}
 
 
 @router.put("/settings/{key}")
@@ -322,6 +379,7 @@ async def create_connection(body: AIConnectionCreate) -> AIConnection:
         api_base_url=body.api_base_url,
         api_key=body.api_key,
         model=body.model,
+        extra_body=body.extra_body,
     )
 
 
@@ -355,25 +413,32 @@ async def test_connection(body: TestConnectionBody):
     Verifies the host is reachable, auth works, and the response
     is OpenAI-compatible. Optionally checks the model exists.
     """
-    url = body.api_base_url.rstrip("/")
-    # Normalize: if URL ends with /v1, use it; otherwise append /v1
-    if not url.endswith("/v1"):
-        url += "/v1"
-    url += "/models"
+    base = normalize_api_base(body.api_base_url)
 
     headers = {}
     if body.api_key:
         headers["Authorization"] = f"Bearer {body.api_key}"
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, headers=headers)
-    except httpx.ConnectError:
-        return {"ok": False, "error": "Connection failed — check the URL"}
-    except httpx.TimeoutException:
-        return {"ok": False, "error": "Connection timed out after 10s"}
-    except Exception as exc:
-        return {"ok": False, "error": f"Request failed: {exc}"}
+    # Try /models at the base URL. If 404, try base + /v1/models as fallback.
+    urls_to_try = [base + "/models", base + "/v1/models"]
+
+    resp = None
+    last_error = None
+    for url in urls_to_try:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+            if resp.status_code != 404:
+                break
+        except httpx.ConnectError:
+            return {"ok": False, "error": "Connection failed — check the URL"}
+        except httpx.TimeoutException:
+            return {"ok": False, "error": "Connection timed out after 10s"}
+        except Exception as exc:
+            last_error = exc
+
+    if resp is None:
+        return {"ok": False, "error": f"Request failed: {last_error}"}
 
     if resp.status_code == 401:
         return {"ok": False, "error": "Authentication failed — check your API key"}
