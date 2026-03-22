@@ -604,6 +604,11 @@ const SystemSection = (() => {
             label: 'Watchdog Escalation Delay (minutes)',
             description: 'How much additional quiet time is allowed after a soft ping before the task is marked stalled.',
         },
+        thought_bubble_duration_ms: {
+            order: 80,
+            label: 'Thought Bubble Duration (ms)',
+            description: 'How long agent thought bubbles display above agents on the canvas. Set to 0 to disable.',
+        },
         social_idle_threshold_minutes: {
             order: 10,
             label: 'Idle Threshold (minutes)',

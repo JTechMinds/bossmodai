@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.models import Agent
+from core.time import ensure_utc
 import db
 
 logger = logging.getLogger(__name__)
@@ -57,10 +58,7 @@ def check_post_action(
         m for m in recent
         if m.from_agent == agent.id
         and m.created_at
-        and (
-            (m.created_at.replace(tzinfo=timezone.utc) if m.created_at.tzinfo is None else m.created_at)
-            > one_min_ago
-        )
+        and ensure_utc(m.created_at) > one_min_ago
     ]
     if len(recent_sent) >= agent.guardian_velocity_limit:
         return GuardianViolation(

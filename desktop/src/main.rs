@@ -5,12 +5,25 @@
 // at localhost:8000. Cleans up the backend on exit.
 
 use std::process::{Child, Command};
+use std::path::Path;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::Manager;
 
 struct BackendProcess(Mutex<Option<Child>>);
+
+fn stop_stale_backend(project_root: &Path) {
+    let main_py = project_root.join("main.py");
+    let pattern = main_py.to_string_lossy().to_string();
+
+    let _ = Command::new("pkill")
+        .arg("-f")
+        .arg(&pattern)
+        .status();
+
+    thread::sleep(Duration::from_millis(300));
+}
 
 fn start_backend() -> Child {
     // Project root is one level up from the desktop/ directory
@@ -36,6 +49,8 @@ fn start_backend() -> Child {
     };
 
     let main_py = project_root.join("main.py");
+
+    stop_stale_backend(&project_root);
 
     Command::new(&python)
         .arg(main_py.to_string_lossy().as_ref())

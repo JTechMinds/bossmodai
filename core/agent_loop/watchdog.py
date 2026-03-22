@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from api.websocket import manager
 from core import config
 from core.agent_loop.dispatcher import dispatcher
+from core.time import ensure_utc
 import db
 
 logger = logging.getLogger(__name__)
@@ -53,28 +54,34 @@ class TaskWatchdog:
         now = datetime.now(timezone.utc)
         active_tasks = db.list_tasks(status="active")
         for task in active_tasks:
-            if not task.assigned_to or not task.last_activity:
+            if not task.assigned_to:
                 continue
 
-            last_activity = task.last_activity
-            if last_activity.tzinfo is None:
-                last_activity = last_activity.replace(tzinfo=timezone.utc)
+            if dispatcher.is_active(task.assigned_to) or db.has_open_trigger(task.assigned_to):
+                continue
 
-            quiet_for = now - last_activity
+            last_progress = ensure_utc(task.last_progress_at or task.last_activity or task.created_at)
+            last_heartbeat = ensure_utc(task.last_heartbeat_at or task.last_activity or task.created_at)
+            quiet_since = max(last_progress, last_heartbeat)
+            quiet_for = now - quiet_since
             soft_threshold = timedelta(minutes=soft_minutes)
-            escalation_threshold = soft_threshold + timedelta(minutes=escalation_minutes)
+            escalation_threshold = timedelta(minutes=escalation_minutes)
 
-            if quiet_for >= escalation_threshold and task.watchdog_pinged_at:
-                pinged_at = task.watchdog_pinged_at
-                if pinged_at.tzinfo is None:
-                    pinged_at = pinged_at.replace(tzinfo=timezone.utc)
-                if last_activity <= pinged_at and task.status != "stalled":
+            if task.watchdog_pinged_at:
+                pinged_at = ensure_utc(task.watchdog_pinged_at)
+                if last_heartbeat > pinged_at:
+                    db.update_task(task.id, watchdog_pinged_at=None)
+                    continue
+
+                if now - pinged_at >= escalation_threshold and task.status != "stalled":
+                    state = db.get_agent_state(task.assigned_to)
                     db.update_task(
                         task.id,
                         status="stalled",
-                        status_note="Watchdog escalated after no status update from the agent.",
+                        status_note="Watchdog escalated after no heartbeat from the agent.",
                     )
-                    db.update_agent_state(task.assigned_to, current_task_id=None)
+                    if state and state.current_task_id == task.id:
+                        db.update_agent_state(task.assigned_to, current_task_id=None)
                     await manager.broadcast_activity(
                         event="task_stalled",
                         detail=f'Task "{task.title}" stalled after watchdog escalation',
@@ -82,11 +89,18 @@ class TaskWatchdog:
                     )
                 continue
 
-            if quiet_for < soft_threshold or task.watchdog_pinged_at is not None:
+            if quiet_for < soft_threshold:
                 continue
 
             agent = db.get_agent(task.assigned_to)
             if agent is None:
+                continue
+
+            if db.has_open_trigger_matching(
+                agent.id,
+                trigger_types=["watchdog_status_ping"],
+                task_id=task.id,
+            ):
                 continue
 
             content = f'Watchdog check: are you still working on "{task.title}"? Provide a status update.'
@@ -107,8 +121,6 @@ class TaskWatchdog:
                 },
                 task_id=task.id,
             )
-
-
 def _agent_name(agent_id: str) -> str | None:
     agent = db.get_agent(agent_id)
     return agent.name if agent else None

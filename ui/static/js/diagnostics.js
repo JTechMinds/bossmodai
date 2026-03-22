@@ -26,6 +26,39 @@ const DiagnosticsView = (() => {
         return val == null ? '' : String(val);
     }
 
+    function triggerLabel(triggerType) {
+        switch (triggerType) {
+            case 'human_chat': return 'Human Chat';
+            case 'peer_message': return 'Peer Message';
+            case 'watchdog_status_ping': return 'Watchdog';
+            case 'task_resumed': return 'Task Resumed';
+            case 'task_attention_required': return 'Task Attention';
+            case 'task_assigned': return 'Task Assigned';
+            case 'social': return 'Social';
+            default: return triggerType || 'Trigger';
+        }
+    }
+
+    function triggerPreview(entry) {
+        let parsed = null;
+        try {
+            parsed = typeof entry.trigger_data === 'string'
+                ? JSON.parse(entry.trigger_data)
+                : entry.trigger_data;
+        } catch {
+            parsed = null;
+        }
+
+        const preview =
+            parsed?.content ||
+            parsed?.task_title ||
+            parsed?.task_description ||
+            '';
+
+        if (!preview) return '';
+        return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
+    }
+
     // ─── Load from REST API ───
 
     async function load(agentId) {
@@ -84,14 +117,15 @@ const DiagnosticsView = (() => {
                 ? new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                 : '';
             const agentLabel = entry.agent_name ? esc(entry.agent_name) : '';
+            const triggerBadge = esc(triggerLabel(entry.trigger_type));
+            const preview = esc(triggerPreview(entry));
 
             html += `
             <div class="diagnostic-card ${isError ? 'has-error' : ''} ${isSelected ? 'selected' : ''}" data-diag-id="${esc(entryIdStr)}">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2 min-w-0">
                         <span class="text-xs">${modeIcon(entry.mode)}</span>
-                        <span class="text-xs font-medium">${esc(entry.mode || '-')}</span>
-                        <span class="text-xs text-bm-muted">\u2192</span>
+                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-bm-muted font-medium">${triggerBadge}</span>
                         <span class="text-xs font-semibold truncate">${esc(actionLabel)}</span>
                         ${agentLabel ? `<span class="text-xs text-bm-muted truncate">[${agentLabel}]</span>` : ''}
                     </div>
@@ -103,6 +137,7 @@ const DiagnosticsView = (() => {
                         </button>
                     </div>
                 </div>
+                ${preview ? `<p class="mt-1 text-xs text-bm-text/80 line-clamp-2">${preview}</p>` : ''}
                 <div class="flex items-center gap-2 mt-0.5 text-xs text-bm-muted">
                     <span>${esc(entry.model || 'no model')}</span>
                     <span>\u2022</span>
@@ -249,6 +284,9 @@ const DiagnosticsView = (() => {
         if (data.trigger_data) {
             sections.push(detailSection('Trigger', formatJson(data.trigger_data)));
         }
+        if (Array.isArray(data.steps) && data.steps.length) {
+            sections.push(renderExecutionTraceSection(data.steps));
+        }
         if (data.context) {
             sections.push(detailSection('Context Sent', formatJson(data.context)));
         }
@@ -266,6 +304,75 @@ const DiagnosticsView = (() => {
         }
 
         return meta + (sections.join('') || '<p class="text-sm text-bm-muted">No detail data available.</p>');
+    }
+
+    function renderExecutionTraceSection(steps) {
+        const cards = steps.map((step) => renderTraceStep(step)).join('');
+        return `
+            <div class="diag-section mb-4">
+                <div class="flex items-center gap-1 mb-1">
+                    <button class="diag-section-toggle flex items-center gap-2 py-1.5 px-2 hover:bg-slate-50 rounded transition-colors"
+                            aria-expanded="true">
+                        <i data-lucide="minus" class="w-4 h-4 text-bm-muted diag-toggle-icon"></i>
+                        <span class="text-sm font-semibold text-bm-text">Execution Trace</span>
+                    </button>
+                </div>
+                <div class="diag-section-content">
+                    <div class="space-y-3">${cards}</div>
+                </div>
+            </div>`;
+    }
+
+    function renderTraceStep(step) {
+        const esc = BossModUtils.escapeHtml;
+        const actionLabel = esc(step.action_name || 'no action');
+        const statusBadge = step.error
+            ? '<span class="text-[11px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 font-medium">Error</span>'
+            : '<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium">OK</span>';
+
+        const blocks = [];
+        if (step.context_snapshot) {
+            blocks.push(renderTraceBlock('Prompt Delta', formatJson(step.context_snapshot)));
+        }
+        if (step.raw_response) {
+            blocks.push(renderTraceBlock('Raw Response', esc(step.raw_response)));
+        }
+        if (step.parsed_action) {
+            blocks.push(renderTraceBlock('Parsed Action', formatJson(step.parsed_action)));
+        }
+        if (step.result) {
+            blocks.push(renderTraceBlock('Execution Result', formatJson(step.result)));
+        }
+        if (step.error) {
+            blocks.push(renderTraceBlock('Error', esc(step.error), true));
+        }
+
+        return `
+            <div class="rounded-lg border border-bm-border bg-white p-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-xs font-semibold text-bm-muted">Step ${Number(step.step_index || 0)}</span>
+                        <span class="text-sm font-semibold truncate">${actionLabel}</span>
+                        ${statusBadge}
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-bm-muted">
+                        <span>${step.prompt_tokens || 0} / ${step.completion_tokens || 0} / ${step.total_tokens || 0} tok</span>
+                        <span>&bull;</span>
+                        <span>${step.duration_ms || 0}ms</span>
+                    </div>
+                </div>
+                <div class="space-y-3">${blocks.join('')}</div>
+            </div>`;
+    }
+
+    function renderTraceBlock(label, content, isError = false) {
+        const labelClass = isError ? 'text-red-600' : 'text-bm-text';
+        const preClass = isError ? 'diagnostic-pre-full error-pre' : 'diagnostic-pre-full';
+        return `
+            <div>
+                <p class="text-xs font-semibold ${labelClass} mb-1">${label}</p>
+                <pre class="${preClass}">${content}</pre>
+            </div>`;
     }
 
     function detailSection(label, content, isError = false) {

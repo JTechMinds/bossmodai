@@ -43,6 +43,8 @@ from db.agent_triggers import (
     get_agent_trigger,
     get_latest_trigger,
     has_open_trigger,
+    has_open_trigger_matching,
+    has_queued_trigger_matching,
     list_agent_triggers,
 )
 
@@ -74,7 +76,7 @@ from db.ai_personalities import (
 )
 
 # Diagnostics
-from db.diagnostics import create_diagnostic, get_diagnostic, get_diagnostics
+from db.diagnostics import create_diagnostic, get_diagnostic, get_diagnostic_steps, get_diagnostics
 
 # World state + spatial
 from db.world import get_nearby_agents, get_world_state
@@ -118,6 +120,8 @@ __all__ = [
     "get_agent_trigger",
     "get_latest_trigger",
     "has_open_trigger",
+    "has_open_trigger_matching",
+    "has_queued_trigger_matching",
     "list_agent_triggers",
     # Tasks
     "create_task",
@@ -146,6 +150,7 @@ __all__ = [
     # Diagnostics
     "create_diagnostic",
     "get_diagnostic",
+    "get_diagnostic_steps",
     "get_diagnostics",
     # World
     "get_nearby_agents",

@@ -170,13 +170,18 @@ class WorldSimulation:
                                 "or sign off with complete/blocked/delegated/abandoned."
                             ),
                         }
-                    dispatcher.enqueue_trigger(
-                        agent_id=agent_id,
-                        trigger_type=trigger_type,
-                        source_channel="work",
-                        payload=payload,
+                    if not db.has_open_trigger_matching(
+                        agent_id,
+                        trigger_types=[trigger_type],
                         task_id=task.id,
-                    )
+                    ):
+                        dispatcher.enqueue_trigger(
+                            agent_id=agent_id,
+                            trigger_type=trigger_type,
+                            source_channel="work",
+                            payload=payload,
+                            task_id=task.id,
+                        )
                 else:
                     dispatcher.notify_agent_idle(agent_id)
 

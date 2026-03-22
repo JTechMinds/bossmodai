@@ -117,6 +117,13 @@ class ConnectionManager:
         """Broadcast a diagnostic summary to all connected clients."""
         await self.broadcast({"type": "diagnostic", "data": summary})
 
+    async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None:
+        """Broadcast an agent's thought to display as a speech bubble on canvas."""
+        await self.broadcast({
+            "type": "agent_thought",
+            "data": {"agent_id": agent_id, "thought": thought, "action_name": action_name},
+        })
+
     async def broadcast_activity(
         self,
         event: str,

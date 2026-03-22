@@ -10,6 +10,8 @@ const AgentContext = (() => {
     let selectedAgent = null;
     let creatingAgent = false;
     let activeSubview = 'chat';
+    const chatCache = new Map();
+    let activeChatLoadId = 0;
 
     // ─── Select / Deselect ───
 
@@ -51,6 +53,14 @@ const AgentContext = (() => {
 
     function getSelectedAgent() {
         return selectedAgent;
+    }
+
+    function getCachedChat(agentId) {
+        return chatCache.get(String(agentId)) || null;
+    }
+
+    function setCachedChat(agentId, messages) {
+        chatCache.set(String(agentId), Array.isArray(messages) ? [...messages] : []);
     }
 
     // ─── Tab header management ───
@@ -219,35 +229,62 @@ const AgentContext = (() => {
         if (!selectedAgent) return;
 
         const esc = BossModUtils.escapeHtml;
+        const agentId = selectedAgent.id;
+        const cached = getCachedChat(agentId);
 
-        // Show loading state
-        messagesEl.innerHTML = `
-            <div class="text-bm-muted text-sm text-center mt-4">
-                <p>Loading messages...</p>
-            </div>`;
-
-        // Fetch chat history from backend
-        let messages = [];
-        try {
-            const res = await fetch(`/api/agents/${selectedAgent.id}/messages?limit=50`);
-            if (res.ok) messages = await res.json();
-        } catch { /* fall through to empty state */ }
-
-        messagesEl.innerHTML = '';
-
-        if (messages.length === 0) {
+        if (cached) {
+            renderChatMessages(cached, selectedAgent.name);
+            showChatSyncIndicator();
+        } else {
             messagesEl.innerHTML = `
                 <div class="text-bm-muted text-sm text-center mt-4">
-                    <p>Chat with <strong>${esc(selectedAgent.name)}</strong></p>
-                    <p class="text-xs mt-1">Send a message to activate this agent.</p>
+                    <p>Loading messages...</p>
                 </div>`;
-        } else {
-            for (const msg of messages) {
-                appendChatMessage(msg.content, msg.from);
-            }
         }
 
         bindChatSend();
+        void refreshChatMessages(agentId);
+    }
+
+    async function refreshChatMessages(agentId) {
+        const loadId = ++activeChatLoadId;
+        let messages = [];
+
+        try {
+            const res = await fetch(`/api/agents/${agentId}/messages?limit=50`, { cache: 'no-store' });
+            if (res.ok) messages = await res.json();
+        } catch {
+            messages = getCachedChat(agentId) || [];
+        }
+
+        setCachedChat(agentId, messages);
+
+        if (!selectedAgent || selectedAgent.id !== agentId || activeSubview !== 'chat' || loadId !== activeChatLoadId) {
+            return;
+        }
+
+        renderChatMessages(messages, selectedAgent.name);
+    }
+
+    function renderChatMessages(messages, agentName) {
+        const messagesEl = document.getElementById('chat-messages');
+        if (!messagesEl) return;
+
+        const esc = BossModUtils.escapeHtml;
+        messagesEl.innerHTML = '';
+
+        if (!messages || messages.length === 0) {
+            messagesEl.innerHTML = `
+                <div class="text-bm-muted text-sm text-center mt-4">
+                    <p>Chat with <strong>${esc(agentName)}</strong></p>
+                    <p class="text-xs mt-1">Send a message to activate this agent.</p>
+                </div>`;
+            return;
+        }
+
+        for (const msg of messages) {
+            appendChatMessage(msg.content, msg.from);
+        }
     }
 
     function bindChatSend() {
@@ -314,11 +351,21 @@ const AgentContext = (() => {
 
     function handleChatMessage(data) {
         if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
+        const cached = getCachedChat(data.agent_id) || [];
+        cached.push({
+            content: data.content,
+            from: data.from,
+            from_name: data.from_name,
+            message_id: data.message_id,
+            created_at: data.created_at,
+        });
+        setCachedChat(data.agent_id, cached);
         hideTypingIndicator();
         appendChatMessage(data.content, data.from);
     }
 
     async function handleChatReset(data) {
+        chatCache.delete(String(data.agent_id));
         if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
         hideTypingIndicator();
         if (activeSubview === 'chat') {
@@ -341,6 +388,20 @@ const AgentContext = (() => {
     function hideTypingIndicator() {
         const el = document.getElementById('chat-typing-indicator');
         if (el) el.remove();
+    }
+
+    function showChatSyncIndicator() {
+        const messagesEl = document.getElementById('chat-messages');
+        if (!messagesEl) return;
+        let indicator = document.getElementById('chat-sync-indicator');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'chat-sync-indicator';
+            indicator.className = 'text-[11px] text-bm-muted italic mb-2';
+            indicator.textContent = 'Refreshing chat...';
+            messagesEl.appendChild(indicator);
+        }
+        messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     // ─── Edit sub-view ───

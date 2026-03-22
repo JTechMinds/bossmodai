@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     completion_summary TEXT,
     status_note    TEXT,
     watchdog_pinged_at TIMESTAMP,
+    last_progress_at TIMESTAMP DEFAULT current_timestamp,
+    last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
@@ -284,4 +286,25 @@ CREATE TABLE IF NOT EXISTS diagnostics (
     error               TEXT,
     duration_ms         INTEGER DEFAULT 0,
     created_at          TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Diagnostic step trace — per-iteration turn detail for admin debugging
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS diagnostic_steps (
+    id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    diagnostic_id     VARCHAR NOT NULL REFERENCES diagnostics(id),
+    step_index        INTEGER NOT NULL,
+    action_name       VARCHAR,
+    context_snapshot  TEXT,
+    raw_response      TEXT,
+    parsed_action     TEXT,
+    result            TEXT,
+    prompt_tokens     INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens      INTEGER DEFAULT 0,
+    duration_ms       INTEGER DEFAULT 0,
+    error             TEXT,
+    created_at        TIMESTAMP DEFAULT current_timestamp
 );

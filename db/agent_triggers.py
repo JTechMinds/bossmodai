@@ -133,6 +133,66 @@ def has_open_trigger(agent_id: str) -> bool:
     return count_queued_triggers(agent_id) > 0
 
 
+def has_open_trigger_matching(
+    agent_id: str,
+    *,
+    trigger_types: list[str] | None = None,
+    task_id: str | None = None,
+) -> bool:
+    """Return whether a matching queued/claimed trigger already exists."""
+    conditions = ["agent_id = $1", "status IN ('queued', 'claimed')"]
+    params: list[Any] = [agent_id]
+
+    if trigger_types:
+        placeholders = ", ".join(f"${len(params) + i + 1}" for i in range(len(trigger_types)))
+        conditions.append(f"trigger_type IN ({placeholders})")
+        params.extend(trigger_types)
+
+    if task_id is not None:
+        params.append(task_id)
+        conditions.append(f"task_id = ${len(params)}")
+
+    row = query_one(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE {' AND '.join(conditions)}
+        """,
+        params,
+    )
+    return bool(row and int(row["cnt"]) > 0)
+
+
+def has_queued_trigger_matching(
+    agent_id: str,
+    *,
+    trigger_types: list[str] | None = None,
+    task_id: str | None = None,
+) -> bool:
+    """Return whether a matching queued trigger already exists."""
+    conditions = ["agent_id = $1", "status = 'queued'"]
+    params: list[Any] = [agent_id]
+
+    if trigger_types:
+        placeholders = ", ".join(f"${len(params) + i + 1}" for i in range(len(trigger_types)))
+        conditions.append(f"trigger_type IN ({placeholders})")
+        params.extend(trigger_types)
+
+    if task_id is not None:
+        params.append(task_id)
+        conditions.append(f"task_id = ${len(params)}")
+
+    row = query_one(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE {' AND '.join(conditions)}
+        """,
+        params,
+    )
+    return bool(row and int(row["cnt"]) > 0)
+
+
 def list_agent_triggers(
     agent_id: str,
     status: str | None = None,

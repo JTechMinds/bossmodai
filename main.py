@@ -5,6 +5,7 @@ and WebSocket connections. Launched by the Tauri desktop shell
 or directly via `uv run python main.py` for development.
 """
 
+import hashlib
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,6 +50,19 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(api_router)
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+def static_url(path: str) -> str:
+    """Return a cache-busted URL for a static file."""
+    file_path = STATIC_DIR / path
+    try:
+        content_hash = hashlib.md5(file_path.read_bytes()).hexdigest()[:8]
+        return f"/static/{path}?h={content_hash}"
+    except FileNotFoundError:
+        return f"/static/{path}"
+
+
+templates.env.globals["static_url"] = static_url
 
 
 @app.get("/")

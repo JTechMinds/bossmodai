@@ -28,6 +28,15 @@ from api.websocket import manager
 from core import config
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.guardian import check_no_progress, check_post_action
+from core.agent_loop.liveness import record_action_liveness
+from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.policies import get_trigger_policy
+from core.agent_loop.turn_rules import (
+    maybe_append_resume_trigger,
+    queue_task_resumed_trigger,
+    should_end_turn_after_action,
+    validate_action_for_turn,
+)
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 from core.models.message import HUMAN_SENDER_ID
@@ -40,7 +49,7 @@ async def run_turn(
     agent: Agent,
     state: AgentState,
     trigger: dict[str, Any],
-) -> dict[str, Any]:
+) -> TurnOutcome:
     """Execute a multi-turn agent activation.
 
     Loops calling the LLM until the agent produces a terminal action
@@ -52,6 +61,7 @@ async def run_turn(
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
 
     trigger_type = trigger.get("type", "unknown")
+    policy = get_trigger_policy(trigger_type)
 
     # 1. Determine activation mode
     mode = _determine_mode(trigger)
@@ -84,21 +94,52 @@ async def run_turn(
         )
     )
     initial_context_json = json.dumps(context)
+    initial_task_id = state.current_task_id
+
+    if policy.require_task_context and not initial_task_id:
+        result = {
+            "event": "agent_error",
+            "detail": f"{agent.name} could not find an active task for {trigger_type}",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        return await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=initial_context_json,
+            outcome=TurnOutcome.failure(
+                result=result,
+                error="Trigger requires active task context",
+                action=None,
+                action_summary="",
+                raw_response="",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+            ),
+            start=start,
+        )
 
     # 4. Multi-turn loop
     action_count = 0
     action: dict[str, Any] | None = None
+    executed_actions: list[str] = []
     result: dict[str, Any] = {}
-    diagnostic_status = "success"
-    last_action_name = ""
     last_response_content = ""
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
-    diagnostic_error: str | None = None
+    step_traces: list[dict[str, Any]] = []
+    next_step_delta: str | None = None
 
     while True:
         action_count += 1
+        step_started = time.monotonic()
+        prompt_delta = next_step_delta
 
         # Call LLM
         try:
@@ -110,23 +151,46 @@ async def run_turn(
             )
         except client.LLMError as exc:
             logger.error("LLM call failed for %s: %s", agent.name, exc)
-            diagnostic_status = "error"
-            diagnostic_error = str(exc)
-            if state.current_task_id:
-                db.update_task(
-                    state.current_task_id,
-                    status="blocked",
-                    status_note=f"System provider failure: {exc}",
-                    watchdog_pinged_at=None,
-                )
-                state = db.update_agent_state(agent.id, current_task_id=None) or state
             result = {
-                "event": "agent_updated",
+                "event": "agent_error",
                 "detail": f"{agent.name} LLM call failed: {exc}",
                 "agent_name": agent.name,
             }
-            await manager.broadcast_activity(**{k: result[k] for k in ("event", "detail", "agent_name")})
-            break
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=str(exc),
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, ""),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=None,
+                            action=None,
+                            result=result,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=str(exc),
+                        ),
+                    ],
+                ),
+                start=start,
+            )
 
         total_prompt_tokens += response.prompt_tokens
         total_completion_tokens += response.completion_tokens
@@ -141,31 +205,125 @@ async def run_turn(
         # Parse action
         action = parse_action(response.content)
         action_name = action["action"]
-        last_action_name = action_name
 
-        if not state.current_task_id:
+        if not _get_active_task_id(agent.id, state):
             state = _maybe_start_implicit_task(agent, state, trigger, action)
+        active_task_id = _get_active_task_id(agent.id, state)
 
         # Handle parse failure
         if action_name == "_parse_failed":
             logger.warning("Parse failure for %s: %s", agent.name, action.get("_raw_snippet", ""))
-            diagnostic_status = "error"
-            diagnostic_error = f"Failed to parse action JSON: {action.get('_raw_snippet', '')}"
-            action["action"] = "idle"
-            action_name = "idle"
-            result = await execute_action(action, agent, state)
-            break
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} returned invalid action JSON",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, ""),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=last_response_content,
+                            action=action,
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
+                        ),
+                    ],
+                ),
+                start=start,
+            )
+
+        validation_error = validate_action_for_turn(action, policy, active_task_id)
+        if validation_error:
+            logger.warning("Contextual action validation failed for %s: %s", agent.name, validation_error)
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} returned an invalid task action",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=validation_error,
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, action_name),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=last_response_content,
+                            action=action,
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=validation_error,
+                        ),
+                    ],
+                ),
+                start=start,
+            )
 
         logger.info(
             "Agent %s action: %s (thought: %s)",
             agent.name, action_name, action.get("thought", "")[:100],
         )
+        executed_actions.append(action_name)
 
         # Execute action
         result = await execute_action(action, agent, state)
+        active_task_id = _get_active_task_id(agent.id, state)
+        maybe_append_resume_trigger(
+            result,
+            agent_id=agent.id,
+            policy=policy,
+            initial_task_id=initial_task_id,
+            active_task_id=active_task_id,
+        )
 
         # Broadcast action result immediately
         await manager.broadcast_world_state()
+
+        thought_text = action.get("thought", "")
+        if thought_text:
+            await manager.broadcast_thought(
+                agent_id=agent.id, thought=thought_text, action_name=action_name,
+            )
+
         await manager.broadcast_activity(
             event=result.get("event", "agent_updated"),
             detail=result.get("detail", ""),
@@ -195,38 +353,111 @@ async def run_turn(
                 task_id=queued.get("task_id"),
             )
 
-        if state.current_task_id:
-            db.update_task(
-                state.current_task_id,
-                last_activity=datetime.now(timezone.utc),
-                watchdog_pinged_at=None,
-            )
+        record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
 
         # Guardian hard-stop checks (token explosion, velocity, repetition)
         violation = check_post_action(agent, action, response.content)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            diagnostic_status = "error"
-            diagnostic_error = f"Guardian [{violation.rule}]: {violation.detail}"
-            await manager.broadcast_activity(
-                event="guardian_violation",
-                detail=f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
-                agent_name=agent.name,
+            result = {
+                "event": "guardian_violation",
+                "detail": f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=f"Guardian [{violation.rule}]: {violation.detail}",
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, action_name),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=last_response_content,
+                            action=action,
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=f"Guardian [{violation.rule}]: {violation.detail}",
+                        ),
+                    ],
+                ),
+                start=start,
             )
-            break
 
         # Guardian no-progress check
         violation = check_no_progress(agent, action_count)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            diagnostic_status = "error"
-            diagnostic_error = f"Guardian [{violation.rule}]: {violation.detail}"
-            await manager.broadcast_activity(
-                event="guardian_violation",
-                detail=f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
-                agent_name=agent.name,
+            result = {
+                "event": "guardian_violation",
+                "detail": f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=f"Guardian [{violation.rule}]: {violation.detail}",
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, action_name),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=last_response_content,
+                            action=action,
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=f"Guardian [{violation.rule}]: {violation.detail}",
+                        ),
+                    ],
+                ),
+                start=start,
             )
-            break
+
+        step_traces.append(
+            _build_step_trace(
+                step_index=action_count,
+                context_snapshot=prompt_delta,
+                raw_response=last_response_content,
+                action=action,
+                result=result,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
+                duration_ms=int((time.monotonic() - step_started) * 1000),
+            )
+        )
 
         # Terminal action — loop ends
         if action_name in TERMINAL_ACTIONS:
@@ -236,47 +467,58 @@ async def run_turn(
         if action_name == "walkTo":
             break
 
+        if should_end_turn_after_action(action, policy):
+            break
+
+        if _has_pending_interrupts(agent.id):
+            queue_task_resumed_trigger(result, agent_id=agent.id, task_id=active_task_id)
+            for queued in result.get("queued_triggers", []):
+                from core.agent_loop.dispatcher import dispatcher
+
+                dispatcher.enqueue_trigger(
+                    agent_id=queued["agent_id"],
+                    trigger_type=queued["trigger_type"],
+                    source_channel=queued["source_channel"],
+                    payload=queued["payload"],
+                    task_id=queued.get("task_id"),
+                )
+            result["queued_triggers"] = []
+            break
+
         # Non-terminal action — feed result back and continue
-        context.append({"role": "assistant", "content": response.content})
-        context.append({
-            "role": "user",
-            "content": (
-                f"Action executed: {result.get('detail', action_name)}. "
-                f"Continue working or sign off (complete/blocked/delegated/abandoned)."
-            ),
-        })
+        continuation_messages = [
+            {"role": "assistant", "content": response.content},
+            {
+                "role": "user",
+                "content": (
+                    f"Action executed: {result.get('detail', action_name)}. "
+                    f"Continue working or sign off (complete/blocked/delegated/abandoned)."
+                ),
+            },
+        ]
+        context.extend(continuation_messages)
+        next_step_delta = _serialize_trace_value(continuation_messages)
 
-    # 5. Guarantee agent returns to idle (unless walking)
-    final_state = db.get_agent_state(agent.id)
-    if final_state and final_state.status not in ("idle", "in_transit"):
-        db.update_agent_state(agent.id, status="idle")
-
-    # Always update last_active_at to prevent re-triggering
-    db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
-
-    # 6. Diagnostic for the full activation
-    diag = db.create_diagnostic(
-        agent_id=agent.id, agent_name=agent.name,
-        trigger_type=trigger_type, trigger_data=json.dumps(trigger),
-        status=diagnostic_status, mode=mode, model=model, model_source=model_source,
-        context=initial_context_json, raw_response=last_response_content,
-        action_name=last_action_name, parsed_action=json.dumps(action) if action else None,
-        result=json.dumps(result, default=str),
-        prompt_tokens=total_prompt_tokens,
-        completion_tokens=total_completion_tokens,
-        total_tokens=total_tokens,
-        error=diagnostic_error,
-        duration_ms=int((time.monotonic() - start) * 1000),
+    return await _finalize_turn(
+        agent=agent,
+        trigger=trigger,
+        trigger_type=trigger_type,
+        mode=mode,
+        model=model,
+        model_source=model_source,
+        initial_context_json=initial_context_json,
+        outcome=TurnOutcome.success(
+            result=result,
+            action=action,
+            action_summary=_summarize_action_chain(executed_actions, action["action"] if action else ""),
+            raw_response=last_response_content,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            total_tokens=total_tokens,
+            steps=step_traces,
+        ),
+        start=start,
     )
-    await manager.broadcast_diagnostic(diag)
-
-    logger.info(
-        "Turn complete for %s: %d actions, %d total tokens, %dms",
-        agent.name, action_count, total_tokens,
-        int((time.monotonic() - start) * 1000),
-    )
-
-    return result
 
 
 async def _skip_turn(
@@ -286,7 +528,7 @@ async def _skip_turn(
     mode: str,
     model_source: str,
     start: float,
-) -> dict[str, Any]:
+) -> TurnOutcome:
     """Handle the case where no model is configured for the activation mode."""
     logger.warning(
         "No model configured for %s (mode=%s) — skipping turn.",
@@ -308,17 +550,21 @@ async def _skip_turn(
         )
         db.update_agent_state(agent.id, current_task_id=None)
 
-    db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
-
-    diag = db.create_diagnostic(
-        agent_id=agent.id, agent_name=agent.name,
-        trigger_type=trigger_type, trigger_data=json.dumps(trigger),
-        status="skipped", mode=mode, model=None, model_source=model_source,
-        error=f"No model configured for '{mode}' mode",
-        duration_ms=int((time.monotonic() - start) * 1000),
+    return await _finalize_turn(
+        agent=agent,
+        trigger=trigger,
+        trigger_type=trigger_type,
+        mode=mode,
+        model=None,
+        model_source=model_source,
+        initial_context_json=None,
+        outcome=TurnOutcome.skipped(
+            result=result,
+            error=f"No model configured for '{mode}' mode",
+            steps=[],
+        ),
+        start=start,
     )
-    await manager.broadcast_diagnostic(diag)
-    return result
 
 
 def _determine_mode(trigger: dict[str, Any]) -> routing.ActivationMode:
@@ -440,3 +686,123 @@ def _maybe_start_implicit_task(
     )
     db.update_task(task.id, status="active")
     return db.update_agent_state(agent.id, current_task_id=task.id) or state
+
+
+def _summarize_action_chain(executed_actions: list[str], fallback: str) -> str:
+    """Render a concise diagnostic label for the turn's action flow."""
+    chain = [action for action in executed_actions if action]
+    if not chain:
+        return fallback or ""
+    if len(chain) <= 4:
+        return " -> ".join(chain)
+    return " -> ".join([*chain[:3], chain[-1]])
+
+
+def _get_active_task_id(agent_id: str, fallback_state: AgentState) -> str | None:
+    """Fetch the latest active task pointer after an action mutates agent state."""
+    refreshed_state = db.get_agent_state(agent_id)
+    if refreshed_state:
+        return refreshed_state.current_task_id
+    return fallback_state.current_task_id
+
+
+def _has_pending_interrupts(agent_id: str) -> bool:
+    """Return whether queued interrupt-style triggers are waiting for the agent."""
+    return db.has_queued_trigger_matching(
+        agent_id,
+        trigger_types=["human_chat", "peer_message", "watchdog_status_ping"],
+    )
+
+
+def _serialize_trace_value(value: Any) -> str | None:
+    """Serialize structured trace content for persistence."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str)
+
+
+def _build_step_trace(
+    *,
+    step_index: int,
+    context_snapshot: str | None,
+    raw_response: str | None,
+    action: dict[str, Any] | None,
+    result: dict[str, Any] | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    duration_ms: int,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Create a normalized per-step execution trace record."""
+    action_name = ""
+    if action:
+        action_name = str(action.get("action") or "")
+
+    return {
+        "step_index": step_index,
+        "action_name": action_name,
+        "context_snapshot": context_snapshot,
+        "raw_response": raw_response,
+        "parsed_action": _serialize_trace_value(action),
+        "result": _serialize_trace_value(result),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "duration_ms": duration_ms,
+        "error": error,
+    }
+
+
+async def _finalize_turn(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    trigger_type: str,
+    mode: str,
+    model: str | None,
+    model_source: str,
+    initial_context_json: str | None,
+    outcome: TurnOutcome,
+    start: float,
+) -> TurnOutcome:
+    """Normalize state, persist diagnostics, and return the final turn outcome."""
+    final_state = db.get_agent_state(agent.id)
+    if final_state and final_state.status not in ("idle", "in_transit"):
+        db.update_agent_state(agent.id, status="idle")
+
+    db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
+
+    diag = db.create_diagnostic(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        trigger_type=trigger_type,
+        trigger_data=json.dumps(trigger),
+        status=outcome.diagnostic_status,
+        mode=mode,
+        model=model,
+        model_source=model_source,
+        context=initial_context_json,
+        raw_response=outcome.raw_response,
+        action_name=outcome.action_summary,
+        parsed_action=json.dumps(outcome.action) if outcome.action else None,
+        result=json.dumps(outcome.result, default=str),
+        prompt_tokens=outcome.prompt_tokens,
+        completion_tokens=outcome.completion_tokens,
+        total_tokens=outcome.total_tokens,
+        error=outcome.diagnostic_error,
+        duration_ms=int((time.monotonic() - start) * 1000),
+        steps=outcome.steps,
+    )
+    await manager.broadcast_diagnostic(diag)
+
+    logger.info(
+        "Turn complete for %s: trigger_status=%s, tokens=%d, %dms",
+        agent.name,
+        outcome.trigger_status,
+        outcome.total_tokens,
+        int((time.monotonic() - start) * 1000),
+    )
+    return outcome

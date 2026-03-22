@@ -12,6 +12,7 @@ from typing import Any
 from api.websocket import manager
 from core import config
 from core.agent_loop.loop import run_turn
+from core.agent_loop.policies import get_trigger_policy
 from core.models.message import HUMAN_SENDER_ID
 import db
 
@@ -143,14 +144,21 @@ class TurnDispatcher:
                 db.fail_agent_trigger(trigger.id, "Agent not found")
                 continue
 
-            status = "social_active" if trigger.trigger_type == "social" else "work_active"
-            state = db.update_agent_state(
-                agent.id,
-                status=status,
-                current_task_id=trigger.task_id,
-            )
+            policy = get_trigger_policy(trigger.trigger_type)
+            state_updates: dict[str, Any] = {
+                "status": policy.activation_status,
+            }
+            if policy.bind_trigger_task and trigger.task_id:
+                state_updates["current_task_id"] = trigger.task_id
+
+            state = db.update_agent_state(agent.id, **state_updates)
             if state is None:
                 db.fail_agent_trigger(trigger.id, "Agent state not found")
+                continue
+
+            if policy.require_task_context and not state.current_task_id:
+                db.fail_agent_trigger(trigger.id, "Trigger requires active task context")
+                db.update_agent_state(agent.id, status="idle")
                 continue
 
             if trigger.task_id:
@@ -166,8 +174,13 @@ class TurnDispatcher:
         task_id = trigger.get("task_id")
 
         try:
-            result = await run_turn(agent, state, trigger)
-            db.complete_agent_trigger(trigger_id)
+            outcome = await run_turn(agent, state, trigger)
+            result = outcome.result
+
+            if outcome.trigger_status == "completed":
+                db.complete_agent_trigger(trigger_id)
+            else:
+                db.fail_agent_trigger(trigger_id, outcome.diagnostic_error or "Turn failed")
 
             if result.get("path") and result.get("agent_id"):
                 from core.world.simulation import simulation
@@ -178,13 +191,7 @@ class TurnDispatcher:
             logger.exception("Trigger execution failed for %s", agent.name)
             db.fail_agent_trigger(trigger_id, str(exc))
             try:
-                if task_id:
-                    db.update_task(
-                        task_id,
-                        status="blocked",
-                        status_note=f"System failure while executing trigger: {exc}",
-                    )
-                db.update_agent_state(agent.id, status="idle", current_task_id=None)
+                db.update_agent_state(agent.id, status="idle")
                 await manager.broadcast_activity(
                     event="agent_error",
                     detail=f"{agent.name} failed while processing a trigger",

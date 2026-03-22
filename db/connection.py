@@ -46,6 +46,8 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
         ("tasks", "completion_summary", "ALTER TABLE tasks ADD COLUMN completion_summary TEXT"),
         ("tasks", "status_note", "ALTER TABLE tasks ADD COLUMN status_note TEXT"),
         ("tasks", "watchdog_pinged_at", "ALTER TABLE tasks ADD COLUMN watchdog_pinged_at TIMESTAMP"),
+        ("tasks", "last_progress_at", "ALTER TABLE tasks ADD COLUMN last_progress_at TIMESTAMP"),
+        ("tasks", "last_heartbeat_at", "ALTER TABLE tasks ADD COLUMN last_heartbeat_at TIMESTAMP"),
         ("diagnostics", "status", None),
     ]
     for table, column, ddl in migrations:
@@ -58,6 +60,18 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
                 logger.info("Migration: added %s.%s", table, column)
         except Exception:
             pass
+
+    try:
+        con.execute(
+            """
+            UPDATE tasks
+            SET
+                last_progress_at = COALESCE(last_progress_at, last_activity, created_at),
+                last_heartbeat_at = COALESCE(last_heartbeat_at, last_activity, created_at)
+            """
+        )
+    except Exception:
+        pass
 
 
 def close_connection() -> None:

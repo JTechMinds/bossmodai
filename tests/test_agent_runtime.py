@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -17,6 +19,7 @@ from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.loop import run_turn
+from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.watchdog import watchdog
 from core.llm import client, routing
 from core.models.message import HUMAN_SENDER_ID
@@ -145,6 +148,300 @@ async def test_run_turn_keeps_work_artifacts_out_of_human_chat(isolated_db, monk
     artifacts = db.get_recent_work_artifacts(agent.id, limit=10)
     assert any(msg.content == "Report body" for msg in artifacts)
 
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "work -> message"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert [step["action_name"] for step in detail["steps"]] == ["work", "message"]
+    assert detail["steps"][0]["context_snapshot"] is None
+    assert "Action executed:" in (detail["steps"][1]["context_snapshot"] or "")
+    assert detail["steps"][0]["result"] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_turn_chat_reply_stops_without_forcing_followup_work(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, status="idle")
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "How do you like the office?", message_type="human")
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"action":"message","recipientType":"human","content":"I like it here.","thought":"reply"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"action":"work","output":"This should never be reached.","tracking":"task","thought":"oops"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "How do you like the office?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=20)
+    assert [msg.content for msg in thread] == ["How do you like the office?", "I like it here."]
+    assert db.get_recent_work_artifacts(agent.id, limit=10) == []
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "message"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_status_reply_requeues_resume_for_active_task(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "How's it going?", message_type="human")
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"action":"message","recipientType":"human","content":"Almost done. I need to finish a few more tests.","thought":"status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "How's it going?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+            "task_id": task.id,
+        },
+    )
+
+    queued = db.list_agent_triggers(agent.id, status="queued", limit=10)
+    assert queued[0]["trigger_type"] == "task_resumed"
+    assert queued[0]["task_id"] == task.id
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "message"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_yields_after_work_when_human_chat_is_queued(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    db.create_agent_trigger(
+        agent.id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={"content": "How's it going?", "from_name": "Human Operator"},
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    call_count = 0
+
+    async def fake_completion(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return client.LLMResponse(
+            content='{"action":"work","output":"Implemented the endpoint scaffold.","tracking":"task","thought":"progress"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "task_resumed",
+            "content": 'Resume work on "Fix the API bug".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert call_count == 1
+    queued = db.list_agent_triggers(agent.id, status="queued", limit=10)
+    trigger_types = [entry["trigger_type"] for entry in queued]
+    assert trigger_types.count("human_chat") == 1
+    assert trigger_types.count("task_resumed") == 1
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "work"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_idle_with_active_task_fails_context_validation(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "How's it going?", message_type="human")
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"action":"idle","thought":"nothing to do"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "How's it going?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.trigger_status == "failed"
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["status"] == "error"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert len(detail["steps"]) == 1
+    assert "cannot use \"idle\"" in (detail["steps"][0]["error"] or "")
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id == task.id
+
+
+@pytest.mark.asyncio
+async def test_run_turn_rejects_mismatched_explicit_task_id(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "Taylor fix the api bug", message_type="human")
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"action":"complete","taskId":"api_bug","summary":"done","thought":"finished"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Taylor fix the api bug",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+            "task_id": task.id,
+        },
+    )
+
+    assert outcome.trigger_status == "failed"
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["status"] == "error"
+    assert "taskId must match" in (diagnostics[0]["error"] or "")
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "active"
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id == task.id
+
 
 def test_parse_action_requires_explicit_tracking_for_stateful_actions(isolated_db):
     parsed = parse_action('{"action":"walkTo","destination":"desk","thought":"move"}')
@@ -186,6 +483,42 @@ async def test_message_action_routes_to_agent_by_explicit_id(isolated_db):
     assert result["queued_triggers"][0]["agent_id"] == target.id
     assert result["queued_triggers"][0]["trigger_type"] == "peer_message"
     assert result["queued_triggers"][0]["payload"]["from_name"] == sender.name
+
+
+@pytest.mark.asyncio
+async def test_complete_action_does_not_clear_task_on_mismatched_task_id(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+
+    result = await execute_action(
+        {
+            "action": "complete",
+            "taskId": "api_bug",
+            "summary": "done",
+            "thought": "finished",
+        },
+        agent,
+        state,
+    )
+
+    assert result["event"] == "agent_error"
+    assert "taskId must match" in result["detail"]
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "active"
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id == task.id
 
 
 @pytest.mark.asyncio
@@ -271,6 +604,8 @@ async def test_watchdog_enqueues_status_ping_for_quiet_active_task(isolated_db, 
     db.update_task(
         task.id,
         status="active",
+        last_progress_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        last_heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=20),
         last_activity=datetime.now(timezone.utc) - timedelta(minutes=20),
     )
 
@@ -502,6 +837,84 @@ async def test_arrival_in_break_room_requests_attention_for_active_task(isolated
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_preserves_active_task_on_human_chat_trigger(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    db.update_agent_state(agent.id, status="idle", current_task_id=task.id)
+    db.create_agent_trigger(
+        agent.id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={"content": "How's it going?", "from_name": "Human Operator"},
+    )
+
+    async def fake_run_trigger(agent_arg, state_arg, trigger_arg):
+        return None
+
+    monkeypatch.setattr(dispatcher, "_run_trigger", fake_run_trigger)
+
+    await dispatcher._drain_queue()
+    await asyncio.sleep(0)
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id == task.id
+    dispatcher._active_turns.clear()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_marks_failed_turns_as_failed_triggers(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, status="idle")
+    trigger = db.create_agent_trigger(
+        agent.id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={"content": "hello", "from_name": "Human Operator"},
+    )
+
+    async def fake_run_turn(agent_arg, state_arg, trigger_arg):
+        return TurnOutcome.failure(
+            result={"event": "agent_error", "detail": "bad json", "agent_name": agent_arg.name},
+            error="bad json",
+            action={"action": "_parse_failed"},
+            action_summary="",
+            raw_response="{",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+
+    await dispatcher._run_trigger(
+        agent,
+        state,
+        {
+            **json.loads(trigger.payload),
+            "type": trigger.trigger_type,
+            "trigger_id": trigger.id,
+            "task_id": trigger.task_id,
+            "source_channel": trigger.source_channel,
+        },
+    )
+
+    refreshed = db.get_agent_trigger(trigger.id)
+    assert refreshed is not None
+    assert refreshed.status == "failed"
+    assert refreshed.failure_reason == "bad json"
+
+
+@pytest.mark.asyncio
 async def test_clear_agent_chat_history_only_deletes_direct_chat(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -554,3 +967,74 @@ async def test_reset_agent_runtime_blocks_active_task_and_clears_open_triggers(i
     assert refreshed_state.status == "idle"
     assert refreshed_state.current_task_id is None
     assert db.count_queued_triggers(agent.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_watchdog_skips_tasks_when_agent_has_open_triggers(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    task = db.create_task(
+        title="Investigate bug",
+        description="Debug the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    old = datetime.now(timezone.utc) - timedelta(minutes=30)
+    db.update_task(
+        task.id,
+        status="active",
+        last_progress_at=old,
+        last_heartbeat_at=old,
+        last_activity=old,
+    )
+    db.create_agent_trigger(
+        agent.id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={"content": "status?"},
+    )
+
+    queued: list[dict] = []
+    monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
+    monkeypatch.setattr(dispatcher, "is_active", lambda _agent_id: False)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+
+    await watchdog._check_tasks()
+
+    assert queued == []
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.watchdog_pinged_at is None
+
+
+@pytest.mark.asyncio
+async def test_watchdog_respects_recent_heartbeat_without_progress(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    task = db.create_task(
+        title="Investigate bug",
+        description="Debug the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    old = datetime.now(timezone.utc) - timedelta(minutes=30)
+    recent = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.update_task(
+        task.id,
+        status="active",
+        last_progress_at=old,
+        last_heartbeat_at=recent,
+        last_activity=recent,
+    )
+
+    queued: list[dict] = []
+    monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
+    monkeypatch.setattr(dispatcher, "is_active", lambda _agent_id: False)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+
+    await watchdog._check_tasks()
+
+    assert queued == []
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.watchdog_pinged_at is None

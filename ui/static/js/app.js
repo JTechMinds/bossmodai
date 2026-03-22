@@ -195,6 +195,12 @@ const BossModApp = (() => {
                     DiagnosticsView.addEntry(msg.data);
                 }
                 break;
+
+            case 'agent_thought':
+                if (typeof OfficeCanvas !== 'undefined') {
+                    OfficeCanvas.showThought(msg.data.agent_id, msg.data.thought);
+                }
+                break;
         }
     }
 

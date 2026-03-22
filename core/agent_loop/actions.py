@@ -39,6 +39,7 @@ _DESTINATIONS = {
 _TRACKING_REQUIRED_ACTIONS = {"work", "walkTo", "attendMeeting", "remoteMeeting"}
 _VALID_TRACKING = {"chat", "task"}
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
+_TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,11 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         if not isinstance(agent_id, str) or not agent_id.strip():
             return '"attendMeeting" requires a non-empty "agentId" when provided'
 
+    if action_name in _TASK_LIFECYCLE_ACTIONS and action.get("taskId") not in (None, ""):
+        task_id = action.get("taskId")
+        if not isinstance(task_id, str) or not task_id.strip():
+            return f'"{action_name}" requires a non-empty "taskId" when provided'
+
     return None
 
 
@@ -143,6 +149,35 @@ def _resolve_agent_by_id(agent_id: Any) -> Agent | None:
     if not isinstance(agent_id, str) or not agent_id.strip():
         return None
     return db.get_agent(agent_id.strip())
+
+
+def _resolve_task_lifecycle_target(
+    state: AgentState,
+    action: dict[str, Any],
+    *,
+    action_name: str,
+) -> tuple[str | None, str | None]:
+    """Resolve the task targeted by a lifecycle action.
+
+    Task lifecycle actions must act on the currently bound active task. Models
+    may include ``taskId`` for clarity, but it must match the active task when
+    one exists.
+    """
+    explicit_task_id = action.get("taskId")
+    if isinstance(explicit_task_id, str):
+        explicit_task_id = explicit_task_id.strip() or None
+    else:
+        explicit_task_id = None
+
+    active_task_id = state.current_task_id
+    if explicit_task_id and active_task_id and explicit_task_id != active_task_id:
+        return None, f'"{action_name}" taskId must match the current active task'
+
+    task_id = explicit_task_id or active_task_id
+    if not task_id:
+        return None, f'"{action_name}" requires an active task'
+
+    return task_id, None
 
 
 # ---------------------------------------------------------------------------
@@ -465,17 +500,18 @@ async def _handle_complete(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Mark current task as complete."""
-    task_id = action.get("taskId") or state.current_task_id
+    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="complete")
+    if error:
+        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     summary = action.get("summary", "")
 
-    if task_id:
-        db.update_task(
-            task_id,
-            status="complete",
-            completion_summary=summary or None,
-            status_note=None,
-            watchdog_pinged_at=None,
-        )
+    db.update_task(
+        task_id,
+        status="complete",
+        completion_summary=summary or None,
+        status_note=None,
+        watchdog_pinged_at=None,
+    )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 
@@ -492,17 +528,18 @@ async def _handle_blocked(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Mark current task as blocked."""
-    task_id = action.get("taskId") or state.current_task_id
+    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="blocked")
+    if error:
+        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
 
-    if task_id:
-        db.update_task(
-            task_id,
-            status="blocked",
-            status_note=reason or None,
-            completion_summary=None,
-            watchdog_pinged_at=None,
-        )
+    db.update_task(
+        task_id,
+        status="blocked",
+        status_note=reason or None,
+        completion_summary=None,
+        watchdog_pinged_at=None,
+    )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 
@@ -519,33 +556,32 @@ async def _handle_delegated(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Delegate current task to another agent."""
-    task_id = action.get("taskId") or state.current_task_id
+    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="delegated")
+    if error:
+        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     target = _resolve_agent_by_id(action.get("agentId"))
     if target is None:
         return {"event": "status_changed", "detail": "No valid delegate target specified", "agent_name": agent.name}
 
-    if task_id:
-        db.update_task(
-            task_id,
-            status="delegated",
-            status_note=f"Delegated to {target.name}",
-            watchdog_pinged_at=None,
-        )
+    db.update_task(
+        task_id,
+        status="delegated",
+        status_note=f"Delegated to {target.name}",
+        watchdog_pinged_at=None,
+    )
 
-        # Create a child task for the target agent (vision doc: delegation
-        # creates a formal task record with its own watchdog)
-        original_task = db.get_task(task_id)
-        if original_task:
-            child = db.create_task(
-                title=original_task.title,
-                description=original_task.description,
-                project=original_task.project,
-                assigned_to=target.id,
-                created_by=agent.id,
-                parent_task_id=task_id,
-            )
-        else:
-            child = None
+    # Create a child task for the target agent (vision doc: delegation
+    # creates a formal task record with its own watchdog)
+    original_task = db.get_task(task_id)
+    if original_task:
+        child = db.create_task(
+            title=original_task.title,
+            description=original_task.description,
+            project=original_task.project,
+            assigned_to=target.id,
+            created_by=agent.id,
+            parent_task_id=task_id,
+        )
     else:
         child = None
 
@@ -577,17 +613,18 @@ async def _handle_abandoned(
     action: dict[str, Any],
 ) -> dict[str, Any]:
     """Abandon current task."""
-    task_id = action.get("taskId") or state.current_task_id
+    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="abandoned")
+    if error:
+        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
 
-    if task_id:
-        db.update_task(
-            task_id,
-            status="abandoned",
-            status_note=reason or None,
-            completion_summary=None,
-            watchdog_pinged_at=None,
-        )
+    db.update_task(
+        task_id,
+        status="abandoned",
+        status_note=reason or None,
+        completion_summary=None,
+        watchdog_pinged_at=None,
+    )
 
     db.update_agent_state(agent.id, status="idle", current_task_id=None)
 

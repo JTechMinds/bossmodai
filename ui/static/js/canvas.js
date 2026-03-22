@@ -40,6 +40,20 @@ const OfficeCanvas = (() => {
         [TILE.CHAIR]:   '#b45309',  // amber-700
     };
 
+    // ─── Thought bubble constants ───
+
+    const BUBBLE_MAX_WIDTH = 200;
+    const BUBBLE_PAD_X = 8;
+    const BUBBLE_PAD_Y = 6;
+    const BUBBLE_RADIUS = 8;
+    const BUBBLE_POINTER_W = 8;
+    const BUBBLE_POINTER_H = 6;
+    const BUBBLE_GAP = 4;        // gap between pointer and agent circle
+    const BUBBLE_FONT = '11px system-ui, sans-serif';
+    const BUBBLE_LINE_HEIGHT = 14;
+    const BUBBLE_MAX_LINES = 3;
+    const BUBBLE_FADE_MS = 500;  // fade-out in last 500ms
+
     // ─── State ───
 
     let canvas = null;
@@ -47,6 +61,8 @@ const OfficeCanvas = (() => {
     let mapData = null;
     let agents = [];     // {id, name, x, y, color, status}
     const agentAnimations = new Map();
+    const agentThoughts = new Map();  // agent_id -> { text, timestamp }
+    let thoughtDurationMs = 4000;
     let hoveredAgent = null;
     let scale = 1;
     let animationFrameId = null;
@@ -77,6 +93,9 @@ const OfficeCanvas = (() => {
         } catch (err) {
             console.error('[OfficeCanvas] Failed to load agents:', err);
         }
+
+        // Load thought bubble duration from settings
+        loadThoughtDuration();
 
         render();
 
@@ -141,6 +160,7 @@ const OfficeCanvas = (() => {
         renderRoomLabels();
         renderDesks();
         renderAgents();
+        renderThoughtBubbles();
 
         ctx.restore();
     }
@@ -269,6 +289,174 @@ const OfficeCanvas = (() => {
 
     function getStatusColor(status) {
         return BossModUtils.getStatusColor(status);
+    }
+
+    // ─── Thought bubbles ───
+
+    async function loadThoughtDuration() {
+        try {
+            const res = await fetch('/api/settings?category=simulation');
+            if (!res.ok) return;
+            const settings = await res.json();
+            const setting = settings.find(s => s.key === 'thought_bubble_duration_ms');
+            if (setting) thoughtDurationMs = parseInt(setting.value, 10) || 4000;
+        } catch (err) {
+            console.error('[OfficeCanvas] Failed to load thought duration:', err);
+        }
+    }
+
+    function showThought(agentId, text) {
+        if (!text) return;
+        agentThoughts.set(agentId, { text, timestamp: Date.now() });
+        ensureThoughtTimer();
+        render();
+    }
+
+    function ensureThoughtTimer() {
+        if (agentThoughts.size === 0) return;
+        // If the animation loop is already running (path animations), bubbles
+        // get redrawn each frame automatically. Otherwise, schedule a render
+        // for when the oldest active thought expires.
+        if (animationFrameId) return;
+        // Use a simple timeout to re-render once thoughts might expire
+        const now = Date.now();
+        let soonest = Infinity;
+        for (const thought of agentThoughts.values()) {
+            const remaining = (thought.timestamp + thoughtDurationMs) - now;
+            if (remaining < soonest) soonest = remaining;
+        }
+        if (soonest < Infinity && soonest > 0) {
+            setTimeout(() => { render(); ensureThoughtTimer(); }, Math.min(soonest, 100));
+        }
+    }
+
+    /** Word-wrap text to fit within maxWidth, return array of lines. */
+    function wrapText(text, maxWidth) {
+        ctx.font = BUBBLE_FONT;
+        const words = text.split(' ');
+        const lines = [];
+        let line = '';
+
+        for (const word of words) {
+            const test = line ? `${line} ${word}` : word;
+            if (ctx.measureText(test).width > maxWidth && line) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = test;
+            }
+        }
+        if (line) lines.push(line);
+
+        // Truncate to max lines
+        if (lines.length > BUBBLE_MAX_LINES) {
+            lines.length = BUBBLE_MAX_LINES;
+            lines[BUBBLE_MAX_LINES - 1] = lines[BUBBLE_MAX_LINES - 1].replace(/\s*\S*$/, '\u2026');
+        }
+
+        return lines;
+    }
+
+    function renderThoughtBubbles() {
+        const now = Date.now();
+        let hasActive = false;
+
+        for (const [agentId, thought] of agentThoughts.entries()) {
+            const elapsed = now - thought.timestamp;
+            if (elapsed >= thoughtDurationMs) {
+                agentThoughts.delete(agentId);
+                continue;
+            }
+
+            const agent = agents.find(a => a.id === agentId);
+            if (!agent) continue;
+
+            hasActive = true;
+
+            // Compute opacity (fade out in last BUBBLE_FADE_MS)
+            const remaining = thoughtDurationMs - elapsed;
+            const opacity = remaining < BUBBLE_FADE_MS ? remaining / BUBBLE_FADE_MS : 1;
+
+            const cx = agent.x * TILE_SIZE + TILE_SIZE / 2;
+            const cy = agent.y * TILE_SIZE + TILE_SIZE / 2;
+            const agentRadius = TILE_SIZE * 0.35;
+
+            // Word-wrap the text
+            const textMaxW = BUBBLE_MAX_WIDTH - BUBBLE_PAD_X * 2;
+            const lines = wrapText(thought.text, textMaxW);
+
+            // Calculate bubble dimensions
+            ctx.font = BUBBLE_FONT;
+            let textW = 0;
+            for (const line of lines) {
+                const w = ctx.measureText(line).width;
+                if (w > textW) textW = w;
+            }
+            const bubbleW = textW + BUBBLE_PAD_X * 2;
+            const bubbleH = lines.length * BUBBLE_LINE_HEIGHT + BUBBLE_PAD_Y * 2;
+
+            // Position: centered above agent
+            const bubbleX = cx - bubbleW / 2;
+            const bubbleY = cy - agentRadius - BUBBLE_GAP - BUBBLE_POINTER_H - bubbleH;
+
+            ctx.save();
+            ctx.globalAlpha = opacity;
+
+            // Drop shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
+            ctx.shadowBlur = 4;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 2;
+
+            // Bubble body
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, BUBBLE_RADIUS);
+            ctx.fill();
+
+            // Reset shadow for border
+            ctx.shadowColor = 'transparent';
+
+            // Border
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Pointer triangle
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(cx - BUBBLE_POINTER_W / 2, bubbleY + bubbleH);
+            ctx.lineTo(cx, bubbleY + bubbleH + BUBBLE_POINTER_H);
+            ctx.lineTo(cx + BUBBLE_POINTER_W / 2, bubbleY + bubbleH);
+            ctx.closePath();
+            ctx.fill();
+
+            // Pointer border (left and right edges only)
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(cx - BUBBLE_POINTER_W / 2, bubbleY + bubbleH - 0.5);
+            ctx.lineTo(cx, bubbleY + bubbleH + BUBBLE_POINTER_H);
+            ctx.lineTo(cx + BUBBLE_POINTER_W / 2, bubbleY + bubbleH - 0.5);
+            ctx.stroke();
+
+            // Text
+            ctx.font = BUBBLE_FONT;
+            ctx.fillStyle = '#1e293b';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(
+                    lines[i],
+                    bubbleX + BUBBLE_PAD_X,
+                    bubbleY + BUBBLE_PAD_Y + i * BUBBLE_LINE_HEIGHT,
+                );
+            }
+
+            ctx.restore();
+        }
+
+        if (hasActive) ensureThoughtTimer();
     }
 
     // ─── Hit detection ───
@@ -447,6 +635,7 @@ const OfficeCanvas = (() => {
         render,
         updateAgents,
         handleActivity,
+        showThought,
     };
 })();
 
