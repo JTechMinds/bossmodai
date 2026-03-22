@@ -9,7 +9,7 @@ Orchestrates a complete agent activation:
   6. Broadcast results via WebSocket after every action
 
 Terminal actions: idle, complete, blocked, delegated, abandoned
-Non-terminal actions: work, message, remoteMeeting (loop continues)
+Non-terminal actions: work, message, attendMeeting, remoteMeeting (loop continues)
 Walk action: walkTo ends the loop (movement handled by simulation)
 
 Returns path data for walk_to actions so the caller (simulation)
@@ -419,7 +419,7 @@ def _maybe_start_implicit_task(
         return state
 
     action_name = action.get("action", "")
-    if action_name not in {"work", "walkTo", "remoteMeeting", "complete", "blocked", "delegated", "abandoned"}:
+    if action_name not in {"work", "walkTo", "attendMeeting", "remoteMeeting", "complete", "blocked", "delegated", "abandoned"}:
         return state
 
     tracking = (action.get("tracking") or "").strip().lower()

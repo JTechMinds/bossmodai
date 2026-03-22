@@ -35,7 +35,7 @@ _DESTINATIONS = {
     "hallway": "hallway_main",
 }
 
-_TRACKING_REQUIRED_ACTIONS = {"work", "walkTo", "remoteMeeting"}
+_TRACKING_REQUIRED_ACTIONS = {"work", "walkTo", "attendMeeting", "remoteMeeting"}
 _VALID_TRACKING = {"chat", "task"}
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 
@@ -128,6 +128,11 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         agent_id = action.get("agentId")
         if not isinstance(agent_id, str) or not agent_id.strip():
             return f'"{action_name}" requires a non-empty "agentId"'
+
+    if action_name == "attendMeeting" and action.get("agentId") not in (None, ""):
+        agent_id = action.get("agentId")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            return '"attendMeeting" requires a non-empty "agentId" when provided'
 
     return None
 
@@ -372,6 +377,68 @@ async def _handle_remote_meeting(
     }
 
 
+async def _handle_attend_meeting(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    """Attend an in-person meeting from the meeting room."""
+    topic = (action.get("topic") or "").strip()
+    tracking = (action.get("tracking") or "task").strip().lower()
+    target = None
+    room = get_room_at(state.x, state.y)
+
+    if not room or room["room_type"] != "meeting":
+        room_name = room["name"] if room else "unknown area"
+        return {
+            "event": "world_feedback",
+            "detail": f"You're in the {room_name}. Walk to the meetingRoom first.",
+            "agent_name": agent.name,
+        }
+
+    if action.get("agentId") not in (None, ""):
+        target = _resolve_agent_by_id(action.get("agentId"))
+        if target is None:
+            return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
+
+    meeting_content = f"In-person meeting in Meeting Room: {topic}" if topic else "In-person meeting in Meeting Room"
+    msg = db.create_message(
+        from_agent=agent.id,
+        to_agent=target.id if target else None,
+        content=meeting_content,
+        message_type="meeting",
+        location_x=state.x,
+        location_y=state.y,
+        token_count=count_tokens(meeting_content),
+    )
+
+    detail = f"{agent.name} joined an in-person meeting"
+    if target:
+        detail += f" with {target.name}"
+    if topic:
+        detail += f": {topic}"
+
+    result = {
+        "event": "meeting_started",
+        "detail": detail,
+        "agent_name": agent.name,
+    }
+    if target:
+        result["queued_triggers"] = [{
+            "agent_id": target.id,
+            "trigger_type": "peer_message",
+            "source_channel": "work" if tracking == "task" else "chat",
+            "payload": {
+                "content": meeting_content,
+                "from_agent": agent.id,
+                "from_name": agent.name,
+                "message_type": "meeting",
+                "source_message_id": msg.id,
+            },
+        }]
+    return result
+
+
 async def _handle_idle(
     agent: Agent,
     state: AgentState,
@@ -533,6 +600,7 @@ _ACTION_HANDLERS = {
     "work": _handle_work,
     "message": _handle_message,
     "walkTo": _handle_walk_to,
+    "attendMeeting": _handle_attend_meeting,
     "remoteMeeting": _handle_remote_meeting,
     "idle": _handle_idle,
     "complete": _handle_complete,

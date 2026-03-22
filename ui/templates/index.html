@@ -199,6 +199,17 @@
                     Your browser does not support canvas.
                 </canvas>
             </div>
+
+            <!-- Diagnostic detail (replaces canvas when active) -->
+            <div id="diagnostic-detail-panel" class="hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
+                <div id="diag-detail-header" class="flex items-center justify-between p-4 border-b border-bm-border bg-bm-surface shrink-0">
+                    <div id="diag-detail-summary" class="flex items-center gap-3 min-w-0"></div>
+                    <button id="diag-detail-close" class="p-2 rounded-lg hover:bg-slate-100 transition-colors shrink-0" title="Close detail">
+                        <i data-lucide="x" class="w-5 h-5 text-bm-muted"></i>
+                    </button>
+                </div>
+                <div id="diag-detail-body" class="flex-1 overflow-y-auto p-4 sm:p-6 bg-bm-bg"></div>
+            </div>
         </div>
     </div>
 

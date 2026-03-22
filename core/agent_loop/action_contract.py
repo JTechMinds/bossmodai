@@ -31,6 +31,11 @@ _ACTION_SPECS = [
         example='{"action":"walkTo","destination":"desk","tracking":"chat","thought":"reasoning"}',
     ),
     ActionSpec(
+        name="attendMeeting",
+        description="Attend an in-person meeting from the meetingRoom. Optionally include agentId when meeting with another agent.",
+        example='{"action":"attendMeeting","topic":"topic","tracking":"task","thought":"reasoning"}',
+    ),
+    ActionSpec(
         name="remoteMeeting",
         description="Start a remote meeting from your current workspace.",
         example='{"action":"remoteMeeting","agentId":"agent-id","topic":"topic","tracking":"task","thought":"reasoning"}',
@@ -85,6 +90,7 @@ def render_action_contract() -> str:
             '  message to human: {"action":"message","recipientType":"human","content":"message text","thought":"reasoning"}',
             '  message to agent: {"action":"message","recipientType":"agent","agentId":"agent-id","content":"message text","thought":"reasoning"}',
             '  remoteMeeting/delegated: use the exact "agentId" from TEAM DIRECTORY.',
+            '  attendMeeting: you may include "agentId" when the in-person meeting is with another agent.',
             "",
             "RESPONSE FORMAT — respond with exactly ONE JSON object:",
         ]
@@ -98,10 +104,10 @@ def render_action_contract() -> str:
             "- Valid JSON only, no markdown or extra text.",
             "- Use message when you need to reply to the human operator.",
             "- If you need location-bound work, walk first and work second.",
-            '- For work, walkTo, and remoteMeeting, include "tracking":"task" if the action should create or continue tracked work; use "tracking":"chat" for simple movement/chat handling.',
-            '- The "tracking" field is required on work, walkTo, and remoteMeeting.',
+            '- For work, walkTo, remoteMeeting, and attendMeeting, include "tracking":"task" if the action should create or continue tracked work; use "tracking":"chat" for simple movement/chat handling.',
+            '- The "tracking" field is required on work, walkTo, remoteMeeting, and attendMeeting.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',
-            '- "thought" is internal reasoning visible to admins.',
+            '- "thought" is a brief admin-visible operational note, not hidden scratch reasoning.',
         ]
     )
     return "\n".join(lines)

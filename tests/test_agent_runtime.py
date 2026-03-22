@@ -48,6 +48,10 @@ async def _noop(*args, **kwargs):
     return None
 
 
+async def _record_world_update(target: list[str], *args, **kwargs):
+    target.append("world")
+
+
 def test_human_chat_thread_excludes_work_artifacts(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -148,6 +152,12 @@ def test_parse_action_requires_explicit_tracking_for_stateful_actions(isolated_d
     assert "tracking" in parsed["_raw_snippet"]
 
 
+def test_parse_action_requires_tracking_for_attend_meeting(isolated_db):
+    parsed = parse_action('{"action":"attendMeeting","topic":"sync","thought":"join"}')
+    assert parsed["action"] == "_parse_failed"
+    assert "tracking" in parsed["_raw_snippet"]
+
+
 def test_parse_action_requires_explicit_message_recipient_contract(isolated_db):
     parsed = parse_action('{"action":"message","to":"Human Operator","content":"hi","thought":"reply"}')
     assert parsed["action"] == "_parse_failed"
@@ -176,6 +186,52 @@ async def test_message_action_routes_to_agent_by_explicit_id(isolated_db):
     assert result["queued_triggers"][0]["agent_id"] == target.id
     assert result["queued_triggers"][0]["trigger_type"] == "peer_message"
     assert result["queued_triggers"][0]["payload"]["from_name"] == sender.name
+
+
+@pytest.mark.asyncio
+async def test_attend_meeting_requires_meeting_room(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    result = await execute_action(
+        {
+            "action": "attendMeeting",
+            "topic": "Weekly sync",
+            "tracking": "task",
+            "thought": "join the meeting",
+        },
+        agent,
+        state,
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "meetingRoom" in result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_attend_meeting_in_room_can_notify_peer(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    target = db.create_agent(name="Morgan", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(agent.id, x=20, y=4, status="work_active")
+
+    result = await execute_action(
+        {
+            "action": "attendMeeting",
+            "agentId": target.id,
+            "topic": "Design review",
+            "tracking": "task",
+            "thought": "join in person",
+        },
+        agent,
+        state,
+    )
+
+    assert result["event"] == "meeting_started"
+    assert "in-person meeting" in result["detail"]
+    assert result["queued_triggers"][0]["agent_id"] == target.id
+    assert result["queued_triggers"][0]["payload"]["message_type"] == "meeting"
 
 
 @pytest.mark.asyncio
@@ -331,6 +387,27 @@ async def test_arrival_resumes_active_task_instead_of_waiting_for_watchdog(isola
     assert len(queued) == 1
     assert queued[0]["trigger_type"] == "task_resumed"
     assert queued[0]["task_id"] == task.id
+
+
+@pytest.mark.asyncio
+async def test_intermediate_movement_broadcasts_world_state(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    db.update_agent_state(agent.id, x=14, y=9, status="in_transit")
+
+    world_updates: list[str] = []
+    monkeypatch.setattr(manager, "broadcast_world_state", lambda: _record_world_update(world_updates))
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+
+    simulation.set_agent_path(agent.id, [(14, 9), (15, 9), (16, 9)])
+    await simulation._advance_movement()
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.x == 15
+    assert refreshed_state.y == 9
+    assert refreshed_state.status == "in_transit"
+    assert world_updates == ["world"]
 
 
 @pytest.mark.asyncio

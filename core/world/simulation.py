@@ -102,6 +102,7 @@ class WorldSimulation:
         """Move in-transit agents along their paths."""
         steps = config.get_int("steps_per_tick") or 1
         completed: list[str] = []
+        moved_any = False
 
         for agent_id, path in self._agent_paths.items():
             if not path:
@@ -113,6 +114,7 @@ class WorldSimulation:
                     break
                 next_x, next_y = path.pop(0)
                 db.update_agent_state(agent_id, x=next_x, y=next_y)
+                moved_any = True
 
             if not path:
                 completed.append(agent_id)
@@ -164,7 +166,7 @@ class WorldSimulation:
                 else:
                     dispatcher.notify_agent_idle(agent_id)
 
-        if completed:
+        if moved_any:
             await manager.broadcast_world_state()
 
 
