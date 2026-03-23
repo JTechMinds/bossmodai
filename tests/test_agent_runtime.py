@@ -101,7 +101,14 @@ async def test_run_turn_keeps_work_artifacts_out_of_human_chat(isolated_db, monk
 
     responses = iter([
         client.LLMResponse(
-            content='{"action":"work","output":"Report body","tracking":"task","thought":"draft"}',
+            content='{"action":"startTask","title":"Finish the report","description":"Please finish the report.","thought":"formalize the assignment"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"action":"work","output":"Report body","thought":"draft"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -149,10 +156,10 @@ async def test_run_turn_keeps_work_artifacts_out_of_human_chat(isolated_db, monk
     assert any(msg.content == "Report body" for msg in artifacts)
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
-    assert diagnostics[0]["action_name"] == "work -> message"
+    assert diagnostics[0]["action_name"] == "startTask -> work -> message"
     detail = db.get_diagnostic(diagnostics[0]["id"])
     assert detail is not None
-    assert [step["action_name"] for step in detail["steps"]] == ["work", "message"]
+    assert [step["action_name"] for step in detail["steps"]] == ["startTask", "work", "message"]
     assert detail["steps"][0]["context_snapshot"] is None
     assert "Action executed:" in (detail["steps"][1]["context_snapshot"] or "")
     assert detail["steps"][0]["result"] is not None
@@ -385,7 +392,7 @@ async def test_run_turn_idle_with_active_task_fails_context_validation(isolated_
 
 
 @pytest.mark.asyncio
-async def test_run_turn_rejects_mismatched_explicit_task_id(isolated_db, monkeypatch):
+async def test_run_turn_binds_complete_to_active_task_even_with_placeholder_task_id(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     task = db.create_task(
@@ -429,30 +436,34 @@ async def test_run_turn_rejects_mismatched_explicit_task_id(isolated_db, monkeyp
         },
     )
 
-    assert outcome.trigger_status == "failed"
+    assert outcome.trigger_status == "completed"
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
-    assert diagnostics[0]["status"] == "error"
-    assert "taskId must match" in (diagnostics[0]["error"] or "")
+    assert diagnostics[0]["status"] == "success"
 
     refreshed_task = db.get_task(task.id)
     assert refreshed_task is not None
-    assert refreshed_task.status == "active"
+    assert refreshed_task.status == "complete"
+    assert refreshed_task.completion_summary == "done"
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
-    assert refreshed_state.current_task_id == task.id
+    assert refreshed_state.current_task_id is None
 
 
-def test_parse_action_requires_explicit_tracking_for_stateful_actions(isolated_db):
+def test_parse_action_accepts_walk_without_tracking(isolated_db):
     parsed = parse_action('{"action":"walkTo","destination":"desk","thought":"move"}')
-    assert parsed["action"] == "_parse_failed"
-    assert "tracking" in parsed["_raw_snippet"]
+    assert parsed["action"] == "walkTo"
 
 
-def test_parse_action_requires_tracking_for_attend_meeting(isolated_db):
+def test_parse_action_accepts_attend_meeting_without_tracking(isolated_db):
     parsed = parse_action('{"action":"attendMeeting","topic":"sync","thought":"join"}')
+    assert parsed["action"] == "attendMeeting"
+
+
+def test_parse_action_requires_title_for_start_task(isolated_db):
+    parsed = parse_action('{"action":"startTask","description":"task details","thought":"formalize"}')
     assert parsed["action"] == "_parse_failed"
-    assert "tracking" in parsed["_raw_snippet"]
+    assert "title" in parsed["_raw_snippet"]
 
 
 def test_parse_action_requires_explicit_message_recipient_contract(isolated_db):
@@ -486,7 +497,7 @@ async def test_message_action_routes_to_agent_by_explicit_id(isolated_db):
 
 
 @pytest.mark.asyncio
-async def test_complete_action_does_not_clear_task_on_mismatched_task_id(isolated_db):
+async def test_complete_action_uses_active_task_when_placeholder_task_id_is_supplied(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
     task = db.create_task(
@@ -509,16 +520,15 @@ async def test_complete_action_does_not_clear_task_on_mismatched_task_id(isolate
         state,
     )
 
-    assert result["event"] == "agent_error"
-    assert "taskId must match" in result["detail"]
+    assert result["event"] == "status_changed"
 
     refreshed_task = db.get_task(task.id)
     assert refreshed_task is not None
-    assert refreshed_task.status == "active"
+    assert refreshed_task.status == "complete"
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
-    assert refreshed_state.current_task_id == task.id
+    assert refreshed_state.current_task_id is None
 
 
 @pytest.mark.asyncio
@@ -531,7 +541,6 @@ async def test_attend_meeting_requires_meeting_room(isolated_db):
         {
             "action": "attendMeeting",
             "topic": "Weekly sync",
-            "tracking": "task",
             "thought": "join the meeting",
         },
         agent,
@@ -554,7 +563,6 @@ async def test_attend_meeting_in_room_can_notify_peer(isolated_db):
             "action": "attendMeeting",
             "agentId": target.id,
             "topic": "Design review",
-            "tracking": "task",
             "thought": "join in person",
         },
         agent,
@@ -577,7 +585,6 @@ async def test_walk_action_includes_activity_path_metadata(isolated_db):
         {
             "action": "walkTo",
             "destination": "desk",
-            "tracking": "chat",
             "thought": "heading back",
         },
         agent,
@@ -589,6 +596,28 @@ async def test_walk_action_includes_activity_path_metadata(isolated_db):
     assert result["activity_extra"]["agent_id"] == agent.id
     assert result["activity_extra"]["path"] == result["path"]
     assert result["activity_extra"]["tiles_per_second"] > 0
+
+
+@pytest.mark.asyncio
+async def test_walk_action_already_at_destination_stays_out_of_transit(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    result = await execute_action(
+        {
+            "action": "walkTo",
+            "destination": "desk",
+            "thought": "already here",
+        },
+        agent,
+        state,
+    )
+
+    assert result["event"] == "world_feedback"
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.status == "work_active"
 
 
 @pytest.mark.asyncio
@@ -672,7 +701,61 @@ async def test_walk_request_stays_chat_only_and_creates_no_task(isolated_db, mon
 
 
 @pytest.mark.asyncio
-async def test_substantive_request_can_create_task_before_walk(isolated_db, monkeypatch):
+async def test_meeting_interrupt_pauses_active_task_before_walking(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(task.id, status="active")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active", current_task_id=task.id)
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "Meet me in the meeting room.", message_type="human")
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"action":"walkTo","destination":"meetingRoom","thought":"Heading to the meeting room first."}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Meet me in the meeting room.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "pending"
+    assert refreshed_task.status_note == "Paused for direct conversation."
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id is None
+    assert refreshed_state.status == "in_transit"
+
+
+@pytest.mark.asyncio
+async def test_substantive_request_can_start_task_before_walk(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.update_agent_state(agent.id, x=14, y=9, status="work_active")
@@ -685,14 +768,25 @@ async def test_substantive_request_can_create_task_before_walk(isolated_db, monk
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
     monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
 
-    async def fake_completion(**kwargs):
-        return client.LLMResponse(
-            content='{"action":"walkTo","destination":"desk","tracking":"task","thought":"Need to get to my desk before I fix it."}',
+    responses = iter([
+        client.LLMResponse(
+            content='{"action":"startTask","title":"Fix the API bug","description":"please fix the API bug","thought":"formalize the request before starting"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
             total_tokens=20,
-        )
+        ),
+        client.LLMResponse(
+            content='{"action":"walkTo","destination":"desk","thought":"Need to get to my desk before I fix it."}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
 
     monkeypatch.setattr(client, "completion", fake_completion)
 
@@ -713,6 +807,82 @@ async def test_substantive_request_can_create_task_before_walk(isolated_db, monk
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
     assert refreshed_state.current_task_id == tasks[0].id
+
+
+@pytest.mark.asyncio
+async def test_new_human_assignment_pauses_older_active_task_before_starting_new_one(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    old_task = db.create_task(
+        title="Hey Taylor meet me in the meeting room for a new assignment",
+        description="Hey Taylor meet me in the meeting room for a new assignment",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(old_task.id, status="active")
+    state = db.update_agent_state(agent.id, x=20, y=4, status="work_active", current_task_id=old_task.id)
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "We need to make a new API that generates random sentences using letters. Please head to your desk and begin working",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"action":"startTask","title":"Build the new sentence API","description":"We need to make a new API that generates random sentences using letters.","thought":"formalize the new assignment"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"action":"walkTo","destination":"desk","thought":"Need to get to my desk before starting the API work."}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "We need to make a new API that generates random sentences using letters. Please head to your desk and begin working",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    refreshed_old_task = db.get_task(old_task.id)
+    assert refreshed_old_task is not None
+    assert refreshed_old_task.status == "pending"
+    assert refreshed_old_task.status_note == "Paused for a newer assignment."
+
+    tasks = db.list_tasks(assigned_to=agent.id)
+    assert len(tasks) == 2
+    newest_task = tasks[-1]
+    assert newest_task.id != old_task.id
+    assert newest_task.status == "active"
+    assert "sentence API" in newest_task.title
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.current_task_id == newest_task.id
 
 
 @pytest.mark.asyncio

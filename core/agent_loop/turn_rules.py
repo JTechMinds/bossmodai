@@ -25,13 +25,20 @@ def validate_action_for_turn(
     if active_task_id and action_name == "idle" and not policy.allow_idle_with_active_task:
         return 'cannot use "idle" while a task is active'
 
+    if action_name == "work" and not active_task_id:
+        return '"work" requires an active task. Use "startTask" or "resumeTask" first.'
+
     if action_name in _TASK_STATE_ACTIONS and not (action.get("taskId") or active_task_id):
         return f'"{action_name}" requires an active task'
 
-    if action_name in _TASK_STATE_ACTIONS and active_task_id:
-        explicit_task_id = action.get("taskId")
-        if explicit_task_id and explicit_task_id != active_task_id:
-            return f'"{action_name}" taskId must match the current active task'
+    if action_name == "startTask" and policy.trigger_type not in {"human_chat", "peer_message"}:
+        return '"startTask" is only valid while handling a direct conversation'
+
+    if action_name == "resumeTask" and policy.trigger_type not in {"human_chat", "peer_message", "task_attention_required"}:
+        return '"resumeTask" is only valid while handling a direct interruption or attention request'
+
+    if action_name == "resumeTask" and active_task_id:
+        return 'cannot use "resumeTask" while a task is already active'
 
     return None
 
@@ -61,6 +68,8 @@ def maybe_append_resume_trigger(
     if not policy.auto_resume_previous_task:
         return
     if not initial_task_id or active_task_id != initial_task_id:
+        return
+    if result.get("event") != "message_sent":
         return
 
     queue_task_resumed_trigger(

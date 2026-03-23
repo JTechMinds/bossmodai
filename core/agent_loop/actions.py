@@ -4,8 +4,9 @@ Parses flat JSON actions from LLM responses and executes them.
 Actions are intent declarations — the system handles avatar mechanics.
 
 Flat JSON format (no nested params):
-  {"action": "work", "output": "...", "tracking": "task", "thought": "..."}
-  {"action": "walkTo", "destination": "breakRoom", "tracking": "chat", "thought": "..."}
+  {"action": "work", "output": "...", "thought": "..."}
+  {"action": "walkTo", "destination": "breakRoom", "thought": "..."}
+  {"action": "startTask", "title": "...", "description": "...", "thought": "..."}
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 
 from core import config
 from core.llm.client import count_tokens
+from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
 from core.world.pathfinding import find_path
 from core.world.tilemap import DEFAULT_DESKS, DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, get_room_at
@@ -36,8 +38,6 @@ _DESTINATIONS = {
     "hallway": "hallway_main",
 }
 
-_TRACKING_REQUIRED_ACTIONS = {"work", "walkTo", "attendMeeting", "remoteMeeting"}
-_VALID_TRACKING = {"chat", "task"}
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 _TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 
@@ -107,13 +107,6 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
     """Validate shape and required fields for parsed actions."""
     action_name = action["action"]
 
-    if action_name in _TRACKING_REQUIRED_ACTIONS:
-        tracking = action.get("tracking")
-        if not isinstance(tracking, str) or tracking.strip().lower() not in _VALID_TRACKING:
-            return 'missing or invalid "tracking"'
-        if action_name == "work" and tracking.strip().lower() != "task":
-            return '"work" requires tracking="task"'
-
     if action_name == "message":
         recipient_type = action.get("recipientType")
         if not isinstance(recipient_type, str) or recipient_type.strip().lower() not in _VALID_MESSAGE_RECIPIENT_TYPES:
@@ -141,6 +134,16 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         if not isinstance(task_id, str) or not task_id.strip():
             return f'"{action_name}" requires a non-empty "taskId" when provided'
 
+    if action_name == "startTask":
+        title = action.get("title")
+        if not isinstance(title, str) or not title.strip():
+            return '"startTask" requires a non-empty "title"'
+
+    if action_name == "resumeTask" and action.get("taskId") not in (None, ""):
+        task_id = action.get("taskId")
+        if not isinstance(task_id, str) or not task_id.strip():
+            return '"resumeTask" requires a non-empty "taskId" when provided'
+
     return None
 
 
@@ -159,9 +162,8 @@ def _resolve_task_lifecycle_target(
 ) -> tuple[str | None, str | None]:
     """Resolve the task targeted by a lifecycle action.
 
-    Task lifecycle actions must act on the currently bound active task. Models
-    may include ``taskId`` for clarity, but it must match the active task when
-    one exists.
+    Task lifecycle actions always act on the currently bound active task. Models
+    may include ``taskId`` for clarity, but runtime binding wins.
     """
     explicit_task_id = action.get("taskId")
     if isinstance(explicit_task_id, str):
@@ -170,14 +172,25 @@ def _resolve_task_lifecycle_target(
         explicit_task_id = None
 
     active_task_id = state.current_task_id
-    if explicit_task_id and active_task_id and explicit_task_id != active_task_id:
-        return None, f'"{action_name}" taskId must match the current active task'
-
-    task_id = explicit_task_id or active_task_id
+    task_id = active_task_id or explicit_task_id
     if not task_id:
         return None, f'"{action_name}" requires an active task'
 
     return task_id, None
+
+
+def _pick_resume_candidate(agent_id: str, explicit_task_id: str | None) -> Any | None:
+    """Resolve the next pending task to resume for the agent."""
+    if explicit_task_id:
+        task = db.get_task(explicit_task_id)
+        if task and task.assigned_to == agent_id and task.status == "pending":
+            return task
+        return None
+
+    pending = db.list_tasks(assigned_to=agent_id, status="pending")
+    if not pending:
+        return None
+    return pending[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +201,7 @@ async def execute_action(
     action: dict[str, Any],
     agent: Agent,
     state: AgentState,
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute a flat action dict and return the result."""
     action_type = action["action"]
@@ -197,7 +211,7 @@ async def execute_action(
         logger.warning("Unknown action '%s' from agent %s", action_type, agent.name)
         return {"event": "status_changed", "detail": f"Unknown action: {action_type}", "agent_name": agent.name}
 
-    return await handler(agent, state, action)
+    return await handler(agent, state, action, trigger)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +222,7 @@ async def _handle_work(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Agent produces work output. Must be at a workspace."""
     output = action.get("output", "")
@@ -245,6 +260,7 @@ async def _handle_message(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Send a message to another agent. Works from any location."""
     recipient_type = (action.get("recipientType") or "").strip().lower()
@@ -252,8 +268,6 @@ async def _handle_message(
 
     if not content:
         return {"event": "status_changed", "detail": "Empty message content", "agent_name": agent.name}
-
-    from core.models.message import HUMAN_SENDER_ID
 
     target = None
     if recipient_type == "human":
@@ -311,6 +325,7 @@ async def _handle_walk_to(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Move avatar to a destination."""
     destination = action.get("destination", "")
@@ -350,6 +365,16 @@ async def _handle_walk_to(
     if not path:
         return {"event": "world_feedback", "detail": f"No path to {destination}", "agent_name": agent.name}
 
+    if len(path) <= 1:
+        destination_label = destination
+        if destination == "desk":
+            destination_label = "your desk"
+        return {
+            "event": "world_feedback",
+            "detail": f"You're already at {destination_label}. Choose the next action.",
+            "agent_name": agent.name,
+        }
+
     db.update_agent_state(agent.id, status="in_transit")
 
     return {
@@ -370,6 +395,7 @@ async def _handle_remote_meeting(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a remote meeting from the agent's current location."""
     target = _resolve_agent_by_id(action.get("agentId"))
@@ -422,10 +448,10 @@ async def _handle_attend_meeting(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Attend an in-person meeting from the meeting room."""
     topic = (action.get("topic") or "").strip()
-    tracking = (action.get("tracking") or "task").strip().lower()
     target = None
     room = get_room_at(state.x, state.y)
 
@@ -468,7 +494,7 @@ async def _handle_attend_meeting(
         result["queued_triggers"] = [{
             "agent_id": target.id,
             "trigger_type": "peer_message",
-            "source_channel": "work" if tracking == "task" else "chat",
+            "source_channel": "chat",
             "payload": {
                 "content": meeting_content,
                 "from_agent": agent.id,
@@ -484,6 +510,7 @@ async def _handle_idle(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Agent has nothing to do."""
     db.update_agent_state(agent.id, status="idle")
@@ -498,6 +525,7 @@ async def _handle_complete(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark current task as complete."""
     task_id, error = _resolve_task_lifecycle_target(state, action, action_name="complete")
@@ -526,6 +554,7 @@ async def _handle_blocked(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark current task as blocked."""
     task_id, error = _resolve_task_lifecycle_target(state, action, action_name="blocked")
@@ -554,6 +583,7 @@ async def _handle_delegated(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Delegate current task to another agent."""
     task_id, error = _resolve_task_lifecycle_target(state, action, action_name="delegated")
@@ -611,6 +641,7 @@ async def _handle_abandoned(
     agent: Agent,
     state: AgentState,
     action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Abandon current task."""
     task_id, error = _resolve_task_lifecycle_target(state, action, action_name="abandoned")
@@ -635,6 +666,94 @@ async def _handle_abandoned(
     }
 
 
+async def _handle_start_task(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create and activate a new durable task from an explicit assignment."""
+    title = (action.get("title") or "").strip()
+    description = (action.get("description") or "").strip()
+    if not description and trigger:
+        description = (trigger.get("content") or "").strip()
+
+    if state.current_task_id:
+        db.update_task(
+            state.current_task_id,
+            status="pending",
+            status_note="Paused for a newer assignment.",
+            completion_summary=None,
+            watchdog_pinged_at=None,
+        )
+    else:
+        pending = db.list_tasks(assigned_to=agent.id, status="pending")
+        if pending:
+            candidate = pending[-1]
+            if candidate.status_note == "Paused for direct conversation.":
+                db.update_task(
+                    candidate.id,
+                    status_note="Paused for a newer assignment.",
+                    completion_summary=None,
+                    watchdog_pinged_at=None,
+                )
+
+    created_by = agent.id
+    if trigger:
+        if trigger.get("type") == "human_chat":
+            created_by = HUMAN_SENDER_ID
+        elif trigger.get("type") == "peer_message" and trigger.get("from_agent"):
+            created_by = trigger["from_agent"]
+
+    task = db.create_task(
+        title=title,
+        description=description or None,
+        assigned_to=agent.id,
+        created_by=created_by,
+    )
+    db.update_task(task.id, status="active", status_note=None)
+    db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+
+    return {
+        "event": "task_started",
+        "detail": f'{agent.name} started task "{task.title}"',
+        "agent_name": agent.name,
+        "activity_extra": {"task_id": task.id, "task_title": task.title},
+    }
+
+
+async def _handle_resume_task(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Activate the latest pending task for the agent."""
+    explicit_task_id = action.get("taskId")
+    if isinstance(explicit_task_id, str):
+        explicit_task_id = explicit_task_id.strip() or None
+    else:
+        explicit_task_id = None
+
+    task = _pick_resume_candidate(agent.id, explicit_task_id)
+    if task is None:
+        return {
+            "event": "agent_error",
+            "detail": "No pending task is available to resume",
+            "agent_name": agent.name,
+        }
+
+    db.update_task(task.id, status="active", status_note=None)
+    db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+
+    return {
+        "event": "task_resumed",
+        "detail": f'{agent.name} resumed task "{task.title}"',
+        "agent_name": agent.name,
+        "activity_extra": {"task_id": task.id, "task_title": task.title},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Handler registry
 # ---------------------------------------------------------------------------
@@ -645,6 +764,8 @@ _ACTION_HANDLERS = {
     "walkTo": _handle_walk_to,
     "attendMeeting": _handle_attend_meeting,
     "remoteMeeting": _handle_remote_meeting,
+    "startTask": _handle_start_task,
+    "resumeTask": _handle_resume_task,
     "idle": _handle_idle,
     "complete": _handle_complete,
     "blocked": _handle_blocked,

@@ -39,7 +39,6 @@ from core.agent_loop.turn_rules import (
 )
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
-from core.models.message import HUMAN_SENDER_ID
 import db
 
 logger = logging.getLogger(__name__)
@@ -206,8 +205,7 @@ async def run_turn(
         action = parse_action(response.content)
         action_name = action["action"]
 
-        if not _get_active_task_id(agent.id, state):
-            state = _maybe_start_implicit_task(agent, state, trigger, action)
+        state = _maybe_pause_active_task_for_interrupt(agent, state, trigger, action)
         active_task_id = _get_active_task_id(agent.id, state)
 
         # Handle parse failure
@@ -305,7 +303,7 @@ async def run_turn(
         executed_actions.append(action_name)
 
         # Execute action
-        result = await execute_action(action, agent, state)
+        result = await execute_action(action, agent, state, trigger)
         active_task_id = _get_active_task_id(agent.id, state)
         maybe_append_resume_trigger(
             result,
@@ -464,7 +462,7 @@ async def run_turn(
             break
 
         # Walk action — loop ends (movement is async via simulation)
-        if action_name == "walkTo":
+        if action_name == "walkTo" and result.get("path"):
             break
 
         if should_end_turn_after_action(action, policy):
@@ -582,7 +580,7 @@ def _get_conversation_history(agent_id: str, trigger: dict[str, Any]) -> list[di
     trigger_type = trigger.get("type")
     limit = 50
 
-    if trigger_type in ("human_chat", "watchdog_status_ping", "task_resumed", "task_attention_required"):
+    if trigger_type in ("human_chat", "watchdog_status_ping"):
         thread = db.get_human_chat_thread(agent_id, limit=limit)
         return db.get_formatted_messages(thread, human_label="Human Operator")
 
@@ -652,40 +650,47 @@ def _get_reference_materials(agent_id: str) -> list[str]:
             snippet = snippet[:200] + "..."
         materials.append(f"- Work artifact ({artifact.created_at.isoformat()}): {snippet}")
 
+    pending = db.list_tasks(assigned_to=agent_id, status="pending")
+    for task in pending[-3:]:
+        note = task.status_note or "Pending work"
+        materials.append(f"- Pending task: {task.title} [{task.status}]: {note}")
+
     return materials
 
 
-def _maybe_start_implicit_task(
+def _maybe_pause_active_task_for_interrupt(
     agent: Agent,
     state: AgentState,
     trigger: dict[str, Any],
     action: dict[str, Any],
 ) -> AgentState:
-    """Promote substantive human requests into a durable task when work begins."""
-    if trigger.get("type") != "human_chat":
+    """Suspend active work when a conversation pulls the agent off-task."""
+    if trigger.get("type") not in {"human_chat", "peer_message"}:
+        return state
+
+    current_task_id = _get_active_task_id(agent.id, state)
+    current_task = db.get_task(current_task_id) if current_task_id else None
+    if not current_task or current_task.status != "active":
         return state
 
     action_name = action.get("action", "")
-    if action_name not in {"work", "walkTo", "attendMeeting", "remoteMeeting", "complete", "blocked", "delegated", "abandoned"}:
+    should_pause = False
+    if action_name in {"attendMeeting", "remoteMeeting", "startTask"}:
+        should_pause = True
+    elif action_name == "walkTo":
+        should_pause = action.get("destination") in {"meetingRoom", "breakRoom", "hallway"}
+
+    if not should_pause:
         return state
 
-    tracking = (action.get("tracking") or "").strip().lower()
-    if tracking != "task":
-        return state
-
-    content = (trigger.get("content") or "").strip()
-    title = content or "Human request"
-    if len(title) > 80:
-        title = title[:77] + "..."
-
-    task = db.create_task(
-        title=title or "Human request",
-        description=trigger.get("content"),
-        assigned_to=agent.id,
-        created_by=HUMAN_SENDER_ID,
+    db.update_task(
+        current_task.id,
+        status="pending",
+        status_note="Paused for direct conversation.",
+        completion_summary=None,
+        watchdog_pinged_at=None,
     )
-    db.update_task(task.id, status="active")
-    return db.update_agent_state(agent.id, current_task_id=task.id) or state
+    return db.update_agent_state(agent.id, current_task_id=None) or state
 
 
 def _summarize_action_chain(executed_actions: list[str], fallback: str) -> str:

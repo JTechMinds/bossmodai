@@ -7,7 +7,17 @@ from typing import Any
 
 import db
 
-_PROGRESS_ACTIONS = {"work", "complete", "blocked", "delegated", "abandoned", "attendMeeting", "remoteMeeting"}
+_PROGRESS_ACTIONS = {
+    "work",
+    "startTask",
+    "resumeTask",
+    "complete",
+    "blocked",
+    "delegated",
+    "abandoned",
+    "attendMeeting",
+    "remoteMeeting",
+}
 
 
 def record_task_heartbeat(task_id: str | None, *, at: datetime | None = None) -> None:

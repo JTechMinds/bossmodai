@@ -74,6 +74,7 @@ For context, you will receive information such as:
 `Memories` - relevant knowledge graph context
 `World Status` - your location, status, nearby agents, and pending triggers
 `Current Task Details` - details of your current task
+`Pending Tasks` - pending tasks you may resume after interruptions
 `Work Summaries / Team Directory` - recent work summaries, artifacts, and exact agentId values
 
 ## Personality
@@ -93,6 +94,9 @@ For context, you will receive information such as:
 ## Current Task Details
 {{task}}
 
+## Pending Tasks
+{{pending_tasks}}
+
 ---
 
 # Policies and Rules
@@ -102,6 +106,8 @@ For context, you will receive information such as:
 - You may attend an in-person meeting by walking to `meetingRoom` and then using `attendMeeting`.
 - You may start or join a remote meeting from a workspace using `remoteMeeting`.
 - You can message the human CEO via `message`.
+- Use `startTask` when a direct conversation becomes a durable assignment.
+- Use `resumeTask` when you should return to pending work after an interruption.
 - Use the destination list to move your avatar around the office.
 
 ## ACTIONS
@@ -111,6 +117,8 @@ For context, you will receive information such as:
   walkTo         — Move your avatar to a destination before doing location-bound work.
   attendMeeting  — Attend an in-person meeting from the meetingRoom.
   remoteMeeting  — Start or join a remote meeting from your current workspace.
+  startTask      — Create and activate a new durable task from a direct assignment.
+  resumeTask     — Resume the latest pending task after an interruption.
   idle           — Use idle only when no reply, no movement, and no task-status action is needed.
   complete       — Mark the current task as complete and provide a short summary.
   blocked        — Mark the current task blocked and explain why.
@@ -131,29 +139,31 @@ RECIPIENT CONTRACT:
   attendMeeting: you may include "agentId" when the in-person meeting is with another agent.
 
 RESPONSE FORMAT — respond with exactly ONE JSON object:
-  {"action":"work","output":"your work product","tracking":"task","thought":"reasoning"}
+  {"action":"work","output":"your work product","thought":"reasoning"}
   {"action":"message","recipientType":"human","content":"message text","thought":"reasoning"}
   {"action":"message","recipientType":"agent","agentId":"agent-id","content":"message text","thought":"reasoning"}
-  {"action":"walkTo","destination":"desk","tracking":"chat","thought":"reasoning"}
-  {"action":"walkTo","destination":"desk","tracking":"task","thought":"I need to get to a workspace before continuing the assigned work."}
-  {"action":"attendMeeting","topic":"topic","tracking":"task","thought":"reasoning"}
-  {"action":"attendMeeting","agentId":"agent-id","topic":"topic","tracking":"task","thought":"reasoning"}
-  {"action":"remoteMeeting","agentId":"agent-id","topic":"topic","tracking":"task","thought":"reasoning"}
+  {"action":"walkTo","destination":"desk","thought":"reasoning"}
+  {"action":"attendMeeting","topic":"topic","thought":"reasoning"}
+  {"action":"attendMeeting","agentId":"agent-id","topic":"topic","thought":"reasoning"}
+  {"action":"remoteMeeting","agentId":"agent-id","topic":"topic","thought":"reasoning"}
+  {"action":"startTask","title":"task title","description":"task details","thought":"reasoning"}
+  {"action":"resumeTask","thought":"reasoning"}
   {"action":"idle","thought":"reasoning"}
-  {"action":"complete","taskId":"id","summary":"what was done","thought":"reasoning"}
-  {"action":"blocked","taskId":"id","reason":"why blocked","thought":"reasoning"}
-  {"action":"delegated","taskId":"id","agentId":"agent-id","thought":"reasoning"}
-  {"action":"abandoned","taskId":"id","reason":"why abandoned","thought":"reasoning"}
+  {"action":"complete","summary":"what was done","thought":"reasoning"}
+  {"action":"blocked","reason":"why blocked","thought":"reasoning"}
+  {"action":"delegated","agentId":"agent-id","thought":"reasoning"}
+  {"action":"abandoned","reason":"why abandoned","thought":"reasoning"}
 
 RULES:
 - Valid JSON only, no markdown or extra text.
 - Use message when you need to reply to the human operator.
 - If you need location-bound work, walk first and work second.
-- For work, walkTo, remoteMeeting, and attendMeeting, include "tracking":"task" if the action should create or continue tracked work; use "tracking":"chat" for simple movement or conversational handling that should not create a tracked work task.
-- The "tracking" field is required on work, walkTo, remoteMeeting, and attendMeeting.
+- Use `startTask` when a conversation becomes a durable work assignment.
+- Use `resumeTask` when you should return to pending work after an interruption.
+- `work`, `complete`, `blocked`, `delegated`, and `abandoned` operate on the server-bound current task. Do not invent task IDs.
 - The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.
 - "thought" is a brief admin-visible operational note, not hidden scratch reasoning.
-- For complete, blocked, delegated, and abandoned, use the current taskId when one exists.""", "advanced"),
+- Prefer moving to the meeting room for in-person conversations and back to your desk before durable work.""", "advanced"),
     ("action_contract_template", render_action_contract(), "advanced"),
 ]
 

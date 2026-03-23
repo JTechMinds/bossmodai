@@ -18,7 +18,7 @@ _ACTION_SPECS = [
     ActionSpec(
         name="work",
         description="Create durable work output. Only use after moving to a workspace.",
-        example='{"action":"work","output":"your work product","tracking":"task","thought":"reasoning"}',
+        example='{"action":"work","output":"your work product","thought":"reasoning"}',
     ),
     ActionSpec(
         name="message",
@@ -28,17 +28,27 @@ _ACTION_SPECS = [
     ActionSpec(
         name="walkTo",
         description="Move your avatar to a destination before doing location-bound work.",
-        example='{"action":"walkTo","destination":"desk","tracking":"chat","thought":"reasoning"}',
+        example='{"action":"walkTo","destination":"desk","thought":"reasoning"}',
     ),
     ActionSpec(
         name="attendMeeting",
         description="Attend an in-person meeting from the meetingRoom. Optionally include agentId when meeting with another agent.",
-        example='{"action":"attendMeeting","topic":"topic","tracking":"task","thought":"reasoning"}',
+        example='{"action":"attendMeeting","topic":"topic","thought":"reasoning"}',
     ),
     ActionSpec(
         name="remoteMeeting",
         description="Start a remote meeting from your current workspace.",
-        example='{"action":"remoteMeeting","agentId":"agent-id","topic":"topic","tracking":"task","thought":"reasoning"}',
+        example='{"action":"remoteMeeting","agentId":"agent-id","topic":"topic","thought":"reasoning"}',
+    ),
+    ActionSpec(
+        name="startTask",
+        description="Create and activate a new durable task from a direct assignment before you begin the work.",
+        example='{"action":"startTask","title":"task title","description":"task details","thought":"reasoning"}',
+    ),
+    ActionSpec(
+        name="resumeTask",
+        description="Resume the latest pending task after an interruption or meeting.",
+        example='{"action":"resumeTask","thought":"reasoning"}',
     ),
     ActionSpec(
         name="idle",
@@ -48,22 +58,22 @@ _ACTION_SPECS = [
     ActionSpec(
         name="complete",
         description="Mark the current task as complete and provide a short summary.",
-        example='{"action":"complete","taskId":"id","summary":"what was done","thought":"reasoning"}',
+        example='{"action":"complete","summary":"what was done","thought":"reasoning"}',
     ),
     ActionSpec(
         name="blocked",
         description="Mark the current task blocked and explain why.",
-        example='{"action":"blocked","taskId":"id","reason":"why blocked","thought":"reasoning"}',
+        example='{"action":"blocked","reason":"why blocked","thought":"reasoning"}',
     ),
     ActionSpec(
         name="delegated",
         description="Hand the current task to another agent.",
-        example='{"action":"delegated","taskId":"id","agentId":"agent-id","thought":"reasoning"}',
+        example='{"action":"delegated","agentId":"agent-id","thought":"reasoning"}',
     ),
     ActionSpec(
         name="abandoned",
         description="Abandon the current task and explain why.",
-        example='{"action":"abandoned","taskId":"id","reason":"why abandoned","thought":"reasoning"}',
+        example='{"action":"abandoned","reason":"why abandoned","thought":"reasoning"}',
     ),
 ]
 
@@ -104,8 +114,9 @@ def render_action_contract() -> str:
             "- Valid JSON only, no markdown or extra text.",
             "- Use message when you need to reply to the human operator.",
             "- If you need location-bound work, walk first and work second.",
-            '- For work, walkTo, remoteMeeting, and attendMeeting, include "tracking":"task" if the action should create or continue tracked work; use "tracking":"chat" for simple movement/chat handling.',
-            '- The "tracking" field is required on work, walkTo, remoteMeeting, and attendMeeting.',
+            '- Use "startTask" when a direct conversation becomes a durable assignment.',
+            '- Use "resumeTask" after an interruption when you should return to pending work.',
+            '- "work", "complete", "blocked", "delegated", and "abandoned" act on the server-bound current task. Do not invent task IDs.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',
             '- "thought" is a brief admin-visible operational note, not hidden scratch reasoning.',
         ]

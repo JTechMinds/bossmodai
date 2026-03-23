@@ -6,7 +6,9 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
+import db
 from core import config
+from core.agent_loop.action_contract import render_action_contract
 from core.models import Agent, AgentState
 from core.world.tilemap import get_room_at
 
@@ -35,6 +37,9 @@ Each turn you must respond with exactly one JSON action.
 ## Current Task Details
 {{task}}
 
+## Pending Tasks
+{{pending_tasks}}
+
 ---
 
 # Policies and Rules
@@ -44,6 +49,8 @@ Each turn you must respond with exactly one JSON action.
 - You may attend an in-person meeting by walking to `meetingRoom` and then using `attendMeeting`.
 - You may start or join a remote meeting from a workspace using `remoteMeeting`.
 - Use `message` when you need to reply to the human operator.
+- Use `startTask` when a conversation becomes a durable assignment.
+- Use `resumeTask` when you should return to pending work after an interruption.
 
 # Output
 
@@ -98,8 +105,9 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
             turn.pending_trigger_count,
         ),
         "{{task}}": _format_task(turn.current_task) if turn.current_task else "",
+        "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
         "{{references}}": _format_references(turn.reference_materials),
-        "{{action_contract}}": config.get("action_contract_template") or "",
+        "{{action_contract}}": render_action_contract(),
     }
 
     # ─── Resolve template from settings ───
@@ -109,6 +117,10 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
         system_prompt = system_prompt.replace(key, value)
 
     messages.append({"role": "system", "content": system_prompt})
+    messages.append({
+        "role": "system",
+        "content": render_action_contract(),
+    })
 
     for msg in turn.conversation_history[-window_size:]:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
@@ -150,6 +162,7 @@ def _format_world_status(
     status_label = _STATUS_LABELS.get(state.status, state.status)
 
     pending_count = pending_trigger_count
+    pending_tasks = db.list_tasks(assigned_to=agent.id, status="pending")
 
     # Nearby agents
     nearby_str = "none"
@@ -168,6 +181,7 @@ def _format_world_status(
         f"  status: {status_label}\n"
         f"  nearby: {nearby_str}\n"
         f"  pendingTriggers: {pending_count}\n"
+        f"  pendingTasks: {len(pending_tasks)}\n"
         f"  currentTask: {task_str}"
     )
 
@@ -188,10 +202,27 @@ def _format_task(task: dict[str, Any]) -> str:
     desc = task.get("description", "No description")
     status = task.get("status", "unknown")
     summary = task.get("completion_summary") or task.get("status_note")
-    details = [f"{title} (status: {status})", desc]
+    details = [f"{title} (status: {status})", f"Task ID: {task.get('id', 'unknown')}", desc]
     if summary:
         details.append(f"Latest summary: {summary}")
     return "\n".join([part for part in details if part])
+
+
+def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) -> str:
+    current_task_id = current_task.get("id") if current_task else None
+    pending = db.list_tasks(assigned_to=agent_id, status="pending")
+    if not pending:
+        return ""
+
+    lines: list[str] = []
+    for task in pending[-3:]:
+        if task.id == current_task_id:
+            continue
+        line = f"- {task.title} (pending)"
+        if task.status_note:
+            line += f": {task.status_note}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _format_references(reference_materials: list[str]) -> str:
@@ -223,7 +254,8 @@ def _format_trigger(trigger: dict[str, Any]) -> str:
             return (
                 f'You still have an active task: "{title}", but you are in the {room_name}. '
                 f'You cannot produce work there.{extra}\nChoose the next valid step: walk to your desk, '
-                "message the human operator with a status update, or sign off with complete/blocked/delegated/abandoned."
+                'message the human operator with a status update, use "resumeTask" if the task was interrupted, '
+                "or sign off with complete/blocked/delegated/abandoned."
             )
         return f"You have been assigned a new task: \"{title}\".{extra}"
 
@@ -235,7 +267,7 @@ def _format_trigger(trigger: dict[str, Any]) -> str:
         title = trigger.get("task_title", "your current task")
         return (
             f"Watchdog status check: you have been quiet on \"{title}\". "
-            "Reply to the human operator with a status update or sign off with complete/blocked/delegated/abandoned."
+            "Reply to the human operator with a status update, continue working, or sign off with complete/blocked/delegated/abandoned."
         )
 
     return "You have been activated."
