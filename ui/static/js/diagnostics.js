@@ -18,7 +18,16 @@ const DiagnosticsView = (() => {
 
     /** Map mode string to display icon. */
     function modeIcon(mode) {
-        return mode === 'social' ? '\uD83D\uDCAC' : '\u26A1';
+        return mode === 'social' || mode === 'decision' ? '\uD83D\uDCAC' : '\u26A1';
+    }
+
+    function modeLabel(mode) {
+        switch (mode) {
+            case 'decision': return 'decision';
+            case 'execution': return 'execution';
+            case 'social': return 'social';
+            default: return mode || '-';
+        }
     }
 
     /** Coerce ID to string for safe comparison (API may return int or string). */
@@ -180,7 +189,7 @@ const DiagnosticsView = (() => {
         if (entry) {
             summaryEl.innerHTML = `
                 <span class="text-sm">${modeIcon(entry.mode)}</span>
-                <span class="text-sm font-medium">${esc(entry.mode || '-')}</span>
+                <span class="text-sm font-medium">${esc(modeLabel(entry.mode))}</span>
                 <span class="text-sm text-bm-muted">\u2192</span>
                 <span class="text-sm font-semibold">${esc(entry.action_name || entry.status)}</span>
                 ${entry.agent_name ? `<span class="text-sm text-bm-muted">[${esc(entry.agent_name)}]</span>` : ''}

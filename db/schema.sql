@@ -73,8 +73,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     assigned_to    VARCHAR,
     created_by     VARCHAR,
     status         VARCHAR DEFAULT 'pending'
-                       CHECK (status IN ('pending', 'active', 'blocked', 'complete',
-                                         'stalled', 'abandoned', 'delegated')),
+                       CHECK (status IN ('pending', 'accepted', 'active', 'blocked', 'complete',
+                                         'stalled', 'abandoned', 'delegated', 'declined')),
     parent_task_id VARCHAR,
     cost_ceiling   DECIMAL,
     completion_summary TEXT,
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS activities (
     id                 VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id           VARCHAR NOT NULL REFERENCES agents(id),
     kind               VARCHAR NOT NULL
-                           CHECK (kind IN ('assignment', 'conversation', 'meeting', 'movement', 'social', 'work')),
+                           CHECK (kind IN ('assignment', 'break', 'conversation', 'meeting', 'movement', 'social', 'work')),
     status             VARCHAR NOT NULL DEFAULT 'active'
                            CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
     task_id            VARCHAR,

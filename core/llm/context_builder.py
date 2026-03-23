@@ -9,6 +9,7 @@ from typing import Any
 import db
 from core import config
 from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.decision_contract import render_decision_contract
 from core.models import Agent, AgentState
 from core.world.tilemap import get_room_at
 
@@ -37,6 +38,7 @@ class TurnContext:
     current_task: dict[str, Any] | None = None
     nearby_agents: list[dict[str, Any]] | None = None
     pending_trigger_count: int = 0
+    contract_kind: str = "execution"
 
 
 def build_context(turn: TurnContext) -> list[dict[str, str]]:
@@ -64,10 +66,10 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
             turn.current_task,
             turn.pending_trigger_count,
         ),
-        "{{activity}}": _format_activity(turn.current_activity) if turn.current_activity else "",
-        "{{task}}": _format_task(turn.current_task) if turn.current_task else "",
+        "{{activity}}": _format_activity(turn.current_activity),
+        "{{task}}": _format_task(turn.current_task),
         "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
-        "{{references}}": _format_references(turn.reference_materials),
+        "{{references}}": _format_references(turn.agent.id, turn.reference_materials),
     }
 
     # ─── Resolve template from settings ───
@@ -79,7 +81,7 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
     messages.append({"role": "system", "content": system_prompt})
     messages.append({
         "role": "system",
-        "content": render_action_contract(),
+        "content": _render_turn_contract(turn.contract_kind),
     })
 
     for msg in turn.conversation_history[-window_size:]:
@@ -93,7 +95,7 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
             messages.append({"role": "assistant", "content": content})
 
     # ─── Trigger event ───
-    messages.append({"role": "user", "content": _format_trigger(turn.trigger)})
+    messages.append({"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind)})
 
     return messages
 
@@ -123,7 +125,7 @@ def _format_world_status(
     status_label = _STATUS_LABELS.get(state.status, state.status)
 
     pending_count = pending_trigger_count
-    pending_tasks = db.list_tasks(assigned_to=agent.id, status="pending")
+    open_tasks = _list_open_tasks(agent.id, current_task)
 
     # Nearby agents
     nearby_str = "none"
@@ -131,7 +133,6 @@ def _format_world_status(
         names = [a.get("name", "Unknown") for a in nearby_agents]
         nearby_str = ", ".join(names)
 
-    # Current task
     task_str = "none"
     if current_task:
         task_str = f"{current_task.get('title', 'Untitled')} ({current_task.get('status', 'unknown')})"
@@ -142,66 +143,165 @@ def _format_world_status(
             activity_str += f' - {current_activity["title"]}'
 
     return (
-        f"WORLD STATUS:\n"
-        f"  location: {room_name}\n"
-        f"  status: {status_label}\n"
-        f"  nearby: {nearby_str}\n"
-        f"  pendingTriggers: {pending_count}\n"
-        f"  pendingTasks: {len(pending_tasks)}\n"
-        f"  currentActivity: {activity_str}\n"
-        f"  currentTask: {task_str}"
+        f"location: {room_name}\n"
+        f"status: {status_label}\n"
+        f"nearby_agents: {nearby_str}\n"
+        f"pending_triggers: {pending_count}\n"
+        f"open_task_count: {len(open_tasks)}\n"
+        f"current_activity: {activity_str}\n"
+        f"current_task: {task_str}"
     )
 
 def _format_task(task: dict[str, Any]) -> str:
+    if not task:
+        return "none"
     title = task.get("title", "Untitled")
     desc = task.get("description", "No description")
     status = task.get("status", "unknown")
     summary = task.get("completion_summary") or task.get("status_note")
-    details = [f"{title} (status: {status})", f"Task ID: {task.get('id', 'unknown')}", desc]
+    details = [
+        f"id: {task.get('id', 'unknown')}",
+        f"title: {title}",
+        f"status: {status}",
+        f"description: {desc}",
+    ]
     if summary:
-        details.append(f"Latest summary: {summary}")
-    return "\n".join([part for part in details if part])
+        details.append(f"latest_summary: {summary}")
+    return "\n".join(details)
 
 
 def _format_activity(activity: dict[str, Any]) -> str:
+    if not activity:
+        return "none"
     title = activity.get("title") or activity.get("kind", "activity")
     detail = activity.get("detail") or "No detail"
     status = activity.get("status", "unknown")
     destination = activity.get("destination")
-    lines = [f"{title} (kind: {activity.get('kind', 'unknown')}, status: {status})", detail]
+    preferred_destination = ((activity.get("metadata") or {}).get("preferred_destination"))
+    lines = [
+        f"kind: {activity.get('kind', 'unknown')}",
+        f"status: {status}",
+        f"title: {title}",
+        f"detail: {detail}",
+    ]
     if destination:
-        lines.append(f"Destination: {destination}")
+        lines.append(f"destination: {destination}")
+    if preferred_destination:
+        lines.append(f"preferred_destination: {preferred_destination}")
     return "\n".join(lines)
 
 
 def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) -> str:
-    active_task_identifier = current_task.get("id") if current_task else None
-    pending = db.list_tasks(assigned_to=agent_id, status="pending")
-    if not pending:
-        return ""
+    open_tasks = _list_open_tasks(agent_id, current_task)
+    if not open_tasks:
+        return "datetime | status | task name | description\nnone"
 
-    lines: list[str] = []
-    for task in pending[-3:]:
-        if task.id == active_task_identifier:
-            continue
-        line = f"- {task.title} (pending)"
-        if task.status_note:
-            line += f": {task.status_note}"
-        lines.append(line)
+    lines = ["datetime | status | task name | description"]
+    for task in open_tasks[-5:]:
+        lines.append(
+            " | ".join(
+                [
+                    _format_datetime(task.created_at),
+                    task.status,
+                    task.title,
+                    _summarize_text(task.description or task.status_note or ""),
+                ]
+            )
+        )
     return "\n".join(lines)
 
 
-def _format_references(reference_materials: list[str]) -> str:
+def _format_references(agent_id: str, reference_materials: list[str]) -> str:
+    sections = [
+        _format_team_directory(reference_materials),
+        _format_recent_completed_tasks(agent_id),
+        _format_recent_work_artifacts(agent_id),
+    ]
+    return "\n\n".join(section for section in sections if section)
+
+
+def _list_open_tasks(agent_id: str, current_task: dict[str, Any] | None) -> list[Any]:
+    """Return pending/accepted tasks excluding the currently active one."""
+    current_task_id = current_task.get("id") if current_task else None
+    tasks = db.list_tasks(assigned_to=agent_id, status="pending") + db.list_tasks(assigned_to=agent_id, status="accepted")
+    return [task for task in tasks if task.id != current_task_id]
+
+
+def _format_team_directory(reference_materials: list[str]) -> str:
+    """Render the teammate directory section."""
+    lines = ["TEAM DIRECTORY:"]
     if not reference_materials:
-        return ""
-    lines = ["REFERENCE MATERIALS:"]
-    for item in reference_materials:
-        lines.append(item)
+        lines.append("none")
+        return "\n".join(lines)
+    lines.extend(reference_materials)
     return "\n".join(lines)
 
 
-def _format_trigger(trigger: dict[str, Any]) -> str:
-    """Format the trigger event. No 'respond with JSON' — the schema handles that."""
+def _format_recent_completed_tasks(agent_id: str) -> str:
+    """Render recent completed task history."""
+    limit = config.get_int("context_recent_completed_tasks") or 3
+    rows = db.get_recent_completed_tasks(agent_id, limit=limit)
+    lines = ["RECENT COMPLETED TASKS:", "datetime | status | task name | summary"]
+    if not rows:
+        lines.append("none")
+        return "\n".join(lines)
+    for task in rows:
+        summary = task.get("completion_summary") or task.get("status_note") or ""
+        lines.append(
+            " | ".join(
+                [
+                    _format_datetime(task.get("last_activity") or task.get("created_at")),
+                    str(task.get("status") or "unknown"),
+                    str(task.get("title") or "Untitled"),
+                    _summarize_text(summary),
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_recent_work_artifacts(agent_id: str) -> str:
+    """Render recent work artifacts as historical context."""
+    limit = config.get_int("context_recent_work_artifacts") or 5
+    rows = db.get_recent_work_artifacts(agent_id, limit=limit)
+    lines = ["RECENT WORK ARTIFACTS:", "datetime | type | summary"]
+    if not rows:
+        lines.append("none")
+        return "\n".join(lines)
+    for artifact in rows:
+        lines.append(
+            " | ".join(
+                [
+                    _format_datetime(artifact.created_at),
+                    artifact.message_type,
+                    _summarize_text((artifact.content or "").strip().replace("\n", " ")),
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_datetime(value: Any) -> str:
+    """Format datetimes consistently for prompt tables."""
+    if value is None:
+        return "unknown"
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _summarize_text(value: str, limit: int = 160) -> str:
+    """Keep prompt rows compact and readable."""
+    text = (value or "").strip()
+    if not text:
+        return "-"
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
+    """Format the trigger event for the turn contract in use."""
     trigger_type = trigger.get("type", "unknown")
 
     if trigger_type in ("message", "human_chat", "peer_message"):
@@ -213,7 +313,9 @@ def _format_trigger(trigger: dict[str, Any]) -> str:
         title = trigger.get("task_title", "a task")
         desc = trigger.get("task_description", "")
         extra = f"\nTask description: {desc}" if desc else ""
-        return f"You have been assigned a new task: \"{title}\".{extra}"
+        if contract_kind == "decision":
+            return f'You have been offered a new task assignment: "{title}". Decide whether to accept it now, defer it, or decline it.{extra}'
+        return f'You have an accepted task commitment: "{title}".{extra}'
 
     if trigger_type == "activity_resumed":
         content = trigger.get("content", "")
@@ -234,3 +336,10 @@ def _format_trigger(trigger: dict[str, Any]) -> str:
         )
 
     return "You have been activated."
+
+
+def _render_turn_contract(contract_kind: str) -> str:
+    """Render the code-owned contract for this turn type."""
+    if contract_kind == "decision":
+        return render_decision_contract()
+    return render_action_contract()

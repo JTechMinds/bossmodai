@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ActivityKind = Literal[
     "assignment",
+    "break",
     "conversation",
     "meeting",
     "movement",

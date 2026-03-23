@@ -131,7 +131,7 @@ def delete_human_chat_thread(agent_id: str) -> int:
 
 
 def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Return recent completed or blocked task summaries for recall context."""
+    """Return recent archived task summaries for recall context."""
     from db.crud import query
 
     return query(
@@ -141,7 +141,7 @@ def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, 
             last_activity, created_at
         FROM tasks
         WHERE assigned_to = $1
-          AND status IN ('complete', 'blocked', 'abandoned', 'stalled', 'delegated')
+          AND status IN ('complete', 'blocked', 'abandoned', 'stalled', 'delegated', 'declined')
         ORDER BY last_activity DESC, created_at DESC
         LIMIT $2
         """,

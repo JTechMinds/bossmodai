@@ -41,6 +41,13 @@ def validate_api_base(url: str) -> str:
     return clean
 
 
+def canonicalize_openai_compatible_model(model: str, api_base: str | None = None) -> str:
+    """Normalize model names for OpenAI-compatible custom endpoints."""
+    if api_base and "/" not in model:
+        return f"openai/{model}"
+    return model
+
+
 @dataclass
 class LLMResponse:
     """Structured result from an LLM call."""
@@ -91,20 +98,15 @@ async def completion(
         max_tokens = config.get_int("default_max_tokens") or 2048
 
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": canonicalize_openai_compatible_model(model, api_base=api_base),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
 
     if api_base:
-        if "/" not in model:
-            raise LLMError(
-                "Custom api_base requires a provider-prefixed model identifier, for example openai/gpt-4.1-mini"
-            )
         kwargs["api_base"] = validate_api_base(api_base)
-        if api_key:
-            kwargs["api_key"] = api_key
+        kwargs["api_key"] = api_key or "local-openai-compatible"
     elif api_key:
         kwargs["api_key"] = api_key
 

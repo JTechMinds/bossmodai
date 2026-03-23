@@ -121,6 +121,8 @@ def plan_arrival_follow_up(agent_id: str, resumed_activity: Activity | None, roo
         reason = f'You arrived at {room_name}. Continue work on "{title}".'
     elif resumed_activity.kind == "assignment":
         reason = f'You arrived at {room_name}. Review the assignment and choose the next step.'
+    elif resumed_activity.kind == "break":
+        reason = f'You arrived at {room_name}. Continue the break.'
     elif resumed_activity.kind == "conversation":
         reason = f'You arrived at {room_name}. Continue the conversation.'
     elif resumed_activity.kind == "meeting":

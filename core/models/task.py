@@ -18,12 +18,14 @@ from pydantic import BaseModel, ConfigDict
 
 TaskStatus = Literal[
     "pending",
+    "accepted",
     "active",
     "blocked",
     "complete",
     "stalled",
     "abandoned",
     "delegated",
+    "declined",
 ]
 
 

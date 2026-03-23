@@ -7,6 +7,7 @@
  */
 
 const AgentContext = (() => {
+    const SHOW_SYSTEM_RECEIPTS_KEY = 'bossmod.chat.showSystemReceipts';
     let selectedAgent = null;
     let creatingAgent = false;
     let activeSubview = 'chat';
@@ -92,6 +93,27 @@ const AgentContext = (() => {
 
     function setCachedChat(agentId, messages) {
         chatCache.set(String(agentId), Array.isArray(messages) ? [...messages] : []);
+    }
+
+    function shouldShowSystemReceipts() {
+        try {
+            return window.localStorage.getItem(SHOW_SYSTEM_RECEIPTS_KEY) !== 'false';
+        } catch {
+            return true;
+        }
+    }
+
+    function setShowSystemReceipts(value) {
+        try {
+            window.localStorage.setItem(SHOW_SYSTEM_RECEIPTS_KEY, value ? 'true' : 'false');
+        } catch {
+            // Ignore storage failures and keep the in-memory render path working.
+        }
+    }
+
+    function getVisibleChatMessages(messages) {
+        if (shouldShowSystemReceipts()) return messages || [];
+        return (messages || []).filter(msg => msg.message_type !== 'system');
     }
 
     // ─── Tab header management ───
@@ -303,19 +325,45 @@ const AgentContext = (() => {
 
         const esc = BossModUtils.escapeHtml;
         messagesEl.innerHTML = '';
+        renderChatControls(messagesEl);
 
-        if (!messages || messages.length === 0) {
-            messagesEl.innerHTML = `
-                <div class="text-bm-muted text-sm text-center mt-4">
+        const visibleMessages = getVisibleChatMessages(messages);
+
+        if (!visibleMessages || visibleMessages.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'text-bm-muted text-sm text-center mt-4';
+            empty.innerHTML = `
                     <p>Chat with <strong>${esc(agentName)}</strong></p>
-                    <p class="text-xs mt-1">Send a message to activate this agent.</p>
-                </div>`;
+                    <p class="text-xs mt-1">Send a message to activate this agent.</p>`;
+            messagesEl.appendChild(empty);
             return;
         }
 
-        for (const msg of messages) {
-            appendChatMessage(msg.content, msg.from);
+        for (const msg of visibleMessages) {
+            appendChatMessage(msg.content, msg.from, msg.message_type);
         }
+    }
+
+    function renderChatControls(messagesEl) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex items-center justify-end mb-3';
+        wrapper.innerHTML = `
+            <label class="inline-flex items-center gap-2 text-xs text-bm-muted cursor-pointer select-none">
+                <input id="chat-system-receipts-toggle"
+                       type="checkbox"
+                       class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
+                       ${shouldShowSystemReceipts() ? 'checked' : ''}>
+                <span>Show system receipts</span>
+            </label>`;
+        messagesEl.appendChild(wrapper);
+
+        const toggle = wrapper.querySelector('#chat-system-receipts-toggle');
+        if (!toggle) return;
+        toggle.addEventListener('change', () => {
+            setShowSystemReceipts(toggle.checked);
+            if (!selectedAgent) return;
+            renderChatMessages(getCachedChat(selectedAgent.id) || [], selectedAgent.name);
+        });
     }
 
     function bindChatSend() {
@@ -366,14 +414,23 @@ const AgentContext = (() => {
         input.focus();
     }
 
-    function appendChatMessage(text, fromType) {
+    function appendChatMessage(text, fromType, messageType = null) {
+        if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts()) {
+            return;
+        }
         const messagesEl = document.getElementById('chat-messages');
         // Remove empty state hint if present
         const emptyHint = messagesEl.querySelector('.text-center');
         if (emptyHint) emptyHint.remove();
 
         const msgDiv = document.createElement('div');
-        msgDiv.className = `chat-msg ${fromType === 'human' ? 'from-human' : 'from-agent'} mb-2`;
+        let bubbleClass = 'from-agent';
+        if (fromType === 'human') {
+            bubbleClass = 'from-human';
+        } else if (fromType === 'system' || messageType === 'system') {
+            bubbleClass = 'from-system';
+        }
+        msgDiv.className = `chat-msg ${bubbleClass} mb-2`;
         // Preserve newlines and whitespace formatting
         msgDiv.innerText = text;
         messagesEl.appendChild(msgDiv);
@@ -387,12 +444,13 @@ const AgentContext = (() => {
             content: data.content,
             from: data.from,
             from_name: data.from_name,
+            message_type: data.message_type,
             message_id: data.message_id,
             created_at: data.created_at,
         });
         setCachedChat(data.agent_id, cached);
         hideTypingIndicator();
-        appendChatMessage(data.content, data.from);
+        appendChatMessage(data.content, data.from, data.message_type);
     }
 
     async function handleChatReset(data) {
@@ -509,8 +567,10 @@ const AgentContext = (() => {
             let html = `<div class="space-y-2">`;
             for (const t of tasks) {
                 const statusColor = t.status === 'complete' ? 'text-emerald-600' :
-                                    t.status === 'active' ? 'text-blue-600' :
-                                    t.status === 'blocked' ? 'text-red-600' : 'text-bm-muted';
+                                    t.status === 'accepted' ? 'text-blue-600' :
+                                    t.status === 'active' ? 'text-amber-600' :
+                                    t.status === 'blocked' ? 'text-red-600' :
+                                    t.status === 'declined' ? 'text-orange-600' : 'text-bm-muted';
                 html += `
                     <div class="p-3 border border-bm-border rounded-lg bg-white">
                         <div class="flex items-start justify-between">

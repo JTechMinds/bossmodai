@@ -9,8 +9,6 @@ import db
 
 _PROGRESS_ACTIONS = {
     "work",
-    "startTask",
-    "resumeTask",
     "complete",
     "blocked",
     "delegated",

@@ -19,7 +19,7 @@ const SettingsView = (() => {
     const ADVANCED_ITEMS = [
         { id: 'advanced-system', label: 'Advanced System Settings', icon: 'shield' },
         { id: 'prompt-template', label: 'System Prompt Template', icon: 'file-code' },
-        { id: 'action-contract', label: 'Action Contract', icon: 'braces' },
+        { id: 'runtime-contracts', label: 'Runtime Contracts', icon: 'braces' },
     ];
 
     // ─── Open / Close ───
@@ -106,8 +106,8 @@ const SettingsView = (() => {
             case 'prompt-template':
                 PromptTemplateSection.render(content);
                 break;
-            case 'action-contract':
-                ActionContractSection.render(content);
+            case 'runtime-contracts':
+                RuntimeContractsSection.render(content);
                 break;
         }
     }
@@ -122,6 +122,44 @@ const SettingsView = (() => {
 
 const ConnectionsSection = (() => {
     let container = null;
+
+    async function copyApiKey(value, statusEl = null) {
+        if (!value) return;
+        try {
+            await navigator.clipboard.writeText(value);
+            if (statusEl) {
+                statusEl.textContent = 'Copied';
+                setTimeout(() => {
+                    if (statusEl.textContent === 'Copied') statusEl.textContent = '';
+                }, 1500);
+            }
+        } catch {
+            if (statusEl) statusEl.textContent = 'Copy failed';
+        }
+    }
+
+    function bindApiKeyFieldControls(root = document) {
+        root.querySelectorAll('[data-toggle-api-key]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetId = btn.dataset.toggleApiKey;
+                const input = document.getElementById(targetId);
+                if (!input) return;
+                const isHidden = input.type === 'password';
+                input.type = isHidden ? 'text' : 'password';
+                btn.textContent = isHidden ? 'Hide' : 'Show';
+            });
+        });
+
+        root.querySelectorAll('[data-copy-api-key]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const targetId = btn.dataset.copyApiKey;
+                const source = document.getElementById(targetId);
+                const statusEl = btn.dataset.copyStatus ? document.getElementById(btn.dataset.copyStatus) : null;
+                if (!source) return;
+                await copyApiKey(source.value, statusEl);
+            });
+        });
+    }
 
     async function render(el) {
         container = el;
@@ -171,7 +209,26 @@ const ConnectionsSection = (() => {
                                 ${conn.model ? `<span class="text-xs px-2 py-0.5 bg-slate-100 rounded-full text-bm-muted">${BossModUtils.escapeHtml(conn.model)}</span>` : ''}
                             </div>
                             <p class="text-sm text-bm-muted mt-1">${BossModUtils.escapeHtml(conn.api_base_url)}</p>
-                            <p class="text-xs text-bm-muted mt-0.5 font-mono">${BossModUtils.escapeHtml(maskedKey)}</p>
+                            <div class="mt-1.5">
+                                <input id="conn-api-key-${conn.id}" type="password" readonly
+                                       value="${BossModUtils.escapeHtml(conn.api_key || '')}"
+                                       class="w-full max-w-md px-2 py-1 text-xs border border-bm-border rounded bg-slate-50 font-mono text-bm-muted">
+                                <div class="flex items-center gap-2 mt-1">
+                                    <button type="button"
+                                            data-toggle-api-key="conn-api-key-${conn.id}"
+                                            class="text-xs text-bm-accent hover:underline">
+                                        Show
+                                    </button>
+                                    <button type="button"
+                                            data-copy-api-key="conn-api-key-${conn.id}"
+                                            data-copy-status="conn-api-key-status-${conn.id}"
+                                            class="text-xs text-bm-accent hover:underline"
+                                            ${conn.api_key ? '' : 'disabled'}>
+                                        Copy
+                                    </button>
+                                    <span id="conn-api-key-status-${conn.id}" class="text-[11px] text-bm-muted">${BossModUtils.escapeHtml(maskedKey)}</span>
+                                </div>
+                            </div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
                             <button data-edit-conn="${conn.id}"
@@ -193,6 +250,7 @@ const ConnectionsSection = (() => {
 
         container.innerHTML = html;
         if (window.lucide) lucide.createIcons({ nodes: [container] });
+        bindApiKeyFieldControls(container);
 
         // Bind events
         const addBtn = document.getElementById('btn-add-connection');
@@ -243,20 +301,34 @@ const ConnectionsSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Provide a key only if your provider expects one. The runtime will not inject placeholder credentials.</p>
-                        <input type="password" name="api_key"
-                               value="${BossModUtils.escapeHtml(conn?.api_key || '')}"
-                               placeholder="sk-..."
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                        <p class="text-xs text-bm-muted mb-1.5">Optional. Leave blank for local OpenAI-compatible servers. The runtime supplies a harmless transport placeholder when the upstream library requires one.</p>
+                        <div class="flex gap-2">
+                            <input id="connection-api-key-input" type="password" name="api_key"
+                                   value="${BossModUtils.escapeHtml(conn?.api_key || '')}"
+                                   placeholder="sk-..."
+                                   class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent">
+                            <button type="button"
+                                    data-toggle-api-key="connection-api-key-input"
+                                    class="px-3 py-2 border border-bm-border rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">
+                                Show
+                            </button>
+                            <button type="button"
+                                    data-copy-api-key="connection-api-key-input"
+                                    data-copy-status="connection-api-key-status"
+                                    class="px-3 py-2 border border-bm-border rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">
+                                Copy
+                            </button>
+                        </div>
+                        <p id="connection-api-key-status" class="text-[11px] text-bm-muted mt-1"></p>
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Model Name</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Exact runtime model identifier. If you use a custom API base, enter the provider-prefixed form such as <code>openai/gpt-4.1-mini</code>.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">Model name exposed by the server. Raw names like <code>llama3</code> work for local OpenAI-compatible endpoints; provider-prefixed names also work.</p>
                         <input type="text" name="model"
                                value="${BossModUtils.escapeHtml(conn?.model || '')}"
-                               placeholder="e.g. openai/gpt-4.1-mini"
+                               placeholder="e.g. llama3 or openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
@@ -292,6 +364,7 @@ const ConnectionsSection = (() => {
             </div>`;
 
         document.getElementById('btn-cancel-conn').addEventListener('click', renderList);
+        bindApiKeyFieldControls(container);
 
         document.getElementById('btn-test-conn').addEventListener('click', async () => {
             const form = document.getElementById('connection-form');
@@ -782,7 +855,7 @@ const PromptTemplateSection = (() => {
         el.innerHTML = `
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">System Prompt Template</h2>
-                <p class="text-sm text-bm-muted mt-0.5">The master wrapper around each agent's role and context. The runtime action contract is injected separately and is not edited here.</p>
+                <p class="text-sm text-bm-muted mt-0.5">The master wrapper around each agent's role and context. The runtime turn contract is injected separately and is not edited here.</p>
             </div>
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Available Template Variables</p>
@@ -797,7 +870,7 @@ const PromptTemplateSection = (() => {
                     <span>{{references}}</span><span>Recent work summaries and artifacts</span>
                 </div>
             </div>
-            <p class="text-xs text-amber-700 mt-3 mb-3">Only the variables listed above are substituted into this template. Separately, the code-owned runtime action contract is always appended as its own system message.</p>
+            <p class="text-xs text-amber-700 mt-3 mb-3">Only the variables listed above are substituted into this template. Separately, the code-owned runtime decision or execution contract is always appended as its own system message.</p>
             <p class="text-xs text-bm-muted mb-1.5">This is the full wrapper prompt sent before every turn. Use it to control role framing, context layout, and the rules the model sees.</p>
             <textarea id="system-prompt-textarea" rows="20"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
@@ -967,48 +1040,58 @@ const AdvancedSystemSection = (() => {
 
 
 // ═══════════════════════════════════════════════════════════════
-// Action Contract Section (Advanced)
+// Runtime Contracts Section (Advanced)
 // ═══════════════════════════════════════════════════════════════
 
-const ActionContractSection = (() => {
+const RuntimeContractsSection = (() => {
     async function render(el) {
-        let contractValue = '';
+        let decisionContract = '';
+        let executionContract = '';
         try {
-            const res = await fetch('/api/runtime/action-contract');
+            const res = await fetch('/api/runtime/contracts');
             const payload = await res.json();
-            contractValue = payload.content || '';
+            decisionContract = payload.decision || '';
+            executionContract = payload.execution || '';
         } catch {
-            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load action contract.</p>';
+            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load runtime contracts.</p>';
             return;
         }
 
         el.innerHTML = `
             <div class="mb-6">
-                <h2 class="text-lg font-semibold">Action Contract</h2>
-                <p class="text-sm text-bm-muted mt-0.5">This is the code-owned runtime action contract appended to every turn. It is generated by the backend and is not editable from Settings.</p>
+                <h2 class="text-lg font-semibold">Runtime Contracts</h2>
+                <p class="text-sm text-bm-muted mt-0.5">These are the code-owned runtime contracts appended to turns. Direct requests use the decision contract. Resumed/internal turns use the execution contract.</p>
             </div>
-            <p class="text-xs text-amber-700 mb-3">Agents always receive this contract as a separate system message. Update the backend action contract if runtime behavior changes.</p>
-            <p class="text-xs text-bm-muted mb-3">Use the System Prompt Template tab to edit the role/context wrapper. Use this tab to inspect the effective runtime contract currently being enforced.</p>
-            <pre id="action-contract-text"
-                 class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(contractValue)}</pre>
+            <p class="text-xs text-amber-700 mb-3">Agents always receive one of these contracts as a separate system message. Update the backend contracts if runtime behavior changes.</p>
+            <p class="text-xs text-bm-muted mb-4">Use the System Prompt Template tab to edit the role/context wrapper. Use this tab to inspect the effective decision and execution contracts currently being enforced.</p>
+            <div class="space-y-5">
+                <section>
+                    <h3 class="text-sm font-semibold mb-2">Decision Contract</h3>
+                    <pre class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(decisionContract)}</pre>
+                </section>
+                <section>
+                    <h3 class="text-sm font-semibold mb-2">Execution Contract</h3>
+                    <pre class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(executionContract)}</pre>
+                </section>
+            </div>
             <div class="flex items-center gap-3 mt-4">
-                <button id="btn-copy-action-contract"
+                <button id="btn-copy-runtime-contracts"
                         class="px-4 py-2 bg-bm-accent text-white rounded-lg
                                hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    Copy Contract
+                    Copy Both
                 </button>
-                <button id="btn-refresh-action-contract"
+                <button id="btn-refresh-runtime-contracts"
                         class="px-4 py-2 border border-bm-border rounded-lg
                                hover:bg-slate-50 transition-colors text-sm font-medium">
                     Refresh
                 </button>
-                <span id="action-contract-save-status" class="text-sm text-bm-muted"></span>
+                <span id="runtime-contract-save-status" class="text-sm text-bm-muted"></span>
             </div>`;
 
-        document.getElementById('btn-copy-action-contract').addEventListener('click', async () => {
-            const status = document.getElementById('action-contract-save-status');
+        document.getElementById('btn-copy-runtime-contracts').addEventListener('click', async () => {
+            const status = document.getElementById('runtime-contract-save-status');
             try {
-                await navigator.clipboard.writeText(contractValue);
+                await navigator.clipboard.writeText(`DECISION CONTRACT\n\n${decisionContract}\n\nEXECUTION CONTRACT\n\n${executionContract}`);
                 status.textContent = 'Copied';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
@@ -1018,7 +1101,7 @@ const ActionContractSection = (() => {
             }
         });
 
-        document.getElementById('btn-refresh-action-contract').addEventListener('click', () => {
+        document.getElementById('btn-refresh-runtime-contracts').addEventListener('click', () => {
             render(el);
         });
     }

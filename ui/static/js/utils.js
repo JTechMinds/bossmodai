@@ -21,12 +21,12 @@ const BossModUtils = (() => {
         return {
             id: w.id,
             name: w.name,
-            x: w.x ?? w.desk_x ?? 0,
-            y: w.y ?? w.desk_y ?? 0,
+            x: w.x ?? 0,
+            y: w.y ?? 0,
             color: w.color || '#3b82f6',
             status: w.status || 'idle',
-            currentActivityKind: w.currentActivityKind || w.current_activity_kind || null,
-            boundTaskId: w.boundTaskId || w.bound_task_id || null,
+            currentActivityKind: w.currentActivityKind || null,
+            boundTaskId: w.boundTaskId || null,
         };
     }
 
@@ -41,6 +41,7 @@ const BossModUtils = (() => {
 
     const ACTIVITY_CONFIG = {
         assignment:   { hex: '#f59e0b', classes: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-500', label: 'assignment' },
+        break:        { hex: '#10b981', classes: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', label: 'break' },
         conversation: { hex: '#10b981', classes: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', label: 'conversation' },
         meeting:      { hex: '#3b82f6', classes: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500', label: 'meeting' },
         movement:     { hex: '#3b82f6', classes: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500', label: 'moving' },

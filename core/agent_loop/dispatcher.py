@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 _REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
-_WORK_REPLAN_ACTIONS = {"startTask", "resumeTask", "complete", "blocked", "delegated", "abandoned"}
+_WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 
 
 class TurnDispatcher:
@@ -293,7 +293,10 @@ class TurnDispatcher:
         """Return whether a direct interrupt changed durable work selection."""
         if trigger.get("type") != "human_chat" or not action:
             return False
-        return action.get("action") in _WORK_REPLAN_ACTIONS
+        action_name = action.get("action")
+        if action_name in _WORK_REPLAN_ACTIONS:
+            return True
+        return action.get("decision") in {"accept", "defer"} and action.get("commitmentKind") == "work"
 
     def _rebuild_backlog_queue(self, agent_id: str) -> None:
         """Drop stale resumptive backlog triggers and rebuild pending assignments."""
@@ -313,7 +316,11 @@ class TurnDispatcher:
         if idle_since is None:
             return
 
-        if db.list_tasks(assigned_to=agent_id, status="pending") or db.list_tasks(assigned_to=agent_id, status="active"):
+        if (
+            db.list_tasks(assigned_to=agent_id, status="pending")
+            or db.list_tasks(assigned_to=agent_id, status="accepted")
+            or db.list_tasks(assigned_to=agent_id, status="active")
+        ):
             return
 
         proximity = config.get_int("social_proximity_tiles") or 0
@@ -335,7 +342,11 @@ class TurnDispatcher:
                 continue
             if self.is_active(peer_id) or db.has_open_trigger(peer_id):
                 continue
-            if db.list_tasks(assigned_to=peer_id, status="pending") or db.list_tasks(assigned_to=peer_id, status="active"):
+            if (
+                db.list_tasks(assigned_to=peer_id, status="pending")
+                or db.list_tasks(assigned_to=peer_id, status="accepted")
+                or db.list_tasks(assigned_to=peer_id, status="active")
+            ):
                 continue
 
             thread = db.get_agent_direct_thread(agent.id, peer_id, limit=10)

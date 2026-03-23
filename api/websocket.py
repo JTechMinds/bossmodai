@@ -86,6 +86,7 @@ class ConnectionManager:
         content: str,
         from_type: str,
         from_name: str,
+        message_type: str | None = None,
         message_id: str | None = None,
         created_at: Any = None,
     ) -> None:
@@ -101,6 +102,7 @@ class ConnectionManager:
                 "content": content,
                 "from": from_type,
                 "from_name": from_name,
+                "message_type": message_type,
                 "message_id": message_id,
                 "created_at": created_at,
             },

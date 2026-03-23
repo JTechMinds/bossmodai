@@ -1,20 +1,4 @@
-"""BossMod AI — Multi-turn agent execution loop.
-
-Orchestrates a complete agent activation:
-  1. Determine activation mode (social / work)
-  2. Select the LLM model — skip if none configured
-  3. Loop: build context → call LLM → parse → Guardian → execute
-  4. Continue until a terminal action or Guardian violation
-  5. Persist diagnostics and leave visible status to the activity runtime
-  6. Broadcast results via WebSocket after every action
-
-Terminal actions: idle, complete, blocked, delegated, abandoned
-Non-terminal actions: work, message, attendMeeting, remoteMeeting (loop continues)
-Walk action: walkTo ends the loop (movement handled by simulation)
-
-Returns structured action outcomes so the dispatcher can apply follow-up
-planning without circular imports.
-"""
+"""BossMod AI — Turn router for direct decisions and execution actions."""
 
 from __future__ import annotations
 
@@ -29,6 +13,9 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
+from core.agent_loop.chat_receipts import create_chat_receipt
+from core.agent_loop.decision_contract import ConversationDecision, parse_decision, validate_decision_for_trigger
+from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.liveness import record_action_liveness
 from core.agent_loop.outcomes import TurnOutcome
@@ -42,6 +29,8 @@ from core.models import Agent, AgentState
 import db
 
 logger = logging.getLogger(__name__)
+
+_DECISION_TRIGGER_TYPES = {"human_chat", "peer_message", "task_assigned"}
 
 
 async def run_turn(
@@ -73,6 +62,7 @@ async def run_turn(
     api_config = routing.get_api_config(agent)
 
     # 3. Build initial context
+    is_decision_turn = _is_decision_turn(trigger)
     conversation_history = _get_conversation_history(agent.id, trigger)
     nearby = _get_nearby_agents(agent.id, state)
     initial_activity = activity_runtime.get_active_activity(agent.id)
@@ -92,10 +82,27 @@ async def run_turn(
             nearby_agents=nearby,
             current_task=current_task,
             pending_trigger_count=pending_count,
+            contract_kind="decision" if is_decision_turn else "execution",
         )
     )
     initial_context_json = json.dumps(context)
     initial_task_id = activity_runtime.get_active_task_id(agent.id)
+
+    if is_decision_turn:
+        return await _run_decision_turn(
+            agent=agent,
+            state=state,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            api_config=api_config,
+            context=context,
+            initial_context_json=initial_context_json,
+            initial_task_id=initial_task_id,
+            start=start,
+        )
 
     if policy.require_work_activity and not initial_task_id:
         result = {
@@ -310,6 +317,8 @@ async def run_turn(
         )
         executed_actions.append(action_name)
 
+        active_activity_before_action = active_activity
+
         # Execute action
         result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = activity_runtime.get_active_task_id(agent.id)
@@ -333,12 +342,21 @@ async def run_turn(
         )
 
         chat_message = result.get("chat_message")
+        if not chat_message:
+            chat_message = create_chat_receipt(
+                agent=agent,
+                trigger=trigger,
+                active_activity=active_activity_before_action,
+                action=action,
+                result=result,
+            )
         if chat_message:
             await manager.broadcast_chat_message(
                 agent_id=chat_message["agent_id"],
                 content=chat_message["content"],
                 from_type=chat_message["from_type"],
                 from_name=chat_message["from_name"],
+                message_type=chat_message.get("message_type"),
                 message_id=chat_message.get("message_id"),
                 created_at=chat_message.get("created_at"),
             )
@@ -457,7 +475,12 @@ async def run_turn(
         if action_name == "walkTo" and result.get("path"):
             break
 
-        if should_end_turn_after_action(action, policy):
+        if should_end_turn_after_action(
+            action,
+            policy,
+            active_activity.kind if active_activity else None,
+            result,
+        ):
             break
 
         if _has_pending_interrupts(agent.id):
@@ -468,9 +491,10 @@ async def run_turn(
             {"role": "assistant", "content": response.content},
             {
                 "role": "user",
-                "content": (
-                    f"Action executed: {result.get('detail', action_name)}. "
-                    f"Continue working or sign off (complete/blocked/delegated/abandoned)."
+                "content": _build_continuation_instruction(
+                    result=result,
+                    action_name=action_name,
+                    active_activity_kind=active_activity.kind if active_activity else None,
                 ),
             },
         ]
@@ -505,6 +529,235 @@ async def run_turn(
             completion_tokens=total_completion_tokens,
             total_tokens=total_tokens,
             steps=step_traces,
+        ),
+        start=start,
+    )
+
+
+def _is_decision_turn(trigger: dict[str, Any]) -> bool:
+    """Return whether the trigger should use the direct-request decision contract."""
+    return trigger.get("type") in _DECISION_TRIGGER_TYPES
+
+
+async def _run_decision_turn(
+    *,
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+    trigger_type: str,
+    mode: str,
+    model: str,
+    model_source: str,
+    api_config: dict[str, Any],
+    context: list[dict[str, str]],
+    initial_context_json: str,
+    initial_task_id: str | None,
+    start: float,
+) -> TurnOutcome:
+    """Handle a single-turn direct request by producing a structured decision."""
+    step_started = time.monotonic()
+
+    try:
+        response = await client.completion(
+            model=model,
+            messages=context,
+            api_base=api_config.get("api_base"),
+            api_key=api_config.get("api_key"),
+            extra_body=api_config.get("extra_body"),
+        )
+    except client.LLMError as exc:
+        result = {
+            "event": "agent_error",
+            "detail": f"{agent.name} LLM call failed: {exc}",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        return await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=initial_context_json,
+            outcome=TurnOutcome.failure(
+                result=result,
+                error=str(exc),
+                action=None,
+                action_summary="",
+                raw_response="",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                steps=[
+                    _build_step_trace(
+                        step_index=1,
+                        context_snapshot=None,
+                        raw_response=None,
+                        action=None,
+                        result=result,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=str(exc),
+                    )
+                ],
+            ),
+            start=start,
+        )
+
+    parsed = parse_decision(response.content)
+    if parsed.get("decision") == "_parse_failed":
+        result = {
+            "event": "agent_error",
+            "detail": f"{agent.name} returned invalid decision JSON",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
+        return await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=initial_context_json,
+            outcome=TurnOutcome.failure(
+                result=result,
+                error=error,
+                action=parsed,
+                action_summary="",
+                raw_response=response.content,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
+                steps=[
+                    _build_step_trace(
+                        step_index=1,
+                        context_snapshot=None,
+                        raw_response=response.content,
+                        action=parsed,
+                        result=result,
+                        prompt_tokens=response.prompt_tokens,
+                        completion_tokens=response.completion_tokens,
+                        total_tokens=response.total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=error,
+                    )
+                ],
+            ),
+            start=start,
+        )
+
+    decision = ConversationDecision.model_validate(parsed)
+    validation_error = validate_decision_for_trigger(
+        decision,
+        trigger_type=trigger_type,
+        active_task_id=initial_task_id,
+    )
+    if validation_error:
+        result = {
+            "event": "agent_error",
+            "detail": f"{agent.name} returned an invalid direct-request decision",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        return await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=initial_context_json,
+            outcome=TurnOutcome.failure(
+                result=result,
+                error=validation_error,
+                action=decision.model_dump(),
+                action_summary="",
+                raw_response=response.content,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
+                steps=[
+                    _build_step_trace(
+                        step_index=1,
+                        context_snapshot=None,
+                        raw_response=response.content,
+                        action=decision.model_dump(),
+                        result=result,
+                        prompt_tokens=response.prompt_tokens,
+                        completion_tokens=response.completion_tokens,
+                        total_tokens=response.total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=validation_error,
+                    )
+                ],
+            ),
+            start=start,
+        )
+
+    result = apply_decision(decision.model_dump(), agent, state, trigger)
+
+    await manager.broadcast_world_state()
+
+    if decision.thought:
+        await manager.broadcast_thought(
+            agent_id=agent.id,
+            thought=decision.thought,
+            action_name=decision.decision,
+        )
+
+    await manager.broadcast_activity(
+        event=result.get("event", "decision_applied"),
+        detail=result.get("detail", ""),
+        agent_name=result.get("agent_name"),
+        extra=result.get("activity_extra"),
+    )
+
+    if result.get("chat_message"):
+        chat_message = result["chat_message"]
+        await manager.broadcast_chat_message(
+            agent_id=chat_message["agent_id"],
+            content=chat_message["content"],
+            from_type=chat_message["from_type"],
+            from_name=chat_message["from_name"],
+            message_type=chat_message.get("message_type"),
+            message_id=chat_message.get("message_id"),
+            created_at=chat_message.get("created_at"),
+        )
+
+    return await _finalize_turn(
+        agent=agent,
+        trigger=trigger,
+        trigger_type=trigger_type,
+        mode=mode,
+        model=model,
+        model_source=model_source,
+        initial_context_json=initial_context_json,
+        outcome=TurnOutcome.success(
+            result=result,
+            action=decision.model_dump(),
+            action_summary=summarize_decision(decision.model_dump()),
+            raw_response=response.content,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            total_tokens=response.total_tokens,
+            steps=[
+                _build_step_trace(
+                    step_index=1,
+                    context_snapshot=None,
+                    raw_response=response.content,
+                    action=decision.model_dump(),
+                    result=result,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    total_tokens=response.total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            ],
         ),
         start=start,
     )
@@ -575,19 +828,24 @@ def _get_conversation_history(agent_id: str, trigger: dict[str, Any]) -> list[di
 
     if trigger_type in ("human_chat", "watchdog_status_ping"):
         thread = db.get_human_chat_thread(agent_id, limit=limit)
-        return db.get_formatted_messages(thread, human_label="Human Operator")
+        return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
 
     if trigger_type == "peer_message" and trigger.get("from_agent"):
         thread = db.get_agent_direct_thread(agent_id, trigger["from_agent"], limit=limit)
-        return db.get_formatted_messages(thread, human_label="Human Operator")
+        return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
 
     if trigger_type == "activity_resumed":
         active = activity_runtime.get_active_activity(agent_id)
         if active and active.kind in {"conversation", "meeting"}:
             thread = db.get_human_chat_thread(agent_id, limit=limit)
-            return db.get_formatted_messages(thread, human_label="Human Operator")
+            return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
 
     return []
+
+
+def _filter_prompt_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Exclude runtime-authored system receipts from LLM conversation context."""
+    return [msg for msg in messages if msg.get("message_type") != "system"]
 
 
 def _get_nearby_agents(
@@ -632,6 +890,7 @@ def _get_current_activity(agent_id: str) -> dict[str, Any] | None:
         "title": activity.title,
         "detail": activity.detail,
         "destination": activity.destination,
+        "metadata": activity.metadata,
     }
 
 
@@ -640,35 +899,9 @@ def _get_reference_materials(agent_id: str) -> list[str]:
     materials: list[str] = []
 
     teammates = [agent for agent in db.list_agents() if agent.id != agent_id]
-    if teammates:
-        directory_lines = [
-            "TEAM DIRECTORY: use exact agentId values for agent-targeted actions.",
-        ]
-        for teammate in teammates:
-            role = f" ({teammate.role})" if teammate.role else ""
-            directory_lines.append(f"- {teammate.name}{role} — agentId: {teammate.id}")
-        materials.append("\n".join(directory_lines))
-
-    for task in db.get_recent_completed_tasks(
-        agent_id,
-        limit=(config.get_int("context_recent_completed_tasks") or 3),
-    ):
-        summary = task.get("completion_summary") or task.get("status_note") or "No summary"
-        materials.append(f"- Completed task: {task.get('title')} [{task.get('status')}]: {summary}")
-
-    for artifact in db.get_recent_work_artifacts(
-        agent_id,
-        limit=(config.get_int("context_recent_work_artifacts") or 5),
-    ):
-        snippet = (artifact.content or "").strip().replace("\n", " ")
-        if len(snippet) > 200:
-            snippet = snippet[:200] + "..."
-        materials.append(f"- Work artifact ({artifact.created_at.isoformat()}): {snippet}")
-
-    pending = db.list_tasks(assigned_to=agent_id, status="pending")
-    for task in pending[-3:]:
-        note = task.status_note or "Pending work"
-        materials.append(f"- Pending task: {task.title} [{task.status}]: {note}")
+    for teammate in teammates:
+        role = f" ({teammate.role})" if teammate.role else ""
+        materials.append(f"- {teammate.name}{role} — agentId: {teammate.id}")
 
     return materials
 
@@ -680,6 +913,42 @@ def _summarize_action_chain(executed_actions: list[str], default_label: str) -> 
     if len(chain) <= 4:
         return " -> ".join(chain)
     return " -> ".join([*chain[:3], chain[-1]])
+
+
+def _build_continuation_instruction(
+    *,
+    result: dict[str, Any],
+    action_name: str,
+    active_activity_kind: str | None,
+) -> str:
+    """Build the next-step instruction after a non-terminal execution action."""
+    detail = result.get("detail", action_name)
+    if active_activity_kind == "work":
+        if result.get("event") == "world_feedback" and "Walk to your desk first." in detail:
+            return (
+                f"Action executed: {detail}. "
+                'Your next step should be {"action":"walkTo","destination":"desk",...} before doing work.'
+            )
+        return (
+            f"Action executed: {detail}. "
+            "Choose the next work step or sign off with complete/blocked/delegated/abandoned."
+        )
+    if active_activity_kind == "meeting":
+        return (
+            f"Action executed: {detail}. "
+            "Choose the next step to continue the meeting commitment."
+        )
+    if active_activity_kind == "conversation":
+        return (
+            f"Action executed: {detail}. "
+            "Choose the next step to continue the conversation."
+        )
+    if active_activity_kind == "break":
+        return (
+            f"Action executed: {detail}. "
+            "Choose the next step to continue the break."
+        )
+    return f"Action executed: {detail}. Choose the next execution step."
 
 def _has_pending_interrupts(agent_id: str) -> bool:
     """Return whether queued interrupt-style triggers are waiting for the agent."""
@@ -698,6 +967,15 @@ def _serialize_trace_value(value: Any) -> str | None:
     return json.dumps(value, default=str)
 
 
+def _diagnostic_mode(trigger_type: str) -> str:
+    """Return the user-facing diagnostics label for the completed turn."""
+    if trigger_type in _DECISION_TRIGGER_TYPES:
+        return "decision"
+    if trigger_type == "social":
+        return "social"
+    return "execution"
+
+
 def _build_step_trace(
     *,
     step_index: int,
@@ -714,7 +992,7 @@ def _build_step_trace(
     """Create a normalized per-step execution trace record."""
     action_name = ""
     if action:
-        action_name = str(action.get("action") or "")
+        action_name = str(action.get("action") or action.get("decision") or "")
 
     return {
         "step_index": step_index,
@@ -753,7 +1031,7 @@ async def _finalize_turn(
         trigger_type=trigger_type,
         trigger_data=json.dumps(trigger),
         status=outcome.diagnostic_status,
-        mode=mode,
+        mode=_diagnostic_mode(trigger_type),
         model=model,
         model_source=model_source,
         context=initial_context_json,

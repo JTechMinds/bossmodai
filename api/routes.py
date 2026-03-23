@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.decision_contract import render_decision_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.dispatcher import dispatcher
 from core.runtime import runtime_services
@@ -187,7 +188,9 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     # Add from_type classification for the frontend
     result = []
     for msg in formatted:
-        if msg["from_agent"] == HUMAN_SENDER_ID:
+        if msg["message_type"] == "system":
+            from_type = "system"
+        elif msg["from_agent"] == HUMAN_SENDER_ID:
             from_type = "human"
         elif msg["from_agent"] == agent_id:
             from_type = "agent"
@@ -270,6 +273,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         content=content,
         from_type="human",
         from_name="You",
+        message_type="human",
         message_id=human_msg.id,
         created_at=human_msg.created_at,
     )
@@ -327,7 +331,7 @@ async def reset_agent_runtime(agent_id: str):
     ]
     if open_activities:
         task = db.get_task(open_activities[0].task_id)
-        if task and task.status in ("pending", "active"):
+        if task and task.status in ("pending", "accepted", "active"):
             db.update_task(
                 task.id,
                 status="blocked",
@@ -385,9 +389,12 @@ async def get_settings(category: str | None = None):
     return db.get_settings(category)
 
 
-@router.get("/runtime/action-contract")
-async def get_action_contract():
-    return {"content": render_action_contract()}
+@router.get("/runtime/contracts")
+async def get_runtime_contracts():
+    return {
+        "decision": render_decision_contract(),
+        "execution": render_action_contract(),
+    }
 
 
 @router.post("/settings/reseed")

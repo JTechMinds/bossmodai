@@ -1,4 +1,4 @@
-"""BossMod AI — Code-owned action contract for agent turns."""
+"""BossMod AI — Code-owned execution contract for resumed/internal turns."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ _ACTION_SPECS = [
     ),
     ActionSpec(
         name="walkTo",
-        description="Move your avatar to a destination before doing location-bound work.",
+        description="Move your avatar to a destination while carrying out an existing commitment.",
         example='{"action":"walkTo","destination":"desk","thought":"reasoning"}',
     ),
     ActionSpec(
@@ -39,16 +39,6 @@ _ACTION_SPECS = [
         name="remoteMeeting",
         description="Start a remote meeting from your current workspace.",
         example='{"action":"remoteMeeting","agentId":"agent-id","topic":"topic","thought":"reasoning"}',
-    ),
-    ActionSpec(
-        name="startTask",
-        description="Create and activate a new durable task from a direct assignment before you begin the work.",
-        example='{"action":"startTask","title":"task title","description":"task details","thought":"reasoning"}',
-    ),
-    ActionSpec(
-        name="resumeTask",
-        description="Resume the latest pending task after an interruption or meeting.",
-        example='{"action":"resumeTask","thought":"reasoning"}',
     ),
     ActionSpec(
         name="idle",
@@ -81,10 +71,11 @@ _DESTINATIONS = "desk, meetingRoom, breakRoom, mainWorkspace, southWorkspace, ha
 
 
 def render_action_contract() -> str:
-    """Render the authoritative prompt contract for agent actions."""
+    """Render the authoritative prompt contract for execution actions."""
     lines = [
-        "You are an AI agent in a virtual office. You control an avatar that represents your physical presence.",
-        "Each turn you must respond with exactly one JSON action.",
+        "This is an EXECUTION turn.",
+        "You are carrying out an existing commitment or resumed activity in the virtual office.",
+        "Respond with exactly one JSON action.",
         "",
         "ACTIONS:",
     ]
@@ -112,10 +103,9 @@ def render_action_contract() -> str:
             "",
             "RULES:",
             "- Valid JSON only, no markdown or extra text.",
-            "- Use message when you need to reply to the human operator.",
+            "- Use message when the current activity requires a conversational reply.",
             "- If you need location-bound work, walk first and work second.",
-            '- Use "startTask" when a direct conversation becomes a durable assignment.',
-            '- Use "resumeTask" after an interruption when you should return to pending work.',
+            "- Use walkTo to fulfill an existing commitment, not to accept a new one.",
             '- "work", "complete", "blocked", "delegated", and "abandoned" act on the server-bound current task. Do not invent task IDs.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',
             '- "thought" is a brief admin-visible operational note, not hidden scratch reasoning.',

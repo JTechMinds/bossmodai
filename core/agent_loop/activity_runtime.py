@@ -9,6 +9,7 @@ from core.models import Activity, AgentState, Task
 
 _VISIBLE_STATUS_BY_KIND = {
     "assignment": "work_active",
+    "break": "social_active",
     "conversation": "work_active",
     "meeting": "work_active",
     "movement": "in_transit",
@@ -16,7 +17,48 @@ _VISIBLE_STATUS_BY_KIND = {
     "work": "work_active",
 }
 
-_TRANSIENT_ACTIVITY_KINDS = {"assignment", "conversation", "meeting", "movement", "social"}
+_TRANSIENT_ACTIVITY_KINDS = {"assignment", "break", "conversation", "meeting", "movement", "social"}
+
+
+def _close_transient_activity(activity: Activity, *, detail: str | None = None) -> str | None:
+    """Complete a transient activity and preserve its resumable parent chain."""
+    parent_id = activity.parent_activity_id
+    db.update_activity(activity.id, status="completed", detail=detail or activity.detail)
+    return parent_id
+
+
+def _prepare_parent_for_new_commitment(agent_id: str, *, reason: str) -> str | None:
+    """Pause work or replace transient activity before starting a new commitment."""
+    active = get_active_activity(agent_id)
+    if not active:
+        return None
+    if active.kind == "work":
+        paused = pause_active_work(agent_id, reason)
+        return paused.id if paused else None
+    return _close_transient_activity(active, detail=reason)
+
+
+def begin_commitment_activity(
+    agent_id: str,
+    *,
+    kind: str,
+    title: str | None = None,
+    detail: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    reason: str,
+) -> Activity:
+    """Replace the current transient commitment and start a new one."""
+    parent_activity_id = _prepare_parent_for_new_commitment(agent_id, reason=reason)
+    activity = db.create_runtime_activity(
+        agent_id=agent_id,
+        kind=kind,
+        title=title,
+        detail=detail,
+        parent_activity_id=parent_activity_id,
+        metadata=metadata or {},
+    )
+    refresh_agent_status(agent_id)
+    return activity
 
 
 def get_active_activity(agent_id: str) -> Activity | None:
@@ -119,6 +161,7 @@ def start_assignment_activity(agent_id: str, task: Task) -> Activity:
         task_id=task.id,
         title=task.title,
         detail=task.description,
+        metadata={"task_title": task.title},
     )
     refresh_agent_status(agent_id)
     return activity
@@ -130,6 +173,7 @@ def start_conversation_activity(
     title: str | None = None,
     detail: str | None = None,
     parent_activity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Activity:
     """Create an active conversation activity."""
     activity = db.create_runtime_activity(
@@ -138,6 +182,7 @@ def start_conversation_activity(
         title=title,
         detail=detail,
         parent_activity_id=parent_activity_id,
+        metadata=metadata or {},
     )
     refresh_agent_status(agent_id)
     return activity
@@ -149,6 +194,7 @@ def start_meeting_activity(
     title: str | None = None,
     detail: str | None = None,
     parent_activity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Activity:
     """Create an active meeting activity."""
     activity = db.create_runtime_activity(
@@ -157,6 +203,28 @@ def start_meeting_activity(
         title=title,
         detail=detail,
         parent_activity_id=parent_activity_id,
+        metadata=metadata or {},
+    )
+    refresh_agent_status(agent_id)
+    return activity
+
+
+def start_break_activity(
+    agent_id: str,
+    *,
+    title: str | None = None,
+    detail: str | None = None,
+    parent_activity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Activity:
+    """Create an active break activity."""
+    activity = db.create_runtime_activity(
+        agent_id=agent_id,
+        kind="break",
+        title=title,
+        detail=detail,
+        parent_activity_id=parent_activity_id,
+        metadata=metadata or {},
     )
     refresh_agent_status(agent_id)
     return activity
@@ -173,7 +241,7 @@ def start_movement_activity(
     """Pause the current activity and activate a movement activity."""
     active = get_active_activity(agent_id)
     resume_parent_id = parent_activity_id
-    if active:
+    if active and active.kind != "movement":
         db.update_activity(active.id, status="paused")
         resume_parent_id = active.id
 
@@ -195,14 +263,20 @@ def activate_work_activity(
     *,
     title: str | None = None,
     detail: str | None = None,
+    task_status: str = "active",
     supersede_note: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> Activity:
     """Create or reactivate the runtime work activity for a task."""
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id == task.id:
-        db.update_task(task.id, status="active", status_note=None, watchdog_pinged_at=None)
+        db.update_task(task.id, status=task_status, status_note=None, watchdog_pinged_at=None)
+        merged_metadata = metadata or active.metadata
+        if merged_metadata != active.metadata:
+            db.update_activity(active.id, metadata=merged_metadata)
         refresh_agent_status(agent_id)
-        return active
+        refreshed = db.get_activity(active.id)
+        return refreshed or active
 
     if active and active.kind == "work" and active.task_id and active.task_id != task.id:
         pause_active_work(agent_id, supersede_note or "Paused for newer work.")
@@ -219,6 +293,7 @@ def activate_work_activity(
             status="active",
             title=title or resumable.title,
             detail=detail or resumable.detail,
+            metadata=metadata or resumable.metadata,
         )
     else:
         activity = db.create_runtime_activity(
@@ -227,9 +302,10 @@ def activate_work_activity(
             task_id=task.id,
             title=title or task.title,
             detail=detail or task.description,
+            metadata=metadata or {},
         )
 
-    db.update_task(task.id, status="active", status_note=None, watchdog_pinged_at=None)
+    db.update_task(task.id, status=task_status, status_note=None, watchdog_pinged_at=None)
     refresh_agent_status(agent_id)
     return activity
 
