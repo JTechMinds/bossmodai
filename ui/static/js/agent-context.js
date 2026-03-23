@@ -13,6 +13,29 @@ const AgentContext = (() => {
     const chatCache = new Map();
     let activeChatLoadId = 0;
 
+    function mergeAgentSnapshot(agentDetails, runtimeSnapshot = null) {
+        if (!agentDetails) return null;
+        if (!runtimeSnapshot) return { ...agentDetails };
+        const runtime = BossModUtils.normalizeAgent(runtimeSnapshot);
+        return { ...agentDetails, ...runtime };
+    }
+
+    function updateSelectedAgentRuntimeDisplay() {
+        if (!selectedAgent) return;
+        const pill = document.getElementById('agent-runtime-status-pill');
+        const dot = document.getElementById('agent-runtime-status-dot');
+        const label = document.getElementById('agent-runtime-status-label');
+        if (!pill || !dot || !label) return;
+
+        pill.className = `inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+            BossModUtils.getStatusClasses(selectedAgent.status || 'idle', selectedAgent.currentActivityKind)
+        }`;
+        dot.className = `w-1.5 h-1.5 rounded-full ${
+            BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind)
+        }`;
+        label.textContent = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
+    }
+
     // ─── Select / Deselect ───
 
     async function selectAgent(agentData) {
@@ -21,7 +44,7 @@ const AgentContext = (() => {
         try {
             const res = await fetch(`/api/agents/${agentData.id}`);
             if (!res.ok) return;
-            selectedAgent = await res.json();
+            selectedAgent = mergeAgentSnapshot(await res.json(), agentData);
         } catch {
             return;
         }
@@ -53,6 +76,14 @@ const AgentContext = (() => {
 
     function getSelectedAgent() {
         return selectedAgent;
+    }
+
+    function handleWorldUpdate(agents) {
+        if (!selectedAgent) return;
+        const runtimeSnapshot = agents.find(agent => agent.id === selectedAgent.id);
+        if (!runtimeSnapshot) return;
+        selectedAgent = mergeAgentSnapshot(selectedAgent, runtimeSnapshot);
+        updateSelectedAgentRuntimeDisplay();
     }
 
     function getCachedChat(agentId) {
@@ -414,7 +445,7 @@ const AgentContext = (() => {
             try {
                 const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
                 if (res.ok) {
-                    selectedAgent = await res.json();
+                    selectedAgent = mergeAgentSnapshot(await res.json(), selectedAgent);
                     updateTabs();
                 }
             } catch {
@@ -428,9 +459,10 @@ const AgentContext = (() => {
                 creatingAgent = false;
 
                 if (savedAgent) {
-                    selectedAgent = savedAgent;
+                    selectedAgent = mergeAgentSnapshot(savedAgent, selectedAgent);
                     updateTabs();
                     showToolbar();
+                    updateSelectedAgentRuntimeDisplay();
                     return;
                 }
 
@@ -438,8 +470,9 @@ const AgentContext = (() => {
                 try {
                     const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
                     if (res.ok) {
-                        selectedAgent = await res.json();
+                        selectedAgent = mergeAgentSnapshot(await res.json(), selectedAgent);
                         updateTabs();
+                        updateSelectedAgentRuntimeDisplay();
                     }
                 } catch { /* ignore */ }
             }, () => {
@@ -510,6 +543,7 @@ const AgentContext = (() => {
         getSelectedAgent,
         handleChatMessage,
         handleChatReset,
+        handleWorldUpdate,
     };
 })();
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.models import AgentTrigger
@@ -14,6 +14,18 @@ _TRIGGER_COLUMNS = (
     "id, agent_id, trigger_type, source_channel, payload, task_id, status, "
     "failure_reason, claimed_at, completed_at, failed_at, created_at"
 )
+
+_TRIGGER_PRIORITY_CASE = """
+CASE trigger_type
+    WHEN 'human_chat' THEN 0
+    WHEN 'peer_message' THEN 1
+    WHEN 'watchdog_status_ping' THEN 2
+    WHEN 'task_assigned' THEN 3
+    WHEN 'activity_resumed' THEN 4
+    WHEN 'social' THEN 5
+    ELSE 9
+END
+"""
 
 
 def create_agent_trigger(
@@ -35,33 +47,58 @@ def create_agent_trigger(
     )
 
 
-def claim_next_trigger(excluded_agent_ids: list[str] | None = None) -> AgentTrigger | None:
-    """Claim the oldest queued trigger whose agent is not currently active."""
-    con = get_connection()
-    excluded_agent_ids = excluded_agent_ids or []
-
-    where = ["status = 'queued'"]
-    params: list[Any] = []
-
-    if excluded_agent_ids:
-        placeholders = ", ".join(f"${i + 1}" for i in range(len(excluded_agent_ids)))
-        where.append(f"agent_id NOT IN ({placeholders})")
-        params.extend(excluded_agent_ids)
-
-    row = con.execute(
+def list_queued_triggers(limit: int = 100) -> list[AgentTrigger]:
+    """Return queued triggers in dispatch order."""
+    rows = query(
         f"""
-        SELECT id
+        SELECT {_TRIGGER_COLUMNS}
         FROM agent_triggers
-        WHERE {' AND '.join(where)}
-        ORDER BY created_at ASC, id ASC
-        LIMIT 1
+        WHERE status = 'queued'
+        ORDER BY {_TRIGGER_PRIORITY_CASE}, created_at ASC, id ASC
+        LIMIT $1
+        """,
+        [limit],
+    )
+    return [AgentTrigger.model_validate(row) for row in rows]
+
+
+def delete_queued_triggers(
+    agent_id: str,
+    *,
+    trigger_types: list[str] | None = None,
+) -> int:
+    """Delete queued triggers for an agent and return the number removed."""
+    conditions = ["agent_id = $1", "status = 'queued'"]
+    params: list[Any] = [agent_id]
+
+    if trigger_types:
+        placeholders = ", ".join(f"${len(params) + i + 1}" for i in range(len(trigger_types)))
+        conditions.append(f"trigger_type IN ({placeholders})")
+        params.extend(trigger_types)
+
+    row = query_one(
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE {' AND '.join(conditions)}
         """,
         params,
-    ).fetchone()
-    if row is None:
-        return None
+    )
+    deleted = int(row["cnt"]) if row else 0
+    if deleted:
+        execute(
+            f"""
+            DELETE FROM agent_triggers
+            WHERE {' AND '.join(conditions)}
+            """,
+            params,
+        )
+    return deleted
 
-    trigger_id = row[0]
+
+def claim_trigger(trigger_id: str) -> AgentTrigger | None:
+    """Claim a specific queued trigger."""
+    con = get_connection()
     now = datetime.now(timezone.utc)
     result = con.execute(
         f"""
@@ -76,6 +113,44 @@ def claim_next_trigger(excluded_agent_ids: list[str] | None = None) -> AgentTrig
     if claimed is None:
         return None
     return AgentTrigger.model_validate({col[0]: val for col, val in zip(result.description, claimed)})
+
+
+def release_trigger(trigger_id: str) -> AgentTrigger | None:
+    """Return a claimed trigger back to queued state."""
+    return fetch_one(
+        f"""
+        UPDATE agent_triggers
+        SET status = 'queued', claimed_at = NULL
+        WHERE id = $1 AND status = 'claimed'
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [trigger_id],
+        AgentTrigger,
+    )
+
+
+def requeue_stale_triggers(claim_timeout_seconds: int) -> int:
+    """Return stale claimed triggers to the queue."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=claim_timeout_seconds)
+    row = query_one(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE status = 'claimed' AND claimed_at < $1
+        """,
+        [cutoff],
+    )
+    count = int(row["cnt"]) if row else 0
+    if count:
+        execute(
+            """
+            UPDATE agent_triggers
+            SET status = 'queued', claimed_at = NULL
+            WHERE status = 'claimed' AND claimed_at < $1
+            """,
+            [cutoff],
+        )
+    return count
 
 
 def complete_agent_trigger(trigger_id: str) -> AgentTrigger | None:

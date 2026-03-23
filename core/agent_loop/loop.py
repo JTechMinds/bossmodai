@@ -5,15 +5,15 @@ Orchestrates a complete agent activation:
   2. Select the LLM model — skip if none configured
   3. Loop: build context → call LLM → parse → Guardian → execute
   4. Continue until a terminal action or Guardian violation
-  5. Guarantee agent returns to idle (unless in_transit)
+  5. Persist diagnostics and leave visible status to the activity runtime
   6. Broadcast results via WebSocket after every action
 
 Terminal actions: idle, complete, blocked, delegated, abandoned
 Non-terminal actions: work, message, attendMeeting, remoteMeeting (loop continues)
 Walk action: walkTo ends the loop (movement handled by simulation)
 
-Returns path data for walk_to actions so the caller (simulation)
-can manage movement without circular imports.
+Returns structured action outcomes so the dispatcher can apply follow-up
+planning without circular imports.
 """
 
 from __future__ import annotations
@@ -26,14 +26,14 @@ from typing import Any
 
 from api.websocket import manager
 from core import config
+from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
+from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.liveness import record_action_liveness
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.turn_rules import (
-    maybe_append_resume_trigger,
-    queue_task_resumed_trigger,
     should_end_turn_after_action,
     validate_action_for_turn,
 )
@@ -75,7 +75,8 @@ async def run_turn(
     # 3. Build initial context
     conversation_history = _get_conversation_history(agent.id, trigger)
     nearby = _get_nearby_agents(agent.id, state)
-    current_task = _get_current_task(state)
+    initial_activity = activity_runtime.get_active_activity(agent.id)
+    current_task = _get_current_task(agent.id)
     reference_materials = _get_reference_materials(agent.id)
 
     pending_count = max(db.count_queued_triggers(agent.id) - 1, 0)
@@ -87,15 +88,16 @@ async def run_turn(
             trigger=trigger,
             conversation_history=conversation_history,
             reference_materials=reference_materials,
+            current_activity=_get_current_activity(agent.id),
             nearby_agents=nearby,
             current_task=current_task,
             pending_trigger_count=pending_count,
         )
     )
     initial_context_json = json.dumps(context)
-    initial_task_id = state.current_task_id
+    initial_task_id = activity_runtime.get_active_task_id(agent.id)
 
-    if policy.require_task_context and not initial_task_id:
+    if policy.require_work_activity and not initial_task_id:
         result = {
             "event": "agent_error",
             "detail": f"{agent.name} could not find an active task for {trigger_type}",
@@ -112,7 +114,7 @@ async def run_turn(
             initial_context_json=initial_context_json,
             outcome=TurnOutcome.failure(
                 result=result,
-                error="Trigger requires active task context",
+                    error="Trigger requires active work activity",
                 action=None,
                 action_summary="",
                 raw_response="",
@@ -134,6 +136,7 @@ async def run_turn(
     total_tokens = 0
     step_traces: list[dict[str, Any]] = []
     next_step_delta: str | None = None
+    scheduled_triggers: list[dict[str, Any]] = []
 
     while True:
         action_count += 1
@@ -205,8 +208,8 @@ async def run_turn(
         action = parse_action(response.content)
         action_name = action["action"]
 
-        state = _maybe_pause_active_task_for_interrupt(agent, state, trigger, action)
-        active_task_id = _get_active_task_id(agent.id, state)
+        active_task_id = activity_runtime.get_active_task_id(agent.id)
+        active_activity = activity_runtime.get_active_activity(agent.id)
 
         # Handle parse failure
         if action_name == "_parse_failed":
@@ -252,7 +255,12 @@ async def run_turn(
                 start=start,
             )
 
-        validation_error = validate_action_for_turn(action, policy, active_task_id)
+        validation_error = validate_action_for_turn(
+            action,
+            policy,
+            active_activity.kind if active_activity else None,
+            active_task_id,
+        )
         if validation_error:
             logger.warning("Contextual action validation failed for %s: %s", agent.name, validation_error)
             result = {
@@ -303,15 +311,10 @@ async def run_turn(
         executed_actions.append(action_name)
 
         # Execute action
-        result = await execute_action(action, agent, state, trigger)
-        active_task_id = _get_active_task_id(agent.id, state)
-        maybe_append_resume_trigger(
-            result,
-            agent_id=agent.id,
-            policy=policy,
-            initial_task_id=initial_task_id,
-            active_task_id=active_task_id,
-        )
+        result = await execute_action(action, agent, state, trigger, token_model=response.model)
+        active_task_id = activity_runtime.get_active_task_id(agent.id)
+        if result.get("trigger_requests"):
+            scheduled_triggers.extend(result["trigger_requests"])
 
         # Broadcast action result immediately
         await manager.broadcast_world_state()
@@ -340,21 +343,10 @@ async def run_turn(
                 created_at=chat_message.get("created_at"),
             )
 
-        for queued in result.get("queued_triggers", []):
-            from core.agent_loop.dispatcher import dispatcher
-
-            dispatcher.enqueue_trigger(
-                agent_id=queued["agent_id"],
-                trigger_type=queued["trigger_type"],
-                source_channel=queued["source_channel"],
-                payload=queued["payload"],
-                task_id=queued.get("task_id"),
-            )
-
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
 
         # Guardian hard-stop checks (token explosion, velocity, repetition)
-        violation = check_post_action(agent, action, response.content)
+        violation = check_post_action(agent, action, response.content, model=response.model)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
             result = {
@@ -469,18 +461,6 @@ async def run_turn(
             break
 
         if _has_pending_interrupts(agent.id):
-            queue_task_resumed_trigger(result, agent_id=agent.id, task_id=active_task_id)
-            for queued in result.get("queued_triggers", []):
-                from core.agent_loop.dispatcher import dispatcher
-
-                dispatcher.enqueue_trigger(
-                    agent_id=queued["agent_id"],
-                    trigger_type=queued["trigger_type"],
-                    source_channel=queued["source_channel"],
-                    payload=queued["payload"],
-                    task_id=queued.get("task_id"),
-                )
-            result["queued_triggers"] = []
             break
 
         # Non-terminal action — feed result back and continue
@@ -497,6 +477,17 @@ async def run_turn(
         context.extend(continuation_messages)
         next_step_delta = _serialize_trace_value(continuation_messages)
 
+    final_activity = activity_runtime.get_active_activity(agent.id)
+    final_result = dict(result)
+    final_result["trigger_requests"] = plan_post_turn_follow_up(
+        agent_id=agent.id,
+        trigger=trigger,
+        initial_activity=initial_activity,
+        final_activity=final_activity,
+        result={**final_result, "trigger_requests": scheduled_triggers},
+        action=action,
+    )
+
     return await _finalize_turn(
         agent=agent,
         trigger=trigger,
@@ -506,7 +497,7 @@ async def run_turn(
         model_source=model_source,
         initial_context_json=initial_context_json,
         outcome=TurnOutcome.success(
-            result=result,
+            result=final_result,
             action=action,
             action_summary=_summarize_action_chain(executed_actions, action["action"] if action else ""),
             raw_response=last_response_content,
@@ -546,7 +537,9 @@ async def _skip_turn(
             status_note=f"No model configured for '{mode}' mode",
             watchdog_pinged_at=None,
         )
-        db.update_agent_state(agent.id, current_task_id=None)
+        active_work = activity_runtime.get_active_work_activity(agent.id)
+        if active_work:
+            activity_runtime.complete_activity(active_work.id, detail=f"No model configured for '{mode}' mode")
 
     return await _finalize_turn(
         agent=agent,
@@ -588,6 +581,12 @@ def _get_conversation_history(agent_id: str, trigger: dict[str, Any]) -> list[di
         thread = db.get_agent_direct_thread(agent_id, trigger["from_agent"], limit=limit)
         return db.get_formatted_messages(thread, human_label="Human Operator")
 
+    if trigger_type == "activity_resumed":
+        active = activity_runtime.get_active_activity(agent_id)
+        if active and active.kind in {"conversation", "meeting"}:
+            thread = db.get_human_chat_thread(agent_id, limit=limit)
+            return db.get_formatted_messages(thread, human_label="Human Operator")
+
     return []
 
 
@@ -600,12 +599,13 @@ def _get_nearby_agents(
     return db.get_nearby_agents(agent_id, state.x, state.y, radius)
 
 
-def _get_current_task(state: AgentState) -> dict[str, Any] | None:
+def _get_current_task(agent_id: str) -> dict[str, Any] | None:
     """Fetch the agent's current task if any."""
-    if not state.current_task_id:
+    active = activity_runtime.get_active_activity(agent_id)
+    if not active or not active.task_id:
         return None
 
-    task = db.get_task(state.current_task_id)
+    task = db.get_task(active.task_id)
     if not task:
         return None
 
@@ -617,6 +617,21 @@ def _get_current_task(state: AgentState) -> dict[str, Any] | None:
         "project": task.project,
         "completion_summary": task.completion_summary,
         "status_note": task.status_note,
+    }
+
+
+def _get_current_activity(agent_id: str) -> dict[str, Any] | None:
+    """Fetch the current runtime activity for prompt rendering."""
+    activity = activity_runtime.get_active_activity(agent_id)
+    if not activity:
+        return None
+    return {
+        "id": activity.id,
+        "kind": activity.kind,
+        "status": activity.status,
+        "title": activity.title,
+        "detail": activity.detail,
+        "destination": activity.destination,
     }
 
 
@@ -657,59 +672,14 @@ def _get_reference_materials(agent_id: str) -> list[str]:
 
     return materials
 
-
-def _maybe_pause_active_task_for_interrupt(
-    agent: Agent,
-    state: AgentState,
-    trigger: dict[str, Any],
-    action: dict[str, Any],
-) -> AgentState:
-    """Suspend active work when a conversation pulls the agent off-task."""
-    if trigger.get("type") not in {"human_chat", "peer_message"}:
-        return state
-
-    current_task_id = _get_active_task_id(agent.id, state)
-    current_task = db.get_task(current_task_id) if current_task_id else None
-    if not current_task or current_task.status != "active":
-        return state
-
-    action_name = action.get("action", "")
-    should_pause = False
-    if action_name in {"attendMeeting", "remoteMeeting", "startTask"}:
-        should_pause = True
-    elif action_name == "walkTo":
-        should_pause = action.get("destination") in {"meetingRoom", "breakRoom", "hallway"}
-
-    if not should_pause:
-        return state
-
-    db.update_task(
-        current_task.id,
-        status="pending",
-        status_note="Paused for direct conversation.",
-        completion_summary=None,
-        watchdog_pinged_at=None,
-    )
-    return db.update_agent_state(agent.id, current_task_id=None) or state
-
-
-def _summarize_action_chain(executed_actions: list[str], fallback: str) -> str:
+def _summarize_action_chain(executed_actions: list[str], default_label: str) -> str:
     """Render a concise diagnostic label for the turn's action flow."""
     chain = [action for action in executed_actions if action]
     if not chain:
-        return fallback or ""
+        return default_label or ""
     if len(chain) <= 4:
         return " -> ".join(chain)
     return " -> ".join([*chain[:3], chain[-1]])
-
-
-def _get_active_task_id(agent_id: str, fallback_state: AgentState) -> str | None:
-    """Fetch the latest active task pointer after an action mutates agent state."""
-    refreshed_state = db.get_agent_state(agent_id)
-    if refreshed_state:
-        return refreshed_state.current_task_id
-    return fallback_state.current_task_id
-
 
 def _has_pending_interrupts(agent_id: str) -> bool:
     """Return whether queued interrupt-style triggers are waiting for the agent."""
@@ -773,11 +743,8 @@ async def _finalize_turn(
     outcome: TurnOutcome,
     start: float,
 ) -> TurnOutcome:
-    """Normalize state, persist diagnostics, and return the final turn outcome."""
-    final_state = db.get_agent_state(agent.id)
-    if final_state and final_state.status not in ("idle", "in_transit"):
-        db.update_agent_state(agent.id, status="idle")
-
+    """Normalize diagnostics, refresh visible status, and return the final turn outcome."""
+    activity_runtime.refresh_agent_status(agent.id)
     db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
 
     diag = db.create_diagnostic(

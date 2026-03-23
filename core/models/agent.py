@@ -72,7 +72,6 @@ class AgentState(BaseModel):
     status: AgentStatus = "idle"
     last_active_at: datetime | None = None
     idle_since: datetime | None = None
-    current_task_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

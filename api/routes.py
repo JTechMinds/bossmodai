@@ -15,8 +15,9 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.dispatcher import dispatcher
-from core.llm.client import normalize_api_base
+from core.runtime import runtime_services
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
     Agent,
@@ -224,17 +225,7 @@ async def create_task(body: TaskCreate) -> Task:
         assigned_to=body.assigned_to,
     )
     if body.assigned_to:
-        dispatcher.enqueue_trigger(
-            agent_id=body.assigned_to,
-            trigger_type="task_assigned",
-            source_channel="work",
-            payload={
-                "task_title": body.title,
-                "task_description": body.description or "",
-                "project": body.project,
-            },
-            task_id=task.id,
-        )
+        dispatcher.enqueue_trigger(**build_task_assigned_trigger(task))
     await manager.broadcast_activity(
         event="task_created",
         detail=f"Task \"{task.title}\" created" + (f" → {body.assigned_to}" if body.assigned_to else ""),
@@ -329,8 +320,13 @@ async def reset_agent_runtime(agent_id: str):
     simulation.clear_agent_path(agent_id)
 
     blocked_task_id = None
-    if state.current_task_id:
-        task = db.get_task(state.current_task_id)
+    open_activities = [
+        activity
+        for activity in db.list_activities(agent_id=agent_id, limit=100)
+        if activity.status in {"active", "paused"} and activity.task_id
+    ]
+    if open_activities:
+        task = db.get_task(open_activities[0].task_id)
         if task and task.status in ("pending", "active"):
             db.update_task(
                 task.id,
@@ -341,7 +337,8 @@ async def reset_agent_runtime(agent_id: str):
             blocked_task_id = task.id
 
     deleted_triggers = db.delete_open_triggers(agent_id)
-    db.update_agent_state(agent_id, status="idle", current_task_id=None)
+    cancelled_activities = db.cancel_open_activities(agent_id, detail="Runtime reset by human operator.")
+    db.update_agent_state(agent_id, status="idle")
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
         event="agent_runtime_reset",
@@ -350,6 +347,7 @@ async def reset_agent_runtime(agent_id: str):
         extra={
             "deleted_triggers": deleted_triggers,
             "blocked_task_id": blocked_task_id,
+            "cancelled_activities": cancelled_activities,
         },
     )
 
@@ -357,6 +355,7 @@ async def reset_agent_runtime(agent_id: str):
         "status": "ok",
         "deleted_triggers": deleted_triggers,
         "blocked_task_id": blocked_task_id,
+        "cancelled_activities": cancelled_activities,
     }
 
 
@@ -399,9 +398,24 @@ async def reseed_settings():
     return {"status": "ok", "detail": "All seed settings reset to defaults"}
 
 
+@router.post("/settings/reseed-application")
+async def reseed_application():
+    """Recreate the brand-new application database from the current schema."""
+    await runtime_services.reseed_application_data()
+    await manager.broadcast_world_state()
+    await manager.broadcast_activity(
+        event="application_reseeded",
+        detail="Application data reseeded from the current schema defaults",
+    )
+    return {"status": "ok", "detail": "Application database recreated from current schema defaults"}
+
+
 @router.put("/settings/{key}")
 async def set_setting(key: str, value: str, category: str = "general"):
-    result = db.set_setting(key, value, category)
+    try:
+        result = db.set_setting(key, value, category)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.reload()  # Invalidate cache so changes take effect immediately
     return result
 
@@ -462,32 +476,26 @@ async def test_connection(body: TestConnectionBody):
     Verifies the host is reachable, auth works, and the response
     is OpenAI-compatible. Optionally checks the model exists.
     """
-    base = normalize_api_base(body.api_base_url)
+    base = body.api_base_url.rstrip("/")
+    if base.endswith("/chat/completions") or base.endswith("/completions"):
+        return {
+            "ok": False,
+            "error": "Use the API base URL, not a completions endpoint. Example: https://host/v1",
+        }
 
     headers = {}
     if body.api_key:
         headers["Authorization"] = f"Bearer {body.api_key}"
 
-    # Try /models at the base URL. If 404, try base + /v1/models as fallback.
-    urls_to_try = [base + "/models", base + "/v1/models"]
-
-    resp = None
-    last_error = None
-    for url in urls_to_try:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url, headers=headers)
-            if resp.status_code != 404:
-                break
-        except httpx.ConnectError:
-            return {"ok": False, "error": "Connection failed — check the URL"}
-        except httpx.TimeoutException:
-            return {"ok": False, "error": "Connection timed out after 10s"}
-        except Exception as exc:
-            last_error = exc
-
-    if resp is None:
-        return {"ok": False, "error": f"Request failed: {last_error}"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(base + "/models", headers=headers)
+    except httpx.ConnectError:
+        return {"ok": False, "error": "Connection failed — check the URL"}
+    except httpx.TimeoutException:
+        return {"ok": False, "error": "Connection timed out after 10s"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Request failed: {exc}"}
 
     if resp.status_code == 401:
         return {"ok": False, "error": "Authentication failed — check your API key"}

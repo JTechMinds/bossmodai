@@ -25,6 +25,8 @@ const BossModUtils = (() => {
             y: w.y ?? w.desk_y ?? 0,
             color: w.color || '#3b82f6',
             status: w.status || 'idle',
+            currentActivityKind: w.currentActivityKind || w.current_activity_kind || null,
+            boundTaskId: w.boundTaskId || w.bound_task_id || null,
         };
     }
 
@@ -37,18 +39,38 @@ const BossModUtils = (() => {
         idle:          { hex: '#94a3b8', classes: 'bg-slate-50 text-slate-600',     dot: 'bg-slate-400' },
     };
 
+    const ACTIVITY_CONFIG = {
+        assignment:   { hex: '#f59e0b', classes: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-500', label: 'assignment' },
+        conversation: { hex: '#10b981', classes: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', label: 'conversation' },
+        meeting:      { hex: '#3b82f6', classes: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500', label: 'meeting' },
+        movement:     { hex: '#3b82f6', classes: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500', label: 'moving' },
+        social:       { hex: '#10b981', classes: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500', label: 'social' },
+        work:         { hex: '#f59e0b', classes: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-500', label: 'working' },
+    };
+
     const DEFAULT_STATUS = STATUS_CONFIG.idle;
 
-    function getStatusColor(status) {
-        return (STATUS_CONFIG[status] || DEFAULT_STATUS).hex;
+    function getDisplayState(status, currentActivityKind = null) {
+        return ACTIVITY_CONFIG[currentActivityKind] || STATUS_CONFIG[status] || DEFAULT_STATUS;
     }
 
-    function getStatusClasses(status) {
-        return (STATUS_CONFIG[status] || DEFAULT_STATUS).classes;
+    function getStatusColor(status, currentActivityKind = null) {
+        return getDisplayState(status, currentActivityKind).hex;
     }
 
-    function getStatusDot(status) {
-        return (STATUS_CONFIG[status] || DEFAULT_STATUS).dot;
+    function getStatusClasses(status, currentActivityKind = null) {
+        return getDisplayState(status, currentActivityKind).classes;
+    }
+
+    function getStatusDot(status, currentActivityKind = null) {
+        return getDisplayState(status, currentActivityKind).dot;
+    }
+
+    function getStatusLabel(status, currentActivityKind = null) {
+        if (currentActivityKind && ACTIVITY_CONFIG[currentActivityKind]) {
+            return ACTIVITY_CONFIG[currentActivityKind].label;
+        }
+        return status || 'idle';
     }
 
     // ─── Overlay panel open/close ───
@@ -86,6 +108,7 @@ const BossModUtils = (() => {
         getStatusColor,
         getStatusClasses,
         getStatusDot,
+        getStatusLabel,
         openOverlay,
         closeOverlay,
     };

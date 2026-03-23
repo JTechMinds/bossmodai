@@ -5,7 +5,7 @@ and call ``db.create_agent()``, ``db.get_task()``, etc.
 """
 
 # Connection lifecycle
-from db.connection import close_connection, get_connection, init_db
+from db.connection import close_connection, get_connection, init_db, reset_database
 
 # Reusable CRUD helpers (for custom queries in domain code)
 from db.crud import execute, fetch_all, fetch_one, query, query_one
@@ -34,10 +34,11 @@ from db.messages import (
     get_recent_completed_tasks,
 )
 from db.agent_triggers import (
-    claim_next_trigger,
+    claim_trigger,
     complete_agent_trigger,
     count_queued_triggers,
     create_agent_trigger,
+    delete_queued_triggers,
     delete_open_triggers,
     fail_agent_trigger,
     get_agent_trigger,
@@ -45,7 +46,10 @@ from db.agent_triggers import (
     has_open_trigger,
     has_open_trigger_matching,
     has_queued_trigger_matching,
+    list_queued_triggers,
     list_agent_triggers,
+    release_trigger,
+    requeue_stale_triggers,
 )
 
 # Tasks
@@ -56,6 +60,15 @@ from db.settings import force_reseed, get_settings, set_setting
 
 # Activity log
 from db.activity import create_activity, get_recent_activity
+from db.activities import (
+    cancel_open_activities,
+    create_activity as create_runtime_activity,
+    get_active_activity,
+    get_activity,
+    get_resumable_work_activity,
+    list_activities,
+    update_activity,
+)
 
 # AI Connections
 from db.ai_connections import (
@@ -86,6 +99,7 @@ __all__ = [
     "close_connection",
     "get_connection",
     "init_db",
+    "reset_database",
     # CRUD helpers
     "execute",
     "fetch_all",
@@ -111,10 +125,11 @@ __all__ = [
     "get_recent_work_artifacts",
     "get_recent_completed_tasks",
     # Trigger queue
-    "claim_next_trigger",
+    "claim_trigger",
     "complete_agent_trigger",
     "count_queued_triggers",
     "create_agent_trigger",
+    "delete_queued_triggers",
     "delete_open_triggers",
     "fail_agent_trigger",
     "get_agent_trigger",
@@ -122,7 +137,10 @@ __all__ = [
     "has_open_trigger",
     "has_open_trigger_matching",
     "has_queued_trigger_matching",
+    "list_queued_triggers",
     "list_agent_triggers",
+    "release_trigger",
+    "requeue_stale_triggers",
     # Tasks
     "create_task",
     "get_task",
@@ -134,6 +152,13 @@ __all__ = [
     "set_setting",
     # Activity
     "create_activity",
+    "create_runtime_activity",
+    "cancel_open_activities",
+    "get_active_activity",
+    "get_activity",
+    "get_resumable_work_activity",
+    "list_activities",
+    "update_activity",
     "get_recent_activity",
     # AI Connections
     "create_connection",

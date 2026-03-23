@@ -34,6 +34,8 @@ def check_post_action(
     agent: Agent,
     action: dict[str, Any],
     response_content: str,
+    *,
+    model: str | None = None,
 ) -> GuardianViolation | None:
     """Run hard-stop Guardian checks after an action. Returns violation or None.
 
@@ -43,7 +45,7 @@ def check_post_action(
     # 1. Token explosion — single output exceeds limit
     from core.llm.client import count_tokens
 
-    token_count = count_tokens(response_content)
+    token_count = count_tokens(response_content, model=model)
     if token_count > agent.guardian_token_limit:
         return GuardianViolation(
             "token_explosion",

@@ -14,47 +14,7 @@ from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_TEMPLATE = """# Role
 
-You are {{agent_name}}, an employee at BossMod that works in a virtual office. You are in control of your virtual character which represents your physical location at BossMod.
-
-Each turn you must respond with exactly one JSON action.
-
-## Personality
-{{personality}}
-
-# Context
-
-## Work Summaries / Team Directory
-{{references}}
-
-## Memories
-{{memory}}
-
-## World Status
-{{worldStatus}}
-
-## Current Task Details
-{{task}}
-
-## Pending Tasks
-{{pending_tasks}}
-
----
-
-# Policies and Rules
-
-- Durable work output can only be produced from a workspace.
-- Move to a workspace before starting or resuming durable work.
-- You may attend an in-person meeting by walking to `meetingRoom` and then using `attendMeeting`.
-- You may start or join a remote meeting from a workspace using `remoteMeeting`.
-- Use `message` when you need to reply to the human operator.
-- Use `startTask` when a conversation becomes a durable assignment.
-- Use `resumeTask` when you should return to pending work after an interruption.
-
-# Output
-
-Return exactly one valid JSON action object and nothing else."""
 
 _STATUS_LABELS = {
     "idle": "idle",
@@ -73,8 +33,8 @@ class TurnContext:
     trigger: dict[str, Any]
     conversation_history: list[dict[str, Any]]
     reference_materials: list[str]
+    current_activity: dict[str, Any] | None = None
     current_task: dict[str, Any] | None = None
-    memory_nodes: list[dict[str, Any]] | None = None
     nearby_agents: list[dict[str, Any]] | None = None
     pending_trigger_count: int = 0
 
@@ -96,22 +56,22 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
         "{{personality}}": personality,
         "{{agent_name}}": turn.agent.name,
         "{{role}}": turn.agent.role or "AI Assistant",
-        "{{memory}}": _format_memory(turn.memory_nodes) if turn.memory_nodes else "",
         "{{worldStatus}}": _format_world_status(
             turn.agent,
             turn.state,
             turn.nearby_agents,
+            turn.current_activity,
             turn.current_task,
             turn.pending_trigger_count,
         ),
+        "{{activity}}": _format_activity(turn.current_activity) if turn.current_activity else "",
         "{{task}}": _format_task(turn.current_task) if turn.current_task else "",
         "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
         "{{references}}": _format_references(turn.reference_materials),
-        "{{action_contract}}": render_action_contract(),
     }
 
     # ─── Resolve template from settings ───
-    template = config.get("system_prompt_template") or _FALLBACK_TEMPLATE
+    template = config.require("system_prompt_template")
     system_prompt = template
     for key, value in variables.items():
         system_prompt = system_prompt.replace(key, value)
@@ -153,6 +113,7 @@ def _format_world_status(
     agent: Agent,
     state: AgentState,
     nearby_agents: list[dict[str, Any]] | None = None,
+    current_activity: dict[str, Any] | None = None,
     current_task: dict[str, Any] | None = None,
     pending_trigger_count: int = 0,
 ) -> str:
@@ -174,6 +135,11 @@ def _format_world_status(
     task_str = "none"
     if current_task:
         task_str = f"{current_task.get('title', 'Untitled')} ({current_task.get('status', 'unknown')})"
+    activity_str = "none"
+    if current_activity:
+        activity_str = current_activity.get("kind", "unknown")
+        if current_activity.get("title"):
+            activity_str += f' - {current_activity["title"]}'
 
     return (
         f"WORLD STATUS:\n"
@@ -182,20 +148,9 @@ def _format_world_status(
         f"  nearby: {nearby_str}\n"
         f"  pendingTriggers: {pending_count}\n"
         f"  pendingTasks: {len(pending_tasks)}\n"
+        f"  currentActivity: {activity_str}\n"
         f"  currentTask: {task_str}"
     )
-
-
-def _format_memory(nodes: list[dict[str, Any]]) -> str:
-    lines = []
-    for node in nodes[:20]:
-        entity = node.get("entity", "")
-        attribute = node.get("attribute", "")
-        value = node.get("value", "")
-        confidence = node.get("confidence", 1.0)
-        lines.append(f"- {entity}.{attribute} = {value} (confidence: {confidence:.0%})")
-    return "\n".join(lines)
-
 
 def _format_task(task: dict[str, Any]) -> str:
     title = task.get("title", "Untitled")
@@ -208,15 +163,26 @@ def _format_task(task: dict[str, Any]) -> str:
     return "\n".join([part for part in details if part])
 
 
+def _format_activity(activity: dict[str, Any]) -> str:
+    title = activity.get("title") or activity.get("kind", "activity")
+    detail = activity.get("detail") or "No detail"
+    status = activity.get("status", "unknown")
+    destination = activity.get("destination")
+    lines = [f"{title} (kind: {activity.get('kind', 'unknown')}, status: {status})", detail]
+    if destination:
+        lines.append(f"Destination: {destination}")
+    return "\n".join(lines)
+
+
 def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) -> str:
-    current_task_id = current_task.get("id") if current_task else None
+    active_task_identifier = current_task.get("id") if current_task else None
     pending = db.list_tasks(assigned_to=agent_id, status="pending")
     if not pending:
         return ""
 
     lines: list[str] = []
     for task in pending[-3:]:
-        if task.id == current_task_id:
+        if task.id == active_task_identifier:
             continue
         line = f"- {task.title} (pending)"
         if task.status_note:
@@ -243,21 +209,18 @@ def _format_trigger(trigger: dict[str, Any]) -> str:
         content = trigger.get("content", "")
         return f"CURRENT REQUEST FROM [{sender}]: {content}"
 
-    if trigger_type in ("task_assigned", "task_resumed", "task_attention_required"):
+    if trigger_type == "task_assigned":
         title = trigger.get("task_title", "a task")
         desc = trigger.get("task_description", "")
         extra = f"\nTask description: {desc}" if desc else ""
-        if trigger_type == "task_resumed":
-            return f'You arrived and should resume your active task: "{title}".{extra}'
-        if trigger_type == "task_attention_required":
-            room_name = trigger.get("room_name", "current location")
-            return (
-                f'You still have an active task: "{title}", but you are in the {room_name}. '
-                f'You cannot produce work there.{extra}\nChoose the next valid step: walk to your desk, '
-                'message the human operator with a status update, use "resumeTask" if the task was interrupted, '
-                "or sign off with complete/blocked/delegated/abandoned."
-            )
         return f"You have been assigned a new task: \"{title}\".{extra}"
+
+    if trigger_type == "activity_resumed":
+        content = trigger.get("content", "")
+        if content:
+            return content
+        kind = trigger.get("activity_kind", "activity")
+        return f"You should continue the current {kind}."
 
     if trigger_type == "social":
         nearby = trigger.get("nearby_names", [])

@@ -79,9 +79,12 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
     """Update task fields. Auto-updates last_activity on status change."""
     if "status" in fields or "completion_summary" in fields or "status_note" in fields:
         now = datetime.now(timezone.utc)
-        fields.setdefault("last_progress_at", now)
         fields.setdefault("last_heartbeat_at", now)
         fields.setdefault("last_activity", now)
+        if fields.get("completion_summary"):
+            fields.setdefault("last_progress_at", now)
+        elif fields.get("status") in {"complete", "blocked", "delegated", "abandoned", "stalled"}:
+            fields.setdefault("last_progress_at", now)
 
     build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)
     return get_task(task_id)

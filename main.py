@@ -16,9 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from api.routes import router as api_router
-from core.agent_loop.dispatcher import dispatcher
-from core.agent_loop.watchdog import watchdog
-from core.world.simulation import simulation
+from core.runtime import runtime_services
 from db import init_db, close_connection
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,13 +27,9 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    simulation.start()
-    dispatcher.start()
-    watchdog.start()
+    runtime_services.start()
     yield
-    watchdog.stop()
-    dispatcher.stop()
-    simulation.stop()
+    await runtime_services.stop()
     close_connection()
 
 

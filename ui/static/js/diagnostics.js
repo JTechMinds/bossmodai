@@ -31,8 +31,7 @@ const DiagnosticsView = (() => {
             case 'human_chat': return 'Human Chat';
             case 'peer_message': return 'Peer Message';
             case 'watchdog_status_ping': return 'Watchdog';
-            case 'task_resumed': return 'Task Resumed';
-            case 'task_attention_required': return 'Task Attention';
+            case 'activity_resumed': return 'Activity Resumed';
             case 'task_assigned': return 'Task Assigned';
             case 'social': return 'Social';
             default: return triggerType || 'Trigger';
@@ -424,13 +423,7 @@ const DiagnosticsView = (() => {
                 try {
                     await navigator.clipboard.writeText(pre.textContent);
                 } catch (err) {
-                    console.warn('[Diagnostics] clipboard API unavailable, selecting text instead:', err);
-                    // Fallback: select the text so user can Ctrl+C
-                    const range = document.createRange();
-                    range.selectNodeContents(pre);
-                    const sel = window.getSelection();
-                    sel.removeAllRanges();
-                    sel.addRange(range);
+                    console.warn('[Diagnostics] clipboard API unavailable:', err);
                     return;
                 }
 

@@ -235,10 +235,10 @@ const AgentPanel = (() => {
             <div class="pt-2 border-t border-bm-border">
                 <div class="flex items-center justify-between text-sm">
                     <span class="text-bm-muted">Status</span>
-                    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
-                                 ${BossModUtils.getStatusClasses(agent.status || 'idle')}">
-                        <span class="w-1.5 h-1.5 rounded-full ${BossModUtils.getStatusDot(agent.status || 'idle')}"></span>
-                        ${agent.status || 'idle'}
+                    <span id="agent-runtime-status-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
+                                 ${BossModUtils.getStatusClasses(agent.status || 'idle', agent.currentActivityKind)}">
+                        <span id="agent-runtime-status-dot" class="w-1.5 h-1.5 rounded-full ${BossModUtils.getStatusDot(agent.status || 'idle', agent.currentActivityKind)}"></span>
+                        <span id="agent-runtime-status-label">${BossModUtils.getStatusLabel(agent.status || 'idle', agent.currentActivityKind)}</span>
                     </span>
                 </div>
             </div>
@@ -335,7 +335,11 @@ const AgentPanel = (() => {
             const connId = formData.get(t.key);
             if (connId && connMap[connId]) {
                 const conn = connMap[connId];
-                data[t.key] = conn.model || conn.name;
+                const runtimeModel = (conn.model || '').trim();
+                if (!runtimeModel) {
+                    throw new Error(`Connection "${conn.name}" is missing an explicit model identifier`);
+                }
+                data[t.key] = runtimeModel;
                 if (!data.api_base_url) {
                     data.api_base_url = conn.api_base_url;
                     data.api_key = conn.api_key || null;
@@ -410,7 +414,7 @@ const AgentPanel = (() => {
             } catch (err) {
                 console.error('[AgentPanel] Save failed:', err);
                 feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
-                feedbackEl.textContent = 'Save failed — check console for details';
+                feedbackEl.textContent = err?.message || 'Save failed — check console for details';
             }
         });
 

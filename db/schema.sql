@@ -41,8 +41,7 @@ CREATE TABLE IF NOT EXISTS agent_state (
     status          VARCHAR DEFAULT 'idle'
                         CHECK (status IN ('idle', 'work_active', 'social_active', 'in_transit')),
     last_active_at  TIMESTAMP,
-    idle_since      TIMESTAMP DEFAULT current_timestamp,
-    current_task_id VARCHAR
+    idle_since      TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -85,56 +84,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     created_at     TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- Memory nodes — entity-attribute-value knowledge graph
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS memory_nodes (
-    id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id    VARCHAR NOT NULL REFERENCES agents(id),
-    entity      VARCHAR NOT NULL,
-    attribute   VARCHAR NOT NULL,
-    value       TEXT,
-    confidence  FLOAT   DEFAULT 1.0,
-    source      VARCHAR DEFAULT 'work'
-                    CHECK (source IN ('work', 'meeting', 'message', 'social', 'transit')),
-    created_at  TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- CLI log — command audit trail with risk classification
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS cli_log (
-    id         VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id   VARCHAR NOT NULL REFERENCES agents(id),
-    command    TEXT    NOT NULL,
-    risk_tier  VARCHAR DEFAULT 'ambiguous'
-                   CHECK (risk_tier IN ('safe', 'slow', 'review', 'blocked', 'ambiguous')),
-    outcome    VARCHAR DEFAULT 'pending'
-                   CHECK (outcome IN ('executed', 'approved', 'blocked', 'pending')),
-    approver   VARCHAR,
-    created_at TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- Approvals — human-in-the-loop action gating
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS approvals (
-    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
-    task_id         VARCHAR,
-    action_type     VARCHAR NOT NULL,
-    action_detail   TEXT,
-    agent_reasoning TEXT,
-    status          VARCHAR DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'approved', 'denied')),
-    decided_by      VARCHAR,
-    created_at      TIMESTAMP DEFAULT current_timestamp,
-    decided_at      TIMESTAMP
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -186,43 +135,6 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
--- Projects — named containers for tasks
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS projects (
-    id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR NOT NULL UNIQUE,
-    description TEXT,
-    created_at  TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- Agent ↔ Project many-to-many
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS agent_projects (
-    agent_id    VARCHAR REFERENCES agents(id),
-    project_id  VARCHAR REFERENCES projects(id),
-    assigned_at TIMESTAMP DEFAULT current_timestamp,
-    PRIMARY KEY (agent_id, project_id)
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- Schedules — cron-driven recurring actions
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS schedules (
-    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
-    cron_expression VARCHAR NOT NULL,
-    description     TEXT,
-    enabled         BOOLEAN DEFAULT true,
-    last_run_at     TIMESTAMP,
-    next_run_at     TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
 -- Agent triggers — durable wake-up queue
 -- ───────────────────────────────────────────────────────────────────────────
 
@@ -241,6 +153,28 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     completed_at   TIMESTAMP,
     failed_at      TIMESTAMP,
     created_at     TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Activities — durable runtime activity state
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS activities (
+    id                 VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id           VARCHAR NOT NULL REFERENCES agents(id),
+    kind               VARCHAR NOT NULL
+                           CHECK (kind IN ('assignment', 'conversation', 'meeting', 'movement', 'social', 'work')),
+    status             VARCHAR NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
+    task_id            VARCHAR,
+    parent_activity_id VARCHAR REFERENCES activities(id),
+    title              VARCHAR,
+    detail             TEXT,
+    destination        VARCHAR,
+    metadata           TEXT,
+    created_at         TIMESTAMP DEFAULT current_timestamp,
+    updated_at         TIMESTAMP DEFAULT current_timestamp,
+    ended_at           TIMESTAMP
 );
 
 -- ───────────────────────────────────────────────────────────────────────────

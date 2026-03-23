@@ -16,9 +16,12 @@ def get_world_state() -> list[dict[str, Any]]:
             a.desk_x, a.desk_y,
             s.x, s.y, s.status,
             s.last_active_at, s.idle_since,
-            s.current_task_id
+            act.kind AS current_activity_kind,
+            act.task_id AS bound_task_id
         FROM agents a
         LEFT JOIN agent_state s ON s.agent_id = a.id
+        LEFT JOIN activities act
+            ON act.agent_id = a.id AND act.status = 'active'
         ORDER BY a.created_at
         """,
     )

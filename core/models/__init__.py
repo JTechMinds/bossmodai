@@ -7,6 +7,7 @@ Re-exports every model for convenient top-level imports::
 
 from __future__ import annotations
 
+from core.models.activity import Activity
 from core.models.agent import Agent, AgentCreate, AgentState, AgentUpdate
 from core.models.memory import Setting
 from core.models.message import Message, MessageCreate
@@ -27,6 +28,7 @@ __all__ = [
     "AgentCreate",
     "AgentState",
     "AgentUpdate",
+    "Activity",
     # Task
     "Task",
     "TaskCreate",

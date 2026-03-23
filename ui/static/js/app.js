@@ -160,6 +160,9 @@ const BossModApp = (() => {
                 if (typeof OfficeCanvas !== 'undefined') {
                     OfficeCanvas.updateAgents(agents);
                 }
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleWorldUpdate(agents);
+                }
                 break;
             }
 

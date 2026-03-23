@@ -266,7 +266,7 @@ const OfficeCanvas = (() => {
             }
 
             // Status indicator dot (bottom-right)
-            const statusColor = getStatusColor(agent.status);
+            const statusColor = getStatusColor(agent.status, agent.currentActivityKind);
             ctx.beginPath();
             ctx.arc(cx + radius * 0.6, cy + radius * 0.6, 3, 0, Math.PI * 2);
             ctx.fillStyle = statusColor;
@@ -287,8 +287,8 @@ const OfficeCanvas = (() => {
         }
     }
 
-    function getStatusColor(status) {
-        return BossModUtils.getStatusColor(status);
+    function getStatusColor(status, currentActivityKind) {
+        return BossModUtils.getStatusColor(status, currentActivityKind);
     }
 
     // ─── Thought bubbles ───

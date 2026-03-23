@@ -16,6 +16,8 @@ import logging
 from typing import Any
 
 from core import config
+from core.agent_loop import activity_runtime
+from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
@@ -130,9 +132,7 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
             return '"attendMeeting" requires a non-empty "agentId" when provided'
 
     if action_name in _TASK_LIFECYCLE_ACTIONS and action.get("taskId") not in (None, ""):
-        task_id = action.get("taskId")
-        if not isinstance(task_id, str) or not task_id.strip():
-            return f'"{action_name}" requires a non-empty "taskId" when provided'
+        return f'"{action_name}" must not include "taskId"; the runtime binds the active task'
 
     if action_name == "startTask":
         title = action.get("title")
@@ -140,9 +140,7 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
             return '"startTask" requires a non-empty "title"'
 
     if action_name == "resumeTask" and action.get("taskId") not in (None, ""):
-        task_id = action.get("taskId")
-        if not isinstance(task_id, str) or not task_id.strip():
-            return '"resumeTask" requires a non-empty "taskId" when provided'
+        return '"resumeTask" must not include "taskId"; it always resumes the latest pending task'
 
     return None
 
@@ -155,42 +153,68 @@ def _resolve_agent_by_id(agent_id: Any) -> Agent | None:
 
 
 def _resolve_task_lifecycle_target(
-    state: AgentState,
+    agent: Agent,
     action: dict[str, Any],
     *,
     action_name: str,
 ) -> tuple[str | None, str | None]:
     """Resolve the task targeted by a lifecycle action.
 
-    Task lifecycle actions always act on the currently bound active task. Models
-    may include ``taskId`` for clarity, but runtime binding wins.
+    Task lifecycle actions always act on the currently bound active task.
     """
-    explicit_task_id = action.get("taskId")
-    if isinstance(explicit_task_id, str):
-        explicit_task_id = explicit_task_id.strip() or None
-    else:
-        explicit_task_id = None
-
-    active_task_id = state.current_task_id
-    task_id = active_task_id or explicit_task_id
-    if not task_id:
+    active_task_id = activity_runtime.get_active_task_id(agent.id)
+    if not active_task_id:
         return None, f'"{action_name}" requires an active task'
 
-    return task_id, None
+    return active_task_id, None
 
 
-def _pick_resume_candidate(agent_id: str, explicit_task_id: str | None) -> Any | None:
+def _pick_resume_candidate(agent_id: str) -> Any | None:
     """Resolve the next pending task to resume for the agent."""
-    if explicit_task_id:
-        task = db.get_task(explicit_task_id)
-        if task and task.assigned_to == agent_id and task.status == "pending":
-            return task
-        return None
-
     pending = db.list_tasks(assigned_to=agent_id, status="pending")
     if not pending:
         return None
     return pending[-1]
+
+
+def _build_trigger_request(
+    *,
+    agent_id: str,
+    trigger_type: str,
+    source_channel: str,
+    payload: dict[str, Any],
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a normalized trigger request emitted by an action."""
+    return {
+        "agent_id": agent_id,
+        "trigger_type": trigger_type,
+        "source_channel": source_channel,
+        "payload": payload,
+        "task_id": task_id,
+    }
+
+
+def _resolve_token_model(agent: Agent, action: dict[str, Any]) -> str | None:
+    """Resolve the tokenizer model for action-side token accounting."""
+    explicit_model = action.get("_token_model")
+    if isinstance(explicit_model, str) and explicit_model.strip():
+        return explicit_model.strip()
+    for field in (
+        agent.model_work,
+        agent.model_social,
+        agent.model_reasoning,
+        agent.model_extraction,
+        agent.model_self_queue,
+    ):
+        if field and field.strip():
+            return field.strip()
+    return config.get("default_model_work")
+
+
+def _count_action_tokens(agent: Agent, action: dict[str, Any], text: str) -> int:
+    """Count tokens for persisted artifacts/messages without heuristic fallback."""
+    return count_tokens(text, model=_resolve_token_model(agent, action))
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +226,11 @@ async def execute_action(
     agent: Agent,
     state: AgentState,
     trigger: dict[str, Any] | None = None,
+    token_model: str | None = None,
 ) -> dict[str, Any]:
     """Execute a flat action dict and return the result."""
+    if token_model:
+        action = {**action, "_token_model": token_model}
     action_type = action["action"]
 
     handler = _ACTION_HANDLERS.get(action_type)
@@ -228,6 +255,8 @@ async def _handle_work(
     output = action.get("output", "")
     if not output:
         return {"event": "status_changed", "detail": "Empty work output", "agent_name": agent.name}
+    if activity_runtime.get_active_task_id(agent.id) is None:
+        return {"event": "agent_error", "detail": "No active work activity is bound", "agent_name": agent.name}
 
     # Desk rule: must be in a workspace
     room = get_room_at(state.x, state.y)
@@ -246,7 +275,7 @@ async def _handle_work(
         message_type="work",
         location_x=state.x,
         location_y=state.y,
-        token_count=count_tokens(output),
+        token_count=_count_action_tokens(agent, action, output),
     )
 
     return {
@@ -288,7 +317,7 @@ async def _handle_message(
         message_type=message_type,
         location_x=state.x,
         location_y=state.y,
-        token_count=count_tokens(content),
+        token_count=_count_action_tokens(agent, action, content),
     )
 
     result = {
@@ -306,18 +335,18 @@ async def _handle_message(
             "created_at": msg.created_at,
         }
     elif target:
-        result["queued_triggers"] = [{
-            "agent_id": target.id,
-            "trigger_type": "peer_message",
-            "source_channel": "chat" if message_type == "social" else "work",
-            "payload": {
+        result["trigger_requests"] = [_build_trigger_request(
+            agent_id=target.id,
+            trigger_type="peer_message",
+            source_channel="chat" if message_type == "social" else "work",
+            payload={
                 "content": content,
                 "from_agent": agent.id,
                 "from_name": agent.name,
                 "message_type": message_type,
                 "source_message_id": msg.id,
             },
-        }]
+        )]
     return result
 
 
@@ -375,7 +404,41 @@ async def _handle_walk_to(
             "agent_name": agent.name,
         }
 
-    db.update_agent_state(agent.id, status="in_transit")
+    active = activity_runtime.get_active_activity(agent.id)
+    paused_work = None
+    if trigger and trigger.get("type") in {"human_chat", "peer_message"} and destination in {"meetingRoom", "breakRoom", "hallway"}:
+        if active and active.kind == "work":
+            paused_work = activity_runtime.pause_active_work(agent.id, "Paused for direct conversation.")
+            if paused_work:
+                active = None
+        if active is None:
+            active = activity_runtime.start_conversation_activity(
+                agent.id,
+                title="Direct conversation",
+                detail=trigger.get("content"),
+                parent_activity_id=paused_work.id if paused_work else None,
+            )
+
+    if trigger and trigger.get("type") == "social" and active is None:
+        active = db.create_runtime_activity(
+            agent_id=agent.id,
+            kind="social",
+            title="Social interaction",
+            detail=trigger.get("content"),
+        )
+        activity_runtime.refresh_agent_status(agent.id)
+
+    activity_runtime.start_movement_activity(
+        agent.id,
+        destination=destination,
+        parent_activity_id=active.id if active else None,
+        detail=f"Walking to {destination}",
+        metadata={
+            "destination": destination,
+            "destination_x": dest_x,
+            "destination_y": dest_y,
+        },
+    )
 
     return {
         "event": "agent_moved",
@@ -422,25 +485,35 @@ async def _handle_remote_meeting(
         message_type="meeting",
         location_x=state.x,
         location_y=state.y,
-        token_count=count_tokens(meeting_content),
+        token_count=_count_action_tokens(agent, action, meeting_content),
+    )
+
+    parent = activity_runtime.get_active_activity(agent.id)
+    if parent and parent.kind in {"assignment", "conversation", "social", "work"}:
+        db.update_activity(parent.id, status="paused")
+    activity_runtime.start_meeting_activity(
+        agent.id,
+        title=topic or "Remote meeting",
+        detail=meeting_content,
+        parent_activity_id=parent.id if parent else None,
     )
 
     return {
         "event": "meeting_started",
         "detail": f"{agent.name} started remote meeting with {target.name}" + (f": {topic}" if topic else ""),
         "agent_name": agent.name,
-        "queued_triggers": [{
-            "agent_id": target.id,
-            "trigger_type": "peer_message",
-            "source_channel": "work",
-            "payload": {
+        "trigger_requests": [_build_trigger_request(
+            agent_id=target.id,
+            trigger_type="peer_message",
+            source_channel="work",
+            payload={
                 "content": meeting_content,
                 "from_agent": agent.id,
                 "from_name": agent.name,
                 "message_type": "meeting",
                 "source_message_id": msg.id,
             },
-        }],
+        )],
     }
 
 
@@ -476,7 +549,7 @@ async def _handle_attend_meeting(
         message_type="meeting",
         location_x=state.x,
         location_y=state.y,
-        token_count=count_tokens(meeting_content),
+        token_count=_count_action_tokens(agent, action, meeting_content),
     )
 
     detail = f"{agent.name} joined an in-person meeting"
@@ -490,19 +563,28 @@ async def _handle_attend_meeting(
         "detail": detail,
         "agent_name": agent.name,
     }
+    parent = activity_runtime.get_active_activity(agent.id)
+    if parent and parent.kind in {"assignment", "conversation", "social", "work"}:
+        db.update_activity(parent.id, status="paused")
+    activity_runtime.start_meeting_activity(
+        agent.id,
+        title=topic or "In-person meeting",
+        detail=meeting_content,
+        parent_activity_id=parent.id if parent else None,
+    )
     if target:
-        result["queued_triggers"] = [{
-            "agent_id": target.id,
-            "trigger_type": "peer_message",
-            "source_channel": "chat",
-            "payload": {
+        result["trigger_requests"] = [_build_trigger_request(
+            agent_id=target.id,
+            trigger_type="peer_message",
+            source_channel="chat",
+            payload={
                 "content": meeting_content,
                 "from_agent": agent.id,
                 "from_name": agent.name,
                 "message_type": "meeting",
                 "source_message_id": msg.id,
             },
-        }]
+        )]
     return result
 
 
@@ -513,7 +595,10 @@ async def _handle_idle(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Agent has nothing to do."""
-    db.update_agent_state(agent.id, status="idle")
+    active = activity_runtime.get_active_activity(agent.id)
+    if active and active.kind != "work":
+        activity_runtime.complete_activity(active.id, detail=active.detail)
+    activity_runtime.refresh_agent_status(agent.id)
     return {
         "event": "status_changed",
         "detail": f"{agent.name} is idle",
@@ -528,7 +613,7 @@ async def _handle_complete(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark current task as complete."""
-    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="complete")
+    task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="complete")
     if error:
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     summary = action.get("summary", "")
@@ -540,8 +625,11 @@ async def _handle_complete(
         status_note=None,
         watchdog_pinged_at=None,
     )
-
-    db.update_agent_state(agent.id, status="idle", current_task_id=None)
+    active = activity_runtime.get_active_work_activity(agent.id)
+    if active:
+        activity_runtime.complete_activity(active.id, detail=summary or active.detail)
+    else:
+        activity_runtime.refresh_agent_status(agent.id)
 
     return {
         "event": "status_changed",
@@ -557,7 +645,7 @@ async def _handle_blocked(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark current task as blocked."""
-    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="blocked")
+    task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="blocked")
     if error:
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
@@ -569,8 +657,11 @@ async def _handle_blocked(
         completion_summary=None,
         watchdog_pinged_at=None,
     )
-
-    db.update_agent_state(agent.id, status="idle", current_task_id=None)
+    active = activity_runtime.get_active_work_activity(agent.id)
+    if active:
+        activity_runtime.complete_activity(active.id, detail=reason or active.detail)
+    else:
+        activity_runtime.refresh_agent_status(agent.id)
 
     return {
         "event": "status_changed",
@@ -586,7 +677,7 @@ async def _handle_delegated(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Delegate current task to another agent."""
-    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="delegated")
+    task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="delegated")
     if error:
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     target = _resolve_agent_by_id(action.get("agentId"))
@@ -615,7 +706,11 @@ async def _handle_delegated(
     else:
         child = None
 
-    db.update_agent_state(agent.id, status="idle", current_task_id=None)
+    active = activity_runtime.get_active_work_activity(agent.id)
+    if active:
+        activity_runtime.complete_activity(active.id, detail=f"Delegated to {target.name}")
+    else:
+        activity_runtime.refresh_agent_status(agent.id)
 
     result = {
         "event": "status_changed",
@@ -623,17 +718,7 @@ async def _handle_delegated(
         "agent_name": agent.name,
     }
     if child:
-        result["queued_triggers"] = [{
-            "agent_id": target.id,
-            "trigger_type": "task_assigned",
-            "source_channel": "work",
-            "task_id": child.id,
-            "payload": {
-                "task_title": child.title,
-                "task_description": child.description or "",
-                "project": child.project,
-            },
-        }]
+        result["trigger_requests"] = [build_task_assigned_trigger(child)]
     return result
 
 
@@ -644,7 +729,7 @@ async def _handle_abandoned(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Abandon current task."""
-    task_id, error = _resolve_task_lifecycle_target(state, action, action_name="abandoned")
+    task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="abandoned")
     if error:
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
@@ -656,8 +741,11 @@ async def _handle_abandoned(
         completion_summary=None,
         watchdog_pinged_at=None,
     )
-
-    db.update_agent_state(agent.id, status="idle", current_task_id=None)
+    active = activity_runtime.get_active_work_activity(agent.id)
+    if active:
+        activity_runtime.complete_activity(active.id, detail=reason or active.detail)
+    else:
+        activity_runtime.refresh_agent_status(agent.id)
 
     return {
         "event": "status_changed",
@@ -678,25 +766,7 @@ async def _handle_start_task(
     if not description and trigger:
         description = (trigger.get("content") or "").strip()
 
-    if state.current_task_id:
-        db.update_task(
-            state.current_task_id,
-            status="pending",
-            status_note="Paused for a newer assignment.",
-            completion_summary=None,
-            watchdog_pinged_at=None,
-        )
-    else:
-        pending = db.list_tasks(assigned_to=agent.id, status="pending")
-        if pending:
-            candidate = pending[-1]
-            if candidate.status_note == "Paused for direct conversation.":
-                db.update_task(
-                    candidate.id,
-                    status_note="Paused for a newer assignment.",
-                    completion_summary=None,
-                    watchdog_pinged_at=None,
-                )
+    activity_runtime.pause_active_work(agent.id, "Paused for a newer assignment.")
 
     created_by = agent.id
     if trigger:
@@ -711,8 +781,13 @@ async def _handle_start_task(
         assigned_to=agent.id,
         created_by=created_by,
     )
-    db.update_task(task.id, status="active", status_note=None)
-    db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+        supersede_note="Paused for a newer assignment.",
+    )
 
     return {
         "event": "task_started",
@@ -729,13 +804,7 @@ async def _handle_resume_task(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Activate the latest pending task for the agent."""
-    explicit_task_id = action.get("taskId")
-    if isinstance(explicit_task_id, str):
-        explicit_task_id = explicit_task_id.strip() or None
-    else:
-        explicit_task_id = None
-
-    task = _pick_resume_candidate(agent.id, explicit_task_id)
+    task = _pick_resume_candidate(agent.id)
     if task is None:
         return {
             "event": "agent_error",
@@ -743,8 +812,12 @@ async def _handle_resume_task(
             "agent_name": agent.name,
         }
 
-    db.update_task(task.id, status="active", status_note=None)
-    db.update_agent_state(agent.id, status="work_active", current_task_id=task.id)
+    activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+    )
 
     return {
         "event": "task_resumed",

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
 from api.websocket import manager
 from core import config
+from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import dispatcher
 from core.time import ensure_utc
 import db
@@ -29,11 +31,14 @@ class TaskWatchdog:
         self._task = asyncio.create_task(self._loop())
         logger.info("Task watchdog started")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+        loop_task = self._task
+        self._task = None
+        if loop_task:
+            loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await loop_task
         logger.info("Task watchdog stopped")
 
     async def _loop(self) -> None:
@@ -60,6 +65,10 @@ class TaskWatchdog:
             if dispatcher.is_active(task.assigned_to) or db.has_open_trigger(task.assigned_to):
                 continue
 
+            active_activity = activity_runtime.get_active_activity(task.assigned_to)
+            if active_activity and active_activity.kind == "movement":
+                continue
+
             last_progress = ensure_utc(task.last_progress_at or task.last_activity or task.created_at)
             last_heartbeat = ensure_utc(task.last_heartbeat_at or task.last_activity or task.created_at)
             quiet_since = max(last_progress, last_heartbeat)
@@ -74,14 +83,16 @@ class TaskWatchdog:
                     continue
 
                 if now - pinged_at >= escalation_threshold and task.status != "stalled":
-                    state = db.get_agent_state(task.assigned_to)
                     db.update_task(
                         task.id,
                         status="stalled",
                         status_note="Watchdog escalated after no heartbeat from the agent.",
                     )
-                    if state and state.current_task_id == task.id:
-                        db.update_agent_state(task.assigned_to, current_task_id=None)
+                    db.cancel_open_activities(
+                        task.assigned_to,
+                        detail="Cancelled after watchdog escalation.",
+                    )
+                    activity_runtime.refresh_agent_status(task.assigned_to)
                     await manager.broadcast_activity(
                         event="task_stalled",
                         detail=f'Task "{task.title}" stalled after watchdog escalation',

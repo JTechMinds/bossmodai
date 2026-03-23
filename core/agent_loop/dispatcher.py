@@ -11,12 +11,23 @@ from typing import Any
 
 from api.websocket import manager
 from core import config
+from core.agent_loop import activity_runtime
+from core.agent_loop.activity_scheduler import (
+    build_task_assigned_trigger,
+    can_dispatch_trigger,
+    plan_arrival_follow_up,
+    prepare_trigger_context,
+)
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
 from core.models.message import HUMAN_SENDER_ID
 import db
 
 logger = logging.getLogger(__name__)
+
+_HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
+_REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
+_WORK_REPLAN_ACTIONS = {"startTask", "resumeTask", "complete", "blocked", "delegated", "abandoned"}
 
 
 class TurnDispatcher:
@@ -32,19 +43,32 @@ class TurnDispatcher:
     def start(self) -> None:
         if self._running:
             return
+        claim_timeout = config.get_int("trigger_claim_timeout_seconds") or 300
+        recovered = db.requeue_stale_triggers(claim_timeout)
+        if recovered:
+            logger.warning("Requeued %d stale claimed triggers", recovered)
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("Turn dispatcher started")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._running = False
         self._wake_event.set()
-        if self._task:
-            self._task.cancel()
-            self._task = None
-        for task in self._active_turns.values():
+        loop_task = self._task
+        self._task = None
+        if loop_task:
+            loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await loop_task
+
+        active_turns = list(self._active_turns.values())
+        for task in active_turns:
             task.cancel()
         self._active_turns.clear()
+        for task in active_turns:
+            with suppress(asyncio.CancelledError):
+                await task
+
         for handle in self._social_timers.values():
             handle.cancel()
         self._social_timers.clear()
@@ -67,6 +91,8 @@ class TurnDispatcher:
         task_id: str | None = None,
     ) -> None:
         """Persist a trigger and wake the dispatcher."""
+        if trigger_type == "human_chat":
+            db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
         db.create_agent_trigger(
             agent_id=agent_id,
             trigger_type=trigger_type,
@@ -74,6 +100,21 @@ class TurnDispatcher:
             payload=payload,
             task_id=task_id,
         )
+        self.notify()
+
+    async def reset_runtime(self) -> None:
+        """Cancel all active turns and deferred timers without mutating the database."""
+        for handle in self._social_timers.values():
+            handle.cancel()
+        self._social_timers.clear()
+
+        active_tasks = list(self._active_turns.values())
+        self._active_turns.clear()
+        for task in active_tasks:
+            task.cancel()
+        for task in active_tasks:
+            with suppress(asyncio.CancelledError):
+                await task
         self.notify()
 
     def notify_agent_idle(self, agent_id: str) -> None:
@@ -127,47 +168,57 @@ class TurnDispatcher:
 
     async def _drain_queue(self) -> None:
         while self._running:
-            trigger = db.claim_next_trigger(excluded_agent_ids=list(self._active_turns))
-            if not trigger:
+            candidate = self._claim_available_trigger()
+            if not candidate:
                 return
 
-            payload = json.loads(trigger.payload) if trigger.payload else {}
+            payload = json.loads(candidate.payload) if candidate.payload else {}
             payload.update({
-                "type": trigger.trigger_type,
-                "trigger_id": trigger.id,
-                "task_id": trigger.task_id,
-                "source_channel": trigger.source_channel,
+                "type": candidate.trigger_type,
+                "trigger_id": candidate.id,
+                "task_id": candidate.task_id,
+                "source_channel": candidate.source_channel,
             })
 
-            agent = db.get_agent(trigger.agent_id)
+            agent = db.get_agent(candidate.agent_id)
             if not agent:
-                db.fail_agent_trigger(trigger.id, "Agent not found")
+                db.fail_agent_trigger(candidate.id, "Agent not found")
                 continue
 
-            policy = get_trigger_policy(trigger.trigger_type)
-            state_updates: dict[str, Any] = {
-                "status": policy.activation_status,
-            }
-            if policy.bind_trigger_task and trigger.task_id:
-                state_updates["current_task_id"] = trigger.task_id
-
-            state = db.update_agent_state(agent.id, **state_updates)
+            prepare_trigger_context(agent.id, payload)
+            policy = get_trigger_policy(candidate.trigger_type)
+            state = activity_runtime.refresh_agent_status(agent.id)
             if state is None:
-                db.fail_agent_trigger(trigger.id, "Agent state not found")
+                db.fail_agent_trigger(candidate.id, "Agent state not found")
                 continue
 
-            if policy.require_task_context and not state.current_task_id:
-                db.fail_agent_trigger(trigger.id, "Trigger requires active task context")
-                db.update_agent_state(agent.id, status="idle")
+            if policy.require_work_activity and not activity_runtime.get_active_task_id(agent.id):
+                db.fail_agent_trigger(candidate.id, "Trigger requires active work activity")
+                activity_runtime.refresh_agent_status(agent.id)
                 continue
-
-            if trigger.task_id:
-                task = db.get_task(trigger.task_id)
-                if task and task.status == "pending":
-                    db.update_task(trigger.task_id, status="active")
 
             task = asyncio.create_task(self._run_trigger(agent, state, payload))
             self._active_turns[agent.id] = task
+
+    def _claim_available_trigger(self):
+        """Claim the next queued trigger that can legally run now."""
+        for trigger in db.list_queued_triggers(limit=100):
+            if trigger.agent_id in self._active_turns:
+                continue
+
+            state = db.get_agent_state(trigger.agent_id)
+            active_activity = activity_runtime.get_active_activity(trigger.agent_id)
+            if not can_dispatch_trigger(
+                trigger_type=trigger.trigger_type,
+                state=state,
+                active_activity=active_activity,
+            ):
+                continue
+
+            claimed = db.claim_trigger(trigger.id)
+            if claimed is not None:
+                return claimed
+        return None
 
     async def _run_trigger(self, agent: Any, state: Any, trigger: dict[str, Any]) -> None:
         trigger_id = trigger["trigger_id"]
@@ -177,10 +228,22 @@ class TurnDispatcher:
             outcome = await run_turn(agent, state, trigger)
             result = outcome.result
 
+            if self._should_replan_backlog(trigger, outcome.action):
+                self._rebuild_backlog_queue(agent.id)
+
             if outcome.trigger_status == "completed":
                 db.complete_agent_trigger(trigger_id)
             else:
                 db.fail_agent_trigger(trigger_id, outcome.diagnostic_error or "Turn failed")
+
+            for queued in result.get("trigger_requests", []):
+                self.enqueue_trigger(
+                    agent_id=queued["agent_id"],
+                    trigger_type=queued["trigger_type"],
+                    source_channel=queued["source_channel"],
+                    payload=queued["payload"],
+                    task_id=queued.get("task_id"),
+                )
 
             if result.get("path") and result.get("agent_id"):
                 from core.world.simulation import simulation
@@ -191,7 +254,10 @@ class TurnDispatcher:
             logger.exception("Trigger execution failed for %s", agent.name)
             db.fail_agent_trigger(trigger_id, str(exc))
             try:
-                db.update_agent_state(agent.id, status="idle")
+                activity_runtime.reconcile_after_turn_failure(
+                    agent.id,
+                    detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {exc}",
+                )
                 await manager.broadcast_activity(
                     event="agent_error",
                     detail=f"{agent.name} failed while processing a trigger",
@@ -205,6 +271,35 @@ class TurnDispatcher:
             if final_state and final_state.status == "idle":
                 self.notify_agent_idle(agent.id)
             self.notify()
+
+    async def handle_arrival(self, agent_id: str, room_name: str) -> None:
+        """Resolve movement arrival and schedule the resumed activity, if any."""
+        resumed_activity = activity_runtime.resolve_arrival(agent_id)
+        for queued in plan_arrival_follow_up(agent_id, resumed_activity, room_name):
+            self.enqueue_trigger(
+                agent_id=queued["agent_id"],
+                trigger_type=queued["trigger_type"],
+                source_channel=queued["source_channel"],
+                payload=queued["payload"],
+                task_id=queued.get("task_id"),
+            )
+
+        state = db.get_agent_state(agent_id)
+        if state and state.status == "idle":
+            self.notify_agent_idle(agent_id)
+        self.notify()
+
+    def _should_replan_backlog(self, trigger: dict[str, Any], action: dict[str, Any] | None) -> bool:
+        """Return whether a direct interrupt changed durable work selection."""
+        if trigger.get("type") != "human_chat" or not action:
+            return False
+        return action.get("action") in _WORK_REPLAN_ACTIONS
+
+    def _rebuild_backlog_queue(self, agent_id: str) -> None:
+        """Drop stale resumptive backlog triggers and rebuild pending assignments."""
+        db.delete_queued_triggers(agent_id, trigger_types=_REBUILDABLE_BACKLOG_TRIGGER_TYPES)
+        for task in db.list_tasks(assigned_to=agent_id, status="pending"):
+            self.enqueue_trigger(**build_task_assigned_trigger(task))
 
     async def _maybe_enqueue_social_trigger(self, agent_id: str) -> None:
         agent = db.get_agent(agent_id)

@@ -10,10 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 from api.websocket import manager
 from core import config
+from core.agent_loop import activity_runtime
+from core.world.pathfinding import find_path
 from core.world.tilemap import get_room_at
 import db
 
@@ -38,15 +41,19 @@ class WorldSimulation:
         if self._running:
             return
         self._running = True
+        self._recover_active_movements()
         self._task = asyncio.create_task(self._loop())
         logger.info("World simulation started")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """Stop the simulation loop."""
         self._running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+        loop_task = self._task
+        self._task = None
+        if loop_task:
+            loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await loop_task
 
         self._agent_paths.clear()
         self._agent_progress.clear()
@@ -136,9 +143,7 @@ class WorldSimulation:
             self._agent_paths.pop(agent_id, None)
             self._agent_progress.pop(agent_id, None)
             state = db.get_agent_state(agent_id)
-            if state and state.status == "in_transit":
-                db.update_agent_state(agent_id, status="idle")
-
+            if state:
                 agent = db.get_agent(agent_id)
                 room = get_room_at(state.x, state.y)
                 room_name = room["name"] if room else "destination"
@@ -148,45 +153,28 @@ class WorldSimulation:
                         detail=f"{agent.name} arrived at {room_name}",
                         agent_name=agent.name,
                     )
-                task = db.get_task(state.current_task_id) if state.current_task_id else None
                 from core.agent_loop.dispatcher import dispatcher
 
-                if task and task.status == "active":
-                    trigger_type = "task_resumed"
-                    payload = {
-                        "task_title": task.title,
-                        "task_description": task.description or "",
-                        "content": f'You arrived at your destination. Resume work on "{task.title}".',
-                    }
-                    if not room or room["room_type"] != "workspace":
-                        trigger_type = "task_attention_required"
-                        payload = {
-                            "task_title": task.title,
-                            "task_description": task.description or "",
-                            "room_name": room_name,
-                            "content": (
-                                f'You arrived in the {room_name} while "{task.title}" is still active. '
-                                "You cannot produce work here. Either walk to your desk, send a status update, "
-                                "or sign off with complete/blocked/delegated/abandoned."
-                            ),
-                        }
-                    if not db.has_open_trigger_matching(
-                        agent_id,
-                        trigger_types=[trigger_type],
-                        task_id=task.id,
-                    ):
-                        dispatcher.enqueue_trigger(
-                            agent_id=agent_id,
-                            trigger_type=trigger_type,
-                            source_channel="work",
-                            payload=payload,
-                            task_id=task.id,
-                        )
-                else:
-                    dispatcher.notify_agent_idle(agent_id)
+                await dispatcher.handle_arrival(agent_id, room_name)
 
         if moved_any:
             await manager.broadcast_world_state()
+
+    def _recover_active_movements(self) -> None:
+        """Rebuild in-flight paths from active movement activities on startup."""
+        for movement in activity_runtime.list_active_movements():
+            state = db.get_agent_state(movement.agent_id)
+            if state is None:
+                continue
+            destination_x = movement.metadata.get("destination_x")
+            destination_y = movement.metadata.get("destination_y")
+            if not isinstance(destination_x, int) or not isinstance(destination_y, int):
+                continue
+            path = find_path(state.x, state.y, destination_x, destination_y)
+            if not path or len(path) <= 1:
+                activity_runtime.resolve_arrival(movement.agent_id)
+                continue
+            self.set_agent_path(movement.agent_id, path)
 
 
 # Module-level singleton

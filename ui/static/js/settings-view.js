@@ -233,7 +233,7 @@ const ConnectionsSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Base URL</label>
-                        <p class="text-xs text-bm-muted mb-1.5">The OpenAI-compatible endpoint URL.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">The exact provider base URL. Use something like <code>https://api.openai.com/v1</code>, not <code>/chat/completions</code>.</p>
                         <input type="url" name="api_base_url" required
                                value="${BossModUtils.escapeHtml(conn?.api_base_url || '')}"
                                placeholder="https://api.openai.com/v1"
@@ -243,7 +243,7 @@ const ConnectionsSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Optional. Leave blank for local models like Ollama.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">Provide a key only if your provider expects one. The runtime will not inject placeholder credentials.</p>
                         <input type="password" name="api_key"
                                value="${BossModUtils.escapeHtml(conn?.api_key || '')}"
                                placeholder="sk-..."
@@ -253,10 +253,10 @@ const ConnectionsSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Model Name</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Optional. Helps you remember which model this connection uses.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">Exact runtime model identifier. If you use a custom API base, enter the provider-prefixed form such as <code>openai/gpt-4.1-mini</code>.</p>
                         <input type="text" name="model"
                                value="${BossModUtils.escapeHtml(conn?.model || '')}"
-                               placeholder="e.g. gpt-4o, claude-sonnet-4-5-20250514, llama3"
+                               placeholder="e.g. openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
@@ -782,7 +782,7 @@ const PromptTemplateSection = (() => {
         el.innerHTML = `
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">System Prompt Template</h2>
-                <p class="text-sm text-bm-muted mt-0.5">The master template that wraps every agent's personality prompt. Most users won't need to change this.</p>
+                <p class="text-sm text-bm-muted mt-0.5">The master wrapper around each agent's role and context. The runtime action contract is injected separately and is not edited here.</p>
             </div>
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Available Template Variables</p>
@@ -790,14 +790,14 @@ const PromptTemplateSection = (() => {
                     <span>{{personality}}</span><span>Agent's personality prompt</span>
                     <span>{{agent_name}}</span><span>Agent's display name</span>
                     <span>{{role}}</span><span>Agent's role title</span>
-                    <span>{{memory}}</span><span>Knowledge graph context</span>
                     <span>{{worldStatus}}</span><span>Location, status, nearby agents, pending triggers</span>
+                    <span>{{activity}}</span><span>Current runtime activity</span>
                     <span>{{task}}</span><span>Current task details</span>
+                    <span>{{pending_tasks}}</span><span>Pending tasks that can be resumed</span>
                     <span>{{references}}</span><span>Recent work summaries and artifacts</span>
-                    <span>{{action_contract}}</span><span>Editable action contract setting</span>
                 </div>
             </div>
-            <p class="text-xs text-amber-700 mt-3 mb-3">Only variables present in this template will be injected. Nothing is appended behind the scenes.</p>
+            <p class="text-xs text-amber-700 mt-3 mb-3">Only the variables listed above are substituted into this template. Separately, the code-owned runtime action contract is always appended as its own system message.</p>
             <p class="text-xs text-bm-muted mb-1.5">This is the full wrapper prompt sent before every turn. Use it to control role framing, context layout, and the rules the model sees.</p>
             <textarea id="system-prompt-textarea" rows="20"
                       class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
@@ -877,12 +877,25 @@ const AdvancedSystemSection = (() => {
                     <div class="flex items-center justify-between">
                         <div>
                             <h3 class="text-sm font-semibold">Reset Seed Settings</h3>
-                            <p class="text-xs text-bm-muted mt-0.5">Overwrite all seed settings back to their code defaults. Custom settings are preserved.</p>
+                            <p class="text-xs text-bm-muted mt-0.5">Overwrite editable seed settings back to their code defaults. Runtime-owned contract text is not stored here.</p>
                         </div>
                         <button id="btn-reseed-settings"
                                 class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
                                        hover:bg-red-50 transition-colors text-sm font-medium">
                             Reseed
+                        </button>
+                    </div>
+                </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold">Recreate Application DB</h3>
+                            <p class="text-xs text-bm-muted mt-0.5">Brand-new-app reset. Rebuild the entire database from the current schema and seed data instead of carrying schema compatibility logic in runtime code.</p>
+                        </div>
+                        <button id="btn-reseed-application"
+                                class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
+                                       hover:bg-red-50 transition-colors text-sm font-medium">
+                            Recreate DB
                         </button>
                     </div>
                 </div>
@@ -900,12 +913,22 @@ const AdvancedSystemSection = (() => {
 
         // Reseed handler
         document.getElementById('btn-reseed-settings').addEventListener('click', async () => {
-            if (!confirm('Reset all seed settings to defaults? This will overwrite your changes to the system prompt template and other seed settings.')) return;
+            if (!confirm('Reset all editable seed settings to defaults? This will overwrite your saved system prompt template and other seed settings.')) return;
             try {
                 await fetch('/api/settings/reseed', { method: 'POST' });
                 render(el); // Re-render to show updated values
             } catch {
                 alert('Reseed failed');
+            }
+        });
+
+        document.getElementById('btn-reseed-application').addEventListener('click', async () => {
+            if (!confirm('Recreate the entire application database from the current schema? This deletes agents, tasks, chat history, diagnostics, and runtime state.')) return;
+            try {
+                await fetch('/api/settings/reseed-application', { method: 'POST' });
+                window.location.reload();
+            } catch {
+                alert('Application reseed failed');
             }
         });
 
@@ -949,52 +972,54 @@ const AdvancedSystemSection = (() => {
 
 const ActionContractSection = (() => {
     async function render(el) {
-        let settings = [];
+        let contractValue = '';
         try {
-            const res = await fetch('/api/settings?category=advanced');
-            settings = await res.json();
+            const res = await fetch('/api/runtime/action-contract');
+            const payload = await res.json();
+            contractValue = payload.content || '';
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load action contract.</p>';
             return;
         }
 
-        const contractSetting = settings.find(s => s.key === 'action_contract_template');
-        const contractValue = contractSetting?.value || '';
-
         el.innerHTML = `
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">Action Contract</h2>
-                <p class="text-sm text-bm-muted mt-0.5">This is the prompt-visible action contract. It is editable. Backend validation still enforces the real runtime schema.</p>
+                <p class="text-sm text-bm-muted mt-0.5">This is the code-owned runtime action contract appended to every turn. It is generated by the backend and is not editable from Settings.</p>
             </div>
-            <p class="text-xs text-amber-700 mb-3">This text is not hidden. Agents only see what is saved here and what your system prompt template includes via <span class="font-mono">{{action_contract}}</span>.</p>
-            <p class="text-xs text-bm-muted mb-1.5">Use this textarea to define the JSON action shapes and examples the model sees. Keep it aligned with runtime behavior so the agent is nudged toward valid outputs.</p>
-            <textarea id="action-contract-textarea" rows="18"
-                      class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
-                             bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                             focus:border-bm-accent resize-y font-mono leading-relaxed">${BossModUtils.escapeHtml(contractValue)}</textarea>
+            <p class="text-xs text-amber-700 mb-3">Agents always receive this contract as a separate system message. Update the backend action contract if runtime behavior changes.</p>
+            <p class="text-xs text-bm-muted mb-3">Use the System Prompt Template tab to edit the role/context wrapper. Use this tab to inspect the effective runtime contract currently being enforced.</p>
+            <pre id="action-contract-text"
+                 class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(contractValue)}</pre>
             <div class="flex items-center gap-3 mt-4">
-                <button id="btn-save-action-contract"
+                <button id="btn-copy-action-contract"
                         class="px-4 py-2 bg-bm-accent text-white rounded-lg
                                hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    Save Contract
+                    Copy Contract
+                </button>
+                <button id="btn-refresh-action-contract"
+                        class="px-4 py-2 border border-bm-border rounded-lg
+                               hover:bg-slate-50 transition-colors text-sm font-medium">
+                    Refresh
                 </button>
                 <span id="action-contract-save-status" class="text-sm text-bm-muted"></span>
             </div>`;
 
-        document.getElementById('btn-save-action-contract').addEventListener('click', async () => {
-            const value = document.getElementById('action-contract-textarea').value;
+        document.getElementById('btn-copy-action-contract').addEventListener('click', async () => {
             const status = document.getElementById('action-contract-save-status');
             try {
-                await fetch(`/api/settings/action_contract_template?value=${encodeURIComponent(value)}&category=advanced`, {
-                    method: 'PUT',
-                });
-                status.textContent = 'Saved';
+                await navigator.clipboard.writeText(contractValue);
+                status.textContent = 'Copied';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
             } catch {
-                status.textContent = 'Save failed';
+                status.textContent = 'Copy failed';
                 status.className = 'text-sm text-red-600';
             }
+        });
+
+        document.getElementById('btn-refresh-action-contract').addEventListener('click', () => {
+            render(el);
         });
     }
 

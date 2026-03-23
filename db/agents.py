@@ -34,9 +34,9 @@ _AGENT_VALID_COLUMNS = {
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
 }
 
-_STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since, current_task_id"
+_STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
 
-_STATE_VALID_COLUMNS = {"x", "y", "status", "last_active_at", "idle_since", "current_task_id"}
+_STATE_VALID_COLUMNS = {"x", "y", "status", "last_active_at", "idle_since"}
 
 
 # ---------------------------------------------------------------------------

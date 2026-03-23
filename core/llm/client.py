@@ -33,12 +33,11 @@ def _get_semaphore() -> asyncio.Semaphore:
     return _llm_semaphore
 
 
-def normalize_api_base(url: str) -> str:
-    """Strip /chat/completions or /completions suffix from a base URL."""
+def validate_api_base(url: str) -> str:
+    """Validate an explicit API base URL for runtime requests."""
     clean = url.rstrip("/")
-    for suffix in ("/chat/completions", "/completions"):
-        if clean.endswith(suffix):
-            return clean[: -len(suffix)]
+    if clean.endswith("/chat/completions") or clean.endswith("/completions"):
+        raise LLMError("api_base must be the provider base URL, not a completions endpoint")
     return clean
 
 
@@ -91,11 +90,6 @@ async def completion(
     if max_tokens is None:
         max_tokens = config.get_int("default_max_tokens") or 2048
 
-    # When using a custom base URL, litellm needs a provider prefix.
-    # Auto-add "openai/" for OpenAI-compatible endpoints if no prefix present.
-    if api_base and "/" not in model:
-        model = f"openai/{model}"
-
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -104,9 +98,13 @@ async def completion(
     }
 
     if api_base:
-        kwargs["api_base"] = normalize_api_base(api_base)
-        # LiteLLM requires an api_key even for local servers that don't need one
-        kwargs["api_key"] = api_key or "not-needed"
+        if "/" not in model:
+            raise LLMError(
+                "Custom api_base requires a provider-prefixed model identifier, for example openai/gpt-4.1-mini"
+            )
+        kwargs["api_base"] = validate_api_base(api_base)
+        if api_key:
+            kwargs["api_key"] = api_key
     elif api_key:
         kwargs["api_key"] = api_key
 
@@ -144,14 +142,17 @@ async def completion(
 def count_tokens(text: str, model: str | None = None) -> int:
     """Estimate token count for a string using litellm's tokenizer.
 
-    Falls back to the configured default work model, then ``gpt-4o``.
+    Returns ``0`` when no explicit tokenizer model is configured or supported.
     """
-    effective_model = model or config.get("default_model_work") or "gpt-4o"
+    effective_model = model or config.get("default_model_work")
+    if not effective_model:
+        logger.warning("Token counting skipped because no tokenizer model is configured")
+        return 0
     try:
         return litellm.token_counter(model=effective_model, text=text)
     except (ValueError, TypeError, KeyError) as exc:
-        logger.debug("Token counting failed (model=%s), using estimate: %s", effective_model, exc)
-        return len(text) // 4
+        logger.warning("Token counting skipped for unsupported model %s: %s", effective_model, exc)
+        return 0
 
 
 class LLMError(Exception):
