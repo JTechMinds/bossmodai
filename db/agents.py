@@ -152,37 +152,39 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
 
 
 def delete_agent(agent_id: str) -> bool:
-    """Delete an agent and all dependent rows atomically.
+    """Delete an agent and all dependent rows.
 
-    Deletes in FK dependency order: children before parents.
+    Deletes in FK dependency order (children before parents).  Each statement
+    auto-commits because DuckDB's FK checker enforces constraints per-statement
+    even inside explicit transactions, which blocks cascading deletes.
+    DuckDB is single-writer, so there is no concurrent-mutation risk.
     """
     result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
     if not result:
         return False
-    with transaction():
-        # notification_links -> notifications
-        execute(
-            """DELETE FROM notification_links WHERE notification_id IN
-               (SELECT id FROM notifications WHERE agent_id = $1)""",
-            [agent_id],
-        )
-        execute("DELETE FROM notifications WHERE agent_id = $1", [agent_id])
-        # activities (clear self-referential parent_activity_id first)
-        execute(
-            "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",
-            [agent_id],
-        )
-        execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
-        # remaining FK dependents
-        execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
-        execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
-        execute("DELETE FROM agent_triggers WHERE agent_id = $1", [agent_id])
-        # original companion tables
-        execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
-        execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
-        execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
-        delete_agent_storage_identity(agent_id)
-        execute("DELETE FROM agents WHERE id = $1", [agent_id])
+    # notification_links -> notifications
+    notification_ids = [r["id"] for r in query(
+        "SELECT id FROM notifications WHERE agent_id = $1", [agent_id],
+    )]
+    for nid in notification_ids:
+        execute("DELETE FROM notification_links WHERE notification_id = $1", [nid])
+    execute("DELETE FROM notifications WHERE agent_id = $1", [agent_id])
+    # activities (clear self-referential parent_activity_id first)
+    execute(
+        "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",
+        [agent_id],
+    )
+    execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
+    # remaining FK dependents
+    execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM agent_triggers WHERE agent_id = $1", [agent_id])
+    # companion tables
+    execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
+    delete_agent_storage_identity(agent_id)
+    execute("DELETE FROM agents WHERE id = $1", [agent_id])
     return True
 
 
