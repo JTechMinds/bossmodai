@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core import config
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.bm_cli.workspace_git import auto_commit_workspace_change
+
+def _max_write_bytes() -> int:
+    return config.get_int("cli_max_write_bytes")
 
 
 def handle_pwd(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
@@ -63,7 +67,6 @@ def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
         return error_result(parsed.raw, f"Path not found: {parsed.args[0] if parsed.args else context.cwd}", cwd=context.cwd)
     if target.real_path.is_file():
         entry_name = Path(target.virtual_path).name
-        entry_name = entry_name if not entry_name else entry_name
         return success_result(
             command=parsed.raw,
             detail=f"{context.agent.name} listed {target.virtual_path}",
@@ -94,7 +97,7 @@ def handle_cat(context: CliExecutionContext, parsed: ParsedCliCommand, content: 
         return error_result(parsed.raw, f"File not found: {parsed.args[0]}", cwd=context.cwd)
     if target.real_path.is_dir():
         return error_result(parsed.raw, f"Cannot read directory: {parsed.args[0]}", cwd=context.cwd)
-    body = target.real_path.read_text(encoding="utf-8", errors="ignore")
+    body = target.real_path.read_text(encoding="utf-8", errors="replace")
     return success_result(
         command=parsed.raw,
         detail=f"{context.agent.name} read {target.virtual_path}",
@@ -140,6 +143,14 @@ def handle_write(context: CliExecutionContext, parsed: ParsedCliCommand, content
         return error_result(parsed.raw, '"write" requires exactly one path argument.', cwd=context.cwd)
     if content is None or not content.strip():
         return error_result(parsed.raw, 'Write commands require a non-empty "content" field.', cwd=context.cwd)
+    content_bytes = len(content.encode("utf-8"))
+    limit = _max_write_bytes()
+    if content_bytes > limit:
+        return error_result(
+            parsed.raw,
+            f"Content exceeds maximum write size ({content_bytes:,} bytes > {limit:,} byte limit).",
+            cwd=context.cwd,
+        )
     target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0])
     if target.real_path is None:
         return error_result(parsed.raw, "Cannot write the virtual root.", cwd=context.cwd)
@@ -180,6 +191,14 @@ def handle_append(context: CliExecutionContext, parsed: ParsedCliCommand, conten
         return error_result(parsed.raw, '"append" requires exactly one path argument.', cwd=context.cwd)
     if content is None or not content.strip():
         return error_result(parsed.raw, 'Append commands require a non-empty "content" field.', cwd=context.cwd)
+    content_bytes = len(content.encode("utf-8"))
+    limit = _max_write_bytes()
+    if content_bytes > limit:
+        return error_result(
+            parsed.raw,
+            f"Content exceeds maximum write size ({content_bytes:,} bytes > {limit:,} byte limit).",
+            cwd=context.cwd,
+        )
     target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0])
     if target.real_path is None:
         return error_result(parsed.raw, "Cannot append to the virtual root.", cwd=context.cwd)

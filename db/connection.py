@@ -7,7 +7,9 @@ and auto-initialises the schema on first access.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Generator
 
 import duckdb
 
@@ -21,13 +23,47 @@ _connection: duckdb.DuckDBPyConnection | None = None
 
 
 def get_connection() -> duckdb.DuckDBPyConnection:
-    """Return the module-level DuckDB connection, creating it on first call."""
+    """Return the module-level DuckDB connection, creating it on first call.
+
+    Includes a lightweight health check — if the existing connection is broken
+    it is replaced with a fresh one.
+    """
     global _connection
+    if _connection is not None:
+        try:
+            _connection.execute("SELECT 1")
+        except Exception:
+            logger.warning("DuckDB connection health check failed — reconnecting")
+            try:
+                _connection.close()
+            except Exception:
+                pass
+            _connection = None
     if _connection is None:
         _connection = duckdb.connect(_DB_PATH)
         _apply_schema(_connection)
         logger.info("DuckDB connection opened: %s", _DB_PATH)
     return _connection
+
+
+@contextmanager
+def transaction() -> Generator[duckdb.DuckDBPyConnection, None, None]:
+    """Context manager that wraps a block in BEGIN / COMMIT / ROLLBACK.
+
+    Usage::
+
+        with transaction() as con:
+            con.execute("INSERT INTO ...", [...])
+            con.execute("INSERT INTO ...", [...])
+    """
+    con = get_connection()
+    con.execute("BEGIN TRANSACTION")
+    try:
+        yield con
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
 
 
 def _apply_schema(con: duckdb.DuckDBPyConnection) -> None:

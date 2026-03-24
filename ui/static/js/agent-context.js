@@ -636,12 +636,38 @@ const AgentContext = (() => {
             }
             renderDeskDirectory(container, payload);
         } catch (err) {
-            container.innerHTML = `
-                <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                    Failed to load desk contents.
-                </div>`;
+            renderDeskError(container, activeDeskPath);
             console.error('[AgentContext] Desk load failed:', err);
         }
+    }
+
+    function renderDeskError(container, failedPath) {
+        const safePath = failedPath || '/me';
+        const parentPath = parentDeskPath(safePath);
+        container.innerHTML = `
+            <div class="space-y-4">
+                <div class="flex items-center justify-end gap-2">
+                    <button type="button" id="desk-error-back-btn"
+                            class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                        Back
+                    </button>
+                    <button type="button" id="desk-error-refresh-btn"
+                            class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                        Refresh
+                    </button>
+                </div>
+                <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    Failed to load desk contents.
+                    <div class="mt-2 text-xs text-red-600">Path: ${BossModUtils.escapeHtml(safePath)}</div>
+                </div>
+            </div>`;
+
+        container.querySelector('#desk-error-back-btn')?.addEventListener('click', () => {
+            openDeskPath(parentPath);
+        });
+        container.querySelector('#desk-error-refresh-btn')?.addEventListener('click', () => {
+            renderDesk(safePath);
+        });
     }
 
     function renderDeskDirectory(container, payload) {

@@ -65,7 +65,7 @@ class ConnectionManager:
         timeout = config.get_float("ws_send_timeout_seconds") or 5.0
         encoded = jsonable_encoder(message)
         dead: list[WebSocket] = []
-        for ws in self._connections:
+        for ws in list(self._connections):
             try:
                 await asyncio.wait_for(ws.send_json(encoded), timeout=timeout)
             except (ConnectionError, RuntimeError, asyncio.TimeoutError) as exc:

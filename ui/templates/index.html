@@ -7,25 +7,7 @@
 
     <!-- Tailwind CSS (CDN, no build step) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        bm: {
-                            bg: '#f8fafc',
-                            surface: '#ffffff',
-                            border: '#e2e8f0',
-                            text: '#1e293b',
-                            muted: '#64748b',
-                            accent: '#2563eb',
-                            'accent-hover': '#1d4ed8',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <script src="{{ static_url('js/tailwind-config.js') }}"></script>
 
     <!-- Lucide Icons (CDN) -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>

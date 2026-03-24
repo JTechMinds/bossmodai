@@ -111,6 +111,15 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("api_message_limit_max", "200", "advanced"),
     ("api_diagnostics_limit_max", "200", "advanced"),
 
+    # ── CLI safety ──
+    ("cli_max_write_bytes", "262144", "advanced"),
+
+    # ── Agent defaults ──
+    ("default_spawn_x", "14", "simulation"),
+    ("default_spawn_y", "9", "simulation"),
+    ("default_prompt_history_last_n", "30", "context"),
+    ("default_prompt_history_max_tokens", "2000", "context"),
+
     # ── System prompt template (advanced) ──
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
 ]

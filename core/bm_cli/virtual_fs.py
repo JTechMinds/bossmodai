@@ -86,7 +86,7 @@ def resolve_cli_path(agent_storage_key: str, cwd: str, raw_path: str | None = No
         virtual_path=virtual_path,
         real_path=candidate,
         exists=candidate.exists(),
-        is_dir=candidate.is_dir() if candidate.exists() else virtual_path.endswith("/") or candidate.suffix == "",
+        is_dir=candidate.is_dir() if candidate.exists() else virtual_path.endswith("/"),
         mount=mount,
     )
 

@@ -7,11 +7,14 @@ model validation in one place.
 
 from __future__ import annotations
 
+import re
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from db.connection import get_connection
+
+_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -127,6 +130,9 @@ def build_update(
     Returns ``True`` if fields were applied, ``False`` if nothing to update
     (all fields filtered out or empty).
     """
+    assert _IDENTIFIER_RE.match(table), f"Invalid table name: {table!r}"
+    assert _IDENTIFIER_RE.match(id_column), f"Invalid id_column name: {id_column!r}"
+
     filtered = {k: v for k, v in fields.items() if k in valid_columns}
     if not filtered:
         return False
@@ -157,6 +163,9 @@ def build_update_returning(
     model_cls: type[T],
 ) -> T | None:
     """Hardened UPDATE with RETURNING clause, validated as a Pydantic model."""
+    assert _IDENTIFIER_RE.match(table), f"Invalid table name: {table!r}"
+    assert _IDENTIFIER_RE.match(id_column), f"Invalid id_column name: {id_column!r}"
+
     filtered = {k: v for k, v in fields.items() if k in valid_columns}
     if not filtered:
         return None

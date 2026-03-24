@@ -351,3 +351,22 @@ CREATE TABLE IF NOT EXISTS diagnostic_steps (
     error             TEXT,
     created_at        TIMESTAMP DEFAULT current_timestamp
 );
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Indexes — high-traffic query patterns
+-- Note: Indexes on tasks and artifacts are omitted because DuckDB's FK
+-- constraint checker can block UPDATEs on rows referenced by other tables
+-- when indexes exist on those tables.
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE INDEX IF NOT EXISTS idx_messages_from_agent_created
+    ON messages (from_agent, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_messages_to_agent_created
+    ON messages (to_agent, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_triggers_agent_status
+    ON agent_triggers (agent_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostics_agent_created
+    ON diagnostics (agent_id, created_at);
