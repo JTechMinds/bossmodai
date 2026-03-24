@@ -18,16 +18,46 @@ def ensure_artifact_roots() -> None:
     _PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
 
 
+def artifacts_root() -> Path:
+    """Return the bounded BossMod artifacts root."""
+    ensure_artifact_roots()
+    return _ARTIFACTS_ROOT
+
+
+def agents_artifact_root() -> Path:
+    """Return the bounded BossMod per-agent artifact root."""
+    ensure_artifact_roots()
+    return _AGENTS_ROOT
+
+
+def projects_artifact_root() -> Path:
+    """Return the bounded BossMod per-project artifact root."""
+    ensure_artifact_roots()
+    return _PROJECTS_ROOT
+
+
 def slugify_name(value: str) -> str:
     """Return a filesystem-safe slug for agent/project names."""
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-_.")
     return text or "untitled"
 
 
-def agent_artifact_dir(agent_name: str) -> Path:
-    """Return the personal artifact directory for an agent."""
+def legacy_agent_artifact_dir(agent_name: str) -> Path:
+    """Return the legacy name-based personal artifact directory for an agent."""
     ensure_artifact_roots()
-    path = _AGENTS_ROOT / slugify_name(agent_name)
+    return _AGENTS_ROOT / slugify_name(agent_name)
+
+
+def transitional_agent_id_artifact_dir(agent_id: str) -> Path:
+    """Return the transitional personal artifact directory keyed by raw agent id."""
+    ensure_artifact_roots()
+    return _AGENTS_ROOT / agent_id
+
+
+def agent_artifact_dir(storage_key: str) -> Path:
+    """Return the canonical immutable personal artifact directory for a storage key."""
+    ensure_artifact_roots()
+    path = _AGENTS_ROOT / storage_key
     path.mkdir(parents=True, exist_ok=True)
     return path
 

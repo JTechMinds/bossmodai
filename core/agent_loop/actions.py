@@ -14,6 +14,7 @@ from typing import Any
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.deliverables import missing_deliverables, summarize_deliverable
 from core.bm_cli import execute_bm_cli
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
@@ -220,6 +221,11 @@ def _count_action_tokens(agent: Agent, action: dict[str, Any], text: str) -> int
     return count_tokens(text, model=_resolve_token_model(agent, action))
 
 
+def _task_is_human_visible(task: Any | None) -> bool:
+    """Return whether task lifecycle notifications should reach the human chat."""
+    return bool(task and (task.notification_policy or "none") != "none")
+
+
 # ---------------------------------------------------------------------------
 # Execute
 # ---------------------------------------------------------------------------
@@ -275,6 +281,7 @@ async def _handle_work(
     task = db.get_task(task_id)
     if task and task.status == "accepted":
         db.update_task(task.id, status="active", status_note=None, watchdog_pinged_at=None)
+        task = db.get_task(task.id)
 
     db.create_message(
         from_agent=agent.id,
@@ -286,11 +293,21 @@ async def _handle_work(
         token_count=_count_action_tokens(agent, action, output),
     )
 
-    return {
+    active_work = activity_runtime.get_active_work_activity(agent.id)
+    pending_deliverables = missing_deliverables(
+        agent_id=agent.id,
+        agent_storage_key=agent.storage_key,
+        task=task,
+    )
+
+    result = {
         "event": "agent_updated",
         "detail": f"{agent.name} produced work output ({len(output)} chars)",
         "agent_name": agent.name,
     }
+    if pending_deliverables:
+        result["missing_deliverables"] = [item.model_dump() for item in pending_deliverables]
+    return result
 
 
 async def _handle_bm_cli(
@@ -302,7 +319,13 @@ async def _handle_bm_cli(
     """Run a bounded BossMod CLI query and return a turn-local result."""
     command = str(action.get("command") or "").strip()
     content = action.get("content")
-    cli_result = execute_bm_cli(agent, state, command, content if isinstance(content, str) else None)
+    cli_result = execute_bm_cli(
+        agent,
+        state,
+        command,
+        content if isinstance(content, str) else None,
+        trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
+    )
     return {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
         "detail": cli_result.detail,
@@ -652,6 +675,21 @@ async def _handle_complete(
     if error:
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     summary = action.get("summary", "")
+    active = activity_runtime.get_active_work_activity(agent.id)
+    task = db.get_task(task_id)
+    pending_deliverables = missing_deliverables(
+        agent_id=agent.id,
+        agent_storage_key=agent.storage_key,
+        task=task,
+    )
+    if pending_deliverables:
+        first = summarize_deliverable(pending_deliverables[0])
+        return {
+            "event": "world_feedback",
+            "detail": f'Required deliverable missing: {first}. Satisfy all declared deliverables before complete.',
+            "agent_name": agent.name,
+            "missing_deliverables": [item.model_dump() for item in pending_deliverables],
+        }
 
     db.update_task(
         task_id,
@@ -670,6 +708,15 @@ async def _handle_complete(
         "event": "status_changed",
         "detail": f"{agent.name} completed task" + (f" — {summary}" if summary else ""),
         "agent_name": agent.name,
+        "chat_notification": {
+            "kind": "completion",
+            "task_title": task.title if task else "task",
+            "deliverables": [item.model_dump() for item in (task.work_contract.deliverables if task and task.work_contract else [])],
+            "task_id": task.id if task else None,
+            "source_channel": task.source_channel if task else "chat",
+            "policy": task.notification_policy if task else "completion_blocked",
+            "human_visible": _task_is_human_visible(task),
+        },
     }
 
 
@@ -685,6 +732,7 @@ async def _handle_blocked(
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
 
+    task = db.get_task(task_id)
     db.update_task(
         task_id,
         status="blocked",
@@ -702,6 +750,15 @@ async def _handle_blocked(
         "event": "status_changed",
         "detail": f"{agent.name} blocked" + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
+        "chat_notification": {
+            "kind": "blocked",
+            "task_title": task.title if task else "task",
+            "reason": reason,
+            "task_id": task.id if task else None,
+            "source_channel": task.source_channel if task else "chat",
+            "policy": task.notification_policy if task else "completion_blocked",
+            "human_visible": _task_is_human_visible(task),
+        },
     }
 
 
@@ -737,6 +794,9 @@ async def _handle_delegated(
             assigned_to=target.id,
             created_by=agent.id,
             parent_task_id=task_id,
+            work_contract=original_task.work_contract,
+            source_channel=original_task.source_channel,
+            notification_policy=original_task.notification_policy,
         )
     else:
         child = None
@@ -751,6 +811,15 @@ async def _handle_delegated(
         "event": "status_changed",
         "detail": f"{agent.name} delegated task to {target.name}",
         "agent_name": agent.name,
+        "chat_notification": {
+            "kind": "handoff",
+            "task_title": original_task.title if original_task else "task",
+            "target_name": target.name,
+            "task_id": original_task.id if original_task else None,
+            "source_channel": original_task.source_channel if original_task else "chat",
+            "policy": original_task.notification_policy if original_task else "completion_blocked",
+            "human_visible": _task_is_human_visible(original_task),
+        },
     }
     if child:
         result["trigger_requests"] = [build_task_assigned_trigger(child)]
@@ -769,6 +838,7 @@ async def _handle_abandoned(
         return {"event": "agent_error", "detail": error, "agent_name": agent.name}
     reason = action.get("reason", "")
 
+    task = db.get_task(task_id)
     db.update_task(
         task_id,
         status="abandoned",
@@ -786,6 +856,15 @@ async def _handle_abandoned(
         "event": "status_changed",
         "detail": f"{agent.name} abandoned task" + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
+        "chat_notification": {
+            "kind": "abandoned",
+            "task_title": task.title if task else "task",
+            "reason": reason,
+            "task_id": task.id if task else None,
+            "source_channel": task.source_channel if task else "chat",
+            "policy": task.notification_policy if task else "completion_blocked",
+            "human_visible": _task_is_human_visible(task),
+        },
     }
 
 

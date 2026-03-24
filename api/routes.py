@@ -5,6 +5,11 @@ WebSocket broadcasting for live Canvas and Activity updates.
 """
 
 import logging
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -14,7 +19,9 @@ from pydantic import BaseModel
 
 from api.websocket import manager
 from core import config
+from core.bm_cli.virtual_fs import resolve_cli_path
 from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.decision_contract import render_decision_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.dispatcher import dispatcher
@@ -23,6 +30,8 @@ from core.models.message import HUMAN_SENDER_ID
 from core.models import (
     Agent,
     AgentCreate,
+    AgentPromptHistoryPolicy,
+    AgentPromptHistoryPolicyUpdate,
     AgentUpdate,
     AIConnection,
     AIConnectionCreate,
@@ -108,6 +117,105 @@ async def get_agent_api_key(agent_id: str):
     return {"api_key": agent.api_key}
 
 
+@router.get("/agents/{agent_id}/prompt-history-policy")
+async def get_agent_prompt_history_policy(agent_id: str) -> AgentPromptHistoryPolicy:
+    """Return the backend-owned prompt-history policy for one agent."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    return db.ensure_agent_prompt_history_policy(agent_id)
+
+
+@router.get("/agents/{agent_id}/desk")
+async def get_agent_desk(agent_id: str, path: str = "/me"):
+    """Return a browsable desk/file view rooted in the agent's bounded workspace."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    try:
+        resolved = resolve_cli_path(agent.storage_key, "/", path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if resolved.real_path is None and resolved.virtual_path != "/":
+        raise HTTPException(404, "Path not found")
+    if resolved.real_path is not None and not resolved.exists:
+        raise HTTPException(404, "Path not found")
+
+    if resolved.real_path is not None and resolved.real_path.is_file():
+        artifact = db.get_artifact_by_absolute_path(str(resolved.real_path.resolve()))
+        raw_content = resolved.real_path.read_text(encoding="utf-8", errors="ignore")
+        content = raw_content[:20_000]
+        return {
+            "kind": "file",
+            "path": resolved.virtual_path,
+            "name": Path(resolved.virtual_path).name,
+            "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
+            "artifact": _serialize_artifact(artifact),
+            "content": content,
+            "truncated": len(raw_content) > len(content),
+        }
+
+    if resolved.virtual_path == "/me":
+        return {
+            "kind": "directory",
+            "path": "/me",
+            "name": "Desk",
+            "breadcrumbs": _desk_breadcrumbs("/me"),
+            "sections": _build_desk_root_sections(agent),
+        }
+
+    return {
+        "kind": "directory",
+        "path": resolved.virtual_path,
+        "name": Path(resolved.virtual_path).name or resolved.virtual_path,
+        "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
+        "entries": _list_desk_entries(agent, resolved),
+    }
+
+
+@router.post("/agents/{agent_id}/desk/open-folder")
+async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
+    """Open one bounded Desk directory in the host file explorer."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    try:
+        resolved = resolve_cli_path(agent.storage_key, "/", path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if resolved.real_path is None or not resolved.exists:
+        raise HTTPException(404, "Path not found")
+
+    target = resolved.real_path.parent if resolved.real_path.is_file() else resolved.real_path
+    opener = config.get("desktop_open_folder_handler")
+    if opener is None:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_required",
+                "message": "Choose a folder opener once and BossMod will remember it.",
+                "options": _available_folder_opener_options(),
+            },
+        )
+    try:
+        _launch_file_explorer(target, opener=opener)
+    except OSError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_invalid",
+                "message": str(exc),
+                "options": _available_folder_opener_options(),
+            },
+        ) from exc
+
+    return {"status": "ok", "path": str(target)}
+
+
 @router.post("/agents", status_code=201)
 async def create_agent(body: AgentCreate) -> Agent:
     agent = db.create_agent(
@@ -154,6 +262,27 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     return agent
 
 
+@router.patch("/agents/{agent_id}/prompt-history-policy")
+async def update_agent_prompt_history_policy(
+    agent_id: str,
+    body: AgentPromptHistoryPolicyUpdate,
+) -> AgentPromptHistoryPolicy:
+    """Patch one agent's prompt-history policy."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    policy = db.update_agent_prompt_history_policy(agent_id, **fields)
+    await manager.broadcast_activity(
+        event="agent_prompt_history_policy_updated",
+        detail=f'Prompt history policy updated for "{agent.name}"',
+        agent_name=agent.name,
+    )
+    return policy
+
+
 @router.delete("/agents/{agent_id}", status_code=204)
 async def delete_agent(agent_id: str):
     # Fetch name before deleting for the activity message
@@ -183,7 +312,32 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     max_limit = config.get_int("api_message_limit_max") or 200
     limit = min(limit, max_limit)
     thread = db.get_human_chat_thread(agent_id, limit=limit)
+    notifications = db.list_notifications(agent_id=agent_id, limit=limit, chat_visible=True)
+    notification_links = db.list_notification_links([item.id for item in notifications])
+    notifications.reverse()
     formatted = db.get_formatted_messages(thread, human_label="You")
+    formatted.extend(
+        [
+            {
+                "id": item.id,
+                "from_agent": "__notification__",
+                "from_name": agent.name,
+                "to_agent": agent_id,
+                "content": item.content,
+                "message_type": "system",
+                "notification_kind": item.kind,
+                "desk_path": (
+                    notification_links[item.id].target_path
+                    if item.id in notification_links and notification_links[item.id].target_kind == "desk"
+                    else None
+                ),
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in notifications
+        ]
+    )
+    formatted.sort(key=lambda item: item.get("created_at") or "")
+    formatted = formatted[-limit:]
 
     # Add from_type classification for the frontend
     result = []
@@ -203,10 +357,180 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
             "from": from_type,
             "from_name": msg["from_name"],
             "message_type": msg["message_type"],
+            "notification_kind": msg.get("notification_kind"),
+            "desk_path": msg.get("desk_path"),
             "created_at": msg["created_at"],
         })
 
     return result
+
+
+def _build_desk_root_sections(agent: Agent) -> list[dict[str, object]]:
+    outputs_root = resolve_cli_path(agent.storage_key, "/", "/me")
+    notes_root = resolve_cli_path(agent.storage_key, "/", "/me/notes")
+    projects_root = resolve_cli_path(agent.storage_key, "/", "/projects")
+
+    output_entries = _list_desk_entries(
+        agent,
+        outputs_root,
+        exclude_names={"notes"},
+    )
+    note_entries = _list_desk_entries(agent, notes_root) if notes_root.exists and notes_root.real_path is not None else []
+    project_entries = _list_desk_entries(agent, projects_root, directories_only=True)
+
+    return [
+        {"title": "Outputs", "entries": output_entries},
+        {"title": "Notes", "entries": note_entries},
+        {"title": "Projects", "entries": project_entries},
+    ]
+
+
+def _list_desk_entries(
+    agent: Agent,
+    resolved,
+    *,
+    exclude_names: set[str] | None = None,
+    directories_only: bool = False,
+) -> list[dict[str, object]]:
+    if resolved.real_path is None or not resolved.real_path.exists() or not resolved.real_path.is_dir():
+        return []
+
+    absolute_prefix = str(resolved.real_path.resolve())
+    artifacts = db.list_artifacts(absolute_path_prefix=absolute_prefix, limit=500)
+    artifact_map = {artifact.absolute_path: artifact for artifact in artifacts}
+
+    entries: list[dict[str, object]] = []
+    for item in sorted(resolved.real_path.iterdir(), key=lambda candidate: (not candidate.is_dir(), candidate.name.lower())):
+        if item.name in {".git", ".gitignore", ".gitattributes"}:
+            continue
+        if exclude_names and item.name in exclude_names:
+            continue
+        if directories_only and not item.is_dir():
+            continue
+        virtual_path = _child_virtual_path(resolved.virtual_path, item.name)
+        artifact = artifact_map.get(str(item.resolve()))
+        entries.append(
+            {
+                "name": item.name,
+                "path": virtual_path,
+                "is_dir": item.is_dir(),
+                "artifact": _serialize_artifact(artifact),
+                "size_bytes": item.stat().st_size if item.is_file() else None,
+                "updated_at": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                "category": _entry_category(virtual_path, artifact),
+            }
+        )
+    return entries
+
+
+def _entry_category(path: str, artifact) -> str:
+    if artifact is not None:
+        return artifact.category
+    if path.startswith("/projects/"):
+        return "project"
+    if path.startswith("/me/notes/") or path == "/me/notes":
+        return "note"
+    return "output"
+
+
+def _serialize_artifact(artifact) -> dict[str, object] | None:
+    if artifact is None:
+        return None
+    return {
+        "id": artifact.id,
+        "title": artifact.title,
+        "task_id": artifact.task_id,
+        "virtual_path": artifact.virtual_path,
+        "category": artifact.category,
+        "size_bytes": artifact.size_bytes,
+        "updated_at": artifact.updated_at.isoformat() if artifact.updated_at else None,
+    }
+
+
+def _desk_breadcrumbs(path: str) -> list[dict[str, str]]:
+    if path in {"", "/"}:
+        return [{"label": "/", "path": "/"}]
+    parts = [item for item in path.strip("/").split("/") if item]
+    breadcrumbs: list[dict[str, str]] = []
+    current = ""
+    for part in parts:
+        current += f"/{part}"
+        label = "Desk" if current == "/me" else part
+        breadcrumbs.append({"label": label, "path": current})
+    return breadcrumbs
+
+
+def _child_virtual_path(parent: str, name: str) -> str:
+    if parent in {"", "/"}:
+        return f"/{name}"
+    return f"{parent.rstrip('/')}/{name}"
+
+
+def _launch_file_explorer(path: Path, *, opener: str) -> None:
+    """Open a directory in the host platform's file explorer."""
+    subprocess.Popen(_file_explorer_command(path, opener=opener))
+
+
+def _file_explorer_command(path: Path, *, opener: str) -> list[str]:
+    """Return the platform-specific file-explorer command for one directory."""
+    selected = opener.strip()
+    if not selected:
+        raise OSError("No folder opener is configured")
+
+    if selected == "system":
+        if sys.platform.startswith("darwin"):
+            return ["open", str(path)]
+        if sys.platform.startswith("win"):
+            return ["explorer", str(path)]
+        if shutil.which("xdg-open"):
+            return ["xdg-open", str(path)]
+        raise OSError("System default opener is unavailable on this machine")
+
+    if sys.platform.startswith("win") and selected.lower() == "explorer":
+        return ["explorer", str(path)]
+    if sys.platform.startswith("darwin") and selected == "open":
+        return ["open", str(path)]
+    if shutil.which(selected):
+        return [selected, str(path)]
+    raise OSError(f'Configured folder opener "{selected}" was not found on PATH')
+
+
+def _available_folder_opener_options() -> list[dict[str, str]]:
+    """Return detected folder opener choices for the current platform."""
+    if sys.platform.startswith("darwin"):
+        return [{"value": "open", "label": "Finder", "description": "Use macOS Finder."}]
+    if sys.platform.startswith("win"):
+        return [{"value": "explorer", "label": "File Explorer", "description": "Use Windows File Explorer."}]
+
+    options: list[dict[str, str]] = []
+    known_linux_openers = (
+        ("nautilus", "Nautilus"),
+        ("dolphin", "Dolphin"),
+        ("nemo", "Nemo"),
+        ("thunar", "Thunar"),
+        ("pcmanfm", "PCManFM"),
+        ("caja", "Caja"),
+        ("konqueror", "Konqueror"),
+        ("lxqt-filemanager", "LXQt File Manager"),
+    )
+    for binary, label in known_linux_openers:
+        if shutil.which(binary):
+            options.append(
+                {
+                    "value": binary,
+                    "label": label,
+                    "description": f"Open folders with {label}.",
+                }
+            )
+    if shutil.which("xdg-open"):
+        options.append(
+            {
+                "value": "system",
+                "label": "System Default",
+                "description": "Use the desktop's default folder opener.",
+            }
+        )
+    return options
 
 
 # ─── Tasks CRUD ───
@@ -221,11 +545,35 @@ async def list_tasks(
 
 @router.post("/tasks", status_code=201)
 async def create_task(body: TaskCreate) -> Task:
+    work_contract = body.work_contract
+    source_channel = body.source_channel or "api"
+    notification_policy = body.notification_policy or "completion_blocked"
+    if work_contract is not None:
+        if body.assigned_to:
+            agent = db.get_agent(body.assigned_to)
+            if not agent:
+                raise HTTPException(404, "Assigned agent not found")
+            cli_state = db.ensure_agent_cli_state(agent.id)
+            work_contract = build_work_contract(
+                work_contract.deliverables,
+                agent_storage_key=agent.storage_key,
+                cwd=cli_state.cwd,
+            )
+        elif any(item.type == "file" and not item.path.startswith("/") for item in work_contract.deliverables):
+            raise HTTPException(
+                400,
+                "Task work_contract file deliverables must use absolute BossMod CLI paths when assigned_to is omitted.",
+            )
+
     task = db.create_task(
         title=body.title,
         description=body.description,
         project=body.project,
         assigned_to=body.assigned_to,
+        created_by=HUMAN_SENDER_ID,
+        work_contract=work_contract,
+        source_channel=source_channel,
+        notification_policy=notification_policy,
     )
     if body.assigned_to:
         dispatcher.enqueue_trigger(**build_task_assigned_trigger(task))
@@ -300,13 +648,18 @@ async def clear_agent_chat_history(agent_id: str):
         raise HTTPException(404, "Agent not found")
 
     deleted = db.delete_human_chat_thread(agent_id)
+    deleted_notifications = db.delete_agent_notifications(agent_id)
     await manager.broadcast_chat_reset(agent_id)
     await manager.broadcast_activity(
         event="chat_history_cleared",
         detail=f'Chat history cleared for "{agent.name}"',
         agent_name=agent.name,
     )
-    return {"status": "ok", "deleted_messages": deleted}
+    return {
+        "status": "ok",
+        "deleted_messages": deleted,
+        "deleted_notifications": deleted_notifications,
+    }
 
 
 @router.post("/agents/{agent_id}/reset-runtime")
@@ -387,6 +740,14 @@ async def get_diagnostic_detail(diagnostic_id: str):
 @router.get("/settings")
 async def get_settings(category: str | None = None):
     return db.get_settings(category)
+
+
+@router.get("/settings/desktop-open-folder-options")
+async def get_desktop_open_folder_options():
+    return {
+        "current": config.get("desktop_open_folder_handler"),
+        "options": _available_folder_opener_options(),
+    }
 
 
 @router.get("/runtime/contracts")

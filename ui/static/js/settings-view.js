@@ -697,18 +697,13 @@ const SystemSection = (() => {
             label: 'Proximity Radius (tiles)',
             description: 'How close agents must be on the map to count as nearby for social triggers.',
         },
-        context_window_messages: {
-            order: 10,
-            label: 'Message Window Size',
-            description: 'How many recent direct conversation messages are included in the agent prompt for a turn.',
-        },
         context_recent_work_artifacts: {
-            order: 20,
+            order: 10,
             label: 'Recent Work Artifacts',
             description: 'How many recent work outputs or artifacts are included as reference material in the prompt.',
         },
         context_recent_completed_tasks: {
-            order: 30,
+            order: 20,
             label: 'Recent Completed Tasks',
             description: 'How many recently completed task summaries are included as reference material in the prompt.',
         },
@@ -913,9 +908,14 @@ const PromptTemplateSection = (() => {
 const AdvancedSystemSection = (() => {
     async function render(el) {
         let settings = [];
+        let folderOpenerMeta = { current: null, options: [] };
         try {
-            const res = await fetch('/api/settings?category=advanced');
-            settings = await res.json();
+            const [settingsRes, openerRes] = await Promise.all([
+                fetch('/api/settings?category=advanced'),
+                fetch('/api/settings/desktop-open-folder-options'),
+            ]);
+            settings = await settingsRes.json();
+            folderOpenerMeta = await openerRes.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
             return;
@@ -923,7 +923,12 @@ const AdvancedSystemSection = (() => {
 
         const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
         const diagLimit = settings.find(s => s.key === 'diagnostics_retention_limit');
+        const folderOpenerSetting = settings.find(s => s.key === 'desktop_open_folder_handler');
         const isEnabled = diagEnabled?.value === 'true';
+        const folderOpenerOptions = folderOpenerMeta.options || [];
+        const currentFolderOpener = folderOpenerMeta.current ?? folderOpenerSetting?.value ?? '';
+        const hasBuiltInFolderOpener = folderOpenerOptions.some(option => option.value === currentFolderOpener);
+        const folderOpenerMode = currentFolderOpener && !hasBuiltInFolderOpener ? 'custom' : 'preset';
 
         el.innerHTML = `
             <div class="mb-6">
@@ -982,6 +987,53 @@ const AdvancedSystemSection = (() => {
                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                   focus:border-bm-accent">
                 </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 class="text-sm font-semibold">Folder Opener</h3>
+                            <p class="text-xs text-bm-muted mt-0.5">Choose which app opens Desk folders. If left unset, BossMod will ask the first time you use Open Folder.</p>
+                        </div>
+                        <span class="text-xs text-bm-muted">${currentFolderOpener ? `Current: ${BossModUtils.escapeHtml(currentFolderOpener)}` : 'Current: ask on first use'}</span>
+                    </div>
+                    <div class="mt-3 space-y-3">
+                        <label class="block text-sm font-medium">
+                            <span class="block mb-1">Detected openers</span>
+                            <select id="desktop-folder-opener-select"
+                                    class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
+                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                           focus:border-bm-accent">
+                                <option value="">Ask on first use</option>
+                                ${folderOpenerOptions.map(option => `
+                                    <option value="${BossModUtils.escapeHtml(option.value)}" ${folderOpenerMode === 'preset' && currentFolderOpener === option.value ? 'selected' : ''}>
+                                        ${BossModUtils.escapeHtml(option.label)}
+                                    </option>
+                                `).join('')}
+                                <option value="__custom__" ${folderOpenerMode === 'custom' ? 'selected' : ''}>Custom executable</option>
+                            </select>
+                        </label>
+                        <label class="block text-sm font-medium">
+                            <span class="block mb-1">Custom executable</span>
+                            <input type="text" id="desktop-folder-opener-custom"
+                                   value="${folderOpenerMode === 'custom' ? BossModUtils.escapeHtml(currentFolderOpener) : ''}"
+                                   placeholder="e.g. thunar"
+                                   class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent">
+                            <p class="text-xs text-bm-muted mt-1">Use this if your preferred file manager is not in the detected list.</p>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <button id="btn-save-folder-opener"
+                                    class="px-3 py-1.5 border border-bm-border rounded-lg hover:bg-bm-bg transition-colors text-sm font-medium">
+                                Save Folder Opener
+                            </button>
+                            <button id="btn-reset-folder-opener"
+                                    class="px-3 py-1.5 border border-bm-border rounded-lg hover:bg-bm-bg transition-colors text-sm font-medium">
+                                Reset To Ask
+                            </button>
+                            <span id="folder-opener-status" class="text-xs text-bm-muted"></span>
+                        </div>
+                    </div>
+                </div>
             </div>`;
 
         // Reseed handler
@@ -1030,6 +1082,53 @@ const AdvancedSystemSection = (() => {
             } catch {
                 e.target.classList.add('border-red-400');
                 setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
+            }
+        });
+
+        const openerSelect = document.getElementById('desktop-folder-opener-select');
+        const openerCustom = document.getElementById('desktop-folder-opener-custom');
+        const openerStatus = document.getElementById('folder-opener-status');
+        const setFolderOpenerStatus = (text, isError = false) => {
+            openerStatus.textContent = text;
+            openerStatus.classList.toggle('text-red-500', isError);
+            openerStatus.classList.toggle('text-bm-muted', !isError);
+        };
+
+        openerSelect.addEventListener('change', () => {
+            if (openerSelect.value === '__custom__') {
+                openerCustom.focus();
+                return;
+            }
+            if (openerSelect.value === '') {
+                openerCustom.value = '';
+            }
+        });
+
+        openerCustom.addEventListener('input', () => {
+            if (openerCustom.value.trim()) {
+                openerSelect.value = '__custom__';
+            }
+        });
+
+        document.getElementById('btn-save-folder-opener').addEventListener('click', async () => {
+            const selected = openerSelect.value;
+            const resolvedValue = selected === '__custom__' ? openerCustom.value.trim() : selected;
+            try {
+                await fetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`, { method: 'PUT' });
+                setFolderOpenerStatus(resolvedValue ? `Saved: ${resolvedValue}` : 'BossMod will ask on first use.');
+            } catch {
+                setFolderOpenerStatus('Failed to save folder opener.', true);
+            }
+        });
+
+        document.getElementById('btn-reset-folder-opener').addEventListener('click', async () => {
+            try {
+                await fetch('/api/settings/desktop_open_folder_handler?value=&category=advanced', { method: 'PUT' });
+                openerSelect.value = '';
+                openerCustom.value = '';
+                setFolderOpenerStatus('BossMod will ask on first use.');
+            } catch {
+                setFolderOpenerStatus('Failed to reset folder opener.', true);
             }
         });
 

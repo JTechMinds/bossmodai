@@ -9,8 +9,10 @@ from typing import Any
 import db
 from core import config
 from core.agent_loop.action_contract import render_action_contract
+from core.agent_loop.deliverables import format_deliverables_for_context
 from core.agent_loop.decision_contract import render_decision_contract
 from core.models import Agent, AgentState
+from core.models.notification import Notification
 from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,7 @@ class TurnContext:
     state: AgentState
     trigger: dict[str, Any]
     conversation_history: list[dict[str, Any]]
+    prompt_notifications: list[Notification]
     reference_materials: list[str]
     current_activity: dict[str, Any] | None = None
     current_task: dict[str, Any] | None = None
@@ -43,7 +46,6 @@ class TurnContext:
 
 def build_context(turn: TurnContext) -> list[dict[str, str]]:
     """Assemble the full message list for an agent turn."""
-    window_size = config.get_int("context_window_messages") or 30
     messages: list[dict[str, str]] = []
 
     # ─── Build template variables ───
@@ -69,7 +71,7 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
         "{{activity}}": _format_activity(turn.current_activity),
         "{{task}}": _format_task(turn.current_task),
         "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
-        "{{references}}": _format_references(turn.agent.id, turn.reference_materials),
+        "{{references}}": _format_references(turn.agent.id, turn.reference_materials, turn.prompt_notifications),
     }
 
     # ─── Resolve template from settings ───
@@ -84,7 +86,7 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
         "content": _render_turn_contract(turn.contract_kind),
     })
 
-    for msg in turn.conversation_history[-window_size:]:
+    for msg in turn.conversation_history:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
         sender = msg.get("from_name", "Unknown")
         content = msg.get("content", "")
@@ -167,6 +169,10 @@ def _format_task(task: dict[str, Any]) -> str:
     ]
     if summary:
         details.append(f"latest_summary: {summary}")
+    deliverable_lines = format_deliverables_for_context(task)
+    if deliverable_lines:
+        details.append("deliverables:")
+        details.extend(deliverable_lines)
     return "\n".join(details)
 
 
@@ -211,11 +217,16 @@ def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) ->
     return "\n".join(lines)
 
 
-def _format_references(agent_id: str, reference_materials: list[str]) -> str:
+def _format_references(
+    agent_id: str,
+    reference_materials: list[str],
+    prompt_notifications: list[Notification],
+) -> str:
     sections = [
         _format_team_directory(reference_materials),
         _format_recent_completed_tasks(agent_id),
         _format_recent_work_artifacts(agent_id),
+        _format_recent_runtime_notifications(prompt_notifications),
     ]
     return "\n\n".join(section for section in sections if section)
 
@@ -278,6 +289,17 @@ def _format_recent_work_artifacts(agent_id: str) -> str:
                 ]
             )
         )
+    return "\n".join(lines)
+
+
+def _format_recent_runtime_notifications(rows: list[Notification]) -> str:
+    """Render recent prompt-visible runtime notifications."""
+    lines = ["RECENT RUNTIME NOTIFICATIONS:"]
+    if not rows:
+        lines.append("none")
+        return "\n".join(lines)
+    for item in rows:
+        lines.append(f"- {item.kind}: {item.content}")
     return "\n".join(lines)
 
 

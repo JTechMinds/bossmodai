@@ -20,7 +20,7 @@ _ACTION_SPECS = [
     ActionSpec(
         name="bm_cli",
         description="Query BossMod CLI for authoritative self/project information before choosing the next step.",
-        example='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+        example='{"action":"bm_cli","command":"status","thought":"check live status"}',
     ),
     ActionSpec(
         name="work",
@@ -116,6 +116,8 @@ def render_action_contract() -> str:
             "- If you need location-bound work, walk first and work second.",
             "- Use bm_cli for authoritative self/project facts when needed; do not treat old chat as runtime truth.",
             '- For bm_cli write commands, provide the file body in a separate "content" field.',
+            '- If the current work contract includes deliverables such as files, satisfy them with bm_cli before complete.',
+            '- Current work-contract file deliverables are stored as absolute BossMod CLI paths; write the required path exactly.',
             "- Use walkTo to fulfill an existing commitment, not to accept a new one.",
             '- "work", "complete", "blocked", "delegated", and "abandoned" act on the server-bound current task. Do not invent task IDs.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',

@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
+from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_activity_resume_trigger
 from core.agent_loop.decision_contract import ConversationDecision
 from core.models import Agent, AgentState
@@ -70,6 +71,7 @@ def apply_decision(
 
     if decision.commitmentKind == "work":
         task = _resolve_or_create_work_task(agent, trigger, decision)
+        task = _persist_work_contract(task, agent, decision)
         work_activity = activity_runtime.activate_work_activity(
             agent.id,
             task,
@@ -77,10 +79,7 @@ def apply_decision(
             detail=task.description,
             task_status="accepted",
             supersede_note="Paused for newer accepted work.",
-            metadata={
-                "preferred_destination": "desk",
-                "acknowledged_by_reply": bool(decision.reply and decision.reply.strip()),
-            },
+            metadata=_build_initial_work_metadata(agent, state, decision.reply),
         )
         result["detail"] = f'{agent.name} accepted work on "{task.title}"'
         result.setdefault("activity_extra", {})["task_title"] = task.title
@@ -179,6 +178,32 @@ def _build_initial_work_reason(state: AgentState, task_title: str) -> str:
         "If you are not already at a workspace, walk to your desk first. "
         "Then continue the task."
     )
+
+
+def _build_initial_work_metadata(
+    agent: Agent,
+    state: AgentState,
+    reply: str | None,
+) -> dict[str, Any]:
+    """Build work-activity metadata for a newly accepted work commitment.
+
+    Only set a desk preference when the agent is not already in a valid
+    workspace. This keeps the planner aligned with the actual work rule and
+    avoids wasting a turn on `walkTo desk` while already at the desk/workspace.
+    """
+    metadata: dict[str, Any] = {
+        "acknowledged_by_reply": bool(reply and reply.strip()),
+    }
+    room = get_room_at(state.x, state.y)
+    if not room or room.get("room_type") != "workspace":
+        metadata["preferred_destination"] = "desk"
+        return metadata
+
+    if agent.desk_x is not None and agent.desk_y is not None:
+        if (state.x, state.y) != (agent.desk_x, agent.desk_y):
+            return metadata
+
+    return metadata
 
 
 def _persist_reply(
@@ -282,6 +307,8 @@ def _resolve_or_create_work_task(
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         assigned_to=agent.id,
         created_by=created_by,
+        source_channel=_task_source_channel_for_trigger(trigger),
+        notification_policy=_task_notification_policy_for_trigger(trigger),
     )
 
 
@@ -303,7 +330,47 @@ def _ensure_deferred_task(
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         assigned_to=agent.id,
         created_by=created_by,
+        source_channel=_task_source_channel_for_trigger(trigger),
+        notification_policy=_task_notification_policy_for_trigger(trigger),
     )
+
+
+def _persist_work_contract(task, agent: Agent, decision: ConversationDecision):
+    """Persist a normalized durable work contract on the task when provided."""
+    if not decision.deliverables:
+        return task
+    cli_state = db.ensure_agent_cli_state(agent.id)
+    contract = build_work_contract(
+        decision.deliverables,
+        agent_storage_key=agent.storage_key,
+        cwd=cli_state.cwd,
+    )
+    if contract is None:
+        return task
+    updated = db.update_task(task.id, work_contract=contract)
+    return updated or task
+
+
+def _task_source_channel_for_trigger(trigger: dict[str, Any]) -> str | None:
+    """Map an originating trigger to a durable task source channel."""
+    trigger_type = trigger.get("type")
+    if trigger_type == "human_chat":
+        return "chat"
+    if trigger_type == "peer_message":
+        return "peer"
+    if trigger_type == "task_assigned":
+        return None
+    return None
+
+
+def _task_notification_policy_for_trigger(trigger: dict[str, Any]) -> str | None:
+    """Map an originating trigger to a durable task notification policy."""
+    trigger_type = trigger.get("type")
+    if trigger_type == "human_chat":
+        return "completion_blocked"
+    if trigger_type == "peer_message":
+        return "none"
+    return None
 
 
 def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | None) -> None:

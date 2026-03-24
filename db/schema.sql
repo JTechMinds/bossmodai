@@ -45,6 +45,33 @@ CREATE TABLE IF NOT EXISTS agent_state (
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
+-- Agent CLI state — persistent virtual CLI working directory
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS agent_cli_state (
+    agent_id   VARCHAR PRIMARY KEY REFERENCES agents(id),
+    cwd        VARCHAR NOT NULL DEFAULT '/me',
+    updated_at TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS agent_prompt_history_policies (
+    agent_id                    VARCHAR PRIMARY KEY REFERENCES agents(id),
+    last_n_histories            INTEGER NOT NULL DEFAULT 30 CHECK (last_n_histories >= 0),
+    max_allowed_history_tokens  INTEGER NOT NULL DEFAULT 2000 CHECK (max_allowed_history_tokens >= 0),
+    earliest_ts_allowed         TIMESTAMP,
+    include_notifications       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at                  TIMESTAMP DEFAULT current_timestamp,
+    updated_at                  TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS agent_storage_identities (
+    agent_id       VARCHAR PRIMARY KEY REFERENCES agents(id),
+    storage_index  INTEGER NOT NULL UNIQUE,
+    storage_key    VARCHAR NOT NULL UNIQUE,
+    created_at     TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
 -- Messages — inter-agent and system communication
 -- ───────────────────────────────────────────────────────────────────────────
 
@@ -54,7 +81,7 @@ CREATE TABLE IF NOT EXISTS messages (
     to_agent      VARCHAR,
     content       TEXT    NOT NULL,
     message_type  VARCHAR DEFAULT 'work'
-                      CHECK (message_type IN ('work', 'social', 'human', 'system', 'meeting')),
+                      CHECK (message_type IN ('work', 'social', 'human', 'meeting')),
     location_x    INTEGER,
     location_y    INTEGER,
     token_count   INTEGER DEFAULT 0,
@@ -84,6 +111,22 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     created_at     TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS task_work_contracts (
+    task_id        VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    work_contract  TEXT    NOT NULL,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS task_notification_policies (
+    task_id         VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    source_channel  VARCHAR NOT NULL,
+    policy          VARCHAR NOT NULL
+                       CHECK (policy IN ('none', 'completion_blocked', 'all')),
+    created_at      TIMESTAMP DEFAULT current_timestamp,
+    updated_at      TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -121,6 +164,47 @@ CREATE TABLE IF NOT EXISTS activity_log (
     detail      TEXT    NOT NULL,
     agent_name  VARCHAR,
     created_at  TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- BossMod CLI events — per-command audit log
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS bm_cli_events (
+    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
+    command         TEXT NOT NULL,
+    content_present BOOLEAN DEFAULT FALSE,
+    executor        VARCHAR NOT NULL,
+    cwd_before      VARCHAR,
+    cwd_after       VARCHAR,
+    policy_tier     VARCHAR NOT NULL,
+    decision        VARCHAR NOT NULL
+                        CHECK (decision IN ('allowed', 'approval_required', 'denied')),
+    exit_code       INTEGER DEFAULT 0,
+    result_kind     VARCHAR,
+    stdout_preview  TEXT,
+    stderr_preview  TEXT,
+    changed_paths   TEXT,
+    trigger_type    VARCHAR,
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id             VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id       VARCHAR NOT NULL REFERENCES agents(id),
+    task_id        VARCHAR REFERENCES tasks(id),
+    virtual_path   VARCHAR NOT NULL,
+    absolute_path  VARCHAR NOT NULL UNIQUE,
+    title          VARCHAR NOT NULL,
+    kind           VARCHAR NOT NULL
+                       CHECK (kind IN ('file')),
+    category       VARCHAR NOT NULL
+                       CHECK (category IN ('output', 'note', 'project')),
+    size_bytes     BIGINT DEFAULT 0,
+    source_command TEXT,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -175,6 +259,31 @@ CREATE TABLE IF NOT EXISTS activities (
     created_at         TIMESTAMP DEFAULT current_timestamp,
     updated_at         TIMESTAMP DEFAULT current_timestamp,
     ended_at           TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id          VARCHAR NOT NULL REFERENCES agents(id),
+    task_id           VARCHAR REFERENCES tasks(id),
+    activity_id       VARCHAR REFERENCES activities(id),
+    kind              VARCHAR NOT NULL
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned')),
+    content           TEXT NOT NULL,
+    source_channel    VARCHAR NOT NULL,
+    policy            VARCHAR NOT NULL
+                         CHECK (policy IN ('none', 'completion_blocked', 'all')),
+    chat_visible      BOOLEAN DEFAULT TRUE,
+    prompt_visibility BOOLEAN DEFAULT FALSE,
+    created_at        TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS notification_links (
+    notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
+    target_kind     VARCHAR NOT NULL
+                       CHECK (target_kind IN ('desk')),
+    target_path     VARCHAR NOT NULL,
+    label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
+    created_at      TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────

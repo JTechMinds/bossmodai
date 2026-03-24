@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -10,13 +12,18 @@ from fastapi import HTTPException
 import db
 import db.connection as db_connection
 import db.settings as settings_store
+from db.agent_storage import normalize_agent_personal_storage
 from api.routes import (
     ActivationBody,
     TestConnectionBody as ConnectionTestBody,
     activate_agent,
     clear_agent_chat_history,
+    create_task as create_task_route,
+    _file_explorer_command,
+    get_agent_desk,
     get_agent_messages,
     get_runtime_contracts,
+    open_agent_desk_folder,
     reseed_application,
     reset_agent_runtime,
     set_setting as set_setting_route,
@@ -25,7 +32,7 @@ from api.routes import (
 from api.websocket import manager
 from core import config
 from core.bm_cli import execute_bm_cli
-from core.bm_cli.filesystem import agent_artifact_dir, project_artifact_dir
+from core.bm_cli.filesystem import agent_artifact_dir, legacy_agent_artifact_dir, project_artifact_dir
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.decision_contract import parse_decision, render_decision_contract
 from core.agent_loop import activity_runtime, loop as loop_module
@@ -34,9 +41,12 @@ from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.loop import run_turn
+from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.watchdog import watchdog
 from core.llm import client, context_builder, routing
+from core.models import TaskCreate
 from core.models.message import HUMAN_SENDER_ID
 from core.world.simulation import simulation
 from core.world.tilemap import DEFAULT_DESKS
@@ -60,6 +70,13 @@ def isolated_db(tmp_path, monkeypatch):
 def _desk_xy() -> tuple[int, int]:
     chair = DEFAULT_DESKS[0]["chair_xy"]
     return int(chair[0]), int(chair[1])
+
+
+def _reset_agent_workspace(storage_key: str) -> Path:
+    root = agent_artifact_dir(storage_key)
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _activate_work(agent, task, *, x: int | None = None, y: int | None = None):
@@ -122,16 +139,90 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
 
 
 def test_parse_action_accepts_bm_cli(isolated_db):
-    parsed = parse_action('{"action":"bm_cli","command":"me get status","thought":"check status"}')
+    parsed = parse_action('{"action":"bm_cli","command":"status","thought":"check status"}')
     assert parsed["action"] == "bm_cli"
-    assert parsed["command"] == "me get status"
+    assert parsed["command"] == "status"
 
 
 def test_parse_action_accepts_bm_cli_with_content(isolated_db):
-    parsed = parse_action('{"action":"bm_cli","command":"me notes write report.md","content":"hello world","thought":"save report"}')
+    parsed = parse_action('{"action":"bm_cli","command":"write report.md","content":"hello world","thought":"save report"}')
     assert parsed["action"] == "bm_cli"
-    assert parsed["command"] == "me notes write report.md"
+    assert parsed["command"] == "write report.md"
     assert parsed["content"] == "hello world"
+
+
+def test_parse_decision_accepts_work_deliverables(isolated_db):
+    parsed = parse_decision(
+        '{"decision":"accept","intentKind":"work_request","reply":"I will save it as avocado_white.md.","commitmentKind":"work","taskTitle":"Write avocado whitepaper","taskDescription":"Create a concise whitepaper.","deliverables":[{"type":"file","path":"avocado_white.md"}],"thought":"accept the work"}'
+    )
+    assert parsed["decision"] == "accept"
+    assert parsed["commitmentKind"] == "work"
+    assert parsed["deliverables"] == [{"type": "file", "path": "avocado_white.md", "description": None}]
+
+
+def test_apply_decision_persists_normalized_task_work_contract(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "reply": "I will write and save the report.",
+            "commitmentKind": "work",
+            "taskTitle": "Write orchard report",
+            "taskDescription": "Draft the orchard report and save it.",
+            "deliverables": [{"type": "file", "path": "avocado_white.md"}],
+            "thought": "accept the work",
+        },
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Write the orchard report and save it as avocado_white.md.",
+            "from_name": "Human Operator",
+            "source_channel": "chat",
+        },
+    )
+
+    assert result["event"] == "decision_applied"
+    tasks = db.list_tasks(assigned_to=agent.id)
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.work_contract is not None
+    assert [item.model_dump() for item in task.work_contract.deliverables] == [
+        {"type": "file", "path": "/projects/orchard/reports/avocado_white.md", "description": None}
+    ]
+
+    active = db.get_active_activity(agent.id)
+    assert active is not None
+    assert "work_contract" not in (active.metadata or {})
+
+
+@pytest.mark.asyncio
+async def test_create_task_route_normalizes_assigned_work_contract(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+
+    task = await create_task_route(
+        TaskCreate(
+            title="Write orchard report",
+            description="Draft the orchard report and save it.",
+            assigned_to=agent.id,
+            work_contract={"deliverables": [{"type": "file", "path": "avocado_white.md"}]},
+        )
+    )
+
+    assert task.work_contract is not None
+    assert [item.model_dump() for item in task.work_contract.deliverables] == [
+        {"type": "file", "path": "/projects/orchard/reports/avocado_white.md", "description": None}
+    ]
+    assert task.created_by == HUMAN_SENDER_ID
+    assert task.source_channel == "api"
+    assert task.notification_policy == "completion_blocked"
 
 
 def test_execute_bm_cli_exposes_expanded_read_commands(isolated_db):
@@ -151,59 +242,88 @@ def test_execute_bm_cli_exposes_expanded_read_commands(isolated_db):
         message_type="work",
     )
 
-    current_task = execute_bm_cli(agent, state, "me get current-task")
+    current_task = execute_bm_cli(agent, state, "current-task")
     assert current_task.ok is True
     assert current_task.kind == "current_task"
     assert current_task.data is not None
     assert current_task.data["current_task"]["title"] == "Draft summary"
     assert "CURRENT TASK:" in current_task.prompt_content
 
-    tasks = execute_bm_cli(agent, state, "me get tasks")
+    tasks = execute_bm_cli(agent, state, "tasks")
     assert tasks.ok is True
     assert tasks.kind == "tasks"
     assert "OPEN TASKS:" in tasks.prompt_content
     assert tasks.data is not None
     assert tasks.data["open_tasks"] == []
 
-    recent_work = execute_bm_cli(agent, state, "me get recent-work")
+    recent_work = execute_bm_cli(agent, state, "recent-work")
     assert recent_work.ok is True
     assert recent_work.kind == "recent_work"
     assert recent_work.data is not None
     assert len(recent_work.data["recent_work_artifacts"]) == 1
     assert "RECENT WORK ARTIFACTS:" in recent_work.prompt_content
 
-    runtime = execute_bm_cli(agent, state, "me get runtime")
+    runtime = execute_bm_cli(agent, state, "runtime")
     assert runtime.ok is True
     assert runtime.kind == "runtime"
     assert runtime.data is not None
     assert runtime.data["runtime"]["current_task"] == "Draft summary"
 
+    status = execute_bm_cli(agent, state, "status")
+    assert status.ok is True
+    assert status.kind == "status"
+    assert status.cwd == "/me"
+    assert "RUNTIME STATUS:" in status.prompt_content
 
-def test_execute_bm_cli_notes_aliases_match_artifact_roots(isolated_db):
+    location = execute_bm_cli(agent, state, "location")
+    assert location.ok is True
+    assert location.kind == "location"
+    assert location.data is not None
+    assert location.data["room"] == "Main Workspace"
+
+
+def test_execute_bm_cli_virtual_shell_navigates_me_and_projects(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
 
-    personal_root = agent_artifact_dir(agent.name)
+    personal_root = agent_artifact_dir(agent.storage_key)
     (personal_root / "todo.txt").write_text("remember the launch checklist", encoding="utf-8")
 
     project_root = project_artifact_dir("orchard")
     project_root.mkdir(parents=True, exist_ok=True)
     (project_root / "brief.md").write_text("avocado market brief", encoding="utf-8")
 
-    personal_listing = execute_bm_cli(agent, state, "me notes ls")
+    cwd = execute_bm_cli(agent, state, "pwd")
+    assert cwd.ok is True
+    assert cwd.data == {"cwd": "/me"}
+
+    personal_listing = execute_bm_cli(agent, state, "ls")
     assert personal_listing.ok is True
     assert "- todo.txt" in personal_listing.prompt_content
 
-    personal_file = execute_bm_cli(agent, state, "me notes cat todo.txt")
+    personal_file = execute_bm_cli(agent, state, "cat todo.txt")
     assert personal_file.ok is True
     assert "remember the launch checklist" in personal_file.prompt_content
 
-    project_listing = execute_bm_cli(agent, state, "project orchard notes ls")
+    root_listing = execute_bm_cli(agent, state, "ls /")
+    assert root_listing.ok is True
+    assert "- me/" in root_listing.prompt_content
+    assert "- projects/" in root_listing.prompt_content
+
+    project_listing = execute_bm_cli(agent, state, "ls /projects/orchard")
     assert project_listing.ok is True
     assert "- brief.md" in project_listing.prompt_content
 
-    project_file = execute_bm_cli(agent, state, "project orchard notes cat brief.md")
+    moved = execute_bm_cli(agent, state, "cd /projects/orchard")
+    assert moved.ok is True
+    assert moved.cwd == "/projects/orchard"
+
+    project_pwd = execute_bm_cli(agent, state, "pwd")
+    assert project_pwd.ok is True
+    assert project_pwd.data == {"cwd": "/projects/orchard"}
+
+    project_file = execute_bm_cli(agent, state, "cat brief.md")
     assert project_file.ok is True
     assert "avocado market brief" in project_file.prompt_content
 
@@ -212,28 +332,266 @@ def test_execute_bm_cli_write_commands_create_reviewable_files(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    _reset_agent_workspace(agent.storage_key)
 
-    personal_write = execute_bm_cli(
-        agent,
-        state,
-        "me notes write reports/summary.md",
-        "Avocado report draft\nSecond line",
-    )
+    mkdir = execute_bm_cli(agent, state, "mkdir reports")
+    assert mkdir.ok is True
+
+    moved = execute_bm_cli(agent, state, "cd reports")
+    assert moved.ok is True
+    assert moved.cwd == "/me/reports"
+
+    personal_write = execute_bm_cli(agent, state, "write summary.md", "Avocado report draft\nSecond line")
     assert personal_write.ok is True
     assert personal_write.kind == "write"
-    personal_path = agent_artifact_dir(agent.name) / "reports" / "summary.md"
+    personal_path = agent_artifact_dir(agent.storage_key) / "reports" / "summary.md"
     assert personal_path.read_text(encoding="utf-8") == "Avocado report draft\nSecond line\n"
 
-    project_write = execute_bm_cli(
-        agent,
-        state,
-        "project orchard notes write deliverables/avocados.md",
-        "Project avocado memo",
-    )
+    appended = execute_bm_cli(agent, state, "append summary.md", "Third line")
+    assert appended.ok is True
+    assert personal_path.read_text(encoding="utf-8") == "Avocado report draft\nSecond line\nThird line\n"
+
+    project_write = execute_bm_cli(agent, state, "write /projects/orchard/deliverables/avocados.md", "Project avocado memo")
     assert project_write.ok is True
     assert project_write.kind == "write"
     project_path = project_artifact_dir("orchard") / "deliverables" / "avocados.md"
     assert project_path.read_text(encoding="utf-8") == "Project avocado memo\n"
+
+
+def test_execute_bm_cli_tracks_personal_workspace_in_git(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    result = execute_bm_cli(agent, state, "write report.md", "hello tracked workspace")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data["path"] == "/me/report.md"
+    assert result.data["git_commit"]
+    assert (personal_root / ".git").exists()
+    assert (personal_root / ".gitignore").exists()
+
+    status = execute_bm_cli(agent, state, "git status")
+    assert status.ok is True
+    assert "report.md" not in status.data["output"]
+
+    history = execute_bm_cli(agent, state, "git log 5")
+    assert history.ok is True
+    assert "bm_cli write /me/report.md" in history.data["output"]
+
+
+def test_execute_bm_cli_keeps_scratchpad_untracked(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    result = execute_bm_cli(agent, state, "write /me/scratchpad/draft.txt", "throwaway notes")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert "git_commit" not in result.data
+    assert (personal_root / "scratchpad" / "draft.txt").read_text(encoding="utf-8") == "throwaway notes\n"
+
+    status = execute_bm_cli(agent, state, "git status")
+    assert status.ok is True
+    assert "scratchpad" not in status.data["output"]
+
+
+def test_execute_bm_cli_git_restore_reverts_file_from_previous_revision(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    execute_bm_cli(agent, state, "write report.md", "first draft")
+    execute_bm_cli(agent, state, "write report.md", "second draft")
+
+    restore = execute_bm_cli(agent, state, "git restore --source HEAD~1 /me/report.md")
+
+    assert restore.ok is True
+    assert restore.data is not None
+    assert restore.data["commit"]
+    assert (personal_root / "report.md").read_text(encoding="utf-8") == "first draft\n"
+
+
+def test_execute_bm_cli_gates_restricted_commands(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    result = execute_bm_cli(agent, state, "rm summary.md")
+
+    assert result.ok is False
+    assert result.kind == "approval_required"
+    assert result.approval_required is True
+    assert "requires operator approval" in result.detail
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=5)
+    assert events[0]["command"] == "rm summary.md"
+    assert events[0]["decision"] == "approval_required"
+    assert events[0]["executor"] == "shell"
+    assert events[0]["policy_tier"] == "restricted"
+
+
+def test_execute_bm_cli_audits_virtual_command_lifecycle(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    execute_bm_cli(agent, state, "mkdir reports")
+    execute_bm_cli(agent, state, "cd reports")
+    execute_bm_cli(agent, state, "write summary.md", "hello audit trail")
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
+    assert len(events) >= 3
+
+    write_event = events[0]
+    assert write_event["command"] == "write summary.md"
+    assert write_event["decision"] == "allowed"
+    assert write_event["executor"] == "virtual"
+    assert write_event["cwd_before"] == "/me/reports"
+    assert write_event["cwd_after"] == "/me/reports"
+    assert write_event["result_kind"] == "write"
+    assert write_event["content_present"] is True
+    assert "summary.md" in (write_event["changed_paths"] or "")
+
+    cd_event = events[1]
+    assert cd_event["command"] == "cd reports"
+    assert cd_event["cwd_before"] == "/me"
+    assert cd_event["cwd_after"] == "/me/reports"
+    assert cd_event["result_kind"] == "cwd"
+
+
+@pytest.mark.asyncio
+async def test_work_completion_requires_requested_saved_file(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write avocado whitepaper",
+        description="Create a concise 2-3 sentence whitepaper on avocado growth and save it as avocado_white.md.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        work_contract={
+            "deliverables": [{"type": "file", "path": "/me/avocado_white.md"}],
+        },
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    work_result = await execute_action(
+        {"action": "work", "output": "Drafted a concise avocado whitepaper."},
+        agent,
+        state,
+    )
+    assert work_result["event"] == "agent_updated"
+    assert work_result["missing_deliverables"] == [{"type": "file", "path": "/me/avocado_white.md", "description": None}]
+
+    blocked_complete = await execute_action(
+        {"action": "complete", "summary": "Drafted and saved the avocado whitepaper."},
+        agent,
+        state,
+    )
+    assert blocked_complete["event"] == "world_feedback"
+    assert blocked_complete["missing_deliverables"] == [{"type": "file", "path": "/me/avocado_white.md", "description": None}]
+
+    write_result = await execute_action(
+        {
+            "action": "bm_cli",
+            "command": "write /me/avocado_white.md",
+            "content": "Avocado trees thrive in warm climates.",
+        },
+        agent,
+        state,
+    )
+    assert write_result["event"] == "bm_cli_result"
+
+    completed = await execute_action(
+        {"action": "complete", "summary": "Drafted and saved the avocado whitepaper."},
+        agent,
+        state,
+    )
+    assert completed["event"] == "status_changed"
+    assert "completed task" in completed["detail"]
+    assert completed["chat_notification"]["kind"] == "completion"
+    assert completed["chat_notification"]["human_visible"] is True
+
+
+def test_project_chat_notifications_emits_completion_notice(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+
+    notifications = project_chat_notifications(
+        agent=agent,
+        trigger={"type": "activity_resumed", "source_channel": "work"},
+        active_activity=None,
+        action={"action": "complete"},
+        result={
+            "event": "status_changed",
+            "chat_notification": {
+                "kind": "completion",
+                "task_title": "Write SLM training whitepaper",
+                "deliverables": [{"type": "file", "path": "/me/slm_training_white.md"}],
+                "source_channel": "chat",
+                "policy": "completion_blocked",
+                "task_id": "task-1",
+                "human_visible": True,
+            },
+        },
+    )
+
+    assert [item.content for item in notifications] == [
+        'Taylor finished "Write SLM training whitepaper" and saved it to /me/slm_training_white.md.'
+    ]
+    assert notifications[0].desk_path == "/me/slm_training_white.md"
+
+
+@pytest.mark.asyncio
+async def test_completion_notification_exposes_structured_desk_link_in_chat_api(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write learning Spanish whitepaper",
+        description="Draft a concise whitepaper.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+
+    notification = project_chat_notifications(
+        agent=agent,
+        trigger={"type": "activity_resumed", "source_channel": "work"},
+        active_activity=None,
+        action={"action": "complete"},
+        result={
+            "event": "status_changed",
+            "chat_notification": {
+                "kind": "completion",
+                "task_title": "Write learning Spanish whitepaper",
+                    "deliverables": [{"type": "file", "path": "/me/learning_spanish_whitepaper.md"}],
+                    "source_channel": "chat",
+                    "policy": "completion_blocked",
+                    "task_id": task.id,
+                    "human_visible": True,
+                },
+            },
+    )[0]
+
+    payload = persist_chat_notification(agent, notification)
+    assert payload["desk_path"] == "/me/learning_spanish_whitepaper.md"
+
+    api_messages = await get_agent_messages(agent.id, limit=10)
+    system_messages = [item for item in api_messages if item["message_type"] == "system"]
+    assert len(system_messages) == 1
+    assert system_messages[0]["desk_path"] == "/me/learning_spanish_whitepaper.md"
 
 
 def test_prompt_context_separates_live_state_from_recent_completed_work(isolated_db):
@@ -271,6 +629,7 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
                 "from_name": "Human Operator",
             },
             conversation_history=[],
+            prompt_notifications=[],
             reference_materials=[],
             current_activity=None,
             current_task=None,
@@ -290,6 +649,7 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     assert "RECENT COMPLETED TASKS:" in system_prompt
     assert "Generate Words API" in system_prompt
     assert "RECENT WORK ARTIFACTS:" in system_prompt
+    assert "RECENT RUNTIME NOTIFICATIONS:" in system_prompt
     assert "For status questions, answer from `Live Runtime State` first." in system_prompt
 
 
@@ -758,7 +1118,7 @@ async def test_run_turn_status_request_can_use_bm_cli_before_final_answer(isolat
 
     responses = iter([
         client.LLMResponse(
-            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            content='{"action":"bm_cli","command":"status","thought":"check live status"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -844,7 +1204,7 @@ async def test_run_turn_status_request_forces_bm_cli_after_stale_first_answer(is
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            content='{"action":"bm_cli","command":"status","thought":"check live status"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -923,7 +1283,7 @@ async def test_run_turn_status_request_cannot_drift_into_new_commitment_after_bm
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            content='{"action":"bm_cli","command":"status","thought":"check live status"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -1173,8 +1533,10 @@ async def test_activity_resumed_attend_meeting_ends_turn_and_emits_system_receip
     assert call_count == 1
 
     thread = db.get_human_chat_thread(agent.id, limit=10)
-    assert thread[-1].message_type == "system"
-    assert thread[-1].content == "Taylor joined the meeting."
+    assert [msg.message_type for msg in thread] == ["human"]
+    notifications = db.list_notifications(agent_id=agent.id, limit=10, chat_visible=True)
+    assert notifications[0].content == "Taylor joined the meeting."
+    assert notifications[0].kind == "receipt"
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
     assert diagnostics[0]["action_name"] == "attendMeeting"
@@ -1345,24 +1707,33 @@ async def test_acknowledged_relocation_does_not_emit_duplicate_walk_receipt(isol
     assert [msg.message_type for msg in thread] == ["human", "social"]
 
 
-def test_prompt_history_excludes_system_receipts(isolated_db):
+def test_prompt_history_view_excludes_non_prompt_visible_notifications(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
     db.create_message(HUMAN_SENDER_ID, agent.id, "Head to the meeting room.", message_type="human")
-    db.create_message(agent.id, HUMAN_SENDER_ID, "Taylor is heading to the Meeting Room.", message_type="system")
+    db.create_notification(
+        agent_id=agent.id,
+        kind="receipt",
+        content="Taylor is heading to the Meeting Room.",
+        source_channel="chat",
+        policy="all",
+        chat_visible=True,
+        prompt_visibility=False,
+    )
     activity_runtime.start_conversation_activity(
         agent.id,
         title="Direct conversation",
         detail="Head to the meeting room.",
     )
 
-    history = loop_module._get_conversation_history(
-        agent.id,
+    view = build_prompt_history_view(
+        agent,
         {"type": "activity_resumed", "source_channel": "chat"},
+        token_model="test-model",
     )
 
-    assert [msg["content"] for msg in history] == ["Head to the meeting room."]
-    assert all(msg["message_type"] != "system" for msg in history)
+    assert [msg["content"] for msg in view.conversation_history] == ["Head to the meeting room."]
+    assert view.prompt_notifications == []
 
 
 @pytest.mark.asyncio
@@ -1841,6 +2212,181 @@ async def test_substantive_request_can_start_task_before_walk(isolated_db, monke
     assert refreshed_state is not None
     assert refreshed_state.status == "work_active"
     assert _paused_work(agent.id, tasks[0].id) is None
+
+
+@pytest.mark.asyncio
+async def test_work_acceptance_at_desk_does_not_set_desk_preference(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "please write the summary",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"decision":"accept","intentKind":"work_request","reply":"I will write the summary now.","commitmentKind":"work","taskTitle":"Write summary","taskDescription":"please write the summary","thought":"accept the task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "please write the summary",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    tasks = db.list_tasks(assigned_to=agent.id)
+    assert len(tasks) == 1
+    active = _active_activity(agent.id)
+    assert active is not None
+    assert active.kind == "work"
+    assert active.metadata.get("preferred_destination") is None
+
+
+@pytest.mark.asyncio
+async def test_bm_cli_write_registers_artifact_and_desk_view_can_open_it(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    result = execute_bm_cli(
+        agent,
+        state,
+        "write /me/test_report.md",
+        "artifact body",
+        trigger_type="human_chat",
+    )
+    assert result.ok is True
+
+    artifacts = db.list_artifacts(agent_id=agent.id)
+    assert len(artifacts) == 1
+    assert artifacts[0].virtual_path == "/me/test_report.md"
+    assert artifacts[0].category == "output"
+
+    desk_payload = await get_agent_desk(agent.id, path="/me")
+    assert desk_payload["kind"] == "directory"
+    output_entries = next(section["entries"] for section in desk_payload["sections"] if section["title"] == "Outputs")
+    assert any(entry["path"] == "/me/test_report.md" for entry in output_entries)
+    output_names = {entry["name"] for entry in output_entries}
+    assert ".git" not in output_names
+    assert ".gitignore" not in output_names
+
+    file_payload = await get_agent_desk(agent.id, path="/me/test_report.md")
+    assert file_payload["kind"] == "file"
+    assert file_payload["artifact"]["virtual_path"] == "/me/test_report.md"
+    assert "artifact body" in file_payload["content"]
+
+
+@pytest.mark.asyncio
+async def test_open_agent_desk_folder_reveals_parent_directory_for_file(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    execute_bm_cli(agent, state, "write /me/test_report.md", "artifact body", trigger_type="human_chat")
+
+    opened: list[str] = []
+    monkeypatch.setattr("api.routes.config.get", lambda key: "thunar" if key == "desktop_open_folder_handler" else None)
+    monkeypatch.setattr("api.routes._launch_file_explorer", lambda path, *, opener: opened.append(f"{opener}:{path}"))
+
+    result = await open_agent_desk_folder(agent.id, path="/me/test_report.md")
+
+    assert result["status"] == "ok"
+    assert opened == [f"thunar:{agent_artifact_dir(agent.storage_key)}"]
+
+
+def test_file_explorer_command_prefers_real_linux_file_manager(monkeypatch):
+    monkeypatch.setattr("api.routes.sys.platform", "linux")
+    monkeypatch.setattr(
+        "api.routes.shutil.which",
+        lambda binary: f"/usr/bin/{binary}" if binary == "thunar" else None,
+    )
+
+    command = _file_explorer_command(Path("/tmp/demo"), opener="thunar")
+
+    assert command == ["thunar", "/tmp/demo"]
+
+
+@pytest.mark.asyncio
+async def test_open_agent_desk_folder_requires_chooser_when_unconfigured(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    execute_bm_cli(agent, state, "write /me/test_report.md", "artifact body", trigger_type="human_chat")
+    monkeypatch.setattr("api.routes.config.get", lambda key: None)
+    monkeypatch.setattr(
+        "api.routes._available_folder_opener_options",
+        lambda: [{"value": "thunar", "label": "Thunar", "description": "Open folders with Thunar."}],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await open_agent_desk_folder(agent.id, path="/me/test_report.md")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "desk_open_folder_handler_required"
+
+
+@pytest.mark.asyncio
+async def test_agent_personal_storage_normalization_preserves_me_after_rename(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    legacy_root = legacy_agent_artifact_dir(agent.name)
+    legacy_file = legacy_root / "notes" / "handoff.md"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.write_text("legacy handoff note", encoding="utf-8")
+    db.upsert_artifact(
+        agent_id=agent.id,
+        task_id=None,
+        virtual_path="/me/notes/handoff.md",
+        absolute_path=str(legacy_file.resolve()),
+        title="handoff.md",
+        kind="file",
+        category="note",
+        size_bytes=legacy_file.stat().st_size,
+        source_command="write /me/notes/handoff.md",
+    )
+
+    db.update_agent(agent.id, name="Taylor Renamed")
+    renamed_agent = db.get_agent(agent.id)
+    assert renamed_agent is not None
+
+    normalize_agent_personal_storage(renamed_agent)
+
+    normalized_file = agent_artifact_dir(renamed_agent.storage_key) / "notes" / "handoff.md"
+    assert normalized_file.exists()
+    assert normalized_file.read_text(encoding="utf-8") == "legacy handoff note"
+    assert not legacy_root.exists()
+    assert db.get_artifact_by_absolute_path(str(legacy_file.resolve())) is None
+    normalized_artifact = db.get_artifact_by_absolute_path(str(normalized_file.resolve()))
+    assert normalized_artifact is not None
+    assert normalized_artifact.virtual_path == "/me/notes/handoff.md"
+
+    desk_payload = await get_agent_desk(agent.id, path="/me/notes/handoff.md")
+    assert desk_payload["kind"] == "file"
+    assert desk_payload["artifact"]["virtual_path"] == "/me/notes/handoff.md"
+    assert "legacy handoff note" in desk_payload["content"]
 
 
 def test_arrival_follow_up_for_work_uses_desk_label_and_clears_preference(isolated_db):
@@ -2424,6 +2970,15 @@ async def test_clear_agent_chat_history_only_deletes_direct_chat(isolated_db, mo
     db.create_message(HUMAN_SENDER_ID, agent.id, "hi", message_type="human")
     db.create_message(agent.id, HUMAN_SENDER_ID, "hello", message_type="work")
     db.create_message(agent.id, None, "artifact", message_type="work")
+    db.create_notification(
+        agent_id=agent.id,
+        kind="completion",
+        content='Taylor finished "Task".',
+        source_channel="chat",
+        policy="completion_blocked",
+        chat_visible=True,
+        prompt_visibility=True,
+    )
 
     monkeypatch.setattr(manager, "broadcast_chat_reset", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
@@ -2431,7 +2986,9 @@ async def test_clear_agent_chat_history_only_deletes_direct_chat(isolated_db, mo
     result = await clear_agent_chat_history(agent.id)
 
     assert result["deleted_messages"] == 2
+    assert result["deleted_notifications"] == 1
     assert db.get_human_chat_thread(agent.id, limit=20) == []
+    assert db.list_notifications(agent_id=agent.id, limit=20) == []
     assert [m.content for m in db.get_recent_work_artifacts(agent.id, limit=10)] == ["artifact"]
 
 

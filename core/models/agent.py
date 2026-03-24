@@ -23,6 +23,7 @@ class Agent(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    storage_key: str
     name: str
     role: str | None = None
     prompt_template: str | None = None

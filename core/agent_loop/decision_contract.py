@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from core.bm_cli.contract import maybe_parse_bm_cli_call, render_bm_cli_guidance
+from core.models.work_contract import DeliverableSpec
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class ConversationDecision(BaseModel):
     detail: str | None = None
     taskTitle: str | None = None
     taskDescription: str | None = None
+    deliverables: list[DeliverableSpec] | None = None
     thought: str = Field(default="")
 
     @model_validator(mode="after")
@@ -52,6 +54,8 @@ class ConversationDecision(BaseModel):
             raise ValueError('"defer" decisions may only defer work or keep commitmentKind="none"')
         if self.commitmentKind == "work" and self.decision == "accept" and not (self.taskTitle and self.taskTitle.strip()):
             raise ValueError('"accept" + commitmentKind="work" requires a non-empty "taskTitle"')
+        if self.deliverables and not (self.decision == "accept" and self.commitmentKind == "work"):
+            raise ValueError('"deliverables" may only be provided for accepted work commitments')
         if self.commitmentKind in {"meeting", "break"} and self.decision == "accept" and self.destination is None:
             raise ValueError(f'"accept" + commitmentKind="{self.commitmentKind}" requires "destination"')
         if self.commitmentKind == "break" and self.destination != "breakRoom":
@@ -121,6 +125,7 @@ def render_decision_contract() -> str:
             "  destination     — desk | meetingRoom | breakRoom | mainWorkspace | southWorkspace | hallway",
             "  title/detail    — short commitment summary when useful",
             "  taskTitle/taskDescription — required when accepting new durable work from chat",
+            '  deliverables    — optional structured outputs for accepted work, e.g. [{"type":"file","path":"avocado_white.md"}]',
             "  thought         — brief admin-visible operational note",
             "",
             render_bm_cli_guidance(),
@@ -132,17 +137,20 @@ def render_decision_contract() -> str:
         lines.append(f"  {spec.example}")
     lines.extend(
         [
+            '  {"decision":"accept","intentKind":"work_request","reply":"I will draft the whitepaper and save it as avocado_white.md.","commitmentKind":"work","taskTitle":"Write avocado whitepaper","taskDescription":"Create a concise 2-3 sentence whitepaper on avocado growth.","deliverables":[{"type":"file","path":"avocado_white.md"}],"thought":"accept the work"}',
             "",
             "RULES:",
             "- Valid JSON only, no markdown or extra text.",
             "- This contract is for direct requests only. Do not emit execution actions here.",
             "- You may use bm_cli first when you need authoritative runtime/project information before deciding.",
             '- For bm_cli write commands, provide the file body in a separate "content" field.',
-            '- For status_request questions about your current state, use {"action":"bm_cli","command":"me get status","thought":"check live status"} before the final decision.',
+            '- For status_request questions about your current state, use {"action":"bm_cli","command":"status","thought":"check live status"} before the final decision.',
             "- Use decision=\"answer\" for pure status/question replies that do not change commitments.",
             "- Use decision=\"accept\" to create or replace a commitment.",
             "- Use commitmentKind=\"work\" only when a request becomes durable work.",
             "- When accepting work from chat, provide taskTitle and taskDescription.",
+            "- When accepted work must produce a file or other tangible output, declare it in deliverables instead of leaving it implicit in prose.",
+            "- Deliverable file paths may be relative when you accept work from chat; the runtime will normalize them against your current BossMod CLI cwd and store them on the task.",
             "- When accepting a meeting or break, provide the destination.",
             "- decision=\"clarify\" and decision=\"decline\" must leave commitmentKind=\"none\".",
         ]

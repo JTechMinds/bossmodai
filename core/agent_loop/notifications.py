@@ -1,0 +1,313 @@
+"""BossMod AI — First-class human-facing notification projection."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import db
+from core.models import Activity, Agent
+
+NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned"]
+
+_DESTINATION_LABELS = {
+    "desk": "desk",
+    "meetingRoom": "Meeting Room",
+    "breakRoom": "Break Room",
+    "mainWorkspace": "Main Workspace",
+    "southWorkspace": "South Workspace",
+    "hallway": "hallway",
+}
+
+_HUMAN_VISIBLE_ACTIVITY_KINDS = {"conversation", "meeting"}
+_RECEIPT_ACTIONS = {"walkTo", "attendMeeting", "remoteMeeting"}
+
+
+@dataclass(frozen=True, slots=True)
+class ChatNotification:
+    """A deterministic human-facing notification projected by the runtime."""
+
+    kind: NotificationKind
+    content: str
+    source_channel: str
+    policy: str
+    chat_visible: bool = True
+    prompt_visibility: bool = False
+    task_id: str | None = None
+    activity_id: str | None = None
+    desk_path: str | None = None
+
+
+def project_chat_notifications(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    active_activity: Activity | None,
+    action: dict[str, Any],
+    result: dict[str, Any],
+) -> list[ChatNotification]:
+    """Project runtime outcomes into human-facing chat notifications."""
+    notifications: list[ChatNotification] = []
+
+    receipt = _build_receipt_notification(
+        agent=agent,
+        trigger=trigger,
+        active_activity=active_activity,
+        action=action,
+        result=result,
+    )
+    if receipt is not None:
+        notifications.append(receipt)
+
+    task_notification = _build_task_notification(agent=agent, result=result)
+    if task_notification is not None:
+        notifications.append(task_notification)
+
+    return notifications
+
+
+def persist_chat_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
+    """Persist one chat notification and return broadcast data."""
+    stored = db.create_notification(
+        agent_id=agent.id,
+        task_id=notification.task_id,
+        activity_id=notification.activity_id,
+        kind=notification.kind,
+        content=notification.content,
+        source_channel=notification.source_channel,
+        policy=notification.policy,
+        chat_visible=notification.chat_visible,
+        prompt_visibility=notification.prompt_visibility,
+    )
+    if notification.desk_path:
+        db.create_notification_link(
+            notification_id=stored.id,
+            target_kind="desk",
+            target_path=notification.desk_path,
+        )
+    return {
+        "agent_id": agent.id,
+        "content": stored.content,
+        "from_type": "system",
+        "from_name": agent.name,
+        "message_type": "system",
+        "message_id": stored.id,
+        "created_at": stored.created_at,
+        "notification_kind": notification.kind,
+        "desk_path": notification.desk_path,
+    }
+
+
+def _build_receipt_notification(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    active_activity: Activity | None,
+    action: dict[str, Any],
+    result: dict[str, Any],
+) -> ChatNotification | None:
+    """Return the silent-action receipt notification when warranted."""
+    if not _should_emit_receipt(trigger=trigger, active_activity=active_activity, action=action, result=result):
+        return None
+
+    action_name = action.get("action")
+    if action_name == "walkTo":
+        return ChatNotification(
+            kind="receipt",
+            content=f"{agent.name} is heading to the {_format_destination(action.get('destination'))}.",
+            source_channel=_notification_source_channel(trigger),
+            policy="all",
+            prompt_visibility=False,
+            activity_id=active_activity.id if active_activity else None,
+        )
+    if action_name == "attendMeeting":
+        return ChatNotification(
+            kind="receipt",
+            content=f"{agent.name} joined the meeting.",
+            source_channel=_notification_source_channel(trigger),
+            policy="all",
+            prompt_visibility=False,
+            activity_id=active_activity.id if active_activity else None,
+        )
+    if action_name == "remoteMeeting":
+        target_name = _resolve_target_name(result.get("detail", ""))
+        if target_name:
+            return ChatNotification(
+                kind="receipt",
+                content=f"{agent.name} started a remote meeting with {target_name}.",
+                source_channel=_notification_source_channel(trigger),
+                policy="all",
+                prompt_visibility=False,
+                activity_id=active_activity.id if active_activity else None,
+            )
+        return ChatNotification(
+            kind="receipt",
+            content=f"{agent.name} started a remote meeting.",
+            source_channel=_notification_source_channel(trigger),
+            policy="all",
+            prompt_visibility=False,
+            activity_id=active_activity.id if active_activity else None,
+        )
+    return None
+
+
+def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNotification | None:
+    """Return a task-lifecycle notification when the runtime says one is needed."""
+    payload = result.get("chat_notification")
+    if not isinstance(payload, dict) or not payload.get("human_visible"):
+        return None
+
+    kind = payload.get("kind")
+    task_title = str(payload.get("task_title") or "task")
+    reason = str(payload.get("reason") or "").strip()
+    deliverables = payload.get("deliverables") or []
+    deliverable_paths = [
+        item.get("path")
+        for item in deliverables
+        if isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"].strip()
+    ]
+
+    if kind == "completion":
+        if len(deliverable_paths) == 1:
+            return ChatNotification(
+                kind="completion",
+                content=f'{agent.name} finished "{task_title}" and saved it to {deliverable_paths[0]}.',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=True,
+                task_id=payload.get("task_id"),
+                desk_path=deliverable_paths[0],
+            )
+        if len(deliverable_paths) > 1:
+            return ChatNotification(
+                kind="completion",
+                content=f'{agent.name} finished "{task_title}" and saved {len(deliverable_paths)} deliverables.',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=True,
+                task_id=payload.get("task_id"),
+            )
+        return ChatNotification(
+            kind="completion",
+            content=f'{agent.name} finished "{task_title}".',
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=True,
+            task_id=payload.get("task_id"),
+        )
+
+    if kind == "blocked":
+        if reason:
+            return ChatNotification(
+                kind="blocked",
+                content=f'{agent.name} is blocked on "{task_title}": {reason}',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=True,
+                task_id=payload.get("task_id"),
+            )
+        return ChatNotification(
+            kind="blocked",
+            content=f'{agent.name} is blocked on "{task_title}".',
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=True,
+            task_id=payload.get("task_id"),
+        )
+
+    if kind == "handoff":
+        target_name = str(payload.get("target_name") or "").strip()
+        if target_name:
+            return ChatNotification(
+                kind="handoff",
+                content=f'{agent.name} delegated "{task_title}" to {target_name}.',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=True,
+                task_id=payload.get("task_id"),
+            )
+        return ChatNotification(
+            kind="handoff",
+            content=f'{agent.name} delegated "{task_title}".',
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=True,
+            task_id=payload.get("task_id"),
+        )
+
+    if kind == "abandoned":
+        if reason:
+            return ChatNotification(
+                kind="abandoned",
+                content=f'{agent.name} abandoned "{task_title}": {reason}',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=True,
+                task_id=payload.get("task_id"),
+            )
+        return ChatNotification(
+            kind="abandoned",
+            content=f'{agent.name} abandoned "{task_title}".',
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=True,
+            task_id=payload.get("task_id"),
+        )
+
+    return None
+
+
+def _should_emit_receipt(
+    *,
+    trigger: dict[str, Any],
+    active_activity: Activity | None,
+    action: dict[str, Any],
+    result: dict[str, Any],
+) -> bool:
+    """Return whether the current turn/action should emit a movement/meeting receipt."""
+    action_name = action.get("action")
+    if action_name not in _RECEIPT_ACTIONS:
+        return False
+    if result.get("event") in {"agent_error", "guardian_violation", "world_feedback"}:
+        return False
+
+    trigger_type = trigger.get("type")
+    if trigger_type == "human_chat":
+        return True
+    if trigger_type != "activity_resumed":
+        return False
+    if not active_activity or active_activity.kind not in _HUMAN_VISIBLE_ACTIVITY_KINDS:
+        return False
+    if action_name == "walkTo" and bool((active_activity.metadata or {}).get("acknowledged_by_reply")):
+        return False
+    return True
+
+
+def _format_destination(destination: Any) -> str:
+    """Humanize a runtime destination identifier."""
+    if not isinstance(destination, str):
+        return "destination"
+    return _DESTINATION_LABELS.get(destination, destination)
+
+
+def _resolve_target_name(detail: str) -> str | None:
+    """Extract the meeting target name from the result detail string."""
+    prefix = " started remote meeting with "
+    if prefix not in detail:
+        return None
+    tail = detail.split(prefix, 1)[1]
+    if ":" in tail:
+        tail = tail.split(":", 1)[0]
+    name = tail.strip()
+    return name or None
+
+
+def _notification_source_channel(trigger: dict[str, Any]) -> str:
+    """Normalize a trigger source channel for notification storage."""
+    source_channel = str(trigger.get("source_channel") or "").strip()
+    if source_channel in {"chat", "api", "slack", "telegram", "peer", "task", "work", "system"}:
+        return source_channel
+    trigger_type = trigger.get("type")
+    if trigger_type == "peer_message":
+        return "peer"
+    return "chat"

@@ -83,13 +83,13 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_max_tokens", "2048", "llm"),
 
     # ── Context window ──
-    ("context_window_messages", "30", "context"),
     ("context_recent_work_artifacts", "5", "context"),
     ("context_recent_completed_tasks", "3", "context"),
 
     # ── Diagnostics ──
     ("diagnostics_enabled", "false", "advanced"),
     ("diagnostics_retention_limit", "5000", "advanced"),
+    ("desktop_open_folder_handler", "", "advanced"),
 
     # ── Concurrency ──
     ("max_concurrent_llm_calls", "5", "llm"),

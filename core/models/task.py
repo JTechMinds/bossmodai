@@ -11,6 +11,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from core.models.notification import NotificationSourceChannel, TaskNotificationPolicy
+from core.models.work_contract import WorkContract
+
 
 # ---------------------------------------------------------------------------
 # Literal type for task status
@@ -46,6 +49,11 @@ class Task(BaseModel):
     assigned_to: str | None = None
     created_by: str | None = None
     status: TaskStatus = "pending"
+    work_contract: WorkContract | None = None
+    work_contract_updated_at: datetime | None = None
+    source_channel: NotificationSourceChannel | None = None
+    notification_policy: TaskNotificationPolicy | None = None
+    notification_policy_updated_at: datetime | None = None
     parent_task_id: str | None = None
     cost_ceiling: float | None = None
     completion_summary: str | None = None
@@ -70,3 +78,6 @@ class TaskCreate(BaseModel):
     description: str | None = None
     project: str | None = None
     assigned_to: str | None = None
+    work_contract: WorkContract | None = None
+    source_channel: NotificationSourceChannel | None = None
+    notification_policy: TaskNotificationPolicy | None = None

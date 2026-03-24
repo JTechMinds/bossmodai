@@ -44,6 +44,13 @@ const AgentPanel = (() => {
         { key: 'model_self_queue', label: 'Self-queue' },
     ];
 
+    const DEFAULT_PROMPT_HISTORY_POLICY = {
+        last_n_histories: 30,
+        max_allowed_history_tokens: 2000,
+        earliest_ts_allowed: null,
+        include_notifications: true,
+    };
+
     // ─── API calls ───
 
     async function fetchAgent(id) {
@@ -77,6 +84,22 @@ const AgentPanel = (() => {
         if (!res.ok) throw new Error(await res.text());
     }
 
+    async function fetchPromptHistoryPolicy(id) {
+        const res = await fetch(`/api/agents/${id}/prompt-history-policy`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    async function apiUpdatePromptHistoryPolicy(id, data) {
+        const res = await fetch(`/api/agents/${id}/prompt-history-policy`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
     async function apiClearChatHistory(id) {
         const res = await fetch(`/api/agents/${id}/chat-history`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
@@ -96,15 +119,23 @@ const AgentPanel = (() => {
         // Fetch connections and personalities for dropdowns
         let connections = [];
         let personalities = [];
+        let promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY };
         try {
-            const [connRes, persRes] = await Promise.all([
+            const requests = [
                 fetch('/api/connections'),
                 fetch('/api/personalities'),
-            ]);
+            ];
+            if (agent?.id) {
+                requests.push(fetchPromptHistoryPolicy(agent.id));
+            }
+            const [connRes, persRes, policyRes] = await Promise.all(requests);
             connections = await connRes.json();
             personalities = await persRes.json();
+            if (policyRes) {
+                promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY, ...policyRes };
+            }
         } catch (err) {
-            console.error('[AgentPanel] Failed to load connections/personalities:', err);
+            console.error('[AgentPanel] Failed to load agent editor dependencies:', err);
         }
 
         const colorOptions = AGENT_COLORS.map(c => {
@@ -152,6 +183,9 @@ const AgentPanel = (() => {
 
         const noConnections = connections.length === 0;
         const noPersonalities = personalities.length === 0;
+        const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed
+            ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
+            : '';
 
         container.innerHTML = `
         <form id="agent-form" class="space-y-4">
@@ -228,6 +262,59 @@ const AgentPanel = (() => {
                            `).join('')}
                        </div>`
                 }
+            </div>
+
+            <div class="border border-bm-border rounded-lg p-3 space-y-3 bg-white">
+                <div>
+                    <h3 class="text-sm font-semibold">AI History</h3>
+                    <p class="text-xs text-bm-muted mt-1">
+                        Controls the backend view used for model-visible conversation history.
+                        This does not delete or duplicate chat data.
+                    </p>
+                </div>
+                <div class="grid grid-cols-1 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium mb-1">Last N History Items</label>
+                        <input type="number"
+                               min="0"
+                               max="500"
+                               name="prompt_history_last_n"
+                               value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
+                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1">Max History Tokens</label>
+                        <input type="number"
+                               min="0"
+                               max="50000"
+                               name="prompt_history_max_tokens"
+                               value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
+                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1">Earliest Allowed Timestamp</label>
+                        <input type="datetime-local"
+                               name="prompt_history_earliest_ts"
+                               value="${BossModUtils.escapeHtml(earliestAllowedValue)}"
+                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                        <p class="text-[11px] text-bm-muted mt-1">
+                            Leave empty to allow older history. Set this to make the agent ignore anything before a cutoff.
+                        </p>
+                    </div>
+                    <label class="inline-flex items-center gap-2 text-sm text-bm-text cursor-pointer">
+                        <input type="checkbox"
+                               name="prompt_history_include_notifications"
+                               class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
+                               ${promptHistoryPolicy.include_notifications ? 'checked' : ''}>
+                        <span>Include prompt-visible runtime notifications</span>
+                    </label>
+                </div>
             </div>
 
             <!-- Status (read-only for existing agents) -->
@@ -307,7 +394,7 @@ const AgentPanel = (() => {
             [desk_x, desk_y] = deskValue.split(',').map(Number);
         }
 
-        const data = {
+        const agentData = {
             name: formData.get('name'),
             role: formData.get('role') || null,
             color: formData.get('agent-color') || '#3b82f6',
@@ -322,7 +409,7 @@ const AgentPanel = (() => {
                 const res = await fetch(`/api/personalities/${personalityId}`);
                 if (res.ok) {
                     const personality = await res.json();
-                    data.prompt_template = personality.prompt_template;
+                    agentData.prompt_template = personality.prompt_template;
                 }
             } catch { /* use null */ }
         }
@@ -339,18 +426,26 @@ const AgentPanel = (() => {
                 if (!runtimeModel) {
                     throw new Error(`Connection "${conn.name}" is missing an explicit model identifier`);
                 }
-                data[t.key] = runtimeModel;
-                if (!data.api_base_url) {
-                    data.api_base_url = conn.api_base_url;
-                    data.api_key = conn.api_key || null;
-                    data.extra_body = conn.extra_body || null;
+                agentData[t.key] = runtimeModel;
+                if (!agentData.api_base_url) {
+                    agentData.api_base_url = conn.api_base_url;
+                    agentData.api_key = conn.api_key || null;
+                    agentData.extra_body = conn.extra_body || null;
                 }
             } else {
-                data[t.key] = null;
+                agentData[t.key] = null;
             }
         }
 
-        return data;
+        const earliestTsRaw = String(formData.get('prompt_history_earliest_ts') || '').trim();
+        const promptHistoryPolicy = {
+            last_n_histories: Number(formData.get('prompt_history_last_n') || DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories),
+            max_allowed_history_tokens: Number(formData.get('prompt_history_max_tokens') || DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens),
+            earliest_ts_allowed: earliestTsRaw ? new Date(earliestTsRaw).toISOString() : null,
+            include_notifications: formData.get('prompt_history_include_notifications') === 'on',
+        };
+
+        return { agentData, promptHistoryPolicy };
     }
 
     // ─── Refresh canvas agents from API ───
@@ -398,17 +493,29 @@ const AgentPanel = (() => {
             feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
             feedbackEl.textContent = 'Saving...';
 
-            const data = await buildSubmitData(form, connections);
-            try {
-                let savedAgent = null;
-                if (isCreating) {
-                    savedAgent = await apiCreateAgent(data);
-                } else {
-                    savedAgent = await apiUpdateAgent(currentAgentId, data);
-                }
-                await refreshCanvas();
-                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
-                feedbackEl.textContent = 'Saved successfully';
+                const { agentData, promptHistoryPolicy } = await buildSubmitData(form, connections);
+                try {
+                    let savedAgent = null;
+                    if (isCreating) {
+                        savedAgent = await apiCreateAgent(agentData);
+                    } else {
+                        savedAgent = await apiUpdateAgent(currentAgentId, agentData);
+                    }
+
+                    try {
+                        await apiUpdatePromptHistoryPolicy(savedAgent.id, promptHistoryPolicy);
+                    } catch (policyErr) {
+                        console.error('[AgentPanel] Prompt history policy save failed:', policyErr);
+                        await refreshCanvas();
+                        feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800';
+                        feedbackEl.textContent = 'Agent saved, but AI history settings failed to save.';
+                        if (onSave) onSave(savedAgent);
+                        return;
+                    }
+
+                    await refreshCanvas();
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
+                    feedbackEl.textContent = 'Saved successfully';
                 setTimeout(() => { feedbackEl.className = 'hidden'; }, 3000);
                 if (onSave) onSave(savedAgent);
             } catch (err) {

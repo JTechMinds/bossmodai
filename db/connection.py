@@ -62,6 +62,12 @@ def init_db() -> None:
     from db.ai_personalities import seed_default_personalities
     seed_default_personalities()
 
+    from db.agent_storage_identities import ensure_all_agent_storage_identities
+    ensure_all_agent_storage_identities()
+
+    from db.agent_storage import normalize_agent_personal_storage_roots
+    normalize_agent_personal_storage_roots()
+
     logger.info("Database initialised")
 
 

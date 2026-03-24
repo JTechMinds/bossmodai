@@ -12,17 +12,19 @@ from db.crud import (
     execute,
     fetch_all,
     fetch_one,
-    insert_returning,
+    insert_returning_dict,
     query,
 )
+from db.agent_storage_identities import delete_agent_storage_identity, ensure_agent_storage_identity
 
 _AGENT_COLUMNS = (
-    "id, name, role, prompt_template, color, "
-    "model_social, model_work, model_reasoning, model_extraction, model_self_queue, "
-    "api_base_url, api_key, extra_body, desk_x, desk_y, "
-    "guardian_token_limit, guardian_velocity_limit, "
-    "guardian_repetition_threshold, guardian_no_progress_threshold, "
-    "created_at"
+    "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
+    "agents.prompt_template, agents.color, agents.model_social, agents.model_work, "
+    "agents.model_reasoning, agents.model_extraction, agents.model_self_queue, "
+    "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
+    "agents.guardian_token_limit, agents.guardian_velocity_limit, "
+    "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
+    "agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
@@ -64,8 +66,8 @@ def create_agent(
     guardian_no_progress_threshold: int = 30,
 ) -> Agent:
     """Insert a new agent and its companion state row."""
-    agent = insert_returning(
-        f"""
+    created = insert_returning_dict(
+        """
         INSERT INTO agents (
             name, role, prompt_template, color,
             model_social, model_work, model_reasoning, model_extraction, model_self_queue,
@@ -73,7 +75,7 @@ def create_agent(
             guardian_token_limit, guardian_velocity_limit,
             guardian_repetition_threshold, guardian_no_progress_threshold
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-        RETURNING {_AGENT_COLUMNS}
+        RETURNING id
         """,
         [
             name, role, prompt_template, color,
@@ -82,24 +84,45 @@ def create_agent(
             guardian_token_limit, guardian_velocity_limit,
             guardian_repetition_threshold, guardian_no_progress_threshold,
         ],
-        Agent,
     )
+    agent_id = str(created["id"])
+    ensure_agent_storage_identity(agent_id)
 
     # Unassigned agents spawn in the hallway (14, 9) instead of void (0, 0)
     spawn_x = desk_x if desk_x is not None else 14
     spawn_y = desk_y if desk_y is not None else 9
     execute(
         "INSERT INTO agent_state (agent_id, x, y) VALUES ($1, $2, $3)",
-        [agent.id, spawn_x, spawn_y],
+        [agent_id, spawn_x, spawn_y],
+    )
+    execute(
+        "INSERT INTO agent_cli_state (agent_id, cwd) VALUES ($1, $2)",
+        [agent_id, "/me"],
+    )
+    execute(
+        """
+        INSERT INTO agent_prompt_history_policies (
+            agent_id, last_n_histories, max_allowed_history_tokens, include_notifications
+        ) VALUES ($1, $2, $3, $4)
+        """,
+        [agent_id, 30, 2000, True],
     )
 
+    agent = get_agent(agent_id)
+    if agent is None:
+        raise RuntimeError(f"Failed to reload created agent {agent_id}")
     return agent
 
 
 def get_agent(agent_id: str) -> Agent | None:
     """Fetch a single agent by ID."""
     return fetch_one(
-        f"SELECT {_AGENT_COLUMNS} FROM agents WHERE id = $1",
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agents.id = $1
+        """,
         [agent_id],
         Agent,
     )
@@ -108,7 +131,12 @@ def get_agent(agent_id: str) -> Agent | None:
 def list_agents() -> list[Agent]:
     """Return all agents ordered by creation time."""
     return fetch_all(
-        f"SELECT {_AGENT_COLUMNS} FROM agents ORDER BY created_at",
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        ORDER BY agents.created_at
+        """,
         model_cls=Agent,
     )
 
@@ -121,7 +149,10 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
 
 def delete_agent(agent_id: str) -> bool:
     """Delete an agent and its companion state row."""
+    execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
     execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
+    delete_agent_storage_identity(agent_id)
     result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
     if not result:
         return False
@@ -135,7 +166,12 @@ def get_agents_by_ids(agent_ids: list[str]) -> dict[str, Agent]:
         return {}
     placeholders = ", ".join(f"${i + 1}" for i in range(len(agent_ids)))
     agents = fetch_all(
-        f"SELECT {_AGENT_COLUMNS} FROM agents WHERE id IN ({placeholders})",
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agents.id IN ({placeholders})
+        """,
         agent_ids,
         Agent,
     )

@@ -1,6 +1,6 @@
 """BossMod AI — Message Pydantic models.
 
-Defines the Message model for inter-agent and system communication,
+Defines the authored message model used for human and agent communication,
 plus the API input model for creating new messages.
 """
 
@@ -24,7 +24,6 @@ MessageType = Literal[
     "work",         # Task-related direct message
     "social",       # Casual / social conversation between agents
     "human",        # Message from the human operator
-    "system",       # System-generated notification
     "meeting",      # Team meeting message (broadcast)
 ]
 

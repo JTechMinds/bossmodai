@@ -11,6 +11,8 @@ const AgentContext = (() => {
     let selectedAgent = null;
     let creatingAgent = false;
     let activeSubview = 'chat';
+    let activeDeskPath = '/me';
+    let folderOpenerModalEl = null;
     const chatCache = new Map();
     let activeChatLoadId = 0;
 
@@ -50,6 +52,7 @@ const AgentContext = (() => {
             return;
         }
 
+        activeDeskPath = '/me';
         activeSubview = 'chat';
         updateTabs();
         showToolbar();
@@ -60,6 +63,7 @@ const AgentContext = (() => {
         selectedAgent = null;
         creatingAgent = false;
         activeSubview = 'chat';
+        activeDeskPath = '/me';
         if (typeof DiagnosticsView !== 'undefined') DiagnosticsView.closeDetail();
         updateTabs();
         hideToolbar();
@@ -70,6 +74,7 @@ const AgentContext = (() => {
         selectedAgent = null;
         creatingAgent = true;
         activeSubview = 'edit';
+        activeDeskPath = '/me';
         updateTabs();
         hideToolbar();
         switchSubview('edit');
@@ -228,6 +233,7 @@ const AgentContext = (() => {
         document.getElementById('subview-chat').classList.add('hidden');
         document.getElementById('subview-edit').classList.add('hidden');
         document.getElementById('subview-tasks').classList.add('hidden');
+        document.getElementById('subview-desk').classList.add('hidden');
         document.getElementById('subview-diagnostics')?.classList.add('hidden');
         document.getElementById('tab-activity').classList.remove('active');
     }
@@ -265,6 +271,10 @@ const AgentContext = (() => {
             case 'tasks':
                 document.getElementById('subview-tasks').classList.remove('hidden');
                 renderTasks();
+                break;
+            case 'desk':
+                document.getElementById('subview-desk').classList.remove('hidden');
+                renderDesk(activeDeskPath);
                 break;
             case 'diagnostics':
                 document.getElementById('subview-diagnostics').classList.remove('hidden');
@@ -340,7 +350,7 @@ const AgentContext = (() => {
         }
 
         for (const msg of visibleMessages) {
-            appendChatMessage(msg.content, msg.from, msg.message_type);
+            appendChatMessage(msg.content, msg.from, msg.message_type, msg);
         }
     }
 
@@ -353,7 +363,7 @@ const AgentContext = (() => {
                        type="checkbox"
                        class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
                        ${shouldShowSystemReceipts() ? 'checked' : ''}>
-                <span>Show system receipts</span>
+                <span>Show system notifications</span>
             </label>`;
         messagesEl.appendChild(wrapper);
 
@@ -414,7 +424,7 @@ const AgentContext = (() => {
         input.focus();
     }
 
-    function appendChatMessage(text, fromType, messageType = null) {
+    function appendChatMessage(text, fromType, messageType = null, message = null) {
         if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts()) {
             return;
         }
@@ -431,9 +441,21 @@ const AgentContext = (() => {
             bubbleClass = 'from-system';
         }
         msgDiv.className = `chat-msg ${bubbleClass} mb-2`;
-        // Preserve newlines and whitespace formatting
-        msgDiv.innerText = text;
+        const textEl = document.createElement('div');
+        textEl.innerText = text;
+        msgDiv.appendChild(textEl);
+
+        const openPath = message?.desk_path || null;
+        if (openPath && (fromType === 'system' || messageType === 'system')) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded border border-bm-border bg-white/70 hover:bg-white text-xs font-medium transition-colors';
+            btn.innerHTML = '<i data-lucide="folder-open" class="w-3 h-3"></i><span>Open in Desk</span>';
+            btn.addEventListener('click', () => openDeskPath(openPath));
+            msgDiv.appendChild(btn);
+        }
         messagesEl.appendChild(msgDiv);
+        if (window.lucide) lucide.createIcons({ nodes: [msgDiv] });
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -445,12 +467,14 @@ const AgentContext = (() => {
             from: data.from,
             from_name: data.from_name,
             message_type: data.message_type,
+            notification_kind: data.notification_kind,
+            desk_path: data.desk_path,
             message_id: data.message_id,
             created_at: data.created_at,
         });
         setCachedChat(data.agent_id, cached);
         hideTypingIndicator();
-        appendChatMessage(data.content, data.from, data.message_type);
+        appendChatMessage(data.content, data.from, data.message_type, data);
     }
 
     async function handleChatReset(data) {
@@ -587,6 +611,309 @@ const AgentContext = (() => {
         }
 
         if (window.lucide) lucide.createIcons({ nodes: [container] });
+    }
+
+    // ─── Desk sub-view ───
+
+    async function renderDesk(path = '/me') {
+        const container = document.getElementById('subview-desk');
+        if (!selectedAgent || !container) return;
+        activeDeskPath = path || '/me';
+        container.innerHTML = `
+            <div class="text-bm-muted text-sm text-center mt-6">
+                <p>Loading desk...</p>
+            </div>`;
+
+        try {
+            const res = await fetch(`/api/agents/${selectedAgent.id}/desk?path=${encodeURIComponent(activeDeskPath)}`, { cache: 'no-store' });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            const payload = await res.json();
+            if (payload.kind === 'file') {
+                renderDeskFile(container, payload);
+                return;
+            }
+            renderDeskDirectory(container, payload);
+        } catch (err) {
+            container.innerHTML = `
+                <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    Failed to load desk contents.
+                </div>`;
+            console.error('[AgentContext] Desk load failed:', err);
+        }
+    }
+
+    function renderDeskDirectory(container, payload) {
+        const sections = Array.isArray(payload.sections) ? payload.sections : null;
+        const entries = Array.isArray(payload.entries) ? payload.entries : null;
+        const breadcrumbs = renderDeskBreadcrumbs(payload.breadcrumbs || []);
+        let html = `
+            <div class="space-y-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-bm-muted">Desk Browser</p>
+                        <h3 class="text-sm font-semibold mt-1">${BossModUtils.escapeHtml(payload.name || 'Desk')}</h3>
+                        <div class="text-xs text-bm-muted mt-1">${breadcrumbs}</div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" id="desk-open-folder-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Open Folder
+                        </button>
+                        <button type="button" id="desk-refresh-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Refresh
+                        </button>
+                    </div>
+                </div>`;
+
+        if (sections) {
+            html += sections.map(section => `
+                <div class="space-y-2">
+                    <h4 class="text-xs font-semibold uppercase tracking-wide text-bm-muted">${BossModUtils.escapeHtml(section.title)}</h4>
+                    ${renderDeskEntryList(section.entries || [], { emptyLabel: `No ${String(section.title || '').toLowerCase()} yet.` })}
+                </div>
+            `).join('');
+        } else {
+            html += renderDeskEntryList(entries || [], { emptyLabel: 'This folder is empty.' });
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+        bindDeskInteractions(container);
+    }
+
+    function renderDeskFile(container, payload) {
+        const artifact = payload.artifact || null;
+        const breadcrumbs = renderDeskBreadcrumbs(payload.breadcrumbs || []);
+        const metadataBits = [];
+        if (artifact?.category) metadataBits.push(`category: ${artifact.category}`);
+        if (artifact?.updated_at) metadataBits.push(`updated: ${new Date(artifact.updated_at).toLocaleString()}`);
+        const html = `
+            <div class="space-y-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-bm-muted">Desk File</p>
+                        <h3 class="text-sm font-semibold mt-1">${BossModUtils.escapeHtml(payload.name || payload.path || 'File')}</h3>
+                        <div class="text-xs text-bm-muted mt-1">${breadcrumbs}</div>
+                        ${metadataBits.length ? `<div class="text-[11px] text-bm-muted mt-2">${BossModUtils.escapeHtml(metadataBits.join(' • '))}</div>` : ''}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" id="desk-open-parent-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Up
+                        </button>
+                        <button type="button" id="desk-open-folder-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Open Folder
+                        </button>
+                        <button type="button" id="desk-refresh-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="rounded-lg border border-bm-border bg-white p-3">
+                    <pre class="text-xs whitespace-pre-wrap break-words text-bm-text">${BossModUtils.escapeHtml(payload.content || '')}</pre>
+                    ${payload.truncated ? '<p class="text-[11px] text-bm-muted mt-2">Preview truncated.</p>' : ''}
+                </div>
+            </div>`;
+        container.innerHTML = html;
+        bindDeskInteractions(container, payload.path);
+    }
+
+    function renderDeskEntryList(entries, { emptyLabel }) {
+        if (!Array.isArray(entries) || entries.length === 0) {
+            return `<div class="rounded-lg border border-dashed border-bm-border p-3 text-xs text-bm-muted">${BossModUtils.escapeHtml(emptyLabel)}</div>`;
+        }
+        return `
+            <div class="space-y-2">
+                ${entries.map(entry => `
+                    <button type="button"
+                            class="desk-entry w-full text-left rounded-lg border border-bm-border bg-white px-3 py-2 hover:bg-slate-50 transition-colors"
+                            data-path="${BossModUtils.escapeHtml(entry.path)}">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="${entry.is_dir ? 'folder' : 'file-text'}" class="w-3.5 h-3.5 shrink-0"></i>
+                                    <span class="text-sm font-medium truncate">${BossModUtils.escapeHtml(entry.name)}</span>
+                                </div>
+                                <div class="text-[11px] text-bm-muted mt-1 truncate">${BossModUtils.escapeHtml(entry.path)}</div>
+                            </div>
+                            <div class="text-[11px] text-bm-muted shrink-0">
+                                ${BossModUtils.escapeHtml(entry.category || '')}
+                            </div>
+                        </div>
+                    </button>
+                `).join('')}
+            </div>`;
+    }
+
+    function renderDeskBreadcrumbs(breadcrumbs) {
+        if (!Array.isArray(breadcrumbs) || breadcrumbs.length === 0) {
+            return '';
+        }
+        return breadcrumbs.map(item => `
+            <button type="button" class="desk-crumb hover:underline" data-path="${BossModUtils.escapeHtml(item.path)}">
+                ${BossModUtils.escapeHtml(item.label)}
+            </button>
+        `).join(' / ');
+    }
+
+    function bindDeskInteractions(container, filePath = null) {
+        container.querySelectorAll('.desk-entry, .desk-crumb').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const path = btn.dataset.path;
+                if (!path) return;
+                openDeskPath(path);
+            });
+        });
+        const refreshBtn = container.querySelector('#desk-refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => renderDesk(activeDeskPath));
+        }
+        const openFolderBtn = container.querySelector('#desk-open-folder-btn');
+        if (openFolderBtn) {
+            openFolderBtn.addEventListener('click', async () => {
+                await openDeskFolder(filePath || activeDeskPath);
+            });
+        }
+        const upBtn = container.querySelector('#desk-open-parent-btn');
+        if (upBtn) {
+            upBtn.addEventListener('click', () => {
+                openDeskPath(parentDeskPath(filePath || activeDeskPath));
+            });
+        }
+        if (window.lucide) lucide.createIcons({ nodes: [container] });
+    }
+
+    function parentDeskPath(path) {
+        if (!path || path === '/me' || path === '/projects') return '/me';
+        const parts = String(path).split('/').filter(Boolean);
+        parts.pop();
+        return parts.length ? `/${parts.join('/')}` : '/me';
+    }
+
+    function openDeskPath(path) {
+        if (!selectedAgent) return;
+        activeDeskPath = path || '/me';
+        switchSubview('desk');
+    }
+
+    async function openDeskFolder(path) {
+        if (!selectedAgent) return;
+        try {
+            const res = await fetch(`/api/agents/${selectedAgent.id}/desk/open-folder?path=${encodeURIComponent(path || '/me')}`, {
+                method: 'POST',
+            });
+            if (!res.ok) {
+                if (res.status === 409) {
+                    const payload = await res.json();
+                    const detail = payload?.detail;
+                    if (detail?.code === 'desk_open_folder_handler_required' || detail?.code === 'desk_open_folder_handler_invalid') {
+                        const chosen = await promptForFolderOpener(detail);
+                        if (chosen) {
+                            await fetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
+                                method: 'PUT',
+                            });
+                            await openDeskFolder(path);
+                        }
+                        return;
+                    }
+                }
+                throw new Error(await res.text());
+            }
+        } catch (err) {
+            console.error('[AgentContext] Failed to open desk folder:', err);
+        }
+    }
+
+    function promptForFolderOpener(detail) {
+        const options = Array.isArray(detail?.options) ? detail.options : [];
+        return new Promise((resolve) => {
+            closeFolderOpenerModal();
+
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4';
+            overlay.innerHTML = `
+                <div class="w-full max-w-lg rounded-xl border border-bm-border bg-white shadow-xl">
+                    <div class="px-5 py-4 border-b border-bm-border">
+                        <h3 class="text-lg font-semibold">Choose Folder Opener</h3>
+                        <p class="text-sm text-bm-muted mt-1">${BossModUtils.escapeHtml(detail?.message || 'Choose how BossMod should open folders on this machine.')}</p>
+                    </div>
+                    <div class="p-5 space-y-4">
+                        <div class="space-y-2" id="folder-opener-choice-list">
+                            ${options.map((option, index) => `
+                                <label class="flex items-start gap-3 rounded-lg border border-bm-border p-3 hover:bg-slate-50 cursor-pointer">
+                                    <input type="radio" name="folder-opener-choice" value="${BossModUtils.escapeHtml(option.value)}" ${index === 0 ? 'checked' : ''} class="mt-0.5">
+                                    <span>
+                                        <span class="block text-sm font-medium">${BossModUtils.escapeHtml(option.label)}</span>
+                                        <span class="block text-xs text-bm-muted mt-0.5">${BossModUtils.escapeHtml(option.description || '')}</span>
+                                    </span>
+                                </label>
+                            `).join('')}
+                            <label class="flex items-start gap-3 rounded-lg border border-bm-border p-3 hover:bg-slate-50 cursor-pointer">
+                                <input type="radio" name="folder-opener-choice" value="__custom__" ${options.length === 0 ? 'checked' : ''} class="mt-0.5">
+                                <span class="flex-1">
+                                    <span class="block text-sm font-medium">Custom executable</span>
+                                    <span class="block text-xs text-bm-muted mt-0.5">Enter the file manager command available on PATH.</span>
+                                    <input id="folder-opener-custom-input" type="text" placeholder="e.g. thunar"
+                                           class="mt-2 w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white">
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="px-5 py-4 border-t border-bm-border flex items-center justify-end gap-2">
+                        <button type="button" id="folder-opener-cancel"
+                                class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="button" id="folder-opener-save"
+                                class="px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:bg-bm-accent-hover transition-colors">
+                            Save
+                        </button>
+                    </div>
+                </div>`;
+
+            document.body.appendChild(overlay);
+            folderOpenerModalEl = overlay;
+
+            const cancel = () => {
+                closeFolderOpenerModal();
+                resolve(null);
+            };
+
+            overlay.querySelector('#folder-opener-cancel')?.addEventListener('click', cancel);
+            overlay.addEventListener('click', (event) => {
+                if (event.target === overlay) cancel();
+            });
+            overlay.querySelector('#folder-opener-custom-input')?.addEventListener('focus', () => {
+                const customRadio = overlay.querySelector('input[name="folder-opener-choice"][value="__custom__"]');
+                if (customRadio) customRadio.checked = true;
+            });
+
+            overlay.querySelector('#folder-opener-save')?.addEventListener('click', () => {
+                const selected = overlay.querySelector('input[name="folder-opener-choice"]:checked');
+                if (!selected) return;
+                if (selected.value === '__custom__') {
+                    const custom = String(overlay.querySelector('#folder-opener-custom-input')?.value || '').trim();
+                    if (!custom) return;
+                    closeFolderOpenerModal();
+                    resolve(custom);
+                    return;
+                }
+                closeFolderOpenerModal();
+                resolve(selected.value);
+            });
+        });
+    }
+
+    function closeFolderOpenerModal() {
+        if (folderOpenerModalEl) {
+            folderOpenerModalEl.remove();
+            folderOpenerModalEl = null;
+        }
     }
 
     // ─── Init ───

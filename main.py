@@ -6,6 +6,7 @@ or directly via `uv run python main.py` for development.
 """
 
 import hashlib
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -69,8 +70,8 @@ async def health():
     return {"status": "ok", "version": "0.1.0"}
 
 
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = os.environ.get("BOSSMOD_HOST", "127.0.0.1")
+PORT = int(os.environ.get("BOSSMOD_PORT", "38471"))
 
 if __name__ == "__main__":
     reload = "--reload" in sys.argv

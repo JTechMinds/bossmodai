@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
-from core.models import Task
-from db.crud import build_update, fetch_all, fetch_one, insert_returning
+from core.models import Task, TaskNotificationSettings, WorkContract
+from db.crud import build_update, insert_returning_dict, query
+from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
+from db.task_work_contracts import delete_task_work_contract, set_task_work_contract
 
 _TASK_COLUMNS = (
-    "id, title, description, project, assigned_to, created_by, "
-    "status, parent_task_id, cost_ceiling, completion_summary, "
-    "status_note, watchdog_pinged_at, last_progress_at, last_heartbeat_at, "
-    "last_activity, created_at"
+    "t.id, t.title, t.description, t.project, t.assigned_to, t.created_by, "
+    "t.status, twc.work_contract, twc.updated_at AS work_contract_updated_at, "
+    "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
+    "t.parent_task_id, t.cost_ceiling, t.completion_summary, "
+    "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
+    "t.last_activity, t.created_at"
 )
 
 _TASK_VALID_COLUMNS = {
@@ -23,6 +28,31 @@ _TASK_VALID_COLUMNS = {
 }
 
 
+def _validate_persisted_work_contract(work_contract: Any) -> WorkContract:
+    """Validate the durable task contract shape and path invariants."""
+    contract = WorkContract.model_validate(work_contract)
+    for item in contract.deliverables:
+        if item.type == "file" and not item.path.startswith("/"):
+            raise ValueError('task work_contract file deliverables must use absolute BossMod CLI paths')
+    return contract
+
+
+def _validate_notification_settings(
+    source_channel: Any,
+    notification_policy: Any,
+) -> TaskNotificationSettings:
+    """Validate durable task notification settings."""
+    return TaskNotificationSettings.model_validate(
+        {
+            "task_id": "placeholder",
+            "source_channel": source_channel,
+            "policy": notification_policy,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+    )
+
+
 def create_task(
     title: str,
     description: str | None = None,
@@ -30,26 +60,69 @@ def create_task(
     assigned_to: str | None = None,
     created_by: str | None = None,
     parent_task_id: str | None = None,
+    work_contract: Any | None = None,
+    source_channel: str | None = None,
+    notification_policy: str | None = None,
 ) -> Task:
     """Insert a new task."""
-    return insert_returning(
+    validated_work_contract = None
+    if work_contract is not None:
+        validated_work_contract = _validate_persisted_work_contract(work_contract)
+    validated_notification_settings = None
+    if source_channel is not None or notification_policy is not None:
+        if source_channel is None or notification_policy is None:
+            raise ValueError("source_channel and notification_policy must be provided together")
+        validated_notification_settings = _validate_notification_settings(source_channel, notification_policy)
+
+    row = insert_returning_dict(
         f"""
         INSERT INTO tasks (title, description, project, assigned_to, created_by, parent_task_id)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING {_TASK_COLUMNS}
+        RETURNING id
         """,
         [title, description, project, assigned_to, created_by, parent_task_id],
-        Task,
     )
+    task_id = row["id"]
+    if validated_work_contract is not None:
+        set_task_work_contract(task_id, validated_work_contract)
+    if validated_notification_settings is not None:
+        set_task_notification_settings(
+            task_id,
+            source_channel=validated_notification_settings.source_channel,
+            policy=validated_notification_settings.policy,
+        )
+    task = get_task(task_id)
+    if task is None:
+        raise RuntimeError(f"Failed to reload created task {task_id}")
+    return task
+
+
+def _task_from_row(row: dict[str, Any]) -> Task:
+    """Hydrate a task row and its optional work contract."""
+    data = dict(row)
+    raw_contract = data.get("work_contract")
+    if raw_contract:
+        data["work_contract"] = json.loads(raw_contract)
+    else:
+        data["work_contract"] = None
+    return Task.model_validate(data)
 
 
 def get_task(task_id: str) -> Task | None:
     """Fetch a single task by ID."""
-    return fetch_one(
-        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id = $1",
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        WHERE t.id = $1
+        """,
         [task_id],
-        Task,
     )
+    if not rows:
+        return None
+    return _task_from_row(rows[0])
 
 
 def list_tasks(
@@ -62,21 +135,41 @@ def list_tasks(
 
     if assigned_to is not None:
         params.append(assigned_to)
-        conditions.append(f"assigned_to = ${len(params)}")
+        conditions.append(f"t.assigned_to = ${len(params)}")
     if status is not None:
         params.append(status)
-        conditions.append(f"status = ${len(params)}")
+        conditions.append(f"t.status = ${len(params)}")
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    return fetch_all(
-        f"SELECT {_TASK_COLUMNS} FROM tasks {where} ORDER BY created_at",
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        {where}
+        ORDER BY t.created_at
+        """,
         params,
-        Task,
     )
+    return [_task_from_row(row) for row in rows]
 
 
 def update_task(task_id: str, **fields: Any) -> Task | None:
     """Update task fields. Auto-updates last_activity on status change."""
+    work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
+    source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
+    notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...
+    validated_work_contract = (
+        _validate_persisted_work_contract(work_contract)
+        if work_contract not in (..., None)
+        else work_contract
+    )
+    validated_notification_settings = ...
+    if source_channel is not ... or notification_policy is not ...:
+        if source_channel in (..., None) or notification_policy in (..., None):
+            raise ValueError("source_channel and notification_policy must be updated together")
+        validated_notification_settings = _validate_notification_settings(source_channel, notification_policy)
     if "status" in fields or "completion_summary" in fields or "status_note" in fields:
         now = datetime.now(timezone.utc)
         fields.setdefault("last_heartbeat_at", now)
@@ -87,4 +180,15 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
             fields.setdefault("last_progress_at", now)
 
     build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)
+    if validated_work_contract is not ...:
+        if validated_work_contract is None:
+            delete_task_work_contract(task_id)
+        else:
+            set_task_work_contract(task_id, validated_work_contract)
+    if validated_notification_settings is not ...:
+        set_task_notification_settings(
+            task_id,
+            source_channel=validated_notification_settings.source_channel,
+            policy=validated_notification_settings.policy,
+        )
     return get_task(task_id)

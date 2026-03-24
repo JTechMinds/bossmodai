@@ -130,6 +130,11 @@
                                    px-3 py-2 text-xs font-medium transition-colors">
                         <i data-lucide="list-todo" class="w-3.5 h-3.5"></i> Tasks
                     </button>
+                    <button data-subview="desk"
+                            class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
+                                   px-3 py-2 text-xs font-medium transition-colors">
+                        <i data-lucide="folder-open" class="w-3.5 h-3.5"></i> Desk
+                    </button>
                     <button data-subview="diagnostics"
                             class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
                                    px-3 py-2 text-xs font-medium transition-colors">
@@ -174,6 +179,9 @@
 
                 <!-- Agent tasks sub-view -->
                 <div id="subview-tasks" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
+
+                <!-- Agent desk sub-view -->
+                <div id="subview-desk" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
 
                 <!-- Agent diagnostics sub-view -->
                 <div id="subview-diagnostics" class="absolute inset-0 overflow-y-auto hidden"></div>

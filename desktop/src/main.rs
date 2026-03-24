@@ -2,7 +2,7 @@
 //
 // Spawns the FastAPI backend as a child process, waits for it
 // to become ready, then opens the native app window pointing
-// at localhost:8000. Cleans up the backend on exit.
+// at the configured local backend port. Cleans up the backend on exit.
 
 use std::process::{Child, Command};
 use std::path::Path;
@@ -10,6 +10,9 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::Manager;
+
+const BACKEND_HOST: &str = "127.0.0.1";
+const BACKEND_PORT: &str = "38471";
 
 struct BackendProcess(Mutex<Option<Child>>);
 
@@ -54,6 +57,8 @@ fn start_backend() -> Child {
 
     Command::new(&python)
         .arg(main_py.to_string_lossy().as_ref())
+        .env("BOSSMOD_HOST", BACKEND_HOST)
+        .env("BOSSMOD_PORT", BACKEND_PORT)
         .current_dir(&project_root)
         .spawn()
         .unwrap_or_else(|e| panic!("Failed to start backend with {}: {}", python, e))
@@ -80,7 +85,7 @@ fn main() {
     let backend_state = BackendProcess(Mutex::new(Some(backend)));
 
     // Wait for backend to be ready
-    let url = "http://127.0.0.1:8000";
+    let url = &format!("http://{}:{}", BACKEND_HOST, BACKEND_PORT);
     if !wait_for_backend(url, 15) {
         eprintln!("[BossMod] Backend failed to start within 15 seconds");
         if let Some(mut child) = backend_state.0.lock().unwrap().take() {

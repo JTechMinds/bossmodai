@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from core.models import Message
@@ -35,18 +36,25 @@ def create_message(
     )
 
 
-def get_human_chat_thread(agent_id: str, limit: int = 50) -> list[Message]:
-    """Return the direct human <-> agent chat thread (oldest first)."""
+def get_human_chat_thread(agent_id: str, limit: int = 50, earliest_ts: datetime | None = None) -> list[Message]:
+    """Return the authored direct human <-> agent chat thread (oldest first)."""
     from core.models.message import HUMAN_SENDER_ID
 
+    conditions = [
+        "((from_agent = $1 AND to_agent = $2) OR (from_agent = $2 AND to_agent = $1))",
+    ]
+    params: list[Any] = [agent_id, HUMAN_SENDER_ID]
+    if earliest_ts is not None:
+        params.append(earliest_ts)
+        conditions.append(f"created_at >= ${len(params)}")
+    params.append(limit)
     messages = fetch_all(
         f"""
         SELECT {_MESSAGE_COLUMNS} FROM messages
-        WHERE (from_agent = $1 AND to_agent = $2)
-           OR (from_agent = $2 AND to_agent = $1)
-        ORDER BY created_at DESC LIMIT $3
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC LIMIT ${len(params)}
         """,
-        [agent_id, HUMAN_SENDER_ID, limit],
+        params,
         Message,
     )
     messages.reverse()
@@ -57,16 +65,24 @@ def get_agent_direct_thread(
     agent_id: str,
     other_agent_id: str,
     limit: int = 50,
+    earliest_ts: datetime | None = None,
 ) -> list[Message]:
     """Return the direct message thread between two agents (oldest first)."""
+    conditions = [
+        "((from_agent = $1 AND to_agent = $2) OR (from_agent = $2 AND to_agent = $1))",
+    ]
+    params: list[Any] = [agent_id, other_agent_id]
+    if earliest_ts is not None:
+        params.append(earliest_ts)
+        conditions.append(f"created_at >= ${len(params)}")
+    params.append(limit)
     messages = fetch_all(
         f"""
         SELECT {_MESSAGE_COLUMNS} FROM messages
-        WHERE (from_agent = $1 AND to_agent = $2)
-           OR (from_agent = $2 AND to_agent = $1)
-        ORDER BY created_at DESC LIMIT $3
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC LIMIT ${len(params)}
         """,
-        [agent_id, other_agent_id, limit],
+        params,
         Message,
     )
     messages.reverse()

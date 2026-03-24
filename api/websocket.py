@@ -35,7 +35,7 @@ class ConnectionManager:
     @property
     def activity_log(self) -> list[dict[str, Any]]:
         """Load recent activity from the database."""
-        rows = db.get_recent_activity(self._max_log_size)
+        rows = db.get_recent_activity_log_entries(self._max_log_size)
         return [
             {
                 "event": r["event"],
@@ -89,6 +89,8 @@ class ConnectionManager:
         message_type: str | None = None,
         message_id: str | None = None,
         created_at: Any = None,
+        notification_kind: str | None = None,
+        desk_path: str | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
 
@@ -105,6 +107,8 @@ class ConnectionManager:
                 "message_type": message_type,
                 "message_id": message_id,
                 "created_at": created_at,
+                "notification_kind": notification_kind,
+                "desk_path": desk_path,
             },
         })
 
@@ -134,7 +138,7 @@ class ConnectionManager:
         extra: dict[str, Any] | None = None,
     ) -> None:
         """Persist an activity event to the database and broadcast to all clients."""
-        db.create_activity(event=event, detail=detail, agent_name=agent_name)
+        db.create_activity_log_entry(event=event, detail=detail, agent_name=agent_name)
 
         entry: dict[str, Any] = {
             "event": event,

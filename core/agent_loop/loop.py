@@ -13,7 +13,8 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
-from core.agent_loop.chat_receipts import create_chat_receipt
+from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
+from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.decision_contract import (
     ConversationDecision,
     parse_direct_turn_response,
@@ -68,7 +69,7 @@ async def run_turn(
 
     # 3. Build initial context
     is_decision_turn = _is_decision_turn(trigger)
-    conversation_history = _get_conversation_history(agent.id, trigger)
+    prompt_history = build_prompt_history_view(agent, trigger, token_model=model)
     nearby = _get_nearby_agents(agent.id, state)
     initial_activity = activity_runtime.get_active_activity(agent.id)
     current_task = _get_current_task(agent.id)
@@ -81,7 +82,8 @@ async def run_turn(
             agent=agent,
             state=state,
             trigger=trigger,
-            conversation_history=conversation_history,
+            conversation_history=prompt_history.conversation_history,
+            prompt_notifications=prompt_history.prompt_notifications,
             reference_materials=reference_materials,
             current_activity=_get_current_activity(agent.id),
             nearby_agents=nearby,
@@ -349,14 +351,6 @@ async def run_turn(
             )
 
         chat_message = result.get("chat_message")
-        if not chat_message:
-            chat_message = create_chat_receipt(
-                agent=agent,
-                trigger=trigger,
-                active_activity=active_activity_before_action,
-                action=action,
-                result=result,
-            )
         if chat_message:
             await manager.broadcast_chat_message(
                 agent_id=chat_message["agent_id"],
@@ -366,6 +360,27 @@ async def run_turn(
                 message_type=chat_message.get("message_type"),
                 message_id=chat_message.get("message_id"),
                 created_at=chat_message.get("created_at"),
+                desk_path=chat_message.get("desk_path"),
+            )
+
+        for notification in project_chat_notifications(
+            agent=agent,
+            trigger=trigger,
+            active_activity=active_activity_before_action,
+            action=action,
+            result=result,
+        ):
+            chat_notification = persist_chat_notification(agent, notification)
+            await manager.broadcast_chat_message(
+                agent_id=chat_notification["agent_id"],
+                content=chat_notification["content"],
+                from_type=chat_notification["from_type"],
+                from_name=chat_notification["from_name"],
+                message_type=chat_notification.get("message_type"),
+                message_id=chat_notification.get("message_id"),
+                created_at=chat_notification.get("created_at"),
+                notification_kind=chat_notification.get("notification_kind"),
+                desk_path=chat_notification.get("desk_path"),
             )
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
@@ -719,7 +734,13 @@ async def _run_decision_turn(
                     start=start,
                 )
 
-            cli_result = execute_bm_cli(agent, state, cli_call.command, cli_call.content)
+            cli_result = execute_bm_cli(
+                agent,
+                state,
+                cli_call.command,
+                cli_call.content,
+                trigger_type=trigger_type,
+            )
             if cli_call.thought:
                 await manager.broadcast_thought(
                     agent_id=agent.id,
@@ -811,7 +832,7 @@ async def _run_decision_turn(
                     "role": "system",
                     "content": (
                         "This direct request is a factual status query. "
-                        'Before your final JSON decision, call {"action":"bm_cli","command":"me get status","thought":"check live status"}.'
+                        'Before your final JSON decision, call {"action":"bm_cli","command":"status","thought":"check live status"}.'
                     ),
                 },
                 {
@@ -1097,33 +1118,6 @@ def _determine_mode(trigger: dict[str, Any]) -> routing.ActivationMode:
     return "work"
 
 
-def _get_conversation_history(agent_id: str, trigger: dict[str, Any]) -> list[dict[str, Any]]:
-    """Fetch the relevant direct conversation history for this trigger."""
-    trigger_type = trigger.get("type")
-    limit = 50
-
-    if trigger_type in ("human_chat", "watchdog_status_ping"):
-        thread = db.get_human_chat_thread(agent_id, limit=limit)
-        return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
-
-    if trigger_type == "peer_message" and trigger.get("from_agent"):
-        thread = db.get_agent_direct_thread(agent_id, trigger["from_agent"], limit=limit)
-        return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
-
-    if trigger_type == "activity_resumed":
-        active = activity_runtime.get_active_activity(agent_id)
-        if active and active.kind in {"conversation", "meeting"}:
-            thread = db.get_human_chat_thread(agent_id, limit=limit)
-            return _filter_prompt_history(db.get_formatted_messages(thread, human_label="Human Operator"))
-
-    return []
-
-
-def _filter_prompt_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Exclude runtime-authored system receipts from LLM conversation context."""
-    return [msg for msg in messages if msg.get("message_type") != "system"]
-
-
 def _get_nearby_agents(
     agent_id: str,
     state: AgentState,
@@ -1149,6 +1143,7 @@ def _get_current_task(agent_id: str) -> dict[str, Any] | None:
         "description": task.description,
         "status": task.status,
         "project": task.project,
+        "work_contract": task.work_contract.model_dump() if task.work_contract else None,
         "completion_summary": task.completion_summary,
         "status_note": task.status_note,
     }
@@ -1200,6 +1195,15 @@ def _build_continuation_instruction(
     """Build the next-step instruction after a non-terminal execution action."""
     detail = result.get("detail", action_name)
     if active_activity_kind == "work":
+        missing_deliverables = result.get("missing_deliverables") or []
+        if missing_deliverables:
+            first = missing_deliverables[0]
+            target = first.get("path") or "the required deliverable"
+            return (
+                f"Action executed: {detail}. "
+                f'The current work contract still requires "{target}". '
+                f'Use {{"action":"bm_cli","command":"write {target}","content":"...",...}} or another valid step to satisfy it before complete.'
+            )
         if result.get("event") == "world_feedback" and "Walk to your desk first." in detail:
             return (
                 f"Action executed: {detail}. "
