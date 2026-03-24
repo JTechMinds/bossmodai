@@ -115,6 +115,7 @@ def render_action_contract() -> str:
             "- Use message when the current activity requires a conversational reply.",
             "- If you need location-bound work, walk first and work second.",
             "- Use bm_cli for authoritative self/project facts when needed; do not treat old chat as runtime truth.",
+            '- For bm_cli write commands, provide the file body in a separate "content" field.',
             "- Use walkTo to fulfill an existing commitment, not to accept a new one.",
             '- "work", "complete", "blocked", "delegated", and "abandoned" act on the server-bound current task. Do not invent task IDs.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',

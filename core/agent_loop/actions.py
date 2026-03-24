@@ -125,6 +125,8 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         command = action.get("command")
         if not isinstance(command, str) or not command.strip():
             return '"bm_cli" requires a non-empty "command"'
+        if action.get("content") is not None and not isinstance(action.get("content"), str):
+            return '"bm_cli" "content" must be a string when provided'
 
     if action_name == "message":
         recipient_type = action.get("recipientType")
@@ -299,7 +301,8 @@ async def _handle_bm_cli(
 ) -> dict[str, Any]:
     """Run a bounded BossMod CLI query and return a turn-local result."""
     command = str(action.get("command") or "").strip()
-    cli_result = execute_bm_cli(agent, state, command)
+    content = action.get("content")
+    cli_result = execute_bm_cli(agent, state, command, content if isinstance(content, str) else None)
     return {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
         "detail": cli_result.detail,

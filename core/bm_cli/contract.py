@@ -14,12 +14,15 @@ class BossModCliCall(BaseModel):
 
     action: Literal["bm_cli"]
     command: str
+    content: str | None = None
     thought: str = Field(default="")
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "BossModCliCall":
         if not self.command.strip():
             raise ValueError('"bm_cli" requires a non-empty "command"')
+        if self.content is not None and not isinstance(self.content, str):
+            raise ValueError('"bm_cli" content must be a string when provided')
         return self
 
 
@@ -38,13 +41,27 @@ def render_bm_cli_guidance() -> str:
         [
             "BOSSMOD CLI:",
             '- Use {"action":"bm_cli","command":"...","thought":"..."} when you need authoritative self/project information.',
+            '- For write-style commands, include a separate "content" field instead of cramming long text into the command string.',
             "- BossMod CLI results are turn-local. Use them for the current reply/action; they do not become normal chat memory.",
             "- Starter commands:",
             "  - me get status",
+            "  - me get runtime",
+            "  - me get activity",
+            "  - me get current-task",
+            "  - me get tasks",
+            "  - me get recent-work",
             "  - me get location",
             "  - me ls",
             "  - me cat <file>",
+            "  - me write <file>   (requires content)",
+            "  - me notes ls",
+            "  - me notes cat <file>",
+            "  - me notes write <file>   (requires content)",
             "  - project <project-name> ls",
             "  - project <project-name> cat <file>",
+            "  - project <project-name> write <file>   (requires content)",
+            "  - project <project-name> notes ls",
+            "  - project <project-name> notes cat <file>",
+            "  - project <project-name> notes write <file>   (requires content)",
         ]
     )

@@ -719,7 +719,7 @@ async def _run_decision_turn(
                     start=start,
                 )
 
-            cli_result = execute_bm_cli(agent, state, cli_call.command)
+            cli_result = execute_bm_cli(agent, state, cli_call.command, cli_call.content)
             if cli_call.thought:
                 await manager.broadcast_thought(
                     agent_id=agent.id,

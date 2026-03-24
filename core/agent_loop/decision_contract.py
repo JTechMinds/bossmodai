@@ -137,6 +137,7 @@ def render_decision_contract() -> str:
             "- Valid JSON only, no markdown or extra text.",
             "- This contract is for direct requests only. Do not emit execution actions here.",
             "- You may use bm_cli first when you need authoritative runtime/project information before deciding.",
+            '- For bm_cli write commands, provide the file body in a separate "content" field.',
             '- For status_request questions about your current state, use {"action":"bm_cli","command":"me get status","thought":"check live status"} before the final decision.',
             "- Use decision=\"answer\" for pure status/question replies that do not change commitments.",
             "- Use decision=\"accept\" to create or replace a commitment.",

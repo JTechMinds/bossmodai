@@ -24,6 +24,8 @@ from api.routes import (
 )
 from api.websocket import manager
 from core import config
+from core.bm_cli import execute_bm_cli
+from core.bm_cli.filesystem import agent_artifact_dir, project_artifact_dir
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.decision_contract import parse_decision, render_decision_contract
 from core.agent_loop import activity_runtime, loop as loop_module
@@ -123,6 +125,115 @@ def test_parse_action_accepts_bm_cli(isolated_db):
     parsed = parse_action('{"action":"bm_cli","command":"me get status","thought":"check status"}')
     assert parsed["action"] == "bm_cli"
     assert parsed["command"] == "me get status"
+
+
+def test_parse_action_accepts_bm_cli_with_content(isolated_db):
+    parsed = parse_action('{"action":"bm_cli","command":"me notes write report.md","content":"hello world","thought":"save report"}')
+    assert parsed["action"] == "bm_cli"
+    assert parsed["command"] == "me notes write report.md"
+    assert parsed["content"] == "hello world"
+
+
+def test_execute_bm_cli_exposes_expanded_read_commands(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Draft summary",
+        description="Prepare a concise summary",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, task, x=desk_x, y=desk_y)
+    db.create_message(
+        from_agent=agent.id,
+        to_agent=None,
+        content="Produced a concise draft summary artifact.",
+        message_type="work",
+    )
+
+    current_task = execute_bm_cli(agent, state, "me get current-task")
+    assert current_task.ok is True
+    assert current_task.kind == "current_task"
+    assert current_task.data is not None
+    assert current_task.data["current_task"]["title"] == "Draft summary"
+    assert "CURRENT TASK:" in current_task.prompt_content
+
+    tasks = execute_bm_cli(agent, state, "me get tasks")
+    assert tasks.ok is True
+    assert tasks.kind == "tasks"
+    assert "OPEN TASKS:" in tasks.prompt_content
+    assert tasks.data is not None
+    assert tasks.data["open_tasks"] == []
+
+    recent_work = execute_bm_cli(agent, state, "me get recent-work")
+    assert recent_work.ok is True
+    assert recent_work.kind == "recent_work"
+    assert recent_work.data is not None
+    assert len(recent_work.data["recent_work_artifacts"]) == 1
+    assert "RECENT WORK ARTIFACTS:" in recent_work.prompt_content
+
+    runtime = execute_bm_cli(agent, state, "me get runtime")
+    assert runtime.ok is True
+    assert runtime.kind == "runtime"
+    assert runtime.data is not None
+    assert runtime.data["runtime"]["current_task"] == "Draft summary"
+
+
+def test_execute_bm_cli_notes_aliases_match_artifact_roots(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    personal_root = agent_artifact_dir(agent.name)
+    (personal_root / "todo.txt").write_text("remember the launch checklist", encoding="utf-8")
+
+    project_root = project_artifact_dir("orchard")
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "brief.md").write_text("avocado market brief", encoding="utf-8")
+
+    personal_listing = execute_bm_cli(agent, state, "me notes ls")
+    assert personal_listing.ok is True
+    assert "- todo.txt" in personal_listing.prompt_content
+
+    personal_file = execute_bm_cli(agent, state, "me notes cat todo.txt")
+    assert personal_file.ok is True
+    assert "remember the launch checklist" in personal_file.prompt_content
+
+    project_listing = execute_bm_cli(agent, state, "project orchard notes ls")
+    assert project_listing.ok is True
+    assert "- brief.md" in project_listing.prompt_content
+
+    project_file = execute_bm_cli(agent, state, "project orchard notes cat brief.md")
+    assert project_file.ok is True
+    assert "avocado market brief" in project_file.prompt_content
+
+
+def test_execute_bm_cli_write_commands_create_reviewable_files(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    personal_write = execute_bm_cli(
+        agent,
+        state,
+        "me notes write reports/summary.md",
+        "Avocado report draft\nSecond line",
+    )
+    assert personal_write.ok is True
+    assert personal_write.kind == "write"
+    personal_path = agent_artifact_dir(agent.name) / "reports" / "summary.md"
+    assert personal_path.read_text(encoding="utf-8") == "Avocado report draft\nSecond line\n"
+
+    project_write = execute_bm_cli(
+        agent,
+        state,
+        "project orchard notes write deliverables/avocados.md",
+        "Project avocado memo",
+    )
+    assert project_write.ok is True
+    assert project_write.kind == "write"
+    project_path = project_artifact_dir("orchard") / "deliverables" / "avocados.md"
+    assert project_path.read_text(encoding="utf-8") == "Project avocado memo\n"
 
 
 def test_prompt_context_separates_live_state_from_recent_completed_work(isolated_db):
