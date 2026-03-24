@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.bm_cli.contract import render_bm_cli_guidance
+
 
 @dataclass(frozen=True)
 class ActionSpec:
@@ -15,6 +17,11 @@ class ActionSpec:
 
 
 _ACTION_SPECS = [
+    ActionSpec(
+        name="bm_cli",
+        description="Query BossMod CLI for authoritative self/project information before choosing the next step.",
+        example='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+    ),
     ActionSpec(
         name="work",
         description="Create durable work output. Only use after moving to a workspace.",
@@ -93,6 +100,8 @@ def render_action_contract() -> str:
             '  remoteMeeting/delegated: use the exact "agentId" from TEAM DIRECTORY.',
             '  attendMeeting: you may include "agentId" when the in-person meeting is with another agent.',
             "",
+            render_bm_cli_guidance(),
+            "",
             "RESPONSE FORMAT — respond with exactly ONE JSON object:",
         ]
     )
@@ -105,6 +114,7 @@ def render_action_contract() -> str:
             "- Valid JSON only, no markdown or extra text.",
             "- Use message when the current activity requires a conversational reply.",
             "- If you need location-bound work, walk first and work second.",
+            "- Use bm_cli for authoritative self/project facts when needed; do not treat old chat as runtime truth.",
             "- Use walkTo to fulfill an existing commitment, not to accept a new one.",
             '- "work", "complete", "blocked", "delegated", and "abandoned" act on the server-bound current task. Do not invent task IDs.',
             '- The "recipientType" field is required on message. Use "agentId" instead of agent names for agent-targeted actions.',

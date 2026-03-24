@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from core.bm_cli.contract import maybe_parse_bm_cli_call, render_bm_cli_guidance
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ def render_decision_contract() -> str:
         "Respond with exactly one JSON decision object.",
         "You are deciding how to respond and what commitment to make.",
         "Do not emit low-level execution actions like walkTo, work, attendMeeting, or remoteMeeting here.",
+        'If you need authoritative self/project facts first, you may use {"action":"bm_cli","command":"...","thought":"..."} before the final decision.',
         "",
         "DECISIONS:",
     ]
@@ -121,6 +123,8 @@ def render_decision_contract() -> str:
             "  taskTitle/taskDescription — required when accepting new durable work from chat",
             "  thought         — brief admin-visible operational note",
             "",
+            render_bm_cli_guidance(),
+            "",
             "RESPONSE FORMAT — respond with exactly ONE JSON object:",
         ]
     )
@@ -132,6 +136,8 @@ def render_decision_contract() -> str:
             "RULES:",
             "- Valid JSON only, no markdown or extra text.",
             "- This contract is for direct requests only. Do not emit execution actions here.",
+            "- You may use bm_cli first when you need authoritative runtime/project information before deciding.",
+            '- For status_request questions about your current state, use {"action":"bm_cli","command":"me get status","thought":"check live status"} before the final decision.',
             "- Use decision=\"answer\" for pure status/question replies that do not change commitments.",
             "- Use decision=\"accept\" to create or replace a commitment.",
             "- Use commitmentKind=\"work\" only when a request becomes durable work.",
@@ -165,6 +171,58 @@ def parse_decision(raw_response: str) -> dict[str, Any]:
         else:
             logger.warning("No JSON found in decision response: %s", text[:200])
             return {"decision": "_parse_failed", "thought": "", "_raw_snippet": text[:200]}
+
+    if not isinstance(parsed, dict):
+        return {"decision": "_parse_failed", "thought": "", "_raw_snippet": "Decision payload must be a JSON object"}
+
+    try:
+        decision = ConversationDecision.model_validate(parsed)
+    except ValidationError as exc:
+        error = exc.errors()[0].get("msg", "Invalid decision payload")
+        logger.warning("Invalid decision payload: %s", error)
+        return {
+            "decision": "_parse_failed",
+            "thought": parsed.get("thought", "") if isinstance(parsed, dict) else "",
+            "_raw_snippet": str(error)[:200],
+        }
+
+    return decision.model_dump()
+
+
+def parse_direct_turn_response(raw_response: str) -> dict[str, Any]:
+    """Parse either a direct-request decision or a BossMod CLI call."""
+    text = raw_response.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = [line for line in lines if not line.strip().startswith("```")]
+        text = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start:end])
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse direct-turn JSON: %s", text[:200])
+                return {"decision": "_parse_failed", "thought": "", "_raw_snippet": text[:200]}
+        else:
+            logger.warning("No JSON found in direct-turn response: %s", text[:200])
+            return {"decision": "_parse_failed", "thought": "", "_raw_snippet": text[:200]}
+
+    try:
+        cli_call = maybe_parse_bm_cli_call(parsed)
+    except ValidationError as exc:
+        error = exc.errors()[0].get("msg", "Invalid BossMod CLI payload")
+        return {
+            "decision": "_parse_failed",
+            "thought": parsed.get("thought", "") if isinstance(parsed, dict) else "",
+            "_raw_snippet": str(error)[:200],
+        }
+    if cli_call is not None:
+        return cli_call.model_dump()
 
     if not isinstance(parsed, dict):
         return {"decision": "_parse_failed", "thought": "", "_raw_snippet": "Decision payload must be a JSON object"}

@@ -27,8 +27,9 @@ from core import config
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.decision_contract import parse_decision, render_decision_contract
 from core.agent_loop import activity_runtime, loop as loop_module
-from core.agent_loop.activity_scheduler import prepare_trigger_context
+from core.agent_loop.activity_scheduler import plan_arrival_follow_up, prepare_trigger_context
 from core.agent_loop.actions import execute_action, parse_action
+from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.outcomes import TurnOutcome
@@ -86,6 +87,11 @@ def _paused_work(agent_id: str, task_id: str):
     return None
 
 
+def _active_movement(agent_id: str):
+    items = db.list_activities(agent_id=agent_id, kind="movement", status="active", limit=20)
+    return items[0] if items else None
+
+
 async def _noop(*args, **kwargs):
     return None
 
@@ -111,6 +117,12 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
 
     advanced_settings = {item.key: item.value for item in db.get_settings("advanced")}
     assert "action_contract_template" not in advanced_settings
+
+
+def test_parse_action_accepts_bm_cli(isolated_db):
+    parsed = parse_action('{"action":"bm_cli","command":"me get status","thought":"check status"}')
+    assert parsed["action"] == "bm_cli"
+    assert parsed["command"] == "me get status"
 
 
 def test_prompt_context_separates_live_state_from_recent_completed_work(isolated_db):
@@ -602,6 +614,258 @@ async def test_run_turn_status_reply_schedules_activity_resume_for_active_work(i
     assert outcome.result["trigger_requests"][0]["task_id"] == task.id
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
     assert diagnostics[0]["action_name"] == "answer(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_status_request_can_use_bm_cli_before_final_answer(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    task = db.create_task(
+        title="Generate Words API",
+        description="Define the API contract.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(
+        task.id,
+        status="complete",
+        completion_summary="Finished the Generate Words API specification.",
+        watchdog_pinged_at=None,
+    )
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "Taylor whats your status?", message_type="human")
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"decision":"answer","intentKind":"status_request","reply":"I am idle right now at the Main Workspace. I finished the Generate Words API specification earlier.","commitmentKind":"none","thought":"share grounded status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Taylor whats your status?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 2
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert all("BOSSMOD CLI RESULT" not in msg.content for msg in thread)
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> answer(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_status_request_forces_bm_cli_after_stale_first_answer(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    task = db.create_task(
+        title="Generate Words API",
+        description="Define the API contract.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_task(
+        task.id,
+        status="complete",
+        completion_summary="Finished the Generate Words API specification.",
+        watchdog_pinged_at=None,
+    )
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "What is the status on the api?", message_type="human")
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"decision":"answer","intentKind":"status_request","reply":"I am currently working on building the API that generates words from letters.","commitmentKind":"none","thought":"status update"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"decision":"answer","intentKind":"status_request","reply":"I am idle right now at the Main Workspace. I finished the Generate Words API specification earlier.","commitmentKind":"none","thought":"share grounded status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "What is the status on the api?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 3
+    assert any(
+        "This direct request is a factual status query." in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[2]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == "I am idle right now at the Main Workspace. I finished the Generate Words API specification earlier."
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> answer(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_status_request_cannot_drift_into_new_commitment_after_bm_cli(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(HUMAN_SENDER_ID, agent.id, "great hows it going?", message_type="human")
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"decision":"answer","intentKind":"status_request","reply":"I just finished the task and I am idle now.","commitmentKind":"none","thought":"status update"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"action":"bm_cli","command":"me get status","thought":"check live status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"decision":"accept","intentKind":"meeting_request","reply":"Sure, I am heading to the meeting room now.","commitmentKind":"meeting","destination":"meetingRoom","title":"Team Sync Meeting","detail":"Join the scheduled team sync meeting.","thought":"accept the meeting"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"decision":"answer","intentKind":"status_request","reply":"I am currently idle at the Main Workspace with no active tasks.","commitmentKind":"none","thought":"share grounded status"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "great hows it going?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 4
+    assert any(
+        "Stay on the current status question." in message["content"]
+        for message in captured_messages[3]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == "I am currently idle at the Main Workspace with no active tasks."
+    assert db.get_active_activity(agent.id) is None
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> answer(none)"
 
 
 @pytest.mark.asyncio
@@ -1468,6 +1732,46 @@ async def test_substantive_request_can_start_task_before_walk(isolated_db, monke
     assert _paused_work(agent.id, tasks[0].id) is None
 
 
+def test_arrival_follow_up_for_work_uses_desk_label_and_clears_preference(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write brief",
+        description="Draft a short brief",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.update_agent_state(agent.id, x=19, y=4, status="work_active")
+    work_activity = activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+        task_status="accepted",
+        metadata={"preferred_destination": "desk"},
+    )
+    movement = activity_runtime.start_movement_activity(
+        agent.id,
+        destination="desk",
+        parent_activity_id=work_activity.id,
+        detail="Walking to desk",
+        metadata={"destination": "desk", "destination_x": desk_x, "destination_y": desk_y},
+    )
+    assert movement.kind == "movement"
+    assert _active_movement(agent.id) is not None
+
+    db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="in_transit")
+
+    resumed = activity_runtime.resolve_arrival(agent.id)
+    assert resumed is not None
+    assert resumed.kind == "work"
+    assert resumed.metadata.get("preferred_destination") is None
+
+    queued = plan_arrival_follow_up(agent.id, resumed, "Main Workspace")
+    assert len(queued) == 1
+    assert queued[0]["payload"]["content"] == 'You arrived at your desk. Continue work on "Write brief".'
+
+
 @pytest.mark.asyncio
 async def test_new_human_assignment_pauses_older_active_task_before_starting_new_one(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
@@ -1853,6 +2157,44 @@ async def test_dispatcher_exception_reconciles_status_with_active_work(isolated_
     assert active is not None
     assert active.kind == "work"
     assert active.task_id == task.id
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["status"] == "error"
+    assert diagnostics[0]["trigger_type"] == "human_chat"
+
+
+def test_apply_decision_does_not_persist_reply_before_work_accept_succeeds(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(activity_runtime, "activate_work_activity", boom)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        apply_decision(
+            {
+                "decision": "accept",
+                "intentKind": "work_request",
+                "reply": "I will start drafting the whitepaper now.",
+                "commitmentKind": "work",
+                "taskTitle": "Write Whitepaper",
+                "taskDescription": "Draft a whitepaper.",
+                "thought": "accept the work",
+            },
+            agent,
+            state,
+            {
+                "type": "human_chat",
+                "content": "Please write a whitepaper.",
+                "from_name": "Human Operator",
+            },
+        )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == []
 
 
 def test_dispatcher_enqueued_human_chat_prunes_stale_rebuildable_triggers(isolated_db):

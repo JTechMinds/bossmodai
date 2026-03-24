@@ -14,7 +14,11 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.chat_receipts import create_chat_receipt
-from core.agent_loop.decision_contract import ConversationDecision, parse_decision, validate_decision_for_trigger
+from core.agent_loop.decision_contract import (
+    ConversationDecision,
+    parse_direct_turn_response,
+    validate_decision_for_trigger,
+)
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.liveness import record_action_liveness
@@ -24,6 +28,7 @@ from core.agent_loop.turn_rules import (
     should_end_turn_after_action,
     validate_action_for_turn,
 )
+from core.bm_cli import execute_bm_cli, maybe_parse_bm_cli_call
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 import db
@@ -325,8 +330,9 @@ async def run_turn(
         if result.get("trigger_requests"):
             scheduled_triggers.extend(result["trigger_requests"])
 
-        # Broadcast action result immediately
-        await manager.broadcast_world_state()
+        # Broadcast action result immediately when the world changed
+        if not result.get("suppress_world_broadcast"):
+            await manager.broadcast_world_state()
 
         thought_text = action.get("thought", "")
         if thought_text:
@@ -334,12 +340,13 @@ async def run_turn(
                 agent_id=agent.id, thought=thought_text, action_name=action_name,
             )
 
-        await manager.broadcast_activity(
-            event=result.get("event", "agent_updated"),
-            detail=result.get("detail", ""),
-            agent_name=result.get("agent_name"),
-            extra=result.get("activity_extra"),
-        )
+        if not result.get("suppress_activity_broadcast"):
+            await manager.broadcast_activity(
+                event=result.get("event", "agent_updated"),
+                detail=result.get("detail", ""),
+                agent_name=result.get("agent_name"),
+                extra=result.get("activity_extra"),
+            )
 
         chat_message = result.get("chat_message")
         if not chat_message:
@@ -487,17 +494,27 @@ async def run_turn(
             break
 
         # Non-terminal action — feed result back and continue
-        continuation_messages = [
-            {"role": "assistant", "content": response.content},
-            {
-                "role": "user",
-                "content": _build_continuation_instruction(
-                    result=result,
-                    action_name=action_name,
-                    active_activity_kind=active_activity.kind if active_activity else None,
-                ),
-            },
-        ]
+        if action_name == "bm_cli" and result.get("cli_prompt_content"):
+            continuation_messages = [
+                {"role": "assistant", "content": response.content},
+                {"role": "system", "content": result["cli_prompt_content"]},
+                {
+                    "role": "user",
+                    "content": "Use the BossMod CLI result above to choose the next execution step.",
+                },
+            ]
+        else:
+            continuation_messages = [
+                {"role": "assistant", "content": response.content},
+                {
+                    "role": "user",
+                    "content": _build_continuation_instruction(
+                        result=result,
+                        action_name=action_name,
+                        active_activity_kind=active_activity.kind if active_activity else None,
+                    ),
+                },
+            ]
         context.extend(continuation_messages)
         next_step_delta = _serialize_trace_value(continuation_messages)
 
@@ -555,212 +572,471 @@ async def _run_decision_turn(
     start: float,
 ) -> TurnOutcome:
     """Handle a single-turn direct request by producing a structured decision."""
-    step_started = time.monotonic()
+    step_traces: list[dict[str, Any]] = []
+    executed_actions: list[str] = []
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
+    current_context = list(context)
+    next_context_snapshot: str | None = None
+    tool_steps = 0
+    last_response_content = ""
+    status_lookup_required = False
+    status_answer_reprompted = False
 
-    try:
-        response = await client.completion(
-            model=model,
-            messages=context,
-            api_base=api_config.get("api_base"),
-            api_key=api_config.get("api_key"),
-            extra_body=api_config.get("extra_body"),
-        )
-    except client.LLMError as exc:
-        result = {
-            "event": "agent_error",
-            "detail": f"{agent.name} LLM call failed: {exc}",
-            "agent_name": agent.name,
-        }
-        await manager.broadcast_activity(**result)
-        return await _finalize_turn(
-            agent=agent,
-            trigger=trigger,
-            trigger_type=trigger_type,
-            mode=mode,
-            model=model,
-            model_source=model_source,
-            initial_context_json=initial_context_json,
-            outcome=TurnOutcome.failure(
-                result=result,
-                error=str(exc),
-                action=None,
-                action_summary="",
-                raw_response="",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                steps=[
-                    _build_step_trace(
-                        step_index=1,
-                        context_snapshot=None,
-                        raw_response=None,
-                        action=None,
-                        result=result,
-                        prompt_tokens=0,
-                        completion_tokens=0,
-                        total_tokens=0,
-                        duration_ms=int((time.monotonic() - step_started) * 1000),
-                        error=str(exc),
-                    )
-                ],
-            ),
-            start=start,
-        )
+    while True:
+        step_started = time.monotonic()
 
-    parsed = parse_decision(response.content)
-    if parsed.get("decision") == "_parse_failed":
-        result = {
-            "event": "agent_error",
-            "detail": f"{agent.name} returned invalid decision JSON",
-            "agent_name": agent.name,
-        }
-        await manager.broadcast_activity(**result)
-        error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
-        return await _finalize_turn(
-            agent=agent,
-            trigger=trigger,
-            trigger_type=trigger_type,
-            mode=mode,
-            model=model,
-            model_source=model_source,
-            initial_context_json=initial_context_json,
-            outcome=TurnOutcome.failure(
-                result=result,
-                error=error,
-                action=parsed,
-                action_summary="",
-                raw_response=response.content,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens,
-                steps=[
-                    _build_step_trace(
-                        step_index=1,
-                        context_snapshot=None,
-                        raw_response=response.content,
-                        action=parsed,
-                        result=result,
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
-                        duration_ms=int((time.monotonic() - step_started) * 1000),
-                        error=error,
-                    )
-                ],
-            ),
-            start=start,
-        )
-
-    decision = ConversationDecision.model_validate(parsed)
-    validation_error = validate_decision_for_trigger(
-        decision,
-        trigger_type=trigger_type,
-        active_task_id=initial_task_id,
-    )
-    if validation_error:
-        result = {
-            "event": "agent_error",
-            "detail": f"{agent.name} returned an invalid direct-request decision",
-            "agent_name": agent.name,
-        }
-        await manager.broadcast_activity(**result)
-        return await _finalize_turn(
-            agent=agent,
-            trigger=trigger,
-            trigger_type=trigger_type,
-            mode=mode,
-            model=model,
-            model_source=model_source,
-            initial_context_json=initial_context_json,
-            outcome=TurnOutcome.failure(
-                result=result,
-                error=validation_error,
-                action=decision.model_dump(),
-                action_summary="",
-                raw_response=response.content,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens,
-                steps=[
-                    _build_step_trace(
-                        step_index=1,
-                        context_snapshot=None,
-                        raw_response=response.content,
-                        action=decision.model_dump(),
-                        result=result,
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
-                        duration_ms=int((time.monotonic() - step_started) * 1000),
-                        error=validation_error,
-                    )
-                ],
-            ),
-            start=start,
-        )
-
-    result = apply_decision(decision.model_dump(), agent, state, trigger)
-
-    await manager.broadcast_world_state()
-
-    if decision.thought:
-        await manager.broadcast_thought(
-            agent_id=agent.id,
-            thought=decision.thought,
-            action_name=decision.decision,
-        )
-
-    await manager.broadcast_activity(
-        event=result.get("event", "decision_applied"),
-        detail=result.get("detail", ""),
-        agent_name=result.get("agent_name"),
-        extra=result.get("activity_extra"),
-    )
-
-    if result.get("chat_message"):
-        chat_message = result["chat_message"]
-        await manager.broadcast_chat_message(
-            agent_id=chat_message["agent_id"],
-            content=chat_message["content"],
-            from_type=chat_message["from_type"],
-            from_name=chat_message["from_name"],
-            message_type=chat_message.get("message_type"),
-            message_id=chat_message.get("message_id"),
-            created_at=chat_message.get("created_at"),
-        )
-
-    return await _finalize_turn(
-        agent=agent,
-        trigger=trigger,
-        trigger_type=trigger_type,
-        mode=mode,
-        model=model,
-        model_source=model_source,
-        initial_context_json=initial_context_json,
-        outcome=TurnOutcome.success(
-            result=result,
-            action=decision.model_dump(),
-            action_summary=summarize_decision(decision.model_dump()),
-            raw_response=response.content,
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
-            total_tokens=response.total_tokens,
-            steps=[
-                _build_step_trace(
-                    step_index=1,
-                    context_snapshot=None,
-                    raw_response=response.content,
-                    action=decision.model_dump(),
+        try:
+            response = await client.completion(
+                model=model,
+                messages=current_context,
+                api_base=api_config.get("api_base"),
+                api_key=api_config.get("api_key"),
+                extra_body=api_config.get("extra_body"),
+            )
+        except client.LLMError as exc:
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} LLM call failed: {exc}",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
                     result=result,
+                    error=str(exc),
+                    action=None,
+                    action_summary=_summarize_action_chain(executed_actions, ""),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=len(step_traces) + 1,
+                            context_snapshot=next_context_snapshot,
+                            raw_response=None,
+                            action=None,
+                            result=result,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=str(exc),
+                        )
+                    ],
+                ),
+                start=start,
+            )
+
+        total_prompt_tokens += response.prompt_tokens
+        total_completion_tokens += response.completion_tokens
+        total_tokens += response.total_tokens
+        last_response_content = response.content
+
+        parsed = parse_direct_turn_response(response.content)
+        if parsed.get("decision") == "_parse_failed":
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} returned invalid decision JSON",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=error,
+                    action=parsed,
+                    action_summary=_summarize_action_chain(executed_actions, ""),
+                    raw_response=response.content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=len(step_traces) + 1,
+                            context_snapshot=next_context_snapshot,
+                            raw_response=response.content,
+                            action=parsed,
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=error,
+                        )
+                    ],
+                ),
+                start=start,
+            )
+
+        cli_call = maybe_parse_bm_cli_call(parsed)
+        if cli_call is not None:
+            tool_steps += 1
+            executed_actions.append("bm_cli")
+            if tool_steps > 3:
+                result = {
+                    "event": "agent_error",
+                    "detail": f"{agent.name} exceeded BossMod CLI lookup limit for one direct request",
+                    "agent_name": agent.name,
+                }
+                await manager.broadcast_activity(**result)
+                return await _finalize_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    outcome=TurnOutcome.failure(
+                        result=result,
+                        error="Too many BossMod CLI calls in one direct request turn",
+                        action=cli_call.model_dump(),
+                        action_summary=_summarize_action_chain(executed_actions, ""),
+                        raw_response=response.content,
+                        prompt_tokens=total_prompt_tokens,
+                        completion_tokens=total_completion_tokens,
+                        total_tokens=total_tokens,
+                        steps=step_traces,
+                    ),
+                    start=start,
+                )
+
+            cli_result = execute_bm_cli(agent, state, cli_call.command)
+            if cli_call.thought:
+                await manager.broadcast_thought(
+                    agent_id=agent.id,
+                    thought=cli_call.thought,
+                    action_name="bm_cli",
+                )
+
+            step_traces.append(
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=response.content,
+                    action=cli_call.model_dump(),
+                    result={
+                        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
+                        "detail": cli_result.detail,
+                        "command": cli_result.command,
+                    },
                     prompt_tokens=response.prompt_tokens,
                     completion_tokens=response.completion_tokens,
                     total_tokens=response.total_tokens,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
-            ],
-        ),
-        start=start,
-    )
+            )
+
+            continuation_messages = [
+                {"role": "assistant", "content": response.content},
+                {"role": "system", "content": cli_result.prompt_content},
+                {
+                    "role": "system",
+                    "content": (
+                        "Use the BossMod CLI result above for this turn. "
+                        "Respond next with a final JSON decision, or call bm_cli again if you still need more authoritative information."
+                    ),
+                },
+            ]
+            current_context.extend(continuation_messages)
+            next_context_snapshot = _serialize_trace_value(continuation_messages)
+            continue
+
+        decision = ConversationDecision.model_validate(parsed)
+        if decision.intentKind == "status_request" and tool_steps == 0 and not initial_task_id:
+            if status_lookup_required:
+                result = {
+                    "event": "agent_error",
+                    "detail": f"{agent.name} answered a status request without checking live status",
+                    "agent_name": agent.name,
+                }
+                await manager.broadcast_activity(**result)
+                return await _finalize_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    outcome=TurnOutcome.failure(
+                        result=result,
+                        error="status requests must use BossMod CLI before the final decision",
+                        action=decision.model_dump(),
+                        action_summary=_summarize_action_chain(executed_actions, ""),
+                        raw_response=response.content,
+                        prompt_tokens=total_prompt_tokens,
+                        completion_tokens=total_completion_tokens,
+                        total_tokens=total_tokens,
+                        steps=step_traces + [
+                            _build_step_trace(
+                                step_index=len(step_traces) + 1,
+                                context_snapshot=next_context_snapshot,
+                                raw_response=response.content,
+                                action=decision.model_dump(),
+                                result=result,
+                                prompt_tokens=response.prompt_tokens,
+                                completion_tokens=response.completion_tokens,
+                                total_tokens=response.total_tokens,
+                                duration_ms=int((time.monotonic() - step_started) * 1000),
+                                error="status requests must use BossMod CLI before the final decision",
+                            )
+                        ],
+                    ),
+                    start=start,
+                )
+
+            status_lookup_required = True
+            continuation_messages = [
+                {"role": "assistant", "content": response.content},
+                {
+                    "role": "system",
+                    "content": (
+                        "This direct request is a factual status query. "
+                        'Before your final JSON decision, call {"action":"bm_cli","command":"me get status","thought":"check live status"}.'
+                    ),
+                },
+                {
+                    "role": "system",
+                    "content": (
+                        "Do not answer current status from prior chat promises or prior assistant messages. "
+                        "Use the BossMod CLI result as authoritative current state for this turn."
+                    ),
+                },
+            ]
+            step_traces.append(
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=response.content,
+                    action=decision.model_dump(),
+                    result={
+                        "event": "bm_cli_required",
+                        "detail": "Status request requires authoritative BossMod CLI lookup before the final decision.",
+                    },
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    total_tokens=response.total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            )
+            current_context.extend(continuation_messages)
+            next_context_snapshot = _serialize_trace_value(continuation_messages)
+            continue
+
+        if status_lookup_required and tool_steps > 0:
+            if decision.intentKind != "status_request" or decision.decision != "answer" or decision.commitmentKind != "none":
+                if status_answer_reprompted:
+                    result = {
+                        "event": "agent_error",
+                        "detail": f"{agent.name} changed a status question into a different commitment after checking live status",
+                        "agent_name": agent.name,
+                    }
+                    await manager.broadcast_activity(**result)
+                    return await _finalize_turn(
+                        agent=agent,
+                        trigger=trigger,
+                        trigger_type=trigger_type,
+                        mode=mode,
+                        model=model,
+                        model_source=model_source,
+                        initial_context_json=initial_context_json,
+                        outcome=TurnOutcome.failure(
+                            result=result,
+                            error="status-request turn drifted into a non-status decision after BossMod CLI lookup",
+                            action=decision.model_dump(),
+                            action_summary=_summarize_action_chain(executed_actions, ""),
+                            raw_response=response.content,
+                            prompt_tokens=total_prompt_tokens,
+                            completion_tokens=total_completion_tokens,
+                            total_tokens=total_tokens,
+                            steps=step_traces + [
+                                _build_step_trace(
+                                    step_index=len(step_traces) + 1,
+                                    context_snapshot=next_context_snapshot,
+                                    raw_response=response.content,
+                                    action=decision.model_dump(),
+                                    result=result,
+                                    prompt_tokens=response.prompt_tokens,
+                                    completion_tokens=response.completion_tokens,
+                                    total_tokens=response.total_tokens,
+                                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                                    error="status-request turn drifted into a non-status decision after BossMod CLI lookup",
+                                )
+                            ],
+                        ),
+                        start=start,
+                    )
+
+                status_answer_reprompted = True
+                continuation_messages = [
+                    {"role": "assistant", "content": response.content},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Stay on the current status question. "
+                            "Do not start, accept, defer, or change any commitment in this turn."
+                        ),
+                    },
+                    {
+                        "role": "system",
+                        "content": (
+                            'Respond next with a final JSON decision using '
+                            '{"decision":"answer","intentKind":"status_request","commitmentKind":"none",...} '
+                            "grounded in the BossMod CLI status result."
+                        ),
+                    },
+                ]
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=len(step_traces) + 1,
+                        context_snapshot=next_context_snapshot,
+                        raw_response=response.content,
+                        action=decision.model_dump(),
+                        result={
+                            "event": "status_answer_required",
+                            "detail": "Status-request turn must end as a factual answer after the BossMod CLI lookup.",
+                        },
+                        prompt_tokens=response.prompt_tokens,
+                        completion_tokens=response.completion_tokens,
+                        total_tokens=response.total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                    )
+                )
+                current_context.extend(continuation_messages)
+                next_context_snapshot = _serialize_trace_value(continuation_messages)
+                continue
+
+        validation_error = validate_decision_for_trigger(
+            decision,
+            trigger_type=trigger_type,
+            active_task_id=initial_task_id,
+        )
+        if validation_error:
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} returned an invalid direct-request decision",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=validation_error,
+                    action=decision.model_dump(),
+                    action_summary=_summarize_action_chain(executed_actions, ""),
+                    raw_response=response.content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=len(step_traces) + 1,
+                            context_snapshot=next_context_snapshot,
+                            raw_response=response.content,
+                            action=decision.model_dump(),
+                            result=result,
+                            prompt_tokens=response.prompt_tokens,
+                            completion_tokens=response.completion_tokens,
+                            total_tokens=response.total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=validation_error,
+                        )
+                    ],
+                ),
+                start=start,
+            )
+
+        result = apply_decision(decision.model_dump(), agent, state, trigger)
+        executed_actions.append(summarize_decision(decision.model_dump()))
+
+        await manager.broadcast_world_state()
+
+        if decision.thought:
+            await manager.broadcast_thought(
+                agent_id=agent.id,
+                thought=decision.thought,
+                action_name=decision.decision,
+            )
+
+        await manager.broadcast_activity(
+            event=result.get("event", "decision_applied"),
+            detail=result.get("detail", ""),
+            agent_name=result.get("agent_name"),
+            extra=result.get("activity_extra"),
+        )
+
+        if result.get("chat_message"):
+            chat_message = result["chat_message"]
+            await manager.broadcast_chat_message(
+                agent_id=chat_message["agent_id"],
+                content=chat_message["content"],
+                from_type=chat_message["from_type"],
+                from_name=chat_message["from_name"],
+                message_type=chat_message.get("message_type"),
+                message_id=chat_message.get("message_id"),
+                created_at=chat_message.get("created_at"),
+            )
+
+        step_traces.append(
+            _build_step_trace(
+                step_index=len(step_traces) + 1,
+                context_snapshot=next_context_snapshot,
+                raw_response=response.content,
+                action=decision.model_dump(),
+                result=result,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                total_tokens=response.total_tokens,
+                duration_ms=int((time.monotonic() - step_started) * 1000),
+            )
+        )
+
+        return await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=initial_context_json,
+            outcome=TurnOutcome.success(
+                result=result,
+                action=decision.model_dump(),
+                action_summary=_summarize_action_chain(executed_actions, summarize_decision(decision.model_dump())),
+                raw_response=response.content,
+                prompt_tokens=total_prompt_tokens,
+                completion_tokens=total_completion_tokens,
+                total_tokens=total_tokens,
+                steps=step_traces,
+            ),
+            start=start,
+        )
 
 
 async def _skip_turn(

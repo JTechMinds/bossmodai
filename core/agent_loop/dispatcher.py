@@ -254,6 +254,28 @@ class TurnDispatcher:
             logger.exception("Trigger execution failed for %s", agent.name)
             db.fail_agent_trigger(trigger_id, str(exc))
             try:
+                diag = db.create_diagnostic(
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                    trigger_type=trigger.get("type", "unknown"),
+                    trigger_data=json.dumps(trigger),
+                    status="error",
+                    mode="decision" if trigger.get("type") in {"human_chat", "peer_message", "task_assigned"} else "execution",
+                    model=None,
+                    model_source="runtime",
+                    context=None,
+                    raw_response=None,
+                    action_name="",
+                    parsed_action=None,
+                    result=json.dumps({"event": "agent_error", "detail": str(exc)}, default=str),
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    error=str(exc),
+                    duration_ms=0,
+                    steps=None,
+                )
+                await manager.broadcast_diagnostic(diag)
                 activity_runtime.reconcile_after_turn_failure(
                     agent.id,
                     detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {exc}",

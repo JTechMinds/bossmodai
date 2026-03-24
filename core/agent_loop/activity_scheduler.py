@@ -118,7 +118,7 @@ def plan_arrival_follow_up(agent_id: str, resumed_activity: Activity | None, roo
     if resumed_activity.kind == "work":
         task = db.get_task(resumed_activity.task_id) if resumed_activity.task_id else None
         title = task.title if task else (resumed_activity.title or "your task")
-        reason = f'You arrived at {room_name}. Continue work on "{title}".'
+        reason = f'You arrived at {_arrival_label(agent_id, room_name)}. Continue work on "{title}".'
     elif resumed_activity.kind == "assignment":
         reason = f'You arrived at {room_name}. Review the assignment and choose the next step.'
     elif resumed_activity.kind == "break":
@@ -131,3 +131,19 @@ def plan_arrival_follow_up(agent_id: str, resumed_activity: Activity | None, roo
         reason = f'You arrived at {room_name}. Continue the current activity.'
 
     return [build_activity_resume_trigger(resumed_activity, reason=reason)]
+
+
+def _arrival_label(agent_id: str, room_name: str) -> str:
+    """Render a more precise arrival label when the agent reached their desk."""
+    if room_name != "Main Workspace":
+        return room_name
+
+    state = db.get_agent_state(agent_id)
+    agent = db.get_agent(agent_id)
+    if state is None or agent is None:
+        return room_name
+    if agent.desk_x is None or agent.desk_y is None:
+        return room_name
+    if (state.x, state.y) == (agent.desk_x, agent.desk_y):
+        return "your desk"
+    return room_name

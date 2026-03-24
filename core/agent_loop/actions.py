@@ -14,6 +14,7 @@ from typing import Any
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.bm_cli import execute_bm_cli
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
@@ -39,6 +40,7 @@ _DESTINATIONS = {
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 _TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 _SUPPORTED_ACTIONS = {
+    "bm_cli",
     "work",
     "message",
     "walkTo",
@@ -118,6 +120,11 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
     action_name = action["action"]
     if action_name not in _SUPPORTED_ACTIONS:
         return f'unsupported action "{action_name}"'
+
+    if action_name == "bm_cli":
+        command = action.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return '"bm_cli" requires a non-empty "command"'
 
     if action_name == "message":
         recipient_type = action.get("recipientType")
@@ -281,6 +288,25 @@ async def _handle_work(
         "event": "agent_updated",
         "detail": f"{agent.name} produced work output ({len(output)} chars)",
         "agent_name": agent.name,
+    }
+
+
+async def _handle_bm_cli(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run a bounded BossMod CLI query and return a turn-local result."""
+    command = str(action.get("command") or "").strip()
+    cli_result = execute_bm_cli(agent, state, command)
+    return {
+        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
+        "detail": cli_result.detail,
+        "agent_name": agent.name,
+        "cli_prompt_content": cli_result.prompt_content,
+        "suppress_world_broadcast": True,
+        "suppress_activity_broadcast": True,
     }
 
 
@@ -765,6 +791,7 @@ async def _handle_abandoned(
 # ---------------------------------------------------------------------------
 
 _ACTION_HANDLERS = {
+    "bm_cli": _handle_bm_cli,
     "work": _handle_work,
     "message": _handle_message,
     "walkTo": _handle_walk_to,

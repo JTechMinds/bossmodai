@@ -320,7 +320,12 @@ def resolve_arrival(agent_id: str) -> Activity | None:
     db.update_activity(active.id, status="completed")
     parent = db.get_activity(active.parent_activity_id) if active.parent_activity_id else None
     if parent and parent.status == "paused":
-        db.update_activity(parent.id, status="active")
+        update_fields: dict[str, Any] = {"status": "active"}
+        if parent.kind == "work":
+            refreshed_parent = _clear_satisfied_desk_preference(agent_id, parent)
+            if refreshed_parent is not None and refreshed_parent != parent.metadata:
+                update_fields["metadata"] = refreshed_parent
+        db.update_activity(parent.id, **update_fields)
         refresh_agent_status(agent_id)
         return db.get_activity(parent.id)
 
@@ -331,3 +336,22 @@ def resolve_arrival(agent_id: str) -> Activity | None:
 def list_active_movements() -> list[Activity]:
     """Return active movement activities for movement recovery."""
     return db.list_activities(kind="movement", status="active", limit=500)
+
+
+def _clear_satisfied_desk_preference(agent_id: str, activity: Activity) -> dict[str, Any] | None:
+    """Drop a work activity's desk preference once the agent is physically at the desk."""
+    if (activity.metadata or {}).get("preferred_destination") != "desk":
+        return None
+
+    state = db.get_agent_state(agent_id)
+    agent = db.get_agent(agent_id)
+    if state is None or agent is None:
+        return None
+    if agent.desk_x is None or agent.desk_y is None:
+        return None
+    if (state.x, state.y) != (agent.desk_x, agent.desk_y):
+        return None
+
+    metadata = dict(activity.metadata or {})
+    metadata.pop("preferred_destination", None)
+    return metadata

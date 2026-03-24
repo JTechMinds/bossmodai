@@ -30,19 +30,16 @@ def apply_decision(
         "trigger_requests": [],
     }
 
-    reply_artifacts = _persist_reply(agent, state, trigger, decision.reply)
-    if reply_artifacts.get("chat_message"):
-        result["chat_message"] = reply_artifacts["chat_message"]
-    result["trigger_requests"].extend(reply_artifacts.get("trigger_requests", []))
-
     if decision.decision == "answer":
         result["detail"] = f"{agent.name} answered the request"
         _resume_previous_work_if_needed(result, active_work)
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.decision == "clarify":
         result["detail"] = f"{agent.name} asked for clarification"
         _resume_previous_work_if_needed(result, active_work)
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.decision == "decline":
@@ -56,6 +53,7 @@ def apply_decision(
             )
         result["detail"] = f"{agent.name} declined the request"
         _resume_previous_work_if_needed(result, active_work)
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.decision == "defer":
@@ -67,6 +65,7 @@ def apply_decision(
             result["detail"] = f"{agent.name} deferred the request"
         _complete_assignment_if_present(agent.id)
         _resume_previous_work_if_needed(result, active_work)
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.commitmentKind == "work":
@@ -91,6 +90,7 @@ def apply_decision(
                 reason=_build_initial_work_reason(state, task.title),
             )
         )
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.commitmentKind == "meeting":
@@ -113,6 +113,7 @@ def apply_decision(
                 reason="Follow through on the accepted meeting.",
             )
         )
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     if decision.commitmentKind == "break":
@@ -134,6 +135,7 @@ def apply_decision(
                 reason="Follow through on the accepted break.",
             )
         )
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
         return result
 
     conversation = activity_runtime.begin_commitment_activity(
@@ -155,6 +157,7 @@ def apply_decision(
             reason="Follow through on the accepted direct request.",
         )
     )
+    _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
     return result
 
 
@@ -240,6 +243,20 @@ def _persist_reply(
             }
         ]
     }
+
+
+def _attach_reply_artifacts(
+    result: dict[str, Any],
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+    reply: str | None,
+) -> None:
+    """Persist reply side effects after the decision state change succeeds."""
+    reply_artifacts = _persist_reply(agent, state, trigger, reply)
+    if reply_artifacts.get("chat_message"):
+        result["chat_message"] = reply_artifacts["chat_message"]
+    result["trigger_requests"].extend(reply_artifacts.get("trigger_requests", []))
 
 
 def _resolve_or_create_work_task(
