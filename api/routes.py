@@ -84,8 +84,8 @@ async def websocket_endpoint(ws: WebSocket):
     world = db.get_world_state()
     await ws.send_json(jsonable_encoder({"type": "world_update", "data": world}))
 
-    # Send recent activity history
-    await ws.send_json(jsonable_encoder({"type": "activity_log", "data": manager.activity_log}))
+    # Send unified activity feed
+    await ws.send_json(jsonable_encoder({"type": "unified_feed", "data": manager.unified_feed}))
 
     try:
         while True:
@@ -823,6 +823,31 @@ async def get_task(task_id: str) -> Task:
     if not task:
         raise HTTPException(404, "Task not found")
     return task
+
+
+# ─── Unified Activity Feed ───
+
+
+@router.get("/activity/feed")
+async def get_activity_feed(
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+    category: str | None = None,
+    agent_name: str | None = None,
+):
+    """Return a paginated, filterable unified feed from all activity sources."""
+    limit = min(max(limit, 1), 200)
+    valid_categories = {"agent", "task", "error", "system"}
+    if category and category not in valid_categories:
+        raise HTTPException(400, f"Invalid category. Must be one of: {', '.join(sorted(valid_categories))}")
+    return db.get_unified_feed(
+        limit=limit,
+        offset=offset,
+        search=search or None,
+        category=category or None,
+        agent_name=agent_name or None,
+    )
 
 
 # ─── Agent activation (manual trigger) ───

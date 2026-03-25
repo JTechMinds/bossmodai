@@ -433,6 +433,8 @@ async def run_turn(
                     notification_kind=chat_notification.get("notification_kind"),
                     desk_path=chat_notification.get("desk_path"),
                 )
+                if chat_notification.get("feed_entry"):
+                    await manager.broadcast_feed_update(chat_notification["feed_entry"])
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
 

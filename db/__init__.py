@@ -139,6 +139,13 @@ from db.settings import force_reseed, get_settings, set_setting
 
 # Activity log
 from db.activity_log import create_activity_log_entry, get_recent_activity_log_entries
+from db.unified_feed import (
+    classify_category,
+    get_unified_feed,
+    normalize_activity_entry,
+    normalize_activity_log_entry,
+    normalize_notification_entry,
+)
 from db.activities import (
     cancel_open_activities,
     create_activity as create_runtime_activity,
@@ -311,6 +318,11 @@ __all__ = [
     "list_activities",
     "update_activity",
     "get_recent_activity_log_entries",
+    "classify_category",
+    "get_unified_feed",
+    "normalize_activity_entry",
+    "normalize_activity_log_entry",
+    "normalize_notification_entry",
     # AI Connections
     "create_connection",
     "delete_connection",

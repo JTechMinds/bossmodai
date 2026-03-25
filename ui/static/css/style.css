@@ -119,9 +119,71 @@
     border-bottom: 1px solid #f1f5f9;
     font-size: 0.8125rem;
     line-height: 1.4;
+    cursor: pointer;
+    transition: background 150ms;
 }
 .activity-entry:last-child {
     border-bottom: none;
+}
+.activity-entry:hover {
+    background: var(--bm-surface-alt, #f8fafc);
+}
+.activity-entry.expanded {
+    background: var(--bm-surface-alt, #f8fafc);
+}
+.activity-detail {
+    animation: bm-slide-down 150ms ease-out;
+}
+.expand-icon {
+    transition: transform 150ms;
+}
+.activity-entry.expanded .expand-icon {
+    transform: rotate(90deg);
+}
+.activity-pulse {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--color-emerald-500, #10b981);
+    font-weight: 500;
+}
+.activity-pulse::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: bm-activity-pulse 2s infinite;
+}
+@keyframes bm-slide-down {
+    from { opacity: 0; max-height: 0; }
+    to { opacity: 1; max-height: 500px; }
+}
+@keyframes bm-activity-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+/* ─── Activity filter chips ─── */
+.activity-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    background: transparent;
+    transition: all 150ms;
+}
+.activity-chip:hover {
+    border-color: #94a3b8;
+}
+.activity-chip.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
 }
 
 /* ─── Chat message bubbles ─── */

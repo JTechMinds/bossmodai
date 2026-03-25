@@ -861,6 +861,7 @@ async def test_declined_task_assignment_marks_task_declined(isolated_db, monkeyp
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -905,6 +906,7 @@ async def test_reseed_application_recreates_database_from_current_schema(isolate
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     result = await reseed_application()
 
@@ -1045,6 +1047,7 @@ async def test_run_turn_keeps_work_artifacts_out_of_human_chat(isolated_db, monk
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -1134,6 +1137,7 @@ async def test_run_turn_chat_reply_stops_without_forcing_followup_work(isolated_
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -1194,6 +1198,7 @@ async def test_run_turn_status_reply_schedules_activity_resume_for_active_work(i
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -1251,6 +1256,7 @@ async def test_run_turn_status_request_can_use_bm_cli_before_final_answer(isolat
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1330,6 +1336,7 @@ async def test_run_turn_status_request_forces_bm_cli_after_stale_first_answer(is
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1409,6 +1416,7 @@ async def test_run_turn_status_request_cannot_drift_into_new_commitment_after_bm
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1491,6 +1499,7 @@ async def test_run_turn_status_request_repairs_invalid_decision_name_before_bm_c
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1574,6 +1583,7 @@ async def test_run_turn_status_request_repairs_invalid_decision_name_after_bm_cl
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1661,6 +1671,7 @@ async def test_run_turn_yields_after_work_when_human_chat_is_queued(isolated_db,
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1719,6 +1730,7 @@ async def test_activity_resumed_conversation_reply_ends_turn_before_follow_up_ac
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1790,6 +1802,7 @@ async def test_activity_resumed_attend_meeting_ends_turn_and_emits_system_receip
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1858,6 +1871,7 @@ async def test_meeting_execution_recovers_from_early_attend_and_walks_to_room(is
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1916,6 +1930,7 @@ async def test_human_relocation_request_emits_agent_reply_and_plans_follow_up(is
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -1977,6 +1992,7 @@ async def test_acknowledged_relocation_does_not_emit_duplicate_walk_receipt(isol
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -2053,6 +2069,7 @@ async def test_run_turn_direct_request_without_reply_fails_context_validation(is
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -2110,6 +2127,7 @@ async def test_execution_turn_completes_active_task_without_task_id(isolated_db,
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(manager, "broadcast_thought", _noop)
@@ -2466,6 +2484,7 @@ async def test_session_message_first_responder_answers_immediately(isolated_db, 
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
@@ -2529,6 +2548,7 @@ async def test_session_response_serializes_and_advances_queue(isolated_db, monke
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
@@ -2595,6 +2615,7 @@ async def test_channel_routes_and_human_message_fanout(isolated_db, monkeypatch)
     monkeypatch.setattr(manager, "broadcast_channel_message", _record_channel_message)
     monkeypatch.setattr(manager, "broadcast_channel_updated", _record_channel_updated)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     created = await create_channel_route(
         ChannelCreateBody(agent_ids=[taylor.id, joe.id]),
@@ -2648,6 +2669,7 @@ async def test_channel_message_first_responder_answers_immediately(isolated_db, 
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
     monkeypatch.setattr(manager, "broadcast_channel_message", _noop)
@@ -2711,6 +2733,7 @@ async def test_channel_response_serializes_and_advances_queue(isolated_db, monke
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
     monkeypatch.setattr(manager, "broadcast_channel_message", _noop)
@@ -2825,6 +2848,7 @@ async def test_watchdog_enqueues_status_ping_for_quiet_active_task(isolated_db, 
 
     queued: list[dict] = []
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
 
     await watchdog._check_tasks()
@@ -2851,6 +2875,7 @@ async def test_walk_request_stays_chat_only_and_creates_no_task(isolated_db, mon
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -2900,6 +2925,7 @@ async def test_meeting_interrupt_pauses_active_task_before_walking(isolated_db, 
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -2951,6 +2977,7 @@ async def test_substantive_request_can_start_task_before_walk(isolated_db, monke
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -3005,6 +3032,7 @@ async def test_work_acceptance_at_desk_does_not_set_desk_preference(isolated_db,
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -3226,6 +3254,7 @@ async def test_new_human_assignment_pauses_older_active_task_before_starting_new
 
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
     monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
     monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
@@ -3328,6 +3357,7 @@ async def test_arrival_resumes_active_task_instead_of_waiting_for_watchdog(isola
     queued: list[dict] = []
     idle_notifications: list[str] = []
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
     monkeypatch.setattr(dispatcher, "notify_agent_idle", lambda agent_id: idle_notifications.append(agent_id))
@@ -3353,6 +3383,7 @@ async def test_intermediate_movement_broadcasts_world_state(isolated_db, monkeyp
     world_updates: list[str] = []
     monkeypatch.setattr(manager, "broadcast_world_state", lambda: _record_world_update(world_updates))
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     simulation.set_agent_path(agent.id, [(14, 9), (15, 9), (16, 9)])
     await simulation._advance_movement(0.25)
@@ -3381,6 +3412,7 @@ async def test_movement_speed_uses_elapsed_time_not_tick_count(isolated_db, monk
     monkeypatch.setattr(config, "get_float", fake_get_float)
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     simulation.set_agent_path(agent.id, [(14, 9), (15, 9), (16, 9)])
     await simulation._advance_movement(0.10)
@@ -3419,6 +3451,7 @@ async def test_arrival_in_break_room_requests_attention_for_active_task(isolated
     queued: list[dict] = []
     idle_notifications: list[str] = []
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
     monkeypatch.setattr(dispatcher, "notify_agent_idle", lambda agent_id: idle_notifications.append(agent_id))
@@ -3528,6 +3561,7 @@ async def test_dispatcher_marks_failed_turns_as_failed_triggers(isolated_db, mon
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     await dispatcher._run_trigger(
         agent,
@@ -3570,6 +3604,7 @@ async def test_dispatcher_exception_reconciles_status_with_active_work(isolated_
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     await dispatcher._run_trigger(
         agent,
@@ -3781,6 +3816,7 @@ async def test_dispatcher_rebuilds_backlog_after_human_redirects_work(isolated_d
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     await dispatcher._run_trigger(
         agent,
@@ -3818,6 +3854,7 @@ async def test_clear_agent_chat_history_only_deletes_direct_chat(isolated_db, mo
 
     monkeypatch.setattr(manager, "broadcast_chat_reset", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     result = await clear_agent_chat_history(agent.id)
 
@@ -3849,6 +3886,7 @@ async def test_reset_agent_runtime_blocks_active_task_and_clears_open_triggers(i
     monkeypatch.setattr(dispatcher, "reset_agent", _noop)
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     result = await reset_agent_runtime(agent.id)
 
@@ -3893,6 +3931,7 @@ async def test_watchdog_skips_tasks_when_agent_has_open_triggers(isolated_db, mo
     monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
     monkeypatch.setattr(dispatcher, "is_active", lambda _agent_id: False)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     await watchdog._check_tasks()
 
@@ -3926,6 +3965,7 @@ async def test_watchdog_respects_recent_heartbeat_without_progress(isolated_db, 
     monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
     monkeypatch.setattr(dispatcher, "is_active", lambda _agent_id: False)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 
     await watchdog._check_tasks()
 

@@ -33,18 +33,9 @@ class ConnectionManager:
         return len(self._connections)
 
     @property
-    def activity_log(self) -> list[dict[str, Any]]:
-        """Load recent activity from the database."""
-        rows = db.get_recent_activity_log_entries(self._max_log_size)
-        return [
-            {
-                "event": r["event"],
-                "detail": r["detail"],
-                "agent_name": r.get("agent_name"),
-                "timestamp": r["created_at"].isoformat() if r.get("created_at") else None,
-            }
-            for r in rows
-        ]
+    def unified_feed(self) -> dict[str, Any]:
+        """Load initial unified feed from the database."""
+        return db.get_unified_feed(limit=50)
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -189,18 +180,23 @@ class ConnectionManager:
         agent_name: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Persist an activity event to the database and broadcast to all clients."""
-        db.create_activity_log_entry(event=event, detail=detail, agent_name=agent_name)
+        """Persist an activity event to the database and broadcast to all clients.
 
-        entry: dict[str, Any] = {
-            "event": event,
-            "detail": detail,
-            "agent_name": agent_name,
-        }
+        The broadcast payload carries the full unified feed shape so the
+        frontend can render it without a separate REST call.
+        """
+        row = db.create_activity_log_entry(event=event, detail=detail, agent_name=agent_name)
+        entry = db.normalize_activity_log_entry(row)
+
+        # Preserve extra fields (e.g. path/agent_id for canvas movement)
         if extra:
             entry.update(extra)
 
         await self.broadcast({"type": "activity", "data": entry})
+
+    async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
+        """Broadcast a unified feed entry for an activity or notification update."""
+        await self.broadcast({"type": "activity_update", "data": entry})
 
 
 # Module-level singleton — imported by routes.py

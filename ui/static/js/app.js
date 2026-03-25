@@ -186,6 +186,9 @@ const BossModApp = (() => {
                 if (typeof AgentContext !== 'undefined') {
                     AgentContext.handleWorldUpdate(agents);
                 }
+                if (typeof ActivityLog !== 'undefined') {
+                    ActivityLog.updateAgentList(agents);
+                }
                 break;
             }
 
@@ -198,9 +201,15 @@ const BossModApp = (() => {
                 }
                 break;
 
-            case 'activity_log':
+            case 'activity_update':
                 if (typeof ActivityLog !== 'undefined') {
-                    ActivityLog.loadHistory(msg.data);
+                    ActivityLog.updateEntry(msg.data);
+                }
+                break;
+
+            case 'unified_feed':
+                if (typeof ActivityLog !== 'undefined') {
+                    ActivityLog.loadFeed(msg.data);
                 }
                 break;
 

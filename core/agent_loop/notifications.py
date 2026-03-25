@@ -68,7 +68,11 @@ def project_chat_notifications(
 
 
 def persist_chat_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
-    """Persist one chat notification and return broadcast data."""
+    """Persist one chat notification and return broadcast data.
+
+    The returned dict includes a ``feed_entry`` key with the unified feed
+    shape so the caller can broadcast it to the activity panel.
+    """
     stored = db.create_notification(
         agent_id=agent.id,
         task_id=notification.task_id,
@@ -86,6 +90,23 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             target_kind="desk",
             target_path=notification.desk_path,
         )
+
+    feed_entry = db.normalize_notification_entry(
+        {
+            "id": stored.id,
+            "kind": stored.kind,
+            "content": stored.content,
+            "agent_name": agent.name,
+            "task_id": stored.task_id,
+            "source_channel": stored.source_channel,
+            "policy": stored.policy,
+            "chat_visible": stored.chat_visible,
+            "prompt_visibility": stored.prompt_visibility,
+            "created_at": stored.created_at,
+        },
+        target_path=notification.desk_path,
+    )
+
     return {
         "agent_id": agent.id,
         "content": stored.content,
@@ -96,6 +117,7 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
         "created_at": stored.created_at,
         "notification_kind": notification.kind,
         "desk_path": notification.desk_path,
+        "feed_entry": feed_entry,
     }
 
 
