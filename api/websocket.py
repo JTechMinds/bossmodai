@@ -119,6 +119,58 @@ class ConnectionManager:
             "data": {"agent_id": agent_id},
         })
 
+    async def broadcast_meeting_message(
+        self,
+        *,
+        agent_id: str | None,
+        session_id: str,
+        content: str,
+        author_type: str,
+        author_name: str,
+        message_id: str | None = None,
+        created_at: Any = None,
+    ) -> None:
+        """Broadcast one shared meeting transcript message."""
+        await self.broadcast({
+            "type": "meeting_message",
+            "data": {
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "content": content,
+                "author_type": author_type,
+                "author_name": author_name,
+                "message_id": message_id,
+                "created_at": created_at,
+            },
+        })
+
+    async def broadcast_channel_message(
+        self,
+        *,
+        channel_id: str,
+        content: str,
+        author_type: str,
+        author_name: str,
+        message_id: str | None = None,
+        created_at: Any = None,
+    ) -> None:
+        """Broadcast one shared channel transcript message."""
+        await self.broadcast({
+            "type": "channel_message",
+            "data": {
+                "channel_id": channel_id,
+                "content": content,
+                "author_type": author_type,
+                "author_name": author_name,
+                "message_id": message_id,
+                "created_at": created_at,
+            },
+        })
+
+    async def broadcast_channel_updated(self, channel: dict[str, Any]) -> None:
+        """Broadcast a channel summary update to all connected clients."""
+        await self.broadcast({"type": "channel_updated", "data": channel})
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         """Broadcast a diagnostic summary to all connected clients."""
         await self.broadcast({"type": "diagnostic", "data": summary})

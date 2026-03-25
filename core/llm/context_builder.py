@@ -39,6 +39,8 @@ class TurnContext:
     reference_materials: list[str]
     current_activity: dict[str, Any] | None = None
     current_task: dict[str, Any] | None = None
+    current_session: dict[str, Any] | None = None
+    current_channel: dict[str, Any] | None = None
     nearby_agents: list[dict[str, Any]] | None = None
     pending_trigger_count: int = 0
     contract_kind: str = "execution"
@@ -71,7 +73,13 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
         "{{activity}}": _format_activity(turn.current_activity),
         "{{task}}": _format_task(turn.current_task),
         "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
-        "{{references}}": _format_references(turn.agent.id, turn.reference_materials, turn.prompt_notifications),
+        "{{references}}": _format_references(
+            turn.agent.id,
+            turn.reference_materials,
+            turn.prompt_notifications,
+            turn.current_session,
+            turn.current_channel,
+        ),
     }
 
     # ─── Resolve template from settings ───
@@ -83,8 +91,15 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
     messages.append({"role": "system", "content": system_prompt})
     messages.append({
         "role": "system",
-        "content": _render_turn_contract(turn.contract_kind),
+        "content": _render_turn_contract(turn.contract_kind, turn.trigger),
     })
+    if turn.contract_kind == "decision":
+        messages.append(
+            {
+                "role": "system",
+                "content": _render_conversation_envelope(turn),
+            }
+        )
 
     for msg in turn.conversation_history:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
@@ -221,8 +236,12 @@ def _format_references(
     agent_id: str,
     reference_materials: list[str],
     prompt_notifications: list[Notification],
+    current_session: dict[str, Any] | None,
+    current_channel: dict[str, Any] | None,
 ) -> str:
     sections = [
+        _format_current_session(current_session),
+        _format_current_channel(current_channel),
         _format_team_directory(reference_materials),
         _format_recent_completed_tasks(agent_id),
         _format_recent_work_artifacts(agent_id),
@@ -303,6 +322,42 @@ def _format_recent_runtime_notifications(rows: list[Notification]) -> str:
     return "\n".join(lines)
 
 
+def _format_current_session(session: dict[str, Any] | None) -> str:
+    """Render the active meeting session summary when relevant."""
+    if not session:
+        return ""
+    lines = [
+        "CURRENT MEETING SESSION:",
+        f"title: {session.get('title') or 'Meeting'}",
+        f"room: {session.get('room_name') or session.get('room_id') or 'meeting'}",
+    ]
+    participants = session.get("participants") or []
+    if participants:
+        names = [str(item.get("name") or "Unknown") for item in participants]
+        lines.append(f"participants: {', '.join(names)}")
+    else:
+        lines.append("participants: none")
+    return "\n".join(lines)
+
+
+def _format_current_channel(channel: dict[str, Any] | None) -> str:
+    """Render the active shared channel summary when relevant."""
+    if not channel:
+        return ""
+    lines = [
+        "CURRENT SHARED CHANNEL:",
+        f"name: {channel.get('name') or 'Channel'}",
+        f"kind: {channel.get('kind') or 'manual'}",
+    ]
+    participants = channel.get("participants") or []
+    if participants:
+        names = [str(item.get("name") or "Unknown") for item in participants]
+        lines.append(f"participants: {', '.join(names)}")
+    else:
+        lines.append("participants: none")
+    return "\n".join(lines)
+
+
 def _format_datetime(value: Any) -> str:
     """Format datetimes consistently for prompt tables."""
     if value is None:
@@ -326,17 +381,26 @@ def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
     """Format the trigger event for the turn contract in use."""
     trigger_type = trigger.get("type", "unknown")
 
-    if trigger_type in ("message", "human_chat", "peer_message"):
+    if trigger_type in ("message", "human_chat", "peer_message", "session_message", "session_response", "channel_message", "channel_response"):
         sender = trigger.get("from_name", "Someone")
         content = trigger.get("content", "")
+        if trigger_type == "channel_message":
+            return f"CURRENT SHARED CHANNEL MESSAGE FROM [{sender}]: {content}"
+        if trigger_type == "channel_response":
+            return f"YOUR TURN TO RESPOND IN THE SHARED CHANNEL after [{sender}] said: {content}"
+        if trigger_type == "session_message":
+            return f"CURRENT MEETING MESSAGE FROM [{sender}]: {content}"
+        if trigger_type == "session_response":
+            return f"YOUR TURN TO RESPOND IN THE MEETING after [{sender}] said: {content}"
         return f"CURRENT REQUEST FROM [{sender}]: {content}"
 
     if trigger_type == "task_assigned":
         title = trigger.get("task_title", "a task")
         desc = trigger.get("task_description", "")
+        sender = trigger.get("from_name", "someone")
         extra = f"\nTask description: {desc}" if desc else ""
         if contract_kind == "decision":
-            return f'You have been offered a new task assignment: "{title}". Decide whether to accept it now, defer it, or decline it.{extra}'
+            return f'[{sender}] assigned you a task: "{title}". Decide whether to accept it, ask a clarifying question, defer it, or decline it.{extra}'
         return f'You have an accepted task commitment: "{title}".{extra}'
 
     if trigger_type == "activity_resumed":
@@ -360,8 +424,111 @@ def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
     return "You have been activated."
 
 
-def _render_turn_contract(contract_kind: str) -> str:
+def _render_turn_contract(contract_kind: str, trigger: dict[str, Any]) -> str:
     """Render the code-owned contract for this turn type."""
     if contract_kind == "decision":
-        return render_decision_contract()
+        return render_decision_contract(str(trigger.get("type") or ""))
     return render_action_contract()
+
+
+def _render_conversation_envelope(turn: TurnContext) -> str:
+    """Render runtime-owned speaker, audience, and channel facts for conversation turns."""
+    trigger = turn.trigger
+    trigger_type = str(trigger.get("type") or "unknown")
+    speaker_type, speaker_name, speaker_id = _conversation_speaker(trigger)
+    channel_kind, channel_name, participant_names = _conversation_channel(turn, trigger_type)
+    audience_mode, target_names = _conversation_audience(turn, trigger_type)
+    turn_purpose = _conversation_turn_purpose(trigger_type)
+
+    lines = [
+        "CONVERSATION ENVELOPE:",
+        f"current_agent: {turn.agent.name}",
+        f"speaker: {speaker_name} ({speaker_type})",
+        f"speaker_id: {speaker_id}",
+        f"channel_kind: {channel_kind}",
+        f"channel_name: {channel_name}",
+        f"turn_purpose: {turn_purpose}",
+        f"audience_mode: {audience_mode}",
+    ]
+    if target_names:
+        lines.append(f"audience_targets: {', '.join(target_names)}")
+    else:
+        lines.append("audience_targets: none")
+    if participant_names:
+        lines.append(f"participants: {', '.join(participant_names)}")
+    else:
+        lines.append("participants: none")
+    lines.extend(
+        [
+            "Use this envelope to understand who is speaking, who else is present, and whether this is direct or shared conversation.",
+            "Do not restate these runtime facts unless they matter to your actual reply.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _conversation_speaker(trigger: dict[str, Any]) -> tuple[str, str, str]:
+    """Return speaker metadata for one conversation trigger."""
+    trigger_type = str(trigger.get("type") or "")
+    if trigger_type == "human_chat":
+        return "human", "Human Operator", "human"
+    if trigger_type == "task_assigned":
+        if trigger.get("from_agent"):
+            return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
+        return "human", str(trigger.get("from_name") or "Human Operator"), "human"
+    if trigger.get("author_type") == "human":
+        return "human", str(trigger.get("from_name") or "Human Operator"), "human"
+    if trigger.get("from_agent"):
+        return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
+    return "runtime", str(trigger.get("from_name") or "System"), "runtime"
+
+
+def _conversation_channel(turn: TurnContext, trigger_type: str) -> tuple[str, str, list[str]]:
+    """Return channel metadata for one conversation turn."""
+    if trigger_type in {"channel_message", "channel_response"} and turn.current_channel:
+        participants = [str(item.get("name") or "Unknown") for item in (turn.current_channel.get("participants") or [])]
+        return (
+            str(turn.current_channel.get("kind") or "channel"),
+            str(turn.current_channel.get("name") or "Channel"),
+            participants,
+        )
+    if trigger_type in {"session_message", "session_response"} and turn.current_session:
+        participants = [str(item.get("name") or "Unknown") for item in (turn.current_session.get("participants") or [])]
+        return (
+            "meeting",
+            str(turn.current_session.get("title") or turn.current_session.get("room_name") or "Meeting"),
+            participants,
+        )
+    if trigger_type == "peer_message":
+        peer_name = str(turn.trigger.get("from_name") or "Coworker")
+        return "direct", f"{peer_name} DM", [turn.agent.name, peer_name]
+    if trigger_type == "task_assigned":
+        assigner = str(turn.trigger.get("from_name") or "Assigning Party")
+        return "assignment", "Task Assignment", [turn.agent.name, assigner]
+    return "direct", "Direct Chat", [turn.agent.name, "Human Operator"]
+
+
+def _conversation_audience(turn: TurnContext, trigger_type: str) -> tuple[str, list[str]]:
+    """Return audience intent facts for one conversation turn."""
+    if trigger_type in {"channel_message", "channel_response"}:
+        participants = [str(item.get("name") or "Unknown") for item in ((turn.current_channel or {}).get("participants") or [])]
+        return "group", participants
+    if trigger_type in {"session_message", "session_response"}:
+        participants = [str(item.get("name") or "Unknown") for item in ((turn.current_session or {}).get("participants") or [])]
+        return "group", participants
+    if trigger_type == "peer_message":
+        return "direct", [str(turn.trigger.get("from_name") or "Coworker")]
+    if trigger_type == "task_assigned":
+        return "direct", [str(turn.trigger.get("from_name") or "Assigning Party")]
+    return "direct", ["Human Operator"]
+
+
+def _conversation_turn_purpose(trigger_type: str) -> str:
+    """Return a short runtime-owned purpose label for one conversation turn."""
+    if trigger_type in {"channel_message", "session_message"}:
+        return "shared_intake"
+    if trigger_type in {"channel_response", "session_response"}:
+        return "shared_reply"
+    if trigger_type == "task_assigned":
+        return "assignment_review"
+    return "direct_reply"

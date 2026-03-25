@@ -43,12 +43,30 @@ from core.models import (
     TaskCreate,
 )
 from core.world.tilemap import get_map_data
+from core.world.tilemap import get_room_at
 from core.world.simulation import simulation
 import db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+
+class ActivationBody(BaseModel):
+    content: str = "You have been manually activated."
+
+
+class MeetingMessageBody(BaseModel):
+    content: str
+
+
+class ChannelCreateBody(BaseModel):
+    name: str | None = None
+    agent_ids: list[str]
+
+
+class ChannelMessageBody(BaseModel):
+    content: str
 
 
 # ─── WebSocket ───
@@ -106,6 +124,144 @@ async def get_agent(agent_id: str) -> Agent:
     if not agent:
         raise HTTPException(404, "Agent not found")
     return agent
+
+
+@router.get("/company/agents")
+async def list_company_agents() -> list[dict[str, object]]:
+    """Return the live company roster for the Company tab."""
+    return [_serialize_company_agent(item) for item in db.get_world_state()]
+
+
+@router.get("/channels")
+async def list_channels() -> list[dict[str, object]]:
+    """Return active shared channels with roster and latest message previews."""
+    items = []
+    for channel in db.list_channels():
+        members = db.list_channel_member_details(channel.id)
+        latest = db.get_latest_channel_message(channel.id)
+        items.append(_serialize_channel_summary(channel, members=members, latest_message=latest))
+    return items
+
+
+@router.post("/channels", status_code=201)
+async def create_channel(body: ChannelCreateBody):
+    """Create one shared channel from the selected company roster members."""
+    member_ids = list(dict.fromkeys(agent_id for agent_id in body.agent_ids if isinstance(agent_id, str) and agent_id.strip()))
+    if not member_ids:
+        raise HTTPException(400, "Select at least one agent")
+
+    agents = db.get_agents_by_ids(member_ids)
+    missing = [agent_id for agent_id in member_ids if agent_id not in agents]
+    if missing:
+        raise HTTPException(404, f"Agents not found: {', '.join(missing)}")
+
+    if body.name and body.name.strip():
+        name = body.name.strip()
+    else:
+        member_names = [agents[agent_id].name for agent_id in member_ids]
+        if len(member_names) <= 3:
+            name = ", ".join(member_names)
+        else:
+            name = f"{', '.join(member_names[:3])} +{len(member_names) - 3}"
+
+    channel = db.create_channel(
+        name=name,
+        member_agent_ids=member_ids,
+        created_by=HUMAN_SENDER_ID,
+    )
+    members = db.list_channel_member_details(channel.id)
+    summary = _serialize_channel_summary(channel, members=members, latest_message=None)
+    await manager.broadcast_channel_updated(summary)
+    await manager.broadcast_activity(
+        event="channel_created",
+        detail=f'Created shared channel "{channel.name}"',
+        agent_name=None,
+    )
+    return summary
+
+
+@router.get("/channels/{channel_id}")
+async def get_channel(channel_id: str, limit: int = 80):
+    """Return one shared channel with roster and transcript."""
+    channel = db.get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(404, "Channel not found")
+
+    messages = [
+        _serialize_channel_message(item)
+        for item in db.list_channel_messages(channel.id, limit=limit)
+    ]
+    members = db.list_channel_member_details(channel.id)
+    return {
+        "channel": _serialize_channel_summary(channel, members=members, latest_message=db.get_latest_channel_message(channel.id)),
+        "messages": messages,
+    }
+
+
+@router.post("/channels/{channel_id}/messages")
+async def create_channel_message(channel_id: str, body: ChannelMessageBody):
+    """Append a shared human message to one channel and start a reply round."""
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        raise HTTPException(404, "Channel not found")
+
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, "Channel message content cannot be empty")
+
+    members = db.list_channel_member_details(channel.id)
+    if not members:
+        raise HTTPException(409, "Channel has no members")
+
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content=content,
+        source_channel="channel",
+    )
+    await manager.broadcast_channel_message(
+        channel_id=channel.id,
+        content=message.content,
+        author_type=message.author_type,
+        author_name=message.author_name,
+        message_id=message.id,
+        created_at=message.created_at,
+    )
+
+    round_record = db.create_channel_response_round(
+        channel_id=channel.id,
+        source_message_id=message.id,
+    )
+    for member in members:
+        agent_id = member.get("id")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            continue
+        db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
+        dispatcher.enqueue_trigger(
+            agent_id=agent_id,
+            trigger_type="channel_message",
+            source_channel="channel",
+            payload={
+                "content": message.content,
+                "channel_id": channel.id,
+                "round_id": round_record.id,
+                "from_name": "Human Operator",
+                "author_type": "human",
+                "source_message_id": message.id,
+                "channel_name": channel.name,
+            },
+        )
+
+    refreshed_channel = db.get_channel(channel.id) or channel
+    await manager.broadcast_channel_updated(
+        _serialize_channel_summary(refreshed_channel, members=members, latest_message=message)
+    )
+    return {
+        "status": "ok",
+        "message": _serialize_channel_message(message),
+        "member_count": len(members),
+    }
 
 
 @router.get("/agents/{agent_id}/api-key")
@@ -365,6 +521,82 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     return result
 
 
+def _meeting_room_name(room_id: str) -> str:
+    """Render a user-facing meeting room label."""
+    if room_id == "meeting_room":
+        return "Meeting Room"
+    return room_id.replace("_", " ").title()
+
+
+def _serialize_meeting_session_message(item) -> dict[str, object]:
+    """Serialize a meeting session message for API responses."""
+    return {
+        "id": item.id,
+        "session_id": item.session_id,
+        "author_type": item.author_type,
+        "author_agent_id": item.author_agent_id,
+        "author_name": item.author_name,
+        "content": item.content,
+        "source_channel": item.source_channel,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _serialize_channel_message(item) -> dict[str, object]:
+    """Serialize one shared channel transcript message."""
+    return {
+        "id": item.id,
+        "channel_id": item.channel_id,
+        "author_type": item.author_type,
+        "author_agent_id": item.author_agent_id,
+        "author_name": item.author_name,
+        "content": item.content,
+        "source_channel": item.source_channel,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
+    """Serialize one company roster row with runtime state and location label."""
+    x = int(item.get("x") or 0)
+    y = int(item.get("y") or 0)
+    room = get_room_at(x, y)
+    location_name = room["name"] if room else "Unknown"
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "role": item.get("role"),
+        "color": item.get("color"),
+        "status": item.get("status") or "idle",
+        "currentActivityKind": item.get("currentActivityKind"),
+        "x": x,
+        "y": y,
+        "location": location_name,
+    }
+
+
+def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | None = None, latest_message=None) -> dict[str, object]:
+    """Serialize one shared channel summary for list and realtime updates."""
+    latest = None
+    if latest_message is not None:
+        latest = {
+            "content": latest_message.content,
+            "author_name": latest_message.author_name,
+            "created_at": latest_message.created_at.isoformat() if latest_message.created_at else None,
+        }
+    return {
+        "id": channel.id,
+        "name": channel.name,
+        "kind": channel.kind,
+        "status": channel.status,
+        "created_at": channel.created_at.isoformat() if channel.created_at else None,
+        "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
+        "member_count": len(members or []),
+        "members": members or [],
+        "latest_message": latest,
+    }
+
+
 def _build_desk_root_sections(agent: Agent) -> list[dict[str, object]]:
     outputs_root = resolve_cli_path(agent.storage_key, "/", "/me")
     notes_root = resolve_cli_path(agent.storage_key, "/", "/me/notes")
@@ -574,6 +806,7 @@ async def create_task(body: TaskCreate) -> Task:
         work_contract=work_contract,
         source_channel=source_channel,
         notification_policy=notification_policy,
+        notification_channel_id=body.notification_channel_id,
     )
     if body.assigned_to:
         dispatcher.enqueue_trigger(**build_task_assigned_trigger(task))
@@ -593,9 +826,6 @@ async def get_task(task_id: str) -> Task:
 
 
 # ─── Agent activation (manual trigger) ───
-
-class ActivationBody(BaseModel):
-    content: str = "You have been manually activated."
 
 
 @router.post("/agents/{agent_id}/activate")
@@ -638,6 +868,103 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
     )
 
     return {"status": "ok", "message": "Message queued"}
+
+
+@router.get("/agents/{agent_id}/meeting-session")
+async def get_agent_meeting_session(agent_id: str, limit: int = 50):
+    """Return the active shared meeting session for one selected agent."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    session = db.get_active_meeting_session_for_agent(agent_id)
+    if session is None:
+        return {"active": False}
+
+    max_limit = config.get_int("api_message_limit_max") or 200
+    messages = [
+        _serialize_meeting_session_message(item)
+        for item in db.list_meeting_session_messages(session.id, limit=min(limit, max_limit))
+    ]
+    return {
+        "active": True,
+        "session": {
+            "id": session.id,
+            "title": session.title,
+            "room_id": session.room_id,
+            "room_name": _meeting_room_name(session.room_id),
+            "participants": db.list_active_meeting_participants(session.room_id),
+            "messages": messages,
+        },
+    }
+
+
+@router.post("/agents/{agent_id}/meeting-session/messages")
+async def create_agent_meeting_session_message(agent_id: str, body: MeetingMessageBody):
+    """Append a shared human message to the selected agent's active meeting session."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, "Meeting message content cannot be empty")
+
+    session = db.get_active_meeting_session_for_agent(agent_id)
+    if session is None:
+        raise HTTPException(409, "Agent is not currently in an active meeting")
+
+    message = db.create_meeting_session_message(
+        session_id=session.id,
+        author_type="human",
+        author_name="Human Operator",
+        content=content,
+        source_channel="meeting",
+    )
+
+    await manager.broadcast_meeting_message(
+        agent_id=None,
+        session_id=session.id,
+        content=message.content,
+        author_type=message.author_type,
+        author_name=message.author_name,
+        message_id=message.id,
+        created_at=message.created_at,
+    )
+
+    round_record = db.create_meeting_response_round(
+        session_id=session.id,
+        source_message_id=message.id,
+    )
+    participants = db.list_active_meeting_participants(session.room_id)
+    for participant in participants:
+        participant_id = participant.get("id")
+        if not isinstance(participant_id, str) or not participant_id.strip():
+            continue
+        db.create_meeting_response_candidate(
+            round_id=round_record.id,
+            agent_id=participant_id,
+        )
+        dispatcher.enqueue_trigger(
+            agent_id=participant_id,
+            trigger_type="session_message",
+            source_channel="chat",
+            payload={
+                "content": message.content,
+                "session_id": session.id,
+                "round_id": round_record.id,
+                "from_name": "Human Operator",
+                "author_type": "human",
+                "source_message_id": message.id,
+                "meeting_title": session.title,
+            },
+        )
+
+    return {
+        "status": "ok",
+        "message": _serialize_meeting_session_message(message),
+        "participant_count": len(participants),
+    }
 
 
 @router.delete("/agents/{agent_id}/chat-history")

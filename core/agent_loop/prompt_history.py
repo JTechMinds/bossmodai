@@ -65,9 +65,35 @@ def _load_conversation_history(
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
         return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
+    if trigger_type in {"channel_message", "channel_response"}:
+        channel_id = trigger.get("channel_id")
+        if channel_id:
+            thread = db.get_formatted_channel_messages(
+                channel_id,
+                limit=fetch_limit,
+            )
+            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
+    if trigger_type in {"session_message", "session_response"}:
+        session_id = trigger.get("session_id")
+        if session_id:
+            thread = db.get_formatted_meeting_session_messages(
+                session_id,
+                limit=fetch_limit,
+            )
+            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
     if trigger_type == "activity_resumed":
         active = db.get_active_activity(agent.id)
-        if active and active.kind in {"conversation", "meeting"}:
+        if active and active.kind == "meeting":
+            session = db.get_active_meeting_session_for_agent(agent.id)
+            if session is not None:
+                thread = db.get_formatted_meeting_session_messages(
+                    session.id,
+                    limit=fetch_limit,
+                )
+                return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+        if active and active.kind == "conversation":
             thread = db.get_human_chat_thread(
                 agent.id,
                 limit=fetch_limit,

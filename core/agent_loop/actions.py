@@ -14,11 +14,21 @@ from typing import Any
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
-from core.agent_loop.deliverables import missing_deliverables, summarize_deliverable
+from core.agent_loop.deliverables import build_work_contract, missing_deliverables, summarize_deliverable
+from core.agent_loop.message_delivery import (
+    resolve_peer_message_type,
+    source_channel_for_message_type,
+)
+from core.agent_loop.task_origins import (
+    task_notification_channel_id_for_trigger,
+    task_notification_policy_for_trigger,
+    task_source_channel_for_trigger,
+)
 from core.bm_cli import execute_bm_cli
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
+from core.models.work_contract import WorkContract
 from core.world.pathfinding import find_path
 from core.world.tilemap import DEFAULT_DESKS, DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, get_room_at
 import db
@@ -44,6 +54,7 @@ _SUPPORTED_ACTIONS = {
     "bm_cli",
     "work",
     "message",
+    "delegateTask",
     "walkTo",
     "attendMeeting",
     "remoteMeeting",
@@ -52,6 +63,29 @@ _SUPPORTED_ACTIONS = {
     "blocked",
     "delegated",
     "abandoned",
+}
+_MODEL_ACTION_TO_NAME = {
+    "cli": "bm_cli",
+    "work": "work",
+    "msg": "message",
+    "assign": "delegateTask",
+    "walk": "walkTo",
+    "mtg": "meeting",
+    "idle": "idle",
+    "done": "complete",
+    "block": "blocked",
+    "deleg": "delegated",
+    "drop": "abandoned",
+}
+_MESSAGE_TARGET_TO_NAME = {"human": "human", "agent": "agent"}
+_MEETING_MODE_TO_NAME = {"room": "attendMeeting", "remote": "remoteMeeting"}
+_DESTINATION_CODE_TO_NAME = {
+    "desk": "desk",
+    "meeting": "meetingRoom",
+    "break": "breakRoom",
+    "main": "mainWorkspace",
+    "south": "southWorkspace",
+    "hall": "hallway",
 }
 
 
@@ -92,24 +126,149 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         logger.warning("Parsed action is not an object: %s", parsed)
         return {"action": "_parse_failed", "thought": "", "_raw_snippet": "Action payload must be a JSON object"}
 
+    try:
+        parsed = _normalize_action_payload(parsed)
+    except ValueError as exc:
+        logger.warning("Invalid compact action payload: %s", exc)
+        return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(exc)[:200]}
+
     if "action" not in parsed:
         logger.warning("No 'action' key in response: %s", parsed)
-        return {"action": "_parse_failed", "thought": parsed.get("thought", ""), "_raw_snippet": str(parsed)[:200]}
+        return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(parsed)[:200]}
 
     if not isinstance(parsed["action"], str):
         logger.warning("Action is not a string (%s): %s", type(parsed["action"]).__name__, parsed)
-        return {"action": "_parse_failed", "thought": parsed.get("thought", ""), "_raw_snippet": str(parsed)[:200]}
+        return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(parsed)[:200]}
 
     validation_error = _validate_action_payload(parsed)
     if validation_error:
         logger.warning("Invalid action payload for %s: %s", parsed["action"], validation_error)
         return {
             "action": "_parse_failed",
-            "thought": parsed.get("thought", ""),
+            "thought": _candidate_thought(parsed),
             "_raw_snippet": f'{parsed["action"]}: {validation_error}'[:200],
         }
 
     return parsed
+
+
+def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the model-facing compact action JSON into canonical runtime fields."""
+    if "act" not in payload:
+        raise ValueError('missing "act"')
+    extra_root = set(payload) - {"act", "data", "th"}
+    if extra_root:
+        raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
+
+    extra = payload.get("data")
+    if extra is None:
+        extra = {}
+    if not isinstance(extra, dict):
+        raise ValueError('"data" must be an object when provided')
+    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "dst", "mode", "topic", "sum", "why", "task"}
+    if extra_data:
+        raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
+
+    action_code = payload.get("act")
+    if not isinstance(action_code, str) or action_code not in _MODEL_ACTION_TO_NAME:
+        raise ValueError('invalid "act"')
+
+    normalized: dict[str, Any] = {
+        "action": _MODEL_ACTION_TO_NAME[action_code],
+        "thought": payload.get("th", ""),
+    }
+    task = extra.get("task") or {}
+    if task in ("", None):
+        task = {}
+    if not isinstance(task, dict):
+        raise ValueError('"data.task" must be an object when provided')
+    extra_task = set(task) - {"title", "desc", "outs"}
+    if extra_task:
+        raise ValueError(f'unexpected data.task keys: {", ".join(sorted(extra_task))}')
+
+    match action_code:
+        case "cli":
+            normalized["command"] = extra.get("cmd")
+            normalized["content"] = extra.get("body")
+        case "work":
+            normalized["output"] = extra.get("out")
+        case "msg":
+            normalized["recipientType"] = _map_optional_code(extra.get("to"), _MESSAGE_TARGET_TO_NAME, "data.to")
+            normalized["agentId"] = extra.get("aid")
+            normalized["content"] = extra.get("msg")
+        case "assign":
+            normalized["agentId"] = extra.get("aid")
+            normalized["taskTitle"] = task.get("title")
+            normalized["taskDescription"] = task.get("desc")
+            normalized["deliverables"] = _normalize_compact_deliverables(task.get("outs"))
+        case "walk":
+            normalized["destination"] = _map_optional_code(extra.get("dst"), _DESTINATION_CODE_TO_NAME, "data.dst")
+        case "mtg":
+            meeting_mode = _map_optional_code(extra.get("mode"), _MEETING_MODE_TO_NAME, "data.mode")
+            if meeting_mode is None:
+                raise ValueError('missing "data.mode"')
+            normalized["action"] = meeting_mode
+            normalized["agentId"] = extra.get("aid")
+            normalized["topic"] = extra.get("topic")
+        case "done":
+            normalized["summary"] = extra.get("sum")
+        case "block" | "drop":
+            normalized["reason"] = extra.get("why")
+        case "deleg":
+            normalized["agentId"] = extra.get("aid")
+        case "idle":
+            pass
+
+    return normalized
+
+
+def _normalize_compact_deliverables(value: Any) -> Any:
+    """Normalize compact outs payload into canonical deliverables."""
+    if value in (None, ""):
+        return None
+    if not isinstance(value, list):
+        raise ValueError('"data.task.outs" must be an array when provided')
+
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError('each item in "data.task.outs" must be an object')
+        extra_item = set(item) - {"type", "path", "desc"}
+        if extra_item:
+            raise ValueError(f'unexpected deliverable keys: {", ".join(sorted(extra_item))}')
+        if item.get("type") != "file":
+            raise ValueError('deliverable "type" must be "file"')
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError('deliverable "path" must be a non-empty string')
+        normalized.append(
+            {
+                "type": "file",
+                "path": path,
+                "description": item.get("desc"),
+            }
+        )
+    return normalized
+
+
+def _map_optional_code(value: Any, mapping: dict[str, str], field_name: str) -> str | None:
+    """Map an optional compact enum code to its canonical value."""
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or value not in mapping:
+        raise ValueError(f'invalid "{field_name}"')
+    return mapping[value]
+
+
+def _candidate_thought(payload: Any) -> str:
+    """Extract the best available thought field from an action payload."""
+    if not isinstance(payload, dict):
+        return ""
+    if isinstance(payload.get("th"), str):
+        return payload.get("th", "")
+    if isinstance(payload.get("thought"), str):
+        return payload.get("thought", "")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +299,28 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         else:
             if action.get("agentId") not in (None, ""):
                 return '"message" to the human operator must not include "agentId"'
+
+    if action_name == "delegateTask":
+        agent_id = action.get("agentId")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            return '"delegateTask" requires a non-empty "agentId"'
+        task_title = action.get("taskTitle")
+        if not isinstance(task_title, str) or not task_title.strip():
+            return '"delegateTask" requires a non-empty "taskTitle"'
+        task_description = action.get("taskDescription")
+        if not isinstance(task_description, str) or not task_description.strip():
+            return '"delegateTask" requires a non-empty "taskDescription"'
+        project = action.get("project")
+        if project is not None and not isinstance(project, str):
+            return '"delegateTask" "project" must be a string when provided'
+        deliverables = action.get("deliverables")
+        if deliverables is not None:
+            if not isinstance(deliverables, list):
+                return '"delegateTask" "deliverables" must be a list when provided'
+            try:
+                WorkContract(deliverables=deliverables)
+            except Exception as exc:
+                return f'"delegateTask" invalid deliverables: {exc}'
 
     if action_name in {"remoteMeeting", "delegated"}:
         agent_id = action.get("agentId")
@@ -224,6 +405,23 @@ def _count_action_tokens(agent: Agent, action: dict[str, Any], text: str) -> int
 def _task_is_human_visible(task: Any | None) -> bool:
     """Return whether task lifecycle notifications should reach the human chat."""
     return bool(task and (task.notification_policy or "none") != "none")
+
+
+def _normalize_delegate_work_contract(
+    *,
+    agent: Agent,
+    action: dict[str, Any],
+) -> WorkContract | None:
+    """Normalize any delegateTask deliverables against the delegator's CLI cwd."""
+    deliverables = action.get("deliverables")
+    if not isinstance(deliverables, list) or not deliverables:
+        return None
+    cli_state = db.ensure_agent_cli_state(agent.id)
+    return build_work_contract(
+        deliverables,
+        agent_storage_key=agent.storage_key,
+        cwd=cli_state.cwd,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +558,10 @@ async def _handle_message(
         to_agent_id = target.id
         to_display = target.name
 
-    message_type = "social" if state.status == "social_active" else "work"
+    if to_agent_id == HUMAN_SENDER_ID:
+        message_type = "social" if state.status == "social_active" else "work"
+    else:
+        message_type = resolve_peer_message_type(state=state, trigger=trigger)
     msg = db.create_message(
         from_agent=agent.id,
         to_agent=to_agent_id,
@@ -390,7 +591,7 @@ async def _handle_message(
         result["trigger_requests"] = [_build_trigger_request(
             agent_id=target.id,
             trigger_type="peer_message",
-            source_channel="chat" if message_type == "social" else "work",
+            source_channel=source_channel_for_message_type(message_type),
             payload={
                 "content": content,
                 "from_agent": agent.id,
@@ -399,6 +600,61 @@ async def _handle_message(
                 "source_message_id": msg.id,
             },
         )]
+    return result
+
+
+async def _handle_delegate_task(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create an explicit task assignment for another agent."""
+    del state
+    target = _resolve_agent_by_id(action.get("agentId"))
+    if target is None:
+        return {"event": "agent_error", "detail": "No valid delegate target specified", "agent_name": agent.name}
+    if target.id == agent.id:
+        return {"event": "agent_error", "detail": "Cannot delegate a task to yourself", "agent_name": agent.name}
+
+    parent_task_id = activity_runtime.get_active_task_id(agent.id)
+    parent_task = db.get_task(parent_task_id) if parent_task_id else None
+
+    task_title = str(action.get("taskTitle") or "").strip()
+    task_description = str(action.get("taskDescription") or "").strip()
+    project = action.get("project")
+    project_name = str(project).strip() if isinstance(project, str) and project.strip() else (parent_task.project if parent_task else None)
+    work_contract = _normalize_delegate_work_contract(agent=agent, action=action)
+
+    task = db.create_task(
+        title=task_title,
+        description=task_description,
+        project=project_name,
+        assigned_to=target.id,
+        created_by=agent.id,
+        parent_task_id=parent_task_id,
+        work_contract=work_contract,
+        source_channel=task_source_channel_for_trigger(trigger or {}),
+        notification_policy=task_notification_policy_for_trigger(trigger or {}),
+        notification_channel_id=task_notification_channel_id_for_trigger(trigger or {}),
+    )
+
+    result = {
+        "event": "status_changed",
+        "detail": f'{agent.name} assigned "{task.title}" to {target.name}',
+        "agent_name": agent.name,
+        "trigger_requests": [build_task_assigned_trigger(task)],
+        "chat_notification": {
+            "kind": "handoff",
+            "task_title": task.title,
+            "target_name": target.name,
+            "task_id": parent_task.id if parent_task else task.id,
+            "source_channel": task.source_channel or "peer",
+            "channel_id": task.notification_channel_id,
+            "policy": task.notification_policy or "none",
+            "human_visible": _task_is_human_visible(task),
+        },
+    }
     return result
 
 
@@ -611,25 +867,57 @@ async def _handle_attend_meeting(
         "detail": detail,
         "agent_name": agent.name,
     }
+    session_title = topic or "In-person meeting"
+    session = db.ensure_room_meeting_session(
+        room["id"],
+        title=session_title,
+        created_by_agent_id=agent.id,
+    )
+
     active = activity_runtime.get_active_activity(agent.id)
     if active and active.kind == "meeting":
+        metadata = {**active.metadata, "session_id": session.id}
         db.update_activity(
             active.id,
             title=topic or active.title,
             detail=meeting_content,
-            metadata={**active.metadata, "topic": topic} if topic else active.metadata,
+            metadata={**metadata, "topic": topic} if topic else metadata,
         )
+        current_meeting = db.get_activity(active.id) or active
     else:
         parent = activity_runtime.get_active_activity(agent.id)
         if parent and parent.kind in {"assignment", "break", "conversation", "social", "work"}:
             db.update_activity(parent.id, status="paused")
-        activity_runtime.start_meeting_activity(
+        current_meeting = activity_runtime.start_meeting_activity(
             agent.id,
-            title=topic or "In-person meeting",
+            title=session_title,
             detail=meeting_content,
             parent_activity_id=parent.id if parent else None,
-            metadata={"topic": topic} if topic else {},
+            metadata={"session_id": session.id, "topic": topic} if topic else {"session_id": session.id},
         )
+
+    current_metadata = current_meeting.metadata or {}
+    if not current_metadata.get("session_join_announced"):
+        session_message = db.create_meeting_session_message(
+            session_id=session.id,
+            author_type="system",
+            author_name="BossMod",
+            content=f"{agent.name} joined the meeting.",
+            source_channel="meeting",
+        )
+        db.update_activity(
+            current_meeting.id,
+            metadata={**current_metadata, "session_id": session.id, "session_join_announced": True},
+        )
+        result["meeting_message"] = {
+            "agent_id": agent.id,
+            "session_id": session.id,
+            "content": session_message.content,
+            "author_type": session_message.author_type,
+            "author_name": session_message.author_name,
+            "message_id": session_message.id,
+            "created_at": session_message.created_at,
+        }
     if target:
         result["trigger_requests"] = [_build_trigger_request(
             agent_id=target.id,
@@ -714,6 +1002,7 @@ async def _handle_complete(
             "deliverables": [item.model_dump() for item in (task.work_contract.deliverables if task and task.work_contract else [])],
             "task_id": task.id if task else None,
             "source_channel": task.source_channel if task else "chat",
+            "channel_id": task.notification_channel_id if task else None,
             "policy": task.notification_policy if task else "completion_blocked",
             "human_visible": _task_is_human_visible(task),
         },
@@ -756,6 +1045,7 @@ async def _handle_blocked(
             "reason": reason,
             "task_id": task.id if task else None,
             "source_channel": task.source_channel if task else "chat",
+            "channel_id": task.notification_channel_id if task else None,
             "policy": task.notification_policy if task else "completion_blocked",
             "human_visible": _task_is_human_visible(task),
         },
@@ -797,6 +1087,7 @@ async def _handle_delegated(
             work_contract=original_task.work_contract,
             source_channel=original_task.source_channel,
             notification_policy=original_task.notification_policy,
+            notification_channel_id=original_task.notification_channel_id,
         )
     else:
         child = None
@@ -817,6 +1108,7 @@ async def _handle_delegated(
             "target_name": target.name,
             "task_id": original_task.id if original_task else None,
             "source_channel": original_task.source_channel if original_task else "chat",
+            "channel_id": original_task.notification_channel_id if original_task else None,
             "policy": original_task.notification_policy if original_task else "completion_blocked",
             "human_visible": _task_is_human_visible(original_task),
         },
@@ -862,6 +1154,7 @@ async def _handle_abandoned(
             "reason": reason,
             "task_id": task.id if task else None,
             "source_channel": task.source_channel if task else "chat",
+            "channel_id": task.notification_channel_id if task else None,
             "policy": task.notification_policy if task else "completion_blocked",
             "human_visible": _task_is_human_visible(task),
         },
@@ -876,6 +1169,7 @@ _ACTION_HANDLERS = {
     "bm_cli": _handle_bm_cli,
     "work": _handle_work,
     "message": _handle_message,
+    "delegateTask": _handle_delegate_task,
     "walkTo": _handle_walk_to,
     "attendMeeting": _handle_attend_meeting,
     "remoteMeeting": _handle_remote_meeting,

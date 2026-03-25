@@ -36,6 +36,7 @@ class ChatNotification:
     task_id: str | None = None
     activity_id: str | None = None
     desk_path: str | None = None
+    channel_id: str | None = None
 
 
 def project_chat_notifications(
@@ -95,6 +96,27 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
         "created_at": stored.created_at,
         "notification_kind": notification.kind,
         "desk_path": notification.desk_path,
+    }
+
+
+def persist_channel_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
+    """Persist one shared-channel notification as a system transcript message."""
+    if not notification.channel_id:
+        raise ValueError("channel notifications require a channel_id")
+    message = db.create_channel_message(
+        channel_id=notification.channel_id,
+        author_type="system",
+        author_name=agent.name,
+        content=notification.content,
+        source_channel=notification.source_channel,
+    )
+    return {
+        "channel_id": notification.channel_id,
+        "content": message.content,
+        "author_type": message.author_type,
+        "author_name": message.author_name,
+        "message_id": message.id,
+        "created_at": message.created_at,
     }
 
 
@@ -177,6 +199,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
                 prompt_visibility=True,
                 task_id=payload.get("task_id"),
                 desk_path=deliverable_paths[0],
+                channel_id=payload.get("channel_id"),
             )
         if len(deliverable_paths) > 1:
             return ChatNotification(
@@ -186,6 +209,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
                 task_id=payload.get("task_id"),
+                channel_id=payload.get("channel_id"),
             )
         return ChatNotification(
             kind="completion",
@@ -194,6 +218,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
         )
 
     if kind == "blocked":
@@ -205,6 +230,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
                 task_id=payload.get("task_id"),
+                channel_id=payload.get("channel_id"),
             )
         return ChatNotification(
             kind="blocked",
@@ -213,6 +239,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
         )
 
     if kind == "handoff":
@@ -225,6 +252,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
                 task_id=payload.get("task_id"),
+                channel_id=payload.get("channel_id"),
             )
         return ChatNotification(
             kind="handoff",
@@ -233,6 +261,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
         )
 
     if kind == "abandoned":
@@ -244,6 +273,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
                 task_id=payload.get("task_id"),
+                channel_id=payload.get("channel_id"),
             )
         return ChatNotification(
             kind="abandoned",
@@ -252,6 +282,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
         )
 
     return None
@@ -305,7 +336,7 @@ def _resolve_target_name(detail: str) -> str | None:
 def _notification_source_channel(trigger: dict[str, Any]) -> str:
     """Normalize a trigger source channel for notification storage."""
     source_channel = str(trigger.get("source_channel") or "").strip()
-    if source_channel in {"chat", "api", "slack", "telegram", "peer", "task", "work", "system"}:
+    if source_channel in {"chat", "channel", "api", "slack", "telegram", "peer", "task", "work", "system"}:
         return source_channel
     trigger_type = trigger.get("type")
     if trigger_type == "peer_message":

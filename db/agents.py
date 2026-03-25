@@ -169,6 +169,14 @@ def delete_agent(agent_id: str) -> bool:
     for nid in notification_ids:
         execute("DELETE FROM notification_links WHERE notification_id = $1", [nid])
     execute("DELETE FROM notifications WHERE agent_id = $1", [agent_id])
+    # clear shared-channel authored references and queue membership
+    execute("UPDATE channel_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+    execute("DELETE FROM channel_response_candidates WHERE agent_id = $1", [agent_id])
+    execute("DELETE FROM channel_members WHERE agent_id = $1", [agent_id])
+    # clear shared-meeting authored references and queue membership
+    execute("UPDATE meeting_session_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+    execute("UPDATE meeting_sessions SET created_by_agent_id = NULL WHERE created_by_agent_id = $1", [agent_id])
+    execute("DELETE FROM meeting_response_candidates WHERE agent_id = $1", [agent_id])
     # activities (clear self-referential parent_activity_id first)
     execute(
         "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",

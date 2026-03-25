@@ -39,6 +39,33 @@ from db.artifacts import (
 from db.bm_cli_events import create_bm_cli_event, has_bm_cli_write_for_path, list_bm_cli_events
 from db.notifications import create_notification, delete_agent_notifications, list_notifications
 from db.notification_links import create_notification_link, list_notification_links
+from db.channels import (
+    add_channel_members,
+    create_channel,
+    create_channel_message,
+    get_channel,
+    get_formatted_channel_messages,
+    get_latest_channel_message,
+    list_channel_member_details,
+    list_channel_members,
+    list_channel_messages,
+    list_channels,
+    update_channel,
+)
+from db.channel_response_rounds import (
+    activate_next_channel_response_candidate,
+    create_channel_response_candidate,
+    create_channel_response_round,
+    get_active_responding_channel_candidate,
+    get_channel_response_candidate,
+    get_channel_response_round,
+    list_channel_response_candidates,
+    mark_channel_candidate_observed,
+    mark_channel_candidate_responded,
+    maybe_complete_channel_response_round,
+    reserve_channel_response_slot,
+    update_channel_response_candidate,
+)
 
 # Messages
 from db.messages import (
@@ -50,6 +77,34 @@ from db.messages import (
     get_recent_authored_messages,
     get_recent_work_artifacts,
     get_recent_completed_tasks,
+)
+from db.meeting_sessions import (
+    create_meeting_session,
+    create_meeting_session_message,
+    end_meeting_session,
+    ensure_room_meeting_session,
+    get_active_meeting_session_by_room,
+    get_active_meeting_session_for_agent,
+    get_formatted_meeting_session_messages,
+    get_meeting_session,
+    list_active_meeting_participants,
+    list_meeting_session_messages,
+    update_meeting_session,
+)
+from db.meeting_response_rounds import (
+    activate_next_response_candidate,
+    create_meeting_response_candidate,
+    create_meeting_response_round,
+    delete_meeting_response_rounds,
+    get_active_responding_candidate,
+    get_meeting_response_candidate,
+    get_meeting_response_round,
+    list_meeting_response_candidates,
+    mark_candidate_observed,
+    mark_candidate_responded,
+    maybe_complete_meeting_response_round,
+    reserve_response_slot,
+    update_meeting_response_candidate,
 )
 from db.agent_triggers import (
     claim_trigger,
@@ -73,6 +128,11 @@ from db.agent_triggers import (
 # Tasks
 from db.tasks import create_task, get_task, list_tasks, update_task
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
+from db.task_notification_targets import (
+    delete_task_notification_target,
+    get_task_notification_target_channel_id,
+    set_task_notification_target_channel_id,
+)
 
 # Settings
 from db.settings import force_reseed, get_settings, set_setting
@@ -153,6 +213,29 @@ __all__ = [
     "create_notification",
     "create_notification_link",
     "delete_agent_notifications",
+    "create_channel",
+    "create_channel_message",
+    "add_channel_members",
+    "get_channel",
+    "get_formatted_channel_messages",
+    "get_latest_channel_message",
+    "list_channel_member_details",
+    "list_channel_members",
+    "list_channel_messages",
+    "list_channels",
+    "update_channel",
+    "create_channel_response_candidate",
+    "create_channel_response_round",
+    "activate_next_channel_response_candidate",
+    "get_active_responding_channel_candidate",
+    "get_channel_response_candidate",
+    "get_channel_response_round",
+    "list_channel_response_candidates",
+    "mark_channel_candidate_observed",
+    "mark_channel_candidate_responded",
+    "maybe_complete_channel_response_round",
+    "reserve_channel_response_slot",
+    "update_channel_response_candidate",
     "list_notification_links",
     "list_notifications",
     # Messages
@@ -164,6 +247,29 @@ __all__ = [
     "get_recent_authored_messages",
     "get_recent_work_artifacts",
     "get_recent_completed_tasks",
+    "create_meeting_session",
+    "create_meeting_session_message",
+    "create_meeting_response_candidate",
+    "create_meeting_response_round",
+    "delete_meeting_response_rounds",
+    "end_meeting_session",
+    "get_active_responding_candidate",
+    "ensure_room_meeting_session",
+    "get_active_meeting_session_by_room",
+    "get_active_meeting_session_for_agent",
+    "get_meeting_response_candidate",
+    "get_meeting_response_round",
+    "get_formatted_meeting_session_messages",
+    "get_meeting_session",
+    "list_active_meeting_participants",
+    "list_meeting_response_candidates",
+    "list_meeting_session_messages",
+    "mark_candidate_observed",
+    "mark_candidate_responded",
+    "maybe_complete_meeting_response_round",
+    "reserve_response_slot",
+    "update_meeting_session",
+    "update_meeting_response_candidate",
     # Trigger queue
     "claim_trigger",
     "complete_agent_trigger",
@@ -188,6 +294,9 @@ __all__ = [
     "update_task",
     "get_task_notification_settings",
     "set_task_notification_settings",
+    "delete_task_notification_target",
+    "get_task_notification_target_channel_id",
+    "set_task_notification_target_channel_id",
     # Settings
     "force_reseed",
     "get_settings",

@@ -19,10 +19,14 @@ _TRIGGER_PRIORITY_CASE = """
 CASE trigger_type
     WHEN 'human_chat' THEN 0
     WHEN 'peer_message' THEN 1
-    WHEN 'watchdog_status_ping' THEN 2
-    WHEN 'task_assigned' THEN 3
-    WHEN 'activity_resumed' THEN 4
-    WHEN 'social' THEN 5
+    WHEN 'session_response' THEN 2
+    WHEN 'channel_response' THEN 3
+    WHEN 'session_message' THEN 4
+    WHEN 'channel_message' THEN 5
+    WHEN 'watchdog_status_ping' THEN 6
+    WHEN 'task_assigned' THEN 7
+    WHEN 'activity_resumed' THEN 8
+    WHEN 'social' THEN 9
     ELSE 9
 END
 """

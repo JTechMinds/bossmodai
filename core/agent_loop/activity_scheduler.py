@@ -7,8 +7,17 @@ from typing import Any
 import db
 from core.agent_loop import activity_runtime
 from core.models import Activity, AgentState, Task
+from core.models.message import HUMAN_SENDER_ID
 
-_INTERRUPT_TRIGGER_TYPES = {"human_chat", "peer_message", "watchdog_status_ping"}
+_INTERRUPT_TRIGGER_TYPES = {
+    "human_chat",
+    "peer_message",
+    "session_message",
+    "session_response",
+    "channel_message",
+    "channel_response",
+    "watchdog_status_ping",
+}
 
 
 def can_dispatch_trigger(
@@ -46,6 +55,14 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
 
 def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     """Build the durable trigger used to present a pending task assignment."""
+    from_agent: str | None = None
+    from_name = "Human Operator"
+    if task.created_by and task.created_by != HUMAN_SENDER_ID:
+        creator = db.get_agent(task.created_by)
+        if creator is not None:
+            from_agent = creator.id
+            from_name = creator.name
+
     return {
         "agent_id": task.assigned_to,
         "trigger_type": "task_assigned",
@@ -55,6 +72,9 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "task_title": task.title,
             "task_description": task.description or "",
             "project": task.project,
+            "from_agent": from_agent,
+            "from_name": from_name,
+            "notification_channel_id": task.notification_channel_id,
         },
     }
 

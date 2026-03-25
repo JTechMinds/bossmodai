@@ -20,7 +20,7 @@ const BossModApp = (() => {
             const stored = localStorage.getItem(STORAGE_KEY);
             if (stored) return JSON.parse(stored);
         } catch { /* ignore corrupt data */ }
-        return { activeTab: 'chat', splitSizes: [30, 70] };
+        return { activeTab: 'chat', splitSizes: [25, 50, 25] };
     }
 
     function savePrefs() {
@@ -51,12 +51,19 @@ const BossModApp = (() => {
 
         const leftPanel = document.getElementById('panel-left');
         const mapPanel = document.getElementById('panel-map');
+        const activityPanel = document.getElementById('panel-activity');
 
-        if (!leftPanel || !mapPanel) return;
+        if (!leftPanel || !mapPanel || !activityPanel) return;
 
-        Split(['#panel-left', '#panel-map'], {
+        // Migrate old 2-panel prefs to 3-panel
+        if (prefs.splitSizes.length !== 3) {
+            prefs.splitSizes = [25, 50, 25];
+            savePrefs();
+        }
+
+        Split(['#panel-left', '#panel-map', '#panel-activity'], {
             sizes: prefs.splitSizes,
-            minSize: [200, 400],
+            minSize: [200, 400, 180],
             gutterSize: 6,
             cursor: 'col-resize',
             onDragEnd: (sizes) => {
@@ -66,6 +73,22 @@ const BossModApp = (() => {
                 window.dispatchEvent(new Event('panel-resize'));
             },
         });
+    }
+
+    // ─── Panel responsive observer ───
+
+    function initPanelObserver() {
+        const panel = document.getElementById('panel-left');
+        if (!panel || typeof ResizeObserver === 'undefined') return;
+
+        const COMPACT_THRESHOLD = 280;
+        const observer = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const width = entry.contentRect.width;
+                panel.classList.toggle('panel-compact', width < COMPACT_THRESHOLD);
+            }
+        });
+        observer.observe(panel);
     }
 
     // ─── Agent selection (via canvas click) ───
@@ -193,6 +216,24 @@ const BossModApp = (() => {
                 }
                 break;
 
+            case 'meeting_message':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleMeetingMessage(msg.data);
+                }
+                break;
+
+            case 'channel_message':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleChannelMessage(msg.data);
+                }
+                break;
+
+            case 'channel_updated':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleChannelUpdated(msg.data);
+                }
+                break;
+
             case 'diagnostic':
                 if (typeof DiagnosticsView !== 'undefined') {
                     DiagnosticsView.addEntry(msg.data);
@@ -290,6 +331,7 @@ const BossModApp = (() => {
         initIcons();
         initTabs();
         initSplit();
+        initPanelObserver();
         initNavButtons();
         initMobileSheet();
         initResize();

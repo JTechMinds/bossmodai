@@ -88,6 +88,110 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at    TIMESTAMP DEFAULT current_timestamp
 );
 
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+    id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    room_id             VARCHAR NOT NULL,
+    title               VARCHAR NOT NULL,
+    status              VARCHAR NOT NULL
+                            CHECK (status IN ('active', 'ended')),
+    created_by_agent_id VARCHAR REFERENCES agents(id),
+    created_at          TIMESTAMP DEFAULT current_timestamp,
+    updated_at          TIMESTAMP DEFAULT current_timestamp,
+    ended_at            TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS meeting_session_messages (
+    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      VARCHAR NOT NULL REFERENCES meeting_sessions(id),
+    author_type     VARCHAR NOT NULL
+                        CHECK (author_type IN ('human', 'agent', 'system')),
+    author_agent_id VARCHAR REFERENCES agents(id),
+    author_name     VARCHAR NOT NULL,
+    content         TEXT NOT NULL,
+    source_channel  VARCHAR NOT NULL,
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS meeting_response_rounds (
+    id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id        VARCHAR NOT NULL REFERENCES meeting_sessions(id),
+    source_message_id VARCHAR NOT NULL REFERENCES meeting_session_messages(id),
+    status            VARCHAR NOT NULL
+                         CHECK (status IN ('active', 'completed')),
+    created_at        TIMESTAMP DEFAULT current_timestamp,
+    updated_at        TIMESTAMP DEFAULT current_timestamp,
+    completed_at      TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS meeting_response_candidates (
+    id             VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id       VARCHAR NOT NULL REFERENCES meeting_response_rounds(id),
+    agent_id       VARCHAR NOT NULL REFERENCES agents(id),
+    status         VARCHAR NOT NULL
+                      CHECK (status IN ('pending', 'queued', 'responding', 'responded', 'observed')),
+    queue_position INTEGER,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp,
+    completed_at   TIMESTAMP,
+    UNIQUE(round_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        VARCHAR NOT NULL,
+    kind        VARCHAR NOT NULL
+                    CHECK (kind IN ('manual')),
+    status      VARCHAR NOT NULL
+                    CHECK (status IN ('active', 'archived')),
+    created_by  VARCHAR,
+    created_at  TIMESTAMP DEFAULT current_timestamp,
+    updated_at  TIMESTAMP DEFAULT current_timestamp,
+    archived_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS channel_members (
+    channel_id   VARCHAR NOT NULL REFERENCES channels(id),
+    agent_id     VARCHAR NOT NULL REFERENCES agents(id),
+    created_at   TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (channel_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_messages (
+    id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel_id       VARCHAR NOT NULL REFERENCES channels(id),
+    author_type      VARCHAR NOT NULL
+                         CHECK (author_type IN ('human', 'agent', 'system')),
+    author_agent_id  VARCHAR REFERENCES agents(id),
+    author_name      VARCHAR NOT NULL,
+    content          TEXT NOT NULL,
+    source_channel   VARCHAR NOT NULL,
+    created_at       TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS channel_response_rounds (
+    id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel_id        VARCHAR NOT NULL REFERENCES channels(id),
+    source_message_id VARCHAR NOT NULL REFERENCES channel_messages(id),
+    status            VARCHAR NOT NULL
+                         CHECK (status IN ('active', 'completed')),
+    created_at        TIMESTAMP DEFAULT current_timestamp,
+    updated_at        TIMESTAMP DEFAULT current_timestamp,
+    completed_at      TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS channel_response_candidates (
+    id             VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id       VARCHAR NOT NULL REFERENCES channel_response_rounds(id),
+    agent_id       VARCHAR NOT NULL REFERENCES agents(id),
+    status         VARCHAR NOT NULL
+                      CHECK (status IN ('pending', 'queued', 'responding', 'responded', 'observed')),
+    queue_position INTEGER,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp,
+    completed_at   TIMESTAMP,
+    UNIQUE(round_id, agent_id)
+);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Tasks — units of work assigned to agents
 -- ───────────────────────────────────────────────────────────────────────────
@@ -127,6 +231,13 @@ CREATE TABLE IF NOT EXISTS task_notification_policies (
                        CHECK (policy IN ('none', 'completion_blocked', 'all')),
     created_at      TIMESTAMP DEFAULT current_timestamp,
     updated_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS task_notification_targets (
+    task_id      VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    channel_id   VARCHAR REFERENCES channels(id),
+    created_at   TIMESTAMP DEFAULT current_timestamp,
+    updated_at   TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -227,7 +338,7 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     agent_id       VARCHAR NOT NULL REFERENCES agents(id),
     trigger_type   VARCHAR NOT NULL,
     source_channel VARCHAR NOT NULL
-                      CHECK (source_channel IN ('chat', 'work', 'system')),
+                      CHECK (source_channel IN ('chat', 'channel', 'work', 'system')),
     payload        TEXT NOT NULL,
     task_id        VARCHAR,
     status         VARCHAR NOT NULL DEFAULT 'queued'

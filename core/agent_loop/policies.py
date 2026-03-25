@@ -26,6 +26,22 @@ _POLICIES: dict[str, TriggerPolicy] = {
         trigger_type="peer_message",
         end_turn_after_direct_reply=True,
     ),
+    "session_message": TriggerPolicy(
+        trigger_type="session_message",
+        end_turn_after_direct_reply=True,
+    ),
+    "session_response": TriggerPolicy(
+        trigger_type="session_response",
+        end_turn_after_direct_reply=True,
+    ),
+    "channel_message": TriggerPolicy(
+        trigger_type="channel_message",
+        end_turn_after_direct_reply=True,
+    ),
+    "channel_response": TriggerPolicy(
+        trigger_type="channel_response",
+        end_turn_after_direct_reply=True,
+    ),
     "watchdog_status_ping": TriggerPolicy(
         trigger_type="watchdog_status_ping",
         end_turn_after_direct_reply=True,

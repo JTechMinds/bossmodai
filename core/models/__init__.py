@@ -11,6 +11,10 @@ from core.models.cli import AgentCliState
 from core.models.activity import Activity
 from core.models.agent import Agent, AgentCreate, AgentState, AgentUpdate
 from core.models.artifact import Artifact
+from core.models.channel import Channel, ChannelMember, ChannelMessage
+from core.models.channel_response import ChannelResponseCandidate, ChannelResponseRound
+from core.models.meeting_response import MeetingResponseCandidate, MeetingResponseRound
+from core.models.meeting_session import MeetingSession, MeetingSessionMessage
 from core.models.memory import Setting
 from core.models.message import Message, MessageCreate
 from core.models.notification import Notification, NotificationLink, TaskNotificationSettings
@@ -36,6 +40,15 @@ __all__ = [
     "AgentCliState",
     "Activity",
     "Artifact",
+    "Channel",
+    "ChannelMember",
+    "ChannelMessage",
+    "ChannelResponseCandidate",
+    "ChannelResponseRound",
+    "MeetingResponseCandidate",
+    "MeetingResponseRound",
+    "MeetingSession",
+    "MeetingSessionMessage",
     # Task
     "Task",
     "TaskCreate",

@@ -13,7 +13,11 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
-from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
+from core.agent_loop.notifications import (
+    persist_channel_notification,
+    persist_chat_notification,
+    project_chat_notifications,
+)
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.decision_contract import (
     ConversationDecision,
@@ -29,14 +33,24 @@ from core.agent_loop.turn_rules import (
     should_end_turn_after_action,
     validate_action_for_turn,
 )
-from core.bm_cli import execute_bm_cli, maybe_parse_bm_cli_call
+from core.bm_cli import BossModCliCall, execute_bm_cli, maybe_parse_bm_cli_call
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 import db
 
 logger = logging.getLogger(__name__)
 
-_DECISION_TRIGGER_TYPES = {"human_chat", "peer_message", "task_assigned"}
+_DECISION_TRIGGER_TYPES = {
+    "human_chat",
+    "peer_message",
+    "session_message",
+    "session_response",
+    "channel_message",
+    "channel_response",
+    "task_assigned",
+}
+
+_MAX_DECISION_REPAIR_ATTEMPTS = 2
 
 
 async def run_turn(
@@ -73,10 +87,13 @@ async def run_turn(
     nearby = _get_nearby_agents(agent.id, state)
     initial_activity = activity_runtime.get_active_activity(agent.id)
     current_task = _get_current_task(agent.id)
+    current_session = _get_current_session(agent.id, trigger)
+    current_channel = _get_current_channel(trigger)
     reference_materials = _get_reference_materials(agent.id)
 
     pending_count = max(db.count_queued_triggers(agent.id) - 1, 0)
 
+    contract_kind = _contract_kind_for_trigger(trigger_type)
     context = context_builder.build_context(
         context_builder.TurnContext(
             agent=agent,
@@ -86,10 +103,12 @@ async def run_turn(
             prompt_notifications=prompt_history.prompt_notifications,
             reference_materials=reference_materials,
             current_activity=_get_current_activity(agent.id),
+            current_session=current_session,
+            current_channel=current_channel,
             nearby_agents=nearby,
             current_task=current_task,
             pending_trigger_count=pending_count,
-            contract_kind="decision" if is_decision_turn else "execution",
+            contract_kind=contract_kind,
         )
     )
     initial_context_json = json.dumps(context)
@@ -362,6 +381,27 @@ async def run_turn(
                 created_at=chat_message.get("created_at"),
                 desk_path=chat_message.get("desk_path"),
             )
+        meeting_message = result.get("meeting_message")
+        if meeting_message:
+            await manager.broadcast_meeting_message(
+                agent_id=meeting_message["agent_id"],
+                session_id=meeting_message["session_id"],
+                content=meeting_message["content"],
+                author_type=meeting_message["author_type"],
+                author_name=meeting_message["author_name"],
+                message_id=meeting_message.get("message_id"),
+                created_at=meeting_message.get("created_at"),
+            )
+        channel_message = result.get("channel_message")
+        if channel_message:
+            await manager.broadcast_channel_message(
+                channel_id=channel_message["channel_id"],
+                content=channel_message["content"],
+                author_type=channel_message["author_type"],
+                author_name=channel_message["author_name"],
+                message_id=channel_message.get("message_id"),
+                created_at=channel_message.get("created_at"),
+            )
 
         for notification in project_chat_notifications(
             agent=agent,
@@ -370,18 +410,29 @@ async def run_turn(
             action=action,
             result=result,
         ):
-            chat_notification = persist_chat_notification(agent, notification)
-            await manager.broadcast_chat_message(
-                agent_id=chat_notification["agent_id"],
-                content=chat_notification["content"],
-                from_type=chat_notification["from_type"],
-                from_name=chat_notification["from_name"],
-                message_type=chat_notification.get("message_type"),
-                message_id=chat_notification.get("message_id"),
-                created_at=chat_notification.get("created_at"),
-                notification_kind=chat_notification.get("notification_kind"),
-                desk_path=chat_notification.get("desk_path"),
-            )
+            if notification.channel_id:
+                channel_notification = persist_channel_notification(agent, notification)
+                await manager.broadcast_channel_message(
+                    channel_id=channel_notification["channel_id"],
+                    content=channel_notification["content"],
+                    author_type=channel_notification["author_type"],
+                    author_name=channel_notification["author_name"],
+                    message_id=channel_notification.get("message_id"),
+                    created_at=channel_notification.get("created_at"),
+                )
+            else:
+                chat_notification = persist_chat_notification(agent, notification)
+                await manager.broadcast_chat_message(
+                    agent_id=chat_notification["agent_id"],
+                    content=chat_notification["content"],
+                    from_type=chat_notification["from_type"],
+                    from_name=chat_notification["from_name"],
+                    message_type=chat_notification.get("message_type"),
+                    message_id=chat_notification.get("message_id"),
+                    created_at=chat_notification.get("created_at"),
+                    notification_kind=chat_notification.get("notification_kind"),
+                    desk_path=chat_notification.get("desk_path"),
+                )
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
 
@@ -598,6 +649,8 @@ async def _run_decision_turn(
     last_response_content = ""
     status_lookup_required = False
     status_answer_reprompted = False
+    status_guard_enabled = trigger_type == "human_chat"
+    decision_repair_attempts = 0
 
     while True:
         step_started = time.monotonic()
@@ -659,13 +712,54 @@ async def _run_decision_turn(
 
         parsed = parse_direct_turn_response(response.content)
         if parsed.get("decision") == "_parse_failed":
+            candidate_payload = parsed.get("_candidate_payload")
+            inferred_status_candidate = _is_status_candidate_payload(candidate_payload)
+            if (
+                status_guard_enabled
+                and inferred_status_candidate
+                and tool_steps == 0
+                and not initial_task_id
+            ):
+                status_lookup_required = True
+            error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
+            if decision_repair_attempts < _MAX_DECISION_REPAIR_ATTEMPTS:
+                decision_repair_attempts += 1
+                continuation_messages = _build_decision_repair_messages(
+                    parsed_error=parsed.get("_raw_snippet", ""),
+                    status_phase=_decision_status_phase(
+                        status_guard_enabled=status_guard_enabled,
+                        status_lookup_required=status_lookup_required,
+                        tool_steps=tool_steps,
+                    ),
+                )
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=len(step_traces) + 1,
+                        context_snapshot=next_context_snapshot,
+                        raw_response=response.content,
+                        action=parsed,
+                        result={
+                            "event": "decision_repair_requested",
+                            "detail": "Conversation decision JSON was invalid; asked the model to correct it.",
+                        },
+                        prompt_tokens=response.prompt_tokens,
+                        completion_tokens=response.completion_tokens,
+                        total_tokens=response.total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                    )
+                )
+                current_context.extend(
+                    [{"role": "assistant", "content": response.content}, *continuation_messages]
+                )
+                next_context_snapshot = _serialize_trace_value(continuation_messages)
+                continue
+
             result = {
                 "event": "agent_error",
                 "detail": f"{agent.name} returned invalid decision JSON",
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -701,7 +795,7 @@ async def _run_decision_turn(
                 start=start,
             )
 
-        cli_call = maybe_parse_bm_cli_call(parsed)
+        cli_call = BossModCliCall.model_validate(parsed) if parsed.get("action") == "bm_cli" else None
         if cli_call is not None:
             tool_steps += 1
             executed_actions.append("bm_cli")
@@ -782,7 +876,7 @@ async def _run_decision_turn(
             continue
 
         decision = ConversationDecision.model_validate(parsed)
-        if decision.intentKind == "status_request" and tool_steps == 0 and not initial_task_id:
+        if status_guard_enabled and decision.intentKind == "status_request" and tool_steps == 0 and not initial_task_id:
             if status_lookup_required:
                 result = {
                     "event": "agent_error",
@@ -832,7 +926,7 @@ async def _run_decision_turn(
                     "role": "system",
                     "content": (
                         "This direct request is a factual status query. "
-                        'Before your final JSON decision, call {"action":"bm_cli","command":"status","thought":"check live status"}.'
+                        'Before your final JSON decision, call {"act":"cli","data":{"cmd":"status"},"th":"check live status"}.'
                     ),
                 },
                 {
@@ -863,7 +957,7 @@ async def _run_decision_turn(
             next_context_snapshot = _serialize_trace_value(continuation_messages)
             continue
 
-        if status_lookup_required and tool_steps > 0:
+        if status_guard_enabled and status_lookup_required and tool_steps > 0:
             if decision.intentKind != "status_request" or decision.decision != "answer" or decision.commitmentKind != "none":
                 if status_answer_reprompted:
                     result = {
@@ -921,7 +1015,7 @@ async def _run_decision_turn(
                         "role": "system",
                         "content": (
                             'Respond next with a final JSON decision using '
-                            '{"decision":"answer","intentKind":"status_request","commitmentKind":"none",...} '
+                            '{"act":"reply","intent":"status","msg":"...","commit":"none","th":"..."} '
                             "grounded in the BossMod CLI status result."
                         ),
                     },
@@ -1023,6 +1117,27 @@ async def _run_decision_turn(
                 message_id=chat_message.get("message_id"),
                 created_at=chat_message.get("created_at"),
             )
+        if result.get("meeting_message"):
+            meeting_message = result["meeting_message"]
+            await manager.broadcast_meeting_message(
+                agent_id=meeting_message["agent_id"],
+                session_id=meeting_message["session_id"],
+                content=meeting_message["content"],
+                author_type=meeting_message["author_type"],
+                author_name=meeting_message["author_name"],
+                message_id=meeting_message.get("message_id"),
+                created_at=meeting_message.get("created_at"),
+            )
+        if result.get("channel_message"):
+            channel_message = result["channel_message"]
+            await manager.broadcast_channel_message(
+                channel_id=channel_message["channel_id"],
+                content=channel_message["content"],
+                author_type=channel_message["author_type"],
+                author_name=channel_message["author_name"],
+                message_id=channel_message.get("message_id"),
+                created_at=channel_message.get("created_at"),
+            )
 
         step_traces.append(
             _build_step_trace(
@@ -1118,6 +1233,13 @@ def _determine_mode(trigger: dict[str, Any]) -> routing.ActivationMode:
     return "work"
 
 
+def _contract_kind_for_trigger(trigger_type: str) -> str:
+    """Return the prompt contract kind for one trigger."""
+    if trigger_type in _DECISION_TRIGGER_TYPES:
+        return "decision"
+    return "execution"
+
+
 def _get_nearby_agents(
     agent_id: str,
     state: AgentState,
@@ -1165,6 +1287,40 @@ def _get_current_activity(agent_id: str) -> dict[str, Any] | None:
     }
 
 
+def _get_current_session(agent_id: str, trigger: dict[str, Any]) -> dict[str, Any] | None:
+    """Fetch the active meeting session context when relevant."""
+    session_id = trigger.get("session_id")
+    session = db.get_meeting_session(session_id) if isinstance(session_id, str) and session_id.strip() else None
+    if session is None:
+        session = db.get_active_meeting_session_for_agent(agent_id)
+    if session is None:
+        return None
+    participants = db.list_active_meeting_participants(session.room_id)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "room_id": session.room_id,
+        "room_name": "Meeting Room" if session.room_id == "meeting_room" else session.room_id,
+        "participants": participants,
+    }
+
+
+def _get_current_channel(trigger: dict[str, Any]) -> dict[str, Any] | None:
+    """Fetch the active shared channel context when relevant."""
+    channel_id = trigger.get("channel_id")
+    if not isinstance(channel_id, str) or not channel_id.strip():
+        return None
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        return None
+    return {
+        "id": channel.id,
+        "name": channel.name,
+        "kind": channel.kind,
+        "participants": db.list_channel_member_details(channel.id),
+    }
+
+
 def _get_reference_materials(agent_id: str) -> list[str]:
     """Build non-chat references for the turn."""
     materials: list[str] = []
@@ -1202,12 +1358,12 @@ def _build_continuation_instruction(
             return (
                 f"Action executed: {detail}. "
                 f'The current work contract still requires "{target}". '
-                f'Use {{"action":"bm_cli","command":"write {target}","content":"...",...}} or another valid step to satisfy it before complete.'
+                f'Use {{"act":"cli","data":{{"cmd":"write {target}","body":"..."}},"th":"save deliverable"}} or another valid step to satisfy it before done.'
             )
         if result.get("event") == "world_feedback" and "Walk to your desk first." in detail:
             return (
                 f"Action executed: {detail}. "
-                'Your next step should be {"action":"walkTo","destination":"desk",...} before doing work.'
+                'Your next step should be {"act":"walk","data":{"dst":"desk"},"th":"move first"} before work.'
             )
         return (
             f"Action executed: {detail}. "
@@ -1234,7 +1390,15 @@ def _has_pending_interrupts(agent_id: str) -> bool:
     """Return whether queued interrupt-style triggers are waiting for the agent."""
     return db.has_queued_trigger_matching(
         agent_id,
-        trigger_types=["human_chat", "peer_message", "watchdog_status_ping"],
+        trigger_types=[
+            "human_chat",
+            "peer_message",
+            "session_message",
+            "session_response",
+            "channel_message",
+            "channel_response",
+            "watchdog_status_ping",
+        ],
     )
 
 
@@ -1245,6 +1409,84 @@ def _serialize_trace_value(value: Any) -> str | None:
     if isinstance(value, str):
         return value
     return json.dumps(value, default=str)
+
+
+def _decision_status_phase(
+    *,
+    status_guard_enabled: bool,
+    status_lookup_required: bool,
+    tool_steps: int,
+) -> str:
+    """Describe where a factual status turn is in its guarded flow."""
+    if not status_guard_enabled or not status_lookup_required:
+        return "none"
+    if tool_steps > 0:
+        return "post_lookup"
+    return "lookup_required"
+
+
+def _is_status_candidate_payload(candidate_payload: Any) -> bool:
+    """Return whether an invalid candidate payload was still attempting a status reply."""
+    if not isinstance(candidate_payload, dict):
+        return False
+    decision_value = str(candidate_payload.get("decision") or "").strip()
+    intent_value = str(candidate_payload.get("intentKind") or "").strip()
+    model_act = str(candidate_payload.get("act") or "").strip()
+    model_intent = str(candidate_payload.get("intent") or "").strip()
+    return (
+        decision_value == "status_request"
+        or intent_value == "status_request"
+        or model_act == "status"
+        or model_intent == "status"
+    )
+
+
+def _build_decision_repair_messages(*, parsed_error: str, status_phase: str) -> list[dict[str, str]]:
+    """Build one strict repair prompt after invalid conversation JSON."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Your previous JSON decision was invalid for the current conversation contract: "
+                f"{parsed_error}. Return exactly one corrected JSON object and nothing else."
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                "Keep the same conversational intent. Do not add commentary, markdown, or explanation. "
+                "Only correct the JSON fields so they conform to the contract."
+            ),
+        },
+        {
+            "role": "system",
+            "content": (
+                'Use the contract keys exactly. "act" is the response mode, "intent" is the topic, and "th" is thought. '
+                'Use "status" only in "intent", never in "act".'
+            ),
+        },
+    ]
+    if status_phase == "lookup_required":
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "This turn is still a factual status question and you have not checked live status yet. "
+                    'If you need authoritative current state, respond next with {"act":"cli","data":{"cmd":"status"},"th":"check live status"}.'
+                ),
+            }
+        )
+    if status_phase == "post_lookup":
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    'For this status query after BossMod CLI lookup, use {"act":"reply","intent":"status","msg":"...","commit":"none","th":"..."}. '
+                    'Do not change the commitment in this turn.'
+                ),
+            }
+        )
+    return messages
 
 
 def _diagnostic_mode(trigger_type: str) -> str:

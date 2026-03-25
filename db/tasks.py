@@ -9,12 +9,14 @@ from typing import Any
 from core.models import Task, TaskNotificationSettings, WorkContract
 from db.crud import build_update, insert_returning_dict, query
 from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
+from db.task_notification_targets import delete_task_notification_target, set_task_notification_target_channel_id
 from db.task_work_contracts import delete_task_work_contract, set_task_work_contract
 
 _TASK_COLUMNS = (
     "t.id, t.title, t.description, t.project, t.assigned_to, t.created_by, "
     "t.status, twc.work_contract, twc.updated_at AS work_contract_updated_at, "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
+    "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
     "t.last_activity, t.created_at"
@@ -63,6 +65,7 @@ def create_task(
     work_contract: Any | None = None,
     source_channel: str | None = None,
     notification_policy: str | None = None,
+    notification_channel_id: str | None = None,
 ) -> Task:
     """Insert a new task."""
     validated_work_contract = None
@@ -91,6 +94,7 @@ def create_task(
             source_channel=validated_notification_settings.source_channel,
             policy=validated_notification_settings.policy,
         )
+        set_task_notification_target_channel_id(task_id, notification_channel_id)
     task = get_task(task_id)
     if task is None:
         raise RuntimeError(f"Failed to reload created task {task_id}")
@@ -116,6 +120,7 @@ def get_task(task_id: str) -> Task | None:
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.id = $1
         """,
         [task_id],
@@ -147,6 +152,7 @@ def list_tasks(
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
         ORDER BY t.created_at
         """,
@@ -160,6 +166,7 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
     notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...
+    notification_channel_id = fields.pop("notification_channel_id", None) if "notification_channel_id" in fields else ...
     validated_work_contract = (
         _validate_persisted_work_contract(work_contract)
         if work_contract not in (..., None)
@@ -191,4 +198,9 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
             source_channel=validated_notification_settings.source_channel,
             policy=validated_notification_settings.policy,
         )
+    if notification_channel_id is not ...:
+        if notification_channel_id is None:
+            delete_task_notification_target(task_id)
+        else:
+            set_task_notification_target_channel_id(task_id, notification_channel_id)
     return get_task(task_id)

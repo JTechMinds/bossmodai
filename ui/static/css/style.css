@@ -212,6 +212,35 @@
     50% { opacity: 1; }
 }
 
+/* ─── Compact panel mode (icon-only when panel is narrow) ─── */
+.panel-compact .toolbar-label {
+    display: none;
+}
+.panel-compact .agent-subview-btn {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+.panel-compact .tab-btn {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+.panel-compact .agent-chip span.truncate {
+    max-width: 40px;
+}
+
+/* ─── Agent chip dismiss button ─── */
+.chip-dismiss {
+    opacity: 0.4;
+    transition: opacity 0.15s;
+    line-height: 0;
+}
+.chip-dismiss:hover {
+    opacity: 1;
+}
+.agent-chip:hover .chip-dismiss {
+    opacity: 0.7;
+}
+
 /* ─── Responsive: hide gutter on mobile ─── */
 @media (max-width: 639px) {
     .gutter {

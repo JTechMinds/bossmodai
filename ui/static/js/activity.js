@@ -28,7 +28,7 @@ const ActivityLog = (() => {
     // ─── Initialization ───
 
     function init() {
-        container = document.querySelector('#tab-activity .overflow-y-auto');
+        container = document.querySelector('#panel-activity .overflow-y-auto');
         if (!container) return;
         console.log('[ActivityLog] Initialized');
     }

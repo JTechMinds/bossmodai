@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 TriggerStatus = Literal["queued", "claimed", "completed", "failed"]
-TriggerChannel = Literal["chat", "work", "system"]
+TriggerChannel = Literal["chat", "channel", "work", "system"]
 
 
 class AgentTrigger(BaseModel):

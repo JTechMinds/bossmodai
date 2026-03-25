@@ -254,6 +254,19 @@ const AgentPanel = (() => {
                          <button type="button" id="btn-goto-connections" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
                     : `<p class="text-xs text-bm-muted mb-2">Assign an AI connection to each activation type.</p>
                        <div class="space-y-2">
+                           <div class="flex items-center gap-2">
+                               <span class="text-xs font-medium text-bm-text w-28 shrink-0">Set All</span>
+                               <select name="model_all"
+                                   class="flex-1 px-2 py-1.5 text-xs border border-bm-border rounded
+                                          bg-bm-bg focus:outline-none focus:ring-1 focus:ring-bm-accent/30">
+                                   <option value="">\u2014 Set all connections \u2014</option>
+                                   ${connections.map(c => {
+                                       const label = c.model ? `${c.name} (${c.model})` : c.name;
+                                       return `<option value="${c.id}">${BossModUtils.escapeHtml(label)}</option>`;
+                                   }).join('')}
+                               </select>
+                           </div>
+                           <hr class="border-bm-border">
                            ${MODEL_TYPES.map(t => `
                                <div class="flex items-center gap-2">
                                    <span class="text-xs text-bm-muted w-28 shrink-0">${t.label}</span>
@@ -264,56 +277,61 @@ const AgentPanel = (() => {
                 }
             </div>
 
-            <div class="border border-bm-border rounded-lg p-3 space-y-3 bg-white">
-                <div>
-                    <h3 class="text-sm font-semibold">AI History</h3>
-                    <p class="text-xs text-bm-muted mt-1">
-                        Controls the backend view used for model-visible conversation history.
-                        This does not delete or duplicate chat data.
-                    </p>
-                </div>
-                <div class="grid grid-cols-1 gap-3">
+            <div class="border border-bm-border rounded-lg p-3 bg-white">
+                <button type="button" id="ai-history-toggle"
+                        class="w-full flex items-center justify-between text-left">
                     <div>
-                        <label class="block text-xs font-medium mb-1">Last N History Items</label>
-                        <input type="number"
-                               min="0"
-                               max="500"
-                               name="prompt_history_last_n"
-                               value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1">Max History Tokens</label>
-                        <input type="number"
-                               min="0"
-                               max="50000"
-                               name="prompt_history_max_tokens"
-                               value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1">Earliest Allowed Timestamp</label>
-                        <input type="datetime-local"
-                               name="prompt_history_earliest_ts"
-                               value="${BossModUtils.escapeHtml(earliestAllowedValue)}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
-                        <p class="text-[11px] text-bm-muted mt-1">
-                            Leave empty to allow older history. Set this to make the agent ignore anything before a cutoff.
+                        <h3 class="text-sm font-semibold">AI History</h3>
+                        <p class="text-xs text-bm-muted mt-1">
+                            Controls the backend view used for model-visible conversation history.
                         </p>
                     </div>
-                    <label class="inline-flex items-center gap-2 text-sm text-bm-text cursor-pointer">
-                        <input type="checkbox"
-                               name="prompt_history_include_notifications"
-                               class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
-                               ${promptHistoryPolicy.include_notifications ? 'checked' : ''}>
-                        <span>Include prompt-visible runtime notifications</span>
-                    </label>
+                    <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="ai-history-chevron"></i>
+                </button>
+                <div id="ai-history-content" class="hidden mt-3 space-y-3">
+                    <div class="grid grid-cols-1 gap-3">
+                        <div>
+                            <label class="block text-xs font-medium mb-1">Last N History Items</label>
+                            <input type="number"
+                                   min="0"
+                                   max="500"
+                                   name="prompt_history_last_n"
+                                   value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
+                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-1">Max History Tokens</label>
+                            <input type="number"
+                                   min="0"
+                                   max="50000"
+                                   name="prompt_history_max_tokens"
+                                   value="${BossModUtils.escapeHtml(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
+                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-1">Earliest Allowed Timestamp</label>
+                            <input type="datetime-local"
+                                   name="prompt_history_earliest_ts"
+                                   value="${BossModUtils.escapeHtml(earliestAllowedValue)}"
+                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                          focus:border-bm-accent">
+                            <p class="text-[11px] text-bm-muted mt-1">
+                                Leave empty to allow older history. Set this to make the agent ignore anything before a cutoff.
+                            </p>
+                        </div>
+                        <label class="inline-flex items-center gap-2 text-sm text-bm-text cursor-pointer">
+                            <input type="checkbox"
+                                   name="prompt_history_include_notifications"
+                                   class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
+                                   ${promptHistoryPolicy.include_notifications ? 'checked' : ''}>
+                            <span>Include prompt-visible runtime notifications</span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -381,6 +399,30 @@ const AgentPanel = (() => {
         if (gotoConn) gotoConn.addEventListener('click', gotoSettings);
         const gotoPers = container.querySelector('#btn-goto-personalities');
         if (gotoPers) gotoPers.addEventListener('click', gotoSettings);
+
+        // "Set All" connection convenience dropdown
+        const setAllSelect = container.querySelector('select[name="model_all"]');
+        if (setAllSelect) {
+            setAllSelect.addEventListener('change', () => {
+                if (!setAllSelect.value) return;
+                MODEL_TYPES.forEach(t => {
+                    const sel = container.querySelector(`select[name="${t.key}"]`);
+                    if (sel) sel.value = setAllSelect.value;
+                });
+            });
+        }
+
+        // AI History collapsible accordion
+        const historyToggle = container.querySelector('#ai-history-toggle');
+        const historyContent = container.querySelector('#ai-history-content');
+        const historyChevron = container.querySelector('#ai-history-chevron');
+        if (historyToggle && historyContent && historyChevron) {
+            historyToggle.addEventListener('click', () => {
+                historyContent.classList.toggle('hidden');
+                historyChevron.style.transform = historyContent.classList.contains('hidden') ? '' : 'rotate(90deg)';
+            });
+            if (window.lucide) lucide.createIcons({ nodes: [historyToggle] });
+        }
     }
 
     // ─── Build submit data from form ───

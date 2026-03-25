@@ -74,54 +74,65 @@
         <div id="panel-left" class="flex flex-col bg-bm-surface border-r border-bm-border
                                      max-sm:hidden">
 
-            <!-- Tab headers (dynamic — managed by AgentContext) -->
+            <!-- Tab headers (Focus | Company | Channels) -->
             <div id="left-panel-tabs" class="flex border-b border-bm-border shrink-0">
-                <button class="tab-btn active flex-1 px-4 py-2.5 text-sm font-medium
-                               transition-colors relative"
-                        data-tab="chat">
-                    <span class="flex items-center justify-center gap-1.5">
-                        <i data-lucide="message-circle" class="w-4 h-4"></i>
-                        Chat
-                    </span>
-                </button>
-                <button class="tab-btn flex-1 px-4 py-2.5 text-sm font-medium
-                               transition-colors relative"
-                        data-tab="activity">
-                    <span class="flex items-center justify-center gap-1.5">
-                        <i data-lucide="activity" class="w-4 h-4"></i>
-                        Activity
-                    </span>
-                </button>
+                <!-- Dynamically managed by AgentContext.updateTabs() -->
+            </div>
+
+            <!-- Agent chips row (agents selected this session) -->
+            <div id="agent-chips" class="hidden border-b border-bm-border shrink-0 px-2 py-1.5 flex flex-wrap gap-1.5 overflow-y-auto max-h-20">
+                <!-- Chips rendered dynamically by AgentContext.renderAgentChips() -->
             </div>
 
             <!-- Sub-view toolbar (hidden until agent selected) -->
             <div id="agent-toolbar" class="hidden border-b border-bm-border shrink-0">
-                <div class="flex">
+                <div class="flex items-center">
                     <button data-subview="chat"
                             class="agent-subview-btn active flex-1 flex items-center justify-center gap-1.5
-                                   px-3 py-2 text-xs font-medium transition-colors">
-                        <i data-lucide="message-circle" class="w-3.5 h-3.5"></i> Chat
+                                   px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap overflow-hidden">
+                        <i data-lucide="message-circle" class="w-3.5 h-3.5 shrink-0"></i>
+                        <span class="toolbar-label">Chat</span>
                     </button>
-                    <button data-subview="edit"
+                    <button data-subview="meeting"
                             class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
-                                   px-3 py-2 text-xs font-medium transition-colors">
-                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit
+                                   px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap overflow-hidden">
+                        <i data-lucide="users" class="w-3.5 h-3.5 shrink-0"></i>
+                        <span class="toolbar-label">Meeting</span>
                     </button>
                     <button data-subview="tasks"
                             class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
-                                   px-3 py-2 text-xs font-medium transition-colors">
-                        <i data-lucide="list-todo" class="w-3.5 h-3.5"></i> Tasks
+                                   px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap overflow-hidden">
+                        <i data-lucide="list-todo" class="w-3.5 h-3.5 shrink-0"></i>
+                        <span class="toolbar-label">Tasks</span>
                     </button>
                     <button data-subview="desk"
                             class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
-                                   px-3 py-2 text-xs font-medium transition-colors">
-                        <i data-lucide="folder-open" class="w-3.5 h-3.5"></i> Desk
+                                   px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap overflow-hidden">
+                        <i data-lucide="folder-open" class="w-3.5 h-3.5 shrink-0"></i>
+                        <span class="toolbar-label">Desk</span>
                     </button>
-                    <button data-subview="diagnostics"
-                            class="agent-subview-btn flex-1 flex items-center justify-center gap-1.5
-                                   px-3 py-2 text-xs font-medium transition-colors">
-                        <i data-lucide="stethoscope" class="w-3.5 h-3.5"></i> Diag
-                    </button>
+                    <!-- Gear dropdown for Edit & Diag -->
+                    <div class="relative shrink-0">
+                        <button id="gear-menu-btn" type="button"
+                                class="agent-subview-btn flex items-center justify-center
+                                       px-3 py-2 text-xs font-medium transition-colors">
+                            <i data-lucide="settings" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <div id="gear-menu-dropdown"
+                             class="hidden absolute right-0 top-full mt-1 w-32
+                                    bg-white border border-bm-border rounded-lg shadow-lg z-50 py-1">
+                            <button data-subview="edit"
+                                    class="gear-menu-item w-full flex items-center gap-2
+                                           px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors">
+                                <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit
+                            </button>
+                            <button data-subview="diagnostics"
+                                    class="gear-menu-item w-full flex items-center gap-2
+                                           px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors">
+                                <i data-lucide="stethoscope" class="w-3.5 h-3.5"></i> Diag
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -142,11 +153,11 @@
                     <div id="chat-messages" class="flex-1 overflow-y-auto p-4"></div>
                     <div class="p-3 border-t border-bm-border">
                         <div class="flex gap-2 items-end">
-                            <textarea id="chat-input" rows="1"
+                            <textarea id="chat-input" rows="3"
                                       placeholder="Type a message... (Shift+Enter for new line)"
                                       class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
                                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                             focus:border-bm-accent resize-none overflow-hidden"></textarea>
+                                             focus:border-bm-accent resize-none"></textarea>
                             <button id="chat-send"
                                     class="px-3 py-2 bg-bm-accent text-white rounded-lg
                                            hover:bg-bm-accent-hover transition-colors shrink-0">
@@ -159,6 +170,9 @@
                 <!-- Agent edit sub-view -->
                 <div id="subview-edit" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
 
+                <!-- Agent meeting sub-view -->
+                <div id="subview-meeting" class="absolute inset-0 flex flex-col hidden"></div>
+
                 <!-- Agent tasks sub-view -->
                 <div id="subview-tasks" class="absolute inset-0 overflow-y-auto p-4 hidden"></div>
 
@@ -168,15 +182,11 @@
                 <!-- Agent diagnostics sub-view -->
                 <div id="subview-diagnostics" class="absolute inset-0 overflow-y-auto hidden"></div>
 
-                <!-- Activity tab -->
-                <div id="tab-activity" class="tab-content absolute inset-0 flex flex-col">
-                    <div class="flex-1 overflow-y-auto p-4">
-                        <div class="text-bm-muted text-sm text-center mt-8">
-                            <i data-lucide="activity" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
-                            <p>Agent activity will appear here</p>
-                        </div>
-                    </div>
-                </div>
+                <!-- Company tab -->
+                <div id="tab-company" class="tab-content absolute inset-0 hidden"></div>
+
+                <!-- Channels tab -->
+                <div id="tab-channels" class="tab-content absolute inset-0 hidden"></div>
             </div>
         </div>
 
@@ -199,6 +209,22 @@
                     </button>
                 </div>
                 <div id="diag-detail-body" class="flex-1 overflow-y-auto p-4 sm:p-6 bg-bm-bg"></div>
+            </div>
+        </div>
+
+        <!-- ─── RIGHT PANEL: ACTIVITY (25%) ─── -->
+        <div id="panel-activity" class="flex flex-col bg-bm-surface border-l border-bm-border max-sm:hidden">
+            <div class="px-3 py-2.5 border-b border-bm-border shrink-0">
+                <span class="flex items-center gap-1.5 text-sm font-medium text-bm-text">
+                    <i data-lucide="activity" class="w-4 h-4"></i>
+                    Activity
+                </span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="text-bm-muted text-sm text-center mt-8">
+                    <i data-lucide="activity" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+                    <p>Agent activity will appear here</p>
+                </div>
             </div>
         </div>
     </div>
@@ -241,6 +267,8 @@
     <script src="{{ static_url('js/activity.js') }}"></script>
     <script src="{{ static_url('js/canvas.js') }}"></script>
     <script src="{{ static_url('js/agent-panel.js') }}"></script>
+    <script src="{{ static_url('js/company-view.js') }}"></script>
+    <script src="{{ static_url('js/channels-view.js') }}"></script>
     <script src="{{ static_url('js/agent-context.js') }}"></script>
     <script src="{{ static_url('js/diagnostics.js') }}"></script>
     <script src="{{ static_url('js/settings-view.js') }}"></script>

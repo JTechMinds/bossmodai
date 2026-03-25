@@ -53,6 +53,7 @@ class Task(BaseModel):
     work_contract_updated_at: datetime | None = None
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
+    notification_channel_id: str | None = None
     notification_policy_updated_at: datetime | None = None
     parent_task_id: str | None = None
     cost_ceiling: float | None = None
@@ -81,3 +82,4 @@ class TaskCreate(BaseModel):
     work_contract: WorkContract | None = None
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
+    notification_channel_id: str | None = None

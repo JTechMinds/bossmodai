@@ -1,4 +1,4 @@
-"""BossMod AI — Prompt-visible BossMod CLI contract."""
+"""BossMod AI — Compact BossMod CLI contract."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BossModCliCall(BaseModel):
-    """A structured request to query the controlled BossMod CLI surface."""
+    """Validated internal representation of a BossMod CLI call."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -27,44 +27,43 @@ class BossModCliCall(BaseModel):
 
 
 def maybe_parse_bm_cli_call(payload: Any) -> BossModCliCall | None:
-    """Return a validated BossMod CLI call when the payload requests one."""
+    """Return a validated BossMod CLI call from the model-facing compact payload."""
     if not isinstance(payload, dict):
         return None
-    if payload.get("action") != "bm_cli":
-        return None
-    return BossModCliCall.model_validate(payload)
+
+    if payload.get("act") == "cli":
+        extra_root = set(payload) - {"act", "data", "th"}
+        if extra_root:
+            raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
+        data = payload.get("data") or {}
+        if not isinstance(data, dict):
+            raise ValueError('"data" must be an object for act="cli"')
+        extra_data = set(data) - {"cmd", "body"}
+        if extra_data:
+            raise ValueError(f'unexpected cli data keys: {", ".join(sorted(extra_data))}')
+        return BossModCliCall.model_validate(
+            {
+                "action": "bm_cli",
+                "command": data.get("cmd"),
+                "content": data.get("body"),
+                "thought": payload.get("th", ""),
+            }
+        )
+
+    return None
 
 
 def render_bm_cli_guidance() -> str:
-    """Render the authoritative starter guidance for BossMod CLI access."""
+    """Render the compact BossMod CLI contract for prompts."""
     return "\n".join(
         [
-            "BOSSMOD CLI:",
-            '- Use {"action":"bm_cli","command":"...","thought":"..."} when you need authoritative self/project information.',
-            '- BossMod CLI behaves like a bounded virtual shell rooted at "/" with "/me" and "/projects" mounts.',
-            '- Your personal /me workspace is versioned with a local Git repo. "/me/scratchpad" stays untracked for throwaway work.',
-            '- Your default working directory is "/me". Use "pwd" and "cd" to inspect or change it.',
-            '- For write-style commands, include a separate "content" field instead of cramming long text into the command string.',
-            "- BossMod CLI results are turn-local. Use them for the current reply/action; they do not become normal chat memory.",
-            "- Starter commands:",
-            "  - pwd",
-            "  - cd <path>",
-            "  - ls [path]",
-            "  - cat <path>",
-            "  - mkdir <path>",
-            "  - write <path>   (requires content)",
-            "  - append <path>   (requires content)",
-            "  - status",
-            "  - runtime",
-            "  - activity",
-            "  - current-task",
-            "  - tasks",
-            "  - recent-work",
-            "  - location",
-            "  - git status",
-            "  - git log [limit]",
-            "  - git diff [path]",
-            "  - git show <revision> [path]",
-            "  - git restore [--source <revision>] <path>",
+            "CLI CALL:",
+            '  {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}',
+            "CLI NOTES:",
+            '  - bounded shell rooted at "/" with "/me" and "/projects"',
+            '  - cwd starts at "/me"',
+            '  - "/me" is git-tracked; "/me/scratchpad" is untracked',
+            "  - results are turn-local",
+            "  - common cmds: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git status log diff show restore",
         ]
     )
