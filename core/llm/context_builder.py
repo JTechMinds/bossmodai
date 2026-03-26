@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 from typing import Any
 
 import db
 from core import config
-from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.deliverables import format_deliverables_for_context
-from core.agent_loop.decision_contract import render_decision_contract
 from core.models import Agent, AgentState
 from core.models.notification import Notification
+from core.llm.template_engine import render_template, syntax_guide
 from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,51 @@ _STATUS_LABELS = {
     "social_active": "socializing",
     "in_transit": "walking",
 }
+
+_AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
+    ("agent_name", "Agent display name"),
+    ("role", "Agent role title"),
+    ("personality", "Rendered personality prompt text"),
+    ("worldStatus", "Formatted world status block"),
+    ("worldStatus.location", "Current room/location label"),
+    ("worldStatus.status", "Current agent status label"),
+    ("worldStatus.nearby_agents", "Comma-separated nearby agent names"),
+    ("worldStatus.pending_triggers", "Queued trigger count"),
+    ("worldStatus.open_task_count", "Open task count"),
+    ("worldStatus.current_activity", "Current activity summary"),
+    ("worldStatus.current_task", "Current task summary"),
+    ("activity", "Formatted current activity block"),
+    ("activity.kind", "Current activity kind"),
+    ("activity.status", "Current activity status"),
+    ("activity.title", "Current activity title"),
+    ("activity.detail", "Current activity detail"),
+    ("activity.destination", "Current activity destination"),
+    ("activity.preferred_destination", "Preferred destination when present"),
+    ("task", "Formatted current task block"),
+    ("task.id", "Current task id"),
+    ("task.title", "Current task title"),
+    ("task.status", "Current task status"),
+    ("task.description", "Current task description"),
+    ("task.project", "Current task project"),
+    ("task.completion_summary", "Current task completion summary"),
+    ("task.status_note", "Current task status note"),
+    ("pending_tasks", "Formatted open task list"),
+    ("references", "Formatted reference block"),
+    ("turn.contract_kind", "Current runtime contract kind"),
+    ("trigger.type", "Current trigger type"),
+    ("trigger.from_name", "Trigger speaker/sender name"),
+    ("trigger.content", "Trigger message content"),
+    ("trigger.source_channel", "Trigger source channel"),
+    ("trigger.task_title", "Assigned task title when present"),
+    ("trigger.task_description", "Assigned task description when present"),
+    ("channel.kind", "Current channel kind when present"),
+    ("channel.name", "Current channel name when present"),
+    ("channel.participant_count", "Current channel participant count"),
+    ("session.kind", "Current session kind when present"),
+    ("session.name", "Current session name when present"),
+    ("session.participant_count", "Current session participant count"),
+]
+AUTHORED_PROMPT_ALLOWED_PATHS = {name for name, _ in _AUTHORED_PROMPT_VARIABLES}
 
 
 @dataclass
@@ -49,50 +94,28 @@ class TurnContext:
 def build_context(turn: TurnContext) -> list[dict[str, str]]:
     """Assemble the full message list for an agent turn."""
     messages: list[dict[str, str]] = []
+    render_context = _build_prompt_render_context(turn)
+    personality_template = turn.agent.prompt_template or _default_role_prompt(turn.agent)
+    rendered_personality = render_template(
+        personality_template,
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
+    render_context["personality"] = rendered_personality
 
-    # ─── Build template variables ───
-    personality = turn.agent.prompt_template or _default_role_prompt(turn.agent)
-    personality = (
-        personality
-        .replace("{{agent_name}}", turn.agent.name)
-        .replace("{{role}}", turn.agent.role or "AI Assistant")
+    system_prompt = render_template(
+        config.require("system_prompt_template"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
-    variables = {
-        "{{personality}}": personality,
-        "{{agent_name}}": turn.agent.name,
-        "{{role}}": turn.agent.role or "AI Assistant",
-        "{{worldStatus}}": _format_world_status(
-            turn.agent,
-            turn.state,
-            turn.nearby_agents,
-            turn.current_activity,
-            turn.current_task,
-            turn.pending_trigger_count,
-        ),
-        "{{activity}}": _format_activity(turn.current_activity),
-        "{{task}}": _format_task(turn.current_task),
-        "{{pending_tasks}}": _format_pending_tasks(turn.agent.id, turn.current_task),
-        "{{references}}": _format_references(
-            turn.agent.id,
-            turn.reference_materials,
-            turn.prompt_notifications,
-            turn.current_session,
-            turn.current_channel,
-        ),
-    }
-
-    # ─── Resolve template from settings ───
-    template = config.require("system_prompt_template")
-    system_prompt = template
-    for key, value in variables.items():
-        system_prompt = system_prompt.replace(key, value)
-
     messages.append({"role": "system", "content": system_prompt})
-    messages.append({
-        "role": "system",
-        "content": _render_turn_contract(turn.contract_kind, turn.trigger),
-    })
+    messages.append(
+        {
+            "role": "system",
+            "content": _render_turn_contract(turn.contract_kind, render_context),
+        }
+    )
     if turn.contract_kind == "decision":
         messages.append(
             {
@@ -126,6 +149,228 @@ def _default_role_prompt(agent: Agent) -> str:
         f"You communicate professionally, stay focused on your tasks, "
         f"and collaborate effectively with your team."
     )
+
+
+def template_variable_metadata() -> list[dict[str, str]]:
+    """Return the supported authored prompt variables for UI metadata."""
+    return [{"name": name, "description": description} for name, description in _AUTHORED_PROMPT_VARIABLES]
+
+
+def template_syntax_examples() -> list[str]:
+    """Return supported authored prompt syntax examples for UI metadata."""
+    return syntax_guide()
+
+
+def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
+    """Build the structured render context for authored prompts."""
+    world_status = _world_status_context(
+        turn.agent,
+        turn.state,
+        turn.nearby_agents,
+        turn.current_activity,
+        turn.current_task,
+        turn.pending_trigger_count,
+    )
+    activity = _activity_context(turn.current_activity)
+    task = _task_context(turn.current_task)
+    return {
+        "agent_name": turn.agent.name,
+        "role": turn.agent.role or "AI Assistant",
+        "personality": "",
+        "worldStatus": world_status,
+        "activity": activity,
+        "task": task,
+        "pending_tasks": _format_pending_tasks(turn.agent.id, turn.current_task),
+        "references": _format_references(
+            turn.agent.id,
+            turn.reference_materials,
+            turn.prompt_notifications,
+            turn.current_session,
+            turn.current_channel,
+        ),
+        "turn": {
+            "contract_kind": turn.contract_kind,
+        },
+        "trigger": _template_trigger(turn.trigger),
+        "channel": _template_channel(turn.current_channel),
+        "session": _template_session(turn.current_session),
+    }
+
+
+def _world_status_context(
+    agent: Agent,
+    state: AgentState,
+    nearby_agents: list[dict[str, Any]] | None = None,
+    current_activity: dict[str, Any] | None = None,
+    current_task: dict[str, Any] | None = None,
+    pending_trigger_count: int = 0,
+) -> dict[str, Any]:
+    room = get_room_at(state.x, state.y)
+    room_name = room["name"] if room else "unknown"
+    status_label = _STATUS_LABELS.get(state.status, state.status)
+    open_tasks = _list_open_tasks(agent.id, current_task)
+    nearby_names = [str(item.get("name") or "Unknown") for item in (nearby_agents or [])]
+    task_summary = "none"
+    if current_task:
+        task_summary = f"{current_task.get('title', 'Untitled')} ({current_task.get('status', 'unknown')})"
+    activity_summary = "none"
+    if current_activity:
+        activity_summary = current_activity.get("kind", "unknown")
+        if current_activity.get("title"):
+            activity_summary += f' - {current_activity["title"]}'
+
+    return {
+        "value": _format_world_status(
+            agent,
+            state,
+            nearby_agents,
+            current_activity,
+            current_task,
+            pending_trigger_count,
+        ),
+        "location": room_name,
+        "status": status_label,
+        "nearby_agents": ", ".join(nearby_names) if nearby_names else "none",
+        "pending_triggers": pending_trigger_count,
+        "open_task_count": len(open_tasks),
+        "current_activity": activity_summary,
+        "current_task": task_summary,
+    }
+
+
+def _activity_context(activity: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = activity.get("metadata") if activity else {}
+    return {
+        "value": _format_activity(activity),
+        "kind": str((activity or {}).get("kind") or ""),
+        "status": str((activity or {}).get("status") or ""),
+        "title": str((activity or {}).get("title") or ""),
+        "detail": str((activity or {}).get("detail") or ""),
+        "destination": str((activity or {}).get("destination") or ""),
+        "preferred_destination": str((metadata or {}).get("preferred_destination") or ""),
+    }
+
+
+def _task_context(task: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "value": _format_task(task),
+        "id": str((task or {}).get("id") or ""),
+        "title": str((task or {}).get("title") or ""),
+        "status": str((task or {}).get("status") or ""),
+        "description": str((task or {}).get("description") or ""),
+        "project": str((task or {}).get("project") or ""),
+        "completion_summary": str((task or {}).get("completion_summary") or ""),
+        "status_note": str((task or {}).get("status_note") or ""),
+    }
+
+
+def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": str(trigger.get("type") or ""),
+        "from_name": str(trigger.get("from_name") or ""),
+        "content": str(trigger.get("content") or ""),
+        "source_channel": str(trigger.get("source_channel") or ""),
+        "task_title": str(trigger.get("task_title") or ""),
+        "task_description": str(trigger.get("task_description") or ""),
+    }
+
+
+def _template_channel(channel: dict[str, Any] | None) -> dict[str, Any]:
+    participants = (channel or {}).get("participants") or []
+    return {
+        "kind": str((channel or {}).get("kind") or ""),
+        "name": str((channel or {}).get("name") or ""),
+        "participant_count": len(participants),
+    }
+
+
+def _template_session(session: dict[str, Any] | None) -> dict[str, Any]:
+    participants = (session or {}).get("participants") or []
+    return {
+        "kind": "meeting" if session else "",
+        "name": str((session or {}).get("title") or (session or {}).get("room_name") or ""),
+        "participant_count": len(participants),
+    }
+
+
+def _preview_trigger(trigger_type: str) -> dict[str, Any]:
+    base = {
+        "type": trigger_type,
+        "from_name": "Human Operator",
+        "content": "Can you give me a quick status update?",
+        "source_channel": "chat",
+        "task_title": "Write API summary",
+        "task_description": "Summarize the current API behavior and save the draft.",
+    }
+    if trigger_type == "peer_message":
+        base.update({"from_name": "Morgan", "content": "Can you take a look at the deployment notes?"})
+    if trigger_type in {"session_message", "session_response"}:
+        base.update({"from_name": "Meeting Room", "content": "Please share your progress."})
+    if trigger_type in {"channel_message", "channel_response"}:
+        base.update({"from_name": "Planning Channel", "content": "Who can summarize next steps?"})
+    if trigger_type == "task_assigned":
+        base.update({"content": "", "from_name": "Human Operator"})
+    if trigger_type == "activity_resumed":
+        base.update({"content": "Continue the current work activity."})
+    if trigger_type == "watchdog_status_ping":
+        base.update({"content": "Provide a status update on the current task."})
+    if trigger_type == "social":
+        base.update({"content": "", "from_name": "Nearby Team"})
+    return base
+
+
+def _preview_activity(contract_kind: str, trigger_type: str) -> dict[str, Any] | None:
+    if contract_kind != "execution":
+        return None
+    kind = "meeting" if trigger_type in {"session_message", "session_response", "channel_message", "channel_response"} else "work"
+    title = "Draft API summary" if kind == "work" else "Planning sync"
+    detail = "Continue the current activity with the team context already in progress."
+    return {
+        "id": "preview-activity",
+        "kind": kind,
+        "status": "active",
+        "title": title,
+        "detail": detail,
+        "destination": "meetingRoom" if kind == "meeting" else "",
+        "metadata": {},
+    }
+
+
+def _preview_task(contract_kind: str, trigger_type: str) -> dict[str, Any] | None:
+    if contract_kind != "execution" and trigger_type != "task_assigned":
+        return None
+    return {
+        "id": "preview-task",
+        "title": "Write API summary",
+        "description": "Summarize the current API behavior and save the result to /me/api_summary.md",
+        "status": "active" if contract_kind == "execution" else "pending",
+        "project": "BossMod AI",
+        "completion_summary": "",
+        "status_note": "",
+        "work_contract": {
+            "deliverables": [{"type": "file", "path": "/me/api_summary.md", "description": None}],
+        },
+    }
+
+
+def _preview_session(trigger_type: str) -> dict[str, Any] | None:
+    if trigger_type not in {"session_message", "session_response"}:
+        return None
+    return {
+        "title": "Planning Sync",
+        "room_name": "Meeting Room",
+        "participants": [{"name": "Taylor"}, {"name": "Morgan"}, {"name": "Riley"}],
+    }
+
+
+def _preview_channel(trigger_type: str) -> dict[str, Any] | None:
+    if trigger_type not in {"channel_message", "channel_response"}:
+        return None
+    return {
+        "kind": "channel",
+        "name": "Planning",
+        "participants": [{"name": "Taylor"}, {"name": "Morgan"}, {"name": "Riley"}],
+    }
 
 
 def _format_world_status(
@@ -424,11 +669,56 @@ def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
     return "You have been activated."
 
 
-def _render_turn_contract(contract_kind: str, trigger: dict[str, Any]) -> str:
-    """Render the code-owned contract for this turn type."""
-    if contract_kind == "decision":
-        return render_decision_contract(str(trigger.get("type") or ""))
-    return render_action_contract()
+def _render_turn_contract(contract_kind: str, render_context: dict[str, Any]) -> str:
+    """Render the current settings-backed runtime contract for one turn."""
+    setting_key = "runtime_contract_decision" if contract_kind == "decision" else "runtime_contract_execution"
+    template = config.require(setting_key)
+    return render_template(template, render_context, allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS)
+
+
+def preview_runtime_contract(contract_kind: str, trigger_type: str, template_override: str | None = None) -> str:
+    """Render one runtime contract against a representative preview context."""
+    now = datetime.now(timezone.utc)
+    agent = Agent(
+        id="preview-agent",
+        storage_key="preview-agent",
+        name="Taylor",
+        role="Operations Analyst",
+        prompt_template="You are {{agent_name}}, keep answers concise and operational.",
+        created_at=now,
+    )
+    state = AgentState(
+        agent_id=agent.id,
+        x=14,
+        y=9,
+        status="work_active" if contract_kind == "execution" else "idle",
+        last_active_at=now,
+        idle_since=now,
+    )
+    turn = TurnContext(
+        agent=agent,
+        state=state,
+        trigger=_preview_trigger(trigger_type),
+        conversation_history=[],
+        prompt_notifications=[],
+        reference_materials=["RECENT COMPLETED TASKS:\n- API summary completed"],
+        current_activity=_preview_activity(contract_kind, trigger_type),
+        current_task=_preview_task(contract_kind, trigger_type),
+        current_session=_preview_session(trigger_type),
+        current_channel=_preview_channel(trigger_type),
+        nearby_agents=[{"name": "Morgan"}, {"name": "Riley"}],
+        pending_trigger_count=1,
+        contract_kind=contract_kind,
+    )
+    render_context = _build_prompt_render_context(turn)
+    render_context["personality"] = render_template(
+        agent.prompt_template or _default_role_prompt(agent),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
+    if template_override is not None:
+        return render_template(template_override, render_context, allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS)
+    return _render_turn_contract(contract_kind, render_context)
 
 
 def _render_conversation_envelope(turn: TurnContext) -> str:

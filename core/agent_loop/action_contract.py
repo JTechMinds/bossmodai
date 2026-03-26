@@ -7,8 +7,8 @@ import json
 from core.bm_cli.contract import render_bm_cli_guidance
 
 
-def render_action_contract() -> str:
-    """Render the unified prompt contract for execution turns."""
+def default_action_contract_template() -> str:
+    """Return the default authored execution contract template."""
     lines = [
         "EXECUTION TURN",
         "Return exactly one JSON object.",
@@ -48,11 +48,11 @@ def render_action_contract() -> str:
         "RULES:",
         "  - cli: require data.cmd; data.body optional",
         "  - work: require data.out",
-        "  - msg: require data.to and data.msg; require data.aid only when data.to=\"agent\"",
+        '  - msg: require data.to and data.msg; require data.aid only when data.to="agent"',
         "  - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional",
         "  - walk: require data.dst",
-        "  - mtg: require data.mode; use mode=\"room\" for in-person Meeting Room joins and mode=\"remote\" for remote meetings",
-        "  - mtg + mode=\"remote\": require data.aid",
+        '  - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings',
+        '  - mtg + mode="remote": require data.aid',
         "  - done: require data.sum",
         "  - block / drop: require data.why",
         "  - deleg: require data.aid",
@@ -69,6 +69,11 @@ def render_action_contract() -> str:
         '  {"act":"msg","data":{"to":"human","msg":"Done. I saved it."},"th":"notify completion"}',
     ]
     return "\n".join(lines)
+
+
+def render_action_contract() -> str:
+    """Render the unified prompt contract for execution turns."""
+    return default_action_contract_template()
 
 
 def _render_action_shape() -> str:

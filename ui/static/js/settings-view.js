@@ -567,13 +567,14 @@ const PersonalitiesSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Prompt Template</label>
-                        <p class="text-xs text-bm-muted mb-1.5">The system prompt that defines this personality's behavior.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">The system prompt that defines this personality's behavior. Supports the same conditional template syntax used by authored prompt templates.</p>
                         <textarea name="prompt_template" required rows="12"
                                   placeholder="You are a senior product manager focused on clarity, prioritization, and stakeholder communication..."
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                          focus:border-bm-accent resize-y font-mono">${BossModUtils.escapeHtml(p?.prompt_template || '')}</textarea>
                     </div>
+                    <div id="personality-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">
                         <button type="submit"
                                 class="px-4 py-2 bg-bm-accent text-white rounded-lg
@@ -597,23 +598,33 @@ const PersonalitiesSection = (() => {
                 name: fd.get('name'),
                 prompt_template: fd.get('prompt_template'),
             };
+            const status = document.getElementById('personality-save-status');
+            status.className = 'p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+            status.textContent = 'Saving...';
             try {
+                let res;
                 if (isEdit) {
-                    await fetch(`/api/personalities/${p.id}`, {
+                    res = await fetch(`/api/personalities/${p.id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    await fetch('/api/personalities', {
+                    res = await fetch('/api/personalities', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 }
+                if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    throw new Error(payload.detail || 'Save failed');
+                }
                 await renderList();
             } catch (err) {
                 console.error('[Personalities] Save failed:', err);
+                status.className = 'p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                status.textContent = err.message || 'Save failed';
             }
         });
     }
@@ -830,15 +841,72 @@ const SystemSection = (() => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// Shared: resizable panel handle
+// ═══════════════════════════════════════════════════════════════
+
+function initResizeHandle(handle, panel, { min = 160, max = 480 } = {}) {
+    let startX, startW;
+    function onMove(e) {
+        const dx = (e.clientX || e.touches[0].clientX) - startX;
+        panel.style.width = Math.min(max, Math.max(min, startW + dx)) + 'px';
+    }
+    function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+    }
+    handle.addEventListener('mousedown', e => {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = panel.offsetWidth;
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+    handle.addEventListener('touchstart', e => {
+        startX = e.touches[0].clientX;
+        startW = panel.offsetWidth;
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onUp);
+    }, { passive: true });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // System Prompt Template Section (Advanced)
 // ═══════════════════════════════════════════════════════════════
 
 const PromptTemplateSection = (() => {
+    const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
+        + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 '
+        + 'focus:border-bm-accent resize-none font-mono leading-relaxed';
+
+    function insertAtCursor(textarea, text) {
+        if (!textarea) return;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = textarea.value.substring(0, start);
+        const after = textarea.value.substring(end);
+        textarea.value = before + text + after;
+        const cursorPos = start + text.length;
+        textarea.selectionStart = cursorPos;
+        textarea.selectionEnd = cursorPos;
+        textarea.focus();
+    }
+
     async function render(el) {
         let settings = [];
+        let runtimeMeta = { allowed_variables: [], template_syntax: [] };
         try {
-            const res = await fetch('/api/settings?category=advanced');
-            settings = await res.json();
+            const [settingsRes, runtimeRes] = await Promise.all([
+                fetch('/api/settings?category=advanced'),
+                fetch('/api/runtime/contracts'),
+            ]);
+            settings = await settingsRes.json();
+            runtimeMeta = await runtimeRes.json();
         } catch (err) {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load template.</p>';
             return;
@@ -846,52 +914,90 @@ const PromptTemplateSection = (() => {
 
         const templateSetting = settings.find(s => s.key === 'system_prompt_template');
         const templateValue = templateSetting?.value || '';
+        const allowedVariables = runtimeMeta?.allowed_variables || [];
+        const syntaxExamples = runtimeMeta?.template_syntax || [];
 
         el.innerHTML = `
-            <div class="mb-6">
+            <div class="mb-4">
                 <h2 class="text-lg font-semibold">System Prompt Template</h2>
-                <p class="text-sm text-bm-muted mt-0.5">The master wrapper around each agent's role and context. The runtime turn contract is injected separately and is not edited here.</p>
+                <p class="text-sm text-bm-muted mt-0.5">The master wrapper around each agent's role and context. Runtime contracts are edited separately in the Runtime Contracts tab.</p>
             </div>
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
-                <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Available Template Variables</p>
-                <div class="grid grid-cols-2 gap-1 text-xs font-mono text-bm-muted">
-                    <span>{{personality}}</span><span>Agent's personality prompt</span>
-                    <span>{{agent_name}}</span><span>Agent's display name</span>
-                    <span>{{role}}</span><span>Agent's role title</span>
-                    <span>{{worldStatus}}</span><span>Location, status, nearby agents, pending triggers</span>
-                    <span>{{activity}}</span><span>Current runtime activity</span>
-                    <span>{{task}}</span><span>Current task details</span>
-                    <span>{{pending_tasks}}</span><span>Pending tasks that can be resumed</span>
-                    <span>{{references}}</span><span>Recent work summaries and artifacts</span>
+                <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
+                <div class="space-y-1 text-xs font-mono text-bm-muted">
+                    ${syntaxExamples.map(ex => `<div>${BossModUtils.escapeHtml(ex)}</div>`).join('')}
                 </div>
             </div>
-            <p class="text-xs text-amber-700 mt-3 mb-3">Only the variables listed above are substituted into this template. Separately, the code-owned runtime decision or execution contract is always appended as its own system message.</p>
-            <p class="text-xs text-bm-muted mb-1.5">This is the full wrapper prompt sent before every turn. Use it to control role framing, context layout, and the rules the model sees.</p>
-            <textarea id="system-prompt-textarea" rows="20"
-                      class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg
-                             bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                             focus:border-bm-accent resize-y font-mono leading-relaxed">${BossModUtils.escapeHtml(templateValue)}</textarea>
-            <div class="flex items-center gap-3 mt-4">
-                <button id="btn-save-template"
-                        class="px-4 py-2 bg-bm-accent text-white rounded-lg
-                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    Save Template
-                </button>
-                <span id="template-save-status" class="text-sm text-bm-muted"></span>
+            <div class="flex gap-0 flex-1 min-h-0" style="height: calc(100vh - 300px); min-height: 400px;">
+                <!-- Variables panel -->
+                <div id="spt-vars-panel" class="shrink-0 overflow-y-auto border border-bm-border rounded-l-lg bg-slate-50 p-3"
+                     style="width: 230px;">
+                    <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Variables</p>
+                    <div class="space-y-1">
+                        ${allowedVariables.map(item => {
+                            const isSubProp = item.name.includes('.');
+                            return `<button type="button" data-var="${BossModUtils.escapeHtml(item.name)}"
+                                class="spt-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
+                                       transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
+                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModUtils.escapeHtml(item.name)}}}</div>
+                                <div class="text-[11px] text-bm-muted leading-tight">${BossModUtils.escapeHtml(item.description)}</div>
+                            </button>`;
+                        }).join('')}
+                    </div>
+                </div>
+                <!-- Resize handle -->
+                <div id="spt-resize-handle" class="shrink-0 w-1.5 cursor-col-resize bg-bm-border hover:bg-bm-accent/40 transition-colors"></div>
+                <!-- Editor panel -->
+                <div class="flex-1 flex flex-col min-w-0 border border-l-0 border-bm-border rounded-r-lg bg-white">
+                    <div class="px-4 pt-4 shrink-0">
+                        <p class="text-xs text-bm-muted">Full wrapper prompt sent before every turn. Controls role framing, context layout, and the rules the model sees.</p>
+                    </div>
+                    <div class="flex-1 min-h-0 p-4">
+                        <textarea id="system-prompt-textarea" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(templateValue)}</textarea>
+                    </div>
+                    <div class="flex items-center gap-3 px-4 pb-4 shrink-0">
+                        <button id="btn-save-template"
+                                class="px-4 py-2 bg-bm-accent text-white rounded-lg
+                                       hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                            Save Template
+                        </button>
+                        <span id="template-save-status" class="text-sm text-bm-muted"></span>
+                    </div>
+                </div>
             </div>`;
 
+        // ─── Resizable vars panel ───
+        initResizeHandle(
+            document.getElementById('spt-resize-handle'),
+            document.getElementById('spt-vars-panel'),
+        );
+
+        // ─── Click-to-insert variables ───
+        el.querySelectorAll('.spt-var-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const varName = btn.dataset.var;
+                const textarea = document.getElementById('system-prompt-textarea');
+                insertAtCursor(textarea, `{{${varName}}}`);
+            });
+        });
+
+        // ─── Save ───
         document.getElementById('btn-save-template').addEventListener('click', async () => {
             const value = document.getElementById('system-prompt-textarea').value;
             const status = document.getElementById('template-save-status');
             try {
-                await fetch(`/api/settings/system_prompt_template?value=${encodeURIComponent(value)}&category=advanced`, {
+                const res = await fetch(`/api/settings/system_prompt_template?value=${encodeURIComponent(value)}&category=advanced`, {
                     method: 'PUT',
                 });
+                if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    throw new Error(payload.detail || 'Save failed');
+                }
                 status.textContent = 'Saved';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
-            } catch {
-                status.textContent = 'Save failed';
+            } catch (err) {
+                status.textContent = err.message || 'Save failed';
                 status.className = 'text-sm text-red-600';
             }
         });
@@ -955,7 +1061,7 @@ const AdvancedSystemSection = (() => {
                     <div class="flex items-center justify-between">
                         <div>
                             <h3 class="text-sm font-semibold">Reset Seed Settings</h3>
-                            <p class="text-xs text-bm-muted mt-0.5">Overwrite editable seed settings back to their code defaults. Runtime-owned contract text is not stored here.</p>
+                            <p class="text-xs text-bm-muted mt-0.5">Overwrite editable seed settings back to their defaults, including system and runtime prompt templates.</p>
                         </div>
                         <button id="btn-reseed-settings"
                                 class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
@@ -1143,65 +1249,209 @@ const AdvancedSystemSection = (() => {
 // ═══════════════════════════════════════════════════════════════
 
 const RuntimeContractsSection = (() => {
+    const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
+        + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 '
+        + 'focus:border-bm-accent resize-none font-mono leading-relaxed';
+    const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
+        + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent';
+
+    function insertAtCursor(textarea, text) {
+        if (!textarea) return;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = textarea.value.substring(0, start);
+        const after = textarea.value.substring(end);
+        textarea.value = before + text + after;
+        const cursorPos = start + text.length;
+        textarea.selectionStart = cursorPos;
+        textarea.selectionEnd = cursorPos;
+        textarea.focus();
+    }
+
     async function render(el) {
-        let decisionContract = '';
-        let executionContract = '';
+        let payload = null;
         try {
             const res = await fetch('/api/runtime/contracts');
-            const payload = await res.json();
-            decisionContract = payload.decision || '';
-            executionContract = payload.execution || '';
+            payload = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load runtime contracts.</p>';
             return;
         }
 
+        const decisionContract = payload?.decision || '';
+        const executionContract = payload?.execution || '';
+        const allowedVariables = payload?.allowed_variables || [];
+        const syntaxExamples = payload?.template_syntax || [];
+        const previewTriggers = payload?.preview_triggers || [];
+
+        let activeTab = 'decision';
+
         el.innerHTML = `
-            <div class="mb-6">
+            <div class="mb-4">
                 <h2 class="text-lg font-semibold">Runtime Contracts</h2>
-                <p class="text-sm text-bm-muted mt-0.5">These are the code-owned runtime contracts appended to turns. Direct requests use the decision contract. Resumed/internal turns use the execution contract.</p>
+                <p class="text-sm text-bm-muted mt-0.5">Edit the decision and execution contract templates appended to turns. Changes apply to newly built turns immediately after save.</p>
             </div>
-            <p class="text-xs text-amber-700 mb-3">Agents always receive one of these contracts as a separate system message. Update the backend contracts if runtime behavior changes.</p>
-            <p class="text-xs text-bm-muted mb-4">Use the System Prompt Template tab to edit the role/context wrapper. Use this tab to inspect the effective decision and execution contracts currently being enforced.</p>
-            <div class="space-y-5">
-                <section>
-                    <h3 class="text-sm font-semibold mb-2">Decision Contract</h3>
-                    <pre class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(decisionContract)}</pre>
-                </section>
-                <section>
-                    <h3 class="text-sm font-semibold mb-2">Execution Contract</h3>
-                    <pre class="w-full px-4 py-3 text-sm border border-bm-border rounded-lg bg-white overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">${BossModUtils.escapeHtml(executionContract)}</pre>
-                </section>
+            <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
+                <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
+                <div class="space-y-1 text-xs font-mono text-bm-muted">
+                    ${syntaxExamples.map(ex => `<div>${BossModUtils.escapeHtml(ex)}</div>`).join('')}
+                </div>
             </div>
-            <div class="flex items-center gap-3 mt-4">
-                <button id="btn-copy-runtime-contracts"
-                        class="px-4 py-2 bg-bm-accent text-white rounded-lg
-                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    Copy Both
-                </button>
-                <button id="btn-refresh-runtime-contracts"
-                        class="px-4 py-2 border border-bm-border rounded-lg
-                               hover:bg-slate-50 transition-colors text-sm font-medium">
-                    Refresh
-                </button>
-                <span id="runtime-contract-save-status" class="text-sm text-bm-muted"></span>
+            <div class="flex gap-0 flex-1 min-h-0" style="height: calc(100vh - 320px); min-height: 400px;">
+                <!-- Variables panel -->
+                <div id="rc-vars-panel" class="shrink-0 overflow-y-auto border border-bm-border rounded-l-lg bg-slate-50 p-3"
+                     style="width: 230px;">
+                    <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Variables</p>
+                    <div class="space-y-1">
+                        ${allowedVariables.map(item => {
+                            const isSubProp = item.name.includes('.');
+                            return `<button type="button" data-var="${BossModUtils.escapeHtml(item.name)}"
+                                class="rc-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
+                                       transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
+                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModUtils.escapeHtml(item.name)}}}</div>
+                                <div class="text-[11px] text-bm-muted leading-tight">${BossModUtils.escapeHtml(item.description)}</div>
+                            </button>`;
+                        }).join('')}
+                    </div>
+                </div>
+                <!-- Resize handle -->
+                <div id="rc-resize-handle" class="shrink-0 w-1.5 cursor-col-resize bg-bm-border hover:bg-bm-accent/40 transition-colors"></div>
+                <!-- Editor panel -->
+                <div class="flex-1 flex flex-col min-w-0 border border-l-0 border-bm-border rounded-r-lg bg-white">
+                    <!-- Tab bar -->
+                    <div class="flex border-b border-bm-border shrink-0">
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative active" data-tab="decision">Decision</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="execution">Execution</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="preview">Preview</button>
+                    </div>
+                    <!-- Tab content -->
+                    <div class="flex-1 flex flex-col min-h-0 p-4">
+                        <div id="rc-tab-decision" class="rc-tab-pane flex-1 flex flex-col min-h-0">
+                            <textarea id="runtime-decision-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(decisionContract)}</textarea>
+                        </div>
+                        <div id="rc-tab-execution" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <textarea id="runtime-execution-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(executionContract)}</textarea>
+                        </div>
+                        <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <div class="flex items-center gap-2 mb-3 flex-wrap">
+                                <select id="runtime-preview-trigger" class="${SELECT_CLS}">
+                                    ${previewTriggers.map(t => `<option value="${BossModUtils.escapeHtml(t)}">${BossModUtils.escapeHtml(t)}</option>`).join('')}
+                                </select>
+                                <select id="runtime-preview-kind" class="${SELECT_CLS}">
+                                    <option value="decision">Decision</option>
+                                    <option value="execution">Execution</option>
+                                </select>
+                                <button id="btn-render-preview"
+                                        class="px-3 py-2 bg-bm-accent text-white rounded-lg
+                                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                                    Render
+                                </button>
+                            </div>
+                            <pre id="runtime-contract-preview-output"
+                                 class="flex-1 w-full px-4 py-3 text-sm border border-bm-border rounded-lg
+                                        bg-slate-50 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">Choose a trigger and contract kind, then click Render.</pre>
+                        </div>
+                    </div>
+                    <!-- Bottom bar -->
+                    <div class="flex items-center gap-3 px-4 pb-4 shrink-0">
+                        <button id="btn-save-runtime-contracts"
+                                class="px-4 py-2 bg-bm-accent text-white rounded-lg
+                                       hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                            Save Contracts
+                        </button>
+                        <button id="btn-refresh-runtime-contracts"
+                                class="px-4 py-2 border border-bm-border rounded-lg
+                                       hover:bg-slate-50 transition-colors text-sm font-medium">
+                            Refresh
+                        </button>
+                        <span id="runtime-contract-save-status" class="text-sm text-bm-muted"></span>
+                    </div>
+                </div>
             </div>`;
 
-        document.getElementById('btn-copy-runtime-contracts').addEventListener('click', async () => {
+        // ─── Resizable vars panel ───
+        initResizeHandle(
+            document.getElementById('rc-resize-handle'),
+            document.getElementById('rc-vars-panel'),
+        );
+
+        // ─── Tab switching ───
+        function switchTab(tab) {
+            activeTab = tab;
+            el.querySelectorAll('.rc-tab').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+            });
+            el.querySelectorAll('.rc-tab-pane').forEach(pane => {
+                pane.classList.toggle('hidden', pane.id !== `rc-tab-${tab}`);
+            });
+            el.querySelectorAll('.rc-var-btn').forEach(btn => {
+                btn.style.opacity = tab === 'preview' ? '0.5' : '';
+                btn.style.cursor = tab === 'preview' ? 'default' : 'pointer';
+            });
+        }
+
+        el.querySelectorAll('.rc-tab').forEach(btn => {
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        });
+
+        // ─── Click-to-insert variables ───
+        el.querySelectorAll('.rc-var-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (activeTab === 'preview') return;
+                const varName = btn.dataset.var;
+                const textarea = document.getElementById(`runtime-${activeTab}-contract`);
+                insertAtCursor(textarea, `{{${varName}}}`);
+            });
+        });
+
+        // ─── Save ───
+        document.getElementById('btn-save-runtime-contracts').addEventListener('click', async () => {
             const status = document.getElementById('runtime-contract-save-status');
+            const decision = document.getElementById('runtime-decision-contract').value;
+            const execution = document.getElementById('runtime-execution-contract').value;
             try {
-                await navigator.clipboard.writeText(`DECISION CONTRACT\n\n${decisionContract}\n\nEXECUTION CONTRACT\n\n${executionContract}`);
-                status.textContent = 'Copied';
+                const res = await fetch('/api/runtime/contracts', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision, execution }),
+                });
+                if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    throw new Error(payload.detail || 'Save failed');
+                }
+                status.textContent = 'Saved';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
-            } catch {
-                status.textContent = 'Copy failed';
+            } catch (err) {
+                status.textContent = err.message || 'Save failed';
                 status.className = 'text-sm text-red-600';
             }
         });
 
+        // ─── Refresh ───
         document.getElementById('btn-refresh-runtime-contracts').addEventListener('click', () => {
             render(el);
+        });
+
+        // ─── Preview ───
+        document.getElementById('btn-render-preview').addEventListener('click', async () => {
+            const triggerType = document.getElementById('runtime-preview-trigger').value;
+            const contractKind = document.getElementById('runtime-preview-kind').value;
+            const template = document.getElementById(`runtime-${contractKind}-contract`).value;
+            const output = document.getElementById('runtime-contract-preview-output');
+            output.textContent = 'Rendering preview\u2026';
+            try {
+                const res = await fetch('/api/runtime/contracts/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contract_kind: contractKind, trigger_type: triggerType, template }),
+                });
+                const preview = await res.json();
+                if (!res.ok) throw new Error(preview.detail || 'Preview failed');
+                output.textContent = preview.rendered || '';
+            } catch (err) {
+                output.textContent = err.message || 'Preview failed';
+            }
         });
     }
 

@@ -18,12 +18,16 @@ from api.routes import (
     ChannelCreateBody,
     ChannelMessageBody,
     MeetingMessageBody,
+    RuntimeContractPreviewBody,
+    RuntimeContractsBody,
     TestConnectionBody as ConnectionTestBody,
     activate_agent,
     clear_agent_chat_history,
+    create_agent as create_agent_route,
     create_channel as create_channel_route,
     create_channel_message as create_channel_message_route,
     create_agent_meeting_session_message,
+    create_personality as create_personality_route,
     create_task as create_task_route,
     _file_explorer_command,
     get_channel as get_channel_route,
@@ -32,9 +36,11 @@ from api.routes import (
     get_agent_messages,
     get_runtime_contracts,
     open_agent_desk_folder,
+    preview_runtime_contract as preview_runtime_contract_route,
     reseed_application,
     reset_agent_runtime,
     set_setting as set_setting_route,
+    set_runtime_contracts as set_runtime_contracts_route,
     test_connection as run_connection_test,
 )
 from api.websocket import manager
@@ -59,7 +65,7 @@ from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.watchdog import watchdog
 from core.llm import client, context_builder, routing
-from core.models import TaskCreate
+from core.models import AIPersonalityCreate, AgentCreate, TaskCreate
 from core.models.message import HUMAN_SENDER_ID
 from core.world.simulation import simulation
 from core.world.tilemap import DEFAULT_DESKS
@@ -132,11 +138,47 @@ async def _record_world_update(target: list[str], *args, **kwargs):
     target.append("world")
 
 
+def _build_turn_context(
+    agent,
+    state,
+    *,
+    trigger: dict[str, object] | None = None,
+    contract_kind: str = "decision",
+    current_activity: dict[str, object] | None = None,
+    current_task: dict[str, object] | None = None,
+    current_session: dict[str, object] | None = None,
+    current_channel: dict[str, object] | None = None,
+    reference_materials: list[str] | None = None,
+):
+    return context_builder.TurnContext(
+        agent=agent,
+        state=state,
+        trigger=trigger
+        or {
+            "type": "human_chat" if contract_kind == "decision" else "activity_resumed",
+            "content": "Provide a quick update.",
+            "from_name": "Human Operator",
+        },
+        conversation_history=[],
+        prompt_notifications=[],
+        reference_materials=reference_materials or [],
+        current_activity=current_activity,
+        current_task=current_task,
+        current_session=current_session,
+        current_channel=current_channel,
+        nearby_agents=[],
+        pending_trigger_count=0,
+        contract_kind=contract_kind,
+    )
+
+
 def test_init_db_removes_obsolete_action_contract_setting(isolated_db):
     advanced_settings = {item.key: item.value for item in db.get_settings("advanced")}
 
     assert "action_contract_template" not in advanced_settings
     assert advanced_settings["system_prompt_template"] == settings_store.SYSTEM_PROMPT_TEMPLATE
+    assert advanced_settings["runtime_contract_decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
+    assert advanced_settings["runtime_contract_execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
 
 
 def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
@@ -836,13 +878,192 @@ async def test_settings_route_rejects_obsolete_setting_key(isolated_db):
 
 
 @pytest.mark.asyncio
-async def test_runtime_contracts_endpoint_returns_code_owned_contracts(isolated_db):
+async def test_runtime_contracts_endpoint_returns_settings_backed_templates(isolated_db):
     payload = await get_runtime_contracts()
 
-    assert payload == {
-        "decision": render_decision_contract(),
-        "execution": render_action_contract(),
-    }
+    assert payload["decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
+    assert payload["execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert any(item["name"] == "trigger.type" for item in payload["allowed_variables"])
+    assert any(item["name"] == "activity.preferred_destination" for item in payload["allowed_variables"])
+    assert any(example.startswith("{{if trigger.type = 'human_chat'}}") for example in payload["template_syntax"])
+    assert "human_chat" in payload["preview_triggers"]
+
+
+@pytest.mark.asyncio
+async def test_set_runtime_contracts_persists_live_templates_without_restart(isolated_db):
+    await set_runtime_contracts_route(
+        RuntimeContractsBody(
+            decision="{{if trigger.type = 'human_chat'}}HUMAN DECISION{{else}}OTHER DECISION{{end}}",
+            execution="EXECUTION FOR {{trigger.type}}",
+        )
+    )
+
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Taylor",
+        role="Operations Analyst",
+        prompt_template="Stay concise for {{agent_name}}.",
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    human_context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "human_chat",
+                "content": "What is your status?",
+                "from_name": "Human Operator",
+            },
+            contract_kind="decision",
+        )
+    )
+    peer_context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "peer_message",
+                "content": "Can you review this?",
+                "from_name": "Morgan",
+                "from_agent": "agent-morgan",
+            },
+            contract_kind="decision",
+        )
+    )
+    execution_context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "activity_resumed",
+                "content": "Continue the current work activity.",
+            },
+            contract_kind="execution",
+        )
+    )
+
+    assert human_context[1]["content"] == "HUMAN DECISION"
+    assert peer_context[1]["content"] == "OTHER DECISION"
+    assert execution_context[1]["content"] == "EXECUTION FOR activity_resumed"
+
+
+@pytest.mark.asyncio
+async def test_prompt_templates_render_conditionals_for_personality_and_system_prompt(isolated_db):
+    await set_setting_route(
+        "system_prompt_template",
+        "HEADER\n{{personality}}\n{{if trigger.type = 'human_chat'}}CHAT{{else}}OTHER{{end}}",
+        "advanced",
+    )
+
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Taylor",
+        role="Operations Analyst",
+        prompt_template="PERSONA {{if trigger.type = 'human_chat'}}HUMAN{{else}}OTHER{{end}}",
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    human_context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "human_chat",
+                "content": "What is your status?",
+                "from_name": "Human Operator",
+            },
+            contract_kind="decision",
+        )
+    )
+    peer_context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "peer_message",
+                "content": "Need a quick update.",
+                "from_name": "Morgan",
+                "from_agent": "agent-morgan",
+            },
+            contract_kind="decision",
+        )
+    )
+
+    assert "PERSONA HUMAN" in human_context[0]["content"]
+    assert "CHAT" in human_context[0]["content"]
+    assert "PERSONA OTHER" in peer_context[0]["content"]
+    assert "OTHER" in peer_context[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_settings_route_rejects_invalid_system_prompt_template(isolated_db):
+    with pytest.raises(HTTPException) as exc_info:
+        await set_setting_route("system_prompt_template", "{{missing_value}}", "advanced")
+
+    assert exc_info.value.status_code == 400
+    assert "template variable" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_runtime_contract_save_rejects_invalid_template(isolated_db):
+    with pytest.raises(HTTPException) as exc_info:
+        await set_runtime_contracts_route(
+            RuntimeContractsBody(
+                decision="{{missing_value}}",
+                execution="EXECUTION",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "template variable" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_runtime_contract_preview_supports_unsaved_template_override(isolated_db):
+    payload = await preview_runtime_contract_route(
+        RuntimeContractPreviewBody(
+            contract_kind="decision",
+            trigger_type="task_assigned",
+            template="{{if trigger.type = 'task_assigned'}}ASSIGNMENT PREVIEW{{else}}OTHER PREVIEW{{end}}",
+        )
+    )
+
+    assert payload["contract_kind"] == "decision"
+    assert payload["trigger_type"] == "task_assigned"
+    assert payload["rendered"] == "ASSIGNMENT PREVIEW"
+
+
+@pytest.mark.asyncio
+async def test_create_agent_route_rejects_invalid_prompt_template(isolated_db):
+    with pytest.raises(HTTPException) as exc_info:
+        await create_agent_route(
+            AgentCreate(
+                name="Taylor",
+                prompt_template="{{missing_value}}",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "template variable" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_create_personality_route_rejects_invalid_prompt_template(isolated_db):
+    with pytest.raises(HTTPException) as exc_info:
+        await create_personality_route(
+            AIPersonalityCreate(
+                name="Ops Personality",
+                prompt_template="{{missing_value}}",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "template variable" in str(exc_info.value.detail).lower()
 
 
 @pytest.mark.asyncio

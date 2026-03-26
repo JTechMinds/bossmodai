@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from core.agent_loop.action_contract import default_action_contract_template
+from core.agent_loop.decision_contract import default_decision_contract_template
 from core.models import Setting
 from db.crud import execute, fetch_all, query_one
 
@@ -51,8 +53,11 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 - Direct requests are decision turns: decide how to respond and what commitment to make.
 - Resumed internal turns are execution turns: carry out the current commitment one step at a time.
 - Durable work output can only be produced while a work commitment is active and you are in a workspace.
-- Follow the runtime contract exactly. It is code-owned and appended separately from this template.
+- Follow the runtime contract exactly. It is appended separately from this template.
 - `thought` is a brief admin-visible operational note, not hidden scratch reasoning."""
+
+RUNTIME_CONTRACT_DECISION_TEMPLATE = default_decision_contract_template()
+RUNTIME_CONTRACT_EXECUTION_TEMPLATE = default_action_contract_template()
 
 _OBSOLETE_SETTING_KEYS = {
     "action_contract_template",
@@ -122,6 +127,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── System prompt template (advanced) ──
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
+    ("runtime_contract_decision", RUNTIME_CONTRACT_DECISION_TEMPLATE, "advanced"),
+    ("runtime_contract_execution", RUNTIME_CONTRACT_EXECUTION_TEMPLATE, "advanced"),
 ]
 
 

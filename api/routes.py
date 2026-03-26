@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -20,11 +21,11 @@ from pydantic import BaseModel
 from api.websocket import manager
 from core import config
 from core.bm_cli.virtual_fs import resolve_cli_path
-from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.deliverables import build_work_contract
-from core.agent_loop.decision_contract import render_decision_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.dispatcher import dispatcher
+from core.llm import context_builder
+from core.llm.template_engine import TemplateError, validate_template
 from core.runtime import runtime_services
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
@@ -67,6 +68,54 @@ class ChannelCreateBody(BaseModel):
 
 class ChannelMessageBody(BaseModel):
     content: str
+
+
+class RuntimeContractsBody(BaseModel):
+    decision: str
+    execution: str
+
+
+class RuntimeContractPreviewBody(BaseModel):
+    contract_kind: Literal["decision", "execution"]
+    trigger_type: str = "human_chat"
+    template: str | None = None
+
+
+_RUNTIME_CONTRACT_KEYS = {
+    "decision": "runtime_contract_decision",
+    "execution": "runtime_contract_execution",
+}
+_RUNTIME_PREVIEW_TRIGGERS = [
+    "human_chat",
+    "peer_message",
+    "task_assigned",
+    "session_message",
+    "session_response",
+    "channel_message",
+    "channel_response",
+    "activity_resumed",
+    "watchdog_status_ping",
+    "social",
+]
+
+
+def _validate_authored_prompt_template(template: str) -> None:
+    """Validate one authored prompt template against the shared template engine."""
+    validate_template(
+        template,
+        allowed_paths=context_builder.AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
+
+
+def _runtime_contracts_payload() -> dict[str, object]:
+    """Return the current runtime contract settings and template metadata."""
+    return {
+        "decision": config.require(_RUNTIME_CONTRACT_KEYS["decision"]),
+        "execution": config.require(_RUNTIME_CONTRACT_KEYS["execution"]),
+        "allowed_variables": context_builder.template_variable_metadata(),
+        "template_syntax": context_builder.template_syntax_examples(),
+        "preview_triggers": list(_RUNTIME_PREVIEW_TRIGGERS),
+    }
 
 
 # ─── WebSocket ───
@@ -374,6 +423,11 @@ async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
 
 @router.post("/agents", status_code=201)
 async def create_agent(body: AgentCreate) -> Agent:
+    if body.prompt_template is not None:
+        try:
+            _validate_authored_prompt_template(body.prompt_template)
+        except TemplateError as exc:
+            raise HTTPException(400, str(exc)) from exc
     agent = db.create_agent(
         name=body.name,
         role=body.role,
@@ -405,6 +459,12 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
+    prompt_template = fields.get("prompt_template")
+    if isinstance(prompt_template, str):
+        try:
+            _validate_authored_prompt_template(prompt_template)
+        except TemplateError as exc:
+            raise HTTPException(400, str(exc)) from exc
     agent = db.update_agent(agent_id, **fields)
     if not agent:
         raise HTTPException(404, "Agent not found")
@@ -1104,9 +1164,42 @@ async def get_desktop_open_folder_options():
 
 @router.get("/runtime/contracts")
 async def get_runtime_contracts():
+    return _runtime_contracts_payload()
+
+
+@router.put("/runtime/contracts")
+async def set_runtime_contracts(body: RuntimeContractsBody):
+    try:
+        _validate_authored_prompt_template(body.decision)
+        _validate_authored_prompt_template(body.execution)
+    except TemplateError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    with db.transaction():
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["decision"], body.decision, "advanced")
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["execution"], body.execution, "advanced")
+    config.reload()
+    return _runtime_contracts_payload()
+
+
+@router.post("/runtime/contracts/preview")
+async def preview_runtime_contract(body: RuntimeContractPreviewBody):
+    if body.trigger_type not in _RUNTIME_PREVIEW_TRIGGERS:
+        raise HTTPException(400, f"Unsupported preview trigger: {body.trigger_type}")
+    try:
+        if body.template is not None:
+            _validate_authored_prompt_template(body.template)
+        rendered = context_builder.preview_runtime_contract(
+            contract_kind=body.contract_kind,
+            trigger_type=body.trigger_type,
+            template_override=body.template,
+        )
+    except TemplateError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
-        "decision": render_decision_contract(),
-        "execution": render_action_contract(),
+        "contract_kind": body.contract_kind,
+        "trigger_type": body.trigger_type,
+        "rendered": rendered,
     }
 
 
@@ -1132,6 +1225,11 @@ async def reseed_application():
 
 @router.put("/settings/{key}")
 async def set_setting(key: str, value: str, category: str = "general"):
+    if key == "system_prompt_template" or key in _RUNTIME_CONTRACT_KEYS.values():
+        try:
+            _validate_authored_prompt_template(value)
+        except TemplateError as exc:
+            raise HTTPException(400, str(exc)) from exc
     try:
         result = db.set_setting(key, value, category)
     except ValueError as exc:
@@ -1266,6 +1364,10 @@ async def get_personality(personality_id: str) -> AIPersonality:
 
 @router.post("/personalities", status_code=201)
 async def create_personality(body: AIPersonalityCreate) -> AIPersonality:
+    try:
+        _validate_authored_prompt_template(body.prompt_template)
+    except TemplateError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return db.create_personality(
         name=body.name,
         prompt_template=body.prompt_template,
@@ -1277,6 +1379,12 @@ async def update_personality(personality_id: str, body: AIPersonalityUpdate) -> 
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
+    prompt_template = fields.get("prompt_template")
+    if isinstance(prompt_template, str):
+        try:
+            _validate_authored_prompt_template(prompt_template)
+        except TemplateError as exc:
+            raise HTTPException(400, str(exc)) from exc
     p = db.update_personality(personality_id, **fields)
     if not p:
         raise HTTPException(404, "Personality not found")
