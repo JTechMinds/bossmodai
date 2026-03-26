@@ -1,99 +1,45 @@
 # BossMod AI
 
-BossMod AI is a local-first desktop app for running a team of AI agents inside a visual 2D office.
+### AI is powerful. But it shouldn't be this hard.
 
-Instead of chatting with one assistant in one window, you can create multiple agents, give them roles, watch them move around a shared office, assign work, inspect their desks, and tune how they think and respond in real time.
+Most AI tools are built for developers, prompt engineers, and people who already know what "temperature 0.7" means. We think that's backwards. AI should be something anyone can pick up, experiment with, and actually get value from — without reading a research paper first.
 
-This project is intended to run on your own machine. It is not a hosted SaaS product.
+**BossMod is a virtual AI office that runs on your computer.** You hire AI agents, give them personalities and roles, assign them real work, and manage them like a team — all through a visual interface that feels more like a game than a command line.
 
-BossMod AI is created and maintained by Jordan Gonzales of JtechMinds LLC.
+No cloud accounts. No monthly fees. No PhD required.
 
-## What It Feels Like
+Created by Jordan Gonzales of [JtechMinds LLC](https://jtechminds.com).
 
-BossMod is built for people who want AI coworkers, not just AI chats.
+---
 
-With BossMod you can:
+## What You Can Do With BossMod
 
-- Create multiple agents with different roles and personalities
-- Watch them move through a shared office map
-- Give them tasks and see how they respond
-- Edit system prompts and runtime contracts live in the app
-- Test prompts, change them, and test again without restarting
-- Inspect diagnostics when an agent makes a bad decision
-- Emergency-pause the whole runtime if things start going sideways
+Imagine having a team of AI workers that you can actually see, talk to, and manage:
 
-## How It Runs
+🏢 **Build your team** — Hire agents and give them roles like Researcher, Software Engineer, Marketer, Designer, or anything you dream up
 
-BossMod runs locally on your computer as a desktop app.
+🗺️ **Watch them work** — A live office map shows your agents moving around, collaborating, and getting things done in real time
 
-At startup, the Tauri shell launches a local Python backend and opens the desktop UI. The app stores its local state in a DuckDB database on your machine.
+💬 **Talk to them** — Chat directly with any agent, set up team channels, or put them in meetings together
 
-In plain English:
+📋 **Assign real work** — Give agents tasks and watch how they plan, respond, and deliver results
 
-- The app runs on your computer
-- Your settings and agent state are stored locally
-- If you connect a cloud model provider, prompt/response traffic goes to that provider
-- If you use a local model endpoint, you can keep the whole workflow local
+🎛️ **Customize everything** — Edit personalities, tweak how agents think and make decisions, all without touching code
 
-## Who This Is For
+🛑 **Stay in control** — Full diagnostics when something goes wrong, and a big red pause button when you need it
 
-BossMod is a good fit if you want to:
+## Getting Started
 
-- Experiment with multi-agent workflows
-- Build a local AI operations desk on your own computer
-- Tune prompts and runtime behavior visually instead of editing source code
-- Use cloud or local models behind a desktop-first interface
+You can be up and running in about 2 minutes.
 
-It is probably not the right tool if you want:
-
-- A managed hosted product
-- A polished enterprise admin console
-- A hardened multi-user server deployment
-
-## Privacy And Safety
-
-BossMod is designed as a local desktop app.
-
-Important expectations:
-
-- API keys are stored locally on your machine
-- The app persists prompts, diagnostics, and runtime state locally
-- Detailed diagnostics can include rendered prompts and model outputs
-- The local backend is meant to stay on the same machine as the desktop app
-- Do not expose the backend to your LAN or the public internet unless you know exactly what you are doing
-
-If you use a remote model provider, that provider will receive the prompts and context you send through it.
-
-## Current Status
-
-BossMod is usable, but still early.
-
-What is already here:
-
-- Desktop shell with local backend startup
-- Editable agents, personalities, settings, prompts, and runtime contracts
-- Task routing and direct/shared conversation flows
-- Diagnostics and traceability
-- Emergency pause / resume for the full AI runtime
-
-What to expect:
-
-- Fast iteration
-- Occasional rough edges
-- A product shape that is still evolving
-
-## Quick Start
-
-The easiest way to understand BossMod is to run it locally from source.
-
-### What You Need
+### You'll Need
 
 - Python 3.12+
-- `uv`
-- Rust + Cargo
-- A bash-compatible shell
+- [`uv`](https://docs.astral.sh/uv/) (Python package manager)
+- Rust + Cargo (for the desktop shell)
+- A bash-compatible shell (Mac/Linux terminal, WSL on Windows)
 
-### Run It
+### Let's Go
 
 ```bash
 git clone <your-repo-url>
@@ -101,107 +47,101 @@ cd bossmodai
 ./run.sh
 ```
 
-What `run.sh` does:
+The script handles everything — installs dependencies, builds the app, and opens it up.
 
-1. Installs Python dependencies with `uv`
-2. Builds the desktop shell if needed
-3. Starts the local app
+### Your First 5 Minutes
 
-## First Use
+Once the app opens, here's the fastest path to seeing something cool:
 
-Once the app opens:
+1. **Connect a brain** — Go to Settings and add an AI provider (OpenAI, Anthropic, a local model, whatever you've got)
+2. **Pick a personality** — We ship 9 ready-made personalities like Software Engineer, Growth Marketer, and QA Engineer so you don't have to write prompts from scratch
+3. **Hire your first agent** — Give them a name, a role, and a personality
+4. **Say hi** — Send them a message or assign a task and see what happens
 
-1. Add at least one AI connection in Settings
-2. Create a personality if you want reusable prompt behavior
-3. Create an agent
-4. Open the Runtime Contracts and System Prompt sections if you want to tune behavior
-5. Send the agent a direct message or assign a task
+If an agent starts going off the rails, hit the red **Emergency Pause** button at the top. It stops everything instantly without losing your work.
 
-If agents start behaving badly, use the red `Emergency Pause` button in the top bar. That stops the runtime without destroying your local data.
+## Works With Any AI Model
 
-## Using Your Own Models
+BossMod doesn't lock you into one provider. Connect whatever models you want:
 
-BossMod is model-provider flexible through `litellm`.
+- **Cloud providers** — OpenAI, Anthropic, Google, and more
+- **Local models** — Ollama, LM Studio, vLLM, or anything with an OpenAI-compatible API
+- **Mix and match** — Use a fast cheap model for casual chat and a powerful one for deep work
 
-That means you can point it at:
+Use a local model and your data never leaves your computer. Everything stays on your machine.
 
-- OpenAI-compatible APIs
-- Self-hosted endpoints
-- Local model runtimes that expose an OpenAI-style interface
+## Built for Tinkerers (And Everyone Else)
 
-Connections are configured inside the app. Agents can then use different models for different kinds of work.
+Here's what makes BossMod different from other AI tools: **you're in the driver's seat.**
 
-## Why The Prompt Editing Matters
+Most AI apps hide their instructions deep in source code where you can't touch them. BossMod puts everything in your hands:
 
-One of BossMod's main ideas is that runtime instructions should be editable by operators, not frozen in source code.
+- **Personalities** — Shape how your agents think and communicate
+- **System prompts** — Control the master instructions that guide every agent
+- **Decision contracts** — Define how agents decide what to do when they're asked something
+- **Execution contracts** — Define how agents carry out work step by step
 
-You can now edit:
+Everything supports live editing with conditional templates. Change how your agents behave based on context — no coding, no restarts. Just tweak, save, and see the results.
 
-- The system prompt wrapper
-- Personality prompts
-- Decision contracts
-- Execution contracts
+## Your Data Stays With You
 
-These prompt surfaces support simple conditional templating, so you can change how instructions are written for different trigger types without rebooting the app.
+BossMod runs 100% on your machine. That's not a feature we bolted on — it's how the whole thing was designed.
 
-## Technical Overview
+- Your API keys, agent data, and conversation history never leave your computer
+- Diagnostics and prompt traces are stored locally
+- Connect a local model and the entire workflow is completely offline
 
-If you are technical, the stack is straightforward:
+The only time data leaves your machine is if you connect to a cloud AI provider — and that's your choice.
 
-- Desktop shell: Tauri
-- Local backend: FastAPI + asyncio
-- Database: DuckDB
-- Frontend: vanilla JavaScript + Tailwind via CDN
-- Model routing: `litellm`
+## Where We're At
 
-At a high level:
+BossMod is **early, active, and evolving fast.** The foundation is solid — agents work, tasks route, conversations flow, diagnostics trace everything — but we're still building and improving every day.
 
-- the desktop shell launches the local backend
-- the backend owns agent orchestration, simulation, diagnostics, and persistence
-- the frontend shows the office, agent state, prompts, diagnostics, and settings
+We'd love for you to try it, break it, and tell us what you think.
 
-## Development Notes
+## Under the Hood
 
-Useful commands:
+For the technically curious:
 
-```bash
-uv sync
-uv run pytest -q
-uv run python main.py
-```
+| Layer | Tech |
+|-------|------|
+| Desktop shell | Tauri |
+| Backend | FastAPI + asyncio |
+| Database | DuckDB |
+| Frontend | Vanilla JS + Tailwind |
+| Model routing | litellm |
 
-The main desktop launcher remains:
+## Development
 
 ```bash
-./run.sh
+uv sync                  # install dependencies
+uv run pytest -q         # run tests
+uv run python main.py    # start the backend directly
+./run.sh                 # full desktop app launch
 ```
 
-## Open Source License
+## License
 
-BossMod AI is licensed under the Apache License 2.0.
+BossMod AI is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-That means:
+**What that means:**
 
-- free to use
-- free to modify
-- free to distribute
-- commercial use is allowed
+- **Free for personal use** — learning, experimenting, hobby projects, research
+- **Free for nonprofits and educators** — charities, schools, public institutions
+- **Commercial use requires a license** — if you're making money with BossMod, [let's talk](mailto:jordan@jtechminds.com)
 
-See [LICENSE](LICENSE) for the full text.
+See [LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for copyright details.
 
-## Contributing
+## Get Involved
 
-Contributions, bug reports, and usability feedback are welcome.
+We're building BossMod in the open and we'd love your help.
 
-If you open an issue or PR, the most helpful reports usually include:
+- **Found a bug?** Open an issue and tell us what happened
+- **Have an idea?** We want to hear it
+- **Want to contribute code?** PRs are welcome — by submitting a PR you agree to our [Contributor License Agreement](CLA.md)
 
-- what you were trying to do
-- what you expected to happen
-- what actually happened
-- screenshots or diagnostics if available
+The most helpful reports include what you were trying to do, what you expected, and what actually happened. Screenshots and diagnostics are a bonus.
 
-## Plain-English Summary
+---
 
-BossMod is a local AI office on your computer.
-
-You create agents, give them roles, assign work, tune their instructions, watch what they do, and keep control with diagnostics and an emergency pause switch.
+*BossMod AI — Making AI work for everyone, not just engineers.*
