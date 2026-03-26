@@ -5,7 +5,15 @@ and call ``db.create_agent()``, ``db.get_task()``, etc.
 """
 
 # Connection lifecycle
-from db.connection import close_connection, get_connection, init_db, reset_database, transaction
+from db.connection import (
+    close_connection,
+    close_thread_connection,
+    get_connection,
+    init_db,
+    interrupt_thread_connection,
+    reset_database,
+    transaction,
+)
 
 # Reusable CRUD helpers (for custom queries in domain code)
 from db.crud import execute, fetch_all, fetch_one, query, query_one
@@ -184,8 +192,10 @@ from db.world import get_nearby_agents, get_world_state
 __all__ = [
     # Connection
     "close_connection",
+    "close_thread_connection",
     "get_connection",
     "init_db",
+    "interrupt_thread_connection",
     "reset_database",
     # CRUD helpers
     "execute",

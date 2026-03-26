@@ -23,7 +23,6 @@ from core import config
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
-from core.agent_loop.dispatcher import dispatcher
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
 from core.runtime import runtime_services
@@ -45,7 +44,6 @@ from core.models import (
 )
 from core.world.tilemap import get_map_data
 from core.world.tilemap import get_room_at
-from core.world.simulation import simulation
 import db
 
 logger = logging.getLogger(__name__)
@@ -292,7 +290,7 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
         if not isinstance(agent_id, str) or not agent_id.strip():
             continue
         db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
-        dispatcher.enqueue_trigger(
+        await runtime_services.enqueue_trigger(
             agent_id=agent_id,
             trigger_type="channel_message",
             source_channel="channel",
@@ -874,7 +872,7 @@ async def create_task(body: TaskCreate) -> Task:
         notification_channel_id=body.notification_channel_id,
     )
     if body.assigned_to:
-        dispatcher.enqueue_trigger(**build_task_assigned_trigger(task))
+        await runtime_services.enqueue_trigger(**build_task_assigned_trigger(task))
     await manager.broadcast_activity(
         event="task_created",
         detail=f"Task \"{task.title}\" created" + (f" → {body.assigned_to}" if body.assigned_to else ""),
@@ -946,7 +944,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         created_at=human_msg.created_at,
     )
 
-    dispatcher.enqueue_trigger(
+    await runtime_services.enqueue_trigger(
         agent_id=agent_id,
         trigger_type="human_chat",
         source_channel="chat",
@@ -1035,7 +1033,7 @@ async def create_agent_meeting_session_message(agent_id: str, body: MeetingMessa
             round_id=round_record.id,
             agent_id=participant_id,
         )
-        dispatcher.enqueue_trigger(
+        await runtime_services.enqueue_trigger(
             agent_id=participant_id,
             trigger_type="session_message",
             source_channel="chat",
@@ -1090,8 +1088,7 @@ async def reset_agent_runtime(agent_id: str):
     if not state:
         raise HTTPException(500, "Agent state not found")
 
-    await dispatcher.reset_agent(agent_id)
-    simulation.clear_agent_path(agent_id)
+    await runtime_services.reset_agent_runtime(agent_id)
 
     blocked_task_id = None
     open_activities = [

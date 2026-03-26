@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -77,15 +78,43 @@ from core.world.tilemap import DEFAULT_DESKS
 
 @pytest.fixture()
 def isolated_db(tmp_path, monkeypatch):
+    if runtime_services._thread is not None:
+        asyncio.run(runtime_services.stop())
+    runtime_services._lock = None
+    runtime_services._lock_loop = None
+    runtime_services._thread = None
+    runtime_services._thread_loop = None
+    runtime_services._controller = None
+    runtime_services._thread_ready = threading.Event()
+    runtime_services._thread_error = None
+    runtime_services._relay_loop = None
+    runtime_services._event_queue = None
+    runtime_services._relay_task = None
     db.close_connection()
     monkeypatch.setattr(db_connection, "_DB_PATH", str(tmp_path / "test-bossmod.db"))
-    db_connection._connection = None
+    db_connection._root_connection = None
+    db_connection._thread_connections.clear()
+    db_connection._thread_local = threading.local()
     config._cache.clear()
     config._loaded = False
     db.init_db()
     yield
+    if runtime_services._thread is not None:
+        asyncio.run(runtime_services.stop())
+    runtime_services._lock = None
+    runtime_services._lock_loop = None
+    runtime_services._thread = None
+    runtime_services._thread_loop = None
+    runtime_services._controller = None
+    runtime_services._thread_ready = threading.Event()
+    runtime_services._thread_error = None
+    runtime_services._relay_loop = None
+    runtime_services._event_queue = None
+    runtime_services._relay_task = None
     db.close_connection()
-    db_connection._connection = None
+    db_connection._root_connection = None
+    db_connection._thread_connections.clear()
+    db_connection._thread_local = threading.local()
     config._cache.clear()
     config._loaded = False
 
@@ -136,6 +165,12 @@ def _active_movement(agent_id: str):
 
 async def _noop(*args, **kwargs):
     return None
+
+
+def _record_async(target: list[dict]):
+    async def _inner(**kwargs):
+        target.append(kwargs)
+    return _inner
 
 
 async def _record_world_update(target: list[str], *args, **kwargs):
@@ -198,7 +233,8 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
     assert "action_contract_template" not in advanced_settings
 
 
-def test_runtime_services_start_respects_persisted_pause_state(isolated_db, monkeypatch):
+@pytest.mark.asyncio
+async def test_runtime_services_start_respects_persisted_pause_state(isolated_db, monkeypatch):
     calls: list[str] = []
 
     monkeypatch.setattr("core.runtime.services.dispatcher.start", lambda: calls.append("dispatcher.start"))
@@ -207,13 +243,15 @@ def test_runtime_services_start_respects_persisted_pause_state(isolated_db, monk
 
     db.set_setting("runtime_control_state", "paused", "advanced")
     config.reload()
-    runtime_services.start()
+    await runtime_services.start()
     assert calls == []
+    await runtime_services.stop()
 
     db.set_setting("runtime_control_state", "running", "advanced")
     config.reload()
-    runtime_services.start()
+    await runtime_services.start()
     assert calls == ["dispatcher.start", "simulation.start", "watchdog.start"]
+    await runtime_services.stop()
 
 
 def test_parse_action_rejects_legacy_bm_cli_shape(isolated_db):
@@ -952,6 +990,9 @@ async def test_runtime_state_route_pauses_and_resumes_services(isolated_db, monk
     monkeypatch.setattr(manager, "broadcast_activity", _broadcast_activity)
     monkeypatch.setattr(manager, "broadcast_runtime_state", _broadcast_runtime_state)
 
+    await runtime_services.start()
+    start_calls.clear()
+
     paused_payload = await set_runtime_state_route(RuntimeControlBody(paused=True))
 
     assert paused_payload == {"state": "paused", "paused": True}
@@ -969,6 +1010,7 @@ async def test_runtime_state_route_pauses_and_resumes_services(isolated_db, monk
     assert runtime_state_broadcasts == ["paused", "running"]
     assert config.require("runtime_control_state") == "running"
     assert await get_runtime_state_route() == {"state": "running", "paused": False}
+    await runtime_services.stop()
 
 
 @pytest.mark.asyncio
@@ -1331,7 +1373,7 @@ async def test_activate_agent_queues_human_trigger_even_when_agent_is_busy(isola
 
     queued: list[dict] = []
     monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
-    monkeypatch.setattr(dispatcher, "enqueue_trigger", lambda **kwargs: queued.append(kwargs))
+    monkeypatch.setattr("core.runtime.services.runtime_services.enqueue_trigger", _record_async(queued))
 
     result = await activate_agent(agent.id, ActivationBody(content="Hey Taylor"))
 
@@ -4186,7 +4228,7 @@ async def test_reset_agent_runtime_blocks_active_task_and_clears_open_triggers(i
         payload={"content": "status?"},
     )
 
-    monkeypatch.setattr(dispatcher, "reset_agent", _noop)
+    monkeypatch.setattr("core.runtime.services.runtime_services.reset_agent_runtime", _noop)
     monkeypatch.setattr(manager, "broadcast_world_state", _noop)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
     monkeypatch.setattr(manager, "broadcast_feed_update", _noop)

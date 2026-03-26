@@ -7,10 +7,10 @@ import logging
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
-from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import dispatcher
+from core.runtime.events import runtime_events as manager
 from core.time import ensure_utc
 import db
 

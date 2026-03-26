@@ -13,9 +13,9 @@ import time
 from contextlib import suppress
 from typing import Any
 
-from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
+from core.runtime.events import runtime_events as manager
 from core.world.pathfinding import find_path
 from core.world.tilemap import get_room_at
 import db

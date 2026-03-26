@@ -28,7 +28,7 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    runtime_services.start()
+    await runtime_services.start()
     yield
     await runtime_services.stop()
     close_connection()

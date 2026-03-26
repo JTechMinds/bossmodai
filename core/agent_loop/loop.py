@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
@@ -36,6 +35,7 @@ from core.agent_loop.turn_rules import (
 from core.bm_cli import BossModCliCall, execute_bm_cli, maybe_parse_bm_cli_call
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
+from core.runtime.events import runtime_events as manager
 import db
 
 logger = logging.getLogger(__name__)

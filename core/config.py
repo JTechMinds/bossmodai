@@ -11,6 +11,7 @@ Settings are lazy-loaded on first access and cached. Call
 from __future__ import annotations
 
 import logging
+import threading
 
 import db
 
@@ -18,11 +19,13 @@ logger = logging.getLogger(__name__)
 
 _cache: dict[str, str] = {}
 _loaded = False
+_lock = threading.RLock()
 
 
 def _ensure_loaded() -> None:
-    global _loaded
-    if not _loaded:
+    with _lock:
+        loaded = _loaded
+    if not loaded:
         reload()
 
 
@@ -30,17 +33,20 @@ def reload() -> None:
     """Reload all settings from the database into the cache."""
     global _loaded
 
-    _cache.clear()
-    for s in db.get_settings():
-        _cache[s.key] = s.value
-    _loaded = True
+    rows = db.get_settings()
+    with _lock:
+        _cache.clear()
+        for s in rows:
+            _cache[s.key] = s.value
+        _loaded = True
     logger.debug("Config loaded: %d settings", len(_cache))
 
 
 def get(key: str) -> str | None:
     """Get a setting value, or ``None`` if not set or empty."""
     _ensure_loaded()
-    val = _cache.get(key)
+    with _lock:
+        val = _cache.get(key)
     if not val or not val.strip():
         return None
     return val.strip()

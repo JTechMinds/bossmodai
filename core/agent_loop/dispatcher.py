@@ -9,7 +9,6 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
@@ -21,6 +20,7 @@ from core.agent_loop.activity_scheduler import (
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
 from core.models.message import HUMAN_SENDER_ID
+from core.runtime.events import runtime_events as manager
 import db
 
 logger = logging.getLogger(__name__)
