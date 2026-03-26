@@ -153,11 +153,6 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
 
 def delete_agent(agent_id: str) -> bool:
     """Delete an agent and all dependent rows.
-
-    Deletes in FK dependency order (children before parents).  Each statement
-    auto-commits because DuckDB's FK checker enforces constraints per-statement
-    even inside explicit transactions, which blocks cascading deletes.
-    DuckDB is single-writer, so there is no concurrent-mutation risk.
     """
     result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
     if not result:

@@ -72,47 +72,48 @@ from core.llm import client, context_builder, routing
 from core.models import AIPersonalityCreate, AgentCreate, TaskCreate
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
+from core.runtime.worker import RuntimeController
 from core.world.simulation import simulation
 from core.world.tilemap import DEFAULT_DESKS
 
 
 @pytest.fixture()
 def isolated_db(tmp_path, monkeypatch):
-    if runtime_services._thread is not None:
-        asyncio.run(runtime_services.stop())
+    if runtime_services._process is not None:
+        if hasattr(runtime_services._process, "wait"):
+            asyncio.run(runtime_services.stop())
+        else:
+            runtime_services._process = None
     runtime_services._lock = None
     runtime_services._lock_loop = None
-    runtime_services._thread = None
-    runtime_services._thread_loop = None
-    runtime_services._controller = None
-    runtime_services._thread_ready = threading.Event()
-    runtime_services._thread_error = None
-    runtime_services._relay_loop = None
-    runtime_services._event_queue = None
-    runtime_services._relay_task = None
+    runtime_services._process = None
+    runtime_services._reader_task = None
+    runtime_services._ready_future = None
+    runtime_services._pending = {}
+    runtime_services._next_request_id = 0
     db.close_connection()
-    monkeypatch.setattr(db_connection, "_DB_PATH", str(tmp_path / "test-bossmod.db"))
-    db_connection._root_connection = None
+    db_path = str(tmp_path / "test-bossmod.db")
+    monkeypatch.setenv("BOSSMOD_DB_PATH", db_path)
+    monkeypatch.setattr(db_connection, "_DB_PATH", db_path)
     db_connection._thread_connections.clear()
     db_connection._thread_local = threading.local()
     config._cache.clear()
     config._loaded = False
     db.init_db()
     yield
-    if runtime_services._thread is not None:
-        asyncio.run(runtime_services.stop())
+    if runtime_services._process is not None:
+        if hasattr(runtime_services._process, "wait"):
+            asyncio.run(runtime_services.stop())
+        else:
+            runtime_services._process = None
     runtime_services._lock = None
     runtime_services._lock_loop = None
-    runtime_services._thread = None
-    runtime_services._thread_loop = None
-    runtime_services._controller = None
-    runtime_services._thread_ready = threading.Event()
-    runtime_services._thread_error = None
-    runtime_services._relay_loop = None
-    runtime_services._event_queue = None
-    runtime_services._relay_task = None
+    runtime_services._process = None
+    runtime_services._reader_task = None
+    runtime_services._ready_future = None
+    runtime_services._pending = {}
+    runtime_services._next_request_id = 0
     db.close_connection()
-    db_connection._root_connection = None
     db_connection._thread_connections.clear()
     db_connection._thread_local = threading.local()
     config._cache.clear()
@@ -234,24 +235,46 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
 
 
 @pytest.mark.asyncio
-async def test_runtime_services_start_respects_persisted_pause_state(isolated_db, monkeypatch):
+async def test_runtime_controller_boot_respects_persisted_pause_state(isolated_db, monkeypatch):
     calls: list[str] = []
+    stop_calls: list[str] = []
 
-    monkeypatch.setattr("core.runtime.services.dispatcher.start", lambda: calls.append("dispatcher.start"))
-    monkeypatch.setattr("core.runtime.services.simulation.start", lambda: calls.append("simulation.start"))
-    monkeypatch.setattr("core.runtime.services.watchdog.start", lambda: calls.append("watchdog.start"))
+    async def _stop_watchdog():
+        stop_calls.append("watchdog.stop")
+
+    async def _stop_dispatcher():
+        stop_calls.append("dispatcher.stop")
+
+    async def _stop_simulation():
+        stop_calls.append("simulation.stop")
+
+    monkeypatch.setattr("core.runtime.worker.dispatcher.start", lambda: calls.append("dispatcher.start"))
+    monkeypatch.setattr("core.runtime.worker.simulation.start", lambda: calls.append("simulation.start"))
+    monkeypatch.setattr("core.runtime.worker.watchdog.start", lambda: calls.append("watchdog.start"))
+    monkeypatch.setattr("core.runtime.worker.watchdog.stop", _stop_watchdog)
+    monkeypatch.setattr("core.runtime.worker.dispatcher.stop", _stop_dispatcher)
+    monkeypatch.setattr("core.runtime.worker.simulation.stop", _stop_simulation)
 
     db.set_setting("runtime_control_state", "paused", "advanced")
     config.reload()
-    await runtime_services.start()
+    controller = RuntimeController()
+    await controller.boot(paused=True)
     assert calls == []
-    await runtime_services.stop()
+    await controller.shutdown()
 
     db.set_setting("runtime_control_state", "running", "advanced")
     config.reload()
-    await runtime_services.start()
+    await controller.boot(paused=False)
     assert calls == ["dispatcher.start", "simulation.start", "watchdog.start"]
-    await runtime_services.stop()
+    await controller.shutdown()
+    assert stop_calls == [
+        "watchdog.stop",
+        "dispatcher.stop",
+        "simulation.stop",
+        "watchdog.stop",
+        "dispatcher.stop",
+        "simulation.stop",
+    ]
 
 
 def test_parse_action_rejects_legacy_bm_cli_shape(isolated_db):
@@ -952,28 +975,10 @@ async def test_runtime_contracts_endpoint_returns_settings_backed_templates(isol
 
 @pytest.mark.asyncio
 async def test_runtime_state_route_pauses_and_resumes_services(isolated_db, monkeypatch):
-    stop_calls: list[str] = []
+    requests: list[str] = []
     start_calls: list[str] = []
     activity_events: list[str] = []
     runtime_state_broadcasts: list[str] = []
-
-    async def _stop_watchdog():
-        stop_calls.append("watchdog.stop")
-
-    async def _stop_dispatcher():
-        stop_calls.append("dispatcher.stop")
-
-    async def _stop_simulation():
-        stop_calls.append("simulation.stop")
-
-    def _start_dispatcher():
-        start_calls.append("dispatcher.start")
-
-    def _start_simulation():
-        start_calls.append("simulation.start")
-
-    def _start_watchdog():
-        start_calls.append("watchdog.start")
 
     async def _broadcast_activity(*, event: str, detail: str, agent_name=None, extra=None):
         activity_events.append(event)
@@ -981,36 +986,51 @@ async def test_runtime_state_route_pauses_and_resumes_services(isolated_db, monk
     async def _broadcast_runtime_state(payload):
         runtime_state_broadcasts.append(str(payload["state"]))
 
-    monkeypatch.setattr("core.runtime.services.watchdog.stop", _stop_watchdog)
-    monkeypatch.setattr("core.runtime.services.dispatcher.stop", _stop_dispatcher)
-    monkeypatch.setattr("core.runtime.services.simulation.stop", _stop_simulation)
-    monkeypatch.setattr("core.runtime.services.dispatcher.start", _start_dispatcher)
-    monkeypatch.setattr("core.runtime.services.simulation.start", _start_simulation)
-    monkeypatch.setattr("core.runtime.services.watchdog.start", _start_watchdog)
+    def _create_runtime_command(command_type: str, payload=None):
+        requests.append(command_type)
+        return type("Command", (), {"id": command_type})()
+
+    async def _wait_for_command(command_id: str):
+        if command_id == "pause_runtime":
+            runtime_services._process = None
+        elif command_id == "resume_runtime":
+            runtime_services._process = type("Proc", (), {"returncode": None})()
+
+    async def _start_unlocked():
+        start_calls.append("runtime.start")
+        runtime_services._process = type("Proc", (), {"returncode": None})()
+
+    runtime_services._process = type("Proc", (), {"returncode": None})()
+    monkeypatch.setattr("core.runtime.services.db.create_runtime_command", _create_runtime_command)
+    monkeypatch.setattr(runtime_services, "_wait_for_command", _wait_for_command)
+    monkeypatch.setattr(runtime_services, "_start_unlocked", _start_unlocked)
     monkeypatch.setattr(manager, "broadcast_activity", _broadcast_activity)
     monkeypatch.setattr(manager, "broadcast_runtime_state", _broadcast_runtime_state)
 
-    await runtime_services.start()
-    start_calls.clear()
-
     paused_payload = await set_runtime_state_route(RuntimeControlBody(paused=True))
 
-    assert paused_payload == {"state": "paused", "paused": True}
-    assert stop_calls == ["watchdog.stop", "dispatcher.stop", "simulation.stop"]
+    assert paused_payload["state"] == "paused"
+    assert paused_payload["paused"] is True
+    assert requests == ["pause_runtime"]
     assert activity_events == ["runtime_paused"]
     assert runtime_state_broadcasts == ["paused"]
     assert config.require("runtime_control_state") == "paused"
-    assert await get_runtime_state_route() == {"state": "paused", "paused": True}
+    current_paused = await get_runtime_state_route()
+    assert current_paused["state"] == "paused"
+    assert current_paused["paused"] is True
 
     resumed_payload = await set_runtime_state_route(RuntimeControlBody(paused=False))
 
-    assert resumed_payload == {"state": "running", "paused": False}
-    assert start_calls == ["dispatcher.start", "simulation.start", "watchdog.start"]
+    assert resumed_payload["state"] == "running"
+    assert resumed_payload["paused"] is False
+    assert start_calls == ["runtime.start"]
+    assert requests == ["pause_runtime", "resume_runtime"]
     assert activity_events == ["runtime_paused", "runtime_resumed"]
     assert runtime_state_broadcasts == ["paused", "running"]
     assert config.require("runtime_control_state") == "running"
-    assert await get_runtime_state_route() == {"state": "running", "paused": False}
-    await runtime_services.stop()
+    current_running = await get_runtime_state_route()
+    assert current_running["state"] == "running"
+    assert current_running["paused"] is False
 
 
 @pytest.mark.asyncio
@@ -2768,11 +2788,13 @@ async def test_meeting_session_route_and_human_message_fanout(isolated_db, monke
     await execute_action({"action": "attendMeeting", "topic": "Planning", "thought": "join"}, morgan, morgan_state)
 
     broadcasted: list[dict[str, object]] = []
+    queued: list[dict] = []
 
     async def _record_meeting_message(**kwargs):
         broadcasted.append(kwargs)
 
     monkeypatch.setattr(manager, "broadcast_meeting_message", _record_meeting_message)
+    monkeypatch.setattr("core.runtime.services.runtime_services.enqueue_trigger", _record_async(queued))
 
     session_payload = await get_agent_meeting_session(taylor.id)
     assert session_payload["active"] is True
@@ -2791,10 +2813,8 @@ async def test_meeting_session_route_and_human_message_fanout(isolated_db, monke
     assert broadcasted[0]["author_type"] == "human"
     assert broadcasted[0]["content"] == "Let's align on the plan."
 
-    triggers = db.list_queued_triggers(limit=10)
-    session_triggers = [item for item in triggers if item.trigger_type == "session_message"]
-    assert len(session_triggers) == 2
-    payloads = [json.loads(item.payload) for item in session_triggers]
+    assert len(queued) == 2
+    payloads = [item["payload"] for item in queued]
     assert all(item["session_id"] == session["id"] for item in payloads)
     assert all(item["round_id"] for item in payloads)
     assert all(item["author_type"] == "human" for item in payloads)
@@ -2950,6 +2970,7 @@ async def test_channel_routes_and_human_message_fanout(isolated_db, monkeypatch)
 
     broadcasted: list[dict[str, object]] = []
     updated: list[dict[str, object]] = []
+    queued: list[dict] = []
 
     async def _record_channel_message(**kwargs):
         broadcasted.append(kwargs)
@@ -2961,6 +2982,7 @@ async def test_channel_routes_and_human_message_fanout(isolated_db, monkeypatch)
     monkeypatch.setattr(manager, "broadcast_channel_updated", _record_channel_updated)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
     monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr("core.runtime.services.runtime_services.enqueue_trigger", _record_async(queued))
 
     created = await create_channel_route(
         ChannelCreateBody(agent_ids=[taylor.id, joe.id]),
@@ -2980,10 +3002,8 @@ async def test_channel_routes_and_human_message_fanout(isolated_db, monkeypatch)
     assert broadcasted[0]["channel_id"] == created["id"]
     assert broadcasted[0]["author_type"] == "human"
 
-    triggers = db.list_queued_triggers(limit=10)
-    channel_triggers = [item for item in triggers if item.trigger_type == "channel_message"]
-    assert len(channel_triggers) == 2
-    payloads = [json.loads(item.payload) for item in channel_triggers]
+    assert len(queued) == 2
+    payloads = [item["payload"] for item in queued]
     assert all(item["channel_id"] == created["id"] for item in payloads)
     assert all(item["round_id"] for item in payloads)
     assert all(item["author_type"] == "human" for item in payloads)
@@ -3434,11 +3454,16 @@ async def test_bm_cli_write_registers_artifact_and_desk_view_can_open_it(isolate
     assert artifacts[0].virtual_path == "/me/test_report.md"
     assert artifacts[0].category == "output"
 
+    root_payload = await get_agent_desk(agent.id, path="/")
+    assert root_payload["kind"] == "directory"
+    root_paths = {entry["path"] for entry in root_payload["entries"]}
+    assert root_paths == {"/me", "/projects"}
+
     desk_payload = await get_agent_desk(agent.id, path="/me")
     assert desk_payload["kind"] == "directory"
-    output_entries = next(section["entries"] for section in desk_payload["sections"] if section["title"] == "Outputs")
-    assert any(entry["path"] == "/me/test_report.md" for entry in output_entries)
-    output_names = {entry["name"] for entry in output_entries}
+    output_paths = {entry["path"] for entry in desk_payload["entries"]}
+    assert "/me/test_report.md" in output_paths
+    output_names = {entry["name"] for entry in desk_payload["entries"]}
     assert ".git" not in output_names
     assert ".gitignore" not in output_names
 
@@ -3726,7 +3751,7 @@ async def test_intermediate_movement_broadcasts_world_state(isolated_db, monkeyp
     db.update_agent_state(agent.id, x=14, y=9, status="in_transit")
 
     world_updates: list[str] = []
-    monkeypatch.setattr(manager, "broadcast_world_state", lambda: _record_world_update(world_updates))
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_world_state", lambda: _record_world_update(world_updates))
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
     monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
 

@@ -132,6 +132,23 @@ from db.agent_triggers import (
     release_trigger,
     requeue_stale_triggers,
 )
+from db.runtime_control import (
+    claim_runtime_command,
+    complete_runtime_command,
+    create_runtime_command,
+    delete_open_runtime_commands,
+    fail_runtime_command,
+    get_runtime_command,
+    get_runtime_worker_state,
+    has_open_runtime_command,
+    list_queued_runtime_commands,
+    mark_runtime_worker_error,
+    mark_runtime_worker_running,
+    mark_runtime_worker_starting,
+    mark_runtime_worker_stopped,
+    mark_runtime_worker_stopping,
+    record_runtime_worker_heartbeat,
+)
 
 # Tasks
 from db.tasks import create_task, get_task, list_tasks, update_task
@@ -305,6 +322,21 @@ __all__ = [
     "list_agent_triggers",
     "release_trigger",
     "requeue_stale_triggers",
+    "claim_runtime_command",
+    "complete_runtime_command",
+    "create_runtime_command",
+    "delete_open_runtime_commands",
+    "fail_runtime_command",
+    "get_runtime_command",
+    "get_runtime_worker_state",
+    "has_open_runtime_command",
+    "list_queued_runtime_commands",
+    "mark_runtime_worker_error",
+    "mark_runtime_worker_running",
+    "mark_runtime_worker_starting",
+    "mark_runtime_worker_stopped",
+    "mark_runtime_worker_stopping",
+    "record_runtime_worker_heartbeat",
     # Tasks
     "create_task",
     "get_task",

@@ -1,129 +1,58 @@
-"""BossMod AI — Coordinated runtime service lifecycle."""
+"""BossMod AI — app-side gateway for the isolated runtime worker."""
 
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
+import json
 import logging
-import threading
+import os
+import signal
+import sys
 from contextlib import suppress
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from api.websocket import manager
-import db
 from core import config
-from core.agent_loop.dispatcher import dispatcher
-from core.agent_loop.watchdog import watchdog
-from core.runtime.events import LoopRuntimeEventSink, NullRuntimeEventSink, runtime_events
-from core.world.simulation import simulation
+import db
+import db.connection as db_connection
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS = 2.0
-
-
-class _RuntimeController:
-    """Own the runtime-only services inside the dedicated runtime thread."""
-
-    async def boot(self, *, paused: bool) -> None:
-        if not paused:
-            self._start_services()
-
-    async def shutdown(self) -> None:
-        await self._stop_services()
-
-    async def pause(self) -> None:
-        await self._stop_services()
-
-    async def resume(self) -> None:
-        self._start_services()
-
-    async def enqueue_trigger(
-        self,
-        *,
-        agent_id: str,
-        trigger_type: str,
-        source_channel: str,
-        payload: dict[str, Any],
-        task_id: str | None = None,
-    ) -> None:
-        dispatcher.enqueue_trigger(
-            agent_id=agent_id,
-            trigger_type=trigger_type,
-            source_channel=source_channel,
-            payload=payload,
-            task_id=task_id,
-        )
-
-    async def reset_agent_runtime(self, agent_id: str) -> None:
-        await dispatcher.reset_agent(agent_id)
-        simulation.clear_agent_path(agent_id)
-
-    def _start_services(self) -> None:
-        dispatcher.start()
-        simulation.start()
-        watchdog.start()
-
-    async def _stop_services(self) -> None:
-        await watchdog.stop()
-        await dispatcher.stop()
-        await simulation.stop()
+_WORKER_READY_TIMEOUT_SECONDS = 10.0
+_WORKER_STOP_TIMEOUT_SECONDS = 2.0
+_COMMAND_WAIT_TIMEOUT_SECONDS = 10.0
+_COMMAND_POLL_INTERVAL_SECONDS = 0.05
+_HEARTBEAT_STALE_SECONDS = 5.0
+_WORKER_NAME = "primary"
+_HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 
 
 class RuntimeServices:
-    """Own lifecycle and control of the isolated runtime thread."""
+    """Expose a durable control boundary to the runtime worker process."""
 
     _STATE_KEY = "runtime_control_state"
     _RUNNING = "running"
     _PAUSED = "paused"
-    _RELAY_STOP = object()
 
     def __init__(self) -> None:
         self._lock: asyncio.Lock | None = None
         self._lock_loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._thread_loop: asyncio.AbstractEventLoop | None = None
-        self._controller: _RuntimeController | None = None
-        self._thread_ready = threading.Event()
-        self._thread_error: BaseException | None = None
-        self._relay_loop: asyncio.AbstractEventLoop | None = None
-        self._event_queue: asyncio.Queue[dict[str, Any] | object] | None = None
-        self._relay_task: asyncio.Task[None] | None = None
+        self._process: asyncio.subprocess.Process | None = None
+        self._process_loop: asyncio.AbstractEventLoop | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._ready_future: asyncio.Future[None] | None = None
+        self._expecting_shutdown = False
 
     async def start(self) -> None:
-        """Start the dedicated runtime thread and its event relay."""
+        """Start the dedicated runtime worker process."""
+        db.init_db()
         async with self._guard():
             await self._start_unlocked()
 
-    async def _start_unlocked(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            return
-
-        self._thread_error = None
-        self._thread_ready.clear()
-        self._relay_loop = asyncio.get_running_loop()
-        self._event_queue = asyncio.Queue()
-        self._thread = threading.Thread(
-            target=self._thread_main,
-            name="bossmod-runtime",
-            daemon=True,
-        )
-        self._thread.start()
-
-        ready = await asyncio.to_thread(self._thread_ready.wait, 10.0)
-        if not ready:
-            raise RuntimeError("Timed out waiting for runtime thread startup")
-        if self._thread_error is not None:
-            raise RuntimeError("Runtime thread failed to start") from self._thread_error
-        if self._thread_loop is None or self._controller is None:
-            raise RuntimeError("Runtime thread did not initialize correctly")
-        if self._event_queue is None:
-            raise RuntimeError("Runtime relay queue did not initialize")
-
-        self._relay_task = asyncio.create_task(self._relay_events())
-
     async def stop(self) -> None:
-        """Stop the runtime thread and event relay."""
+        """Stop the runtime worker process."""
         async with self._guard():
             await self._stop_unlocked()
 
@@ -136,39 +65,58 @@ class RuntimeServices:
             await self._start_unlocked()
 
     def state(self) -> str:
-        """Return the persisted global runtime state."""
         state = config.get(self._STATE_KEY)
         if state == self._PAUSED:
             return self._PAUSED
         return self._RUNNING
 
     def is_paused(self) -> bool:
-        """Return whether the global runtime kill switch is engaged."""
         return self.state() == self._PAUSED
 
     def status_payload(self) -> dict[str, object]:
-        """Return a small UI-friendly runtime state payload."""
         state = self.state()
+        try:
+            worker = db.get_runtime_worker_state(_WORKER_NAME)
+        except Exception:
+            worker = None
+        last_heartbeat = worker.last_heartbeat_at if worker is not None else None
+        heartbeat_age = None
+        healthy = False
+        if last_heartbeat is not None:
+            heartbeat_age = (datetime.now(timezone.utc) - last_heartbeat).total_seconds()
+        if worker is not None and worker.lifecycle_state == "running" and heartbeat_age is not None:
+            healthy = heartbeat_age <= _HEARTBEAT_STALE_SECONDS
         return {
             "state": state,
             "paused": state == self._PAUSED,
+            "worker": {
+                "name": worker.worker_name if worker is not None else _WORKER_NAME,
+                "state": worker.lifecycle_state if worker is not None else "stopped",
+                "healthy": healthy,
+                "pid": worker.pid if worker is not None else None,
+                "last_heartbeat_at": last_heartbeat.isoformat() if last_heartbeat is not None else None,
+                "started_at": worker.started_at.isoformat() if worker and worker.started_at else None,
+                "stopped_at": worker.stopped_at.isoformat() if worker and worker.stopped_at else None,
+                "last_error": worker.last_error if worker is not None else None,
+            },
         }
 
     async def pause(self) -> dict[str, object]:
-        """Persist the global paused state and stop runtime services."""
         async with self._guard():
             db.set_setting(self._STATE_KEY, self._PAUSED, "advanced")
             config.reload()
-            await self._submit(self._require_controller().pause())
+            if self._process_is_running():
+                command = db.create_runtime_command("pause_runtime")
+                await self._wait_for_command(command.id)
             return self.status_payload()
 
     async def resume(self) -> dict[str, object]:
-        """Persist the global running state and restart runtime services."""
         async with self._guard():
             db.set_setting(self._STATE_KEY, self._RUNNING, "advanced")
             config.reload()
             await self._start_unlocked()
-            await self._submit(self._require_controller().resume())
+            command = db.create_runtime_command("resume_runtime")
+            await self._wait_for_command(command.id)
             return self.status_payload()
 
     async def enqueue_trigger(
@@ -180,27 +128,27 @@ class RuntimeServices:
         payload: dict[str, Any],
         task_id: str | None = None,
     ) -> None:
-        if self._controller is None:
-            await self.start()
-        await self._submit(
-            self._require_controller().enqueue_trigger(
-                agent_id=agent_id,
-                trigger_type=trigger_type,
-                source_channel=source_channel,
-                payload=payload,
-                task_id=task_id,
-            )
+        await self.start()
+        if trigger_type == "human_chat":
+            db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
+        db.create_agent_trigger(
+            agent_id=agent_id,
+            trigger_type=trigger_type,
+            source_channel=source_channel,
+            payload=payload,
+            task_id=task_id,
         )
+        async with self._guard():
+            if self._process_is_running() and not db.has_open_runtime_command(["wake_dispatcher"]):
+                db.create_runtime_command("wake_dispatcher")
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
-        if self._controller is None:
-            await self.start()
-        await self._submit(self._require_controller().reset_agent_runtime(agent_id))
-
-    def _require_controller(self) -> _RuntimeController:
-        if self._controller is None:
-            raise RuntimeError("Runtime controller is not running")
-        return self._controller
+        await self.start()
+        async with self._guard():
+            if not self._process_is_running():
+                return
+            command = db.create_runtime_command("reset_agent_runtime", {"agent_id": agent_id})
+            await self._wait_for_command(command.id)
 
     def _guard(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -209,72 +157,202 @@ class RuntimeServices:
             self._lock_loop = loop
         return self._lock
 
-    async def _submit(self, coro: Any) -> Any:
-        loop = self._thread_loop
-        if loop is None:
-            raise RuntimeError("Runtime thread is not running")
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return await asyncio.wrap_future(future)
+    def _process_is_running(self) -> bool:
+        return self._process is not None and self._process.returncode is None
+
+    async def _start_unlocked(self) -> None:
+        process = self._process
+        if process is not None and process.returncode is None:
+            return
+
+        if process is not None and process.returncode is not None:
+            await self._clear_process_state()
+
+        db.delete_open_runtime_commands()
+
+        loop = asyncio.get_running_loop()
+        self._ready_future = loop.create_future()
+        self._expecting_shutdown = False
+
+        worker_cmd = [
+            sys.executable,
+            "-u",
+            "-m",
+            "core.runtime.worker",
+        ]
+        env = os.environ.copy()
+        env["BOSSMOD_DB_PATH"] = str(db_connection._DB_PATH)
+        env["BOSSMOD_APP_PID"] = str(os.getpid())
+        self._process = await asyncio.create_subprocess_exec(
+            *worker_cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=None,
+        )
+        db.mark_runtime_worker_starting(self._process.pid, worker_name=_WORKER_NAME)
+        self._process_loop = asyncio.get_running_loop()
+        self._reader_task = asyncio.create_task(self._read_worker_output())
+        ready_future = self._ready_future
+        if ready_future is None:
+            raise RuntimeError("Runtime worker ready future was not initialized")
+        try:
+            await asyncio.wait_for(ready_future, timeout=_WORKER_READY_TIMEOUT_SECONDS)
+        except Exception as exc:
+            await self._force_stop_process(self._process)
+            await self._clear_process_state()
+            db.mark_runtime_worker_error(str(exc), worker_name=_WORKER_NAME)
+            raise
 
     async def _stop_unlocked(self) -> None:
-        """Stop the runtime thread and drain pending relay events."""
-        thread = self._thread
-        loop = self._thread_loop
-        controller = self._controller
-        relay_task = self._relay_task
-        relay_loop = self._relay_loop
-        relay_queue = self._event_queue
-
-        if thread is None:
+        process = self._process
+        if process is None:
+            db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
             return
 
-        if loop is not None and controller is not None:
-            shutdown_future = asyncio.run_coroutine_threadsafe(controller.shutdown(), loop)
+        self._expecting_shutdown = True
+        db.mark_runtime_worker_stopping(process.pid if process.returncode is None else None, worker_name=_WORKER_NAME)
+
+        process_loop = self._process_loop
+        if process_loop is not asyncio.get_running_loop():
+            await self._kill_process(process)
+            await self._clear_process_state()
+            db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
+            return
+
+        if process.returncode is None:
+            db.create_runtime_command("shutdown_runtime")
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(asyncio.wrap_future(shutdown_future)),
-                    timeout=_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS,
-                )
+                await asyncio.wait_for(process.wait(), timeout=_WORKER_STOP_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
-                logger.warning("Runtime shutdown stalled; interrupting runtime DuckDB query")
-                db.interrupt_thread_connection(thread.ident)
-                with suppress(Exception):
-                    await asyncio.wait_for(
-                        asyncio.shield(asyncio.wrap_future(shutdown_future)),
-                        timeout=_RUNTIME_SHUTDOWN_TIMEOUT_SECONDS,
-                    )
-            loop.call_soon_threadsafe(loop.stop)
+                await self._force_stop_process(process)
 
-        await asyncio.to_thread(thread.join, 10.0)
-        if thread.is_alive():
-            raise RuntimeError("Runtime thread failed to stop cleanly")
+        await self._clear_process_state()
+        state = db.get_runtime_worker_state(_WORKER_NAME)
+        if state is None or state.lifecycle_state not in {"stopped", "error"}:
+            db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
 
-        self._thread = None
-        self._thread_loop = None
-        self._controller = None
-
-        if relay_task is not None and relay_loop is not None and relay_queue is not None:
-            with suppress(RuntimeError):
-                relay_loop.call_soon_threadsafe(relay_queue.put_nowait, self._RELAY_STOP)
+    async def _clear_process_state(self) -> None:
+        reader_task = self._reader_task
+        if reader_task is not None:
+            reader_loop = reader_task.get_loop()
             current_loop = asyncio.get_running_loop()
-            if relay_task.get_loop() is current_loop:
+            if reader_loop is current_loop:
+                reader_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await relay_task
-        self._relay_loop = None
-        self._event_queue = None
-        self._relay_task = None
+                    await reader_task
+            else:
+                reader_task.cancel()
+        self._reader_task = None
 
-    async def _relay_events(self) -> None:
-        queue = self._event_queue
-        if queue is None:
+        process = self._process
+        if process is not None:
+            transport = getattr(process, "_transport", None)
+            if transport is not None:
+                with suppress(Exception):
+                    transport.close()
+                with suppress(Exception):
+                    process._transport = None
+            if process.stdout is not None:
+                with suppress(Exception):
+                    process.stdout.close()
+                with suppress(Exception):
+                    process.stdout = None
+
+        self._process = None
+        self._process_loop = None
+        ready_future = self._ready_future
+        if ready_future is not None and not ready_future.done():
+            ready_future.cancel()
+        self._ready_future = None
+
+    async def _force_stop_process(self, process: asyncio.subprocess.Process | None) -> None:
+        if process is None or process.returncode is not None:
             return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+
+    async def _kill_process(self, process: asyncio.subprocess.Process) -> None:
+        pid = process.pid
+        if pid is None:
+            return
+        with suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(asyncio.to_thread(os.waitpid, pid, 0), timeout=2.0)
+            return
+        except (asyncio.TimeoutError, ChildProcessError):
+            pass
+        with suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        with suppress(ChildProcessError):
+            await asyncio.to_thread(os.waitpid, pid, 0)
+
+    async def _wait_for_command(self, command_id: str) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _COMMAND_WAIT_TIMEOUT_SECONDS
         while True:
-            envelope = await queue.get()
-            if envelope is self._RELAY_STOP:
+            command = db.get_runtime_command(command_id)
+            if command is None:
+                raise RuntimeError(f"Runtime command disappeared: {command_id}")
+            if command.status == "completed":
                 return
-            if not isinstance(envelope, dict):
-                continue
-            await self._dispatch_event(envelope)
+            if command.status == "failed":
+                raise RuntimeError(command.failure_reason or "Runtime command failed")
+            if loop.time() >= deadline:
+                raise RuntimeError(f"Timed out waiting for runtime command {command.command_type}")
+            if not self._process_is_running():
+                raise RuntimeError("Runtime worker is not running")
+            await asyncio.sleep(_COMMAND_POLL_INTERVAL_SECONDS)
+
+    async def _read_worker_output(self) -> None:
+        process = self._process
+        if process is None or process.stdout is None:
+            return
+        try:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                message = json.loads(line.decode("utf-8"))
+                await self._handle_worker_message(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed reading runtime worker output")
+        finally:
+            ready_future = self._ready_future
+            if ready_future is not None and not ready_future.done():
+                ready_future.set_exception(RuntimeError("Runtime worker exited before ready"))
+            if not self._expecting_shutdown:
+                state = db.get_runtime_worker_state(_WORKER_NAME)
+                if state is None or state.lifecycle_state not in {"stopped", "error"}:
+                    db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
+
+    async def _handle_worker_message(self, message: dict[str, Any]) -> None:
+        message_type = message.get("type")
+        if message_type == "ready":
+            if self._ready_future is not None and not self._ready_future.done():
+                self._ready_future.set_result(None)
+            return
+        if message_type == "fatal":
+            error = message.get("error") or "Runtime worker failed"
+            logger.error("Runtime worker fatal error: %s", error)
+            db.mark_runtime_worker_error(error, worker_name=_WORKER_NAME)
+            if self._ready_future is not None and not self._ready_future.done():
+                self._ready_future.set_exception(RuntimeError(error))
+            return
+        if message_type == "event":
+            payload = message.get("payload")
+            if isinstance(payload, dict):
+                await self._dispatch_event(payload)
+            return
+        logger.warning("Unknown runtime worker message: %s", message)
 
     async def _dispatch_event(self, envelope: dict[str, Any]) -> None:
         kind = envelope.get("kind")
@@ -316,44 +394,6 @@ class RuntimeServices:
             await manager.broadcast_feed_update(data["entry"])
             return
         logger.warning("Unknown runtime event kind received: %s", kind)
-
-    def _thread_main(self) -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        relay_loop = self._relay_loop
-        event_queue = self._event_queue
-        if relay_loop is None or event_queue is None:
-            self._thread_error = RuntimeError("Runtime relay bridge is not initialized")
-            self._thread_ready.set()
-            loop.close()
-            return
-        runtime_events.set_sink(LoopRuntimeEventSink(relay_loop, event_queue))
-        controller = _RuntimeController()
-        try:
-            self._thread_loop = loop
-            self._controller = controller
-            loop.run_until_complete(controller.boot(paused=self.is_paused()))
-        except BaseException as exc:
-            self._thread_error = exc
-            self._thread_ready.set()
-            runtime_events.set_sink(NullRuntimeEventSink())
-            db.close_thread_connection()
-            loop.close()
-            return
-
-        self._thread_ready.set()
-        try:
-            loop.run_forever()
-        finally:
-            runtime_events.set_sink(NullRuntimeEventSink())
-            db.close_thread_connection()
-            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
-            for task in pending:
-                task.cancel()
-            for task in pending:
-                with suppress(asyncio.CancelledError, concurrent.futures.CancelledError):
-                    loop.run_until_complete(task)
-            loop.close()
 
 
 runtime_services = RuntimeServices()

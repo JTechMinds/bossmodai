@@ -194,12 +194,20 @@ def create_channel_message(
     message = insert_returning(
         f"""
         INSERT INTO channel_messages (
-            channel_id, author_type, author_agent_id, author_name, content, source_channel
+            channel_id, author_type, author_agent_id, author_name, content, source_channel, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING {_MESSAGE_COLUMNS}
         """,
-        [channel_id, author_type, author_agent_id, author_name, content, source_channel],
+        [
+            channel_id,
+            author_type,
+            author_agent_id,
+            author_name,
+            content,
+            source_channel,
+            datetime.now(timezone.utc),
+        ],
         ChannelMessage,
     )
     return message

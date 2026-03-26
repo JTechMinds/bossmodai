@@ -4,7 +4,9 @@ Agent CRUD, map data, world state, settings, and real-time
 WebSocket broadcasting for live Canvas and Activity updates.
 """
 
+import asyncio
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -20,7 +22,7 @@ from pydantic import BaseModel
 
 from api.websocket import manager
 from core import config
-from core.bm_cli.virtual_fs import resolve_cli_path
+from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.llm import context_builder
@@ -341,46 +343,7 @@ async def get_agent_desk(agent_id: str, path: str = "/me"):
     if not agent:
         raise HTTPException(404, "Agent not found")
 
-    try:
-        resolved = resolve_cli_path(agent.storage_key, "/", path)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    if resolved.real_path is None and resolved.virtual_path != "/":
-        raise HTTPException(404, "Path not found")
-    if resolved.real_path is not None and not resolved.exists:
-        raise HTTPException(404, "Path not found")
-
-    if resolved.real_path is not None and resolved.real_path.is_file():
-        artifact = db.get_artifact_by_absolute_path(str(resolved.real_path.resolve()))
-        raw_content = resolved.real_path.read_text(encoding="utf-8", errors="ignore")
-        content = raw_content[:20_000]
-        return {
-            "kind": "file",
-            "path": resolved.virtual_path,
-            "name": Path(resolved.virtual_path).name,
-            "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
-            "artifact": _serialize_artifact(artifact),
-            "content": content,
-            "truncated": len(raw_content) > len(content),
-        }
-
-    if resolved.virtual_path == "/me":
-        return {
-            "kind": "directory",
-            "path": "/me",
-            "name": "Desk",
-            "breadcrumbs": _desk_breadcrumbs("/me"),
-            "sections": _build_desk_root_sections(agent),
-        }
-
-    return {
-        "kind": "directory",
-        "path": resolved.virtual_path,
-        "name": Path(resolved.virtual_path).name or resolved.virtual_path,
-        "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
-        "entries": _list_desk_entries(agent, resolved),
-    }
+    return await asyncio.to_thread(_build_agent_desk_payload, agent, path)
 
 
 @router.post("/agents/{agent_id}/desk/open-folder")
@@ -660,24 +623,69 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
     }
 
 
-def _build_desk_root_sections(agent: Agent) -> list[dict[str, object]]:
-    outputs_root = resolve_cli_path(agent.storage_key, "/", "/me")
-    notes_root = resolve_cli_path(agent.storage_key, "/", "/me/notes")
-    projects_root = resolve_cli_path(agent.storage_key, "/", "/projects")
+def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
+    """Build one filesystem-style Desk payload in a worker thread."""
+    try:
+        resolved = resolve_cli_path(agent.storage_key, "/", path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    output_entries = _list_desk_entries(
-        agent,
-        outputs_root,
-        exclude_names={"notes"},
-    )
-    note_entries = _list_desk_entries(agent, notes_root) if notes_root.exists and notes_root.real_path is not None else []
-    project_entries = _list_desk_entries(agent, projects_root, directories_only=True)
+    if resolved.real_path is None and resolved.virtual_path != "/":
+        raise HTTPException(404, "Path not found")
+    if resolved.real_path is not None and not resolved.exists:
+        raise HTTPException(404, "Path not found")
 
-    return [
-        {"title": "Outputs", "entries": output_entries},
-        {"title": "Notes", "entries": note_entries},
-        {"title": "Projects", "entries": project_entries},
-    ]
+    if resolved.real_path is not None and resolved.real_path.is_file():
+        content, truncated = _read_desk_file_preview(resolved.real_path)
+        artifact = db.get_artifact_by_absolute_path(str(resolved.real_path.resolve()))
+        return {
+            "kind": "file",
+            "path": resolved.virtual_path,
+            "name": Path(resolved.virtual_path).name,
+            "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
+            "artifact": _serialize_artifact(artifact),
+            "content": content,
+            "truncated": truncated,
+        }
+
+    entries = _list_virtual_root_entries(agent) if resolved.virtual_path == "/" else _list_desk_entries(agent, resolved)
+    return {
+        "kind": "directory",
+        "path": resolved.virtual_path,
+        "name": _desk_display_name(resolved.virtual_path),
+        "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
+        "entries": entries,
+    }
+
+
+def _read_desk_file_preview(path: Path, limit_chars: int = 20_000) -> tuple[str, bool]:
+    """Read a bounded UTF-8 preview for one desk file."""
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        content = handle.read(limit_chars + 1)
+    return content[:limit_chars], len(content) > limit_chars
+
+
+def _list_virtual_root_entries(agent: Agent) -> list[dict[str, object]]:
+    """Return the virtual filesystem mounts without scanning nested contents."""
+    entries: list[dict[str, object]] = []
+    for mount in virtual_root_entries():
+        path = f"/{mount.rstrip('/')}"
+        resolved = resolve_cli_path(agent.storage_key, "/", path)
+        updated_at = None
+        if resolved.real_path is not None and resolved.real_path.exists():
+            updated_at = datetime.fromtimestamp(resolved.real_path.stat().st_mtime).isoformat()
+        entries.append(
+            {
+                "name": mount.rstrip("/"),
+                "path": path,
+                "is_dir": True,
+                "artifact": None,
+                "size_bytes": None,
+                "updated_at": updated_at,
+                "category": "mount",
+            }
+        )
+    return entries
 
 
 def _list_desk_entries(
@@ -690,37 +698,65 @@ def _list_desk_entries(
     if resolved.real_path is None or not resolved.real_path.exists() or not resolved.real_path.is_dir():
         return []
 
-    absolute_prefix = str(resolved.real_path.resolve())
-    artifacts = db.list_artifacts(absolute_path_prefix=absolute_prefix, limit=500)
-    artifact_map = {artifact.absolute_path: artifact for artifact in artifacts}
+    scanned: list[dict[str, object]] = []
+    child_paths: list[str] = []
+    with os.scandir(resolved.real_path) as iterator:
+        for entry in iterator:
+            name = entry.name
+            if name in {".git", ".gitignore", ".gitattributes"}:
+                continue
+            if exclude_names and name in exclude_names:
+                continue
+            is_dir = entry.is_dir()
+            if directories_only and not is_dir:
+                continue
+            stat_result = entry.stat()
+            absolute_path = str(Path(entry.path).resolve())
+            if not is_dir:
+                child_paths.append(absolute_path)
+            scanned.append(
+                {
+                    "name": name,
+                    "path": _child_virtual_path(resolved.virtual_path, name),
+                    "is_dir": is_dir,
+                    "absolute_path": absolute_path,
+                    "size_bytes": None if is_dir else stat_result.st_size,
+                    "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+                }
+            )
+
+    scanned.sort(key=lambda item: (not bool(item["is_dir"]), str(item["name"]).lower()))
+    artifact_map = {
+        artifact.absolute_path: artifact
+        for artifact in db.list_artifacts(absolute_paths=child_paths, limit=max(len(child_paths), 1))
+    }
 
     entries: list[dict[str, object]] = []
-    for item in sorted(resolved.real_path.iterdir(), key=lambda candidate: (not candidate.is_dir(), candidate.name.lower())):
-        if item.name in {".git", ".gitignore", ".gitattributes"}:
-            continue
-        if exclude_names and item.name in exclude_names:
-            continue
-        if directories_only and not item.is_dir():
-            continue
-        virtual_path = _child_virtual_path(resolved.virtual_path, item.name)
-        artifact = artifact_map.get(str(item.resolve()))
+    for item in scanned:
+        artifact = artifact_map.get(str(item["absolute_path"]))
         entries.append(
             {
-                "name": item.name,
-                "path": virtual_path,
-                "is_dir": item.is_dir(),
+                "name": item["name"],
+                "path": item["path"],
+                "is_dir": item["is_dir"],
                 "artifact": _serialize_artifact(artifact),
-                "size_bytes": item.stat().st_size if item.is_file() else None,
-                "updated_at": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                "category": _entry_category(virtual_path, artifact),
+                "size_bytes": item["size_bytes"],
+                "updated_at": item["updated_at"],
+                "category": _entry_category(str(item["path"]), artifact, is_dir=bool(item["is_dir"])),
             }
         )
     return entries
 
 
-def _entry_category(path: str, artifact) -> str:
+def _entry_category(path: str, artifact, *, is_dir: bool = False) -> str:
+    if path == "/me":
+        return "workspace"
+    if path == "/projects":
+        return "projects"
     if artifact is not None:
         return artifact.category
+    if is_dir:
+        return "folder"
     if path.startswith("/projects/"):
         return "project"
     if path.startswith("/me/notes/") or path == "/me/notes":
@@ -746,11 +782,11 @@ def _desk_breadcrumbs(path: str) -> list[dict[str, str]]:
     if path in {"", "/"}:
         return [{"label": "/", "path": "/"}]
     parts = [item for item in path.strip("/").split("/") if item]
-    breadcrumbs: list[dict[str, str]] = []
+    breadcrumbs: list[dict[str, str]] = [{"label": "/", "path": "/"}]
     current = ""
     for part in parts:
         current += f"/{part}"
-        label = "Desk" if current == "/me" else part
+        label = part
         breadcrumbs.append({"label": label, "path": current})
     return breadcrumbs
 
@@ -759,6 +795,16 @@ def _child_virtual_path(parent: str, name: str) -> str:
     if parent in {"", "/"}:
         return f"/{name}"
     return f"{parent.rstrip('/')}/{name}"
+
+
+def _desk_display_name(path: str) -> str:
+    if path == "/":
+        return "Workspace"
+    if path == "/me":
+        return "Desk"
+    if path == "/projects":
+        return "Projects"
+    return Path(path).name or path
 
 
 def _launch_file_explorer(path: Path, *, opener: str) -> None:

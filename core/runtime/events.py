@@ -1,8 +1,7 @@
-"""BossMod AI — Runtime event bridge for cross-thread delivery."""
+"""BossMod AI — Runtime event bridge for process-isolated delivery."""
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Protocol
 
 
@@ -57,6 +56,12 @@ class RuntimeEventSink(Protocol):
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
 
 
+class RuntimeEventTransport(Protocol):
+    """Transport abstraction used by runtime event sinks."""
+
+    async def send_event(self, envelope: dict[str, Any]) -> None: ...
+
+
 class NullRuntimeEventSink:
     """Drop runtime events when no sink has been configured."""
 
@@ -94,41 +99,41 @@ class NullRuntimeEventSink:
         return None
 
 
-class LoopRuntimeEventSink:
-    """Forward runtime events onto an app-loop asyncio queue."""
+class TransportRuntimeEventSink:
+    """Serialize runtime events over an external transport."""
 
-    def __init__(
-        self,
-        relay_loop: asyncio.AbstractEventLoop,
-        event_queue: asyncio.Queue[dict[str, Any] | object],
-    ) -> None:
-        self._relay_loop = relay_loop
-        self._event_queue = event_queue
+    def __init__(self, transport: RuntimeEventTransport) -> None:
+        self._transport = transport
 
-    def _emit(self, kind: str, data: dict[str, Any] | None = None) -> None:
-        envelope = {"kind": kind, "data": data or {}}
-        self._relay_loop.call_soon_threadsafe(self._event_queue.put_nowait, envelope)
+    async def _emit(self, kind: str, data: dict[str, Any] | None = None) -> None:
+        await self._transport.send_event({
+            "type": "event",
+            "payload": {
+                "kind": kind,
+                "data": data or {},
+            },
+        })
 
     async def broadcast_world_state(self) -> None:
-        self._emit("world_state")
+        await self._emit("world_state")
 
     async def broadcast_runtime_state(self, payload: dict[str, Any]) -> None:
-        self._emit("runtime_state", {"payload": payload})
+        await self._emit("runtime_state", {"payload": payload})
 
     async def broadcast_chat_message(self, **kwargs: Any) -> None:
-        self._emit("chat_message", kwargs)
+        await self._emit("chat_message", kwargs)
 
     async def broadcast_meeting_message(self, **kwargs: Any) -> None:
-        self._emit("meeting_message", kwargs)
+        await self._emit("meeting_message", kwargs)
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
-        self._emit("channel_message", kwargs)
+        await self._emit("channel_message", kwargs)
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
-        self._emit("diagnostic", {"summary": summary})
+        await self._emit("diagnostic", {"summary": summary})
 
     async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None:
-        self._emit(
+        await self._emit(
             "thought",
             {
                 "agent_id": agent_id,
@@ -144,7 +149,7 @@ class LoopRuntimeEventSink:
         agent_name: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        self._emit(
+        await self._emit(
             "activity",
             {
                 "event": event,
@@ -155,7 +160,7 @@ class LoopRuntimeEventSink:
         )
 
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
-        self._emit("feed_update", {"entry": entry})
+        await self._emit("feed_update", {"entry": entry})
 
 
 class RuntimeEventProxy:

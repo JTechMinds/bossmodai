@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from core import config
@@ -52,8 +53,8 @@ def create_diagnostic(
             mode, model, model_source, context, raw_response,
             action_name, parsed_action, result,
             prompt_tokens, completion_tokens, total_tokens,
-            error, duration_ms
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+            error, duration_ms, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         RETURNING {_SUMMARY_COLUMNS}
         """,
         [
@@ -62,6 +63,7 @@ def create_diagnostic(
             action_name, parsed_action, result,
             prompt_tokens, completion_tokens, total_tokens,
             error, duration_ms,
+            datetime.now(timezone.utc),
         ],
     )
     if steps:

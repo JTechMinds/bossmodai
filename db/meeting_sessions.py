@@ -106,12 +106,20 @@ def create_meeting_session_message(
     return insert_returning(
         f"""
         INSERT INTO meeting_session_messages (
-            session_id, author_type, author_agent_id, author_name, content, source_channel
+            session_id, author_type, author_agent_id, author_name, content, source_channel, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING {_MESSAGE_COLUMNS}
         """,
-        [session_id, author_type, author_agent_id, author_name, content, source_channel],
+        [
+            session_id,
+            author_type,
+            author_agent_id,
+            author_name,
+            content,
+            source_channel,
+            datetime.now(timezone.utc),
+        ],
         MeetingSessionMessage,
     )
 
@@ -235,4 +243,3 @@ def get_formatted_meeting_session_messages(session_id: str, *, limit: int = 50) 
 def delete_meeting_session_messages(session_id: str) -> None:
     """Delete all messages for one meeting session."""
     execute("DELETE FROM meeting_session_messages WHERE session_id = $1", [session_id])
-

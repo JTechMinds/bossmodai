@@ -186,8 +186,8 @@ WITH unified AS (
     LEFT JOIN agents ag ON ag.id = n.agent_id
 )
 SELECT * FROM unified
-WHERE ($1::VARCHAR IS NULL OR title ILIKE '%' || $1 || '%')
-  AND ($2::VARCHAR IS NULL OR agent_name = $2)
+WHERE ($1 IS NULL OR LOWER(title) LIKE '%' || LOWER($1) || '%')
+  AND ($2 IS NULL OR agent_name = $2)
 ORDER BY is_active DESC, ts DESC
 LIMIT $3 OFFSET $4
 """

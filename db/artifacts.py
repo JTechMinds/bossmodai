@@ -36,10 +36,14 @@ def list_artifacts(
     *,
     agent_id: str | None = None,
     task_id: str | None = None,
+    absolute_paths: list[str] | None = None,
     absolute_path_prefix: str | None = None,
     limit: int = 200,
 ) -> list[Artifact]:
     """Return artifacts filtered by optional owner/task/path prefix."""
+    if absolute_paths is not None and not absolute_paths:
+        return []
+
     conditions: list[str] = []
     params: list[object] = []
     if agent_id is not None:
@@ -48,6 +52,10 @@ def list_artifacts(
     if task_id is not None:
         params.append(task_id)
         conditions.append(f"task_id = ${len(params)}")
+    if absolute_paths is not None:
+        placeholders = ", ".join(f"${len(params) + index + 1}" for index in range(len(absolute_paths)))
+        params.extend(absolute_paths)
+        conditions.append(f"absolute_path IN ({placeholders})")
     if absolute_path_prefix is not None:
         params.append(f"{absolute_path_prefix}%")
         conditions.append(f"absolute_path LIKE ${len(params)}")

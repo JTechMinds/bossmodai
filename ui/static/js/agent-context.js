@@ -17,6 +17,7 @@ const AgentContext = (() => {
     let activeMeetingSessionId = null;
     let folderOpenerModalEl = null;
     const chatCache = new Map();
+    const deskCache = new Map();
     let activeChatLoadId = 0;
 
     function mergeAgentSnapshot(agentDetails, runtimeSnapshot = null) {
@@ -117,6 +118,63 @@ const AgentContext = (() => {
 
     function setCachedChat(agentId, messages) {
         chatCache.set(String(agentId), Array.isArray(messages) ? [...messages] : []);
+    }
+
+    function getDeskCacheKey(agentId, path) {
+        return `${String(agentId)}:${String(path || '/')}`;
+    }
+
+    function getCachedDesk(agentId, path) {
+        return deskCache.get(getDeskCacheKey(agentId, path)) || null;
+    }
+
+    function setCachedDesk(agentId, path, payload) {
+        if (!payload) return;
+        deskCache.set(getDeskCacheKey(agentId, path), payload);
+    }
+
+    function clearDeskCacheForAgent(agentId) {
+        const prefix = `${String(agentId)}:`;
+        for (const key of Array.from(deskCache.keys())) {
+            if (key.startsWith(prefix)) {
+                deskCache.delete(key);
+            }
+        }
+    }
+
+    function deskInvalidationPaths(path) {
+        const normalized = String(path || '/');
+        const parts = normalized.split('/').filter(Boolean);
+        const paths = new Set(['/']);
+        let current = '';
+        for (const part of parts) {
+            current += `/${part}`;
+            paths.add(current);
+        }
+        if (normalized !== '/') {
+            paths.add(normalized);
+        }
+        return paths;
+    }
+
+    function invalidateDeskCachesForPath(agentId, path) {
+        const invalidated = deskInvalidationPaths(path);
+        const normalized = String(path || '/');
+        if (normalized === '/projects' || normalized.startsWith('/projects/')) {
+            for (const key of Array.from(deskCache.keys())) {
+                const separator = key.indexOf(':');
+                const cachedPath = separator >= 0 ? key.slice(separator + 1) : '/';
+                if (invalidated.has(cachedPath)) {
+                    deskCache.delete(key);
+                }
+            }
+            return invalidated;
+        }
+
+        for (const cachedPath of invalidated) {
+            deskCache.delete(getDeskCacheKey(agentId, cachedPath));
+        }
+        return invalidated;
     }
 
     function shouldShowSystemReceipts() {
@@ -242,6 +300,7 @@ const AgentContext = (() => {
         // Remove from tracked agents and clear chat cache
         interactedAgents.delete(agentId);
         chatCache.delete(String(agentId));
+        clearDeskCacheForAgent(agentId);
 
         if (wasSelected) {
             selectedAgent = null;
@@ -623,7 +682,22 @@ const AgentContext = (() => {
     }
 
     function handleChatMessage(data) {
+        const changedPath = data?.desk_path || null;
+        const invalidatedPaths = changedPath ? invalidateDeskCachesForPath(data.agent_id, changedPath) : null;
+        const viewingSharedProjectPath = Boolean(
+            selectedAgent &&
+            activeSubview === 'desk' &&
+            changedPath &&
+            (changedPath === '/projects' || changedPath.startsWith('/projects/')) &&
+            invalidatedPaths?.has(activeDeskPath)
+        );
+        if (viewingSharedProjectPath) {
+            void renderDesk(activeDeskPath, { forceRefresh: true });
+        }
         if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
+        if (activeSubview === 'desk' && invalidatedPaths?.has(activeDeskPath)) {
+            void renderDesk(activeDeskPath, { forceRefresh: true });
+        }
         const cached = getCachedChat(data.agent_id) || [];
         cached.push({
             content: data.content,
@@ -982,10 +1056,16 @@ const AgentContext = (() => {
 
     // ─── Desk sub-view ───
 
-    async function renderDesk(path = '/me') {
+    async function renderDesk(path = '/me', { forceRefresh = false } = {}) {
         const container = document.getElementById('subview-desk');
         if (!selectedAgent || !container) return;
         activeDeskPath = path || '/me';
+        const cached = !forceRefresh ? getCachedDesk(selectedAgent.id, activeDeskPath) : null;
+        if (cached) {
+            renderDeskPayload(container, cached);
+            return;
+        }
+
         container.innerHTML = `
             <div class="text-bm-muted text-sm text-center mt-6">
                 <p>Loading desk...</p>
@@ -997,15 +1077,20 @@ const AgentContext = (() => {
                 throw new Error(await res.text());
             }
             const payload = await res.json();
-            if (payload.kind === 'file') {
-                renderDeskFile(container, payload);
-                return;
-            }
-            renderDeskDirectory(container, payload);
+            setCachedDesk(selectedAgent.id, activeDeskPath, payload);
+            renderDeskPayload(container, payload);
         } catch (err) {
             renderDeskError(container, activeDeskPath);
             console.error('[AgentContext] Desk load failed:', err);
         }
+    }
+
+    function renderDeskPayload(container, payload) {
+        if (payload.kind === 'file') {
+            renderDeskFile(container, payload);
+            return;
+        }
+        renderDeskDirectory(container, payload);
     }
 
     function renderDeskError(container, failedPath) {
@@ -1038,9 +1123,13 @@ const AgentContext = (() => {
     }
 
     function renderDeskDirectory(container, payload) {
-        const sections = Array.isArray(payload.sections) ? payload.sections : null;
         const entries = Array.isArray(payload.entries) ? payload.entries : null;
         const breadcrumbs = renderDeskBreadcrumbs(payload.breadcrumbs || []);
+        const path = String(payload.path || '/me');
+        const canOpenFolder = Boolean(path && path !== '/');
+        const canGoUp = !['/', '/me', '/projects'].includes(path);
+        const deskRootTarget = path.startsWith('/projects') ? '/me' : '/projects';
+        const deskRootLabel = path.startsWith('/projects') ? 'My Desk' : 'Projects';
         let html = `
             <div class="space-y-4">
                 <div class="flex items-start justify-between gap-3">
@@ -1050,10 +1139,20 @@ const AgentContext = (() => {
                         <div class="text-xs text-bm-muted mt-1">${breadcrumbs}</div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button type="button" id="desk-open-folder-btn"
+                        <button type="button" id="desk-root-switch-btn" data-path="${BossModUtils.escapeHtml(deskRootTarget)}"
                                 class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
-                            Open Folder
+                            ${BossModUtils.escapeHtml(deskRootLabel)}
                         </button>
+                        ${canGoUp ? `
+                            <button type="button" id="desk-open-parent-btn"
+                                    class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                                Up
+                            </button>` : ''}
+                        ${canOpenFolder ? `
+                            <button type="button" id="desk-open-folder-btn"
+                                    class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                                Open Folder
+                            </button>` : ''}
                         <button type="button" id="desk-refresh-btn"
                                 class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
                             Refresh
@@ -1061,16 +1160,7 @@ const AgentContext = (() => {
                     </div>
                 </div>`;
 
-        if (sections) {
-            html += sections.map(section => `
-                <div class="space-y-2">
-                    <h4 class="text-xs font-semibold uppercase tracking-wide text-bm-muted">${BossModUtils.escapeHtml(section.title)}</h4>
-                    ${renderDeskEntryList(section.entries || [], { emptyLabel: `No ${String(section.title || '').toLowerCase()} yet.` })}
-                </div>
-            `).join('');
-        } else {
-            html += renderDeskEntryList(entries || [], { emptyLabel: 'This folder is empty.' });
-        }
+        html += renderDeskEntryList(entries || [], { emptyLabel: 'This folder is empty.' });
 
         html += '</div>';
         container.innerHTML = html;
@@ -1080,6 +1170,9 @@ const AgentContext = (() => {
     function renderDeskFile(container, payload) {
         const artifact = payload.artifact || null;
         const breadcrumbs = renderDeskBreadcrumbs(payload.breadcrumbs || []);
+        const path = String(payload.path || '/me');
+        const deskRootTarget = path.startsWith('/projects') ? '/me' : '/projects';
+        const deskRootLabel = path.startsWith('/projects') ? 'My Desk' : 'Projects';
         const metadataBits = [];
         if (artifact?.category) metadataBits.push(`category: ${artifact.category}`);
         if (artifact?.updated_at) metadataBits.push(`updated: ${new Date(artifact.updated_at).toLocaleString()}`);
@@ -1093,6 +1186,10 @@ const AgentContext = (() => {
                         ${metadataBits.length ? `<div class="text-[11px] text-bm-muted mt-2">${BossModUtils.escapeHtml(metadataBits.join(' • '))}</div>` : ''}
                     </div>
                     <div class="flex items-center gap-2">
+                        <button type="button" id="desk-root-switch-btn" data-path="${BossModUtils.escapeHtml(deskRootTarget)}"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            ${BossModUtils.escapeHtml(deskRootLabel)}
+                        </button>
                         <button type="button" id="desk-open-parent-btn"
                                 class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
                             Up
@@ -1147,11 +1244,16 @@ const AgentContext = (() => {
         if (!Array.isArray(breadcrumbs) || breadcrumbs.length === 0) {
             return '';
         }
-        return breadcrumbs.map(item => `
-            <button type="button" class="desk-crumb hover:underline" data-path="${BossModUtils.escapeHtml(item.path)}">
-                ${BossModUtils.escapeHtml(item.label)}
-            </button>
-        `).join(' / ');
+        const root = breadcrumbs[0];
+        let html = `<button type="button" class="desk-crumb hover:underline" data-path="${BossModUtils.escapeHtml(root.path)}">${BossModUtils.escapeHtml(root.label)}</button>`;
+        for (let index = 1; index < breadcrumbs.length; index += 1) {
+            const item = breadcrumbs[index];
+            if (index > 1) {
+                html += '<span class="text-bm-muted">/</span>';
+            }
+            html += `<button type="button" class="desk-crumb hover:underline" data-path="${BossModUtils.escapeHtml(item.path)}">${BossModUtils.escapeHtml(item.label)}</button>`;
+        }
+        return html;
     }
 
     function bindDeskInteractions(container, filePath = null) {
@@ -1164,7 +1266,14 @@ const AgentContext = (() => {
         });
         const refreshBtn = container.querySelector('#desk-refresh-btn');
         if (refreshBtn) {
-            refreshBtn.addEventListener('click', () => renderDesk(activeDeskPath));
+            refreshBtn.addEventListener('click', () => renderDesk(activeDeskPath, { forceRefresh: true }));
+        }
+        const rootSwitchBtn = container.querySelector('#desk-root-switch-btn');
+        if (rootSwitchBtn) {
+            rootSwitchBtn.addEventListener('click', () => {
+                const path = rootSwitchBtn.dataset.path;
+                openDeskPath(path || '/projects');
+            });
         }
         const openFolderBtn = container.querySelector('#desk-open-folder-btn');
         if (openFolderBtn) {
@@ -1182,7 +1291,9 @@ const AgentContext = (() => {
     }
 
     function parentDeskPath(path) {
-        if (!path || path === '/me' || path === '/projects') return '/me';
+        if (!path || path === '/') return '/me';
+        if (path === '/me') return '/me';
+        if (path === '/projects') return '/projects';
         const parts = String(path).split('/').filter(Boolean);
         parts.pop();
         return parts.length ? `/${parts.join('/')}` : '/me';
