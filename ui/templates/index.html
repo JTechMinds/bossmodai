@@ -40,6 +40,13 @@
                 <i data-lucide="arrow-left" class="w-4 h-4"></i>
                 Back to Office
             </button>
+            <button id="btn-runtime-kill-switch"
+                    class="flex items-center gap-2 px-3 py-1.5 border border-red-300 bg-red-50 text-red-700 rounded-lg
+                           hover:bg-red-100 transition-colors text-sm font-medium"
+                    aria-label="Emergency pause AI runtime">
+                <i data-lucide="octagon-x" class="w-4 h-4"></i>
+                <span id="runtime-kill-switch-label">Emergency Pause</span>
+            </button>
             <button id="btn-new-agent"
                     class="hidden sm:flex items-center gap-2 px-3 py-1.5 border border-bm-border text-bm-text rounded-lg
                            hover:bg-slate-50 transition-colors text-sm font-medium"
@@ -55,6 +62,11 @@
             </button>
         </div>
     </nav>
+
+    <div id="runtime-pause-banner"
+         class="hidden shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+        AI runtime is paused. Agents will not take new turns until you resume the system.
+    </div>
 
     <!-- ═══════════════ SETTINGS VIEW (hidden by default) ═══════════════ -->
     <div id="settings-layout" class="flex-1 flex overflow-hidden hidden">

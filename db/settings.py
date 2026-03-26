@@ -58,6 +58,7 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 
 RUNTIME_CONTRACT_DECISION_TEMPLATE = default_decision_contract_template()
 RUNTIME_CONTRACT_EXECUTION_TEMPLATE = default_action_contract_template()
+RUNTIME_CONTROL_STATE = "running"
 
 _OBSOLETE_SETTING_KEYS = {
     "action_contract_template",
@@ -129,6 +130,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
     ("runtime_contract_decision", RUNTIME_CONTRACT_DECISION_TEMPLATE, "advanced"),
     ("runtime_contract_execution", RUNTIME_CONTRACT_EXECUTION_TEMPLATE, "advanced"),
+    ("runtime_control_state", RUNTIME_CONTROL_STATE, "advanced"),
 ]
 
 

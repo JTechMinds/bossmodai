@@ -20,6 +20,7 @@ from api.routes import (
     MeetingMessageBody,
     RuntimeContractPreviewBody,
     RuntimeContractsBody,
+    RuntimeControlBody,
     TestConnectionBody as ConnectionTestBody,
     activate_agent,
     clear_agent_chat_history,
@@ -35,12 +36,14 @@ from api.routes import (
     get_agent_meeting_session,
     get_agent_messages,
     get_runtime_contracts,
+    get_runtime_state as get_runtime_state_route,
     open_agent_desk_folder,
     preview_runtime_contract as preview_runtime_contract_route,
     reseed_application,
     reset_agent_runtime,
     set_setting as set_setting_route,
     set_runtime_contracts as set_runtime_contracts_route,
+    set_runtime_state as set_runtime_state_route,
     test_connection as run_connection_test,
 )
 from api.websocket import manager
@@ -67,6 +70,7 @@ from core.agent_loop.watchdog import watchdog
 from core.llm import client, context_builder, routing
 from core.models import AIPersonalityCreate, AgentCreate, TaskCreate
 from core.models.message import HUMAN_SENDER_ID
+from core.runtime import runtime_services
 from core.world.simulation import simulation
 from core.world.tilemap import DEFAULT_DESKS
 
@@ -179,6 +183,7 @@ def test_init_db_removes_obsolete_action_contract_setting(isolated_db):
     assert advanced_settings["system_prompt_template"] == settings_store.SYSTEM_PROMPT_TEMPLATE
     assert advanced_settings["runtime_contract_decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
     assert advanced_settings["runtime_contract_execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert advanced_settings["runtime_control_state"] == settings_store.RUNTIME_CONTROL_STATE
 
 
 def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
@@ -191,6 +196,24 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
 
     advanced_settings = {item.key: item.value for item in db.get_settings("advanced")}
     assert "action_contract_template" not in advanced_settings
+
+
+def test_runtime_services_start_respects_persisted_pause_state(isolated_db, monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setattr("core.runtime.services.dispatcher.start", lambda: calls.append("dispatcher.start"))
+    monkeypatch.setattr("core.runtime.services.simulation.start", lambda: calls.append("simulation.start"))
+    monkeypatch.setattr("core.runtime.services.watchdog.start", lambda: calls.append("watchdog.start"))
+
+    db.set_setting("runtime_control_state", "paused", "advanced")
+    config.reload()
+    runtime_services.start()
+    assert calls == []
+
+    db.set_setting("runtime_control_state", "running", "advanced")
+    config.reload()
+    runtime_services.start()
+    assert calls == ["dispatcher.start", "simulation.start", "watchdog.start"]
 
 
 def test_parse_action_rejects_legacy_bm_cli_shape(isolated_db):
@@ -887,6 +910,65 @@ async def test_runtime_contracts_endpoint_returns_settings_backed_templates(isol
     assert any(item["name"] == "activity.preferred_destination" for item in payload["allowed_variables"])
     assert any(example.startswith("{{if trigger.type = 'human_chat'}}") for example in payload["template_syntax"])
     assert "human_chat" in payload["preview_triggers"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_route_pauses_and_resumes_services(isolated_db, monkeypatch):
+    stop_calls: list[str] = []
+    start_calls: list[str] = []
+    activity_events: list[str] = []
+    runtime_state_broadcasts: list[str] = []
+
+    async def _stop_watchdog():
+        stop_calls.append("watchdog.stop")
+
+    async def _stop_dispatcher():
+        stop_calls.append("dispatcher.stop")
+
+    async def _stop_simulation():
+        stop_calls.append("simulation.stop")
+
+    def _start_dispatcher():
+        start_calls.append("dispatcher.start")
+
+    def _start_simulation():
+        start_calls.append("simulation.start")
+
+    def _start_watchdog():
+        start_calls.append("watchdog.start")
+
+    async def _broadcast_activity(*, event: str, detail: str, agent_name=None, extra=None):
+        activity_events.append(event)
+
+    async def _broadcast_runtime_state(payload):
+        runtime_state_broadcasts.append(str(payload["state"]))
+
+    monkeypatch.setattr("core.runtime.services.watchdog.stop", _stop_watchdog)
+    monkeypatch.setattr("core.runtime.services.dispatcher.stop", _stop_dispatcher)
+    monkeypatch.setattr("core.runtime.services.simulation.stop", _stop_simulation)
+    monkeypatch.setattr("core.runtime.services.dispatcher.start", _start_dispatcher)
+    monkeypatch.setattr("core.runtime.services.simulation.start", _start_simulation)
+    monkeypatch.setattr("core.runtime.services.watchdog.start", _start_watchdog)
+    monkeypatch.setattr(manager, "broadcast_activity", _broadcast_activity)
+    monkeypatch.setattr(manager, "broadcast_runtime_state", _broadcast_runtime_state)
+
+    paused_payload = await set_runtime_state_route(RuntimeControlBody(paused=True))
+
+    assert paused_payload == {"state": "paused", "paused": True}
+    assert stop_calls == ["watchdog.stop", "dispatcher.stop", "simulation.stop"]
+    assert activity_events == ["runtime_paused"]
+    assert runtime_state_broadcasts == ["paused"]
+    assert config.require("runtime_control_state") == "paused"
+    assert await get_runtime_state_route() == {"state": "paused", "paused": True}
+
+    resumed_payload = await set_runtime_state_route(RuntimeControlBody(paused=False))
+
+    assert resumed_payload == {"state": "running", "paused": False}
+    assert start_calls == ["dispatcher.start", "simulation.start", "watchdog.start"]
+    assert activity_events == ["runtime_paused", "runtime_resumed"]
+    assert runtime_state_broadcasts == ["paused", "running"]
+    assert config.require("runtime_control_state") == "running"
+    assert await get_runtime_state_route() == {"state": "running", "paused": False}
 
 
 @pytest.mark.asyncio

@@ -71,6 +71,10 @@ class ConnectionManager:
         world = db.get_world_state()
         await self.broadcast({"type": "world_update", "data": world})
 
+    async def broadcast_runtime_state(self, payload: dict[str, Any]) -> None:
+        """Broadcast the current global runtime state to all clients."""
+        await self.broadcast({"type": "runtime_state", "data": payload})
+
     async def broadcast_chat_message(
         self,
         agent_id: str,

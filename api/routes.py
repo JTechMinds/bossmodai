@@ -81,6 +81,10 @@ class RuntimeContractPreviewBody(BaseModel):
     template: str | None = None
 
 
+class RuntimeControlBody(BaseModel):
+    paused: bool
+
+
 _RUNTIME_CONTRACT_KEYS = {
     "decision": "runtime_contract_decision",
     "execution": "runtime_contract_execution",
@@ -135,6 +139,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     # Send unified activity feed
     await ws.send_json(jsonable_encoder({"type": "unified_feed", "data": manager.unified_feed}))
+    await ws.send_json(jsonable_encoder({"type": "runtime_state", "data": runtime_services.status_payload()}))
 
     try:
         while True:
@@ -1165,6 +1170,32 @@ async def get_desktop_open_folder_options():
 @router.get("/runtime/contracts")
 async def get_runtime_contracts():
     return _runtime_contracts_payload()
+
+
+@router.get("/runtime/state")
+async def get_runtime_state():
+    return runtime_services.status_payload()
+
+
+@router.put("/runtime/state")
+async def set_runtime_state(body: RuntimeControlBody):
+    was_paused = runtime_services.is_paused()
+    if body.paused:
+        payload = await runtime_services.pause()
+        if not was_paused:
+            await manager.broadcast_activity(
+                event="runtime_paused",
+                detail="Emergency pause engaged. AI runtime services stopped.",
+            )
+    else:
+        payload = await runtime_services.resume()
+        if was_paused:
+            await manager.broadcast_activity(
+                event="runtime_resumed",
+                detail="AI runtime services resumed.",
+            )
+    await manager.broadcast_runtime_state(payload)
+    return payload
 
 
 @router.put("/runtime/contracts")

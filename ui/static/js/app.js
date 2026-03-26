@@ -12,6 +12,7 @@ const BossModApp = (() => {
     let ws = null;
     let wsReconnectTimer = null;
     const WS_RECONNECT_DELAY = 3000;
+    let runtimePaused = false;
 
     // ─── Preferences ───
 
@@ -254,6 +255,81 @@ const BossModApp = (() => {
                     OfficeCanvas.showThought(msg.data.agent_id, msg.data.thought);
                 }
                 break;
+
+            case 'runtime_state':
+                applyRuntimeState(msg.data);
+                break;
+        }
+    }
+
+    function applyRuntimeState(payload) {
+        runtimePaused = !!payload?.paused;
+
+        const button = document.getElementById('btn-runtime-kill-switch');
+        const label = document.getElementById('runtime-kill-switch-label');
+        const banner = document.getElementById('runtime-pause-banner');
+
+        if (button) {
+            button.disabled = false;
+            button.className = runtimePaused
+                ? 'flex items-center gap-2 px-3 py-1.5 border border-emerald-300 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium'
+                : 'flex items-center gap-2 px-3 py-1.5 border border-red-300 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium';
+            button.setAttribute('aria-label', runtimePaused ? 'Resume AI runtime' : 'Emergency pause AI runtime');
+        }
+        if (label) {
+            label.textContent = runtimePaused ? 'Resume AI' : 'Emergency Pause';
+        }
+        if (banner) {
+            banner.classList.toggle('hidden', !runtimePaused);
+        }
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+    }
+
+    async function fetchRuntimeState() {
+        try {
+            const res = await fetch('/api/runtime/state', { cache: 'no-store' });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            applyRuntimeState(await res.json());
+        } catch (err) {
+            console.error('[BossMod] Failed to load runtime state:', err);
+        }
+    }
+
+    async function toggleRuntimeState() {
+        const nextPaused = !runtimePaused;
+        const message = nextPaused
+            ? 'Pause all AI runtime services now? Active turns will be cancelled.'
+            : 'Resume all AI runtime services now?';
+        if (!window.confirm(message)) {
+            return;
+        }
+
+        const button = document.getElementById('btn-runtime-kill-switch');
+        if (button) {
+            button.disabled = true;
+        }
+
+        try {
+            const res = await fetch('/api/runtime/state', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paused: nextPaused }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(payload.detail || 'Failed to update runtime state');
+            }
+            applyRuntimeState(payload);
+        } catch (err) {
+            console.error('[BossMod] Failed to update runtime state:', err);
+            window.alert(err.message || 'Failed to update runtime state');
+            if (button) {
+                button.disabled = false;
+            }
         }
     }
 
@@ -283,6 +359,7 @@ const BossModApp = (() => {
         const settingsBtn = document.getElementById('btn-settings');
         const backBtn = document.getElementById('btn-back-to-office');
         const newAgentBtn = document.getElementById('btn-new-agent');
+        const killSwitchBtn = document.getElementById('btn-runtime-kill-switch');
 
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
@@ -311,6 +388,12 @@ const BossModApp = (() => {
                 if (typeof AgentContext !== 'undefined') {
                     AgentContext.startCreateAgent();
                 }
+            });
+        }
+
+        if (killSwitchBtn) {
+            killSwitchBtn.addEventListener('click', () => {
+                void toggleRuntimeState();
             });
         }
     }
@@ -345,6 +428,7 @@ const BossModApp = (() => {
         initMobileSheet();
         initResize();
         initWebSocket();
+        void fetchRuntimeState();
 
         console.log('[BossMod] App initialized');
     }

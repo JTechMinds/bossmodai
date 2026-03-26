@@ -155,10 +155,12 @@ const AgentPanel = (() => {
             return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}</option>`;
         }).join('');
 
-        // Personality dropdown
-        const personalityOptions = personalities.map(p =>
-            `<option value="${p.id}">${BossModUtils.escapeHtml(p.name)}</option>`
-        ).join('');
+        // Personality dropdown — match by prompt_template since agents store
+        // the template text, not the personality ID.
+        const personalityOptions = personalities.map(p => {
+            const selected = agent?.prompt_template && agent.prompt_template === p.prompt_template;
+            return `<option value="${p.id}" ${selected ? 'selected' : ''}>${BossModUtils.escapeHtml(p.name)}</option>`;
+        }).join('');
 
         // Connection dropdown builder (for each model type)
         function connectionSelect(modelKey, currentValue) {

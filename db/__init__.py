@@ -169,6 +169,7 @@ from db.ai_connections import (
 from db.ai_personalities import (
     create_personality,
     delete_personality,
+    force_reseed_personalities,
     get_personality,
     list_personalities,
     update_personality,
@@ -332,6 +333,7 @@ __all__ = [
     # AI Personalities
     "create_personality",
     "delete_personality",
+    "force_reseed_personalities",
     "get_personality",
     "list_personalities",
     "update_personality",
