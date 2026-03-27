@@ -123,6 +123,13 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── CLI safety ──
     ("cli_max_write_bytes", "262144", "advanced"),
 
+    # ── CLI policy ──
+    ("cli_shell_enabled", "false", "cli_policy"),
+    ("cli_shell_timeout_seconds", "30", "cli_policy"),
+    ("cli_shell_max_output_bytes", "65536", "cli_policy"),
+    ("cli_approval_timeout_minutes", "60", "cli_policy"),
+    ("cli_default_policy", "deny", "cli_policy"),
+
     # ── Agent defaults ──
     ("default_spawn_x", "14", "simulation"),
     ("default_spawn_y", "9", "simulation"),

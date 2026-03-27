@@ -25,6 +25,7 @@ def create_bm_cli_event(
     stderr_preview: str | None,
     changed_paths: str | None,
     trigger_type: str | None = None,
+    approval_request_id: str | None = None,
 ) -> dict[str, Any]:
     """Insert a single BossMod CLI audit event row."""
     return insert_returning_dict(
@@ -33,13 +34,13 @@ def create_bm_cli_event(
             agent_id, command, content_present, executor,
             cwd_before, cwd_after, policy_tier, decision,
             exit_code, result_kind, stdout_preview, stderr_preview,
-            changed_paths, trigger_type, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            changed_paths, trigger_type, approval_request_id, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING
             id, agent_id, command, content_present, executor,
             cwd_before, cwd_after, policy_tier, decision,
             exit_code, result_kind, stdout_preview, stderr_preview,
-            changed_paths, trigger_type, created_at
+            changed_paths, trigger_type, approval_request_id, created_at
         """,
         [
             agent_id,
@@ -56,6 +57,7 @@ def create_bm_cli_event(
             stderr_preview,
             changed_paths,
             trigger_type,
+            approval_request_id,
             datetime.now(timezone.utc),
         ],
     )

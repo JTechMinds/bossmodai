@@ -21,6 +21,7 @@ def record_bm_cli_event(
     decision: str,
     result: BossModCliResult,
     trigger_type: str | None,
+    approval_request_id: str | None = None,
 ) -> None:
     """Persist a normalized audit event for one BossMod CLI request."""
     stdout_preview, stderr_preview = _build_output_previews(result)
@@ -39,6 +40,7 @@ def record_bm_cli_event(
         stderr_preview=stderr_preview,
         changed_paths=_serialize_changed_paths(result),
         trigger_type=trigger_type,
+        approval_request_id=approval_request_id,
     )
 
 

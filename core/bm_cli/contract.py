@@ -55,16 +55,30 @@ def maybe_parse_bm_cli_call(payload: Any) -> BossModCliCall | None:
 
 def render_bm_cli_guidance() -> str:
     """Render the compact BossMod CLI contract for prompts."""
-    return "\n".join(
-        [
-            "CLI CALL:",
-            '  {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}',
-            "CLI NOTES:",
-            '  - bounded shell rooted at "/" with "/me" and "/projects"',
-            '  - cwd starts at "/me"',
-            '  - "/me" is git-tracked; "/me/scratchpad" is untracked',
-            "  - results are turn-local",
-            '  - for large files, call write <path> with no body to use the managed chunked writer',
-            "  - common cmds: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git status log diff show restore",
-        ]
-    )
+    from core import config
+
+    lines = [
+        "CLI CALL:",
+        '  {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}',
+        "CLI NOTES:",
+        '  - bounded shell rooted at "/" with "/me" and "/projects"',
+        '  - cwd starts at "/me"',
+        '  - "/me" is git-tracked; "/me/scratchpad" is untracked',
+        "  - results are turn-local",
+        '  - for large files, call write <path> with no body to use the managed chunked writer',
+        "  - built-in cmds: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git status log diff show restore",
+    ]
+
+    try:
+        shell_enabled = config.get("cli_shell_enabled") == "true"
+    except Exception:
+        shell_enabled = False
+
+    if shell_enabled:
+        lines.extend([
+            "  - native shell commands are available (npm, pip, python, curl, etc.)",
+            "  - some commands may require operator approval — your turn will pause until reviewed",
+            "  - blocked commands cannot be used; try alternative approaches",
+        ])
+
+    return "\n".join(lines)

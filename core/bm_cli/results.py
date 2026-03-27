@@ -1,4 +1,4 @@
-"""BossMod AI — Result rendering helpers for the virtual BossMod CLI."""
+"""BossMod AI — Result rendering helpers for the BossMod CLI."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def error_result(command: str, message: str, *, cwd: str | None = None, executor
         detail=f"BossMod CLI error: {message}",
         prompt_content=render_sections(
             command,
-            [("ERROR", [message, "Pick a supported command or continue without BossMod CLI."])],
+            [("ERROR", [message])],
         ),
         kind="error",
         data={"error": message},
@@ -50,7 +50,15 @@ def error_result(command: str, message: str, *, cwd: str | None = None, executor
     )
 
 
-def approval_required_result(command: str, message: str, *, cwd: str | None = None, executor: str = "virtual") -> BossModCliResult:
+def approval_required_result(
+    command: str,
+    message: str,
+    *,
+    cwd: str | None = None,
+    executor: str = "virtual",
+    matched_rule_id: str | None = None,
+    approval_request_id: str | None = None,
+) -> BossModCliResult:
     """Build an approval-required result for gated commands."""
     return BossModCliResult(
         command=command,
@@ -58,7 +66,7 @@ def approval_required_result(command: str, message: str, *, cwd: str | None = No
         detail=f"BossMod CLI approval required: {message}",
         prompt_content=render_sections(
             command,
-            [("APPROVAL REQUIRED", [message, "Choose a safer BossMod CLI command or continue without this operation."])],
+            [("APPROVAL REQUIRED", [message, "Your turn will pause until the operator reviews this command."])],
         ),
         kind="approval_required",
         data={"approval_required": True, "message": message},
@@ -66,6 +74,50 @@ def approval_required_result(command: str, message: str, *, cwd: str | None = No
         approval_required=True,
         executor=executor,
         exit_code=126,
+        matched_rule_id=matched_rule_id,
+        approval_request_id=approval_request_id,
+    )
+
+
+def shell_result(
+    *,
+    command: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool,
+    duration_ms: int,
+    cwd: str | None = None,
+    matched_rule_id: str | None = None,
+) -> BossModCliResult:
+    """Build a result from a native shell command execution."""
+    ok = exit_code == 0 and not timed_out
+    sections: list[tuple[str, list[str]]] = []
+
+    if timed_out:
+        sections.append(("TIMEOUT", [f"Command timed out after {duration_ms}ms"]))
+    if stdout.strip():
+        sections.append(("STDOUT", [stdout.strip()]))
+    if stderr.strip():
+        sections.append(("STDERR", [stderr.strip()]))
+    if not sections:
+        sections.append(("OUTPUT", [f"(exit code {exit_code}, no output)"]))
+
+    return BossModCliResult(
+        command=command,
+        ok=ok,
+        detail=f"Shell command {'timed out' if timed_out else 'completed'} (exit {exit_code}, {duration_ms}ms)",
+        prompt_content=render_sections(command, sections),
+        kind="shell",
+        data={
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "duration_ms": duration_ms,
+        },
+        cwd=cwd,
+        executor="shell",
+        exit_code=exit_code,
+        matched_rule_id=matched_rule_id,
     )
 
 

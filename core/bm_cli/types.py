@@ -22,6 +22,8 @@ class BossModCliResult:
     approval_required: bool = False
     executor: str = "virtual"
     exit_code: int = 0
+    matched_rule_id: str | None = None
+    approval_request_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

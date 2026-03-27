@@ -85,6 +85,41 @@ class RuntimeControlBody(BaseModel):
     paused: bool
 
 
+class CliPolicyRuleBody(BaseModel):
+    tier: str
+    pattern: str
+    match_mode: str = "prefix"
+    agent_id: str | None = None
+    description: str | None = None
+    enabled: bool = True
+    priority: int = 0
+
+
+class CliPolicyRuleUpdateBody(BaseModel):
+    tier: str | None = None
+    pattern: str | None = None
+    match_mode: str | None = None
+    agent_id: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+
+
+class CliPolicySimulateBody(BaseModel):
+    command: str
+    agent_id: str | None = None
+
+
+class CliSimulatorExecuteBody(BaseModel):
+    command: str
+    agent_id: str
+    content: str | None = None
+
+
+class CliApprovalDecisionBody(BaseModel):
+    decision_note: str | None = None
+
+
 _RUNTIME_CONTRACT_KEYS = {
     "decision": "runtime_contract_decision",
     "execution": "runtime_contract_execution",
@@ -1196,6 +1231,202 @@ async def get_diagnostic_detail(diagnostic_id: str):
     if not entry:
         raise HTTPException(404, "Diagnostic entry not found")
     return entry
+
+
+# ─── CLI Policy ───
+
+# Rules CRUD
+@router.get("/cli-policy/rules")
+async def list_cli_policy_rules(tier: str | None = None, agent_id: str | None = None):
+    return db.list_cli_policy_rules(tier=tier, agent_id=agent_id)
+
+
+@router.post("/cli-policy/rules", status_code=201)
+async def create_cli_policy_rule(body: CliPolicyRuleBody):
+    # Validate tier
+    if body.tier not in ("never_allowed", "always_allowed", "approval_required"):
+        raise HTTPException(400, f"Invalid tier: {body.tier}")
+    if body.match_mode not in ("exact", "prefix", "glob"):
+        raise HTTPException(400, f"Invalid match_mode: {body.match_mode}")
+    if not body.pattern.strip():
+        raise HTTPException(400, "Pattern cannot be empty")
+    rule = db.create_cli_policy_rule(
+        tier=body.tier,
+        pattern=body.pattern.strip(),
+        match_mode=body.match_mode,
+        agent_id=body.agent_id,
+        description=body.description,
+        enabled=body.enabled,
+        priority=body.priority,
+    )
+    # Invalidate policy engine cache
+    from core.bm_cli.policy_engine import policy_engine
+    policy_engine.reload()
+    return rule
+
+
+@router.put("/cli-policy/rules/{rule_id}")
+async def update_cli_policy_rule(rule_id: str, body: CliPolicyRuleUpdateBody):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "tier" in fields and fields["tier"] not in ("never_allowed", "always_allowed", "approval_required"):
+        raise HTTPException(400, f"Invalid tier: {fields['tier']}")
+    if "match_mode" in fields and fields["match_mode"] not in ("exact", "prefix", "glob"):
+        raise HTTPException(400, f"Invalid match_mode: {fields['match_mode']}")
+    updated = db.update_cli_policy_rule(rule_id, **fields)
+    if updated is None:
+        raise HTTPException(404, "Rule not found")
+    from core.bm_cli.policy_engine import policy_engine
+    policy_engine.reload()
+    return updated
+
+
+@router.delete("/cli-policy/rules/{rule_id}")
+async def delete_cli_policy_rule(rule_id: str):
+    deleted = db.delete_cli_policy_rule(rule_id)
+    if not deleted:
+        raise HTTPException(404, "Rule not found")
+    from core.bm_cli.policy_engine import policy_engine
+    policy_engine.reload()
+    return {"ok": True}
+
+
+@router.post("/cli-policy/rules/seed-defaults")
+async def seed_cli_policy_rules():
+    # Delete all existing rules first, then re-seed
+    # Use execute to clear the table
+    db.execute("DELETE FROM cli_policy_rules")
+    db.seed_default_cli_policy_rules()
+    from core.bm_cli.policy_engine import policy_engine
+    policy_engine.reload()
+    return {"ok": True, "message": "Default rules re-seeded"}
+
+
+# Approvals
+@router.get("/cli-policy/approvals")
+async def list_cli_approval_requests(status: str | None = None, agent_id: str | None = None, limit: int = 50):
+    return db.list_cli_approval_requests(status=status, agent_id=agent_id, limit=min(limit, 200))
+
+
+@router.post("/cli-policy/approvals/{request_id}/approve")
+async def approve_cli_request(request_id: str):
+    approval = db.approve_cli_approval_request(request_id)
+    if approval is None:
+        raise HTTPException(404, "Approval request not found or already resolved")
+    # Create a trigger so the agent resumes with the approved command
+    db.create_agent_trigger(
+        agent_id=approval.agent_id,
+        trigger_type="cli_approval_resolved",
+        source_channel="system",
+        payload={
+            "approval_request_id": approval.id,
+            "command": approval.command,
+            "content": approval.content,
+            "cwd": approval.cwd,
+            "status": "approved",
+        },
+    )
+    await manager.broadcast_activity(
+        event="cli_approval_approved",
+        detail=f"Command approved: {approval.command}",
+    )
+    return approval
+
+
+@router.post("/cli-policy/approvals/{request_id}/reject")
+async def reject_cli_request(request_id: str, body: CliApprovalDecisionBody | None = None):
+    note = body.decision_note if body else None
+    rejection = db.reject_cli_approval_request(request_id, decision_note=note)
+    if rejection is None:
+        raise HTTPException(404, "Approval request not found or already resolved")
+    # Create a trigger so the agent knows the command was rejected
+    db.create_agent_trigger(
+        agent_id=rejection.agent_id,
+        trigger_type="cli_approval_resolved",
+        source_channel="system",
+        payload={
+            "approval_request_id": rejection.id,
+            "command": rejection.command,
+            "status": "rejected",
+            "decision_note": note,
+        },
+    )
+    await manager.broadcast_activity(
+        event="cli_approval_rejected",
+        detail=f"Command rejected: {rejection.command}" + (f" — {note}" if note else ""),
+    )
+    return rejection
+
+
+# Simulator — policy dry-run (lightweight check without execution)
+@router.post("/cli-policy/simulate")
+async def simulate_cli_policy(body: CliPolicySimulateBody):
+    from core.bm_cli.policy_engine import policy_engine
+    from core.bm_cli.runtime import VIRTUAL_COMMANDS
+    if not body.command.strip():
+        raise HTTPException(400, "Command cannot be empty")
+    decision = policy_engine.evaluate_dry_run(body.command.strip(), VIRTUAL_COMMANDS, body.agent_id)
+    matched_rule = None
+    if decision.matched_rule_id:
+        matched_rule = db.get_cli_policy_rule(decision.matched_rule_id)
+    return {
+        "command": body.command.strip(),
+        "agent_id": body.agent_id,
+        "decision": {
+            "allowed": decision.allowed,
+            "tier": decision.tier,
+            "executor": decision.executor,
+            "approval_required": decision.approval_required,
+            "message": decision.message,
+            "matched_rule_id": decision.matched_rule_id,
+        },
+        "matched_rule": matched_rule,
+    }
+
+
+# Simulator — full interactive execution (runs the real BM_CLI pipeline)
+@router.post("/cli-policy/simulator/execute")
+async def simulator_execute(body: CliSimulatorExecuteBody):
+    """Execute a command through the full BM_CLI pipeline as a specific agent.
+
+    This is the interactive simulator — it actually runs the command (virtual or
+    shell) and returns real output, exactly as the agent would experience it.
+    Approval-required commands return the approval gate instead of executing.
+    """
+    from core.bm_cli.runtime import execute_bm_cli
+    from fastapi.encoders import jsonable_encoder
+
+    if not body.command.strip():
+        raise HTTPException(400, "Command cannot be empty")
+
+    agent = db.get_agent(body.agent_id)
+    if agent is None:
+        raise HTTPException(404, f"Agent not found: {body.agent_id}")
+
+    state = db.get_agent_state(body.agent_id)
+    if state is None:
+        raise HTTPException(404, f"Agent state not found: {body.agent_id}")
+
+    cli_result = execute_bm_cli(
+        agent,
+        state,
+        body.command.strip(),
+        body.content,
+        trigger_type="simulator",
+    )
+
+    return {
+        "command": cli_result.command,
+        "ok": cli_result.ok,
+        "exit_code": cli_result.exit_code,
+        "executor": cli_result.executor,
+        "kind": cli_result.kind,
+        "output": cli_result.prompt_content,
+        "detail": cli_result.detail,
+        "cwd": cli_result.cwd,
+        "approval_required": cli_result.approval_required,
+        "approval_request_id": cli_result.approval_request_id,
+        "matched_rule_id": cli_result.matched_rule_id,
+    }
 
 
 # ─── Settings ───

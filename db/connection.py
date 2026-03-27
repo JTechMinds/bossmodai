@@ -188,6 +188,25 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
     logger.info("Schema applied from %s", _SCHEMA_PATH)
 
 
+def _apply_migrations(con: SQLiteCompatConnection) -> None:
+    """Apply additive column migrations for existing databases."""
+    _add_column_if_missing(
+        con, "bm_cli_events", "approval_request_id",
+        "VARCHAR REFERENCES cli_approval_requests(id)",
+    )
+
+
+def _add_column_if_missing(
+    con: SQLiteCompatConnection, table: str, column: str, definition: str,
+) -> None:
+    """Add a column to an existing table if it doesn't already exist."""
+    result = con.execute(f"PRAGMA table_info({table})")
+    columns = {row[1] for row in result.fetchall()}
+    if column not in columns:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        logger.info("Migration: added column %s.%s", table, column)
+
+
 def close_thread_connection() -> None:
     """Close the current thread's SQLite connection."""
     con = getattr(_thread_local, "connection", None)
@@ -224,6 +243,7 @@ def init_db() -> None:
     """Initialise the database and seed default settings."""
     con = get_connection()
     _apply_schema(con)
+    _apply_migrations(con)
 
     from db.settings import prune_obsolete_settings, seed_defaults
     seed_defaults()
@@ -231,6 +251,9 @@ def init_db() -> None:
 
     from db.ai_personalities import seed_default_personalities
     seed_default_personalities()
+
+    from db.cli_policy_rules import seed_default_rules
+    seed_default_rules()
 
     from db.agent_storage_identities import ensure_all_agent_storage_identities
     ensure_all_agent_storage_identities()

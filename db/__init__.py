@@ -45,6 +45,24 @@ from db.artifacts import (
     upsert_artifact,
 )
 from db.bm_cli_events import create_bm_cli_event, has_bm_cli_write_for_path, list_bm_cli_events
+from db.cli_policy_rules import (
+    create_rule as create_cli_policy_rule,
+    delete_rule as delete_cli_policy_rule,
+    get_rule as get_cli_policy_rule,
+    get_rules_by_tier as get_cli_policy_rules_by_tier,
+    list_rules as list_cli_policy_rules,
+    seed_default_rules as seed_default_cli_policy_rules,
+    update_rule as update_cli_policy_rule,
+)
+from db.cli_approval_requests import (
+    approve_request as approve_cli_approval_request,
+    count_pending_requests as count_pending_cli_approval_requests,
+    create_approval_request as create_cli_approval_request,
+    expire_stale_requests as expire_stale_cli_approval_requests,
+    get_approval_request as get_cli_approval_request,
+    list_approval_requests as list_cli_approval_requests,
+    reject_request as reject_cli_approval_request,
+)
 from db.notifications import create_notification, delete_agent_notifications, list_notifications
 from db.notification_links import create_notification_link, list_notification_links
 from db.channels import (
@@ -389,4 +407,20 @@ __all__ = [
     # World
     "get_nearby_agents",
     "get_world_state",
+    # CLI Policy Rules
+    "create_cli_policy_rule",
+    "delete_cli_policy_rule",
+    "get_cli_policy_rule",
+    "get_cli_policy_rules_by_tier",
+    "list_cli_policy_rules",
+    "seed_default_cli_policy_rules",
+    "update_cli_policy_rule",
+    # CLI Approval Requests
+    "approve_cli_approval_request",
+    "count_pending_cli_approval_requests",
+    "create_cli_approval_request",
+    "expire_stale_cli_approval_requests",
+    "get_cli_approval_request",
+    "list_cli_approval_requests",
+    "reject_cli_approval_request",
 ]

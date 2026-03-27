@@ -14,6 +14,7 @@ const SettingsView = (() => {
         { id: 'connections',   label: 'AI Connections',  icon: 'plug' },
         { id: 'personalities', label: 'AI Personalities', icon: 'brain' },
         { id: 'system',       label: 'System Settings',  icon: 'sliders' },
+        { id: 'cli-policy',   label: 'CLI Policy',       icon: 'terminal' },
     ];
 
     const ADVANCED_ITEMS = [
@@ -99,6 +100,9 @@ const SettingsView = (() => {
                 break;
             case 'system':
                 SystemSection.render(content);
+                break;
+            case 'cli-policy':
+                CliPolicySection.render(content);
                 break;
             case 'advanced-system':
                 AdvancedSystemSection.render(content);

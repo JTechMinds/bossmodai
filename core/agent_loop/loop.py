@@ -159,6 +159,41 @@ async def run_turn(
             start=start,
         )
 
+    # 3b. Handle cli_approval_resolved trigger — pre-execute approved command
+    if trigger_type == "cli_approval_resolved":
+        approval_payload = trigger.get("payload") or {}
+        if isinstance(approval_payload, str):
+            try:
+                approval_payload = json.loads(approval_payload)
+            except (json.JSONDecodeError, TypeError):
+                approval_payload = {}
+        approval_status = approval_payload.get("status", "rejected")
+        if approval_status == "approved":
+            from core.bm_cli.runtime import execute_approved_command
+            cli_result = execute_approved_command(
+                agent,
+                state,
+                approval_payload.get("command", ""),
+                approval_payload.get("content"),
+                approval_request_id=approval_payload.get("approval_request_id", ""),
+                trigger_type=trigger_type,
+            )
+            approval_context_msg = cli_result.prompt_content
+        else:
+            note = approval_payload.get("decision_note") or "No reason given."
+            cmd = approval_payload.get("command", "unknown")
+            approval_context_msg = (
+                f"BOSSMOD CLI RESULT\ncommand: {cmd}\n\n"
+                f"REJECTED:\nYour previous command was rejected by the operator.\n"
+                f"Reason: {note}\n"
+                f"Choose an alternative approach or continue without this operation."
+            )
+        context.append({"role": "system", "content": approval_context_msg})
+        context.append({
+            "role": "user",
+            "content": "A previously requested command has been reviewed. Use the result above to choose your next step.",
+        })
+
     # 4. Multi-turn loop
     action_count = 0
     action: dict[str, Any] | None = None
@@ -574,6 +609,10 @@ async def run_turn(
 
         # Walk action — loop ends (movement is async via simulation)
         if action_name == "walkTo" and result.get("path"):
+            break
+
+        # Approval-required — turn ends, human decides
+        if action_name == "bm_cli" and result.get("approval_required"):
             break
 
         if should_end_turn_after_action(

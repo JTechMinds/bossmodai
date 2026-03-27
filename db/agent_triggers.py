@@ -18,16 +18,17 @@ _TRIGGER_COLUMNS = (
 _TRIGGER_PRIORITY_CASE = """
 CASE trigger_type
     WHEN 'human_chat' THEN 0
-    WHEN 'peer_message' THEN 1
-    WHEN 'session_response' THEN 2
-    WHEN 'channel_response' THEN 3
-    WHEN 'session_message' THEN 4
-    WHEN 'channel_message' THEN 5
-    WHEN 'watchdog_status_ping' THEN 6
-    WHEN 'task_assigned' THEN 7
-    WHEN 'activity_resumed' THEN 8
-    WHEN 'social' THEN 9
-    ELSE 9
+    WHEN 'cli_approval_resolved' THEN 1
+    WHEN 'peer_message' THEN 2
+    WHEN 'session_response' THEN 3
+    WHEN 'channel_response' THEN 4
+    WHEN 'session_message' THEN 5
+    WHEN 'channel_message' THEN 6
+    WHEN 'watchdog_status_ping' THEN 7
+    WHEN 'task_assigned' THEN 8
+    WHEN 'activity_resumed' THEN 9
+    WHEN 'social' THEN 10
+    ELSE 10
 END
 """
 

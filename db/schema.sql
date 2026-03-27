@@ -276,27 +276,68 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
+-- CLI policy rules — configurable command whitelist/blacklist/elevated
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS cli_policy_rules (
+    id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    tier        VARCHAR NOT NULL
+                    CHECK (tier IN ('never_allowed', 'always_allowed', 'approval_required')),
+    pattern     VARCHAR NOT NULL,
+    match_mode  VARCHAR NOT NULL DEFAULT 'prefix'
+                    CHECK (match_mode IN ('exact', 'prefix', 'glob')),
+    agent_id    VARCHAR REFERENCES agents(id),
+    description VARCHAR,
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    priority    INTEGER NOT NULL DEFAULT 0,
+    created_at  TIMESTAMP DEFAULT current_timestamp,
+    updated_at  TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- CLI approval requests — human-in-the-loop command gating
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS cli_approval_requests (
+    id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
+    trigger_id      VARCHAR,
+    command         TEXT NOT NULL,
+    content         TEXT,
+    cwd             VARCHAR,
+    matched_rule_id VARCHAR REFERENCES cli_policy_rules(id),
+    status          VARCHAR NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+    decision_by     VARCHAR,
+    decision_note   TEXT,
+    decided_at      TIMESTAMP,
+    expires_at      TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
 -- BossMod CLI events — per-command audit log
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS bm_cli_events (
-    id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
-    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
-    command         TEXT NOT NULL,
-    content_present BOOLEAN DEFAULT FALSE,
-    executor        VARCHAR NOT NULL,
-    cwd_before      VARCHAR,
-    cwd_after       VARCHAR,
-    policy_tier     VARCHAR NOT NULL,
-    decision        VARCHAR NOT NULL
-                        CHECK (decision IN ('allowed', 'approval_required', 'denied')),
-    exit_code       INTEGER DEFAULT 0,
-    result_kind     VARCHAR,
-    stdout_preview  TEXT,
-    stderr_preview  TEXT,
-    changed_paths   TEXT,
-    trigger_type    VARCHAR,
-    created_at      TIMESTAMP DEFAULT current_timestamp
+    id                  VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id            VARCHAR NOT NULL REFERENCES agents(id),
+    command             TEXT NOT NULL,
+    content_present     BOOLEAN DEFAULT FALSE,
+    executor            VARCHAR NOT NULL,
+    cwd_before          VARCHAR,
+    cwd_after           VARCHAR,
+    policy_tier         VARCHAR NOT NULL,
+    decision            VARCHAR NOT NULL
+                            CHECK (decision IN ('allowed', 'approval_required', 'denied')),
+    exit_code           INTEGER DEFAULT 0,
+    result_kind         VARCHAR,
+    stdout_preview      TEXT,
+    stderr_preview      TEXT,
+    changed_paths       TEXT,
+    trigger_type        VARCHAR,
+    approval_request_id VARCHAR REFERENCES cli_approval_requests(id),
+    created_at          TIMESTAMP DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -511,3 +552,12 @@ CREATE INDEX IF NOT EXISTS idx_runtime_commands_status_created
 
 CREATE INDEX IF NOT EXISTS idx_diagnostics_agent_created
     ON diagnostics (agent_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_cli_policy_rules_tier_enabled
+    ON cli_policy_rules (tier, enabled);
+
+CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_status
+    ON cli_approval_requests (status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_agent
+    ON cli_approval_requests (agent_id, status);
