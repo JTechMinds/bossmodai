@@ -644,12 +644,16 @@ const SystemSection = (() => {
         { key: 'simulation', label: 'Simulation' },
         { key: 'social',     label: 'Social Triggers' },
         { key: 'context',    label: 'Context Window' },
+        { key: 'llm',        label: 'AI Output' },
+        { key: 'desk',       label: 'Desk Settings' },
     ];
 
     const CATEGORY_DESCRIPTIONS = {
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
         context: 'Controls how much recent conversation and work history is included in each agent turn.',
+        llm: 'Controls global completion behavior for model-generated output.',
+        desk: 'Controls Desk preview behavior and filesystem browsing limits.',
     };
 
     const SETTING_META = {
@@ -718,6 +722,16 @@ const SystemSection = (() => {
             label: 'Recent Completed Tasks',
             description: 'How many recently completed task summaries are included as reference material in the prompt.',
         },
+        default_max_tokens: {
+            order: 10,
+            label: 'Default Max Completion Tokens',
+            description: 'Global fallback output-token budget for one model completion when no provider-specific override is supplied.',
+        },
+        desk_preview_max_chars: {
+            order: 10,
+            label: 'Desk Preview Character Limit',
+            description: 'Maximum number of characters loaded into the Desk file preview before the UI marks the preview as truncated.',
+        },
     };
 
     async function render(el) {
@@ -735,6 +749,7 @@ const SystemSection = (() => {
         const shownCats = new Set(CATEGORIES.map(c => c.key));
         for (const s of settings) {
             if (!shownCats.has(s.category)) continue;
+            if (!SETTING_META[s.key]) continue;
             if (s.key === 'steps_per_tick') continue;
             if (!groups[s.category]) groups[s.category] = [];
             groups[s.category].push(s);
@@ -760,7 +775,7 @@ const SystemSection = (() => {
         let html = `
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">System Settings</h2>
-                <p class="text-sm text-bm-muted mt-0.5">Configure simulation behavior and social triggers.</p>
+                <p class="text-sm text-bm-muted mt-0.5">Configure runtime behavior, model output limits, and Desk browsing.</p>
             </div>
             <div class="max-w-7xl">
                 <div class="mb-5 flex flex-wrap gap-2">`;
@@ -961,6 +976,11 @@ const PromptTemplateSection = (() => {
                                        hover:bg-bm-accent-hover transition-colors text-sm font-medium">
                             Save Template
                         </button>
+                        <button id="btn-reset-template"
+                                class="px-4 py-2 border border-bm-border rounded-lg
+                                       hover:bg-slate-50 transition-colors text-sm font-medium">
+                            Reset to Default
+                        </button>
                         <span id="template-save-status" class="text-sm text-bm-muted"></span>
                     </div>
                 </div>
@@ -998,6 +1018,29 @@ const PromptTemplateSection = (() => {
                 setTimeout(() => { status.textContent = ''; }, 2000);
             } catch (err) {
                 status.textContent = err.message || 'Save failed';
+                status.className = 'text-sm text-red-600';
+            }
+        });
+
+        document.getElementById('btn-reset-template').addEventListener('click', async () => {
+            if (!confirm('Reset the system prompt template to the seeded default?')) return;
+            const textarea = document.getElementById('system-prompt-textarea');
+            const status = document.getElementById('template-save-status');
+            try {
+                const res = await fetch('/api/settings/system_prompt_template/reset', {
+                    method: 'POST',
+                });
+                if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    throw new Error(payload.detail || 'Reset failed');
+                }
+                const setting = await res.json();
+                textarea.value = setting.value || '';
+                status.textContent = 'Reset to default';
+                status.className = 'text-sm text-emerald-600';
+                setTimeout(() => { status.textContent = ''; }, 2000);
+            } catch (err) {
+                status.textContent = err.message || 'Reset failed';
                 status.className = 'text-sm text-red-600';
             }
         });
@@ -1359,6 +1402,11 @@ const RuntimeContractsSection = (() => {
                                        hover:bg-bm-accent-hover transition-colors text-sm font-medium">
                             Save Contracts
                         </button>
+                        <button id="btn-reset-runtime-contracts"
+                                class="px-4 py-2 border border-bm-border rounded-lg
+                                       hover:bg-slate-50 transition-colors text-sm font-medium">
+                            Reset to Defaults
+                        </button>
                         <button id="btn-refresh-runtime-contracts"
                                 class="px-4 py-2 border border-bm-border rounded-lg
                                        hover:bg-slate-50 transition-colors text-sm font-medium">
@@ -1424,6 +1472,28 @@ const RuntimeContractsSection = (() => {
                 setTimeout(() => { status.textContent = ''; }, 2000);
             } catch (err) {
                 status.textContent = err.message || 'Save failed';
+                status.className = 'text-sm text-red-600';
+            }
+        });
+
+        document.getElementById('btn-reset-runtime-contracts').addEventListener('click', async () => {
+            if (!confirm('Reset both runtime contracts to their seeded defaults?')) return;
+            const status = document.getElementById('runtime-contract-save-status');
+            try {
+                const res = await fetch('/api/runtime/contracts/reset', {
+                    method: 'POST',
+                });
+                const payload = await res.json();
+                if (!res.ok) {
+                    throw new Error(payload.detail || 'Reset failed');
+                }
+                document.getElementById('runtime-decision-contract').value = payload.decision || '';
+                document.getElementById('runtime-execution-contract').value = payload.execution || '';
+                status.textContent = 'Reset to defaults';
+                status.className = 'text-sm text-emerald-600';
+                setTimeout(() => { status.textContent = ''; }, 2000);
+            } catch (err) {
+                status.textContent = err.message || 'Reset failed';
                 status.className = 'text-sm text-red-600';
             }
         });

@@ -9,7 +9,7 @@ from typing import Any
 
 import db
 from core import config
-from core.agent_loop.deliverables import format_deliverables_for_context
+from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
@@ -116,6 +116,9 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
             "content": _render_turn_contract(turn.contract_kind, render_context),
         }
     )
+    file_guidance = _render_file_deliverable_guidance(turn)
+    if file_guidance:
+        messages.append({"role": "system", "content": file_guidance})
     if turn.contract_kind == "decision":
         messages.append(
             {
@@ -754,6 +757,24 @@ def _render_conversation_envelope(turn: TurnContext) -> str:
             "Do not restate these runtime facts unless they matter to your actual reply.",
         ]
     )
+    return "\n".join(lines)
+
+
+def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
+    """Return runtime-owned file-writing guidance for contract-bound work."""
+    if turn.contract_kind != "execution" or not turn.current_task:
+        return None
+    contract = get_work_contract(turn.current_task)
+    file_paths = [item.path for item in contract.deliverables if item.type == "file" and item.path]
+    if not file_paths:
+        return None
+    lines = [
+        "FILE DELIVERABLE GUIDANCE:",
+        f"required_files: {', '.join(file_paths)}",
+        "If the current work contract requires a file, prefer BossMod CLI write directly instead of putting the full document into data.out.",
+        "For substantial documents, call write <path> with no body to use the managed chunked writer.",
+        "Use work.out for short progress/status text, not the final long-form file body.",
+    ]
     return "\n".join(lines)
 
 

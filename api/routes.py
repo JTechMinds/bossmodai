@@ -660,6 +660,9 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
 
 def _read_desk_file_preview(path: Path, limit_chars: int = 20_000) -> tuple[str, bool]:
     """Read a bounded UTF-8 preview for one desk file."""
+    configured_limit = config.get_int("desk_preview_max_chars")
+    if configured_limit is not None and configured_limit > 0:
+        limit_chars = configured_limit
     with path.open("r", encoding="utf-8", errors="ignore") as handle:
         content = handle.read(limit_chars + 1)
     return content[:limit_chars], len(content) > limit_chars
@@ -1256,6 +1259,16 @@ async def set_runtime_contracts(body: RuntimeContractsBody):
     return _runtime_contracts_payload()
 
 
+@router.post("/runtime/contracts/reset")
+async def reset_runtime_contracts():
+    """Reset both runtime contract templates back to their seeded defaults."""
+    with db.transaction():
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["decision"])
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["execution"])
+    config.reload()
+    return _runtime_contracts_payload()
+
+
 @router.post("/runtime/contracts/preview")
 async def preview_runtime_contract(body: RuntimeContractPreviewBody):
     if body.trigger_type not in _RUNTIME_PREVIEW_TRIGGERS:
@@ -1295,6 +1308,17 @@ async def reseed_application():
         detail="Application data reseeded from the current schema defaults",
     )
     return {"status": "ok", "detail": "Application database recreated from current schema defaults"}
+
+
+@router.post("/settings/{key}/reset")
+async def reset_setting_to_default(key: str):
+    """Reset one seeded setting back to its default value."""
+    try:
+        result = db.reset_setting_to_seed(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    config.reload()
+    return result
 
 
 @router.put("/settings/{key}")

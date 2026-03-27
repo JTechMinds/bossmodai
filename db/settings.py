@@ -86,11 +86,14 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_model_extraction", "", "llm"),
     ("default_model_self_queue", "", "llm"),
     ("default_temperature", "0.7", "llm"),
-    ("default_max_tokens", "2048", "llm"),
+    ("default_max_tokens", "8192", "llm"),
 
     # ── Context window ──
     ("context_recent_work_artifacts", "5", "context"),
     ("context_recent_completed_tasks", "3", "context"),
+
+    # ── Desk ──
+    ("desk_preview_max_chars", "50000", "desk"),
 
     # ── Diagnostics ──
     ("diagnostics_enabled", "false", "advanced"),
@@ -132,6 +135,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("runtime_contract_execution", RUNTIME_CONTRACT_EXECUTION_TEMPLATE, "advanced"),
     ("runtime_control_state", RUNTIME_CONTROL_STATE, "advanced"),
 ]
+_SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
+    key: (value, category) for key, value, category in _SEED_SETTINGS
+}
 
 
 def seed_defaults() -> None:
@@ -165,6 +171,20 @@ def force_reseed() -> None:
         )
     prune_obsolete_settings()
     logger.info("Settings force-reseeded (%d keys)", len(_SEED_SETTINGS))
+
+
+def get_seed_setting_default(key: str) -> tuple[str, str] | None:
+    """Return the seeded default value and category for one setting key."""
+    return _SEED_SETTING_DEFAULTS.get(key)
+
+
+def reset_setting_to_seed(key: str) -> Setting:
+    """Reset one seeded setting key back to its default value."""
+    seeded = get_seed_setting_default(key)
+    if seeded is None:
+        raise ValueError(f"Setting '{key}' has no seeded default")
+    value, category = seeded
+    return set_setting(key, value, category)
 
 
 def get_settings(category: str | None = None) -> list[Setting]:

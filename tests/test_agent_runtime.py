@@ -40,7 +40,9 @@ from api.routes import (
     get_runtime_state as get_runtime_state_route,
     open_agent_desk_folder,
     preview_runtime_contract as preview_runtime_contract_route,
+    reset_runtime_contracts,
     reseed_application,
+    reset_setting_to_default,
     reset_agent_runtime,
     set_setting as set_setting_route,
     set_runtime_contracts as set_runtime_contracts_route,
@@ -51,6 +53,7 @@ from api.websocket import manager
 from core import config
 from core.bm_cli import execute_bm_cli
 from core.bm_cli.filesystem import agent_artifact_dir, legacy_agent_artifact_dir, project_artifact_dir
+from core.bm_cli.managed_writer import run_managed_write
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.decision_contract import (
     ConversationDecision,
@@ -793,6 +796,45 @@ async def test_work_completion_requires_requested_saved_file(isolated_db):
     assert completed["chat_notification"]["human_visible"] is True
 
 
+@pytest.mark.asyncio
+async def test_large_work_output_with_file_deliverable_is_redirected_to_managed_write(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write backend whitepaper",
+        description="Create and save a backend whitepaper.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        work_contract={
+            "deliverables": [{"type": "file", "path": "/me/backend-tech-stack-whitepaper.md"}],
+        },
+    )
+    activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    result = await execute_action(
+        {"action": "work", "output": "x" * 2500},
+        agent,
+        state,
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "/me/backend-tech-stack-whitepaper.md" in result["detail"]
+    assert "Use BossMod CLI write with no body" in result["detail"]
+    assert result["missing_deliverables"] == [
+        {
+            "type": "file",
+            "path": "/me/backend-tech-stack-whitepaper.md",
+            "description": None,
+        }
+    ]
+
+
 def test_project_chat_notifications_emits_completion_notice(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -1094,6 +1136,48 @@ async def test_set_runtime_contracts_persists_live_templates_without_restart(iso
     assert execution_context[1]["content"] == "EXECUTION FOR activity_resumed"
 
 
+def test_execution_context_adds_file_deliverable_guidance_for_file_contract(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Taylor",
+        role="Operations Analyst",
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "activity_resumed",
+                "content": "Continue the whitepaper task.",
+            },
+            contract_kind="execution",
+            current_task={
+                "id": "task-1",
+                "title": "Write the backend whitepaper",
+                "status": "active",
+                "description": "Draft and save the backend whitepaper.",
+                "work_contract": {
+                    "deliverables": [{"type": "file", "path": "/me/backend-tech-stack-whitepaper.md"}],
+                },
+            },
+        )
+    )
+
+    guidance = [
+        msg["content"]
+        for msg in context
+        if msg["role"] == "system" and "FILE DELIVERABLE GUIDANCE:" in msg["content"]
+    ]
+    assert len(guidance) == 1
+    assert "/me/backend-tech-stack-whitepaper.md" in guidance[0]
+    assert "write <path> with no body" in guidance[0]
+    assert "Use work.out for short progress/status text" in guidance[0]
+
+
 @pytest.mark.asyncio
 async def test_prompt_templates_render_conditionals_for_personality_and_system_prompt(isolated_db):
     await set_setting_route(
@@ -1154,6 +1238,22 @@ async def test_settings_route_rejects_invalid_system_prompt_template(isolated_db
 
 
 @pytest.mark.asyncio
+async def test_reset_setting_to_default_restores_seeded_system_prompt_template(isolated_db):
+    await set_setting_route(
+        "system_prompt_template",
+        "CUSTOM HEADER\n{{personality}}",
+        "advanced",
+    )
+
+    result = await reset_setting_to_default("system_prompt_template")
+
+    assert result.key == "system_prompt_template"
+    assert result.category == "advanced"
+    assert result.value == settings_store.SYSTEM_PROMPT_TEMPLATE
+    assert config.require("system_prompt_template") == settings_store.SYSTEM_PROMPT_TEMPLATE
+
+
+@pytest.mark.asyncio
 async def test_runtime_contract_save_rejects_invalid_template(isolated_db):
     with pytest.raises(HTTPException) as exc_info:
         await set_runtime_contracts_route(
@@ -1165,6 +1265,23 @@ async def test_runtime_contract_save_rejects_invalid_template(isolated_db):
 
     assert exc_info.value.status_code == 400
     assert "template variable" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_reset_runtime_contracts_restores_seed_defaults(isolated_db):
+    await set_runtime_contracts_route(
+        RuntimeContractsBody(
+            decision="CUSTOM DECISION",
+            execution="CUSTOM EXECUTION",
+        )
+    )
+
+    payload = await reset_runtime_contracts()
+
+    assert payload["decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
+    assert payload["execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert config.require("runtime_contract_decision") == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
+    assert config.require("runtime_contract_execution") == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
 
 
 @pytest.mark.asyncio
@@ -1371,6 +1488,7 @@ async def test_completion_canonicalizes_openai_compatible_custom_base(isolated_d
     assert captured["model"] == "openai/llama3"
     assert captured["api_base"] == "http://localhost:11434/v1"
     assert captured["api_key"] == "local-openai-compatible"
+    assert captured["max_tokens"] == 8192
 
 
 def test_human_chat_thread_excludes_work_artifacts(isolated_db):
@@ -2535,6 +2653,156 @@ async def test_execution_turn_completes_active_task_without_task_id(isolated_db,
     assert _active_activity(agent.id) is None
 
 
+@pytest.mark.asyncio
+async def test_activity_resumed_managed_writer_saves_long_file_and_commits_once(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write the research paper",
+        description="Draft a long markdown paper about frontend technology choices.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, task)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"write /me/paper.md"},"th":"open managed writer"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="# Frontend Stack Review\n\nThis paper compares delivery options for modern frontend systems.\n\n",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="## Recommendation\n\nPrefer a small, typed React stack with deliberate performance budgets.\n<<BOSSMOD_FILE_DONE>>",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"done","data":{"sum":"saved paper"},"th":"complete task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Write the research paper".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    paper_path = agent_artifact_dir(agent.storage_key) / "paper.md"
+    assert paper_path.read_text(encoding="utf-8") == (
+        "# Frontend Stack Review\n\n"
+        "This paper compares delivery options for modern frontend systems.\n\n"
+        "## Recommendation\n\n"
+        "Prefer a small, typed React stack with deliberate performance budgets.\n"
+    )
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
+    assert [event["result_kind"] for event in events if event["result_kind"] in {"write", "append"}] == ["write"]
+    history = execute_bm_cli(agent, state, "git log 5")
+    assert history.ok is True
+    assert "bm_cli write /me/paper.md" in history.data["output"]
+    assert outcome.trigger_status == "completed"
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert detail["steps"][0]["prompt_tokens"] == 30
+    assert detail["steps"][0]["completion_tokens"] == 30
+    assert detail["steps"][0]["total_tokens"] == 60
+    cli_step = json.loads(detail["steps"][0]["result"])
+    assert cli_step["managed_writer"]["used"] is True
+    assert cli_step["managed_writer"]["attempted"] is True
+    assert cli_step["managed_writer"]["completed"] is True
+    assert cli_step["managed_writer"]["chunks"] == 2
+    assert cli_step["managed_writer"]["total_tokens"] == 40
+    assert "via managed writer (2 chunks)" in cli_step["detail"]
+
+
+@pytest.mark.asyncio
+async def test_managed_writer_chunk_limit_records_attempt_metadata(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    responses = iter(
+        [
+            client.LLMResponse(
+                content=f"Section chunk {idx}\n",
+                model="test-model",
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            )
+            for idx in range(12)
+        ]
+    )
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_managed_write(
+        agent=agent,
+        state=state,
+        command="write /me/paper.md",
+        model="test-model",
+        api_config={},
+        base_context=[],
+        action_response='{"act":"cli","data":{"cmd":"write /me/paper.md"},"th":"start"}',
+        trigger_type="activity_resumed",
+    )
+
+    assert outcome.cli_result.ok is False
+    assert outcome.chunks == 12
+    assert "chunk limit" in outcome.cli_result.detail.lower()
+    assert "Do not paste a long file body into CLI JSON." in outcome.cli_result.prompt_content
+    data = outcome.cli_result.data or {}
+    assert data["managed_writer_attempted"] is True
+    assert data["managed_writer_used"] is False
+    assert data["managed_writer_completed"] is False
+    assert data["managed_chunks"] == 12
+    assert data["managed_prompt_tokens"] == 120
+    assert data["managed_completion_tokens"] == 60
+    assert data["managed_total_tokens"] == 180
+    assert data["managed_bytes"] > 0
+
+
 def test_parse_action_accepts_walk_to_minimal_payload(isolated_db):
     parsed = parse_action('{"act":"walk","data":{"dst":"desk"},"th":"move"}')
     assert parsed["action"] == "walkTo"
@@ -3471,6 +3739,24 @@ async def test_bm_cli_write_registers_artifact_and_desk_view_can_open_it(isolate
     assert file_payload["kind"] == "file"
     assert file_payload["artifact"]["virtual_path"] == "/me/test_report.md"
     assert "artifact body" in file_payload["content"]
+
+
+@pytest.mark.asyncio
+async def test_desk_file_preview_uses_configurable_preview_limit(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    db.set_setting("desk_preview_max_chars", "12", "desk")
+    config.reload()
+    execute_bm_cli(agent, state, "write /me/test_report.md", "abcdefghijklmnopqrstuvwxyz", trigger_type="human_chat")
+
+    file_payload = await get_agent_desk(agent.id, path="/me/test_report.md")
+
+    assert file_payload["kind"] == "file"
+    assert file_payload["content"] == "abcdefghijkl"
+    assert file_payload["truncated"] is True
 
 
 @pytest.mark.asyncio

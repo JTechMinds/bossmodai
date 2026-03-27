@@ -64,6 +64,7 @@ def render_bm_cli_guidance() -> str:
             '  - cwd starts at "/me"',
             '  - "/me" is git-tracked; "/me/scratchpad" is untracked',
             "  - results are turn-local",
+            '  - for large files, call write <path> with no body to use the managed chunked writer',
             "  - common cmds: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git status log diff show restore",
         ]
     )

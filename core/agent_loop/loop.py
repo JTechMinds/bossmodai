@@ -33,6 +33,7 @@ from core.agent_loop.turn_rules import (
     validate_action_for_turn,
 )
 from core.bm_cli import BossModCliCall, execute_bm_cli, maybe_parse_bm_cli_call
+from core.bm_cli.managed_writer import is_managed_write_request, run_managed_write
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
@@ -236,6 +237,9 @@ async def run_turn(
             "LLM response for %s (turn %d): model=%s, tokens=%d",
             agent.name, action_count, response.model, response.total_tokens,
         )
+        step_prompt_tokens = response.prompt_tokens
+        step_completion_tokens = response.completion_tokens
+        step_total_tokens = response.total_tokens
 
         # Parse action
         action = parse_action(response.content)
@@ -277,9 +281,9 @@ async def run_turn(
                             raw_response=last_response_content,
                             action=action,
                             result=result,
-                            prompt_tokens=response.prompt_tokens,
-                            completion_tokens=response.completion_tokens,
-                            total_tokens=response.total_tokens,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
                         ),
@@ -326,9 +330,9 @@ async def run_turn(
                             raw_response=last_response_content,
                             action=action,
                             result=result,
-                            prompt_tokens=response.prompt_tokens,
-                            completion_tokens=response.completion_tokens,
-                            total_tokens=response.total_tokens,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=validation_error,
                         ),
@@ -346,7 +350,29 @@ async def run_turn(
         active_activity_before_action = active_activity
 
         # Execute action
-        result = await execute_action(action, agent, state, trigger, token_model=response.model)
+        if action_name == "bm_cli" and is_managed_write_request(
+            str(action.get("command") or ""),
+            action.get("content") if isinstance(action.get("content"), str) else None,
+        ):
+            managed_write = await run_managed_write(
+                agent=agent,
+                state=state,
+                command=str(action.get("command") or ""),
+                model=model,
+                api_config=api_config,
+                base_context=context,
+                action_response=response.content,
+                trigger_type=trigger_type,
+            )
+            total_prompt_tokens += managed_write.prompt_tokens
+            total_completion_tokens += managed_write.completion_tokens
+            total_tokens += managed_write.total_tokens
+            step_prompt_tokens += managed_write.prompt_tokens
+            step_completion_tokens += managed_write.completion_tokens
+            step_total_tokens += managed_write.total_tokens
+            result = _cli_result_to_turn_result(agent, managed_write.cli_result)
+        else:
+            result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = activity_runtime.get_active_task_id(agent.id)
         if result.get("trigger_requests"):
             scheduled_triggers.extend(result["trigger_requests"])
@@ -472,9 +498,9 @@ async def run_turn(
                             raw_response=last_response_content,
                             action=action,
                             result=result,
-                            prompt_tokens=response.prompt_tokens,
-                            completion_tokens=response.completion_tokens,
-                            total_tokens=response.total_tokens,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=f"Guardian [{violation.rule}]: {violation.detail}",
                         ),
@@ -517,9 +543,9 @@ async def run_turn(
                             raw_response=last_response_content,
                             action=action,
                             result=result,
-                            prompt_tokens=response.prompt_tokens,
-                            completion_tokens=response.completion_tokens,
-                            total_tokens=response.total_tokens,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=f"Guardian [{violation.rule}]: {violation.detail}",
                         ),
@@ -535,9 +561,9 @@ async def run_turn(
                 raw_response=last_response_content,
                 action=action,
                 result=result,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens,
+                prompt_tokens=step_prompt_tokens,
+                completion_tokens=step_completion_tokens,
+                total_tokens=step_total_tokens,
                 duration_ms=int((time.monotonic() - step_started) * 1000),
             )
         )
@@ -711,6 +737,9 @@ async def _run_decision_turn(
         total_completion_tokens += response.completion_tokens
         total_tokens += response.total_tokens
         last_response_content = response.content
+        step_prompt_tokens = response.prompt_tokens
+        step_completion_tokens = response.completion_tokens
+        step_total_tokens = response.total_tokens
 
         parsed = parse_direct_turn_response(response.content)
         if parsed.get("decision") == "_parse_failed":
@@ -744,9 +773,9 @@ async def _run_decision_turn(
                             "event": "decision_repair_requested",
                             "detail": "Conversation decision JSON was invalid; asked the model to correct it.",
                         },
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
+                        prompt_tokens=step_prompt_tokens,
+                        completion_tokens=step_completion_tokens,
+                        total_tokens=step_total_tokens,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                     )
                 )
@@ -786,9 +815,9 @@ async def _run_decision_turn(
                             raw_response=response.content,
                             action=parsed,
                             result=result,
-                            prompt_tokens=response.prompt_tokens,
-                            completion_tokens=response.completion_tokens,
-                            total_tokens=response.total_tokens,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=error,
                         )
@@ -830,13 +859,32 @@ async def _run_decision_turn(
                     start=start,
                 )
 
-            cli_result = execute_bm_cli(
-                agent,
-                state,
-                cli_call.command,
-                cli_call.content,
-                trigger_type=trigger_type,
-            )
+            if is_managed_write_request(cli_call.command, cli_call.content):
+                managed_write = await run_managed_write(
+                    agent=agent,
+                    state=state,
+                    command=cli_call.command,
+                    model=model,
+                    api_config=api_config,
+                    base_context=current_context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                )
+                total_prompt_tokens += managed_write.prompt_tokens
+                total_completion_tokens += managed_write.completion_tokens
+                total_tokens += managed_write.total_tokens
+                step_prompt_tokens += managed_write.prompt_tokens
+                step_completion_tokens += managed_write.completion_tokens
+                step_total_tokens += managed_write.total_tokens
+                cli_result = managed_write.cli_result
+            else:
+                cli_result = execute_bm_cli(
+                    agent,
+                    state,
+                    cli_call.command,
+                    cli_call.content,
+                    trigger_type=trigger_type,
+                )
             if cli_call.thought:
                 await manager.broadcast_thought(
                     agent_id=agent.id,
@@ -851,13 +899,12 @@ async def _run_decision_turn(
                     raw_response=response.content,
                     action=cli_call.model_dump(),
                     result={
-                        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
-                        "detail": cli_result.detail,
+                        **_cli_result_to_turn_result(agent, cli_result),
                         "command": cli_result.command,
                     },
-                    prompt_tokens=response.prompt_tokens,
-                    completion_tokens=response.completion_tokens,
-                    total_tokens=response.total_tokens,
+                    prompt_tokens=step_prompt_tokens,
+                    completion_tokens=step_completion_tokens,
+                    total_tokens=step_total_tokens,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
@@ -1360,7 +1407,8 @@ def _build_continuation_instruction(
             return (
                 f"Action executed: {detail}. "
                 f'The current work contract still requires "{target}". '
-                f'Use {{"act":"cli","data":{{"cmd":"write {target}","body":"..."}},"th":"save deliverable"}} or another valid step to satisfy it before done.'
+                f'Use {{"act":"cli","data":{{"cmd":"write {target}"}},"th":"save deliverable"}} to satisfy it before done. '
+                "Do not paste the full file body into JSON; the runtime will manage long-form file writing."
             )
         if result.get("event") == "world_feedback" and "Walk to your desk first." in detail:
             return (
@@ -1531,6 +1579,35 @@ def _build_step_trace(
         "duration_ms": duration_ms,
         "error": error,
     }
+
+
+def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
+    """Convert one BossMod CLI result into the standard turn-local action result."""
+    result = {
+        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
+        "detail": cli_result.detail,
+        "agent_name": agent.name,
+        "cli_prompt_content": cli_result.prompt_content,
+        "suppress_world_broadcast": True,
+        "suppress_activity_broadcast": True,
+    }
+    cli_data = cli_result.data or {}
+    if cli_data.get("managed_writer_attempted") or cli_data.get("managed_writer_used"):
+        chunks = int(cli_data.get("managed_chunks") or 0)
+        completed = bool(cli_data.get("managed_writer_completed") or cli_data.get("managed_writer_used"))
+        suffix = "via managed writer" if completed else "after managed writer attempt"
+        result["detail"] = f"{cli_result.detail} {suffix} ({chunks} chunk{'s' if chunks != 1 else ''})"
+        result["managed_writer"] = {
+            "attempted": True,
+            "used": bool(cli_data.get("managed_writer_used")),
+            "completed": completed,
+            "chunks": chunks,
+            "bytes": int(cli_data.get("managed_bytes") or 0),
+            "prompt_tokens": int(cli_data.get("managed_prompt_tokens") or 0),
+            "completion_tokens": int(cli_data.get("managed_completion_tokens") or 0),
+            "total_tokens": int(cli_data.get("managed_total_tokens") or 0),
+        }
+    return result
 
 
 async def _finalize_turn(

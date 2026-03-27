@@ -87,6 +87,7 @@ _DESTINATION_CODE_TO_NAME = {
     "south": "southWorkspace",
     "hall": "hallway",
 }
+_MAX_INLINE_FILE_DELIVERABLE_WORK_CHARS = 2000
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +482,25 @@ async def _handle_work(
         db.update_task(task.id, status="active", status_note=None, watchdog_pinged_at=None)
         task = db.get_task(task.id)
 
+    pending_deliverables = missing_deliverables(
+        agent_id=agent.id,
+        agent_storage_key=agent.storage_key,
+        task=task,
+    )
+    file_deliverables = [item for item in pending_deliverables if item.type == "file" and item.path]
+    if file_deliverables and len(output) > _MAX_INLINE_FILE_DELIVERABLE_WORK_CHARS:
+        target = summarize_deliverable(file_deliverables[0])
+        return {
+            "event": "world_feedback",
+            "detail": (
+                f"This work contract requires {target}. "
+                "Do not place the full document in data.out. "
+                "Use BossMod CLI write with no body so the runtime can manage the file write."
+            ),
+            "agent_name": agent.name,
+            "missing_deliverables": [item.model_dump() for item in pending_deliverables],
+        }
+
     db.create_message(
         from_agent=agent.id,
         to_agent=None,
@@ -489,13 +509,6 @@ async def _handle_work(
         location_x=state.x,
         location_y=state.y,
         token_count=_count_action_tokens(agent, action, output),
-    )
-
-    active_work = activity_runtime.get_active_work_activity(agent.id)
-    pending_deliverables = missing_deliverables(
-        agent_id=agent.id,
-        agent_storage_key=agent.storage_key,
-        task=task,
     )
 
     result = {
