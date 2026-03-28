@@ -66,7 +66,10 @@ def render_bm_cli_guidance() -> str:
         '  - "/me" is git-tracked; "/me/scratchpad" is untracked',
         "  - results are turn-local",
         '  - for large files, call write <path> with no body to use the managed chunked writer',
-        "  - built-in cmds: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git status log diff show restore",
+        '  - type "help" to discover available commands',
+        '  - type "categories" to browse commands by category',
+        '  - type "fsearch <query>" to search for commands',
+        '  - type "learn <command>" for detailed usage',
     ]
 
     try:
@@ -76,9 +79,11 @@ def render_bm_cli_guidance() -> str:
 
     if shell_enabled:
         lines.extend([
-            "  - native shell commands are available (npm, pip, python, curl, etc.)",
+            "  - additional commands are available (npm, pip, python, curl, etc.)",
             "  - some commands may require operator approval — your turn will pause until reviewed",
             "  - blocked commands cannot be used; try alternative approaches",
         ])
+    else:
+        lines.append("  - only built-in commands are currently available")
 
     return "\n".join(lines)

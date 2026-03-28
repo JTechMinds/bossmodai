@@ -21,6 +21,12 @@ from core.bm_cli.fs_commands import (
     handle_write,
 )
 from core.bm_cli.git_commands import handle_git
+from core.bm_cli.help_commands import (
+    handle_commands,
+    handle_fsearch,
+    handle_help,
+    handle_learn,
+)
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
@@ -60,6 +66,10 @@ _HANDLERS: dict[str, CliHandler] = {
     "tasks": handle_tasks,
     "recent-work": handle_recent_work,
     "location": handle_location,
+    "help": handle_help,
+    "categories": handle_commands,
+    "fsearch": handle_fsearch,
+    "learn": handle_learn,
 }
 
 VIRTUAL_COMMANDS: frozenset[str] = frozenset(_HANDLERS.keys())

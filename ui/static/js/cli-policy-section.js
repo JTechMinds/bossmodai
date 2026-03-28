@@ -1,7 +1,7 @@
 /**
  * BossMod AI — CLI Policy settings section.
  *
- * Sub-tabbed IIFE module with four views: Rules, Settings, Simulator, Approvals.
+ * Sub-tabbed IIFE module with five views: Rules, Virtual Commands, Settings, Simulator, Approvals.
  * Renders into the settings content pane via CliPolicySection.render(container).
  */
 
@@ -77,10 +77,11 @@ const CliPolicySection = (() => {
 
     function renderShell() {
         const tabs = [
-            { id: 'rules',     label: 'Rules',     icon: 'list' },
-            { id: 'settings',  label: 'Settings',  icon: 'settings' },
-            { id: 'simulator', label: 'Simulator',  icon: 'terminal' },
-            { id: 'approvals', label: 'Approvals',  icon: 'shield-check' },
+            { id: 'rules',            label: 'Rules',            icon: 'list' },
+            { id: 'virtual-commands', label: 'Virtual Commands',  icon: 'cpu' },
+            { id: 'settings',         label: 'Settings',          icon: 'settings' },
+            { id: 'simulator',        label: 'Simulator',         icon: 'terminal' },
+            { id: 'approvals',        label: 'Approvals',         icon: 'shield-check' },
         ];
 
         let html = `
@@ -115,10 +116,11 @@ const CliPolicySection = (() => {
 
         const content = document.getElementById('cli-tab-content');
         switch (activeTab) {
-            case 'rules':     renderRulesTab(content);     break;
-            case 'settings':  renderSettingsTab(content);  break;
-            case 'simulator': renderSimulatorTab(content);  break;
-            case 'approvals': renderApprovalsTab(content);  break;
+            case 'rules':            renderRulesTab(content);            break;
+            case 'virtual-commands': renderVirtualCommandsTab(content);  break;
+            case 'settings':         renderSettingsTab(content);         break;
+            case 'simulator':        renderSimulatorTab(content);        break;
+            case 'approvals':        renderApprovalsTab(content);        break;
         }
 
         refreshApprovalBadge();
@@ -196,6 +198,7 @@ const CliPolicySection = (() => {
                             <div class="flex items-center gap-2 flex-wrap">
                                 <code class="text-sm font-mono bg-bm-bg px-2 py-0.5 rounded">${esc(rule.pattern)}</code>
                                 <span class="text-xs text-bm-muted border border-bm-border rounded px-1.5 py-0.5">${esc(rule.match_mode)}</span>
+                                <span class="text-xs text-blue-400 bg-blue-500/10 rounded px-1.5 py-0.5">${esc(rule.category)}</span>
                                 <span class="text-xs text-bm-muted">${esc(scope)}</span>
                             </div>
                             ${rule.description ? `<p class="text-xs text-bm-muted mt-1">${esc(rule.description)}</p>` : ''}
@@ -340,6 +343,36 @@ const CliPolicySection = (() => {
                                placeholder="What this rule does"
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
                     </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1">Category</label>
+                        <input type="text" name="category"
+                               value="${esc(rule?.category || 'general')}"
+                               placeholder="e.g. filesystem, network, packages"
+                               list="cli-category-suggestions"
+                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                        <datalist id="cli-category-suggestions">
+                            <option value="general">
+                            <option value="filesystem">
+                            <option value="network">
+                            <option value="packages">
+                            <option value="development">
+                            <option value="git">
+                            <option value="system">
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1">Usage Syntax</label>
+                        <input type="text" name="usage_syntax"
+                               value="${esc(rule?.usage_syntax || '')}"
+                               placeholder="e.g. curl [options] <url>"
+                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-medium mb-1">Help Text</label>
+                        <textarea name="help_text" rows="4"
+                                  placeholder="Detailed help shown when agents type: learn commandname"
+                                  class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">${esc(rule?.help_text || '')}</textarea>
+                    </div>
                     <div class="md:col-span-2 flex items-center gap-4">
                         <label class="flex items-center gap-2 text-sm">
                             <input type="checkbox" name="enabled" ${rule?.enabled !== false ? 'checked' : ''}
@@ -377,6 +410,9 @@ const CliPolicySection = (() => {
                 description: fd.get('description') || null,
                 enabled: fd.has('enabled'),
                 priority: parseInt(fd.get('priority') || '0', 10),
+                category: fd.get('category') || 'general',
+                usage_syntax: fd.get('usage_syntax') || null,
+                help_text: fd.get('help_text') || null,
             };
 
             try {
@@ -728,7 +764,6 @@ const CliPolicySection = (() => {
     function _simLine(type, html) {
         const cls = {
             dim:     'text-gray-400',
-            muted:   'text-gray-400',
             text:    'text-gray-200',
             bright:  'text-gray-100',
             cyan:    'text-cyan-400',
@@ -750,23 +785,23 @@ const CliPolicySection = (() => {
             : '<span class="text-red-400">disabled</span> — only built-in virtual commands are available';
 
         _simLine('cyan',   '┌───────────────────────────────────────────────┐');
-        _simLine('cyan',   '│         BossMod CLI Simulator                 │');
+        _simLine('cyan',   '│             BossMod CLI Simulator             │');
         _simLine('cyan',   '└───────────────────────────────────────────────┘');
         _simBlank();
-        _simLine('muted',  `Shell executor: ${shellStatus}`);
-        _simLine('muted',  `Default policy: <span class="text-gray-300">${esc(simDefaultPolicy)}</span> (when no rule matches)`);
+        _simLine('dim',    `Shell executor: ${shellStatus}`);
+        _simLine('dim',    `Default policy: <span class="text-gray-300">${esc(simDefaultPolicy)}</span> (when no rule matches)`);
         _simBlank();
         _simLine('dim',    'This terminal runs commands exactly as the selected agent would.');
         _simLine('dim',    'Every command goes through the full BM_CLI pipeline:');
-        _simLine('dim',    '  policy check → execute (virtual or shell) → result');
+        _simLine('dim',    '  policy check → execute → result');
         _simBlank();
-        _simLine('muted',  'Try these:');
-        _simLine('text',   '  <span class="text-cyan-400">pwd</span>              virtual command — always works');
-        _simLine('text',   '  <span class="text-cyan-400">echo hello</span>       shell command — requires shell enabled + allowed rule');
-        _simLine('text',   '  <span class="text-cyan-400">policy rm -rf /</span>  check policy for a command without executing it');
-        _simLine('text',   '  <span class="text-cyan-400">help</span>             show all simulator commands');
-        _simBlank();
-        _simLine('dim',    'Use <span class="text-gray-400">&uarr;</span> <span class="text-gray-400">&darr;</span> arrow keys to navigate command history.');
+        _simLine('dim',    'Try these:');
+        _simLine('text',   '  <span class="text-cyan-400">help</span>             — discover available commands');
+        _simLine('text',   '  <span class="text-cyan-400">categories</span>       — browse commands by category');
+        _simLine('text',   '  <span class="text-cyan-400">fsearch network</span>  — search for commands by keyword');
+        _simLine('text',   '  <span class="text-cyan-400">learn cat</span>        — detailed usage for a command');
+        _simLine('text',   '  <span class="text-cyan-400">pwd</span>             — built-in command, always works');
+        _simLine('text',   '  <span class="text-cyan-400">echo hello</span>      — requires shell enabled');
         _simBlank();
     }
 
@@ -804,62 +839,13 @@ const CliPolicySection = (() => {
         const agentId = document.getElementById('cli-sim-agent')?.value;
         _appendCommandEcho(cmd);
 
-        // Built-in simulator commands
-        if (cmd === 'help') {
-            _simBlank();
-            _simLine('header', 'Simulator Commands');
-            _simLine('text', '  <span class="text-cyan-400">help</span>             show this help');
-            _simLine('text', '  <span class="text-cyan-400">clear</span>            clear terminal output');
-            _simLine('text', '  <span class="text-cyan-400">history</span>          show command history');
-            _simLine('text', '  <span class="text-cyan-400">policy &lt;cmd&gt;</span>    check policy for a command (no execution)');
-            _simBlank();
-            _simLine('header', 'How It Works');
-            _simLine('dim', '  Any other input runs through the full BM_CLI pipeline:');
-            _simLine('dim', '  1. Policy engine checks the command against your rules');
-            _simLine('dim', '  2. If allowed → executes (virtual handler or real shell)');
-            _simLine('dim', '  3. If blocked → shows the blocking rule');
-            _simLine('dim', '  4. If approval required → creates a pending approval request');
-            _simBlank();
-            _simLine('header', 'Examples');
-            _simLine('text', '  <span class="text-gray-400">pwd</span>                     built-in virtual command');
-            _simLine('text', '  <span class="text-gray-400">ls /home</span>                built-in with path argument');
-            _simLine('text', '  <span class="text-gray-400">echo "hello world"</span>      shell command (needs shell enabled)');
-            _simLine('text', '  <span class="text-gray-400">git status</span>              shell command (needs allowed rule)');
-            _simLine('text', '  <span class="text-gray-400">rm -rf /tmp/test</span>        likely blocked or approval-gated');
-            _simLine('text', '  <span class="text-gray-400">policy curl example.com</span>  check without executing');
-            _simBlank();
-            return;
-        }
-        if (cmd === 'clear') {
-            const out = document.getElementById('cli-sim-output');
-            if (out) out.innerHTML = '';
-            return;
-        }
-        if (cmd === 'history') {
-            if (simCommandHistory.length === 0) {
-                _simLine('dim', '(no history)');
-            } else {
-                simCommandHistory.forEach((c, i) => {
-                    _simLine('text', `  <span class="text-gray-600">${String(i + 1).padStart(3)}</span>  ${esc(c)}`);
-                });
-            }
-            _simBlank();
-            return;
-        }
-        if (cmd.startsWith('policy ')) {
-            const policyCmd = cmd.slice(7).trim();
-            if (!policyCmd) { _simLine('red', 'Usage: policy &lt;command&gt;'); _simBlank(); return; }
-            await _runPolicyCheck(policyCmd, agentId);
-            return;
-        }
-
         if (!agentId) {
             _simLine('red', 'No agent selected. Choose an agent from the dropdown above.');
             _simBlank();
             return;
         }
 
-        // Execute through real BM_CLI pipeline
+        // Every command goes through the real BM_CLI pipeline — no shortcuts
         simRunning = true;
         const loadingEl = document.createElement('div');
         loadingEl.className = 'text-gray-600 animate-pulse';
@@ -963,49 +949,78 @@ const CliPolicySection = (() => {
         }
     }
 
-    async function _runPolicyCheck(cmd, agentId) {
+    // ═══════════════════════════════════════════════════════════════
+    //  VIRTUAL COMMANDS TAB
+    // ═══════════════════════════════════════════════════════════════
+
+    async function renderVirtualCommandsTab(el) {
+        let data = { commands: [], categories: [] };
         try {
-            const res = await fetch('/api/cli-policy/simulate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: cmd, agent_id: agentId || null }),
-            });
-            const data = await res.json();
-            const d = data.decision;
-
-            // Color-coded policy result banner
-            if (d.allowed) {
-                _appendOutput(
-                    'bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-md text-xs font-medium mt-1 border border-emerald-500/20',
-                    `&#10003; ALLOWED — tier: ${esc(d.tier)}, executor: ${esc(d.executor)}`
-                );
-            } else if (d.approval_required) {
-                _appendOutput(
-                    'bg-amber-500/10 text-amber-400 px-3 py-1.5 rounded-md text-xs font-medium mt-1 border border-amber-500/20',
-                    `&#9888; APPROVAL REQUIRED — tier: ${esc(d.tier)}`
-                );
-            } else {
-                _appendOutput(
-                    'bg-red-500/10 text-red-400 px-3 py-1.5 rounded-md text-xs font-medium mt-1 border border-red-500/20',
-                    `&#10007; BLOCKED — tier: ${esc(d.tier)}`
-                );
-            }
-
-            if (d.message) _simLine('dim', esc(d.message));
-
-            if (data.matched_rule) {
-                const mr = data.matched_rule;
-                _simLine('dim', `matched rule: "${esc(mr.pattern)}" (${esc(mr.match_mode)}) — ${esc(mr.description || '')}`);
-                if (mr.agent_id) {
-                    _simLine('dim', `scope: agent-specific (${esc(agentName(mr.agent_id))})`);
-                } else {
-                    _simLine('dim', `scope: global (all agents)`);
-                }
-            }
+            const res = await fetch('/api/cli-policy/virtual-commands');
+            data = await res.json();
         } catch {
-            _simLine('red', 'Policy check failed.');
+            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load virtual commands.</p>';
+            return;
         }
-        _simBlank();
+
+        const byCategory = {};
+        for (const cmd of data.commands) {
+            if (!byCategory[cmd.category]) byCategory[cmd.category] = [];
+            byCategory[cmd.category].push(cmd);
+        }
+
+        const catOrder = data.categories.map(c => c.name);
+        const catDescriptions = {};
+        for (const c of data.categories) catDescriptions[c.name] = c.description;
+
+        let html = `
+            <div class="mb-5">
+                <div class="flex items-start gap-3 p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl">
+                    <i data-lucide="info" class="w-5 h-5 text-blue-400 shrink-0 mt-0.5"></i>
+                    <div class="text-sm">
+                        <p class="font-medium mb-1">Built-in virtual commands</p>
+                        <p class="text-xs text-bm-muted">Always available to all agents. These run inside the BossMod virtual environment — no shell access or policy rules required.</p>
+                    </div>
+                </div>
+            </div>`;
+
+        for (const cat of catOrder) {
+            const cmds = byCategory[cat];
+            if (!cmds || cmds.length === 0) continue;
+            const desc = catDescriptions[cat] || '';
+
+            html += `
+                <div class="mb-5">
+                    <h3 class="text-sm font-semibold capitalize mb-2 flex items-center gap-2">
+                        ${esc(cat)}
+                        <span class="text-xs text-bm-muted font-normal">${esc(desc)}</span>
+                    </h3>
+                    <div class="space-y-1.5">`;
+
+            for (const cmd of cmds) {
+                html += `
+                        <details class="group border border-bm-border rounded-lg bg-white overflow-hidden">
+                            <summary class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors">
+                                <code class="text-sm font-mono font-semibold text-bm-accent">${esc(cmd.name)}</code>
+                                <span class="text-xs text-bm-muted flex-1">${esc(cmd.description)}</span>
+                                <code class="text-xs text-bm-muted font-mono hidden sm:inline">${esc(cmd.usage_syntax)}</code>
+                                <i data-lucide="chevron-down" class="w-4 h-4 text-bm-muted transition-transform group-open:rotate-180"></i>
+                            </summary>
+                            <div class="px-4 py-3 border-t border-bm-border bg-bm-bg/50">
+                                <div class="text-xs mb-2">
+                                    <span class="font-semibold">Usage:</span>
+                                    <code class="ml-1 font-mono">${esc(cmd.usage_syntax)}</code>
+                                </div>
+                                <pre class="text-xs text-bm-muted whitespace-pre-wrap font-mono leading-relaxed">${esc(cmd.help_text)}</pre>
+                            </div>
+                        </details>`;
+            }
+
+            html += '</div></div>';
+        }
+
+        el.innerHTML = html;
+        icons(el);
     }
 
 

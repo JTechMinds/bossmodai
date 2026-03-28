@@ -91,6 +91,9 @@ class CliPolicyRuleBody(BaseModel):
     match_mode: str = "prefix"
     agent_id: str | None = None
     description: str | None = None
+    category: str = "general"
+    usage_syntax: str | None = None
+    help_text: str | None = None
     enabled: bool = True
     priority: int = 0
 
@@ -101,6 +104,9 @@ class CliPolicyRuleUpdateBody(BaseModel):
     match_mode: str | None = None
     agent_id: str | None = None
     description: str | None = None
+    category: str | None = None
+    usage_syntax: str | None = None
+    help_text: str | None = None
     enabled: bool | None = None
     priority: int | None = None
 
@@ -1235,6 +1241,33 @@ async def get_diagnostic_detail(diagnostic_id: str):
 
 # ─── CLI Policy ───
 
+@router.get("/cli-policy/virtual-commands")
+async def list_virtual_commands():
+    """Return the read-only virtual command registry for the UI."""
+    from core.bm_cli.command_registry import (
+        VIRTUAL_COMMAND_REGISTRY,
+        VIRTUAL_CATEGORIES,
+    )
+
+    commands = [
+        {
+            "name": cmd.name,
+            "category": cmd.category,
+            "description": cmd.description,
+            "usage_syntax": cmd.usage_syntax,
+            "help_text": cmd.help_text,
+        }
+        for cmd in VIRTUAL_COMMAND_REGISTRY.values()
+    ]
+
+    categories = [
+        {"name": k, "description": v}
+        for k, v in VIRTUAL_CATEGORIES.items()
+    ]
+
+    return {"commands": commands, "categories": categories}
+
+
 # Rules CRUD
 @router.get("/cli-policy/rules")
 async def list_cli_policy_rules(tier: str | None = None, agent_id: str | None = None):
@@ -1256,6 +1289,9 @@ async def create_cli_policy_rule(body: CliPolicyRuleBody):
         match_mode=body.match_mode,
         agent_id=body.agent_id,
         description=body.description,
+        category=body.category,
+        usage_syntax=body.usage_syntax,
+        help_text=body.help_text,
         enabled=body.enabled,
         priority=body.priority,
     )

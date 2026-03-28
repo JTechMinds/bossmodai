@@ -18,6 +18,9 @@ class CliPolicyRule(BaseModel):
     match_mode: str = "prefix"
     agent_id: str | None = None
     description: str | None = None
+    category: str = "general"
+    usage_syntax: str | None = None
+    help_text: str | None = None
     enabled: bool = True
     priority: int = 0
     created_at: datetime
@@ -32,6 +35,9 @@ class CliPolicyRuleCreate(BaseModel):
     match_mode: str = "prefix"
     agent_id: str | None = None
     description: str | None = None
+    category: str = "general"
+    usage_syntax: str | None = None
+    help_text: str | None = None
     enabled: bool = True
     priority: int = 0
 

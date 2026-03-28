@@ -194,6 +194,16 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "bm_cli_events", "approval_request_id",
         "VARCHAR REFERENCES cli_approval_requests(id)",
     )
+    _add_column_if_missing(
+        con, "cli_policy_rules", "category",
+        "VARCHAR NOT NULL DEFAULT 'general'",
+    )
+    _add_column_if_missing(
+        con, "cli_policy_rules", "usage_syntax", "VARCHAR",
+    )
+    _add_column_if_missing(
+        con, "cli_policy_rules", "help_text", "TEXT",
+    )
 
 
 def _add_column_if_missing(

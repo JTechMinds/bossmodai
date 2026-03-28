@@ -135,7 +135,7 @@ class PolicyEngine:
                 allowed=False,
                 tier="disabled",
                 executor="shell",
-                message=f'"{command_name}" is not a built-in command and shell execution is not enabled. Use built-in commands: pwd cd ls cat mkdir write append status runtime activity current-task tasks recent-work location git.',
+                message=f'"{command_name}" is not a built-in command and shell execution is not enabled. Type "help" to discover available commands.',
             )
 
         # 3. Walk tiers in strict order; first matching rule wins.
