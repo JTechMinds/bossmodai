@@ -18,6 +18,7 @@ from api.routes import (
     ActivationBody,
     ChannelCreateBody,
     ChannelMessageBody,
+    CliPolicySimulateBody,
     MeetingMessageBody,
     RuntimeContractPreviewBody,
     RuntimeContractsBody,
@@ -48,6 +49,7 @@ from api.routes import (
     set_setting as set_setting_route,
     set_runtime_contracts as set_runtime_contracts_route,
     set_runtime_state as set_runtime_state_route,
+    simulate_cli_policy,
     test_connection as run_connection_test,
 )
 from api.websocket import manager
@@ -695,8 +697,14 @@ def test_execute_bm_cli_document_edit_commands_target_sections_precisely(isolate
         "Watch the rollout closely.\n"
     )
 
+    compact_source = "# Title\n## A\none\n## B\ntwo\n"
+    execute_bm_cli(agent, state, "write compact.md", compact_source)
+    compact_replaced = execute_bm_cli(agent, state, 'replace-section compact.md "## A"', "new")
+    assert compact_replaced.ok is True
+    assert (personal_root / "compact.md").read_text(encoding="utf-8") == "# Title\n## A\nnew\n## B\ntwo\n"
+
     events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
-    assert [event["result_kind"] for event in events if event["result_kind"] in {"replace-section"}] == ["replace-section"]
+    assert [event["result_kind"] for event in events].count("replace-section") == 2
 
     artifacts = db.list_artifacts(agent_id=agent.id, limit=10)
     assert any(item.virtual_path == "/me/report.md" for item in artifacts)
@@ -732,6 +740,9 @@ def test_execute_bm_cli_file_command_aliases_and_discovery_are_ai_friendly(isola
     categories = execute_bm_cli(agent, state, "categories")
     assert categories.ok is True
     assert "files — Inspect, create, and edit files" in categories.prompt_content
+    assert "batch-write" in categories.prompt_content
+    assert "replace-section" in categories.prompt_content
+    assert "rewrite-section" in categories.prompt_content
     assert 'replace-section <path> "<heading>"' not in categories.prompt_content
     assert "Type \"fsearch <category|keyword>\" to review the commands inside a category." in categories.prompt_content
 
@@ -744,6 +755,24 @@ def test_execute_bm_cli_file_command_aliases_and_discovery_are_ai_friendly(isola
     assert learn.ok is True
     assert "Command:   replace-section" in learn.prompt_content
     assert "Aliases:   repsect, rsect" in learn.prompt_content
+
+
+def test_simulate_cli_policy_matches_virtual_alias_execution(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+
+    simulated = asyncio.run(
+        simulate_cli_policy(
+            CliPolicySimulateBody(
+                command='repsect plan.md "## Recommendation"',
+                agent_id=agent.id,
+            )
+        )
+    )
+
+    assert simulated["decision"]["allowed"] is True
+    assert simulated["decision"]["tier"] == "virtual"
+    assert simulated["decision"]["executor"] == "virtual"
 
 
 def test_execute_bm_cli_tracks_personal_workspace_in_git(isolated_db):

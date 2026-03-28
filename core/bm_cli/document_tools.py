@@ -37,13 +37,21 @@ class MarkdownSection:
 class MarkdownDocument:
     """Parsed markdown document with addressable sections."""
 
+    text: str
     lines: tuple[str, ...]
+    line_start_offsets: tuple[int, ...]
     sections: tuple[MarkdownSection, ...]
 
 
 def parse_markdown_document(text: str) -> MarkdownDocument:
     """Parse markdown headings into addressable sections."""
-    lines = tuple(text.replace("\r\n", "\n").splitlines())
+    normalized_text = text.replace("\r\n", "\n")
+    lines = tuple(normalized_text.splitlines())
+    line_start_offsets: list[int] = []
+    offset = 0
+    for raw_line in normalized_text.splitlines(keepends=True):
+        line_start_offsets.append(offset)
+        offset += len(raw_line)
     headings: list[tuple[int, int, int, str]] = []
 
     open_fence: tuple[str, int] | None = None
@@ -94,7 +102,12 @@ def parse_markdown_document(text: str) -> MarkdownDocument:
                 end_index=next_start,
             )
         )
-    return MarkdownDocument(lines=lines, sections=tuple(sections))
+    return MarkdownDocument(
+        text=normalized_text,
+        lines=lines,
+        line_start_offsets=tuple(line_start_offsets),
+        sections=tuple(sections),
+    )
 
 
 def render_markdown_outline_entries(document: MarkdownDocument) -> list[str]:
@@ -136,10 +149,15 @@ def replace_markdown_section_body(
     new_body: str,
 ) -> str:
     """Replace only one markdown section body and return the updated file text."""
-    prefix = list(document.lines[:section.body_start_index])
-    suffix = list(document.lines[section.end_index:])
-    updated_lines = prefix + _render_section_body_lines(new_body) + suffix
-    return "\n".join(updated_lines)
+    body_start, body_end = _section_body_offsets(document, section)
+    existing_body = document.text[body_start:body_end]
+    leading_padding, trailing_padding = _preserve_section_padding(
+        existing_body,
+        has_following_section=section.end_index < len(document.lines),
+    )
+    replacement_body = new_body.strip("\n")
+    replacement = f"{leading_padding}{replacement_body}{trailing_padding}"
+    return f"{document.text[:body_start]}{replacement}{document.text[body_end:]}"
 
 
 def describe_markdown_section(section: MarkdownSection) -> str:
@@ -177,9 +195,42 @@ def _normalize_heading(value: str) -> str:
     return _WHITESPACE_RE.sub(" ", value.strip()).casefold()
 
 
-def _render_section_body_lines(new_body: str) -> list[str]:
-    """Render a replacement section body with stable markdown spacing."""
-    if not new_body.strip():
-        return [""]
-    body_lines = new_body.strip("\n").split("\n")
-    return ["", *body_lines, ""]
+def _line_start_offset(document: MarkdownDocument, line_index: int) -> int:
+    """Return the character offset where one logical line starts."""
+    if line_index < len(document.line_start_offsets):
+        return document.line_start_offsets[line_index]
+    return len(document.text)
+
+
+def _section_body_offsets(document: MarkdownDocument, section: MarkdownSection) -> tuple[int, int]:
+    """Return the character offsets for one section body slice."""
+    return (
+        _line_start_offset(document, section.body_start_index),
+        _line_start_offset(document, section.end_index),
+    )
+
+
+def _preserve_section_padding(existing_body: str, *, has_following_section: bool) -> tuple[str, str]:
+    """Preserve the section's boundary newlines without reformatting the file."""
+    if not existing_body:
+        trailing = "\n" if has_following_section else ""
+        return "", trailing
+
+    if existing_body.strip("\n"):
+        leading_count = 0
+        while leading_count < len(existing_body) and existing_body[leading_count] == "\n":
+            leading_count += 1
+
+        trailing_count = 0
+        while len(existing_body) - trailing_count > leading_count and existing_body[-(trailing_count + 1)] == "\n":
+            trailing_count += 1
+
+        leading = existing_body[:leading_count]
+        trailing = existing_body[len(existing_body) - trailing_count:] if trailing_count else ""
+        return leading, trailing
+
+    leading = "\n"
+    trailing_count = max(len(existing_body) - 1, 0)
+    if has_following_section:
+        trailing_count = max(trailing_count, 1)
+    return leading, "\n" * trailing_count

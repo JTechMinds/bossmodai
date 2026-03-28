@@ -167,7 +167,7 @@ def handle_commands(
     virtual_cats = list_virtual_categories()
     v_lines: list[str] = []
     for cat, desc, cmd_names in virtual_cats:
-        preview = ", ".join(cmd_names[:4])
+        preview = ", ".join(cmd_names)
         v_lines.append(f"  {cat} — {desc} ({preview})")
     sections.insert(0, ("AVAILABLE CATEGORIES", v_lines))
 

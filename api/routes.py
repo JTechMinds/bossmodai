@@ -1398,16 +1398,20 @@ async def reject_cli_request(request_id: str, body: CliApprovalDecisionBody | No
 # Simulator — policy dry-run (lightweight check without execution)
 @router.post("/cli-policy/simulate")
 async def simulate_cli_policy(body: CliPolicySimulateBody):
-    from core.bm_cli.policy_engine import policy_engine
+    from core.bm_cli.policies import evaluate_command_policy
     from core.bm_cli.runtime import VIRTUAL_COMMANDS
-    if not body.command.strip():
+    command = body.command.strip()
+    if not command:
         raise HTTPException(400, "Command cannot be empty")
-    decision = policy_engine.evaluate_dry_run(body.command.strip(), VIRTUAL_COMMANDS, body.agent_id)
+    try:
+        decision = evaluate_command_policy(command, VIRTUAL_COMMANDS, body.agent_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     matched_rule = None
     if decision.matched_rule_id:
         matched_rule = db.get_cli_policy_rule(decision.matched_rule_id)
     return {
-        "command": body.command.strip(),
+        "command": command,
         "agent_id": body.agent_id,
         "decision": {
             "allowed": decision.allowed,
