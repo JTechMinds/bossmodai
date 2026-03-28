@@ -87,6 +87,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_model_self_queue", "", "llm"),
     ("default_temperature", "0.7", "llm"),
     ("default_max_tokens", "8192", "llm"),
+    ("llm_request_timeout_seconds", "120", "llm"),
+    ("managed_writer_max_batch_files", "8", "llm"),
+    ("managed_writer_max_sections_per_file", "8", "llm"),
 
     # ── Context window ──
     ("context_recent_work_artifacts", "5", "context"),
@@ -122,6 +125,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── CLI safety ──
     ("cli_max_write_bytes", "262144", "advanced"),
+    ("cli_max_read_lines", "200", "advanced"),
 
     # ── CLI policy ──
     ("cli_shell_enabled", "false", "cli_policy"),

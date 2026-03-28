@@ -19,4 +19,10 @@ def evaluate_parsed_command_policy(
     agent_id: str | None = None,
 ) -> CommandPolicyDecision:
     """Return the policy decision for one parsed BossMod CLI command."""
+    if parsed.name in virtual_commands:
+        return CommandPolicyDecision(
+            allowed=True,
+            tier="virtual",
+            executor="virtual",
+        )
     return policy_engine.evaluate(parsed.raw, virtual_commands, agent_id)

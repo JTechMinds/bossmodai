@@ -111,6 +111,13 @@ def _tier_tag(tier: str) -> str:
     return tags.get(tier, f"({tier})")
 
 
+def _render_virtual_discovery_line(cmd) -> str:
+    """Render one compact command line with syntax and AI-facing usage hint."""
+    alias_suffix = f" [aliases: {', '.join(cmd.aliases)}]" if cmd.aliases else ""
+    hint = cmd.discovery_hint or cmd.description
+    return f"  {cmd.usage_syntax} — {hint}{alias_suffix}"
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
@@ -126,8 +133,8 @@ def handle_help(
     lines = [
         "Run commands by typing their name. Browse by category or search to find what you need.",
         "",
-        "  categories        — browse commands grouped by category",
-        "  fsearch <query>   — search for a command by keyword",
+        "  categories        — browse command categories",
+        "  fsearch <query>   — search commands with syntax and usage hints",
         "  learn <command>   — detailed usage for a specific command",
     ]
 
@@ -162,7 +169,7 @@ def handle_commands(
     for cat, desc, cmd_names in virtual_cats:
         preview = ", ".join(cmd_names[:4])
         v_lines.append(f"  {cat} — {desc} ({preview})")
-    sections.append(("AVAILABLE CATEGORIES", v_lines))
+    sections.insert(0, ("AVAILABLE CATEGORIES", v_lines))
 
     # Shell categories (only when enabled)
     shell_on = _shell_enabled()
@@ -177,7 +184,7 @@ def handle_commands(
         else:
             sections.append(("ADDITIONAL CATEGORIES (policy-controlled)", ["No policy rules configured."]))
 
-    footer_lines = ['Type "fsearch <category|keyword>" to drill into a category.']
+    footer_lines = ['Type "fsearch <category|keyword>" to review the commands inside a category.']
     sections.append(("HINT", footer_lines))
 
     return success_result(
@@ -212,7 +219,7 @@ def handle_fsearch(
     for cat, cmds in v_matches.items():
         lines: list[str] = []
         for cmd in cmds:
-            lines.append(f"  {cmd.name} — {cmd.description}")
+            lines.append(_render_virtual_discovery_line(cmd))
         sections.append((f" {cat.upper()}", lines))
         found = True
 
@@ -241,7 +248,7 @@ def handle_fsearch(
             cwd=ctx.cwd,
         )
 
-    footer_lines = ['Type "learn <command>" for detailed usage on any command.']
+    footer_lines = ['Type "learn <command>" only when the one-line usage hint is not enough.']
     sections.append(("HINT", footer_lines))
 
     return success_result(
@@ -276,9 +283,12 @@ def handle_learn(
             f"  Command:   {vcmd.name}",
             f"  Category:  {vcmd.category}",
             f"  Usage:     {vcmd.usage_syntax}",
-            "",
-            vcmd.help_text,
         ]
+        if vcmd.aliases:
+            lines.append(f"  Aliases:   {', '.join(vcmd.aliases)}")
+        if vcmd.discovery_hint:
+            lines.extend(["", f"Quick use: {vcmd.discovery_hint}"])
+        lines.extend(["", vcmd.help_text])
         return success_result(
             command=parsed.raw,
             detail=f'Usage info for "{cmd_name}"',

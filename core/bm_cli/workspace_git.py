@@ -48,13 +48,19 @@ def ensure_agent_workspace_repo(agent: Agent) -> Path:
 
 def auto_commit_workspace_change(agent: Agent, virtual_path: str, *, reason: str) -> str | None:
     """Stage and commit one tracked workspace change when appropriate."""
-    if not _is_trackable_virtual_path(virtual_path):
+    return commit_workspace_changes(agent, [virtual_path], reason=reason)
+
+
+def commit_workspace_changes(agent: Agent, virtual_paths: list[str], *, reason: str) -> str | None:
+    """Stage and commit a batch of tracked workspace changes when appropriate."""
+    trackable_paths = [path for path in virtual_paths if _is_trackable_virtual_path(path)]
+    if not trackable_paths:
         ensure_agent_workspace_repo(agent)
         return None
 
     root = ensure_agent_workspace_repo(agent)
-    relative_path = _repo_relative_path(agent, virtual_path)
-    _run_git(root, ["add", "--", ".gitignore", relative_path], agent=agent)
+    relative_paths = list(dict.fromkeys(_repo_relative_path(agent, path) for path in trackable_paths))
+    _run_git(root, ["add", "--", ".gitignore", *relative_paths], agent=agent)
     if not _has_staged_changes(root):
         return None
 

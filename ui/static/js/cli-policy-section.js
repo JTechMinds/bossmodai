@@ -13,6 +13,7 @@ const CliPolicySection = (() => {
     let agentsFetched = false;
     let simulationResults = [];
 
+
     // ─── Helpers ───
 
     const esc = BossModUtils.escapeHtml;
@@ -146,7 +147,140 @@ const CliPolicySection = (() => {
     //  RULES TAB
     // ═══════════════════════════════════════════════════════════════
 
+    const TIER_ORDER  = { never_allowed: 0, approval_required: 1, always_allowed: 2 };
+    const TIER_BORDER = { never_allowed: '#ef4444', approval_required: '#f59e0b', always_allowed: '#10b981' };
+    const TIER_LABEL  = { never_allowed: 'Never Allowed', approval_required: 'Approval Required', always_allowed: 'Always Allowed' };
+    const TIER_SHORT  = { never_allowed: 'Never', approval_required: 'Approval', always_allowed: 'Allowed' };
+    const TIER_CSS    = { never_allowed: 'tier-never', approval_required: 'tier-approval', always_allowed: 'tier-allowed' };
+
+    let sortCol = null;
+    let sortDir = 'asc';
+    let filterTier = null;
+    let searchText = '';
+    let _rulesTabEl = null;
+
+    function getFilteredSorted() {
+        let rows = [...rulesCache];
+        if (filterTier) rows = rows.filter(r => r.tier === filterTier);
+        if (searchText) {
+            const q = searchText.toLowerCase();
+            rows = rows.filter(r =>
+                r.pattern.toLowerCase().includes(q) ||
+                (r.description || '').toLowerCase().includes(q) ||
+                (r.category || '').toLowerCase().includes(q) ||
+                r.match_mode.toLowerCase().includes(q) ||
+                r.tier.replace(/_/g, ' ').includes(q) ||
+                agentName(r.agent_id).toLowerCase().includes(q) ||
+                String(r.priority).includes(q)
+            );
+        }
+        if (sortCol) {
+            rows.sort((a, b) => {
+                let va, vb;
+                if (sortCol === 'tier') {
+                    va = TIER_ORDER[a.tier] ?? 9;
+                    vb = TIER_ORDER[b.tier] ?? 9;
+                } else {
+                    va = (a[sortCol] ?? '');
+                    vb = (b[sortCol] ?? '');
+                    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+                }
+                const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+                return sortDir === 'asc' ? cmp : -cmp;
+            });
+        } else {
+            rows.sort((a, b) => {
+                const td = (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9);
+                return td !== 0 ? td : b.priority - a.priority;
+            });
+        }
+        return rows;
+    }
+
+    function renderTableBody() {
+        const tbody = document.getElementById('cli-rules-tbody');
+        const countEl = document.getElementById('cli-rules-count');
+        if (!tbody) return;
+
+        const rows = getFilteredSorted();
+
+        if (rows.length === 0) {
+            tbody.innerHTML = `
+                <tr><td colspan="7" class="text-center py-10 text-bm-muted text-sm">
+                    ${rulesCache.length === 0
+                        ? 'No rules configured. Add a rule or seed defaults to get started.'
+                        : 'No rules match the current filters.'}
+                </td></tr>`;
+        } else {
+            let html = '';
+            for (const rule of rows) {
+                const checked = rule.enabled !== false;
+                const tierCss = TIER_CSS[rule.tier] || '';
+                const tierShort = TIER_SHORT[rule.tier] || '';
+                html += `
+                <tr class="bm-rule-row" data-rule-id="${rule.id}">
+                    <td class="bm-rule-cmd">${esc(rule.pattern)}</td>
+                    <td><span class="bm-tier-label ${tierCss}">${esc(tierShort)}</span></td>
+                    <td style="color:#475569;font-size:12.5px">${esc(rule.description || '')}</td>
+                    <td style="color:#475569;font-size:12.5px">${esc(rule.category || '')}</td>
+                    <td style="color:#475569;font-size:12.5px">${esc(rule.match_mode)}</td>
+                    <td>
+                        <button class="bm-toggle" role="switch" aria-checked="${checked}"
+                                data-toggle-rule="${rule.id}" title="${checked ? 'Enabled' : 'Disabled'}">
+                            <span class="bm-toggle-knob"></span>
+                        </button>
+                    </td>
+                    <td>
+                        <div class="bm-rule-actions">
+                            <button class="bm-action-btn" data-edit-rule="${rule.id}" title="Edit">
+                                <i data-lucide="pencil" class="w-3.5 h-3.5 text-bm-muted"></i>
+                            </button>
+                            <button class="bm-action-btn bm-delete" data-delete-rule="${rule.id}" title="Delete">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5 text-red-400"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+
+        if (countEl) {
+            const total = rulesCache.length;
+            const shown = rows.length;
+            countEl.textContent = shown === total
+                ? `${total} rule${total !== 1 ? 's' : ''}`
+                : `${shown} of ${total} rules`;
+        }
+
+        icons(tbody);
+    }
+
+    function handleSort(col) {
+        if (sortCol === col) {
+            if (sortDir === 'asc') { sortDir = 'desc'; }
+            else { sortCol = null; sortDir = 'asc'; }
+        } else {
+            sortCol = col;
+            sortDir = 'asc';
+        }
+        // Update header indicators
+        document.querySelectorAll('.bm-th').forEach(th => {
+            const icon = th.querySelector('.bm-sort-icon');
+            if (!icon) return;
+            if (th.dataset.sort === sortCol) {
+                th.classList.add('bm-sorted');
+                icon.textContent = sortDir === 'asc' ? '\u25B4' : '\u25BE';
+            } else {
+                th.classList.remove('bm-sorted');
+                icon.textContent = '\u25BE';
+            }
+        });
+        renderTableBody();
+    }
+
     async function renderRulesTab(el) {
+        _rulesTabEl = el;
         try {
             const res = await fetch('/api/cli-policy/rules');
             rulesCache = await res.json();
@@ -155,8 +289,14 @@ const CliPolicySection = (() => {
             return;
         }
 
-        let html = `
-            <div class="flex items-center justify-between mb-4">
+        const tierChip = (value, label) => {
+            const active = filterTier === value;
+            return `<button type="button" data-tier-filter="${value || ''}"
+                            class="bm-tier-chip ${active ? 'active' : ''}">${label}</button>`;
+        };
+
+        el.innerHTML = `
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div class="flex items-center gap-2">
                     <button id="btn-add-rule"
                             class="flex items-center gap-2 px-3 py-2 bg-bm-accent text-white rounded-lg
@@ -169,72 +309,117 @@ const CliPolicySection = (() => {
                         <i data-lucide="database" class="w-4 h-4"></i> Seed Defaults
                     </button>
                 </div>
-                <span class="text-xs text-bm-muted">${rulesCache.length} rule${rulesCache.length !== 1 ? 's' : ''}</span>
+                <div class="flex items-center gap-2">
+                    ${tierChip(null, 'All')}
+                    ${tierChip('never_allowed', 'Never Allowed')}
+                    ${tierChip('approval_required', 'Approval Required')}
+                    ${tierChip('always_allowed', 'Always Allowed')}
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="relative">
+                        <i data-lucide="search" class="w-3.5 h-3.5 text-bm-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                        <input id="cli-rules-search" type="text" placeholder="Search rules..."
+                               value="${esc(searchText)}"
+                               class="pl-8 pr-3 py-1.5 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text w-52
+                                      focus:outline-none focus:border-bm-accent focus:ring-1 focus:ring-bm-accent/30">
+                    </div>
+                    <span id="cli-rules-count" class="text-xs text-bm-muted whitespace-nowrap"></span>
+                </div>
             </div>
-            <div id="cli-rule-form-slot"></div>`;
+            <div id="cli-rule-form-slot"></div>
+            <div class="bm-rules-table-wrap">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr>
+                            <th class="bm-th" data-sort="pattern" style="width:16%">
+                                Command <span class="bm-sort-icon">\u25BE</span>
+                            </th>
+                            <th class="bm-th" data-sort="tier" style="width:11%">
+                                Tier <span class="bm-sort-icon">\u25BE</span>
+                            </th>
+                            <th class="bm-th" data-sort="description" style="width:35%">
+                                Description <span class="bm-sort-icon">\u25BE</span>
+                            </th>
+                            <th class="bm-th" data-sort="category" style="width:11%">
+                                Category <span class="bm-sort-icon">\u25BE</span>
+                            </th>
+                            <th class="bm-th" data-sort="match_mode" style="width:7%">
+                                Mode <span class="bm-sort-icon">\u25BE</span>
+                            </th>
+                            <th class="bm-th-nosort" style="width:70px">Enabled</th>
+                            <th class="bm-th-nosort" style="width:70px"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cli-rules-tbody"></tbody>
+                </table>
+            </div>`;
 
-        if (rulesCache.length === 0) {
-            html += `
-                <div class="text-center py-12 text-bm-muted">
-                    <i data-lucide="shield-off" class="w-10 h-10 mx-auto mb-3 opacity-40"></i>
-                    <p class="text-sm">No rules configured. Add a rule or seed defaults to get started.</p>
-                </div>`;
-        } else {
-            // Sort: by tier order, then priority descending
-            const tierOrder = { never_allowed: 0, approval_required: 1, always_allowed: 2 };
-            const sorted = [...rulesCache].sort((a, b) => {
-                const td = (tierOrder[a.tier] ?? 9) - (tierOrder[b.tier] ?? 9);
-                if (td !== 0) return td;
-                return b.priority - a.priority;
-            });
-
-            html += '<div class="space-y-2">';
-            for (const rule of sorted) {
-                const scope = rule.agent_id ? esc(agentName(rule.agent_id)) : 'Global';
-                html += `
-                    <div class="border border-bm-border rounded-lg p-3 bg-white flex items-center gap-3 flex-wrap" data-rule-row="${rule.id}">
-                        <div class="shrink-0">${tierBadge(rule.tier)}</div>
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <code class="text-sm font-mono bg-bm-bg px-2 py-0.5 rounded">${esc(rule.pattern)}</code>
-                                <span class="text-xs text-bm-muted border border-bm-border rounded px-1.5 py-0.5">${esc(rule.match_mode)}</span>
-                                <span class="text-xs text-blue-400 bg-blue-500/10 rounded px-1.5 py-0.5">${esc(rule.category)}</span>
-                                <span class="text-xs text-bm-muted">${esc(scope)}</span>
-                            </div>
-                            ${rule.description ? `<p class="text-xs text-bm-muted mt-1">${esc(rule.description)}</p>` : ''}
-                        </div>
-                        <div class="flex items-center gap-2 shrink-0">
-                            <span class="text-[10px] text-bm-muted">pri ${rule.priority}</span>
-                            <button data-toggle-enabled="${rule.id}"
-                                    class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors
-                                           ${rule.enabled ? 'bg-bm-accent' : 'bg-slate-300'}"
-                                    role="switch" aria-checked="${rule.enabled}" title="${rule.enabled ? 'Enabled' : 'Disabled'}">
-                                <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform
-                                             ${rule.enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-                            </button>
-                            <button data-edit-rule="${rule.id}"
-                                    class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors" title="Edit">
-                                <i data-lucide="pencil" class="w-3.5 h-3.5 text-bm-muted"></i>
-                            </button>
-                            <button data-delete-rule="${rule.id}"
-                                    class="p-1.5 rounded-lg hover:bg-red-50 transition-colors" title="Delete">
-                                <i data-lucide="trash-2" class="w-3.5 h-3.5 text-red-400"></i>
-                            </button>
-                        </div>
-                    </div>`;
-            }
-            html += '</div>';
-        }
-
-        el.innerHTML = html;
         icons(el);
+        renderTableBody();
 
-        // Add rule
-        document.getElementById('btn-add-rule').addEventListener('click', () => {
-            showRuleForm(null);
+        // ── Sort headers ──
+        el.querySelectorAll('.bm-th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => handleSort(th.dataset.sort));
         });
 
-        // Seed defaults
+        // ── Tier filter chips ──
+        el.querySelectorAll('[data-tier-filter]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const val = btn.dataset.tierFilter;
+                filterTier = val || null;
+                el.querySelectorAll('.bm-tier-chip').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                renderTableBody();
+            });
+        });
+
+        // ── Search ──
+        document.getElementById('cli-rules-search').addEventListener('input', (e) => {
+            searchText = e.target.value;
+            renderTableBody();
+        });
+
+        // ── Delegated click handlers on tbody ──
+        document.getElementById('cli-rules-tbody').addEventListener('click', async (e) => {
+            const toggle = e.target.closest('[data-toggle-rule]');
+            const edit = e.target.closest('[data-edit-rule]');
+            const del = e.target.closest('[data-delete-rule]');
+
+            if (toggle) {
+                const rule = rulesCache.find(r => r.id === toggle.dataset.toggleRule);
+                if (!rule) return;
+                try {
+                    await fetch(`/api/cli-policy/rules/${rule.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: !rule.enabled }),
+                    });
+                    rule.enabled = !rule.enabled;
+                    renderTableBody();
+                } catch { /* silent */ }
+            }
+
+            if (edit) {
+                const rule = rulesCache.find(r => r.id === edit.dataset.editRule);
+                if (rule) showRuleForm(rule);
+            }
+
+            if (del) {
+                if (!confirm('Delete this rule?')) return;
+                try {
+                    await fetch(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
+                    rulesCache = rulesCache.filter(r => r.id !== del.dataset.deleteRule);
+                    renderTableBody();
+                } catch {
+                    alert('Failed to delete rule.');
+                }
+            }
+        });
+
+        // ── Add rule ──
+        document.getElementById('btn-add-rule').addEventListener('click', () => showRuleForm(null));
+
+        // ── Seed defaults ──
         document.getElementById('btn-seed-defaults').addEventListener('click', async () => {
             if (!confirm('This will delete ALL existing rules and replace them with the defaults. Continue?')) return;
             try {
@@ -243,44 +428,6 @@ const CliPolicySection = (() => {
             } catch {
                 alert('Failed to seed defaults.');
             }
-        });
-
-        // Toggle enabled
-        el.querySelectorAll('[data-toggle-enabled]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const ruleId = btn.dataset.toggleEnabled;
-                const rule = rulesCache.find(r => r.id === ruleId);
-                if (!rule) return;
-                try {
-                    await fetch(`/api/cli-policy/rules/${ruleId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: !rule.enabled }),
-                    });
-                    renderRulesTab(el);
-                } catch { /* silent */ }
-            });
-        });
-
-        // Edit rule
-        el.querySelectorAll('[data-edit-rule]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const rule = rulesCache.find(r => r.id === btn.dataset.editRule);
-                if (rule) showRuleForm(rule);
-            });
-        });
-
-        // Delete rule
-        el.querySelectorAll('[data-delete-rule]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (!confirm('Delete this rule?')) return;
-                try {
-                    await fetch(`/api/cli-policy/rules/${btn.dataset.deleteRule}`, { method: 'DELETE' });
-                    renderRulesTab(el);
-                } catch {
-                    alert('Failed to delete rule.');
-                }
-            });
         });
     }
 

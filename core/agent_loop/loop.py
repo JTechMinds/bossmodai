@@ -33,7 +33,15 @@ from core.agent_loop.turn_rules import (
     validate_action_for_turn,
 )
 from core.bm_cli import BossModCliCall, execute_bm_cli, maybe_parse_bm_cli_call
-from core.bm_cli.managed_writer import is_managed_write_request, run_managed_write
+from core.bm_cli.managed_writer import (
+    ManagedWriteProgress,
+    is_managed_batch_write_request,
+    is_managed_section_rewrite_request,
+    is_managed_write_request,
+    run_managed_batch_write,
+    run_managed_section_rewrite,
+    run_managed_write,
+)
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
@@ -176,6 +184,7 @@ async def run_turn(
                 approval_payload.get("command", ""),
                 approval_payload.get("content"),
                 approval_request_id=approval_payload.get("approval_request_id", ""),
+                cwd=approval_payload.get("cwd"),
                 trigger_type=trigger_type,
             )
             approval_context_msg = cli_result.prompt_content
@@ -385,27 +394,59 @@ async def run_turn(
         active_activity_before_action = active_activity
 
         # Execute action
-        if action_name == "bm_cli" and is_managed_write_request(
-            str(action.get("command") or ""),
-            action.get("content") if isinstance(action.get("content"), str) else None,
-        ):
-            managed_write = await run_managed_write(
-                agent=agent,
-                state=state,
-                command=str(action.get("command") or ""),
-                model=model,
-                api_config=api_config,
-                base_context=context,
-                action_response=response.content,
-                trigger_type=trigger_type,
-            )
-            total_prompt_tokens += managed_write.prompt_tokens
-            total_completion_tokens += managed_write.completion_tokens
-            total_tokens += managed_write.total_tokens
-            step_prompt_tokens += managed_write.prompt_tokens
-            step_completion_tokens += managed_write.completion_tokens
-            step_total_tokens += managed_write.total_tokens
-            result = _cli_result_to_turn_result(agent, managed_write.cli_result)
+        if action_name == "bm_cli":
+            cli_command = str(action.get("command") or "")
+            cli_content = action.get("content") if isinstance(action.get("content"), str) else None
+            managed_write = None
+            progress_reporter = _build_managed_writer_progress_reporter(agent, task_id=active_task_id)
+            if is_managed_write_request(cli_command, cli_content):
+                managed_write = await run_managed_write(
+                    agent=agent,
+                    state=state,
+                    command=cli_command,
+                    model=model,
+                    api_config=api_config,
+                    base_context=context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
+                )
+            elif is_managed_batch_write_request(cli_command, cli_content):
+                managed_write = await run_managed_batch_write(
+                    agent=agent,
+                    state=state,
+                    command=cli_command,
+                    content=cli_content or "",
+                    model=model,
+                    api_config=api_config,
+                    base_context=context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
+                )
+            elif is_managed_section_rewrite_request(cli_command, cli_content):
+                managed_write = await run_managed_section_rewrite(
+                    agent=agent,
+                    state=state,
+                    command=cli_command,
+                    content=cli_content or "",
+                    model=model,
+                    api_config=api_config,
+                    base_context=context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
+                )
+            if managed_write is not None:
+                total_prompt_tokens += managed_write.prompt_tokens
+                total_completion_tokens += managed_write.completion_tokens
+                total_tokens += managed_write.total_tokens
+                step_prompt_tokens += managed_write.prompt_tokens
+                step_completion_tokens += managed_write.completion_tokens
+                step_total_tokens += managed_write.total_tokens
+                result = _cli_result_to_turn_result(agent, managed_write.cli_result)
+            else:
+                result = await execute_action(action, agent, state, trigger, token_model=response.model)
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = activity_runtime.get_active_task_id(agent.id)
@@ -898,6 +939,11 @@ async def _run_decision_turn(
                     start=start,
                 )
 
+            managed_write = None
+            progress_reporter = _build_managed_writer_progress_reporter(
+                agent,
+                task_id=activity_runtime.get_active_task_id(agent.id),
+            )
             if is_managed_write_request(cli_call.command, cli_call.content):
                 managed_write = await run_managed_write(
                     agent=agent,
@@ -908,7 +954,35 @@ async def _run_decision_turn(
                     base_context=current_context,
                     action_response=response.content,
                     trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
                 )
+            elif is_managed_batch_write_request(cli_call.command, cli_call.content):
+                managed_write = await run_managed_batch_write(
+                    agent=agent,
+                    state=state,
+                    command=cli_call.command,
+                    content=cli_call.content or "",
+                    model=model,
+                    api_config=api_config,
+                    base_context=current_context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
+                )
+            elif is_managed_section_rewrite_request(cli_call.command, cli_call.content):
+                managed_write = await run_managed_section_rewrite(
+                    agent=agent,
+                    state=state,
+                    command=cli_call.command,
+                    content=cli_call.content or "",
+                    model=model,
+                    api_config=api_config,
+                    base_context=current_context,
+                    action_response=response.content,
+                    trigger_type=trigger_type,
+                    progress_callback=progress_reporter,
+                )
+            if managed_write is not None:
                 total_prompt_tokens += managed_write.prompt_tokens
                 total_completion_tokens += managed_write.completion_tokens
                 total_tokens += managed_write.total_tokens
@@ -1375,6 +1449,60 @@ def _get_current_activity(agent_id: str) -> dict[str, Any] | None:
     }
 
 
+def _build_managed_writer_progress_reporter(
+    agent: Agent,
+    *,
+    task_id: str | None,
+):
+    """Return a runtime-owned reporter for managed-writer progress updates."""
+    last_detail: str | None = None
+
+    async def _report(update: ManagedWriteProgress) -> None:
+        nonlocal last_detail
+
+        detail = (update.detail or "").strip()
+        if not detail:
+            return
+
+        now = datetime.now(timezone.utc)
+        active = activity_runtime.get_active_work_activity(agent.id)
+        if active and (task_id is None or active.task_id == task_id):
+            db.update_activity(active.id, detail=detail)
+
+        if task_id:
+            fields: dict[str, Any] = {
+                "status_note": detail,
+                "watchdog_pinged_at": None,
+                "last_heartbeat_at": now,
+                "last_activity": now,
+            }
+            if update.counts_as_progress:
+                fields["last_progress_at"] = now
+            db.update_task(task_id, **fields)
+
+        if detail == last_detail:
+            return
+        last_detail = detail
+
+        await manager.broadcast_activity(
+            event="managed_writer_progress",
+            detail=f"{agent.name}: {detail}",
+            agent_name=agent.name,
+            extra={
+                "stage": update.stage,
+                "path": update.path,
+                "file_index": update.file_index,
+                "file_count": update.file_count,
+                "section_index": update.section_index,
+                "section_count": update.section_count,
+                "strategy": update.strategy,
+                "counts_as_progress": update.counts_as_progress,
+            },
+        )
+
+    return _report
+
+
 def _get_current_session(agent_id: str, trigger: dict[str, Any]) -> dict[str, Any] | None:
     """Fetch the active meeting session context when relevant."""
     session_id = trigger.get("session_id")
@@ -1632,19 +1760,54 @@ def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
     }
     cli_data = cli_result.data or {}
     if cli_data.get("managed_writer_attempted") or cli_data.get("managed_writer_used"):
-        chunks = int(cli_data.get("managed_chunks") or 0)
+        call_count = int(cli_data.get("managed_calls") or cli_data.get("managed_chunks") or 0)
         completed = bool(cli_data.get("managed_writer_completed") or cli_data.get("managed_writer_used"))
-        suffix = "via managed writer" if completed else "after managed writer attempt"
-        result["detail"] = f"{cli_result.detail} {suffix} ({chunks} chunk{'s' if chunks != 1 else ''})"
+        strategy = str(cli_data.get("managed_strategy") or "managed")
+        strategy_label = strategy.replace("_", "-")
+        section_count = int(cli_data.get("managed_sections") or 0)
+        batch_file_count = int(cli_data.get("batch_file_count") or 0)
+        section_suffix = (
+            f", {section_count} section{'s' if section_count != 1 else ''}"
+            if section_count > 0 and strategy == "sectioned"
+            else ""
+        )
+        if batch_file_count > 0:
+            suffix = (
+                f"via batch writer ({batch_file_count} file{'s' if batch_file_count != 1 else ''}, "
+                f"{call_count} call{'s' if call_count != 1 else ''}, {strategy_label}{section_suffix})"
+                if completed
+                else (
+                    f"after batch writer attempt ({batch_file_count} file{'s' if batch_file_count != 1 else ''}, "
+                    f"{call_count} call{'s' if call_count != 1 else ''}, {strategy_label}{section_suffix})"
+                )
+            )
+        else:
+            suffix = (
+                f"via managed writer ({strategy_label}, {call_count} call{'s' if call_count != 1 else ''}{section_suffix})"
+                if completed
+                else f"after managed writer attempt ({strategy_label}, {call_count} call{'s' if call_count != 1 else ''}{section_suffix})"
+            )
+        result["detail"] = f"{cli_result.detail} {suffix}"
         result["managed_writer"] = {
             "attempted": True,
             "used": bool(cli_data.get("managed_writer_used")),
             "completed": completed,
-            "chunks": chunks,
+            "strategy": strategy,
+            "calls": call_count,
+            "chunks": call_count,
+            "sections": section_count,
             "bytes": int(cli_data.get("managed_bytes") or 0),
             "prompt_tokens": int(cli_data.get("managed_prompt_tokens") or 0),
             "completion_tokens": int(cli_data.get("managed_completion_tokens") or 0),
             "total_tokens": int(cli_data.get("managed_total_tokens") or 0),
+        }
+    if cli_data.get("batch_writer_attempted") or cli_data.get("batch_writer_used"):
+        result["batch_writer"] = {
+            "attempted": True,
+            "used": bool(cli_data.get("batch_writer_used")),
+            "completed": bool(cli_data.get("batch_writer_completed") or cli_data.get("batch_writer_used")),
+            "file_count": int(cli_data.get("batch_file_count") or 0),
+            "files": cli_data.get("batch_files") or [],
         }
     return result
 

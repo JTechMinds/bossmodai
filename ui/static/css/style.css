@@ -303,6 +303,194 @@
     opacity: 0.7;
 }
 
+/* ─── CLI Policy rules table ─── */
+.bm-rules-table-wrap {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.bm-rules-table-wrap table {
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+.bm-th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.bm-th:hover {
+    color: #64748b;
+}
+.bm-th .bm-sort-icon {
+    opacity: 0;
+    margin-left: 3px;
+    transition: opacity 0.15s;
+}
+.bm-th:hover .bm-sort-icon {
+    opacity: 0.3;
+}
+.bm-th.bm-sorted .bm-sort-icon {
+    opacity: 1;
+    color: #2563eb;
+}
+.bm-th-nosort {
+    padding: 10px 12px;
+    text-align: center;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.bm-rule-row {
+    border-bottom: 1px solid #f1f5f9;
+    transition: background-color 0.1s;
+}
+.bm-rule-row:last-child {
+    border-bottom: none;
+}
+.bm-rule-row:hover {
+    background-color: #f8fafc;
+}
+.bm-rule-row td {
+    padding: 0 12px;
+    height: 38px;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bm-rule-actions {
+    opacity: 0;
+    transition: opacity 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+.bm-rule-row:hover .bm-rule-actions {
+    opacity: 1;
+}
+.bm-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.15s;
+    padding: 0;
+}
+.bm-action-btn:hover {
+    background-color: #f1f5f9;
+}
+.bm-action-btn.bm-delete:hover {
+    background-color: #fef2f2;
+}
+.bm-toggle {
+    position: relative;
+    display: inline-flex;
+    height: 20px;
+    width: 36px;
+    align-items: center;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: background-color 0.15s;
+    border: none;
+    padding: 0;
+    flex-shrink: 0;
+}
+.bm-toggle[aria-checked="true"] {
+    background-color: #2563eb;
+}
+.bm-toggle[aria-checked="false"] {
+    background-color: #cbd5e1;
+}
+.bm-toggle-knob {
+    display: inline-block;
+    height: 14px;
+    width: 14px;
+    border-radius: 9999px;
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,.12);
+    transition: transform 0.15s;
+}
+.bm-toggle[aria-checked="true"] .bm-toggle-knob {
+    transform: translateX(16px);
+}
+.bm-toggle[aria-checked="false"] .bm-toggle-knob {
+    transform: translateX(2px);
+}
+.bm-tier-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    background: transparent;
+    transition: all 0.15s;
+}
+.bm-tier-chip:hover {
+    border-color: #94a3b8;
+}
+.bm-tier-chip.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+}
+.bm-rule-row:nth-child(even) {
+    background-color: #f8fafc;
+}
+.bm-rule-row:hover {
+    background: #f1f5f9;
+}
+.bm-rule-cmd {
+    font-family: ui-monospace, SFMono-Regular, 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #0f172a;
+    padding-left: 16px !important;
+}
+.bm-tier-label {
+    display: inline-block;
+    margin-left: 8px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+.bm-tier-label.tier-never    { color: #dc2626; background: rgba(239,68,68,.1); }
+.bm-tier-label.tier-approval { color: #d97706; background: rgba(245,158,11,.1); }
+.bm-tier-label.tier-allowed  { color: #059669; background: rgba(16,185,129,.1); }
+
 /* ─── Responsive: hide gutter on mobile ─── */
 @media (max-width: 639px) {
     .gutter {

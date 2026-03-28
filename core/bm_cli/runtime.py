@@ -13,11 +13,16 @@ from core.bm_cli.artifacts import register_cli_artifacts
 from core.bm_cli.audit import record_bm_cli_event
 from core.bm_cli.fs_commands import (
     handle_append,
+    handle_batch_write,
     handle_cat,
     handle_cd,
+    handle_outline,
     handle_ls,
     handle_mkdir,
     handle_pwd,
+    handle_read_range,
+    handle_replace_section,
+    handle_rewrite_section,
     handle_write,
 )
 from core.bm_cli.git_commands import handle_git
@@ -55,9 +60,14 @@ _HANDLERS: dict[str, CliHandler] = {
     "cd": handle_cd,
     "ls": handle_ls,
     "cat": handle_cat,
+    "outline": handle_outline,
+    "read-range": handle_read_range,
     "mkdir": handle_mkdir,
     "write": handle_write,
     "append": handle_append,
+    "batch-write": handle_batch_write,
+    "replace-section": handle_replace_section,
+    "rewrite-section": handle_rewrite_section,
     "git": handle_git,
     "status": handle_status,
     "runtime": handle_runtime,
@@ -204,16 +214,20 @@ def execute_approved_command(
     content: str | None = None,
     *,
     approval_request_id: str,
+    cwd: str | None = None,
     trigger_type: str | None = None,
 ) -> BossModCliResult:
     """Execute a previously-approved shell command (bypasses policy)."""
-    cwd_before = get_cli_cwd(agent.id)
+    cwd_before = cwd or get_cli_cwd(agent.id)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
 
-    resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
+    try:
+        resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
+    except ValueError as exc:
+        return error_result(command, str(exc), cwd=cwd_before, executor="shell")
     shell_cwd = Path(resolved.real_path) if resolved and resolved.real_path else Path.cwd()
     timeout = config.get_int("cli_shell_timeout_seconds") or 30
     max_output = config.get_int("cli_shell_max_output_bytes") or 65536

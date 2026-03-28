@@ -180,6 +180,10 @@ def delete_rule(rule_id: str) -> bool:
     )
     if row is None:
         return False
+    execute(
+        "UPDATE cli_approval_requests SET matched_rule_id = NULL WHERE matched_rule_id = $1",
+        [rule_id],
+    )
     execute("DELETE FROM cli_policy_rules WHERE id = $1", [rule_id])
     return True
 

@@ -122,9 +122,16 @@ async def completion(
 
     logger.info("LLM request: model=%s, api_base=%s, extra_body=%s", kwargs.get("model"), kwargs.get("api_base"), kwargs.get("extra_body"))
 
+    timeout_seconds = config.require_float("llm_request_timeout_seconds")
     try:
         async with _get_semaphore():
-            response = await litellm.acompletion(**kwargs)
+            response = await asyncio.wait_for(
+                litellm.acompletion(**kwargs),
+                timeout=timeout_seconds,
+            )
+    except asyncio.TimeoutError as exc:
+        logger.error("LLM call timed out (model=%s) after %ss", model, timeout_seconds)
+        raise LLMError(f"LLM call timed out after {timeout_seconds:g}s") from exc
     except Exception as exc:
         logger.error("LLM call failed (model=%s): %s", model, exc)
         raise LLMError(f"LLM call failed: {exc}") from exc

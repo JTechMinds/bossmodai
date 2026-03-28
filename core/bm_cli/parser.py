@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 
+from core.bm_cli.command_registry import resolve_virtual_command_name
 from core.bm_cli.types import ParsedCliCommand
 
 
@@ -17,8 +18,11 @@ def parse_cli_command(command: str) -> ParsedCliCommand:
     if not tokens:
         raise ValueError("Command is empty.")
 
+    raw_name = tokens[0].strip()
+    canonical_name = resolve_virtual_command_name(raw_name) or raw_name
+
     return ParsedCliCommand(
         raw=command,
-        name=tokens[0].strip(),
+        name=canonical_name,
         args=tuple(tokens[1:]),
     )

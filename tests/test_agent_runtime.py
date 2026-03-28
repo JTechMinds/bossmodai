@@ -41,6 +41,7 @@ from api.routes import (
     open_agent_desk_folder,
     preview_runtime_contract as preview_runtime_contract_route,
     reset_runtime_contracts,
+    seed_cli_policy_rules,
     reseed_application,
     reset_setting_to_default,
     reset_agent_runtime,
@@ -51,9 +52,11 @@ from api.routes import (
 )
 from api.websocket import manager
 from core import config
-from core.bm_cli import execute_bm_cli
+from core.bm_cli import execute_approved_command, execute_bm_cli
 from core.bm_cli.filesystem import agent_artifact_dir, legacy_agent_artifact_dir, project_artifact_dir
-from core.bm_cli.managed_writer import run_managed_write
+from core.bm_cli.types import BossModCliResult
+from core.bm_cli.session import set_cli_cwd
+from core.bm_cli.managed_writer import run_managed_batch_write, run_managed_write
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.decision_contract import (
     ConversationDecision,
@@ -237,6 +240,16 @@ def test_init_db_prunes_obsolete_action_contract_setting(isolated_db):
     assert "action_contract_template" not in advanced_settings
 
 
+def test_init_db_seeds_llm_timeout_and_managed_writer_limits(isolated_db):
+    llm_settings = {item.key: item.value for item in db.get_settings("llm")}
+    advanced_settings = {item.key: item.value for item in db.get_settings("advanced")}
+
+    assert llm_settings["llm_request_timeout_seconds"] == "120"
+    assert llm_settings["managed_writer_max_batch_files"] == "8"
+    assert llm_settings["managed_writer_max_sections_per_file"] == "8"
+    assert advanced_settings["cli_max_read_lines"] == "200"
+
+
 @pytest.mark.asyncio
 async def test_runtime_controller_boot_respects_persisted_pause_state(isolated_db, monkeypatch):
     calls: list[str] = []
@@ -346,6 +359,14 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert '"mode": "room | remote"' in contract
     assert "act = the next execution step you are taking" in contract
     assert "data = arguments for that execution step" in contract
+    assert "data.body = optional body text or manifest for cli commands that use it" in contract
+    assert "cli + batch-write: require data.body as a short manifest with path + goal entries" in contract
+    assert "cli + replace-section: require data.body as the literal new section body" in contract
+    assert "cli + rewrite-section: require data.body as a short rewrite goal" in contract
+    assert "short exact text -> write/append with body" in contract
+    assert "multiple generated files -> batch-write with a short manifest body" in contract
+    assert "inspect markdown structure -> outline <path>" in contract
+    assert 'ai-authored markdown section edit -> rewrite-section <path> "<heading>" with a short goal body' in contract
 
 
 def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
@@ -628,6 +649,103 @@ def test_execute_bm_cli_write_commands_create_reviewable_files(isolated_db):
     assert project_path.read_text(encoding="utf-8") == "Project avocado memo\n"
 
 
+def test_execute_bm_cli_document_edit_commands_target_sections_precisely(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    source = (
+        "# Launch Plan\n\n"
+        "Overview.\n\n"
+        "## Recommendation\n\n"
+        "Use the current launch plan.\n\n"
+        "## Risks\n\n"
+        "Watch the rollout closely.\n"
+    )
+    execute_bm_cli(agent, state, "write report.md", source)
+
+    outline = execute_bm_cli(agent, state, "outline report.md")
+    assert outline.ok is True
+    assert "line 1: # Launch Plan" in outline.prompt_content
+    assert "line 5:   ## Recommendation" in outline.prompt_content
+    assert outline.data["sections"][1]["heading"] == "## Recommendation"
+
+    read_range = execute_bm_cli(agent, state, "read-range report.md 5:9")
+    assert read_range.ok is True
+    assert "   5 | ## Recommendation" in read_range.prompt_content
+    assert "   7 | Use the current launch plan." in read_range.prompt_content
+
+    replaced = execute_bm_cli(
+        agent,
+        state,
+        'replace-section report.md "## Recommendation"',
+        "Focus the launch on the highest-confidence market and keep scope tight.",
+    )
+    assert replaced.ok is True
+    assert replaced.kind == "replace-section"
+
+    report_path = personal_root / "report.md"
+    assert report_path.read_text(encoding="utf-8") == (
+        "# Launch Plan\n\n"
+        "Overview.\n\n"
+        "## Recommendation\n\n"
+        "Focus the launch on the highest-confidence market and keep scope tight.\n\n"
+        "## Risks\n\n"
+        "Watch the rollout closely.\n"
+    )
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
+    assert [event["result_kind"] for event in events if event["result_kind"] in {"replace-section"}] == ["replace-section"]
+
+    artifacts = db.list_artifacts(agent_id=agent.id, limit=10)
+    assert any(item.virtual_path == "/me/report.md" for item in artifacts)
+
+
+def test_execute_bm_cli_file_command_aliases_and_discovery_are_ai_friendly(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    execute_bm_cli(
+        agent,
+        state,
+        "write plan.md",
+        "# Plan\n\n## Recommendation\n\nUse a narrower launch plan.\n",
+    )
+
+    alias_result = execute_bm_cli(
+        agent,
+        state,
+        'repsect plan.md "## Recommendation"',
+        "Focus the launch on one market and one owner.",
+    )
+    assert alias_result.ok is True
+    assert alias_result.kind == "replace-section"
+    assert (personal_root / "plan.md").read_text(encoding="utf-8") == (
+        "# Plan\n\n"
+        "## Recommendation\n\n"
+        "Focus the launch on one market and one owner.\n"
+    )
+
+    categories = execute_bm_cli(agent, state, "categories")
+    assert categories.ok is True
+    assert "files — Inspect, create, and edit files" in categories.prompt_content
+    assert 'replace-section <path> "<heading>"' not in categories.prompt_content
+    assert "Type \"fsearch <category|keyword>\" to review the commands inside a category." in categories.prompt_content
+
+    search = execute_bm_cli(agent, state, "fsearch section")
+    assert search.ok is True
+    assert 'replace-section <path> "<heading>" — body = literal replacement section text; target by quoted markdown heading [aliases: repsect, rsect]' in search.prompt_content
+    assert 'rewrite-section <path> "<heading>" — body = short rewrite goal; runtime rewrites only the targeted section [aliases: rewsect, rwsect]' in search.prompt_content
+
+    learn = execute_bm_cli(agent, state, "learn repsect")
+    assert learn.ok is True
+    assert "Command:   replace-section" in learn.prompt_content
+    assert "Aliases:   repsect, rsect" in learn.prompt_content
+
+
 def test_execute_bm_cli_tracks_personal_workspace_in_git(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -647,7 +765,7 @@ def test_execute_bm_cli_tracks_personal_workspace_in_git(isolated_db):
     assert status.ok is True
     assert "report.md" not in status.data["output"]
 
-    history = execute_bm_cli(agent, state, "git log 5")
+    history = execute_bm_cli(agent, state, "git log 50")
     assert history.ok is True
     assert "bm_cli write /me/report.md" in history.data["output"]
 
@@ -691,19 +809,132 @@ def test_execute_bm_cli_gates_restricted_commands(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    config.reload()
 
     result = execute_bm_cli(agent, state, "rm summary.md")
 
     assert result.ok is False
     assert result.kind == "approval_required"
     assert result.approval_required is True
-    assert "requires operator approval" in result.detail
+    assert "approval required" in result.detail.lower()
 
     events = db.list_bm_cli_events(agent_id=agent.id, limit=5)
     assert events[0]["command"] == "rm summary.md"
     assert events[0]["decision"] == "approval_required"
     assert events[0]["executor"] == "shell"
-    assert events[0]["policy_tier"] == "restricted"
+    assert events[0]["policy_tier"] == "approval_required"
+
+
+def test_execute_approved_command_uses_reviewed_cwd(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    personal_root = _reset_agent_workspace(agent.storage_key)
+
+    execute_bm_cli(agent, state, "mkdir reports")
+    set_cli_cwd(agent.id, "/me")
+    approval = db.create_cli_approval_request(
+        agent_id=agent.id,
+        command="pwd",
+        cwd="/me/reports",
+    )
+
+    result = execute_approved_command(
+        agent,
+        state,
+        "pwd",
+        approval_request_id=approval.id,
+        cwd="/me/reports",
+    )
+
+    assert result.ok is True
+    assert str(personal_root / "reports") in result.prompt_content
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=5)
+    assert events[0]["command"] == "pwd"
+    assert events[0]["cwd_before"] == "/me/reports"
+    assert events[0]["approval_request_id"] == approval.id
+
+
+@pytest.mark.asyncio
+async def test_cli_approval_resolved_trigger_uses_reviewed_cwd(isolated_db, monkeypatch):
+    import core.bm_cli.runtime as bm_cli_runtime
+
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    approval = db.create_cli_approval_request(
+        agent_id=agent.id,
+        command="pwd",
+        cwd="/me/reports",
+    )
+    captured: dict[str, str | None] = {}
+
+    def fake_execute_approved_command(
+        _agent,
+        _state,
+        command,
+        content=None,
+        *,
+        approval_request_id,
+        cwd=None,
+        trigger_type=None,
+    ):
+        captured["command"] = command
+        captured["approval_request_id"] = approval_request_id
+        captured["cwd"] = cwd
+        captured["trigger_type"] = trigger_type
+        return BossModCliResult(
+            command=command,
+            ok=True,
+            detail="approved command executed",
+            prompt_content="BOSSMOD CLI RESULT\ncommand: pwd\n\nSTDOUT:\n/me/reports",
+            kind="shell",
+            cwd=cwd,
+            executor="shell",
+            exit_code=0,
+        )
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"idle","th":"done"}',
+            model="test-model",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+    monkeypatch.setattr(client, "completion", fake_completion)
+    monkeypatch.setattr(bm_cli_runtime, "execute_approved_command", fake_execute_approved_command)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "cli_approval_resolved",
+            "payload": {
+                "approval_request_id": approval.id,
+                "command": "pwd",
+                "cwd": "/me/reports",
+                "status": "approved",
+            },
+        },
+    )
+
+    assert outcome.trigger_status == "completed"
+    assert captured["command"] == "pwd"
+    assert captured["approval_request_id"] == approval.id
+    assert captured["cwd"] == "/me/reports"
+    assert captured["trigger_type"] == "cli_approval_resolved"
 
 
 def test_execute_bm_cli_audits_virtual_command_lifecycle(isolated_db):
@@ -832,6 +1063,53 @@ async def test_large_work_output_with_file_deliverable_is_redirected_to_managed_
             "path": "/me/backend-tech-stack-whitepaper.md",
             "description": None,
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_large_work_output_with_multiple_file_deliverables_is_redirected_to_batch_write(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write package",
+        description="Create and save a summary and appendix.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        work_contract={
+            "deliverables": [
+                {"type": "file", "path": "/me/summary.md"},
+                {"type": "file", "path": "/me/appendix.md"},
+            ],
+        },
+    )
+    activity_runtime.activate_work_activity(
+        agent.id,
+        task,
+        title=task.title,
+        detail=task.description,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    result = await execute_action(
+        {"action": "work", "output": "x" * 2500},
+        agent,
+        state,
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "multiple files" in result["detail"]
+    assert "Use BossMod CLI batch-write with a short manifest body" in result["detail"]
+    assert result["missing_deliverables"] == [
+        {
+            "type": "file",
+            "path": "/me/summary.md",
+            "description": None,
+        },
+        {
+            "type": "file",
+            "path": "/me/appendix.md",
+            "description": None,
+        },
     ]
 
 
@@ -1178,6 +1456,50 @@ def test_execution_context_adds_file_deliverable_guidance_for_file_contract(isol
     assert "Use work.out for short progress/status text" in guidance[0]
 
 
+def test_execution_context_adds_batch_write_guidance_for_multiple_file_deliverables(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Taylor",
+        role="Operations Analyst",
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "activity_resumed",
+                "content": "Continue the package task.",
+            },
+            contract_kind="execution",
+            current_task={
+                "id": "task-2",
+                "title": "Write the package",
+                "status": "active",
+                "description": "Draft and save the package files.",
+                "work_contract": {
+                    "deliverables": [
+                        {"type": "file", "path": "/me/summary.md"},
+                        {"type": "file", "path": "/me/appendix.md"},
+                    ],
+                },
+            },
+        )
+    )
+
+    guidance = [
+        msg["content"]
+        for msg in context
+        if msg["role"] == "system" and "FILE DELIVERABLE GUIDANCE:" in msg["content"]
+    ]
+    assert len(guidance) == 1
+    assert "batch-write" in guidance[0]
+    assert "Do not put long-form document bodies into CLI JSON." in guidance[0]
+
+
 @pytest.mark.asyncio
 async def test_prompt_templates_render_conditionals_for_personality_and_system_prompt(isolated_db):
     await set_setting_route(
@@ -1435,6 +1757,27 @@ async def test_connection_uses_single_models_endpoint(isolated_db, monkeypatch):
 
     assert result["ok"] is True
     assert calls == ["http://localhost:11434/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_llm_completion_times_out_using_settings(isolated_db, monkeypatch):
+    db.set_setting("llm_request_timeout_seconds", "0.01", "llm")
+    config.reload()
+    client._llm_semaphore = None
+
+    async def _slow_completion(**kwargs):
+        await asyncio.sleep(0.05)
+        return None
+
+    monkeypatch.setattr(client.litellm, "acompletion", _slow_completion)
+
+    with pytest.raises(client.LLMError) as exc_info:
+        await client.completion(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+    assert "timed out" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
@@ -2683,14 +3026,13 @@ async def test_activity_resumed_managed_writer_saves_long_file_and_commits_once(
             total_tokens=20,
         ),
         client.LLMResponse(
-            content="# Frontend Stack Review\n\nThis paper compares delivery options for modern frontend systems.\n\n",
-            model="test-model",
-            prompt_tokens=10,
-            completion_tokens=10,
-            total_tokens=20,
-        ),
-        client.LLMResponse(
-            content="## Recommendation\n\nPrefer a small, typed React stack with deliberate performance budgets.\n<<BOSSMOD_FILE_DONE>>",
+            content=(
+                "# Frontend Stack Review\n\n"
+                "This paper compares delivery options for modern frontend systems.\n\n"
+                "## Recommendation\n\n"
+                "Prefer a small, typed React stack with deliberate performance budgets.\n"
+                "<<BOSSMOD_FILE_DONE>>"
+            ),
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -2732,7 +3074,7 @@ async def test_activity_resumed_managed_writer_saves_long_file_and_commits_once(
     )
     events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
     assert [event["result_kind"] for event in events if event["result_kind"] in {"write", "append"}] == ["write"]
-    history = execute_bm_cli(agent, state, "git log 5")
+    history = execute_bm_cli(agent, state, "git log 50")
     assert history.ok is True
     assert "bm_cli write /me/paper.md" in history.data["output"]
     assert outcome.trigger_status == "completed"
@@ -2740,37 +3082,279 @@ async def test_activity_resumed_managed_writer_saves_long_file_and_commits_once(
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
     detail = db.get_diagnostic(diagnostics[0]["id"])
     assert detail is not None
-    assert detail["steps"][0]["prompt_tokens"] == 30
-    assert detail["steps"][0]["completion_tokens"] == 30
-    assert detail["steps"][0]["total_tokens"] == 60
+    assert detail["steps"][0]["prompt_tokens"] == 20
+    assert detail["steps"][0]["completion_tokens"] == 20
+    assert detail["steps"][0]["total_tokens"] == 40
     cli_step = json.loads(detail["steps"][0]["result"])
     assert cli_step["managed_writer"]["used"] is True
     assert cli_step["managed_writer"]["attempted"] is True
     assert cli_step["managed_writer"]["completed"] is True
-    assert cli_step["managed_writer"]["chunks"] == 2
-    assert cli_step["managed_writer"]["total_tokens"] == 40
-    assert "via managed writer (2 chunks)" in cli_step["detail"]
+    assert cli_step["managed_writer"]["strategy"] == "single_pass"
+    assert cli_step["managed_writer"]["calls"] == 1
+    assert cli_step["managed_writer"]["chunks"] == 1
+    assert cli_step["managed_writer"]["total_tokens"] == 20
+    assert "via managed writer (single-pass, 1 call)" in cli_step["detail"]
 
 
 @pytest.mark.asyncio
-async def test_managed_writer_chunk_limit_records_attempt_metadata(isolated_db, monkeypatch):
+async def test_activity_resumed_batch_writer_saves_multiple_files_and_commits_once(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write the package",
+        description="Draft the summary and appendix files.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        work_contract={
+            "deliverables": [
+                {"type": "file", "path": "/me/summary.md"},
+                {"type": "file", "path": "/me/appendix.md"},
+            ],
+        },
+    )
+    state = _activate_work(agent, task)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "cli",
+                    "data": {
+                        "cmd": "batch-write",
+                        "body": "/me/summary.md :: One-page executive summary\n/me/appendix.md :: Detailed appendix with supporting notes",
+                    },
+                    "th": "write both files",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="# Summary\n\nA concise executive summary.\n<<BOSSMOD_FILE_DONE>>",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="# Appendix\n\nSupporting detail and notes.\n<<BOSSMOD_FILE_DONE>>",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"done","data":{"sum":"saved package"},"th":"complete task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Write the package".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    summary_path = agent_artifact_dir(agent.storage_key) / "summary.md"
+    appendix_path = agent_artifact_dir(agent.storage_key) / "appendix.md"
+    assert summary_path.read_text(encoding="utf-8") == "# Summary\n\nA concise executive summary.\n"
+    assert appendix_path.read_text(encoding="utf-8") == "# Appendix\n\nSupporting detail and notes.\n"
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
+    assert [event["result_kind"] for event in events if event["result_kind"] in {"write", "append", "batch-write"}] == ["batch-write"]
+
+    history = execute_bm_cli(agent, state, "git log 50")
+    assert history.ok is True
+    assert "bm_cli batch-write 2 files" in history.data["output"]
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "complete"
+    assert outcome.trigger_status == "completed"
+
+    artifacts = db.list_artifacts(agent_id=agent.id, limit=10)
+    assert {artifact.virtual_path for artifact in artifacts} >= {"/me/summary.md", "/me/appendix.md"}
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    cli_step = json.loads(detail["steps"][0]["result"])
+    assert cli_step["managed_writer"]["used"] is True
+    assert cli_step["managed_writer"]["strategy"] == "single_pass"
+    assert cli_step["managed_writer"]["calls"] == 2
+    assert cli_step["batch_writer"]["used"] is True
+    assert cli_step["batch_writer"]["file_count"] == 2
+    assert "via batch writer" in cli_step["detail"]
+
+
+@pytest.mark.asyncio
+async def test_activity_resumed_rewrite_section_rewrites_only_target_section(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Tighten the launch brief",
+        description="Rewrite the recommendation section to be more executive-friendly.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, task)
+
+    report_path = agent_artifact_dir(agent.storage_key) / "report.md"
+    report_path.write_text(
+        "# Launch Brief\n\n"
+        "## Recommendation\n\n"
+        "Use the broad launch plan with many optional paths.\n\n"
+        "## Risks\n\n"
+        "Coordination may slip.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"rewrite-section /me/report.md \\"## Recommendation\\"","body":"Make this tighter, more executive-friendly, and action-oriented."},"th":"rewrite the recommendation"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="## Recommendation\n\nFocus the launch on the highest-confidence path, commit to one owner, and cut optional workstreams.\n",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"done","data":{"sum":"rewrote recommendation"},"th":"complete task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Tighten the launch brief".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert report_path.read_text(encoding="utf-8") == (
+        "# Launch Brief\n\n"
+        "## Recommendation\n\n"
+        "Focus the launch on the highest-confidence path, commit to one owner, and cut optional workstreams.\n\n"
+        "## Risks\n\n"
+        "Coordination may slip.\n"
+    )
+
+    events = db.list_bm_cli_events(agent_id=agent.id, limit=10)
+    assert [event["result_kind"] for event in events if event["result_kind"] in {"rewrite-section"}] == ["rewrite-section"]
+    history = execute_bm_cli(agent, state, "git log 50")
+    assert history.ok is True
+    assert "bm_cli rewrite-section /me/report.md ## Recommendation" in history.data["output"]
+    assert outcome.trigger_status == "completed"
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    cli_step = json.loads(detail["steps"][0]["result"])
+    assert cli_step["managed_writer"]["used"] is True
+    assert cli_step["managed_writer"]["strategy"] == "section_rewrite"
+    assert cli_step["managed_writer"]["calls"] == 1
+    assert "via managed writer (section-rewrite, 1 call)" in cli_step["detail"]
+
+
+@pytest.mark.asyncio
+async def test_managed_writer_uses_section_plan_when_single_pass_defers(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.get_agent_state(agent.id)
     assert state is not None
 
-    responses = iter(
-        [
-            client.LLMResponse(
-                content=f"Section chunk {idx}\n",
-                model="test-model",
-                prompt_tokens=10,
-                completion_tokens=5,
-                total_tokens=15,
-            )
-            for idx in range(12)
-        ]
-    )
+    responses = iter([
+        client.LLMResponse(
+            content="<<BOSSMOD_PLAN_REQUIRED>>",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "sections": [
+                        {"heading": "# Protein Shakes", "goal": "Introduce the document and summarize the core benefits."},
+                        {"heading": "## Recommendation", "goal": "Explain the practical recommendation and usage guidance."},
+                    ]
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content="Protein shakes are a practical way to increase protein intake and support recovery.\n",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content='## Recommendation\n\nUse them when convenience matters and match the product to the dietary goal.\n',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+    ])
 
     async def fake_completion(**kwargs):
         return next(responses)
@@ -2788,19 +3372,149 @@ async def test_managed_writer_chunk_limit_records_attempt_metadata(isolated_db, 
         trigger_type="activity_resumed",
     )
 
-    assert outcome.cli_result.ok is False
-    assert outcome.chunks == 12
-    assert "chunk limit" in outcome.cli_result.detail.lower()
-    assert "Do not paste a long file body into CLI JSON." in outcome.cli_result.prompt_content
+    assert outcome.cli_result.ok is True
+    assert outcome.chunks == 4
+    assert (agent_artifact_dir(agent.storage_key) / "paper.md").read_text(encoding="utf-8") == (
+        "# Protein Shakes\n\n"
+        "Protein shakes are a practical way to increase protein intake and support recovery.\n\n"
+        "## Recommendation\n\n"
+        "Use them when convenience matters and match the product to the dietary goal.\n"
+    )
     data = outcome.cli_result.data or {}
     assert data["managed_writer_attempted"] is True
-    assert data["managed_writer_used"] is False
-    assert data["managed_writer_completed"] is False
-    assert data["managed_chunks"] == 12
-    assert data["managed_prompt_tokens"] == 120
-    assert data["managed_completion_tokens"] == 60
-    assert data["managed_total_tokens"] == 180
+    assert data["managed_writer_used"] is True
+    assert data["managed_writer_completed"] is True
+    assert data["managed_strategy"] == "sectioned"
+    assert data["managed_calls"] == 4
+    assert data["managed_chunks"] == 4
+    assert data["managed_sections"] == 2
+    assert data["managed_prompt_tokens"] == 40
+    assert data["managed_completion_tokens"] == 20
+    assert data["managed_total_tokens"] == 60
     assert data["managed_bytes"] > 0
+
+
+@pytest.mark.asyncio
+async def test_activity_resumed_managed_writer_broadcasts_progress_updates(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Write the progress paper",
+        description="Draft a markdown paper and show writing progress.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, task)
+
+    progress_snapshots: list[dict[str, Any]] = []
+
+    async def _broadcast_activity(*, event: str, detail: str, agent_name=None, extra=None):
+        if event != "managed_writer_progress":
+            return
+        current_task = db.get_task(task.id)
+        current_activity = db.get_active_activity(agent.id)
+        progress_snapshots.append(
+            {
+                "detail": detail,
+                "extra": extra or {},
+                "status_note": current_task.status_note if current_task else None,
+                "activity_detail": current_activity.detail if current_activity else None,
+            }
+        )
+
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_world_state", _noop)
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_activity", _broadcast_activity)
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_feed_update", _noop)
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_chat_message", _noop)
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_diagnostic", _noop)
+    monkeypatch.setattr("core.runtime.events.runtime_events.broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"write /me/paper.md"},"th":"start writing"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content="<<BOSSMOD_PLAN_REQUIRED>>",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "sections": [
+                        {"heading": "# Overview", "goal": "Introduce the topic."},
+                        {"heading": "## Recommendation", "goal": "Explain the recommended approach."},
+                    ]
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content="Protein shakes are useful when convenience matters.\n",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content="Use them to supplement, not replace, whole-food meals.\n",
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        ),
+        client.LLMResponse(
+            content='{"act":"done","data":{"sum":"saved paper"},"th":"complete task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Write the progress paper".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert outcome.trigger_status == "completed"
+    assert [item["detail"] for item in progress_snapshots] == [
+        "Taylor: Writing /me/paper.md",
+        "Taylor: Planned 2 sections for /me/paper.md",
+        "Taylor: Writing section 1/2 of /me/paper.md: # Overview",
+        "Taylor: Writing section 2/2 of /me/paper.md: ## Recommendation",
+        "Taylor: Saved /me/paper.md",
+    ]
+    assert progress_snapshots[0]["status_note"] == "Writing /me/paper.md"
+    assert progress_snapshots[0]["activity_detail"] == "Writing /me/paper.md"
+    assert progress_snapshots[1]["extra"]["strategy"] == "sectioned"
+    assert progress_snapshots[3]["extra"]["counts_as_progress"] is True
+    assert progress_snapshots[-1]["status_note"] == "Saved /me/paper.md"
+    assert progress_snapshots[-1]["activity_detail"] == "Saved /me/paper.md"
 
 
 def test_parse_action_accepts_walk_to_minimal_payload(isolated_db):
@@ -3757,6 +4471,32 @@ async def test_desk_file_preview_uses_configurable_preview_limit(isolated_db):
     assert file_payload["kind"] == "file"
     assert file_payload["content"] == "abcdefghijkl"
     assert file_payload["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_seed_cli_policy_rules_clears_linked_approval_rule_references(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    rule = db.create_cli_policy_rule(
+        tier="approval_required",
+        pattern="curl",
+        match_mode="prefix",
+        description="Network access",
+        category="network",
+    )
+    approval = db.create_cli_approval_request(
+        agent_id=agent.id,
+        command="curl https://example.com",
+        matched_rule_id=rule.id,
+    )
+
+    payload = await seed_cli_policy_rules()
+
+    assert payload["ok"] is True
+    refreshed = db.get_cli_approval_request(approval.id)
+    assert refreshed is not None
+    assert refreshed.matched_rule_id is None
+    assert db.list_cli_policy_rules()
 
 
 @pytest.mark.asyncio

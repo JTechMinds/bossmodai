@@ -72,7 +72,7 @@ def list_bm_cli_events(agent_id: str | None = None, limit: int = 100) -> list[di
                 id, agent_id, command, content_present, executor,
                 cwd_before, cwd_after, policy_tier, decision,
                 exit_code, result_kind, stdout_preview, stderr_preview,
-                changed_paths, trigger_type, created_at
+                changed_paths, trigger_type, approval_request_id, created_at
             FROM bm_cli_events
             WHERE agent_id = $1
             ORDER BY created_at DESC, id DESC
@@ -86,7 +86,7 @@ def list_bm_cli_events(agent_id: str | None = None, limit: int = 100) -> list[di
             id, agent_id, command, content_present, executor,
             cwd_before, cwd_after, policy_tier, decision,
             exit_code, result_kind, stdout_preview, stderr_preview,
-            changed_paths, trigger_type, created_at
+            changed_paths, trigger_type, approval_request_id, created_at
         FROM bm_cli_events
         ORDER BY created_at DESC, id DESC
         LIMIT $1
@@ -107,7 +107,7 @@ def has_bm_cli_write_for_path(
         SELECT changed_paths
         FROM bm_cli_events
         WHERE agent_id = $1
-          AND result_kind IN ('write', 'append')
+          AND result_kind IN ('write', 'append', 'batch-write', 'replace-section', 'rewrite-section')
           AND created_at >= $2
         ORDER BY created_at DESC, id DESC
         LIMIT 200

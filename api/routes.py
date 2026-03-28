@@ -1328,10 +1328,12 @@ async def delete_cli_policy_rule(rule_id: str):
 
 @router.post("/cli-policy/rules/seed-defaults")
 async def seed_cli_policy_rules():
-    # Delete all existing rules first, then re-seed
-    # Use execute to clear the table
-    db.execute("DELETE FROM cli_policy_rules")
-    db.seed_default_cli_policy_rules()
+    # Delete all existing rules first, then re-seed. Existing approval
+    # requests retain history but drop their matched_rule_id reference.
+    with db.transaction():
+        db.execute("UPDATE cli_approval_requests SET matched_rule_id = NULL WHERE matched_rule_id IS NOT NULL")
+        db.execute("DELETE FROM cli_policy_rules")
+        db.seed_default_cli_policy_rules()
     from core.bm_cli.policy_engine import policy_engine
     policy_engine.reload()
     return {"ok": True, "message": "Default rules re-seeded"}

@@ -489,14 +489,25 @@ async def _handle_work(
     )
     file_deliverables = [item for item in pending_deliverables if item.type == "file" and item.path]
     if file_deliverables and len(output) > _MAX_INLINE_FILE_DELIVERABLE_WORK_CHARS:
-        target = summarize_deliverable(file_deliverables[0])
-        return {
-            "event": "world_feedback",
-            "detail": (
+        if len(file_deliverables) == 1:
+            target = summarize_deliverable(file_deliverables[0])
+            detail = (
                 f"This work contract requires {target}. "
                 "Do not place the full document in data.out. "
                 "Use BossMod CLI write with no body so the runtime can manage the file write."
-            ),
+            )
+        else:
+            targets = ", ".join(summarize_deliverable(item) for item in file_deliverables[:3])
+            if len(file_deliverables) > 3:
+                targets = f"{targets}, ..."
+            detail = (
+                f"This work contract requires multiple files ({targets}). "
+                "Do not place full documents in data.out. "
+                "Use BossMod CLI batch-write with a short manifest body listing each path and goal."
+            )
+        return {
+            "event": "world_feedback",
+            "detail": detail,
             "agent_name": agent.name,
             "missing_deliverables": [item.model_dump() for item in pending_deliverables],
         }

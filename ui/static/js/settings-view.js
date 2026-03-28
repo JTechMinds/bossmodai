@@ -731,6 +731,31 @@ const SystemSection = (() => {
             label: 'Default Max Completion Tokens',
             description: 'Global fallback output-token budget for one model completion when no provider-specific override is supplied.',
         },
+        default_temperature: {
+            order: 20,
+            label: 'Default Temperature',
+            description: 'Global fallback sampling temperature for model completions when no provider-specific override is supplied.',
+        },
+        llm_request_timeout_seconds: {
+            order: 30,
+            label: 'LLM Request Timeout (seconds)',
+            description: 'Maximum time one model call may run before the runtime aborts it and surfaces a timeout error.',
+        },
+        max_concurrent_llm_calls: {
+            order: 40,
+            label: 'Max Concurrent LLM Calls',
+            description: 'Global concurrency limit for simultaneous model requests across the runtime.',
+        },
+        managed_writer_max_batch_files: {
+            order: 50,
+            label: 'Batch Writer Max Files',
+            description: 'Maximum number of files one managed batch-write request may generate before the runtime asks for smaller batches.',
+        },
+        managed_writer_max_sections_per_file: {
+            order: 60,
+            label: 'Writer Max Sections Per File',
+            description: 'Maximum number of planned sections the managed writer may generate for one file before it requires a narrower scope.',
+        },
         desk_preview_max_chars: {
             order: 10,
             label: 'Desk Preview Character Limit',
@@ -1076,6 +1101,7 @@ const AdvancedSystemSection = (() => {
 
         const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
         const diagLimit = settings.find(s => s.key === 'diagnostics_retention_limit');
+        const cliReadLimit = settings.find(s => s.key === 'cli_max_read_lines');
         const folderOpenerSetting = settings.find(s => s.key === 'desktop_open_folder_handler');
         const isEnabled = diagEnabled?.value === 'true';
         const folderOpenerOptions = folderOpenerMeta.options || [];
@@ -1136,6 +1162,16 @@ const AdvancedSystemSection = (() => {
                     <input type="number" id="diag-retention-limit"
                            value="${BossModUtils.escapeHtml(diagLimit?.value || '5000')}"
                            min="100" max="50000" step="100"
+                           class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                  focus:border-bm-accent">
+                </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
+                    <label class="block text-sm font-medium mb-1">CLI Read Range Limit (lines)</label>
+                    <p class="text-xs text-bm-muted mb-1.5">Maximum number of lines one <code>read-range</code> command may return before the runtime requires smaller targeted reads.</p>
+                    <input type="number" id="cli-read-range-limit"
+                           value="${BossModUtils.escapeHtml(cliReadLimit?.value || '200')}"
+                           min="10" max="5000" step="10"
                            class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                   focus:border-bm-accent">
@@ -1230,6 +1266,18 @@ const AdvancedSystemSection = (() => {
             const value = e.target.value;
             try {
                 await fetch(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                e.target.classList.add('border-emerald-400');
+                setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
+            } catch {
+                e.target.classList.add('border-red-400');
+                setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
+            }
+        });
+
+        document.getElementById('cli-read-range-limit').addEventListener('change', async (e) => {
+            const value = e.target.value;
+            try {
+                await fetch(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
                 e.target.classList.add('border-emerald-400');
                 setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
             } catch {
