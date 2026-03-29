@@ -9,6 +9,7 @@ from typing import Any
 
 import db
 from core import config
+from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.models import Agent, AgentState
 from core.models.notification import Notification
@@ -89,25 +90,14 @@ class TurnContext:
     nearby_agents: list[dict[str, Any]] | None = None
     pending_trigger_count: int = 0
     contract_kind: str = "execution"
+    communication_snapshot_json: str | None = None
 
 
 def build_context(turn: TurnContext) -> list[dict[str, str]]:
     """Assemble the full message list for an agent turn."""
     messages: list[dict[str, str]] = []
     render_context = _build_prompt_render_context(turn)
-    personality_template = turn.agent.prompt_template or _default_role_prompt(turn.agent)
-    rendered_personality = render_template(
-        personality_template,
-        render_context,
-        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
-    )
-    render_context["personality"] = rendered_personality
-
-    system_prompt = render_template(
-        config.require("system_prompt_template"),
-        render_context,
-        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
-    )
+    system_prompt = _render_system_prompt(turn, render_context)
 
     messages.append({"role": "system", "content": system_prompt})
     messages.append(
@@ -126,6 +116,9 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
                 "content": _render_conversation_envelope(turn),
             }
         )
+        communication_snapshot = _render_communication_snapshot(turn)
+        if communication_snapshot:
+            messages.append({"role": "system", "content": communication_snapshot})
 
     for msg in turn.conversation_history:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
@@ -151,6 +144,22 @@ def _default_role_prompt(agent: Agent) -> str:
         f"You work in a virtual office with other AI agents. "
         f"You communicate professionally, stay focused on your tasks, "
         f"and collaborate effectively with your team."
+    )
+
+
+def _render_system_prompt(turn: TurnContext, render_context: dict[str, Any]) -> str:
+    """Render the base authored system prompt once for any turn flavor."""
+    personality_template = turn.agent.prompt_template or _default_role_prompt(turn.agent)
+    rendered_personality = render_template(
+        personality_template,
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
+    render_context["personality"] = rendered_personality
+    return render_template(
+        config.require("system_prompt_template"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
 
@@ -778,6 +787,22 @@ def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
         "Use work.out for short progress/status text, not the final long-form file body.",
     ]
     return "\n".join(lines)
+
+
+def _render_communication_snapshot(turn: TurnContext) -> str | None:
+    """Render the authoritative bounded snapshot for communication turns."""
+    if turn.contract_kind != "decision":
+        return None
+    trigger_type = str(turn.trigger.get("type") or "")
+    profile = communication_profile_for_trigger(trigger_type)
+    if profile is None or not turn.communication_snapshot_json:
+        return None
+    return (
+        "AUTHORITATIVE COMMUNICATION SNAPSHOT (JSON):\n"
+        f"{turn.communication_snapshot_json}\n\n"
+        "Use this snapshot as the current internal source of truth for status, progress, recent work, projects, and meetings.\n"
+        "Use BossMod CLI only if the snapshot still lacks a fact you genuinely need."
+    )
 
 
 def _conversation_speaker(trigger: dict[str, Any]) -> tuple[str, str, str]:

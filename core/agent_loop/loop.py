@@ -12,6 +12,11 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
+from core.agent_loop.communication import (
+    build_communication_snapshot,
+    communication_profile_for_trigger,
+    communication_snapshot_json,
+)
 from core.agent_loop.notifications import (
     persist_channel_notification,
     persist_chat_notification,
@@ -20,6 +25,7 @@ from core.agent_loop.notifications import (
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.decision_contract import (
     ConversationDecision,
+    parse_decision,
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
@@ -58,6 +64,7 @@ _DECISION_TRIGGER_TYPES = {
     "channel_response",
     "task_assigned",
 }
+_COMMUNICATION_TRIGGER_TYPES = _DECISION_TRIGGER_TYPES - {"task_assigned"}
 
 _MAX_DECISION_REPAIR_ATTEMPTS = 2
 
@@ -96,32 +103,39 @@ async def run_turn(
     nearby = _get_nearby_agents(agent.id, state)
     initial_activity = activity_runtime.get_active_activity(agent.id)
     current_task = _get_current_task(agent.id)
+    current_activity = _get_current_activity(agent.id)
     current_session = _get_current_session(agent.id, trigger)
     current_channel = _get_current_channel(trigger)
     reference_materials = _get_reference_materials(agent.id)
-
     pending_count = max(db.count_queued_triggers(agent.id) - 1, 0)
-
-    contract_kind = _contract_kind_for_trigger(trigger_type)
-    context = context_builder.build_context(
-        context_builder.TurnContext(
+    initial_task_id = activity_runtime.get_active_task_id(agent.id)
+    communication_snapshot = None
+    if trigger_type in _COMMUNICATION_TRIGGER_TYPES:
+        communication_snapshot = build_communication_snapshot(
             agent=agent,
             state=state,
             trigger=trigger,
-            conversation_history=prompt_history.conversation_history,
-            prompt_notifications=prompt_history.prompt_notifications,
-            reference_materials=reference_materials,
-            current_activity=_get_current_activity(agent.id),
-            current_session=current_session,
-            current_channel=current_channel,
-            nearby_agents=nearby,
-            current_task=current_task,
-            pending_trigger_count=pending_count,
-            contract_kind=contract_kind,
         )
+
+    contract_kind = _contract_kind_for_trigger(trigger_type)
+    turn_context = context_builder.TurnContext(
+        agent=agent,
+        state=state,
+        trigger=trigger,
+        conversation_history=prompt_history.conversation_history,
+        prompt_notifications=prompt_history.prompt_notifications,
+        reference_materials=reference_materials,
+        current_activity=current_activity,
+        current_session=current_session,
+        current_channel=current_channel,
+        nearby_agents=nearby,
+        current_task=current_task,
+        pending_trigger_count=pending_count,
+        contract_kind=contract_kind,
+        communication_snapshot_json=communication_snapshot_json(communication_snapshot) if communication_snapshot else None,
     )
+    context = context_builder.build_context(turn_context)
     initial_context_json = json.dumps(context)
-    initial_task_id = activity_runtime.get_active_task_id(agent.id)
 
     if is_decision_turn:
         return await _run_decision_turn(
@@ -755,9 +769,6 @@ async def _run_decision_turn(
     next_context_snapshot: str | None = None
     tool_steps = 0
     last_response_content = ""
-    status_lookup_required = False
-    status_answer_reprompted = False
-    status_guard_enabled = trigger_type == "human_chat"
     decision_repair_attempts = 0
 
     while True:
@@ -823,25 +834,11 @@ async def _run_decision_turn(
 
         parsed = parse_direct_turn_response(response.content)
         if parsed.get("decision") == "_parse_failed":
-            candidate_payload = parsed.get("_candidate_payload")
-            inferred_status_candidate = _is_status_candidate_payload(candidate_payload)
-            if (
-                status_guard_enabled
-                and inferred_status_candidate
-                and tool_steps == 0
-                and not initial_task_id
-            ):
-                status_lookup_required = True
             error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
             if decision_repair_attempts < _MAX_DECISION_REPAIR_ATTEMPTS:
                 decision_repair_attempts += 1
                 continuation_messages = _build_decision_repair_messages(
                     parsed_error=parsed.get("_raw_snippet", ""),
-                    status_phase=_decision_status_phase(
-                        status_guard_enabled=status_guard_enabled,
-                        status_lookup_required=status_lookup_required,
-                        tool_steps=tool_steps,
-                    ),
                 )
                 step_traces.append(
                     _build_step_trace(
@@ -1038,170 +1035,6 @@ async def _run_decision_turn(
             continue
 
         decision = ConversationDecision.model_validate(parsed)
-        if status_guard_enabled and decision.intentKind == "status_request" and tool_steps == 0 and not initial_task_id:
-            if status_lookup_required:
-                result = {
-                    "event": "agent_error",
-                    "detail": f"{agent.name} answered a status request without checking live status",
-                    "agent_name": agent.name,
-                }
-                await manager.broadcast_activity(**result)
-                return await _finalize_turn(
-                    agent=agent,
-                    trigger=trigger,
-                    trigger_type=trigger_type,
-                    mode=mode,
-                    model=model,
-                    model_source=model_source,
-                    initial_context_json=initial_context_json,
-                    outcome=TurnOutcome.failure(
-                        result=result,
-                        error="status requests must use BossMod CLI before the final decision",
-                        action=decision.model_dump(),
-                        action_summary=_summarize_action_chain(executed_actions, ""),
-                        raw_response=response.content,
-                        prompt_tokens=total_prompt_tokens,
-                        completion_tokens=total_completion_tokens,
-                        total_tokens=total_tokens,
-                        steps=step_traces + [
-                            _build_step_trace(
-                                step_index=len(step_traces) + 1,
-                                context_snapshot=next_context_snapshot,
-                                raw_response=response.content,
-                                action=decision.model_dump(),
-                                result=result,
-                                prompt_tokens=response.prompt_tokens,
-                                completion_tokens=response.completion_tokens,
-                                total_tokens=response.total_tokens,
-                                duration_ms=int((time.monotonic() - step_started) * 1000),
-                                error="status requests must use BossMod CLI before the final decision",
-                            )
-                        ],
-                    ),
-                    start=start,
-                )
-
-            status_lookup_required = True
-            continuation_messages = [
-                {"role": "assistant", "content": response.content},
-                {
-                    "role": "system",
-                    "content": (
-                        "This direct request is a factual status query. "
-                        'Before your final JSON decision, call {"act":"cli","data":{"cmd":"status"},"th":"check live status"}.'
-                    ),
-                },
-                {
-                    "role": "system",
-                    "content": (
-                        "Do not answer current status from prior chat promises or prior assistant messages. "
-                        "Use the BossMod CLI result as authoritative current state for this turn."
-                    ),
-                },
-            ]
-            step_traces.append(
-                _build_step_trace(
-                    step_index=len(step_traces) + 1,
-                    context_snapshot=next_context_snapshot,
-                    raw_response=response.content,
-                    action=decision.model_dump(),
-                    result={
-                        "event": "bm_cli_required",
-                        "detail": "Status request requires authoritative BossMod CLI lookup before the final decision.",
-                    },
-                    prompt_tokens=response.prompt_tokens,
-                    completion_tokens=response.completion_tokens,
-                    total_tokens=response.total_tokens,
-                    duration_ms=int((time.monotonic() - step_started) * 1000),
-                )
-            )
-            current_context.extend(continuation_messages)
-            next_context_snapshot = _serialize_trace_value(continuation_messages)
-            continue
-
-        if status_guard_enabled and status_lookup_required and tool_steps > 0:
-            if decision.intentKind != "status_request" or decision.decision != "answer" or decision.commitmentKind != "none":
-                if status_answer_reprompted:
-                    result = {
-                        "event": "agent_error",
-                        "detail": f"{agent.name} changed a status question into a different commitment after checking live status",
-                        "agent_name": agent.name,
-                    }
-                    await manager.broadcast_activity(**result)
-                    return await _finalize_turn(
-                        agent=agent,
-                        trigger=trigger,
-                        trigger_type=trigger_type,
-                        mode=mode,
-                        model=model,
-                        model_source=model_source,
-                        initial_context_json=initial_context_json,
-                        outcome=TurnOutcome.failure(
-                            result=result,
-                            error="status-request turn drifted into a non-status decision after BossMod CLI lookup",
-                            action=decision.model_dump(),
-                            action_summary=_summarize_action_chain(executed_actions, ""),
-                            raw_response=response.content,
-                            prompt_tokens=total_prompt_tokens,
-                            completion_tokens=total_completion_tokens,
-                            total_tokens=total_tokens,
-                            steps=step_traces + [
-                                _build_step_trace(
-                                    step_index=len(step_traces) + 1,
-                                    context_snapshot=next_context_snapshot,
-                                    raw_response=response.content,
-                                    action=decision.model_dump(),
-                                    result=result,
-                                    prompt_tokens=response.prompt_tokens,
-                                    completion_tokens=response.completion_tokens,
-                                    total_tokens=response.total_tokens,
-                                    duration_ms=int((time.monotonic() - step_started) * 1000),
-                                    error="status-request turn drifted into a non-status decision after BossMod CLI lookup",
-                                )
-                            ],
-                        ),
-                        start=start,
-                    )
-
-                status_answer_reprompted = True
-                continuation_messages = [
-                    {"role": "assistant", "content": response.content},
-                    {
-                        "role": "system",
-                        "content": (
-                            "Stay on the current status question. "
-                            "Do not start, accept, defer, or change any commitment in this turn."
-                        ),
-                    },
-                    {
-                        "role": "system",
-                        "content": (
-                            'Respond next with a final JSON decision using '
-                            '{"act":"reply","intent":"status","msg":"...","commit":"none","th":"..."} '
-                            "grounded in the BossMod CLI status result."
-                        ),
-                    },
-                ]
-                step_traces.append(
-                    _build_step_trace(
-                        step_index=len(step_traces) + 1,
-                        context_snapshot=next_context_snapshot,
-                        raw_response=response.content,
-                        action=decision.model_dump(),
-                        result={
-                            "event": "status_answer_required",
-                            "detail": "Status-request turn must end as a factual answer after the BossMod CLI lookup.",
-                        },
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
-                        duration_ms=int((time.monotonic() - step_started) * 1000),
-                    )
-                )
-                current_context.extend(continuation_messages)
-                next_context_snapshot = _serialize_trace_value(continuation_messages)
-                continue
-
         validation_error = validate_decision_for_trigger(
             decision,
             trigger_type=trigger_type,
@@ -1335,7 +1168,6 @@ async def _run_decision_turn(
             ),
             start=start,
         )
-
 
 async def _skip_turn(
     agent: Agent,
@@ -1628,37 +1460,7 @@ def _serialize_trace_value(value: Any) -> str | None:
     return json.dumps(value, default=str)
 
 
-def _decision_status_phase(
-    *,
-    status_guard_enabled: bool,
-    status_lookup_required: bool,
-    tool_steps: int,
-) -> str:
-    """Describe where a factual status turn is in its guarded flow."""
-    if not status_guard_enabled or not status_lookup_required:
-        return "none"
-    if tool_steps > 0:
-        return "post_lookup"
-    return "lookup_required"
-
-
-def _is_status_candidate_payload(candidate_payload: Any) -> bool:
-    """Return whether an invalid candidate payload was still attempting a status reply."""
-    if not isinstance(candidate_payload, dict):
-        return False
-    decision_value = str(candidate_payload.get("decision") or "").strip()
-    intent_value = str(candidate_payload.get("intentKind") or "").strip()
-    model_act = str(candidate_payload.get("act") or "").strip()
-    model_intent = str(candidate_payload.get("intent") or "").strip()
-    return (
-        decision_value == "status_request"
-        or intent_value == "status_request"
-        or model_act == "status"
-        or model_intent == "status"
-    )
-
-
-def _build_decision_repair_messages(*, parsed_error: str, status_phase: str) -> list[dict[str, str]]:
+def _build_decision_repair_messages(*, parsed_error: str) -> list[dict[str, str]]:
     """Build one strict repair prompt after invalid conversation JSON."""
     messages = [
         {
@@ -1683,26 +1485,6 @@ def _build_decision_repair_messages(*, parsed_error: str, status_phase: str) -> 
             ),
         },
     ]
-    if status_phase == "lookup_required":
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "This turn is still a factual status question and you have not checked live status yet. "
-                    'If you need authoritative current state, respond next with {"act":"cli","data":{"cmd":"status"},"th":"check live status"}.'
-                ),
-            }
-        )
-    if status_phase == "post_lookup":
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    'For this status query after BossMod CLI lookup, use {"act":"reply","intent":"status","msg":"...","commit":"none","th":"..."}. '
-                    'Do not change the commitment in this turn.'
-                ),
-            }
-        )
     return messages
 
 

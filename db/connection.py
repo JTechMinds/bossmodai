@@ -191,6 +191,12 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply additive column migrations for existing databases."""
     _add_column_if_missing(
+        con, "tasks", "requester_id", "VARCHAR",
+    )
+    _add_column_if_missing(
+        con, "tasks", "owner_id", "VARCHAR",
+    )
+    _add_column_if_missing(
         con, "bm_cli_events", "approval_request_id",
         "VARCHAR REFERENCES cli_approval_requests(id)",
     )

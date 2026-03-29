@@ -25,6 +25,7 @@ from core import config
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.task_roles import default_task_owner_id
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
 from core.runtime import runtime_services
@@ -558,6 +559,49 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     return result
 
 
+@router.get("/agents/{agent_id}/notifications")
+async def get_agent_notifications(
+    agent_id: str,
+    limit: int = 50,
+    chat_visible: bool | None = None,
+    prompt_visible: bool | None = None,
+):
+    """Return stored notifications for an agent, including hidden inbox updates."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    max_limit = config.get_int("api_message_limit_max") or 200
+    notifications = db.list_notifications(
+        agent_id=agent_id,
+        limit=min(limit, max_limit),
+        chat_visible=chat_visible,
+        prompt_visible=prompt_visible,
+    )
+    notification_links = db.list_notification_links([item.id for item in notifications])
+    return [
+        {
+            "id": item.id,
+            "agent_id": item.agent_id,
+            "task_id": item.task_id,
+            "activity_id": item.activity_id,
+            "kind": item.kind,
+            "content": item.content,
+            "source_channel": item.source_channel,
+            "policy": item.policy,
+            "chat_visible": item.chat_visible,
+            "prompt_visibility": item.prompt_visibility,
+            "desk_path": (
+                notification_links[item.id].target_path
+                if item.id in notification_links and notification_links[item.id].target_kind == "desk"
+                else None
+            ),
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+        for item in notifications
+    ]
+
+
 def _meeting_room_name(room_id: str) -> str:
     """Render a user-facing meeting room label."""
     if room_id == "meeting_room":
@@ -893,9 +937,18 @@ def _available_folder_opener_options() -> list[dict[str, str]]:
 @router.get("/tasks")
 async def list_tasks(
     assigned_to: str | None = None,
+    owner_id: str | None = None,
+    requester_id: str | None = None,
+    parent_task_id: str | None = None,
     status: str | None = None,
 ) -> list[Task]:
-    return db.list_tasks(assigned_to=assigned_to, status=status)
+    return db.list_tasks(
+        assigned_to=assigned_to,
+        owner_id=owner_id,
+        requester_id=requester_id,
+        parent_task_id=parent_task_id,
+        status=status,
+    )
 
 
 @router.post("/tasks", status_code=201)
@@ -903,6 +956,18 @@ async def create_task(body: TaskCreate) -> Task:
     work_contract = body.work_contract
     source_channel = body.source_channel or "api"
     notification_policy = body.notification_policy or "completion_blocked"
+    requester_id = body.requester_id or HUMAN_SENDER_ID
+    parent_task = None
+    if requester_id != HUMAN_SENDER_ID and not db.get_agent(requester_id):
+        raise HTTPException(404, "Requester agent not found")
+    if body.owner_id == HUMAN_SENDER_ID:
+        raise HTTPException(400, "Task owner must be an agent, not the human operator")
+    if body.owner_id and not db.get_agent(body.owner_id):
+        raise HTTPException(404, "Owner agent not found")
+    if body.parent_task_id:
+        parent_task = db.get_task(body.parent_task_id)
+        if not parent_task:
+            raise HTTPException(404, "Parent task not found")
     if work_contract is not None:
         if body.assigned_to:
             agent = db.get_agent(body.assigned_to)
@@ -919,13 +984,22 @@ async def create_task(body: TaskCreate) -> Task:
                 400,
                 "Task work_contract file deliverables must use absolute BossMod CLI paths when assigned_to is omitted.",
             )
+    owner_id = body.owner_id or default_task_owner_id(
+        assignee_id=body.assigned_to,
+        requester_id=requester_id,
+        created_by=HUMAN_SENDER_ID,
+        parent_task=parent_task,
+    )
 
     task = db.create_task(
         title=body.title,
         description=body.description,
         project=body.project,
         assigned_to=body.assigned_to,
+        requester_id=requester_id,
+        owner_id=owner_id,
         created_by=HUMAN_SENDER_ID,
+        parent_task_id=body.parent_task_id,
         work_contract=work_contract,
         source_channel=source_channel,
         notification_policy=notification_policy,
@@ -978,7 +1052,7 @@ async def get_activity_feed(
 
 @router.post("/agents/{agent_id}/activate")
 async def activate_agent(agent_id: str, body: ActivationBody | None = None):
-    """Queue a human chat trigger for an agent."""
+    """Route a human direct request to chat or work for an agent."""
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")

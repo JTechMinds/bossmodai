@@ -24,6 +24,11 @@ from core.agent_loop.task_origins import (
     task_notification_policy_for_trigger,
     task_source_channel_for_trigger,
 )
+from core.agent_loop.task_roles import (
+    default_task_owner_id,
+    task_assignment_reply_target,
+    task_report_recipient_ids,
+)
 from core.bm_cli import execute_bm_cli
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
@@ -213,10 +218,13 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             normalized["topic"] = extra.get("topic")
         case "done":
             normalized["summary"] = extra.get("sum")
+            normalized["followUpMessage"] = extra.get("msg")
         case "block" | "drop":
             normalized["reason"] = extra.get("why")
+            normalized["followUpMessage"] = extra.get("msg")
         case "deleg":
             normalized["agentId"] = extra.get("aid")
+            normalized["followUpMessage"] = extra.get("msg")
         case "idle":
             pass
 
@@ -328,6 +336,11 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         if not isinstance(agent_id, str) or not agent_id.strip():
             return f'"{action_name}" requires a non-empty "agentId"'
 
+    if action_name in _TASK_LIFECYCLE_ACTIONS:
+        follow_up_message = action.get("followUpMessage")
+        if follow_up_message is not None and (not isinstance(follow_up_message, str) or not follow_up_message.strip()):
+            return f'"{action_name}" "followUpMessage" must be a non-empty string when provided'
+
     if action_name == "attendMeeting" and action.get("agentId") not in (None, ""):
         agent_id = action.get("agentId")
         if not isinstance(agent_id, str) or not agent_id.strip():
@@ -405,7 +418,11 @@ def _count_action_tokens(agent: Agent, action: dict[str, Any], text: str) -> int
 
 def _task_is_human_visible(task: Any | None) -> bool:
     """Return whether task lifecycle notifications should reach the human chat."""
-    return bool(task and (task.notification_policy or "none") != "none")
+    return bool(
+        task
+        and task.requester_id == HUMAN_SENDER_ID
+        and (task.notification_policy or "none") != "none"
+    )
 
 
 def _normalize_delegate_work_contract(
@@ -423,6 +440,156 @@ def _normalize_delegate_work_contract(
         agent_storage_key=agent.storage_key,
         cwd=cli_state.cwd,
     )
+
+
+def _append_task_stakeholder_reports(
+    *,
+    result: dict[str, Any],
+    actor: Agent,
+    state: AgentState,
+    task: Any | None,
+    content: str,
+    skip_recipient_ids: set[str] | None = None,
+) -> None:
+    """Send durable task updates to the requesting/owning agents."""
+    if task is None or not isinstance(content, str) or not content.strip():
+        return
+
+    skipped = skip_recipient_ids or set()
+    recipients = task_report_recipient_ids(task, actor_id=actor.id)
+    if not recipients:
+        return
+
+    trigger_requests = result.setdefault("trigger_requests", [])
+    for recipient_id in recipients:
+        db.create_notification(
+            agent_id=recipient_id,
+            task_id=task.id,
+            kind="task_update",
+            content=content.strip(),
+            source_channel="task",
+            policy="none",
+            chat_visible=False,
+            prompt_visibility=False,
+        )
+        if recipient_id in skipped:
+            continue
+        message = db.create_message(
+            from_agent=actor.id,
+            to_agent=recipient_id,
+            content=content.strip(),
+            message_type="work",
+            location_x=state.x,
+            location_y=state.y,
+        )
+        trigger_requests.append(
+            _build_trigger_request(
+                agent_id=recipient_id,
+                trigger_type="peer_message",
+                source_channel=source_channel_for_message_type(message.message_type),
+                payload={
+                    "content": message.content,
+                    "from_agent": actor.id,
+                    "from_name": actor.name,
+                    "message_type": message.message_type,
+                    "source_message_id": message.id,
+                },
+                task_id=task.id,
+            )
+        )
+
+
+def _task_requires_conversational_follow_up(task: Any | None, *, actor_id: str) -> bool:
+    """Return whether the current task should send a natural follow-up reply."""
+    if task is None:
+        return False
+    if task.source_channel not in {"chat", "peer", "meeting", "channel"}:
+        return False
+    if task.notification_channel_id and task.source_channel == "channel":
+        return True
+    target = task_assignment_reply_target(task, assignee_id=actor_id)
+    return target["kind"] in {"human", "agent"}
+
+
+def _append_task_follow_up_message(
+    *,
+    result: dict[str, Any],
+    actor: Agent,
+    state: AgentState,
+    task: Any | None,
+    content: str | None,
+) -> set[str]:
+    """Persist one natural follow-up message for a task lifecycle update."""
+    if task is None or not isinstance(content, str) or not content.strip():
+        return set()
+
+    if task.notification_channel_id and task.source_channel == "channel":
+        message = db.create_channel_message(
+            channel_id=task.notification_channel_id,
+            author_type="agent",
+            author_agent_id=actor.id,
+            author_name=actor.name,
+            content=content.strip(),
+            source_channel="channel",
+        )
+        result["channel_message"] = {
+            "channel_id": task.notification_channel_id,
+            "content": message.content,
+            "author_type": message.author_type,
+            "author_name": actor.name,
+            "message_id": message.id,
+            "created_at": message.created_at,
+        }
+        return set()
+
+    target = task_assignment_reply_target(task, assignee_id=actor.id)
+    if target["kind"] == "human":
+        message = db.create_message(
+            from_agent=actor.id,
+            to_agent=HUMAN_SENDER_ID,
+            content=content.strip(),
+            message_type="social",
+            location_x=state.x,
+            location_y=state.y,
+        )
+        result["chat_message"] = {
+            "agent_id": actor.id,
+            "content": message.content,
+            "from_type": "agent",
+            "from_name": actor.name,
+            "message_type": message.message_type,
+            "message_id": message.id,
+            "created_at": message.created_at,
+        }
+        return set()
+
+    if target["kind"] == "agent" and target["agent_id"]:
+        message = db.create_message(
+            from_agent=actor.id,
+            to_agent=target["agent_id"],
+            content=content.strip(),
+            message_type="social",
+            location_x=state.x,
+            location_y=state.y,
+        )
+        result.setdefault("trigger_requests", []).append(
+            _build_trigger_request(
+                agent_id=target["agent_id"],
+                trigger_type="peer_message",
+                source_channel="chat",
+                payload={
+                    "content": message.content,
+                    "from_agent": actor.id,
+                    "from_name": actor.name,
+                    "message_type": message.message_type,
+                    "source_message_id": message.id,
+                },
+                task_id=task.id,
+            )
+        )
+        return {target["agent_id"]}
+
+    return set()
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +807,6 @@ async def _handle_delegate_task(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create an explicit task assignment for another agent."""
-    del state
     target = _resolve_agent_by_id(action.get("agentId"))
     if target is None:
         return {"event": "agent_error", "detail": "No valid delegate target specified", "agent_name": agent.name}
@@ -655,18 +821,31 @@ async def _handle_delegate_task(
     project = action.get("project")
     project_name = str(project).strip() if isinstance(project, str) and project.strip() else (parent_task.project if parent_task else None)
     work_contract = _normalize_delegate_work_contract(agent=agent, action=action)
+    source_channel = task_source_channel_for_trigger(trigger or {}) or (parent_task.source_channel if parent_task else None)
+    notification_policy = task_notification_policy_for_trigger(trigger or {}) or (parent_task.notification_policy if parent_task else None)
+    notification_channel_id = (
+        task_notification_channel_id_for_trigger(trigger or {}) or (parent_task.notification_channel_id if parent_task else None)
+    )
+    owner_id = default_task_owner_id(
+        assignee_id=target.id,
+        requester_id=agent.id,
+        created_by=agent.id,
+        parent_task=parent_task,
+    )
 
     task = db.create_task(
         title=task_title,
         description=task_description,
         project=project_name,
         assigned_to=target.id,
+        requester_id=agent.id,
+        owner_id=owner_id,
         created_by=agent.id,
         parent_task_id=parent_task_id,
         work_contract=work_contract,
-        source_channel=task_source_channel_for_trigger(trigger or {}),
-        notification_policy=task_notification_policy_for_trigger(trigger or {}),
-        notification_channel_id=task_notification_channel_id_for_trigger(trigger or {}),
+        source_channel=source_channel,
+        notification_policy=notification_policy,
+        notification_channel_id=notification_channel_id,
     )
 
     result = {
@@ -685,6 +864,13 @@ async def _handle_delegate_task(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=f'Assigned subtask "{task.title}" to {target.name}.',
+    )
     return result
 
 
@@ -995,6 +1181,15 @@ async def _handle_complete(
     summary = action.get("summary", "")
     active = activity_runtime.get_active_work_activity(agent.id)
     task = db.get_task(task_id)
+    follow_up_message = action.get("followUpMessage")
+    if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
+        isinstance(follow_up_message, str) and follow_up_message.strip()
+    ):
+        return {
+            "event": "world_feedback",
+            "detail": 'This task needs a short requester-facing update. Include data.msg in your "done" action.',
+            "agent_name": agent.name,
+        }
     pending_deliverables = missing_deliverables(
         agent_id=agent.id,
         agent_storage_key=agent.storage_key,
@@ -1022,7 +1217,7 @@ async def _handle_complete(
     else:
         activity_runtime.refresh_agent_status(agent.id)
 
-    return {
+    result = {
         "event": "status_changed",
         "detail": f"{agent.name} completed task" + (f" — {summary}" if summary else ""),
         "agent_name": agent.name,
@@ -1037,6 +1232,22 @@ async def _handle_complete(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    skipped = _append_task_follow_up_message(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=follow_up_message,
+    )
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=(f'Completed "{task.title}": {summary}' if task and summary else f'Completed "{task.title}".' if task else ""),
+        skip_recipient_ids=skipped,
+    )
+    return result
 
 
 async def _handle_blocked(
@@ -1052,6 +1263,15 @@ async def _handle_blocked(
     reason = action.get("reason", "")
 
     task = db.get_task(task_id)
+    follow_up_message = action.get("followUpMessage")
+    if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
+        isinstance(follow_up_message, str) and follow_up_message.strip()
+    ):
+        return {
+            "event": "world_feedback",
+            "detail": 'This task needs a short requester-facing update. Include data.msg in your "block" action.',
+            "agent_name": agent.name,
+        }
     db.update_task(
         task_id,
         status="blocked",
@@ -1065,7 +1285,7 @@ async def _handle_blocked(
     else:
         activity_runtime.refresh_agent_status(agent.id)
 
-    return {
+    result = {
         "event": "status_changed",
         "detail": f"{agent.name} blocked" + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
@@ -1080,6 +1300,22 @@ async def _handle_blocked(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    skipped = _append_task_follow_up_message(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=follow_up_message,
+    )
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=(f'Blocked on "{task.title}": {reason}' if task and reason else f'Blocked on "{task.title}".' if task else ""),
+        skip_recipient_ids=skipped,
+    )
+    return result
 
 
 async def _handle_delegated(
@@ -1095,6 +1331,16 @@ async def _handle_delegated(
     target = _resolve_agent_by_id(action.get("agentId"))
     if target is None:
         return {"event": "status_changed", "detail": "No valid delegate target specified", "agent_name": agent.name}
+    original_task = db.get_task(task_id)
+    follow_up_message = action.get("followUpMessage")
+    if _task_requires_conversational_follow_up(original_task, actor_id=agent.id) and not (
+        isinstance(follow_up_message, str) and follow_up_message.strip()
+    ):
+        return {
+            "event": "world_feedback",
+            "detail": 'This task needs a short requester-facing update. Include data.msg in your "deleg" action.',
+            "agent_name": agent.name,
+        }
 
     db.update_task(
         task_id,
@@ -1105,13 +1351,19 @@ async def _handle_delegated(
 
     # Create a child task for the target agent (vision doc: delegation
     # creates a formal task record with its own watchdog)
-    original_task = db.get_task(task_id)
     if original_task:
         child = db.create_task(
             title=original_task.title,
             description=original_task.description,
             project=original_task.project,
             assigned_to=target.id,
+            requester_id=agent.id,
+            owner_id=default_task_owner_id(
+                assignee_id=target.id,
+                requester_id=agent.id,
+                created_by=agent.id,
+                parent_task=original_task,
+            ),
             created_by=agent.id,
             parent_task_id=task_id,
             work_contract=original_task.work_contract,
@@ -1145,6 +1397,25 @@ async def _handle_delegated(
     }
     if child:
         result["trigger_requests"] = [build_task_assigned_trigger(child)]
+    skipped = _append_task_follow_up_message(
+        result=result,
+        actor=agent,
+        state=state,
+        task=original_task,
+        content=follow_up_message,
+    )
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=original_task,
+        content=(
+            f'Delegated "{original_task.title}" to {target.name}.'
+            if original_task
+            else ""
+        ),
+        skip_recipient_ids=skipped,
+    )
     return result
 
 
@@ -1161,6 +1432,15 @@ async def _handle_abandoned(
     reason = action.get("reason", "")
 
     task = db.get_task(task_id)
+    follow_up_message = action.get("followUpMessage")
+    if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
+        isinstance(follow_up_message, str) and follow_up_message.strip()
+    ):
+        return {
+            "event": "world_feedback",
+            "detail": 'This task needs a short requester-facing update. Include data.msg in your "drop" action.',
+            "agent_name": agent.name,
+        }
     db.update_task(
         task_id,
         status="abandoned",
@@ -1174,7 +1454,7 @@ async def _handle_abandoned(
     else:
         activity_runtime.refresh_agent_status(agent.id)
 
-    return {
+    result = {
         "event": "status_changed",
         "detail": f"{agent.name} abandoned task" + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
@@ -1189,6 +1469,22 @@ async def _handle_abandoned(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    skipped = _append_task_follow_up_message(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=follow_up_message,
+    )
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=(f'Abandoned "{task.title}": {reason}' if task and reason else f'Abandoned "{task.title}".' if task else ""),
+        skip_recipient_ids=skipped,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from core.models import MeetingSession, MeetingSessionMessage
 from core.world.tilemap import get_room_at
@@ -238,6 +239,53 @@ def get_formatted_meeting_session_messages(session_id: str, *, limit: int = 50) 
         }
         for item in list_meeting_session_messages(session_id, limit=limit)
     ]
+
+
+def get_recent_meeting_summaries_for_agent(
+    agent_id: str,
+    *,
+    limit_sessions: int = 2,
+    messages_per_session: int = 6,
+) -> list[dict[str, Any]]:
+    """Return recent meeting transcript summaries for sessions the agent spoke in."""
+    rows = query(
+        """
+        SELECT DISTINCT
+            s.id,
+            s.title,
+            s.status,
+            s.room_id,
+            COALESCE(s.ended_at, s.updated_at, s.created_at) AS sort_ts
+        FROM meeting_sessions s
+        JOIN meeting_session_messages m ON m.session_id = s.id
+        WHERE m.author_agent_id = $1
+        ORDER BY sort_ts DESC, s.id DESC
+        LIMIT $2
+        """,
+        [agent_id, limit_sessions],
+    )
+    summaries: list[dict[str, Any]] = []
+    for row in rows:
+        transcript = [
+            {
+                "author_type": item.author_type,
+                "author_name": item.author_name,
+                "content": item.content,
+                "created_at": item.created_at,
+            }
+            for item in list_meeting_session_messages(str(row["id"]), limit=messages_per_session)
+        ]
+        summaries.append(
+            {
+                "session_id": str(row["id"]),
+                "title": str(row.get("title") or "Meeting"),
+                "status": str(row.get("status") or "unknown"),
+                "room_id": str(row.get("room_id") or ""),
+                "sort_ts": row.get("sort_ts"),
+                "messages": transcript,
+            }
+        )
+    return summaries
 
 
 def delete_meeting_session_messages(session_id: str) -> None:

@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     description    TEXT,
     project        VARCHAR,
     assigned_to    VARCHAR,
+    requester_id   VARCHAR,
+    owner_id       VARCHAR,
     created_by     VARCHAR,
     status         VARCHAR DEFAULT 'pending'
                        CHECK (status IN ('pending', 'accepted', 'active', 'blocked', 'complete',
@@ -452,7 +454,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     task_id           VARCHAR REFERENCES tasks(id),
     activity_id       VARCHAR REFERENCES activities(id),
     kind              VARCHAR NOT NULL
-                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned')),
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update')),
     content           TEXT NOT NULL,
     source_channel    VARCHAR NOT NULL,
     policy            VARCHAR NOT NULL

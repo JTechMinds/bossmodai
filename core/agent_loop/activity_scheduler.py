@@ -6,8 +6,8 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
+from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
-from core.models.message import HUMAN_SENDER_ID
 
 _INTERRUPT_TRIGGER_TYPES = {
     "human_chat",
@@ -55,13 +55,7 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
 
 def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     """Build the durable trigger used to present a pending task assignment."""
-    from_agent: str | None = None
-    from_name = "Human Operator"
-    if task.created_by and task.created_by != HUMAN_SENDER_ID:
-        creator = db.get_agent(task.created_by)
-        if creator is not None:
-            from_agent = creator.id
-            from_name = creator.name
+    sender = task_assignment_sender(task)
 
     return {
         "agent_id": task.assigned_to,
@@ -72,8 +66,12 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "task_title": task.title,
             "task_description": task.description or "",
             "project": task.project,
-            "from_agent": from_agent,
-            "from_name": from_name,
+            "from_agent": sender["from_agent"],
+            "from_name": sender["from_name"],
+            "requester_id": sender["requester_id"],
+            "requester_name": sender["requester_name"],
+            "owner_id": sender["owner_id"],
+            "owner_name": sender["owner_name"],
             "notification_channel_id": task.notification_channel_id,
         },
     }

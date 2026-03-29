@@ -7,13 +7,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.models import Task, TaskNotificationSettings, WorkContract
+from core.models.message import HUMAN_SENDER_ID
 from db.crud import build_update, insert_returning_dict, query
 from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import delete_task_notification_target, set_task_notification_target_channel_id
 from db.task_work_contracts import delete_task_work_contract, set_task_work_contract
 
 _TASK_COLUMNS = (
-    "t.id, t.title, t.description, t.project, t.assigned_to, t.created_by, "
+    "t.id, t.title, t.description, t.project, t.assigned_to, t.requester_id, t.owner_id, t.created_by, "
     "t.status, twc.work_contract, twc.updated_at AS work_contract_updated_at, "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
     "tnt.channel_id AS notification_channel_id, "
@@ -23,7 +24,7 @@ _TASK_COLUMNS = (
 )
 
 _TASK_VALID_COLUMNS = {
-    "title", "description", "project", "assigned_to",
+    "title", "description", "project", "assigned_to", "requester_id", "owner_id",
     "status", "parent_task_id", "cost_ceiling", "completion_summary",
     "status_note", "watchdog_pinged_at", "last_progress_at", "last_heartbeat_at",
     "last_activity",
@@ -60,6 +61,8 @@ def create_task(
     description: str | None = None,
     project: str | None = None,
     assigned_to: str | None = None,
+    requester_id: str | None = None,
+    owner_id: str | None = None,
     created_by: str | None = None,
     parent_task_id: str | None = None,
     work_contract: Any | None = None,
@@ -77,13 +80,20 @@ def create_task(
             raise ValueError("source_channel and notification_policy must be provided together")
         validated_notification_settings = _validate_notification_settings(source_channel, notification_policy)
 
+    resolved_requester_id = requester_id if requester_id is not None else created_by
+    resolved_owner_id = owner_id if owner_id is not None else _default_task_owner_id(
+        assigned_to=assigned_to,
+        requester_id=resolved_requester_id,
+        created_by=created_by,
+    )
+
     row = insert_returning_dict(
         f"""
-        INSERT INTO tasks (title, description, project, assigned_to, created_by, parent_task_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO tasks (title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         """,
-        [title, description, project, assigned_to, created_by, parent_task_id],
+        [title, description, project, assigned_to, resolved_requester_id, resolved_owner_id, created_by, parent_task_id],
     )
     task_id = row["id"]
     if validated_work_contract is not None:
@@ -112,6 +122,23 @@ def _task_from_row(row: dict[str, Any]) -> Task:
     return Task.model_validate(data)
 
 
+def _default_task_owner_id(
+    *,
+    assigned_to: str | None,
+    requester_id: str | None,
+    created_by: str | None,
+) -> str | None:
+    """Pick the accountable owner for a task when one is not provided."""
+    for candidate in (assigned_to, requester_id, created_by):
+        if not isinstance(candidate, str):
+            continue
+        value = candidate.strip()
+        if not value or value == HUMAN_SENDER_ID:
+            continue
+        return value
+    return None
+
+
 def get_task(task_id: str) -> Task | None:
     """Fetch a single task by ID."""
     rows = query(
@@ -132,6 +159,9 @@ def get_task(task_id: str) -> Task | None:
 
 def list_tasks(
     assigned_to: str | None = None,
+    owner_id: str | None = None,
+    requester_id: str | None = None,
+    parent_task_id: str | None = None,
     status: str | None = None,
 ) -> list[Task]:
     """Return tasks, optionally filtered by assignee and/or status."""
@@ -141,6 +171,15 @@ def list_tasks(
     if assigned_to is not None:
         params.append(assigned_to)
         conditions.append(f"t.assigned_to = ${len(params)}")
+    if owner_id is not None:
+        params.append(owner_id)
+        conditions.append(f"t.owner_id = ${len(params)}")
+    if requester_id is not None:
+        params.append(requester_id)
+        conditions.append(f"t.requester_id = ${len(params)}")
+    if parent_task_id is not None:
+        params.append(parent_task_id)
+        conditions.append(f"t.parent_task_id = ${len(params)}")
     if status is not None:
         params.append(status)
         conditions.append(f"t.status = ${len(params)}")

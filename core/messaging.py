@@ -1,9 +1,9 @@
-"""BossMod AI — Shared human message routing service.
+"""BossMod AI — Shared human message ingress for direct and channel chat.
 
 Reusable functions for persisting, broadcasting, and triggering agent
-responses to human messages.  Used by both ``api/routes.py`` (web UI)
-and ``integrations/telegram/bot.py`` (Telegram bot) so the routing
-logic lives in exactly one place.
+responses to human messages. Used by both ``api/routes.py`` (web UI)
+and ``integrations/telegram/bot.py`` (Telegram bot) so delivery logic
+lives in exactly one place.
 """
 
 from __future__ import annotations
@@ -26,10 +26,9 @@ async def route_human_dm(
     """Persist a human DM, broadcast to WebSocket clients, enqueue an agent trigger.
 
     ``from_name`` is displayed to connected UI clients (e.g. "You" for the web UI).
-    ``trigger_from_name`` is what the agent sees in its prompt context (defaults
-    to "Human Operator" for backward compatibility).
+    ``trigger_from_name`` is what the agent sees in its prompt context.
 
-    Returns a dict with ``message_id`` of the persisted message.
+    Returns a dict with ``message_id``.
     """
     human_msg = db.create_message(
         from_agent=HUMAN_SENDER_ID,
@@ -56,7 +55,10 @@ async def route_human_dm(
             "source_message_id": human_msg.id,
         },
     )
-    return {"message_id": human_msg.id}
+    return {
+        "message_id": human_msg.id,
+        "routed_as": "human_chat",
+    }
 
 
 async def route_human_channel_message(

@@ -47,6 +47,8 @@ class Task(BaseModel):
     description: str | None = None
     project: str | None = None
     assigned_to: str | None = None
+    requester_id: str | None = None
+    owner_id: str | None = None
     created_by: str | None = None
     status: TaskStatus = "pending"
     work_contract: WorkContract | None = None
@@ -79,6 +81,9 @@ class TaskCreate(BaseModel):
     description: str | None = None
     project: str | None = None
     assigned_to: str | None = None
+    requester_id: str | None = None
+    owner_id: str | None = None
+    parent_task_id: str | None = None
     work_contract: WorkContract | None = None
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None

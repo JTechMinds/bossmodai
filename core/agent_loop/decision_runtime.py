@@ -19,6 +19,11 @@ from core.agent_loop.task_origins import (
     task_notification_policy_for_trigger,
     task_source_channel_for_trigger,
 )
+from core.agent_loop.task_roles import (
+    default_task_owner_id,
+    task_assignment_reply_target,
+    task_requester_id_for_trigger,
+)
 from core.agent_loop.decision_contract import ConversationDecision
 from core.models import Agent, AgentState
 from core.models.message import HUMAN_SENDER_ID
@@ -450,7 +455,9 @@ def _persist_assignment_reply(
             }
         }
 
-    if task.created_by == HUMAN_SENDER_ID:
+    reply_target = task_assignment_reply_target(task, assignee_id=agent.id)
+
+    if reply_target["kind"] == "human":
         message = db.create_message(
             from_agent=agent.id,
             to_agent=HUMAN_SENDER_ID,
@@ -471,10 +478,10 @@ def _persist_assignment_reply(
             }
         }
 
-    if task.created_by:
+    if reply_target["kind"] == "agent" and reply_target["agent_id"]:
         message = db.create_message(
             from_agent=agent.id,
-            to_agent=task.created_by,
+            to_agent=reply_target["agent_id"],
             content=reply.strip(),
             message_type="social",
             location_x=state.x,
@@ -483,7 +490,7 @@ def _persist_assignment_reply(
         return {
             "trigger_requests": [
                 {
-                    "agent_id": task.created_by,
+                    "agent_id": reply_target["agent_id"],
                     "trigger_type": "peer_message",
                     "source_channel": "chat",
                     "payload": {
@@ -545,11 +552,19 @@ def _resolve_or_create_work_task(
             created_by = trigger["from_agent"]
     elif trigger.get("type") == "peer_message" and trigger.get("from_agent"):
         created_by = trigger["from_agent"]
+    requester_id = task_requester_id_for_trigger(trigger, default_agent_id=agent.id)
+    owner_id = default_task_owner_id(
+        assignee_id=agent.id,
+        requester_id=requester_id,
+        created_by=created_by,
+    )
 
     return db.create_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         assigned_to=agent.id,
+        requester_id=requester_id,
+        owner_id=owner_id,
         created_by=created_by,
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
@@ -575,10 +590,18 @@ def _ensure_deferred_task(
         created_by = HUMAN_SENDER_ID
     else:
         created_by = trigger.get("from_agent") or agent.id
+    requester_id = task_requester_id_for_trigger(trigger, default_agent_id=agent.id)
+    owner_id = default_task_owner_id(
+        assignee_id=agent.id,
+        requester_id=requester_id,
+        created_by=created_by,
+    )
     return db.create_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         assigned_to=agent.id,
+        requester_id=requester_id,
+        owner_id=owner_id,
         created_by=created_by,
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
