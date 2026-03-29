@@ -63,12 +63,27 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("trigger.source_channel", "Trigger source channel"),
     ("trigger.task_title", "Assigned task title when present"),
     ("trigger.task_description", "Assigned task description when present"),
+    ("trigger.activity_kind", "Activity kind for resumed work triggers"),
+    ("trigger.nearby_names", "Comma-separated nearby agent names for social triggers"),
     ("channel.kind", "Current channel kind when present"),
     ("channel.name", "Current channel name when present"),
     ("channel.participant_count", "Current channel participant count"),
     ("session.kind", "Current session kind when present"),
     ("session.name", "Current session name when present"),
     ("session.participant_count", "Current session participant count"),
+    ("cli.shell_enabled", "Whether BossMod CLI shell access is enabled"),
+    ("conversation.speaker_name", "Conversation speaker display name"),
+    ("conversation.speaker_type", "Conversation speaker type"),
+    ("conversation.speaker_id", "Conversation speaker runtime id"),
+    ("conversation.channel_kind", "Conversation channel kind"),
+    ("conversation.channel_name", "Conversation channel name"),
+    ("conversation.turn_purpose", "Conversation turn purpose label"),
+    ("conversation.audience_mode", "Conversation audience mode"),
+    ("conversation.audience_targets", "Conversation audience targets as text"),
+    ("conversation.participants", "Conversation participants as text"),
+    ("file_guidance.required_files", "Comma-separated required file paths for the current work contract"),
+    ("file_guidance.required_file_count", "Number of required file deliverables for the current work contract"),
+    ("communication_snapshot.json", "Serialized authoritative communication snapshot JSON"),
 ]
 AUTHORED_PROMPT_ALLOWED_PATHS = {name for name, _ in _AUTHORED_PROMPT_VARIABLES}
 
@@ -206,6 +221,9 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "trigger": _template_trigger(turn.trigger),
         "channel": _template_channel(turn.current_channel),
         "session": _template_session(turn.current_session),
+        "cli": {
+            "shell_enabled": config.get("cli_shell_enabled") == "true",
+        },
     }
 
 
@@ -284,6 +302,8 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
         "task_description": str(trigger.get("task_description") or ""),
+        "activity_kind": str(trigger.get("activity_kind") or ""),
+        "nearby_names": ", ".join(str(item or "") for item in (trigger.get("nearby_names") or [] if isinstance(trigger.get("nearby_names"), list) else [])),
     }
 
 
@@ -323,11 +343,11 @@ def _preview_trigger(trigger_type: str) -> dict[str, Any]:
     if trigger_type == "task_assigned":
         base.update({"content": "", "from_name": "Human Operator"})
     if trigger_type == "activity_resumed":
-        base.update({"content": "Continue the current work activity."})
+        base.update({"content": "Continue the current work activity.", "activity_kind": "work"})
     if trigger_type == "watchdog_status_ping":
-        base.update({"content": "Provide a status update on the current task."})
+        base.update({"content": "Provide a status update on the current task.", "task_title": "Write API summary"})
     if trigger_type == "social":
-        base.update({"content": "", "from_name": "Nearby Team"})
+        base.update({"content": "", "from_name": "Nearby Team", "nearby_names": ["Morgan", "Riley"]})
     return base
 
 
@@ -636,49 +656,17 @@ def _summarize_text(value: str, limit: int = 160) -> str:
 
 def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
     """Format the trigger event for the turn contract in use."""
-    trigger_type = trigger.get("type", "unknown")
-
-    if trigger_type in ("message", "human_chat", "peer_message", "session_message", "session_response", "channel_message", "channel_response"):
-        sender = trigger.get("from_name", "Someone")
-        content = trigger.get("content", "")
-        if trigger_type == "channel_message":
-            return f"CURRENT SHARED CHANNEL MESSAGE FROM [{sender}]: {content}"
-        if trigger_type == "channel_response":
-            return f"YOUR TURN TO RESPOND IN THE SHARED CHANNEL after [{sender}] said: {content}"
-        if trigger_type == "session_message":
-            return f"CURRENT MEETING MESSAGE FROM [{sender}]: {content}"
-        if trigger_type == "session_response":
-            return f"YOUR TURN TO RESPOND IN THE MEETING after [{sender}] said: {content}"
-        return f"CURRENT REQUEST FROM [{sender}]: {content}"
-
-    if trigger_type == "task_assigned":
-        title = trigger.get("task_title", "a task")
-        desc = trigger.get("task_description", "")
-        sender = trigger.get("from_name", "someone")
-        extra = f"\nTask description: {desc}" if desc else ""
-        if contract_kind == "decision":
-            return f'[{sender}] assigned you a task: "{title}". Decide whether to accept it, ask a clarifying question, defer it, or decline it.{extra}'
-        return f'You have an accepted task commitment: "{title}".{extra}'
-
-    if trigger_type == "activity_resumed":
-        content = trigger.get("content", "")
-        if content:
-            return content
-        kind = trigger.get("activity_kind", "activity")
-        return f"You should continue the current {kind}."
-
-    if trigger_type == "social":
-        nearby = trigger.get("nearby_names", [])
-        return f"You're idle and nearby: {', '.join(nearby)}. Consider a brief social interaction."
-
-    if trigger_type == "watchdog_status_ping":
-        title = trigger.get("task_title", "your current task")
-        return (
-            f"Watchdog status check: you have been quiet on \"{title}\". "
-            "Reply to the human operator with a status update, continue working, or sign off with complete/blocked/delegated/abandoned."
-        )
-
-    return "You have been activated."
+    render_context = {
+        "trigger": _template_trigger(trigger),
+        "turn": {
+            "contract_kind": contract_kind,
+        },
+    }
+    return render_template(
+        config.require("runtime_block_trigger_event"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
 
 
 def _render_turn_contract(contract_kind: str, render_context: dict[str, Any]) -> str:
@@ -741,32 +729,24 @@ def _render_conversation_envelope(turn: TurnContext) -> str:
     channel_kind, channel_name, participant_names = _conversation_channel(turn, trigger_type)
     audience_mode, target_names = _conversation_audience(turn, trigger_type)
     turn_purpose = _conversation_turn_purpose(trigger_type)
-
-    lines = [
-        "CONVERSATION ENVELOPE:",
-        f"current_agent: {turn.agent.name}",
-        f"speaker: {speaker_name} ({speaker_type})",
-        f"speaker_id: {speaker_id}",
-        f"channel_kind: {channel_kind}",
-        f"channel_name: {channel_name}",
-        f"turn_purpose: {turn_purpose}",
-        f"audience_mode: {audience_mode}",
-    ]
-    if target_names:
-        lines.append(f"audience_targets: {', '.join(target_names)}")
-    else:
-        lines.append("audience_targets: none")
-    if participant_names:
-        lines.append(f"participants: {', '.join(participant_names)}")
-    else:
-        lines.append("participants: none")
-    lines.extend(
-        [
-            "Use this envelope to understand who is speaking, who else is present, and whether this is direct or shared conversation.",
-            "Do not restate these runtime facts unless they matter to your actual reply.",
-        ]
+    render_context = _build_prompt_render_context(turn) | {
+        "conversation": {
+            "speaker_name": speaker_name,
+            "speaker_type": speaker_type,
+            "speaker_id": speaker_id,
+            "channel_kind": channel_kind,
+            "channel_name": channel_name,
+            "turn_purpose": turn_purpose,
+            "audience_mode": audience_mode,
+            "audience_targets": ", ".join(target_names),
+            "participants": ", ".join(participant_names),
+        }
+    }
+    return render_template(
+        config.require("runtime_block_conversation_envelope"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
-    return "\n".join(lines)
 
 
 def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
@@ -777,16 +757,17 @@ def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
     file_paths = [item.path for item in contract.deliverables if item.type == "file" and item.path]
     if not file_paths:
         return None
-    lines = [
-        "FILE DELIVERABLE GUIDANCE:",
-        f"required_files: {', '.join(file_paths)}",
-        "If the current work contract requires a file, prefer BossMod CLI write directly instead of putting the full document into data.out.",
-        "For one substantial document, call write <path> with no body to use runtime-managed authoring.",
-        "For multiple generated files, call bwrite with a short manifest body listing each path and goal.",
-        "Do not put long-form document bodies into CLI JSON.",
-        "Use work.out for short progress/status text, not the final long-form file body.",
-    ]
-    return "\n".join(lines)
+    render_context = _build_prompt_render_context(turn) | {
+        "file_guidance": {
+            "required_files": ", ".join(file_paths),
+            "required_file_count": str(len(file_paths)),
+        }
+    }
+    return render_template(
+        config.require("runtime_block_file_deliverable_guidance"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
 
 
 def _render_communication_snapshot(turn: TurnContext) -> str | None:
@@ -797,11 +778,15 @@ def _render_communication_snapshot(turn: TurnContext) -> str | None:
     profile = communication_profile_for_trigger(trigger_type)
     if profile is None or not turn.communication_snapshot_json:
         return None
-    return (
-        "AUTHORITATIVE COMMUNICATION SNAPSHOT (JSON):\n"
-        f"{turn.communication_snapshot_json}\n\n"
-        "Use this snapshot as the current internal source of truth for status, progress, recent work, projects, and meetings.\n"
-        "Use BossMod CLI only if the snapshot still lacks a fact you genuinely need."
+    render_context = _build_prompt_render_context(turn) | {
+        "communication_snapshot": {
+            "json": turn.communication_snapshot_json,
+        }
+    }
+    return render_template(
+        config.require("runtime_block_communication_snapshot"),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
 

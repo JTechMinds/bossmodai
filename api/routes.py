@@ -75,6 +75,10 @@ class ChannelMessageBody(BaseModel):
 class RuntimeContractsBody(BaseModel):
     decision: str
     execution: str
+    trigger_event: str
+    conversation_envelope: str
+    file_deliverable_guidance: str
+    communication_snapshot: str
 
 
 class RuntimeContractPreviewBody(BaseModel):
@@ -131,6 +135,10 @@ class CliApprovalDecisionBody(BaseModel):
 _RUNTIME_CONTRACT_KEYS = {
     "decision": "runtime_contract_decision",
     "execution": "runtime_contract_execution",
+    "trigger_event": "runtime_block_trigger_event",
+    "conversation_envelope": "runtime_block_conversation_envelope",
+    "file_deliverable_guidance": "runtime_block_file_deliverable_guidance",
+    "communication_snapshot": "runtime_block_communication_snapshot",
 }
 _RUNTIME_PREVIEW_TRIGGERS = [
     "human_chat",
@@ -159,6 +167,10 @@ def _runtime_contracts_payload() -> dict[str, object]:
     return {
         "decision": config.require(_RUNTIME_CONTRACT_KEYS["decision"]),
         "execution": config.require(_RUNTIME_CONTRACT_KEYS["execution"]),
+        "trigger_event": config.require(_RUNTIME_CONTRACT_KEYS["trigger_event"]),
+        "conversation_envelope": config.require(_RUNTIME_CONTRACT_KEYS["conversation_envelope"]),
+        "file_deliverable_guidance": config.require(_RUNTIME_CONTRACT_KEYS["file_deliverable_guidance"]),
+        "communication_snapshot": config.require(_RUNTIME_CONTRACT_KEYS["communication_snapshot"]),
         "allowed_variables": context_builder.template_variable_metadata(),
         "template_syntax": context_builder.template_syntax_examples(),
         "preview_triggers": list(_RUNTIME_PREVIEW_TRIGGERS),
@@ -1544,22 +1556,34 @@ async def set_runtime_contracts(body: RuntimeContractsBody):
     try:
         _validate_authored_prompt_template(body.decision)
         _validate_authored_prompt_template(body.execution)
+        _validate_authored_prompt_template(body.trigger_event)
+        _validate_authored_prompt_template(body.conversation_envelope)
+        _validate_authored_prompt_template(body.file_deliverable_guidance)
+        _validate_authored_prompt_template(body.communication_snapshot)
     except TemplateError as exc:
         raise HTTPException(400, str(exc)) from exc
 
     with db.transaction():
         db.set_setting(_RUNTIME_CONTRACT_KEYS["decision"], body.decision, "advanced")
         db.set_setting(_RUNTIME_CONTRACT_KEYS["execution"], body.execution, "advanced")
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["trigger_event"], body.trigger_event, "advanced")
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["conversation_envelope"], body.conversation_envelope, "advanced")
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["file_deliverable_guidance"], body.file_deliverable_guidance, "advanced")
+        db.set_setting(_RUNTIME_CONTRACT_KEYS["communication_snapshot"], body.communication_snapshot, "advanced")
     config.reload()
     return _runtime_contracts_payload()
 
 
 @router.post("/runtime/contracts/reset")
 async def reset_runtime_contracts():
-    """Reset both runtime contract templates back to their seeded defaults."""
+    """Reset runtime contracts and runtime-owned prompt blocks back to seeded defaults."""
     with db.transaction():
         db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["decision"])
         db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["execution"])
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["trigger_event"])
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["conversation_envelope"])
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["file_deliverable_guidance"])
+        db.reset_setting_to_seed(_RUNTIME_CONTRACT_KEYS["communication_snapshot"])
     config.reload()
     return _runtime_contracts_payload()
 

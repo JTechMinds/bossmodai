@@ -30,6 +30,7 @@ from core.agent_loop.task_roles import (
     task_report_recipient_ids,
 )
 from core.bm_cli import execute_bm_cli
+from core.default_prompts import render_default_prompt
 from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
@@ -55,6 +56,7 @@ _DESTINATIONS = {
 
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 _TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
+_ACTION_PROMPT_ALLOWED_PATHS = {"room_name", "target", "targets"}
 _SUPPORTED_ACTIONS = {
     "bm_cli",
     "work",
@@ -640,8 +642,13 @@ async def _handle_work(
         room_name = room["name"] if room else "unknown area"
         return {
             "event": "world_feedback",
-            "detail": f"You're in the {room_name}. Walk to your desk first.",
+            "detail": render_default_prompt(
+                "internal_action_requires_workspace",
+                {"room_name": room_name},
+                allowed_paths=_ACTION_PROMPT_ALLOWED_PATHS,
+            ),
             "agent_name": agent.name,
+            "feedback_code": "walk_to_desk_first",
         }
 
     task = db.get_task(task_id)
@@ -658,19 +665,19 @@ async def _handle_work(
     if file_deliverables and len(output) > _MAX_INLINE_FILE_DELIVERABLE_WORK_CHARS:
         if len(file_deliverables) == 1:
             target = summarize_deliverable(file_deliverables[0])
-            detail = (
-                f"This work contract requires {target}. "
-                "Do not place the full document in data.out. "
-                "Use BossMod CLI write with no body so the runtime can manage the file write."
+            detail = render_default_prompt(
+                "internal_action_large_work_single_file_guidance",
+                {"target": target},
+                allowed_paths=_ACTION_PROMPT_ALLOWED_PATHS,
             )
         else:
             targets = ", ".join(summarize_deliverable(item) for item in file_deliverables[:3])
             if len(file_deliverables) > 3:
                 targets = f"{targets}, ..."
-            detail = (
-                f"This work contract requires multiple files ({targets}). "
-                "Do not place full documents in data.out. "
-                "Use BossMod CLI bwrite with a short manifest body listing each path and goal."
+            detail = render_default_prompt(
+                "internal_action_large_work_multi_file_guidance",
+                {"targets": targets},
+                allowed_paths=_ACTION_PROMPT_ALLOWED_PATHS,
             )
         return {
             "event": "world_feedback",
@@ -982,8 +989,13 @@ async def _handle_remote_meeting(
         room_name = room["name"] if room else "unknown area"
         return {
             "event": "world_feedback",
-            "detail": f"You're in the {room_name}. Walk to your desk first.",
+            "detail": render_default_prompt(
+                "internal_action_requires_workspace",
+                {"room_name": room_name},
+                allowed_paths=_ACTION_PROMPT_ALLOWED_PATHS,
+            ),
             "agent_name": agent.name,
+            "feedback_code": "walk_to_desk_first",
         }
 
     # Send a meeting request message

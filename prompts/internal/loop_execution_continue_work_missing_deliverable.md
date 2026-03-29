@@ -1,0 +1,1 @@
+Action executed: {{detail}}. The current work contract still requires "{{target}}". Use {"act":"cli","data":{"cmd":"write {{target}}"},"th":"save deliverable"} to satisfy it before done. Do not paste the full file body into JSON; the runtime will manage long-form file writing.

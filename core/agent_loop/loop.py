@@ -48,6 +48,7 @@ from core.bm_cli.managed_writer import (
     run_managed_section_rewrite,
     run_managed_write,
 )
+from core.default_prompts import load_default_prompt, render_default_prompt
 from core.llm import client, context_builder, routing
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
@@ -67,6 +68,16 @@ _DECISION_TRIGGER_TYPES = {
 _COMMUNICATION_TRIGGER_TYPES = _DECISION_TRIGGER_TYPES - {"task_assigned"}
 
 _MAX_DECISION_REPAIR_ATTEMPTS = 2
+_LOOP_PROMPT_ALLOWED_PATHS = {"command", "reason", "parsed_error", "detail", "target"}
+
+
+def _render_loop_prompt(template_key: str, **context: Any) -> str:
+    """Render one centralized loop prompt block."""
+    return render_default_prompt(
+        template_key,
+        context,
+        allowed_paths=_LOOP_PROMPT_ALLOWED_PATHS,
+    )
 
 
 async def run_turn(
@@ -205,16 +216,15 @@ async def run_turn(
         else:
             note = approval_payload.get("decision_note") or "No reason given."
             cmd = approval_payload.get("command", "unknown")
-            approval_context_msg = (
-                f"BOSSMOD CLI RESULT\ncommand: {cmd}\n\n"
-                f"REJECTED:\nYour previous command was rejected by the operator.\n"
-                f"Reason: {note}\n"
-                f"Choose an alternative approach or continue without this operation."
+            approval_context_msg = _render_loop_prompt(
+                "internal_loop_approval_rejected_result",
+                command=cmd,
+                reason=note,
             )
         context.append({"role": "system", "content": approval_context_msg})
         context.append({
             "role": "user",
-            "content": "A previously requested command has been reviewed. Use the result above to choose your next step.",
+            "content": load_default_prompt("internal_loop_approval_review_followup"),
         })
 
     # 4. Multi-turn loop
@@ -688,7 +698,7 @@ async def run_turn(
                 {"role": "system", "content": result["cli_prompt_content"]},
                 {
                     "role": "user",
-                    "content": "Use the BossMod CLI result above to choose the next execution step.",
+                    "content": load_default_prompt("internal_loop_execution_cli_followup"),
                 },
             ]
         else:
@@ -1024,10 +1034,7 @@ async def _run_decision_turn(
                 {"role": "system", "content": cli_result.prompt_content},
                 {
                     "role": "system",
-                    "content": (
-                        "Use the BossMod CLI result above for this turn. "
-                        "Respond next with a final JSON decision, or call bm_cli again if you still need more authoritative information."
-                    ),
+                    "content": load_default_prompt("internal_loop_decision_cli_followup"),
                 },
             ]
             current_context.extend(continuation_messages)
@@ -1403,37 +1410,39 @@ def _build_continuation_instruction(
         if missing_deliverables:
             first = missing_deliverables[0]
             target = first.get("path") or "the required deliverable"
-            return (
-                f"Action executed: {detail}. "
-                f'The current work contract still requires "{target}". '
-                f'Use {{"act":"cli","data":{{"cmd":"write {target}"}},"th":"save deliverable"}} to satisfy it before done. '
-                "Do not paste the full file body into JSON; the runtime will manage long-form file writing."
+            return _render_loop_prompt(
+                "internal_loop_execution_continue_work_missing_deliverable",
+                detail=detail,
+                target=target,
             )
-        if result.get("event") == "world_feedback" and "Walk to your desk first." in detail:
-            return (
-                f"Action executed: {detail}. "
-                'Your next step should be {"act":"walk","data":{"dst":"desk"},"th":"move first"} before work.'
+        if result.get("feedback_code") == "walk_to_desk_first":
+            return _render_loop_prompt(
+                "internal_loop_execution_continue_move_to_desk",
+                detail=detail,
             )
-        return (
-            f"Action executed: {detail}. "
-            "Choose the next work step or sign off with complete/blocked/delegated/abandoned."
+        return _render_loop_prompt(
+            "internal_loop_execution_continue_work_generic",
+            detail=detail,
         )
     if active_activity_kind == "meeting":
-        return (
-            f"Action executed: {detail}. "
-            "Choose the next step to continue the meeting commitment."
+        return _render_loop_prompt(
+            "internal_loop_execution_continue_meeting",
+            detail=detail,
         )
     if active_activity_kind == "conversation":
-        return (
-            f"Action executed: {detail}. "
-            "Choose the next step to continue the conversation."
+        return _render_loop_prompt(
+            "internal_loop_execution_continue_conversation",
+            detail=detail,
         )
     if active_activity_kind == "break":
-        return (
-            f"Action executed: {detail}. "
-            "Choose the next step to continue the break."
+        return _render_loop_prompt(
+            "internal_loop_execution_continue_break",
+            detail=detail,
         )
-    return f"Action executed: {detail}. Choose the next execution step."
+    return _render_loop_prompt(
+        "internal_loop_execution_continue_generic",
+        detail=detail,
+    )
 
 def _has_pending_interrupts(agent_id: str) -> bool:
     """Return whether queued interrupt-style triggers are waiting for the agent."""
@@ -1465,24 +1474,18 @@ def _build_decision_repair_messages(*, parsed_error: str) -> list[dict[str, str]
     messages = [
         {
             "role": "system",
-            "content": (
-                "Your previous JSON decision was invalid for the current conversation contract: "
-                f"{parsed_error}. Return exactly one corrected JSON object and nothing else."
+            "content": _render_loop_prompt(
+                "internal_loop_decision_repair_primary",
+                parsed_error=parsed_error,
             ),
         },
         {
             "role": "system",
-            "content": (
-                "Keep the same conversational intent. Do not add commentary, markdown, or explanation. "
-                "Only correct the JSON fields so they conform to the contract."
-            ),
+            "content": load_default_prompt("internal_loop_decision_repair_preserve_intent"),
         },
         {
             "role": "system",
-            "content": (
-                'Use the contract keys exactly. "act" is the response mode, "intent" is the topic, and "th" is thought. '
-                'Use "status" only in "intent", never in "act".'
-            ),
+            "content": load_default_prompt("internal_loop_decision_repair_keys"),
         },
     ]
     return messages

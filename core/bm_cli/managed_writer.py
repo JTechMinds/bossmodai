@@ -26,11 +26,33 @@ from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.types import BossModCliResult
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.bm_cli.workspace_git import commit_workspace_changes
+from core.default_prompts import load_default_prompt, render_default_prompt
 from core.llm import client
 from core.models import Agent, AgentState
 
 _MANAGED_WRITE_DONE_SENTINEL = "<<BOSSMOD_FILE_DONE>>"
 _MANAGED_WRITE_PLAN_SENTINEL = "<<BOSSMOD_PLAN_REQUIRED>>"
+
+_MANAGED_WRITER_PROMPT_ALLOWED_PATHS = {
+    "target_path",
+    "file_goal",
+    "done_sentinel",
+    "plan_sentinel",
+    "max_sections",
+    "batch.is_batch",
+    "batch.file_index",
+    "batch.file_count",
+    "section.heading",
+    "section.goal",
+    "section_index",
+    "section_count",
+    "outline",
+    "section_heading",
+    "rewrite_goal",
+    "previous_heading",
+    "next_heading",
+    "current_body",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +101,15 @@ class ManagedGenerationOutcome:
     strategy: str
     section_count: int
     cli_result: BossModCliResult | None = None
+
+
+def _render_managed_writer_prompt(template_key: str, context: dict[str, Any]) -> str:
+    """Render one file-backed managed-writer prompt template."""
+    return render_default_prompt(
+        template_key,
+        context,
+        allowed_paths=_MANAGED_WRITER_PROMPT_ALLOWED_PATHS,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +291,7 @@ def _managed_writer_error_result(
 ) -> BossModCliResult:
     """Build a managed-writer error with explicit recovery guidance and metadata."""
     cli_result = error_result(command, message, cwd=cwd)
+    guidance_lines = load_default_prompt("internal_managed_writer_error_guidance").splitlines()
     prompt_content = render_sections(
         command,
         [
@@ -267,8 +299,7 @@ def _managed_writer_error_result(
                 "ERROR",
                 [
                     message,
-                    "Do not paste a long file body into CLI JSON.",
-                    "Retry with a narrower file goal, a smaller batch, or a shorter status update first.",
+                    *guidance_lines,
                 ],
             )
         ],
@@ -1678,21 +1709,20 @@ def _managed_single_pass_instruction(
     file_count: int,
 ) -> str:
     """Return the runtime instruction for one direct file-generation attempt."""
-    lines = [
-        f"You are in a managed BossMod file-writer session for {target_path}.",
-        "Author the complete file in one response if it reasonably fits.",
-        "Output only the file body as plain UTF-8 text.",
-        "Do not return JSON.",
-        "Do not add commentary or explanations.",
-        "Do not wrap the output in code fences.",
-        f"If the complete file fits, append {_MANAGED_WRITE_DONE_SENTINEL} on its own line at the end.",
-        f"If the file should be written section-by-section instead, return only {_MANAGED_WRITE_PLAN_SENTINEL} on its own line.",
-    ]
-    if file_count > 1:
-        lines.append(f"This file is {file_index} of {file_count} in a batch deliverable.")
-    if file_goal:
-        lines.append(f"File goal: {file_goal}")
-    return "\n".join(lines)
+    return _render_managed_writer_prompt(
+        "internal_managed_writer_single_pass",
+        {
+            "target_path": target_path,
+            "file_goal": file_goal or "",
+            "done_sentinel": _MANAGED_WRITE_DONE_SENTINEL,
+            "plan_sentinel": _MANAGED_WRITE_PLAN_SENTINEL,
+            "batch": {
+                "is_batch": file_count > 1,
+                "file_index": file_index,
+                "file_count": file_count,
+            },
+        },
+    )
 
 
 def _managed_section_plan_instruction(
@@ -1703,21 +1733,19 @@ def _managed_section_plan_instruction(
     file_count: int,
 ) -> str:
     """Return the runtime instruction for planning a large document."""
-    lines = [
-        f"You are planning a managed BossMod file for {target_path}.",
-        "Return strict JSON only.",
-        'Use this schema: {"sections":[{"heading":"# Heading","goal":"what this section must cover"}]}',
-        f"Plan between 2 and {_managed_max_sections_per_file()} sections.",
-        "Each heading must be the exact markdown heading that should appear in the final file.",
-        "Keep each goal concise and specific.",
-        "Do not include section body prose.",
-        "Do not wrap the JSON in code fences.",
-    ]
-    if file_count > 1:
-        lines.append(f"This file is {file_index} of {file_count} in a batch deliverable.")
-    if file_goal:
-        lines.append(f"File goal: {file_goal}")
-    return "\n".join(lines)
+    return _render_managed_writer_prompt(
+        "internal_managed_writer_section_plan",
+        {
+            "target_path": target_path,
+            "file_goal": file_goal or "",
+            "max_sections": _managed_max_sections_per_file(),
+            "batch": {
+                "is_batch": file_count > 1,
+                "file_index": file_index,
+                "file_count": file_count,
+            },
+        },
+    )
 
 
 def _managed_section_instruction(
@@ -1732,24 +1760,25 @@ def _managed_section_instruction(
     outline_lines: list[str],
 ) -> str:
     """Return the runtime instruction for one section body."""
-    lines = [
-        f"You are authoring section {section_index} of {section_count} for {target_path}.",
-        "Write only the body content for this section.",
-        f'Do not include the heading "{section.heading}" in the response.',
-        "Do not include other sections.",
-        "Do not return JSON.",
-        "Do not add commentary or explanations.",
-        "Do not wrap the output in code fences.",
-        "Document outline:",
-        *outline_lines,
-        f"Current section heading: {section.heading}",
-        f"Current section goal: {section.goal}",
-    ]
-    if file_count > 1:
-        lines.append(f"This file is {file_index} of {file_count} in a batch deliverable.")
-    if file_goal:
-        lines.append(f"File goal: {file_goal}")
-    return "\n".join(lines)
+    return _render_managed_writer_prompt(
+        "internal_managed_writer_section",
+        {
+            "target_path": target_path,
+            "file_goal": file_goal or "",
+            "section_index": section_index,
+            "section_count": section_count,
+            "outline": "\n".join(outline_lines),
+            "section": {
+                "heading": section.heading,
+                "goal": section.goal,
+            },
+            "batch": {
+                "is_batch": file_count > 1,
+                "file_index": file_index,
+                "file_count": file_count,
+            },
+        },
+    )
 
 
 def _managed_section_rewrite_instruction(
@@ -1763,28 +1792,18 @@ def _managed_section_rewrite_instruction(
     next_heading: str | None,
 ) -> str:
     """Return the runtime instruction for rewriting one existing section body."""
-    lines = [
-        f"You are rewriting one existing markdown section in {target_path}.",
-        "Return only the rewritten body text for the target section.",
-        f'Do not include the heading "{section_heading}" in the response.',
-        "Do not return JSON.",
-        "Do not add commentary or explanations.",
-        "Do not wrap the output in code fences.",
-        "Do not modify or mention other sections.",
-        "Document outline:",
-        *outline_lines,
-        f"Target section: {section_heading}",
-        f"Rewrite goal: {rewrite_goal}",
-    ]
-    if previous_heading:
-        lines.append(f"Previous section: {previous_heading}")
-    if next_heading:
-        lines.append(f"Next section: {next_heading}")
-    if current_body:
-        lines.extend(["Current section body:", current_body])
-    else:
-        lines.append("Current section body: (empty)")
-    return "\n".join(lines)
+    return _render_managed_writer_prompt(
+        "internal_managed_writer_section_rewrite",
+        {
+            "target_path": target_path,
+            "section_heading": section_heading,
+            "rewrite_goal": rewrite_goal,
+            "outline": "\n".join(outline_lines),
+            "previous_heading": previous_heading or "",
+            "next_heading": next_heading or "",
+            "current_body": current_body,
+        },
+    )
 
 
 def _render_outline_lines(sections: list[ManagedSectionPlan]) -> list[str]:

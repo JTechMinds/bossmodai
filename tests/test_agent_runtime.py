@@ -229,6 +229,10 @@ def test_init_db_removes_obsolete_action_contract_setting(isolated_db):
     assert advanced_settings["system_prompt_template"] == settings_store.SYSTEM_PROMPT_TEMPLATE
     assert advanced_settings["runtime_contract_decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
     assert advanced_settings["runtime_contract_execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert advanced_settings["runtime_block_trigger_event"] == settings_store.RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE
+    assert advanced_settings["runtime_block_conversation_envelope"] == settings_store.RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE
+    assert advanced_settings["runtime_block_file_deliverable_guidance"] == settings_store.RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE
+    assert advanced_settings["runtime_block_communication_snapshot"] == settings_store.RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE
     assert advanced_settings["runtime_control_state"] == settings_store.RUNTIME_CONTROL_STATE
 
 
@@ -1451,8 +1455,14 @@ async def test_runtime_contracts_endpoint_returns_settings_backed_templates(isol
 
     assert payload["decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
     assert payload["execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert payload["trigger_event"] == settings_store.RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE
+    assert payload["conversation_envelope"] == settings_store.RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE
+    assert payload["file_deliverable_guidance"] == settings_store.RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE
+    assert payload["communication_snapshot"] == settings_store.RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE
     assert any(item["name"] == "trigger.type" for item in payload["allowed_variables"])
     assert any(item["name"] == "activity.preferred_destination" for item in payload["allowed_variables"])
+    assert any(item["name"] == "conversation.speaker_name" for item in payload["allowed_variables"])
+    assert any(item["name"] == "communication_snapshot.json" for item in payload["allowed_variables"])
     assert any(example.startswith("{{if trigger.type = 'human_chat'}}") for example in payload["template_syntax"])
     assert "human_chat" in payload["preview_triggers"]
 
@@ -1523,6 +1533,10 @@ async def test_set_runtime_contracts_persists_live_templates_without_restart(iso
         RuntimeContractsBody(
             decision="{{if trigger.type = 'human_chat'}}HUMAN DECISION{{else}}OTHER DECISION{{end}}",
             execution="EXECUTION FOR {{trigger.type}}",
+            trigger_event="TRIGGER kind={{trigger.type}} who={{trigger.from_name}}",
+            conversation_envelope="ENVELOPE speaker={{conversation.speaker_name}} audience={{conversation.audience_mode}}",
+            file_deliverable_guidance="GUIDANCE files={{file_guidance.required_files}}",
+            communication_snapshot="SNAPSHOT {{communication_snapshot.json}}",
         )
     )
 
@@ -1570,12 +1584,43 @@ async def test_set_runtime_contracts_persists_live_templates_without_restart(iso
                 "content": "Continue the current work activity.",
             },
             contract_kind="execution",
+            current_task={
+                "id": "task-1",
+                "title": "Write the backend whitepaper",
+                "status": "active",
+                "description": "Draft and save the backend whitepaper.",
+                "work_contract": {
+                    "deliverables": [{"type": "file", "path": "/me/backend-tech-stack-whitepaper.md"}],
+                },
+            },
+        )
+    )
+    snapshot_context = context_builder.build_context(
+        context_builder.TurnContext(
+            agent=agent,
+            state=state,
+            trigger={
+                "type": "human_chat",
+                "content": "What is your status?",
+                "from_name": "Human Operator",
+            },
+            conversation_history=[],
+            prompt_notifications=[],
+            reference_materials=[],
+            nearby_agents=[],
+            pending_trigger_count=0,
+            contract_kind="decision",
+            communication_snapshot_json='{"runtime":{"status":"idle"}}',
         )
     )
 
     assert human_context[1]["content"] == "HUMAN DECISION"
     assert peer_context[1]["content"] == "OTHER DECISION"
     assert execution_context[1]["content"] == "EXECUTION FOR activity_resumed"
+    assert human_context[2]["content"] == "ENVELOPE speaker=Human Operator audience=direct"
+    assert human_context[-1]["content"] == "TRIGGER kind=human_chat who=Human Operator"
+    assert any(msg["content"] == "GUIDANCE files=/me/backend-tech-stack-whitepaper.md" for msg in execution_context if msg["role"] == "system")
+    assert any(msg["content"] == 'SNAPSHOT {"runtime":{"status":"idle"}}' for msg in snapshot_context if msg["role"] == "system")
 
 
 def test_execution_context_adds_file_deliverable_guidance_for_file_contract(isolated_db):
@@ -1746,6 +1791,10 @@ async def test_runtime_contract_save_rejects_invalid_template(isolated_db):
             RuntimeContractsBody(
                 decision="{{missing_value}}",
                 execution="EXECUTION",
+                trigger_event="TRIGGER",
+                conversation_envelope="ENVELOPE",
+                file_deliverable_guidance="GUIDANCE",
+                communication_snapshot="SNAPSHOT",
             )
         )
 
@@ -1759,6 +1808,10 @@ async def test_reset_runtime_contracts_restores_seed_defaults(isolated_db):
         RuntimeContractsBody(
             decision="CUSTOM DECISION",
             execution="CUSTOM EXECUTION",
+            trigger_event="CUSTOM TRIGGER",
+            conversation_envelope="CUSTOM ENVELOPE",
+            file_deliverable_guidance="CUSTOM GUIDANCE",
+            communication_snapshot="CUSTOM SNAPSHOT",
         )
     )
 
@@ -1766,8 +1819,16 @@ async def test_reset_runtime_contracts_restores_seed_defaults(isolated_db):
 
     assert payload["decision"] == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
     assert payload["execution"] == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert payload["trigger_event"] == settings_store.RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE
+    assert payload["conversation_envelope"] == settings_store.RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE
+    assert payload["file_deliverable_guidance"] == settings_store.RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE
+    assert payload["communication_snapshot"] == settings_store.RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE
     assert config.require("runtime_contract_decision") == settings_store.RUNTIME_CONTRACT_DECISION_TEMPLATE
     assert config.require("runtime_contract_execution") == settings_store.RUNTIME_CONTRACT_EXECUTION_TEMPLATE
+    assert config.require("runtime_block_trigger_event") == settings_store.RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE
+    assert config.require("runtime_block_conversation_envelope") == settings_store.RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE
+    assert config.require("runtime_block_file_deliverable_guidance") == settings_store.RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE
+    assert config.require("runtime_block_communication_snapshot") == settings_store.RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE
 
 
 @pytest.mark.asyncio

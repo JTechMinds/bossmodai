@@ -7,7 +7,19 @@ from typing import Any
 import db
 from core.bm_cli.results import success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
+from core.default_prompts import load_default_prompt
 from core.world.tilemap import get_room_at
+
+
+_AUTHORITATIVE_NOTES = {
+    "status": load_default_prompt("internal_cli_authoritative_status"),
+    "runtime": load_default_prompt("internal_cli_authoritative_runtime"),
+    "activity": load_default_prompt("internal_cli_authoritative_activity"),
+    "current_task": load_default_prompt("internal_cli_authoritative_current_task"),
+    "tasks": load_default_prompt("internal_cli_authoritative_tasks"),
+    "recent_work": load_default_prompt("internal_cli_authoritative_recent_work"),
+    "location": load_default_prompt("internal_cli_authoritative_location"),
+}
 
 
 def handle_status(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
@@ -24,7 +36,7 @@ def handle_status(context: CliExecutionContext, parsed: ParsedCliCommand, conten
             ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
             ("RECENT WORK ARTIFACTS", _artifact_table_lines(snapshot["recent_work_artifacts"])),
         ],
-        authoritative_note="Use this snapshot as authoritative current state for this turn.",
+        authoritative_note=_AUTHORITATIVE_NOTES["status"],
         cwd=context.cwd,
     )
 
@@ -38,7 +50,7 @@ def handle_runtime(context: CliExecutionContext, parsed: ParsedCliCommand, conte
         kind="runtime",
         data={"runtime": snapshot["runtime"]},
         sections=[("RUNTIME STATUS", _runtime_lines(snapshot["runtime"]))],
-        authoritative_note="Use this runtime snapshot as authoritative current state for this turn.",
+        authoritative_note=_AUTHORITATIVE_NOTES["runtime"],
         cwd=context.cwd,
     )
 
@@ -54,7 +66,7 @@ def handle_activity(context: CliExecutionContext, parsed: ParsedCliCommand, cont
         kind="activity",
         data={"current_activity": current_activity},
         sections=[("CURRENT ACTIVITY", lines)],
-        authoritative_note="Use this activity snapshot as authoritative for the current live thread.",
+        authoritative_note=_AUTHORITATIVE_NOTES["activity"],
         cwd=context.cwd,
     )
 
@@ -70,7 +82,7 @@ def handle_current_task(context: CliExecutionContext, parsed: ParsedCliCommand, 
         kind="current_task",
         data={"current_task": current_task},
         sections=[("CURRENT TASK", lines)],
-        authoritative_note="Use this task snapshot as authoritative for currently active work.",
+        authoritative_note=_AUTHORITATIVE_NOTES["current_task"],
         cwd=context.cwd,
     )
 
@@ -90,7 +102,7 @@ def handle_tasks(context: CliExecutionContext, parsed: ParsedCliCommand, content
             ("OPEN TASKS", _task_table_lines(snapshot["open_tasks"], description_label="description")),
             ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
         ],
-        authoritative_note="Use open tasks as current backlog and recent completed tasks as historical reference.",
+        authoritative_note=_AUTHORITATIVE_NOTES["tasks"],
         cwd=context.cwd,
     )
 
@@ -110,7 +122,7 @@ def handle_recent_work(context: CliExecutionContext, parsed: ParsedCliCommand, c
             ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
             ("RECENT WORK ARTIFACTS", _artifact_table_lines(snapshot["recent_work_artifacts"])),
         ],
-        authoritative_note="Treat this as recent historical work, not proof that work is still active now.",
+        authoritative_note=_AUTHORITATIVE_NOTES["recent_work"],
         cwd=context.cwd,
     )
 
@@ -137,7 +149,7 @@ def handle_location(context: CliExecutionContext, parsed: ParsedCliCommand, cont
                 f"runtime_status: {context.state.status}",
             ])
         ],
-        authoritative_note="Use this location snapshot as authoritative current state for this turn.",
+        authoritative_note=_AUTHORITATIVE_NOTES["location"],
         cwd=context.cwd,
     )
 

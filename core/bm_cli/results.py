@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from core.bm_cli.types import BossModCliResult
+from core.default_prompts import load_default_prompt, render_default_prompt
+
+
+_CLI_RESULT_PROMPT_ALLOWED_PATHS = {"command", "sections", "authoritative_note"}
 
 
 def success_result(
@@ -60,13 +64,14 @@ def approval_required_result(
     approval_request_id: str | None = None,
 ) -> BossModCliResult:
     """Build an approval-required result for gated commands."""
+    pause_note = load_default_prompt("internal_cli_approval_pause_note")
     return BossModCliResult(
         command=command,
         ok=False,
         detail=f"BossMod CLI approval required: {message}",
         prompt_content=render_sections(
             command,
-            [("APPROVAL REQUIRED", [message, "Your turn will pause until the operator reviews this command."])],
+            [("APPROVAL REQUIRED", [message, pause_note])],
         ),
         kind="approval_required",
         data={"approval_required": True, "message": message},
@@ -128,13 +133,19 @@ def render_sections(
     authoritative_note: str | None = None,
 ) -> str:
     """Render prompt-friendly CLI output from named sections."""
-    lines = ["BOSSMOD CLI RESULT", f"command: {command}"]
+    section_lines: list[str] = []
     for title, content_lines in sections:
-        lines.extend(["", f"{title}:"])
-        lines.extend(content_lines or ["none"])
-    if authoritative_note:
-        lines.extend(["", authoritative_note])
-    return "\n".join(lines)
+        section_lines.extend(["", f"{title}:"])
+        section_lines.extend(content_lines or ["none"])
+    return render_default_prompt(
+        "internal_cli_result_wrapper",
+        {
+            "command": command,
+            "sections": "\n".join(section_lines),
+            "authoritative_note": authoritative_note or "",
+        },
+        allowed_paths=_CLI_RESULT_PROMPT_ALLOWED_PATHS,
+    )
 
 
 def trim(text: str, *, limit: int = 240) -> str:

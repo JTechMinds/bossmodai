@@ -6,7 +6,10 @@ import json
 import logging
 from typing import Any, Literal
 
-from core.bm_cli.contract import maybe_parse_bm_cli_call, render_bm_cli_guidance
+from core import config
+from core.bm_cli.contract import maybe_parse_bm_cli_call
+from core.default_prompts import load_default_prompt
+from core.llm.template_engine import render_template
 from core.models.work_contract import DeliverableSpec
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -74,6 +77,7 @@ _ALLOWED_ACTS_BY_TRIGGER = {
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
+_CONTRACT_ALLOWED_PATHS = {"trigger.type", "cli.shell_enabled"}
 
 
 class ConversationDecision(BaseModel):
@@ -132,213 +136,28 @@ def allowed_acts_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
 
 def default_decision_contract_template() -> str:
     """Return the default authored decision contract template."""
-    human_shape = _render_decision_shape(_ALLOWED_ACTS_BY_TRIGGER["human_chat"])
-    peer_shape = _render_decision_shape(_ALLOWED_ACTS_BY_TRIGGER["peer_message"])
-    assignment_shape = _render_decision_shape(_ALLOWED_ACTS_BY_TRIGGER["task_assigned"])
-    shared_shape = _render_decision_shape(_SHARED_ALLOWED_ACTS)
-    default_shape = _render_decision_shape(_DEFAULT_ALLOWED_ACTS)
-
-    lines = [
-        "CONVERSATION TURN",
-        "Return exactly one JSON object.",
-        "Use the same schema for direct chat, peer chat, shared threads, and task assignments.",
-        "The runtime already knows who spoke, which thread/channel this is, and who else is present.",
-        "",
-        "{{if trigger.type = 'human_chat'}}",
-        "ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer",
-        "{{elseif trigger.type = 'peer_message'}}",
-        "ALLOWED act FOR THIS TURN: reply | accept | clarify | decline",
-        "{{elseif trigger.type = 'task_assigned'}}",
-        "ALLOWED act FOR THIS TURN: accept | clarify | defer | decline",
-        "{{elseif trigger.type = 'session_message'}}",
-        "ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline",
-        "{{elseif trigger.type = 'session_response'}}",
-        "ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline",
-        "{{elseif trigger.type = 'channel_message'}}",
-        "ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline",
-        "{{elseif trigger.type = 'channel_response'}}",
-        "ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline",
-        "{{else}}",
-        "ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer | observe",
-        "{{end}}",
-        "  reply = send a conversational reply",
-        "  observe = stay silent in a shared thread",
-        "  accept / clarify / decline / defer = commit-level conversation decisions",
-        "",
-        "REQUIRED JSON SHAPE:",
-        "Do not output the schema itself. Output one JSON object matching this shape:",
-        "{{if trigger.type = 'human_chat'}}",
-        human_shape,
-        "{{elseif trigger.type = 'peer_message'}}",
-        peer_shape,
-        "{{elseif trigger.type = 'task_assigned'}}",
-        assignment_shape,
-        "{{elseif trigger.type = 'session_message'}}",
-        shared_shape,
-        "{{elseif trigger.type = 'session_response'}}",
-        shared_shape,
-        "{{elseif trigger.type = 'channel_message'}}",
-        shared_shape,
-        "{{elseif trigger.type = 'channel_response'}}",
-        shared_shape,
-        "{{else}}",
-        default_shape,
-        "{{end}}",
-        "",
-        "FIELD DEFINITIONS:",
-        "  act = the response mode you choose for this turn",
-        "  intent = what the incoming message is about",
-        "  msg = the outward-facing text reply; null only when staying silent",
-        "  commit = the durable commitment created or preserved by this turn",
-        "  data = extra fields used only when the chosen act/commit needs them",
-        "  data.dst = destination for meeting, break, or relocation commitments",
-        "  data.title = short commitment label when useful",
-        "  data.detail = longer commitment note when useful",
-        "  data.task.title = title for newly accepted work",
-        "  data.task.desc = description for newly accepted work",
-        "  data.task.outs = deliverables required for newly accepted work",
-        "  th = short admin-visible note",
-        "",
-        "FIELD VALUES:",
-        "  intent = question | status | meeting | work | move | break | social | other",
-        "  commit = none | conversation | meeting | work | break",
-        "  data.dst = desk | meeting | break | main | south | hall",
-        "",
-        "RULES:",
-        '  - act="reply" is the normal response mode for direct chat, peer chat, and status answers.',
-        '  - act="observe" is only valid in shared thread turns.',
-        '  - intent="status" means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use BossMod CLI only if the snapshot lacks the needed fact.',
-        '  - accept work: require msg, commit="work", and data.task.title + data.task.desc unless accepting an existing assignment.',
-        '  - accept meeting: require msg, commit="meeting", and data.dst.',
-        '  - accept break: require msg, commit="break", and data.dst="break".',
-        '  - clarify / decline: require msg and commit="none".',
-        '  - defer: require msg and commit="none" or "work".',
-        '  - "act" is the response mode. "status" belongs in "intent", never in "act".',
-        '  - Do not invent keys that are not listed.',
-        "",
-        render_bm_cli_guidance(),
-        "{{if trigger.type = 'peer_message'}}",
-        "",
-        "PEER NOTE:",
-        "  - ordinary coworker chat is conversational only; durable work should arrive as an explicit assignment",
-        "{{elseif trigger.type = 'task_assigned'}}",
-        "",
-        "ASSIGNMENT NOTE:",
-        "  - this is an offered assignment; use accept | clarify | defer | decline",
-        '  - accept/defer must keep commit="work"; clarify/decline must keep commit="none"',
-        "  - do not invent a new data.task.title or data.task.desc for an existing assignment",
-        "{{end}}",
-        "",
-        "EXAMPLES:",
-        '  {"act":"reply","intent":"status","msg":"I am idle right now.","commit":"none","th":"share status"}',
-        '  {"act":"accept","intent":"work","msg":"I will draft it.","commit":"work","data":{"task":{"title":"Write memo","desc":"Draft the memo.","outs":[{"type":"file","path":"memo.md"}]}},"th":"accept work"}',
-    ]
-    return "\n".join(lines)
+    return load_default_prompt("runtime_contract_decision")
 
 
 def render_decision_contract(trigger_type: str | None = None) -> str:
     """Render the unified prompt contract for all conversation turns."""
-    allowed_acts = allowed_acts_for_trigger(trigger_type)
-    lines = [
-        "CONVERSATION TURN",
-        "Return exactly one JSON object.",
-        "Use the same schema for direct chat, peer chat, shared threads, and task assignments.",
-        "The runtime already knows who spoke, which thread/channel this is, and who else is present.",
-        "",
-        f'ALLOWED act FOR THIS TURN: {" | ".join(allowed_acts)}',
-        "  reply = send a conversational reply",
-        "  observe = stay silent in a shared thread",
-        "  accept / clarify / decline / defer = commit-level conversation decisions",
-        "",
-        "REQUIRED JSON SHAPE:",
-        "Do not output the schema itself. Output one JSON object matching this shape:",
-        _render_decision_shape(allowed_acts),
-        "",
-        "FIELD DEFINITIONS:",
-        "  act = the response mode you choose for this turn",
-        "  intent = what the incoming message is about",
-        "  msg = the outward-facing text reply; null only when staying silent",
-        "  commit = the durable commitment created or preserved by this turn",
-        "  data = extra fields used only when the chosen act/commit needs them",
-        "  data.dst = destination for meeting, break, or relocation commitments",
-        "  data.title = short commitment label when useful",
-        "  data.detail = longer commitment note when useful",
-        "  data.task.title = title for newly accepted work",
-        "  data.task.desc = description for newly accepted work",
-        "  data.task.outs = deliverables required for newly accepted work",
-        "  th = short admin-visible note",
-        "",
-        "FIELD VALUES:",
-        "  intent = question | status | meeting | work | move | break | social | other",
-        "  commit = none | conversation | meeting | work | break",
-        "  data.dst = desk | meeting | break | main | south | hall",
-        "",
-        "RULES:",
-        '  - act="reply" is the normal response mode for direct chat, peer chat, and status answers.',
-        '  - act="observe" is only valid in shared thread turns.',
-        '  - intent="status" means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use BossMod CLI only if the snapshot lacks the needed fact.',
-        '  - accept work: require msg, commit="work", and data.task.title + data.task.desc unless accepting an existing assignment.',
-        '  - accept meeting: require msg, commit="meeting", and data.dst.',
-        '  - accept break: require msg, commit="break", and data.dst="break".',
-        '  - clarify / decline: require msg and commit="none".',
-        '  - defer: require msg and commit="none" or "work".',
-        '  - "act" is the response mode. "status" belongs in "intent", never in "act".',
-        '  - Do not invent keys that are not listed.',
-        "",
-        render_bm_cli_guidance(),
-    ]
-
-    if trigger_type == "peer_message":
-        lines.extend(
-            [
-                "",
-                "PEER NOTE:",
-                "  - ordinary coworker chat is conversational only; durable work should arrive as an explicit assignment",
-            ]
-        )
-
-    if trigger_type == "task_assigned":
-        lines.extend(
-            [
-                "",
-                "ASSIGNMENT NOTE:",
-                "  - this is an offered assignment; use accept | clarify | defer | decline",
-                '  - accept/defer must keep commit="work"; clarify/decline must keep commit="none"',
-                "  - do not invent a new data.task.title or data.task.desc for an existing assignment",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "EXAMPLES:",
-            '  {"act":"reply","intent":"status","msg":"I am idle right now.","commit":"none","th":"share status"}',
-            '  {"act":"accept","intent":"work","msg":"I will draft it.","commit":"work","data":{"task":{"title":"Write memo","desc":"Draft the memo.","outs":[{"type":"file","path":"memo.md"}]}},"th":"accept work"}',
-        ]
+    return render_template(
+        default_decision_contract_template(),
+        _contract_render_context(trigger_type),
+        allowed_paths=_CONTRACT_ALLOWED_PATHS,
     )
-    return "\n".join(lines)
 
 
-def _render_decision_shape(allowed_acts: tuple[str, ...]) -> str:
-    """Render the actual model-facing JSON shape for conversation turns."""
-    shape = {
-        "act": " | ".join(allowed_acts),
-        "intent": "question | status | meeting | work | move | break | social | other",
-        "msg": "string | null",
-        "commit": "none | conversation | meeting | work | break",
-        "data": {
-            "dst": "desk | meeting | break | main | south | hall | null",
-            "title": "string | null",
-            "detail": "string | null",
-            "task": {
-                "title": "string | null",
-                "desc": "string | null",
-                "outs": [{"type": "file", "path": "string", "desc": "string | null"}],
-            },
+def _contract_render_context(trigger_type: str | None) -> dict[str, object]:
+    """Return the minimal template context needed by the decision contract."""
+    return {
+        "trigger": {
+            "type": str(trigger_type or ""),
         },
-        "th": "string",
+        "cli": {
+            "shell_enabled": config.get("cli_shell_enabled") == "true",
+        },
     }
-    return "```json\n" + json.dumps(shape, indent=2) + "\n```"
 
 
 def parse_decision(raw_response: str) -> dict[str, Any]:

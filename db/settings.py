@@ -5,59 +5,19 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from core.agent_loop.action_contract import default_action_contract_template
-from core.agent_loop.decision_contract import default_decision_contract_template
+from core.default_prompts import (
+    RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE,
+    RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE,
+    RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE,
+    RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE,
+    RUNTIME_CONTRACT_DECISION_TEMPLATE,
+    RUNTIME_CONTRACT_EXECUTION_TEMPLATE,
+    SYSTEM_PROMPT_TEMPLATE,
+)
 from core.models import Setting
 from db.crud import execute, fetch_all, query_one
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT_TEMPLATE = """# Role
-
-You are {{agent_name}}, an employee at BossMod that works in a virtual office. You control your virtual character, which represents your physical location at BossMod.
-
-Each turn you must respond with exactly one JSON object that conforms to the runtime contract provided separately for that specific turn.
-
-## Personality
-{{personality}}
-
-# Context
-
-## Live Runtime State
-{{worldStatus}}
-
-## Current Activity
-{{activity}}
-
-## Current Task
-{{task}}
-
-## Open Tasks
-{{pending_tasks}}
-
-## Recent Work History / Team Directory
-{{references}}
-
----
-
-# Operating Rules
-
-- Treat `Live Runtime State` as authoritative for your current operational status.
-- Treat `Current Activity` as the live runtime thread you are continuing right now.
-- Treat `Current Task` as the only task you are actively working right now.
-- Treat `Open Tasks` as pending or accepted work that is not complete yet.
-- Treat `Recent Work History / Team Directory` as historical reference only, not proof that work is still active.
-- For status questions, answer from `Live Runtime State` first. If `Current Task` is none, do not claim you are still actively working on a completed task; you may mention the most recent completed task as finished work.
-- Use BossMod CLI when you need authoritative self/project facts instead of inferring them from old chat.
-- Durable work output can only be produced from a workspace.
-- Direct requests are decision turns: decide how to respond and what commitment to make.
-- Resumed internal turns are execution turns: carry out the current commitment one step at a time.
-- Durable work output can only be produced while a work commitment is active and you are in a workspace.
-- Follow the runtime contract exactly. It is appended separately from this template.
-- `thought` is a brief admin-visible operational note, not hidden scratch reasoning."""
-
-RUNTIME_CONTRACT_DECISION_TEMPLATE = default_decision_contract_template()
-RUNTIME_CONTRACT_EXECUTION_TEMPLATE = default_action_contract_template()
 RUNTIME_CONTROL_STATE = "running"
 
 _OBSOLETE_SETTING_KEYS = {
@@ -149,6 +109,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
     ("runtime_contract_decision", RUNTIME_CONTRACT_DECISION_TEMPLATE, "advanced"),
     ("runtime_contract_execution", RUNTIME_CONTRACT_EXECUTION_TEMPLATE, "advanced"),
+    ("runtime_block_conversation_envelope", RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE, "advanced"),
+    ("runtime_block_file_deliverable_guidance", RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE, "advanced"),
+    ("runtime_block_communication_snapshot", RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE, "advanced"),
+    ("runtime_block_trigger_event", RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE, "advanced"),
     ("runtime_control_state", RUNTIME_CONTROL_STATE, "advanced"),
 ]
 _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {

@@ -1379,6 +1379,10 @@ const RuntimeContractsSection = (() => {
 
         const decisionContract = payload?.decision || '';
         const executionContract = payload?.execution || '';
+        const triggerEvent = payload?.trigger_event || '';
+        const conversationEnvelope = payload?.conversation_envelope || '';
+        const fileGuidance = payload?.file_deliverable_guidance || '';
+        const communicationSnapshot = payload?.communication_snapshot || '';
         const allowedVariables = payload?.allowed_variables || [];
         const syntaxExamples = payload?.template_syntax || [];
         const previewTriggers = payload?.preview_triggers || [];
@@ -1388,7 +1392,7 @@ const RuntimeContractsSection = (() => {
         el.innerHTML = `
             <div class="mb-4">
                 <h2 class="text-lg font-semibold">Runtime Contracts</h2>
-                <p class="text-sm text-bm-muted mt-0.5">Edit the decision and execution contract templates appended to turns. Changes apply to newly built turns immediately after save.</p>
+                <p class="text-sm text-bm-muted mt-0.5">Edit the runtime contracts and runtime-owned prompt blocks appended to turns. Changes apply to newly built turns immediately after save.</p>
             </div>
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
@@ -1421,6 +1425,10 @@ const RuntimeContractsSection = (() => {
                     <div class="flex border-b border-bm-border shrink-0">
                         <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative active" data-tab="decision">Decision</button>
                         <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="execution">Execution</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="trigger-event">Trigger</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="conversation-envelope">Envelope</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="file-guidance">File Guidance</button>
+                        <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="communication-snapshot">Snapshot</button>
                         <button class="tab-btn rc-tab flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative" data-tab="preview">Preview</button>
                     </div>
                     <!-- Tab content -->
@@ -1430,6 +1438,18 @@ const RuntimeContractsSection = (() => {
                         </div>
                         <div id="rc-tab-execution" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <textarea id="runtime-execution-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(executionContract)}</textarea>
+                        </div>
+                        <div id="rc-tab-trigger-event" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <textarea id="runtime-trigger-event-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(triggerEvent)}</textarea>
+                        </div>
+                        <div id="rc-tab-conversation-envelope" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <textarea id="runtime-conversation-envelope-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(conversationEnvelope)}</textarea>
+                        </div>
+                        <div id="rc-tab-file-guidance" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <textarea id="runtime-file-guidance-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(fileGuidance)}</textarea>
+                        </div>
+                        <div id="rc-tab-communication-snapshot" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
+                            <textarea id="runtime-communication-snapshot-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(communicationSnapshot)}</textarea>
                         </div>
                         <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <div class="flex items-center gap-2 mb-3 flex-wrap">
@@ -1513,11 +1533,15 @@ const RuntimeContractsSection = (() => {
             const status = document.getElementById('runtime-contract-save-status');
             const decision = document.getElementById('runtime-decision-contract').value;
             const execution = document.getElementById('runtime-execution-contract').value;
+            const trigger_event = document.getElementById('runtime-trigger-event-contract').value;
+            const conversation_envelope = document.getElementById('runtime-conversation-envelope-contract').value;
+            const file_deliverable_guidance = document.getElementById('runtime-file-guidance-contract').value;
+            const communication_snapshot = document.getElementById('runtime-communication-snapshot-contract').value;
             try {
                 const res = await fetch('/api/runtime/contracts', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ decision, execution }),
+                    body: JSON.stringify({ decision, execution, trigger_event, conversation_envelope, file_deliverable_guidance, communication_snapshot }),
                 });
                 if (!res.ok) {
                     const payload = await res.json().catch(() => ({}));
@@ -1545,6 +1569,10 @@ const RuntimeContractsSection = (() => {
                 }
                 document.getElementById('runtime-decision-contract').value = payload.decision || '';
                 document.getElementById('runtime-execution-contract').value = payload.execution || '';
+                document.getElementById('runtime-trigger-event-contract').value = payload.trigger_event || '';
+                document.getElementById('runtime-conversation-envelope-contract').value = payload.conversation_envelope || '';
+                document.getElementById('runtime-file-guidance-contract').value = payload.file_deliverable_guidance || '';
+                document.getElementById('runtime-communication-snapshot-contract').value = payload.communication_snapshot || '';
                 status.textContent = 'Reset to defaults';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
