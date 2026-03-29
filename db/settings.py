@@ -140,6 +140,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_prompt_history_last_n", "30", "context"),
     ("default_prompt_history_max_tokens", "2000", "context"),
 
+    # ── Telegram integration ──
+    ("telegram_enabled", "false", "telegram"),
+    ("telegram_bot_token", "", "telegram"),
+    ("telegram_allowed_user_ids", "", "telegram"),
+
     # ── System prompt template (advanced) ──
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
     ("runtime_contract_decision", RUNTIME_CONTRACT_DECISION_TEMPLATE, "advanced"),

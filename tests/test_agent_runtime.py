@@ -362,13 +362,13 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "act = the next execution step you are taking" in contract
     assert "data = arguments for that execution step" in contract
     assert "data.body = optional body text or manifest for cli commands that use it" in contract
-    assert "cli + batch-write: require data.body as a short manifest with path + goal entries" in contract
-    assert "cli + replace-section: require data.body as the literal new section body" in contract
-    assert "cli + rewrite-section: require data.body as a short rewrite goal" in contract
+    assert "cli + bwrite: require data.body as a short manifest with path + goal entries" in contract
+    assert "cli + repsect: require data.body as the literal new section body" in contract
+    assert "cli + rewsect: require data.body as a short rewrite goal" in contract
     assert "short exact text -> write/append with body" in contract
-    assert "multiple generated files -> batch-write with a short manifest body" in contract
-    assert "inspect markdown structure -> outline <path>" in contract
-    assert 'ai-authored markdown section edit -> rewrite-section <path> "<heading>" with a short goal body' in contract
+    assert "multiple generated files -> bwrite with a short manifest body" in contract
+    assert "inspect markdown structure -> ol <path>" in contract
+    assert 'ai-authored markdown section edit -> rewsect <path> "<heading>" with a short goal body' in contract
 
 
 def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
@@ -740,21 +740,25 @@ def test_execute_bm_cli_file_command_aliases_and_discovery_are_ai_friendly(isola
     categories = execute_bm_cli(agent, state, "categories")
     assert categories.ok is True
     assert "files — Inspect, create, and edit files" in categories.prompt_content
-    assert "batch-write" in categories.prompt_content
-    assert "replace-section" in categories.prompt_content
-    assert "rewrite-section" in categories.prompt_content
+    assert "bwrite" in categories.prompt_content
+    assert "repsect" in categories.prompt_content
+    assert "rewsect" in categories.prompt_content
+    assert "batch-write" not in categories.prompt_content
+    assert "replace-section" not in categories.prompt_content
+    assert "rewrite-section" not in categories.prompt_content
     assert 'replace-section <path> "<heading>"' not in categories.prompt_content
     assert "Type \"fsearch <category|keyword>\" to review the commands inside a category." in categories.prompt_content
 
     search = execute_bm_cli(agent, state, "fsearch section")
     assert search.ok is True
-    assert 'replace-section <path> "<heading>" — body = literal replacement section text; target by quoted markdown heading [aliases: repsect, rsect]' in search.prompt_content
-    assert 'rewrite-section <path> "<heading>" — body = short rewrite goal; runtime rewrites only the targeted section [aliases: rewsect, rwsect]' in search.prompt_content
+    assert 'repsect <path> "<heading>" — body = literal replacement section text; target by quoted markdown heading' in search.prompt_content
+    assert 'rewsect <path> "<heading>" — body = short rewrite goal; runtime rewrites only the targeted section' in search.prompt_content
+    assert "[aliases:" not in search.prompt_content
 
     learn = execute_bm_cli(agent, state, "learn repsect")
     assert learn.ok is True
-    assert "Command:   replace-section" in learn.prompt_content
-    assert "Aliases:   repsect, rsect" in learn.prompt_content
+    assert "Command:   repsect" in learn.prompt_content
+    assert "Aliases:" not in learn.prompt_content
 
 
 def test_simulate_cli_policy_matches_virtual_alias_execution(isolated_db):
@@ -1127,7 +1131,7 @@ async def test_large_work_output_with_multiple_file_deliverables_is_redirected_t
 
     assert result["event"] == "world_feedback"
     assert "multiple files" in result["detail"]
-    assert "Use BossMod CLI batch-write with a short manifest body" in result["detail"]
+    assert "Use BossMod CLI bwrite with a short manifest body" in result["detail"]
     assert result["missing_deliverables"] == [
         {
             "type": "file",
@@ -1525,7 +1529,7 @@ def test_execution_context_adds_batch_write_guidance_for_multiple_file_deliverab
         if msg["role"] == "system" and "FILE DELIVERABLE GUIDANCE:" in msg["content"]
     ]
     assert len(guidance) == 1
-    assert "batch-write" in guidance[0]
+    assert "bwrite" in guidance[0]
     assert "Do not put long-form document bodies into CLI JSON." in guidance[0]
 
 
@@ -3220,7 +3224,7 @@ async def test_activity_resumed_batch_writer_saves_multiple_files_and_commits_on
 
     history = execute_bm_cli(agent, state, "git log 50")
     assert history.ok is True
-    assert "bm_cli batch-write 2 files" in history.data["output"]
+    assert "bm_cli bwrite 2 files" in history.data["output"]
 
     refreshed_task = db.get_task(task.id)
     assert refreshed_task is not None
@@ -3275,7 +3279,7 @@ async def test_activity_resumed_rewrite_section_rewrites_only_target_section(iso
 
     responses = iter([
         client.LLMResponse(
-            content='{"act":"cli","data":{"cmd":"rewrite-section /me/report.md \\"## Recommendation\\"","body":"Make this tighter, more executive-friendly, and action-oriented."},"th":"rewrite the recommendation"}',
+            content='{"act":"cli","data":{"cmd":"rewsect /me/report.md \\"## Recommendation\\"","body":"Make this tighter, more executive-friendly, and action-oriented."},"th":"rewrite the recommendation"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -3327,7 +3331,7 @@ async def test_activity_resumed_rewrite_section_rewrites_only_target_section(iso
     assert [event["result_kind"] for event in events if event["result_kind"] in {"rewrite-section"}] == ["rewrite-section"]
     history = execute_bm_cli(agent, state, "git log 50")
     assert history.ok is True
-    assert "bm_cli rewrite-section /me/report.md ## Recommendation" in history.data["output"]
+    assert "bm_cli rewsect /me/report.md ## Recommendation" in history.data["output"]
     assert outcome.trigger_status == "completed"
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)

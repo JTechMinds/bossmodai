@@ -100,31 +100,31 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         ),
         discovery_hint="full-file read; use for short files or final verification",
     ),
-    "outline": VirtualCommandMeta(
-        name="outline",
+    "ol": VirtualCommandMeta(
+        name="ol",
         category="files",
         description="List markdown headings with line numbers.",
-        usage_syntax="outline <path>",
+        usage_syntax="ol <path>",
         help_text=(
             "Inspect the heading structure of a markdown document before a\n"
             "targeted edit. Returns markdown headings with 1-based line\n"
             "numbers so you can pick the right section precisely.\n"
             "\n"
-            "Use this before replace-section or rewrite-section when you are\n"
+            "Use this before repsect or rewsect when you are\n"
             "not sure which heading to target.\n"
             "\n"
             "Examples:\n"
-            "  outline proposal.md    — inspect document sections\n"
-            "  outline /me/brief.md   — inspect by absolute path"
+            "  ol proposal.md    — inspect document sections\n"
+            "  ol /me/brief.md   — inspect by absolute path"
         ),
         discovery_hint="markdown heading map with line numbers; use before section edits",
-        aliases=("ol",),
+        aliases=("outline",),
     ),
-    "read-range": VirtualCommandMeta(
-        name="read-range",
+    "rr": VirtualCommandMeta(
+        name="rr",
         category="files",
         description="Read a bounded line range with numbering.",
-        usage_syntax="read-range <path> <start:end>",
+        usage_syntax="rr <path> <start:end>",
         help_text=(
             "Read an exact line range from a file using 1-based inclusive\n"
             "line numbers. The runtime enforces a bounded maximum range.\n"
@@ -133,11 +133,11 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "for code, configs, or long documents.\n"
             "\n"
             "Examples:\n"
-            "  read-range app.py 10:40            — read lines 10 through 40\n"
-            "  read-range /me/brief.md 1:60       — read a bounded document slice"
+            "  rr app.py 10:40            — read lines 10 through 40\n"
+            "  rr /me/brief.md 1:60       — read a bounded document slice"
         ),
         discovery_hint="bounded exact read with numbered lines; use for local context before precise edits",
-        aliases=("rr", "lines"),
+        aliases=("read-range", "lines"),
     ),
     "mkdir": VirtualCommandMeta(
         name="mkdir",
@@ -166,8 +166,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "generated document writing.\n"
             "\n"
             "Use this when you need one generated file.\n"
-            "Use batch-write when you need multiple generated files.\n"
-            "Use replace-section or rewrite-section when you are editing one\n"
+            "Use bwrite when you need multiple generated files.\n"
+            "Use repsect or rewsect when you are editing one\n"
             "part of an existing markdown document.\n"
             "Do not put a long paper or report body directly into JSON.\n"
             "\n"
@@ -198,11 +198,11 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         ),
         discovery_hint="body = small tail addition only; not for long-form generation",
     ),
-    "batch-write": VirtualCommandMeta(
-        name="batch-write",
+    "bwrite": VirtualCommandMeta(
+        name="bwrite",
         category="files",
         description="Author multiple files in one runtime-managed batch.",
-        usage_syntax="batch-write",
+        usage_syntax="bwrite",
         help_text=(
             "Create multiple generated files in one runtime-managed batch.\n"
             "Do not pass any path arguments in the command itself.\n"
@@ -223,16 +223,16 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             '  {"files":[{"path":"/me/summary.md","goal":"One-page executive summary"}]}\n'
             "\n"
             "Examples:\n"
-            "  batch-write      — with body listing each file and goal"
+            "  bwrite      — with body listing each file and goal"
         ),
         discovery_hint='body = short manifest of "path :: goal" entries; runtime authors each file',
-        aliases=("bwrite",),
+        aliases=("batch-write",),
     ),
-    "replace-section": VirtualCommandMeta(
-        name="replace-section",
+    "repsect": VirtualCommandMeta(
+        name="repsect",
         category="files",
         description="Replace one markdown section with exact text.",
-        usage_syntax='replace-section <path> "<heading>"',
+        usage_syntax='repsect <path> "<heading>"',
         help_text=(
             "Replace only one markdown section body with the literal body text\n"
             "you put in the body field. The quoted heading selector may be\n"
@@ -240,21 +240,21 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "selector like \"## Recommendation\".\n"
             "\n"
             "Use this when you already know the exact replacement text.\n"
-            "Use rewrite-section when you want the runtime to author the new\n"
+            "Use rewsect when you want the runtime to author the new\n"
             "section body from a short goal.\n"
             "\n"
             "Examples:\n"
-            '  replace-section report.md "## Recommendation"   — with body containing the exact new section text\n'
-            '  replace-section /me/brief.md "Summary"          — target a unique heading by title'
+            '  repsect report.md "## Recommendation"   — with body containing the exact new section text\n'
+            '  repsect /me/brief.md "Summary"          — target a unique heading by title'
         ),
         discovery_hint='body = literal replacement section text; target by quoted markdown heading',
-        aliases=("repsect", "rsect"),
+        aliases=("replace-section", "rsect"),
     ),
-    "rewrite-section": VirtualCommandMeta(
-        name="rewrite-section",
+    "rewsect": VirtualCommandMeta(
+        name="rewsect",
         category="files",
         description="Rewrite one markdown section from a short goal.",
-        usage_syntax='rewrite-section <path> "<heading>"',
+        usage_syntax='rewsect <path> "<heading>"',
         help_text=(
             "Rewrite only one markdown section through the runtime-managed\n"
             "authoring path. Put a short rewrite goal in the body instead of\n"
@@ -264,14 +264,14 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "section, generates a new section body, and saves only that edit.\n"
             "Do not put the full rewritten section body into CLI JSON.\n"
             "\n"
-            "Use outline first if you need to inspect the available headings.\n"
+            "Use ol first if you need to inspect the available headings.\n"
             "\n"
             "Examples:\n"
-            '  rewrite-section report.md "## Recommendation"   — with body: "Make this shorter and more executive-friendly"\n'
-            '  rewrite-section /me/brief.md "Risks"            — with body: "Add compliance risks and concrete mitigations"'
+            '  rewsect report.md "## Recommendation"   — with body: "Make this shorter and more executive-friendly"\n'
+            '  rewsect /me/brief.md "Risks"            — with body: "Add compliance risks and concrete mitigations"'
         ),
         discovery_hint='body = short rewrite goal; runtime rewrites only the targeted section',
-        aliases=("rewsect", "rwsect"),
+        aliases=("rewrite-section", "rwsect"),
     ),
 
     # ── git ───────────────────────────────────────────────────────────────

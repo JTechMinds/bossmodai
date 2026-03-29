@@ -113,9 +113,8 @@ def _tier_tag(tier: str) -> str:
 
 def _render_virtual_discovery_line(cmd) -> str:
     """Render one compact command line with syntax and AI-facing usage hint."""
-    alias_suffix = f" [aliases: {', '.join(cmd.aliases)}]" if cmd.aliases else ""
     hint = cmd.discovery_hint or cmd.description
-    return f"  {cmd.usage_syntax} — {hint}{alias_suffix}"
+    return f"  {cmd.usage_syntax} — {hint}"
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +283,6 @@ def handle_learn(
             f"  Category:  {vcmd.category}",
             f"  Usage:     {vcmd.usage_syntax}",
         ]
-        if vcmd.aliases:
-            lines.append(f"  Aliases:   {', '.join(vcmd.aliases)}")
         if vcmd.discovery_hint:
             lines.extend(["", f"Quick use: {vcmd.discovery_hint}"])
         lines.extend(["", vcmd.help_text])

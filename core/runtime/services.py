@@ -44,6 +44,11 @@ class RuntimeServices:
         self._reader_task: asyncio.Task[None] | None = None
         self._ready_future: asyncio.Future[None] | None = None
         self._expecting_shutdown = False
+        self._telegram_bridge: Any | None = None
+
+    def set_telegram_bridge(self, bridge: Any) -> None:
+        """Attach the Telegram event bridge for forwarding runtime events."""
+        self._telegram_bridge = bridge
 
     async def start(self) -> None:
         """Start the dedicated runtime worker process."""
@@ -357,6 +362,13 @@ class RuntimeServices:
     async def _dispatch_event(self, envelope: dict[str, Any]) -> None:
         kind = envelope.get("kind")
         data = envelope.get("data") or {}
+
+        if self._telegram_bridge is not None:
+            try:
+                await self._telegram_bridge.dispatch(kind, data)
+            except Exception:
+                logger.warning("Telegram bridge dispatch failed for %s", kind, exc_info=True)
+
         if kind == "world_state":
             await manager.broadcast_world_state()
             return

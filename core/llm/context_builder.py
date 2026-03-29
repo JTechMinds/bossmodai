@@ -773,7 +773,7 @@ def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
         f"required_files: {', '.join(file_paths)}",
         "If the current work contract requires a file, prefer BossMod CLI write directly instead of putting the full document into data.out.",
         "For one substantial document, call write <path> with no body to use runtime-managed authoring.",
-        "For multiple generated files, call batch-write with a short manifest body listing each path and goal.",
+        "For multiple generated files, call bwrite with a short manifest body listing each path and goal.",
         "Do not put long-form document bodies into CLI JSON.",
         "Use work.out for short progress/status text, not the final long-form file body.",
     ]

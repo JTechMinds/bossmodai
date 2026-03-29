@@ -28,6 +28,7 @@ from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
 from core.runtime import runtime_services
+from core.messaging import route_human_dm, route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
     Agent,
@@ -304,58 +305,27 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
     if not content:
         raise HTTPException(400, "Channel message content cannot be empty")
 
-    members = db.list_channel_member_details(channel.id)
-    if not members:
-        raise HTTPException(409, "Channel has no members")
-
-    message = db.create_channel_message(
-        channel_id=channel.id,
-        author_type="human",
-        author_name="Human Operator",
-        content=content,
-        source_channel="channel",
-    )
-    await manager.broadcast_channel_message(
-        channel_id=channel.id,
-        content=message.content,
-        author_type=message.author_type,
-        author_name=message.author_name,
-        message_id=message.id,
-        created_at=message.created_at,
-    )
-
-    round_record = db.create_channel_response_round(
-        channel_id=channel.id,
-        source_message_id=message.id,
-    )
-    for member in members:
-        agent_id = member.get("id")
-        if not isinstance(agent_id, str) or not agent_id.strip():
-            continue
-        db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
-        await runtime_services.enqueue_trigger(
-            agent_id=agent_id,
-            trigger_type="channel_message",
-            source_channel="channel",
-            payload={
-                "content": message.content,
-                "channel_id": channel.id,
-                "round_id": round_record.id,
-                "from_name": "Human Operator",
-                "author_type": "human",
-                "source_message_id": message.id,
-                "channel_name": channel.name,
-            },
+    try:
+        result = await route_human_channel_message(
+            channel_id=channel.id,
+            channel_name=channel.name,
+            content=content,
+            from_name="Human Operator",
+            broadcast_manager=manager,
+            services=runtime_services,
         )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
 
+    message = result["message"]
     refreshed_channel = db.get_channel(channel.id) or channel
     await manager.broadcast_channel_updated(
-        _serialize_channel_summary(refreshed_channel, members=members, latest_message=message)
+        _serialize_channel_summary(refreshed_channel, members=result["members"], latest_message=message)
     )
     return {
         "status": "ok",
         "message": _serialize_channel_message(message),
-        "member_count": len(members),
+        "member_count": len(result["members"]),
     }
 
 
@@ -1015,34 +985,12 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
 
     content = body.content if body else "You have been manually activated."
 
-    # Persist the human message
-    human_msg = db.create_message(
-        from_agent=HUMAN_SENDER_ID,
-        to_agent=agent_id,
-        content=content,
-        message_type="human",
-    )
-
-    # Broadcast human message to all connected clients
-    await manager.broadcast_chat_message(
+    await route_human_dm(
         agent_id=agent_id,
         content=content,
-        from_type="human",
         from_name="You",
-        message_type="human",
-        message_id=human_msg.id,
-        created_at=human_msg.created_at,
-    )
-
-    await runtime_services.enqueue_trigger(
-        agent_id=agent_id,
-        trigger_type="human_chat",
-        source_channel="chat",
-        payload={
-            "content": content,
-            "from_name": "Human Operator",
-            "source_message_id": human_msg.id,
-        },
+        broadcast_manager=manager,
+        services=runtime_services,
     )
 
     return {"status": "ok", "message": "Message queued"}

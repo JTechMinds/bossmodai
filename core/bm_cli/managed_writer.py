@@ -131,14 +131,14 @@ def is_managed_batch_write_request(command: str, content: str | None) -> bool:
     """Return whether a CLI call should use the runtime-managed batch writer."""
     if content is None or not content.strip():
         return False
-    return _is_command_name(command, "batch-write", expected_args=0)
+    return _is_command_name(command, "bwrite", expected_args=0)
 
 
 def is_managed_section_rewrite_request(command: str, content: str | None) -> bool:
     """Return whether a CLI call should use the runtime-managed section rewriter."""
     if content is None or not content.strip():
         return False
-    return _is_command_name(command, "rewrite-section", expected_args=2)
+    return _is_command_name(command, "rewsect", expected_args=2)
 
 
 def _is_command_name(command: str, expected_name: str, *, expected_args: int) -> bool:
@@ -516,7 +516,7 @@ async def run_managed_batch_write(
         progress_callback,
         ManagedWriteProgress(
             stage="batch_started",
-            detail=f"Starting batch-write for {len(resolved_specs)} file{'s' if len(resolved_specs) != 1 else ''}",
+            detail=f"Starting bwrite for {len(resolved_specs)} file{'s' if len(resolved_specs) != 1 else ''}",
             file_count=len(resolved_specs),
             strategy="batch",
         ),
@@ -617,7 +617,7 @@ async def run_managed_batch_write(
     commit_sha = commit_workspace_changes(
         agent,
         paths,
-        reason=f"bm_cli batch-write {len(paths)} file{'s' if len(paths) != 1 else ''}",
+        reason=f"bm_cli bwrite {len(paths)} file{'s' if len(paths) != 1 else ''}",
     )
     total_chars = sum(int(row["chars"]) for row in file_rows)
     data: dict[str, Any] = {
@@ -998,7 +998,7 @@ async def run_managed_section_rewrite(
         cwd=cwd,
         raw_path=resolved.virtual_path,
         content=updated_text,
-        reason=f"bm_cli rewrite-section {resolved.virtual_path} {target_section.display_heading}",
+        reason=f"bm_cli rewsect {resolved.virtual_path} {target_section.display_heading}",
         allow_empty=True,
     )
     data: dict[str, Any] = {

@@ -538,6 +538,26 @@ CREATE TABLE IF NOT EXISTS diagnostic_steps (
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
+-- Telegram bot integration — session state per Telegram user
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS telegram_sessions (
+    id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    telegram_user_id  BIGINT NOT NULL,
+    session_type      VARCHAR NOT NULL DEFAULT 'idle'
+                         CHECK (session_type IN ('dm', 'group', 'idle')),
+    target_agent_id   VARCHAR REFERENCES agents(id),
+    target_channel_id VARCHAR REFERENCES channels(id),
+    agent_names_key   VARCHAR,
+    last_active_at    TIMESTAMP DEFAULT current_timestamp,
+    created_at        TIMESTAMP DEFAULT current_timestamp,
+    updated_at        TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_sessions_user
+    ON telegram_sessions (telegram_user_id);
+
+-- ───────────────────────────────────────────────────────────────────────────
 -- Indexes — high-traffic query patterns
 -- ───────────────────────────────────────────────────────────────────────────
 

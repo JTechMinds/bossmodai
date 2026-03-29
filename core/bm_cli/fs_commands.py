@@ -138,8 +138,8 @@ def handle_outline(context: CliExecutionContext, parsed: ParsedCliCommand, conte
     """List markdown headings with line numbers for one file."""
     del content
     if len(parsed.args) != 1:
-        return error_result(parsed.raw, '"outline" requires exactly one path argument.', cwd=context.cwd)
-    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="outline")
+        return error_result(parsed.raw, '"ol" requires exactly one path argument.', cwd=context.cwd)
+    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="ol")
     if result is not None:
         return result
     assert target is not None
@@ -178,7 +178,7 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
     """Read a bounded line range from one file with 1-based numbering."""
     del content
     if len(parsed.args) != 2:
-        return error_result(parsed.raw, '"read-range" requires a path plus a start:end line range.', cwd=context.cwd)
+        return error_result(parsed.raw, '"rr" requires a path plus a start:end line range.', cwd=context.cwd)
     try:
         start_line, end_line = _parse_line_range(parsed.args[1])
     except ValueError as exc:
@@ -192,7 +192,7 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
             cwd=context.cwd,
         )
 
-    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="read-range")
+    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="rr")
     if result is not None:
         return result
     assert target is not None
@@ -352,10 +352,10 @@ def handle_append(context: CliExecutionContext, parsed: ParsedCliCommand, conten
 def handle_batch_write(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
     """Explain that batch-write is handled by the runtime-managed authoring path."""
     if parsed.args:
-        return error_result(parsed.raw, '"batch-write" does not take path arguments. Put the file manifest in the body.', cwd=context.cwd)
+        return error_result(parsed.raw, '"bwrite" does not take path arguments. Put the file manifest in the body.', cwd=context.cwd)
     return error_result(
         parsed.raw,
-        'Batch-write is runtime-managed. Provide a short manifest body and let the runtime author each file. Use "learn batch-write" for the manifest format.',
+        'Bwrite is runtime-managed. Provide a short manifest body and let the runtime author each file. Use "learn bwrite" for the manifest format.',
         cwd=context.cwd,
     )
 
@@ -369,17 +369,17 @@ def handle_replace_section(
     if len(parsed.args) != 2:
         return error_result(
             parsed.raw,
-            '"replace-section" requires a path and a quoted heading selector.',
+            '"repsect" requires a path and a quoted heading selector.',
             cwd=context.cwd,
         )
     if content is None:
         return error_result(
             parsed.raw,
-            'Replace-section requires a body containing the literal new section text.',
+            'Repsect requires a body containing the literal new section text.',
             cwd=context.cwd,
         )
 
-    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="replace-section")
+    target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="repsect")
     if result is not None:
         return result
     assert target is not None
@@ -402,7 +402,7 @@ def handle_replace_section(
             cwd=context.cwd,
             raw_path=parsed.args[0],
             content=updated_text,
-            reason=f"bm_cli replace-section {target.virtual_path} {section.display_heading}",
+            reason=f"bm_cli repsect {target.virtual_path} {section.display_heading}",
             allow_empty=True,
         )
     except ValueError as exc:
@@ -449,18 +449,18 @@ def handle_rewrite_section(
     if len(parsed.args) != 2:
         return error_result(
             parsed.raw,
-            '"rewrite-section" requires a path and a quoted heading selector.',
+            '"rewsect" requires a path and a quoted heading selector.',
             cwd=context.cwd,
         )
     if content is None or not content.strip():
         return error_result(
             parsed.raw,
-            'Rewrite-section is runtime-managed. Provide a short rewrite goal in the body. Use "learn rewrite-section" for the format.',
+            'Rewsect is runtime-managed. Provide a short rewrite goal in the body. Use "learn rewsect" for the format.',
             cwd=context.cwd,
         )
     return error_result(
         parsed.raw,
-        'Rewrite-section is runtime-managed. Provide a short rewrite goal in the body and let the runtime rewrite only that section. Use "learn rewrite-section" for the format.',
+        'Rewsect is runtime-managed. Provide a short rewrite goal in the body and let the runtime rewrite only that section. Use "learn rewsect" for the format.',
         cwd=context.cwd,
     )
 

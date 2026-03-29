@@ -503,7 +503,7 @@ async def _handle_work(
             detail = (
                 f"This work contract requires multiple files ({targets}). "
                 "Do not place full documents in data.out. "
-                "Use BossMod CLI batch-write with a short manifest body listing each path and goal."
+                "Use BossMod CLI bwrite with a short manifest body listing each path and goal."
             )
         return {
             "event": "world_feedback",

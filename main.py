@@ -6,6 +6,7 @@ or directly via `uv run python main.py` for development.
 """
 
 import hashlib
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -20,6 +21,8 @@ from api.routes import router as api_router
 from core.runtime import runtime_services
 from db import init_db, close_connection
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "ui" / "templates"
 STATIC_DIR = BASE_DIR / "ui" / "static"
@@ -29,7 +32,26 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 async def lifespan(app: FastAPI):
     init_db()
     await runtime_services.start()
+
+    try:
+        from api.websocket import manager
+        from integrations import telegram as tg
+        telegram_bridge = await tg.start(services=runtime_services, broadcast_manager=manager)
+        if telegram_bridge:
+            runtime_services.set_telegram_bridge(telegram_bridge)
+    except ImportError:
+        pass
+    except Exception:
+        logger.warning("Telegram bot failed to start", exc_info=True)
+
     yield
+
+    try:
+        from integrations import telegram as tg
+        await tg.stop()
+    except (ImportError, Exception):
+        pass
+
     await runtime_services.stop()
     close_connection()
 
