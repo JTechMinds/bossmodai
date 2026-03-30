@@ -150,6 +150,7 @@ from db.agent_triggers import (
     list_queued_triggers,
     list_agent_triggers,
     release_trigger,
+    retry_agent_trigger,
     requeue_stale_triggers,
 )
 from db.runtime_control import (
@@ -346,6 +347,7 @@ __all__ = [
     "list_queued_triggers",
     "list_agent_triggers",
     "release_trigger",
+    "retry_agent_trigger",
     "requeue_stale_triggers",
     "claim_runtime_command",
     "complete_runtime_command",

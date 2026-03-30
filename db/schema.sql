@@ -387,6 +387,7 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     task_id        VARCHAR,
     status         VARCHAR NOT NULL DEFAULT 'queued'
                       CHECK (status IN ('queued', 'claimed', 'completed', 'failed')),
+    retry_count    INTEGER NOT NULL DEFAULT 0,
     failure_reason TEXT,
     claimed_at     TIMESTAMP,
     completed_at   TIMESTAMP,

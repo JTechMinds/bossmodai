@@ -24,6 +24,7 @@ class AgentTrigger(BaseModel):
     payload: str
     task_id: str | None = None
     status: TriggerStatus = "queued"
+    retry_count: int = 0
     failure_reason: str | None = None
     claimed_at: datetime | None = None
     completed_at: datetime | None = None

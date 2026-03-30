@@ -146,6 +146,204 @@ class TurnDispatcher:
                 await task
         self.notify()
 
+    def _retry_limit(self) -> int:
+        """Return the configured number of retries after the initial failed attempt."""
+        configured = config.get_int("turn_failure_retry_limit")
+        if configured is None or configured < 0:
+            return 2
+        return configured
+
+    @staticmethod
+    def _short_error_detail(detail: str, *, limit: int = 240) -> str:
+        """Keep persisted failure detail readable in task notes and chat notices."""
+        text = " ".join((detail or "Unknown turn failure").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip() + "..."
+
+    @staticmethod
+    def _is_retryable_outcome(trigger_status: str) -> bool:
+        """Return whether a trigger outcome should be retried automatically."""
+        return trigger_status == "failed"
+
+    def _resolve_stuck_task(self, agent_id: str, trigger: dict[str, Any]):
+        """Return the task that should be marked stalled after retry exhaustion, if any."""
+        task_id = trigger.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            task_id = activity_runtime.get_active_task_id(agent_id)
+        if not isinstance(task_id, str) or not task_id.strip():
+            return None
+        task = db.get_task(task_id)
+        if task is None:
+            return None
+        if task.status in {"complete", "abandoned", "delegated", "declined"}:
+            return None
+        return task
+
+    async def _notify_human_of_stuck_turn(
+        self,
+        *,
+        agent: Any,
+        failure_detail: str,
+        task: Any | None,
+    ) -> None:
+        """Persist and broadcast a requester-visible stuck notice."""
+        if task is not None:
+            content = (
+                f'I hit repeated runtime failures while handling "{task.title}". '
+                f'The task is now stalled. Last error: {failure_detail}'
+            )
+        else:
+            content = (
+                "I hit repeated runtime failures while handling the request and could not recover. "
+                f"Last error: {failure_detail}"
+            )
+        state = db.get_agent_state(agent.id)
+        message = db.create_message(
+            from_agent=agent.id,
+            to_agent=HUMAN_SENDER_ID,
+            content=content,
+            message_type="social",
+            location_x=state.x if state else 0,
+            location_y=state.y if state else 0,
+        )
+        await manager.broadcast_chat_message(
+            agent_id=agent.id,
+            content=message.content,
+            from_type="agent",
+            from_name=agent.name,
+            message_type=message.message_type,
+            message_id=message.id,
+            created_at=message.created_at,
+        )
+
+    async def _exhaust_failed_trigger(
+        self,
+        *,
+        agent: Any,
+        trigger: dict[str, Any],
+        failure_detail: str,
+    ) -> None:
+        """Fail the trigger permanently, reconcile state, and surface the stall."""
+        trigger_id = trigger["trigger_id"]
+        db.fail_agent_trigger(trigger_id, failure_detail)
+
+        task = self._resolve_stuck_task(agent.id, trigger)
+        if task is not None:
+            db.update_task(
+                task.id,
+                status="stalled",
+                status_note=f"Runtime exhausted automatic retries: {failure_detail}",
+                watchdog_pinged_at=None,
+            )
+            db.cancel_open_activities(
+                agent.id,
+                detail=f"Cancelled after retry exhaustion: {failure_detail}",
+            )
+            activity_runtime.refresh_agent_status(agent.id)
+            await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=task)
+            await manager.broadcast_activity(
+                event="task_stalled",
+                detail=f'Task "{task.title}" stalled after retry exhaustion',
+                agent_name=agent.name,
+                extra={
+                    "task_id": task.id,
+                    "trigger_type": trigger.get("type"),
+                    "failure_reason": failure_detail,
+                },
+            )
+            return
+
+        activity_runtime.reconcile_after_turn_failure(
+            agent.id,
+            detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {failure_detail}",
+        )
+        if trigger.get("type") == "human_chat":
+            await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=None)
+        await manager.broadcast_activity(
+            event="agent_error",
+            detail=f"{agent.name} failed while processing a trigger",
+            agent_name=agent.name,
+            extra={
+                "trigger_type": trigger.get("type"),
+                "failure_reason": failure_detail,
+            },
+        )
+
+    async def _supervise_failed_turn(
+        self,
+        *,
+        agent: Any,
+        trigger: dict[str, Any],
+        failure_detail: str,
+        retryable: bool,
+    ) -> None:
+        """Route every failed turn through one retry-or-exhaust decision path."""
+        normalized_detail = self._short_error_detail(failure_detail)
+        trigger_record = db.get_agent_trigger(trigger["trigger_id"])
+        retry_limit = self._retry_limit()
+        if retryable and trigger_record is not None and trigger_record.retry_count < retry_limit:
+            retried = db.retry_agent_trigger(trigger["trigger_id"], normalized_detail)
+            retry_count = retried.retry_count if retried is not None else trigger_record.retry_count + 1
+            await manager.broadcast_activity(
+                event="trigger_retry_scheduled",
+                detail=(
+                    f"{agent.name} hit a runtime failure and will retry "
+                    f"({retry_count}/{retry_limit})"
+                ),
+                agent_name=agent.name,
+                extra={
+                    "trigger_id": trigger["trigger_id"],
+                    "trigger_type": trigger.get("type"),
+                    "retry_count": retry_count,
+                    "retry_limit": retry_limit,
+                    "failure_reason": normalized_detail,
+                },
+            )
+            return
+
+        await self._exhaust_failed_trigger(
+            agent=agent,
+            trigger=trigger,
+            failure_detail=normalized_detail,
+        )
+
+    def _enqueue_result_triggers(self, result: dict[str, Any]) -> None:
+        """Persist any follow-up triggers emitted by a successful turn."""
+        for queued in result.get("trigger_requests", []):
+            self.enqueue_trigger(
+                agent_id=queued["agent_id"],
+                trigger_type=queued["trigger_type"],
+                source_channel=queued["source_channel"],
+                payload=queued["payload"],
+                task_id=queued.get("task_id"),
+            )
+
+    async def _record_dispatcher_exception(self, *, agent: Any, trigger: dict[str, Any], exc: Exception) -> None:
+        """Persist a diagnostic row for exceptions raised outside normal turn finalization."""
+        diag = db.create_diagnostic(
+            agent_id=agent.id,
+            agent_name=agent.name,
+            trigger_type=trigger.get("type", "unknown"),
+            trigger_data=json.dumps(trigger),
+            status="error",
+            mode="decision" if trigger.get("type") in {"human_chat", "peer_message", "session_message", "session_response", "channel_message", "channel_response", "task_assigned"} else "execution",
+            model=None,
+            model_source="runtime",
+            context=None,
+            raw_response=None,
+            action_name="",
+            parsed_action=None,
+            result=json.dumps({"event": "agent_error", "detail": str(exc)}, default=str),
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            error=str(exc),
+            duration_ms=0,
+            steps=None,
+        )
+        await manager.broadcast_diagnostic(diag)
+
     async def _run_social_probe(self, agent_id: str) -> None:
         self._social_timers.pop(agent_id, None)
         try:
@@ -222,68 +420,38 @@ class TurnDispatcher:
 
     async def _run_trigger(self, agent: Any, state: Any, trigger: dict[str, Any]) -> None:
         trigger_id = trigger["trigger_id"]
-        task_id = trigger.get("task_id")
 
         try:
             outcome = await run_turn(agent, state, trigger)
             result = outcome.result
 
-            if self._should_replan_backlog(trigger, outcome.action):
-                self._rebuild_backlog_queue(agent.id)
-
             if outcome.trigger_status == "completed":
+                if self._should_replan_backlog(trigger, outcome.action):
+                    self._rebuild_backlog_queue(agent.id)
                 db.complete_agent_trigger(trigger_id)
+                self._enqueue_result_triggers(result)
+
+                if result.get("path") and result.get("agent_id"):
+                    from core.world.simulation import simulation
+
+                    simulation.set_agent_path(result["agent_id"], result["path"])
             else:
-                db.fail_agent_trigger(trigger_id, outcome.diagnostic_error or "Turn failed")
-
-            for queued in result.get("trigger_requests", []):
-                self.enqueue_trigger(
-                    agent_id=queued["agent_id"],
-                    trigger_type=queued["trigger_type"],
-                    source_channel=queued["source_channel"],
-                    payload=queued["payload"],
-                    task_id=queued.get("task_id"),
+                await self._supervise_failed_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    failure_detail=outcome.diagnostic_error or "Turn failed",
+                    retryable=self._is_retryable_outcome(outcome.trigger_status),
                 )
-
-            if result.get("path") and result.get("agent_id"):
-                from core.world.simulation import simulation
-
-                simulation.set_agent_path(result["agent_id"], result["path"])
 
         except Exception as exc:
             logger.exception("Trigger execution failed for %s", agent.name)
-            db.fail_agent_trigger(trigger_id, str(exc))
             try:
-                diag = db.create_diagnostic(
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    trigger_type=trigger.get("type", "unknown"),
-                    trigger_data=json.dumps(trigger),
-                    status="error",
-                    mode="decision" if trigger.get("type") in {"human_chat", "peer_message", "session_message", "session_response", "channel_message", "channel_response", "task_assigned"} else "execution",
-                    model=None,
-                    model_source="runtime",
-                    context=None,
-                    raw_response=None,
-                    action_name="",
-                    parsed_action=None,
-                    result=json.dumps({"event": "agent_error", "detail": str(exc)}, default=str),
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    total_tokens=0,
-                    error=str(exc),
-                    duration_ms=0,
-                    steps=None,
-                )
-                await manager.broadcast_diagnostic(diag)
-                activity_runtime.reconcile_after_turn_failure(
-                    agent.id,
-                    detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {exc}",
-                )
-                await manager.broadcast_activity(
-                    event="agent_error",
-                    detail=f"{agent.name} failed while processing a trigger",
-                    agent_name=agent.name,
+                await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
+                await self._supervise_failed_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    failure_detail=str(exc),
+                    retryable=True,
                 )
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")

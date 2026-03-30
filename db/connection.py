@@ -191,6 +191,10 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply additive column migrations for existing databases."""
     _add_column_if_missing(
+        con, "agent_triggers", "retry_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_column_if_missing(
         con, "tasks", "requester_id", "VARCHAR",
     )
     _add_column_if_missing(
@@ -281,7 +285,14 @@ def init_db() -> None:
 
 
 def reset_database() -> None:
-    """Recreate the database file from the current schema and seed data."""
+    """Recreate the database file from the current schema and seed data.
+
+    Also wipes the artifacts directory so the filesystem matches the fresh DB.
+    """
+    import shutil
+
+    from core.bm_cli.filesystem import artifacts_root, ensure_artifact_roots
+
     close_connection()
     db_path = Path(_DB_PATH)
     if db_path.exists():
@@ -290,4 +301,11 @@ def reset_database() -> None:
         sidecar = Path(f"{db_path}{suffix}")
         if sidecar.exists():
             sidecar.unlink()
+
+    # Wipe artifact files so filesystem matches fresh DB
+    root = artifacts_root()
+    if root.exists():
+        shutil.rmtree(root)
+    ensure_artifact_roots()
+
     init_db()

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import db
+from core.bm_cli.filesystem import slugify_name
 from core.models import Agent, AgentState, Task
 
 _OPEN_TASK_STATUSES = ("pending", "accepted", "active", "blocked", "stalled")
@@ -74,6 +75,7 @@ def build_communication_snapshot(
     recent_artifacts = db.get_recent_artifact_refs(agent.id, limit=2)
     recent_notifications = db.list_notifications(agent_id=agent.id, limit=5)
     recent_meeting_rows = db.get_recent_meeting_summaries_for_agent(agent.id, limit_sessions=2, messages_per_session=4)
+    cli_state = db.get_agent_cli_state(agent.id)
 
     current_task_id = current_task.id if current_task is not None else None
     assigned_rows = [
@@ -127,6 +129,7 @@ def build_communication_snapshot(
         "runtime": {
             "status": state.status,
             "location": _room_name(state),
+            "cwd": cli_state.cwd if cli_state is not None else "/me",
             "current_activity": active.kind if active else "none",
             "current_task": current_task.title if current_task else "none",
             "open_assigned_task_count": len(assigned_rows) + (1 if current_task is not None else 0),
@@ -257,6 +260,7 @@ def _project_rollups_for_agent(agent_id: str, *, current_task_id: str | None) ->
             project,
             {
                 "project": project,
+                "path": f"/projects/{slugify_name(project)}",
                 "counts": {},
                 "latest_tasks": [],
                 "sort_ts": task.last_activity,
@@ -277,6 +281,7 @@ def _project_rollups_for_agent(agent_id: str, *, current_task_id: str | None) ->
     return [
         {
             "project": item["project"],
+            "path": item["path"],
             "counts": item["counts"],
             "latest_tasks": item["latest_tasks"],
         }

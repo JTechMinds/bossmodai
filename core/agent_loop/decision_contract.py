@@ -79,7 +79,13 @@ _ALLOWED_ACTS_BY_TRIGGER = {
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
-_CONTRACT_ALLOWED_PATHS = {"trigger.type", "cli.shell_enabled"}
+_CONTRACT_ALLOWED_PATHS = {
+    "trigger.type",
+    "cli.shell_enabled",
+    "cli.cwd",
+    "workspace.default_save_root",
+    "workspace.project_root",
+}
 
 
 class ConversationDecision(BaseModel):
@@ -158,6 +164,11 @@ def _contract_render_context(trigger_type: str | None) -> dict[str, object]:
         },
         "cli": {
             "shell_enabled": config.get("cli_shell_enabled") == "true",
+            "cwd": "/me",
+        },
+        "workspace": {
+            "default_save_root": "/me",
+            "project_root": "",
         },
     }
 

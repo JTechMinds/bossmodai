@@ -12,7 +12,7 @@ from db.connection import get_connection
 
 _TRIGGER_COLUMNS = (
     "id, agent_id, trigger_type, source_channel, payload, task_id, status, "
-    "failure_reason, claimed_at, completed_at, failed_at, created_at"
+    "retry_count, failure_reason, claimed_at, completed_at, failed_at, created_at"
 )
 
 _TRIGGER_PRIORITY_CASE = """
@@ -130,6 +130,24 @@ def release_trigger(trigger_id: str) -> AgentTrigger | None:
         RETURNING {_TRIGGER_COLUMNS}
         """,
         [trigger_id],
+        AgentTrigger,
+    )
+
+
+def retry_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
+    """Return a claimed trigger to the queue and increment its retry count."""
+    return fetch_one(
+        f"""
+        UPDATE agent_triggers
+        SET status = 'queued',
+            retry_count = retry_count + 1,
+            failure_reason = $1,
+            claimed_at = NULL,
+            failed_at = NULL
+        WHERE id = $2 AND status IN ('claimed', 'queued')
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [reason, trigger_id],
         AgentTrigger,
     )
 

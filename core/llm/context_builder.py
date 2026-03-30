@@ -12,6 +12,7 @@ import db
 from core import config
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
+from core.bm_cli.filesystem import slugify_name
 from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
@@ -82,6 +83,11 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("session.name", "Current session name when present"),
     ("session.participant_count", "Current session participant count"),
     ("cli.shell_enabled", "Whether BossMod CLI shell access is enabled"),
+    ("cli.cwd", "Current BossMod CLI working directory"),
+    ("workspace.personal_root", "Default personal workspace root"),
+    ("workspace.projects_root", "Default shared projects workspace root"),
+    ("workspace.default_save_root", "Preferred default save root for new files in this turn"),
+    ("workspace.project_root", "Relevant shared project folder when present"),
     ("conversation.speaker_name", "Conversation speaker display name"),
     ("conversation.speaker_type", "Conversation speaker type"),
     ("conversation.speaker_id", "Conversation speaker runtime id"),
@@ -218,6 +224,8 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     )
     activity = _activity_context(turn.current_activity)
     task = _task_context(turn.current_task)
+    cli_cwd = _current_cli_cwd(turn.agent.id)
+    workspace = _workspace_context(cli_cwd, turn.current_task)
     return {
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
@@ -243,7 +251,9 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "session": _template_session(turn.current_session),
         "cli": {
             "shell_enabled": config.get("cli_shell_enabled") == "true",
+            "cwd": cli_cwd,
         },
+        "workspace": workspace,
     }
 
 
@@ -260,6 +270,37 @@ def _current_time_context(now: datetime) -> dict[str, str]:
         "day_name": local_now.strftime("%A"),
         "timezone": timezone_name,
     }
+
+
+def _current_cli_cwd(agent_id: str) -> str:
+    """Return the current BossMod CLI working directory for one agent."""
+    cli_state = db.get_agent_cli_state(agent_id)
+    return cli_state.cwd if cli_state is not None else "/me"
+
+
+def _workspace_context(cli_cwd: str, task: dict[str, Any] | None) -> dict[str, str]:
+    """Return compact workspace defaults for prompt rendering."""
+    project_root = _workspace_project_root(cli_cwd, task)
+    default_save_root = cli_cwd if project_root and cli_cwd.startswith(project_root) else (project_root or "/me")
+    return {
+        "personal_root": "/me",
+        "projects_root": "/projects",
+        "default_save_root": default_save_root,
+        "project_root": project_root,
+    }
+
+
+def _workspace_project_root(cli_cwd: str, task: dict[str, Any] | None) -> str:
+    """Infer the relevant shared project root from cwd or current task."""
+    normalized_cwd = str(cli_cwd or "").strip() or "/me"
+    if normalized_cwd.startswith("/projects/"):
+        parts = [part for part in normalized_cwd.split("/") if part]
+        if len(parts) >= 2:
+            return f"/projects/{parts[1]}"
+    project_name = str((task or {}).get("project") or "").strip()
+    if project_name:
+        return f"/projects/{slugify_name(project_name)}"
+    return ""
 
 
 def _world_status_context(

@@ -25,6 +25,17 @@ Each scenario should record:
 *   `Forbidden behavior`
 *   `Status: Covered | Partial | Missing | Requires Platform Capability`
 
+### 2.1 Prompt Instruction Quality Gates
+Every prompt instruction should also pass these quality checks before it is treated as acceptable:
+
+*   **Non-ambiguous:** The instruction should be specific enough that the agent does not have to guess what it means.
+*   **Operational:** If the instruction implies a next step, it should point to a concrete action, path, or command pattern when one exists.
+*   **Context-backed:** If the instruction depends on workspace or runtime state, the required path/folder/fact should be present in the rendered prompt context.
+*   **No abstract placeholders without grounding:** Words like "relevant", "appropriate", or "correct location" are not sufficient unless the prompt also provides the actual candidate path or the rule for deriving it.
+*   **Clarify instead of guess:** If a required path, project, or fact is not known, the instruction should explicitly allow inspection or clarification rather than interpretation by guesswork.
+*   **Short and testable:** Instructions should stay concise and be worded so they can be validated by prompt-render tests or runtime acceptance tests.
+*   **No duplicate vague restatements:** Avoid pairing one concrete instruction with a second, looser version of the same rule that reintroduces ambiguity.
+
 ## 3. Highest-Priority Missing Scenarios
 These are the most important additions beyond the current prompt audit work.
 
@@ -200,6 +211,23 @@ These are the most important additions beyond the current prompt audit work.
 | P-01 | Representative prompt bundles stay under a bounded instruction/context budget | Standard decision and execution turns remain under 3k prompt tokens in preview/test fixtures | No | Covered |
 | P-02 | Dynamic prompt blocks only appear when relevant | Conversation snapshot/envelope/file guidance and similar blocks render conditionally instead of appearing on every turn | No | Covered |
 
+### 4.12 Workspace Conventions and Save/Lookup Defaults
+| ID | Scenario | Expected Behavior | CLI/Tools | Status |
+| --- | --- | --- | --- | --- |
+| SP-01 | Shared project deliverable is created without an explicit path | Agent defaults to the relevant `/projects/...` location instead of saving in an arbitrary folder | Optional | Covered |
+| SP-02 | User asks about project details | Agent reviews the relevant project folder before guessing from memory or unrelated context | Optional | Covered |
+| SP-03 | Personal report or self-owned working document is created without an explicit path | Agent defaults to `/me/...` and keeps the output in an organized folder structure | Optional | Covered |
+| SP-04 | Target save location is ambiguous | Agent clarifies or inspects the likely workspace structure before saving | Optional | Covered |
+| SP-05 | Project already has an established folder structure | Agent follows the existing structure instead of inventing a new parallel layout | Optional | Covered |
+| SP-06 | User explicitly specifies a save/read path | Agent follows the explicit path instead of applying a default preference | Optional | Covered |
+
+### 4.13 Runtime Failure Recovery and Anti-Stall Behavior
+| ID | Scenario | Expected Behavior | CLI/Tools | Status |
+| --- | --- | --- | --- | --- |
+| R-01 | A turn fails while the agent still has work in motion | Dispatcher retries the trigger automatically up to the configured retry limit instead of dead-stopping immediately | No | Covered |
+| R-02 | Retries are exhausted for a work-related turn | Trigger is marked failed, the task is marked stalled, runtime activities are cancelled, and the human sees a visible stuck message | No | Covered |
+| R-03 | Failure comes from an exception path rather than a normal failed turn outcome | The same dispatcher retry supervisor handles it instead of using a separate ad hoc path | No | Covered |
+
 ## 5. What Else Should Be Added Beyond Your Two Big Scenarios?
 Yes. The other big missing areas are:
 
@@ -298,7 +326,7 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | None currently open | Anti-hallucination / evidence-discipline gaps are covered in the focused matrix | The next work is broader release confidence rather than another single missing workflow slice | Prompting/Contracts + Agent Runtime + QA/Acceptance |
+| P1 | None currently open | Focused workspace-convention gaps are covered; the next work is broader release confidence rather than another single workflow slice | Shifts effort from targeted behavior gaps to broader validation and release confidence | Prompting/Contracts + Agent Runtime + QA/Acceptance |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |

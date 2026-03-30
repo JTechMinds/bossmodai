@@ -387,6 +387,14 @@ def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     assert "When someone asks for revisions to finished work, treat that as new follow-up work rather than pretending the completed task is still active." in contract
     assert "Distinguish active work from completed work when both are relevant." in contract
     assert "Questions about prior completed work do not replace the current active task." in contract
+    assert "If the user gives a save or read path, use it." in contract
+    assert "If a shared project path is not known yet, clarify before choosing one." in contract
+    assert "For self-owned reports or notes without project context, prefer `/me/...`." in contract
+    assert "Prefer the existing folder structure when it is already visible." in contract
+    assert "If the location is still ambiguous after inspection, clarify before saving." in contract
+    assert 'current cwd is `"/me"`' not in contract
+    assert "current cwd is `/" in contract
+    assert "default save root for this turn is `/me`" in contract
     assert "For more details, view the document itself." in contract
     assert "`cat <path>` for short files" in contract
     assert "`ol <path>` for longer markdown files" in contract
@@ -585,6 +593,76 @@ def test_apply_decision_persists_normalized_task_work_contract(isolated_db):
     active = db.get_active_activity(agent.id)
     assert active is not None
     assert "work_contract" not in (active.metadata or {})
+
+
+def test_apply_decision_preserves_explicit_absolute_deliverable_path_over_cwd(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "reply": "I will save the personal recap to the requested path.",
+            "commitmentKind": "work",
+            "taskTitle": "Write personal launch recap",
+            "taskDescription": "Draft a personal launch recap and save it.",
+            "deliverables": [{"type": "file", "path": "/me/reports/launch_recap.md"}],
+            "thought": "use the explicit personal path",
+        },
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Write a personal launch recap and save it to /me/reports/launch_recap.md.",
+            "from_name": "Human Operator",
+            "source_channel": "chat",
+        },
+    )
+
+    assert result["event"] == "decision_applied"
+    task = db.list_tasks(assigned_to=agent.id)[0]
+    assert task.work_contract is not None
+    assert [item.model_dump() for item in task.work_contract.deliverables] == [
+        {"type": "file", "path": "/me/reports/launch_recap.md", "description": None}
+    ]
+
+
+def test_apply_decision_defaults_personal_relative_deliverable_to_current_me_workspace(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    db.update_agent_cli_state(agent.id, cwd="/me/reports")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "reply": "I will draft the recap and keep it in my reports folder.",
+            "commitmentKind": "work",
+            "taskTitle": "Write personal launch recap",
+            "taskDescription": "Draft a personal launch recap and save it.",
+            "deliverables": [{"type": "file", "path": "launch_recap.md"}],
+            "thought": "use my current personal workspace",
+        },
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Write a personal launch recap and save it.",
+            "from_name": "Human Operator",
+            "source_channel": "chat",
+        },
+    )
+
+    assert result["event"] == "decision_applied"
+    task = db.list_tasks(assigned_to=agent.id)[0]
+    assert task.work_contract is not None
+    assert [item.model_dump() for item in task.work_contract.deliverables] == [
+        {"type": "file", "path": "/me/reports/launch_recap.md", "description": None}
+    ]
 
 
 def test_apply_decision_task_assignment_clarify_replies_to_assigner(isolated_db):
@@ -1740,6 +1818,41 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     assert "For status questions, answer from `Live Runtime State` first." in system_prompt
 
 
+def test_decision_contract_renders_known_project_folder_guidance_from_context(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "human_chat",
+                "content": "What does the orchard brief say?",
+                "from_name": "Human Operator",
+                "source_channel": "chat",
+            },
+            contract_kind="decision",
+            current_task={
+                "id": "task-1",
+                "title": "Prepare orchard launch plan",
+                "status": "accepted",
+                "description": "Prepare the orchard launch plan.",
+                "project": "orchard",
+            },
+        )
+    )
+
+    contract = context[1]["content"]
+    assert "Known project folder for this turn: `/projects/orchard`" in contract
+    assert "For project details, start with `ls /projects/orchard`." in contract
+    assert "For shared project work without an explicit path, save under `/projects/orchard/...`." in contract
+    assert "project-folder lookup starts with `ls /projects/orchard`" in contract
+    assert "default save root for this turn is `/projects/orchard/reports`" in contract
+
+
 def test_communication_snapshot_includes_recent_artifact_paths(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -1790,6 +1903,68 @@ def test_communication_snapshot_includes_recent_artifact_paths(isolated_db):
     ]
 
 
+def test_communication_snapshot_includes_current_cwd_and_project_paths(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+    task = db.create_task(
+        title="Prepare orchard launch plan",
+        description="Prepare the launch plan for orchard.",
+        project="orchard",
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    db.update_task(task.id, status="accepted", watchdog_pinged_at=None)
+
+    snapshot = build_communication_snapshot(
+        agent=agent,
+        state=state,
+        trigger={
+            "type": "human_chat",
+            "content": "Can you check the orchard project folder?",
+            "from_name": "Human Operator",
+            "source_channel": "chat",
+        },
+    )
+
+    assert snapshot["runtime"]["cwd"] == "/projects/orchard/reports"
+    assert snapshot["project_rollups"] == [
+        {
+            "project": "orchard",
+            "path": "/projects/orchard",
+            "counts": {"accepted": 1},
+            "latest_tasks": [
+                {
+                    "title": "Prepare orchard launch plan",
+                    "status": "accepted",
+                    "assigned_to": agent.id,
+                    "assignee_name": "Taylor",
+                }
+            ],
+        }
+    ]
+    assert snapshot["referenced_records"]["projects"] == [
+        {
+            "project": "orchard",
+            "path": "/projects/orchard",
+            "counts": {"accepted": 1},
+            "latest_tasks": [
+                {
+                    "title": "Prepare orchard launch plan",
+                    "status": "accepted",
+                    "assigned_to": agent.id,
+                    "assignee_name": "Taylor",
+                }
+            ],
+        }
+    ]
+
+
 def test_preview_prompt_bundles_stay_under_instruction_budget(isolated_db):
     cases = [
         ("decision", "human_chat"),
@@ -1823,6 +1998,9 @@ def test_template_variable_metadata_includes_current_time_variables(isolated_db)
     assert "current_date_time" in names
     assert "current_time.iso_local" in names
     assert "current_time.iso_utc" in names
+    assert "cli.cwd" in names
+    assert "workspace.default_save_root" in names
+    assert "workspace.project_root" in names
     assert "current_time.date" in names
     assert "current_time.time" in names
     assert "current_time.day_name" in names
@@ -3324,6 +3502,184 @@ async def test_run_turn_human_chat_prior_document_question_can_read_artifact_bef
     assert [step["action_name"] for step in detail["steps"]] == ["bm_cli", "answer"]
     first_action = json.loads(detail["steps"][0]["parsed_action"])
     assert first_action["command"] == "cat /me/quarterly-report.md"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_project_question_can_review_project_folder_before_reply(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    db.update_agent_cli_state(agent.id, cwd="/projects/orchard/reports")
+    task = db.create_task(
+        title="Prepare orchard launch plan",
+        description="Prepare the launch plan for orchard.",
+        project="orchard",
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    db.update_task(task.id, status="accepted", watchdog_pinged_at=None)
+    project_root = project_artifact_dir("orchard")
+    project_root.mkdir(parents=True, exist_ok=True)
+    brief_path = project_root / "brief.md"
+    brief_path.write_text(
+        "# Orchard Brief\n\nThe orchard launch focuses on avocado distribution readiness and a phased regional rollout.\n",
+        encoding="utf-8",
+    )
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "What does the orchard project brief say about the launch?",
+        message_type="human",
+    )
+
+    captured_messages: list[list[dict[str, str]]] = []
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"ls /projects/orchard"},"th":"check the project folder"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"cat /projects/orchard/brief.md"},"th":"read the project brief"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"question","msg":"The orchard brief says the launch is focused on avocado distribution readiness and a phased regional rollout.",'
+                '"th":"answer from the project brief"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "What does the orchard project brief say about the launch?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 3
+    assert any(
+        '"path": "/projects/orchard"' in message["content"]
+        for message in captured_messages[0]
+        if message["role"] == "system"
+    )
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"] and "brief.md" in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"] and "avocado distribution readiness" in message["content"]
+        for message in captured_messages[2]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "The orchard brief says the launch is focused on avocado distribution readiness and a phased regional rollout."
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> bm_cli -> answer(none)"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert [step["action_name"] for step in detail["steps"]] == ["bm_cli", "bm_cli", "answer"]
+    first_action = json.loads(detail["steps"][0]["parsed_action"])
+    second_action = json.loads(detail["steps"][1]["parsed_action"])
+    assert first_action["command"] == "ls /projects/orchard"
+    assert second_action["command"] == "cat /projects/orchard/brief.md"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_ambiguous_project_save_location_can_clarify(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Write the launch report and save it in the project files.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"clarify","intent":"work","msg":"Which project folder should I use for the report?",'
+                '"th":"need the target project location"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Write the launch report and save it in the project files.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == "Which project folder should I use for the report?"
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "clarify(none)"
 
 
 @pytest.mark.asyncio
@@ -8139,7 +8495,7 @@ async def test_prepare_trigger_context_materializes_assignment_activity_without_
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_marks_failed_turns_as_failed_triggers(isolated_db, monkeypatch):
+async def test_dispatcher_retries_failed_turns_before_marking_trigger_failed(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     state = db.update_agent_state(agent.id, status="idle")
@@ -8165,6 +8521,7 @@ async def test_dispatcher_marks_failed_turns_as_failed_triggers(isolated_db, mon
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
     monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
 
     await dispatcher._run_trigger(
         agent,
@@ -8180,12 +8537,16 @@ async def test_dispatcher_marks_failed_turns_as_failed_triggers(isolated_db, mon
 
     refreshed = db.get_agent_trigger(trigger.id)
     assert refreshed is not None
-    assert refreshed.status == "failed"
+    assert refreshed.status == "queued"
+    assert refreshed.retry_count == 1
     assert refreshed.failure_reason == "bad json"
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert thread == []
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_exception_reconciles_status_with_active_work(isolated_db, monkeypatch):
+async def test_dispatcher_exhausted_failed_turn_stalls_task_and_notifies_human(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     task = db.create_task(
@@ -8195,19 +8556,32 @@ async def test_dispatcher_exception_reconciles_status_with_active_work(isolated_
         created_by=HUMAN_SENDER_ID,
     )
     state = _activate_work(agent, task)
+    db.set_setting("turn_failure_retry_limit", "0", "advanced")
+    config.reload()
     trigger = db.create_agent_trigger(
         agent.id,
-        trigger_type="human_chat",
-        source_channel="chat",
-        payload={"content": "hello", "from_name": "Human Operator"},
+        trigger_type="activity_resumed",
+        source_channel="work",
+        payload={"content": "resume"},
+        task_id=task.id,
     )
 
     async def fake_run_turn(agent_arg, state_arg, trigger_arg):
-        raise RuntimeError("boom")
+        return TurnOutcome.failure(
+            result={"event": "agent_error", "detail": "bad json", "agent_name": agent_arg.name},
+            error="bad json",
+            action={"action": "_parse_failed"},
+            action_summary="",
+            raw_response="{",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
     monkeypatch.setattr(manager, "broadcast_activity", _noop)
     monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
 
     await dispatcher._run_trigger(
         agent,
@@ -8221,18 +8595,93 @@ async def test_dispatcher_exception_reconciles_status_with_active_work(isolated_
         },
     )
 
+    refreshed_trigger = db.get_agent_trigger(trigger.id)
+    assert refreshed_trigger is not None
+    assert refreshed_trigger.status == "failed"
+    assert refreshed_trigger.retry_count == 0
+    assert refreshed_trigger.failure_reason == "bad json"
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "stalled"
+    assert "Runtime exhausted automatic retries" in (refreshed_task.status_note or "")
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.status == "idle"
+
+    active = _active_activity(agent.id)
+    assert active is None
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert len(thread) == 1
+    assert 'Investigate bug' in thread[0].content
+    assert 'stalled' in thread[0].content
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics == []
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_exception_uses_same_retry_supervisor(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Investigate bug",
+        description="Debug the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, task)
+    trigger = db.create_agent_trigger(
+        agent.id,
+        trigger_type="activity_resumed",
+        source_channel="work",
+        payload={"content": "resume"},
+        task_id=task.id,
+    )
+
+    async def fake_run_turn(agent_arg, state_arg, trigger_arg):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", fake_run_turn)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+
+    await dispatcher._run_trigger(
+        agent,
+        state,
+        {
+            **json.loads(trigger.payload),
+            "type": trigger.trigger_type,
+            "trigger_id": trigger.id,
+            "task_id": trigger.task_id,
+            "source_channel": trigger.source_channel,
+        },
+    )
+
+    refreshed_trigger = db.get_agent_trigger(trigger.id)
+    assert refreshed_trigger is not None
+    assert refreshed_trigger.status == "queued"
+    assert refreshed_trigger.retry_count == 1
+    assert refreshed_trigger.failure_reason == "boom"
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "active"
+
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
     assert refreshed_state.status == "work_active"
 
-    active = _active_activity(agent.id)
-    assert active is not None
-    assert active.kind == "work"
-    assert active.task_id == task.id
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert thread == []
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
     assert diagnostics[0]["status"] == "error"
-    assert diagnostics[0]["trigger_type"] == "human_chat"
+    assert diagnostics[0]["trigger_type"] == "activity_resumed"
 
 
 def test_apply_decision_does_not_persist_reply_before_work_accept_succeeds(isolated_db, monkeypatch):

@@ -78,6 +78,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),
     ("trigger_claim_timeout_seconds", "300", "advanced"),
+    ("turn_failure_retry_limit", "2", "advanced"),
 
     # ── API limits ──
     ("api_message_limit_max", "200", "advanced"),
