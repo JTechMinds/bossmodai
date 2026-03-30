@@ -7,6 +7,7 @@ WebSocket broadcasting for live Canvas and Activity updates.
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,6 +56,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
+_TEXT_FILE_EXTENSIONS = {
+    ".txt", ".md", ".json", ".py", ".js", ".ts", ".yaml", ".yml",
+    ".toml", ".csv", ".xml", ".html", ".css", ".log", ".cfg", ".ini",
+    ".sh", ".bash", ".env", ".sql", ".graphql", ".jsx", ".tsx", ".svg",
+    ".rst", ".tex", ".makefile", ".dockerfile", ".gitignore",
+}
+
 
 class ActivationBody(BaseModel):
     content: str = "You have been manually activated."
@@ -70,6 +78,11 @@ class ChannelCreateBody(BaseModel):
 
 
 class ChannelMessageBody(BaseModel):
+    content: str
+
+
+class CompanyFileSaveBody(BaseModel):
+    path: str
     content: str
 
 
@@ -289,6 +302,24 @@ async def get_metrics_dashboard() -> dict[str, object]:
 async def get_company_files(path: str = "/") -> dict[str, object]:
     """Return a browsable file view rooted at the company workspace."""
     return await asyncio.to_thread(_build_company_files_payload, path)
+
+
+@router.put("/company/files")
+async def save_company_file(body: CompanyFileSaveBody) -> dict[str, object]:
+    """Write content back to a file in the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    resolved = _resolve_safe_company_path(root, body.path)
+    if resolved is None:
+        raise HTTPException(400, "Invalid path")
+    if not resolved.exists() or not resolved.is_file():
+        raise HTTPException(404, "File not found")
+
+    await asyncio.to_thread(resolved.write_text, body.content, encoding="utf-8")
+    stat = await asyncio.to_thread(resolved.stat)
+    virtual_path = "/" + str(resolved.relative_to(root.resolve())).replace("\\", "/")
+    return {"status": "ok", "path": virtual_path, "size_bytes": stat.st_size}
 
 
 @router.post("/company/files/open-folder")
@@ -979,6 +1010,24 @@ def _resolve_safe_company_path(root: Path, raw_path: str) -> Path | None:
     return None
 
 
+def _annotate_agent_names(items: list[dict], name_key: str = "name") -> None:
+    """Detect agent_XXXX keys in a list of dicts and attach agent_name."""
+    agent_keys = [
+        str(d.get(name_key, ""))
+        for d in items
+        if re.match(r"^agent_\d{4}$", str(d.get(name_key, "")))
+    ]
+    if not agent_keys:
+        for d in items:
+            d.setdefault("agent_name", None)
+        return
+    from db.agent_storage_identities import get_agent_names_by_storage_keys
+
+    name_map = get_agent_names_by_storage_keys(agent_keys)
+    for d in items:
+        d["agent_name"] = name_map.get(str(d.get(name_key)))
+
+
 def _build_company_files_payload(path: str) -> dict[str, object]:
     """Build a filesystem-style payload for the company workspace browser."""
     from core.bm_cli.filesystem import artifacts_root
@@ -996,6 +1045,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
 
     if resolved.is_file():
         stat = resolved.stat()
+        binary = resolved.suffix.lower() not in _TEXT_FILE_EXTENSIONS
+        content, truncated = ("", False) if binary else _read_desk_file_preview(resolved)
         return {
             "kind": "file",
             "path": virtual_path,
@@ -1003,6 +1054,9 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
             "breadcrumbs": _company_breadcrumbs(virtual_path),
             "size_bytes": stat.st_size,
             "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "content": content,
+            "truncated": truncated,
+            "binary": binary,
         }
 
     entries: list[dict[str, object]] = []
@@ -1022,6 +1076,7 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
                 "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
             })
     entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
+    _annotate_agent_names(entries)
 
     return {
         "kind": "directory",
@@ -1042,6 +1097,7 @@ def _company_breadcrumbs(path: str) -> list[dict[str, str]]:
     for part in parts:
         current += f"/{part}"
         breadcrumbs.append({"label": part, "path": current})
+    _annotate_agent_names(breadcrumbs, name_key="label")
     return breadcrumbs
 
 

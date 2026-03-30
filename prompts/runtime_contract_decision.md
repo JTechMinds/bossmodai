@@ -36,6 +36,15 @@ For defer:
 ```json
 {"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
 ```
+{{elseif trigger.type = 'watchdog_status_ping'}}
+ALLOWED conversation act FOR THIS TURN: reply
+
+Use this shape:
+
+For reply:
+```json
+{"act":"reply","intent":"status | other","msg":"string","th":"string"}
+```
 {{elseif trigger.type = 'peer_message'}}
 ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline
 
@@ -203,6 +212,7 @@ TURN GUIDANCE
 - `reply` is the normal response mode for direct chat, peer chat, and status answers.
 - A plain status reply should describe current work naturally without trying to restate the underlying work commitment in JSON.
 - `intent="status"` means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use BossMod CLI only if the snapshot still lacks the needed fact.
+- For `watchdog_status_ping`, reply with a concise current status update. The runtime will keep the task active and queue work resumption after your reply.
 - Accepting work normally means `commit="work"`.
 - Accepting a meeting means `commit="meeting"` and `data.dst`.
 - Accepting a break means `commit="break"` and `data.dst="break"`.

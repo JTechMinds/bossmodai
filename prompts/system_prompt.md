@@ -9,6 +9,9 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 
 # Context
 
+## Current Local Time
+{{current_date_time}}
+
 ## Live Runtime State
 {{worldStatus}}
 
@@ -29,6 +32,7 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 # Operating Rules
 
 - Treat `Live Runtime State` as authoritative for your current operational status.
+- Treat `Current Local Time` as authoritative for references like now, today, tomorrow, this morning, and this afternoon.
 - Treat `Current Activity` as the live runtime thread you are continuing right now.
 - Treat `Current Task` as the only task you are actively working right now.
 - Treat `Open Tasks` as pending or accepted work that is not complete yet.

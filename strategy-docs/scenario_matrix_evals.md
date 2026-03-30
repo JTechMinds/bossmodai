@@ -109,8 +109,8 @@ These are the most important additions beyond the current prompt audit work.
 | --- | --- | --- | --- | --- |
 | C-01 | No lookup needed | Agent does not call CLI unnecessarily | No | Covered |
 | C-02 | One authoritative lookup needed | Agent calls `cli`, then final conversation decision | Yes | Covered |
-| C-03 | Multiple lookups needed | Agent chains multiple `cli` lookups before final decision | Yes | Partial |
-| C-04 | First lookup is only to discover CLI usage/command path | Agent may use CLI discovery before the actual fact lookup | Yes | Partial |
+| C-03 | Multiple lookups needed | Agent chains multiple `cli` lookups before final decision | Yes | Covered |
+| C-04 | First lookup is only to discover CLI usage/command path | Agent may use CLI discovery before the actual fact lookup | Yes | Covered |
 | C-05 | Decision turn ends on CLI instead of final answer | Forbidden | Yes but not terminal | Covered |
 | C-06 | Snapshot already has answer but agent still reaches for CLI | Should be discouraged by prompt logic | Optional but should usually not happen | Missing |
 
@@ -133,7 +133,7 @@ These are the most important additions beyond the current prompt audit work.
 | D-05 | Assignee declines delegated work | Decline is communicated clearly to delegator/owner | No | Partial |
 | D-06 | Worker completes and reports back to delegator | Completion routes to delegator/owner appropriately | Optional | Covered |
 | D-07 | PM delegates to worker and then summarizes back to human | PM acts as aggregation/reporting layer | Optional | Covered |
-| D-08 | Worker blocks and PM reassigns to another worker | Escalation and reassignment loop works end-to-end | Optional | Missing |
+| D-08 | Worker blocks and PM reassigns to another worker | Escalation and reassignment loop works end-to-end | Optional | Covered |
 
 ### 4.6 Shared Channels and Meetings
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -161,8 +161,9 @@ These are the most important additions beyond the current prompt audit work.
 | O-01 | View agent current task | Current task is available through CLI/runtime status | Yes | Covered |
 | O-02 | View recent work artifacts | Recent artifacts are visible in status surfaces | Yes | Covered |
 | O-03 | Watchdog pings quiet active task | Task gets status ping trigger | No | Covered |
-| O-04 | Agent answers watchdog with useful status and continues work | Status is visible and task remains active/resumes | Optional | Partial |
+| O-04 | Agent answers watchdog with useful status and continues work | Status is visible and task remains active/resumes | Optional | Covered |
 | O-05 | Human sees completion reply and artifact together | Completion message and artifact visibility are aligned | Optional | Covered |
+| O-06 | Prompt bundle exposes authoritative current local date/time | Agent can ground replies about now/today/tomorrow without guessing the clock | No | Covered |
 
 ### 4.9 Scheduled / Recurring / Periodic Work
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -237,6 +238,7 @@ These automated checks should pass in CI before treating the prompt layer as val
     *   peer message reply
     *   file save + Desk visibility
     *   completion follow-up to human requester
+    *   system prompt renders current local date/time variables
 
 3.  Delegation suite
     *   task delegation record creation
@@ -265,18 +267,16 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.1 P0: Blockers Before Declaring Interaction Flows Ready
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P0 | C-03, C-04 | Multi-step decision-turn CLI lookup test, including CLI command discovery before final answer | This is now allowed by the contract and should be protected by tests | Prompting/Contracts + Agent Runtime |
-| P0 | O-04 | Watchdog ping answered with useful status and work continuation | Quiet-task recovery is core to long-running agents | Agent Runtime |
+| P0 | None currently open | Core interaction P0 runtime gaps are covered by executable tests | Keep the release gate focused on manual smoke + next P1 workflows | Agent Runtime + QA/Acceptance |
 
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
 | P1 | H-09, W-08 | Human scope change / reprioritization while a task is active | Real operators will redirect work mid-flight | Agent Runtime + Prompting/Contracts |
 | P1 | W-07 | Revision loop after deliverable completion | Essential for real document workflows | Agent Runtime |
-| P1 | W-05, D-08 | Blocked worker -> PM escalation -> reassignment | Key for managed teams, especially PM-led workflows | Agent Runtime |
+| P1 | W-05 | Human-requested task becomes blocked and reports the blocker cleanly | Key for real work management outside delegation chains | Agent Runtime |
 | P1 | A-01, A-04 | AI-to-AI greeting/move/meeting conversational flows | Good conversational realism and meeting coordination coverage | Prompting/Contracts |
 | P1 | M-05 | Meeting creates durable follow-up work item | Prevents meetings from becoming dead-end transcripts | Agent Runtime |
-| P1 | O-05 | Human sees completion message and artifact access aligned in one workflow | Operator trust depends on this joining up cleanly | Desk/UI + Agent Runtime |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
@@ -308,10 +308,9 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add a **multi-step decision-turn CLI** acceptance test.
-2.  Add a **watchdog status ping recovery** acceptance test.
-3.  Add blocked/decline **PM reassignment** acceptance coverage for `D-08`.
-4.  Re-run the matrix and update each affected row from `Partial/Missing` to `Covered` only after both prompt-bundle review and runtime acceptance testing pass.
+1.  Add human **scope-change / reprioritization** coverage for `H-09` and `W-08`.
+2.  Add **revision loop** coverage for `W-07`.
+3.  Add direct human **blocked-task** coverage for `W-05`.
 
 ## 11. Bottom Line
 The matrix is now actionable:

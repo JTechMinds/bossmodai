@@ -74,6 +74,7 @@ _ALLOWED_ACTS_BY_TRIGGER = {
     "human_chat": ("reply", "accept", "clarify", "decline", "defer"),
     "peer_message": ("reply", "accept", "clarify", "decline"),
     "task_assigned": ("accept", "clarify", "defer", "decline"),
+    "watchdog_status_ping": ("reply",),
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
@@ -344,6 +345,9 @@ def validate_decision_for_trigger(
     active_task_id: str | None,
 ) -> str | None:
     """Validate a parsed decision against the conversation turn context."""
+    if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
+        return "watchdog status pings require a direct reply"
+
     allowed = allowed_decisions_for_trigger(trigger_type)
     if decision.decision not in allowed:
         return f'this turn only allows decisions: {", ".join(allowed)}'
@@ -356,6 +360,7 @@ def validate_decision_for_trigger(
         "channel_message",
         "channel_response",
         "task_assigned",
+        "watchdog_status_ping",
     } and decision.decision != "observe" and not (decision.reply and decision.reply.strip()):
         return 'conversation turns require a non-empty "reply" unless you choose "observe"'
 

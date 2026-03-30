@@ -371,6 +371,14 @@ def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     assert '{"act":"observe","intent":"other","th":"string"}' not in contract
 
 
+def test_render_decision_contract_scopes_watchdog_status_ping_choices(isolated_db):
+    contract = render_decision_contract("watchdog_status_ping")
+    assert "ALLOWED conversation act FOR THIS TURN: reply" in contract
+    assert '{"act":"reply","intent":"status | other","msg":"string","th":"string"}' in contract
+    assert '{"act":"accept","intent":"work | meeting | break | move | other"' not in contract
+    assert "The runtime will keep the task active and queue work resumption after your reply." in contract
+
+
 def test_render_action_contract_includes_required_schema(isolated_db):
     contract = render_action_contract()
     assert "REQUIRED JSON SHAPE:" in contract
@@ -416,6 +424,40 @@ def test_validate_decision_allows_task_assignment_clarify(isolated_db):
         active_task_id=None,
     )
     assert error is None
+
+
+def test_validate_decision_requires_direct_watchdog_reply(isolated_db):
+    decision = ConversationDecision.model_validate(
+        {
+            "decision": "answer",
+            "intentKind": "status_request",
+            "reply": "I am still working through the failing tests.",
+            "commitmentKind": "none",
+            "thought": "share watchdog status",
+        }
+    )
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type="watchdog_status_ping",
+        active_task_id="task-123",
+    )
+    assert error is None
+
+    invalid = ConversationDecision.model_validate(
+        {
+            "decision": "defer",
+            "intentKind": "other",
+            "reply": "I will get back to this later.",
+            "commitmentKind": "none",
+            "thought": "invalid watchdog response",
+        }
+    )
+    error = validate_decision_for_trigger(
+        invalid,
+        trigger_type="watchdog_status_ping",
+        active_task_id="task-123",
+    )
+    assert error == "watchdog status pings require a direct reply"
 
 
 def test_validate_decision_allows_task_assignment_accept_without_new_title(isolated_db):
@@ -1480,6 +1522,7 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     )
 
     system_prompt = context[0]["content"]
+    assert "## Current Local Time" in system_prompt
     assert "## Live Runtime State" in system_prompt
     assert "status: idle" in system_prompt
     assert "current_task: none" in system_prompt
@@ -1491,6 +1534,17 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     assert "RECENT WORK ARTIFACTS:" in system_prompt
     assert "RECENT RUNTIME NOTIFICATIONS:" in system_prompt
     assert "For status questions, answer from `Live Runtime State` first." in system_prompt
+
+
+def test_template_variable_metadata_includes_current_time_variables(isolated_db):
+    names = {item["name"] for item in context_builder.template_variable_metadata()}
+    assert "current_date_time" in names
+    assert "current_time.iso_local" in names
+    assert "current_time.iso_utc" in names
+    assert "current_time.date" in names
+    assert "current_time.time" in names
+    assert "current_time.day_name" in names
+    assert "current_time.timezone" in names
 
 
 def test_init_db_omits_removed_unused_tables(isolated_db):
@@ -1844,6 +1898,59 @@ async def test_prompt_templates_render_conditionals_for_personality_and_system_p
     assert "CHAT" in human_context[0]["content"]
     assert "PERSONA OTHER" in peer_context[0]["content"]
     assert "OTHER" in peer_context[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_renders_current_time_variables(isolated_db, monkeypatch):
+    fixed_now = datetime(2026, 3, 30, 9, 42, 15, tzinfo=timezone(timedelta(hours=-4), name="EDT"))
+
+    monkeypatch.setattr(context_builder, "now_local", lambda: fixed_now)
+
+    await set_setting_route(
+        "system_prompt_template",
+        (
+            "TIME {{current_date_time}}\n"
+            "DATE {{current_time.date}}\n"
+            "CLOCK {{current_time.time}}\n"
+            "DAY {{current_time.day_name}}\n"
+            "TZ {{current_time.timezone}}\n"
+            "UTC {{current_time.iso_utc}}\n"
+            "{{personality}}"
+        ),
+        "advanced",
+    )
+
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Taylor",
+        role="Operations Analyst",
+        prompt_template="PERSONA {{agent_name}}",
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "human_chat",
+                "content": "What time is it?",
+                "from_name": "Human Operator",
+            },
+            contract_kind="decision",
+        )
+    )
+
+    system_prompt = context[0]["content"]
+    assert "TIME 2026-03-30 09:42:15 EDT" in system_prompt
+    assert "DATE 2026-03-30" in system_prompt
+    assert "CLOCK 09:42:15" in system_prompt
+    assert "DAY Monday" in system_prompt
+    assert "TZ EDT" in system_prompt
+    assert "UTC 2026-03-30T13:42:15+00:00" in system_prompt
+    assert "PERSONA Taylor" in system_prompt
 
 
 @pytest.mark.asyncio
@@ -2426,6 +2533,84 @@ async def test_run_turn_status_reply_schedules_activity_resume_for_active_work(i
 
 
 @pytest.mark.asyncio
+async def test_run_turn_watchdog_status_reply_refreshes_liveness_and_resumes_work(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Fix the API bug",
+        description="Debug and patch the failure",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    pinged_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    heartbeat_before = pinged_at - timedelta(minutes=10)
+    db.update_task(
+        task.id,
+        status="active",
+        watchdog_pinged_at=pinged_at,
+        last_heartbeat_at=heartbeat_before,
+        last_activity=heartbeat_before,
+    )
+    state = _activate_work(agent, task)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"reply","intent":"status","msg":"I am still working through the failing tests and have isolated the root cause.","th":"reply to watchdog"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "watchdog_status_ping",
+            "content": 'Watchdog check: are you still working on "Fix the API bug"? Provide a status update.',
+            "from_name": "System",
+            "source_channel": "system",
+            "task_id": task.id,
+            "task_title": task.title,
+        },
+    )
+
+    assert outcome.result["trigger_requests"][0]["trigger_type"] == "activity_resumed"
+    assert outcome.result["trigger_requests"][0]["task_id"] == task.id
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.watchdog_pinged_at is None
+    assert refreshed_task.last_heartbeat_at is not None
+    assert refreshed_task.last_heartbeat_at > heartbeat_before
+    assert refreshed_task.last_activity is not None
+    assert refreshed_task.last_activity > heartbeat_before
+    assert refreshed_task.status_note == "I am still working through the failing tests and have isolated the root cause."
+
+    active = _active_activity(agent.id)
+    assert active is not None
+    assert active.kind == "work"
+    assert active.status == "active"
+    assert active.task_id == task.id
+    assert active.detail == "I am still working through the failing tests and have isolated the root cause."
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "answer(none)"
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == []
+
+
+@pytest.mark.asyncio
 async def test_run_turn_human_chat_grounded_question_uses_grounded_lane(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -2593,6 +2778,108 @@ async def test_run_turn_human_chat_grounded_question_can_clarify_when_snapshot_i
     thread = db.get_human_chat_thread(agent.id, limit=10)
     assert [msg.message_type for msg in thread] == ["human", "social"]
     assert thread[-1].content == "Which project do you mean? I do not have a single latest project identified in my current queue."
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_can_chain_cli_discovery_before_final_answer(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "What's your current runtime status? If needed, figure out the right CLI command first.",
+        message_type="human",
+    )
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"help"},"th":"discover the right CLI command first"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"runtime"},"th":"check the live runtime state"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"status","msg":"I checked the runtime. I am idle in the Main Workspace right now with no active task.",'
+                '"th":"answer using the authoritative runtime result"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "What's your current runtime status? If needed, figure out the right CLI command first.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 3
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+    assert any(
+        "Respond next with a final JSON decision" in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[2]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == "I checked the runtime. I am idle in the Main Workspace right now with no active task."
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> bm_cli -> answer(none)"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert [step["action_name"] for step in detail["steps"]] == ["bm_cli", "bm_cli", "answer"]
+
+    first_action = json.loads(detail["steps"][0]["parsed_action"])
+    second_action = json.loads(detail["steps"][1]["parsed_action"])
+    assert first_action["command"] == "help"
+    assert second_action["command"] == "runtime"
 
 
 @pytest.mark.asyncio
@@ -3028,6 +3315,333 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
 
     assert _active_activity(pm.id) is None
     assert _active_activity(worker.id) is None
+
+
+@pytest.mark.asyncio
+async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_reports_back_to_human(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    first_worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    second_worker = db.create_agent(name="Morgan", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    pm_state = db.update_agent_state(pm.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        pm.id,
+        "Please coordinate the competitor launch research and delegate it.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will coordinate the research handoff and keep the delegation moving.",'
+                '"commit":"work","data":{"task":{"title":"Coordinate competitor launch research",'
+                '"desc":"Coordinate the competitor launch research assignment, handle blockers, and report the result back to the human."}},'
+                '"th":"accept the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "assign",
+                    "data": {
+                        "aid": first_worker.id,
+                        "task": {
+                            "title": "Investigate competitor launches",
+                            "desc": "Review recent competitor launches and summarize the useful takeaways for Pat.",
+                        },
+                    },
+                    "th": "delegate the first investigation attempt to Taylor",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"idle","th":"wait for Taylor to report back or block"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will investigate the launches and report back if I hit anything blocking.",'
+                '"commit":"work","th":"accept the first delegated task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"block","data":{"why":"I do not have access to the launch archive.",'
+                '"msg":"I am blocked because I do not have access to the launch archive."},'
+                '"th":"report the blocker to Pat"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"status","msg":"Understood. I am reassigning the investigation so the parent task stays on track.",'
+                '"th":"acknowledge the blocker and keep the parent task moving"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "assign",
+                    "data": {
+                        "aid": second_worker.id,
+                        "task": {
+                            "title": "Investigate competitor launches",
+                            "desc": "Review recent competitor launches and summarize the useful takeaways for Pat.",
+                        },
+                    },
+                    "th": "reassign the investigation to Morgan",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"idle","th":"wait for Morgan to complete the reassigned investigation"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will take the reassigned investigation and report back with the summary.",'
+                '"commit":"work","th":"accept the reassigned task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"researched competitor launches after reassignment",'
+                '"msg":"I finished the reassigned competitor launch investigation and the takeaways are ready."},'
+                '"th":"report completion to Pat after reassignment"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"status","msg":"Thanks. I have the reassigned findings and I am sending the final summary to the human now.",'
+                '"th":"acknowledge Morgan and resume the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"coordinated the competitor launch research after a reassignment",'
+                '"msg":"Taylor was blocked on archive access, so I reassigned the investigation to Morgan and now have the finished summary for you."},'
+                '"th":"report the reassigned completion back to the human"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    def _materialize_trigger(request: dict[str, object]) -> dict[str, object]:
+        trigger = dict(request["payload"])
+        trigger["type"] = request["trigger_type"]
+        trigger["source_channel"] = request["source_channel"]
+        if request.get("task_id") is not None:
+            trigger["task_id"] = request["task_id"]
+        return trigger
+
+    async def _run_trigger_request(request: dict[str, object]):
+        agent = db.get_agent(request["agent_id"])
+        assert agent is not None
+        trigger = _materialize_trigger(request)
+        prepare_trigger_context(agent.id, trigger)
+        state = activity_runtime.refresh_agent_status(agent.id)
+        assert state is not None
+        return await run_turn(agent, state, trigger)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    initial_outcome = await run_turn(
+        pm,
+        pm_state,
+        {
+            "type": "human_chat",
+            "content": "Please coordinate the competitor launch research and delegate it.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    parent = db.list_tasks(assigned_to=pm.id)[0]
+
+    pm_first_resume = next(
+        item
+        for item in initial_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+    first_delegate_outcome = await _run_trigger_request(pm_first_resume)
+
+    first_assignment_request = next(
+        item
+        for item in first_delegate_outcome.result["trigger_requests"]
+        if item["agent_id"] == first_worker.id and item["trigger_type"] == "task_assigned"
+    )
+    first_assignment_outcome = await _run_trigger_request(first_assignment_request)
+
+    first_worker_resume = next(
+        item
+        for item in first_assignment_outcome.result["trigger_requests"]
+        if item["agent_id"] == first_worker.id and item["trigger_type"] == "activity_resumed"
+    )
+    first_block_outcome = await _run_trigger_request(first_worker_resume)
+
+    blocked_update = next(
+        item
+        for item in first_block_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+    )
+    assert blocked_update["payload"]["content"] == "I am blocked because I do not have access to the launch archive."
+
+    pm_ack_outcome = await _run_trigger_request(blocked_update)
+    blocked_ack = next(
+        item
+        for item in pm_ack_outcome.result["trigger_requests"]
+        if item["agent_id"] == first_worker.id and item["trigger_type"] == "peer_message"
+    )
+    assert blocked_ack["payload"]["content"] == (
+        "Understood. I am reassigning the investigation so the parent task stays on track."
+    )
+
+    pm_second_resume = next(
+        item
+        for item in pm_ack_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+    second_delegate_outcome = await _run_trigger_request(pm_second_resume)
+
+    second_assignment_request = next(
+        item
+        for item in second_delegate_outcome.result["trigger_requests"]
+        if item["agent_id"] == second_worker.id and item["trigger_type"] == "task_assigned"
+    )
+    second_assignment_outcome = await _run_trigger_request(second_assignment_request)
+
+    second_worker_resume = next(
+        item
+        for item in second_assignment_outcome.result["trigger_requests"]
+        if item["agent_id"] == second_worker.id and item["trigger_type"] == "activity_resumed"
+    )
+    second_completion_outcome = await _run_trigger_request(second_worker_resume)
+
+    completion_update = next(
+        item
+        for item in second_completion_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+    )
+    assert completion_update["payload"]["content"] == (
+        "I finished the reassigned competitor launch investigation and the takeaways are ready."
+    )
+
+    pm_reply_outcome = await _run_trigger_request(completion_update)
+    second_worker_ack = next(
+        item
+        for item in pm_reply_outcome.result["trigger_requests"]
+        if item["agent_id"] == second_worker.id and item["trigger_type"] == "peer_message"
+    )
+    assert second_worker_ack["payload"]["content"] == (
+        "Thanks. I have the reassigned findings and I am sending the final summary to the human now."
+    )
+
+    pm_final_resume = next(
+        item
+        for item in pm_reply_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+    pm_final_outcome = await _run_trigger_request(pm_final_resume)
+
+    first_child = db.list_tasks(assigned_to=first_worker.id)[0]
+    second_child = db.list_tasks(assigned_to=second_worker.id)[0]
+    refreshed_parent = db.get_task(parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status == "complete"
+    assert refreshed_parent.completion_summary == "coordinated the competitor launch research after a reassignment"
+
+    assert first_child.parent_task_id == parent.id
+    assert first_child.status == "blocked"
+    assert first_child.status_note == "I do not have access to the launch archive."
+
+    assert second_child.parent_task_id == parent.id
+    assert second_child.status == "complete"
+    assert second_child.completion_summary == "researched competitor launches after reassignment"
+
+    manager_thread = db.get_human_chat_thread(pm.id, limit=20)
+    manager_contents = [msg.content for msg in manager_thread]
+    assert "Please coordinate the competitor launch research and delegate it." in manager_contents
+    assert "I will coordinate the research handoff and keep the delegation moving." in manager_contents
+    assert (
+        "Taylor was blocked on archive access, so I reassigned the investigation to Morgan and now have the finished summary for you."
+        in manager_contents
+    )
+
+    first_worker_thread = db.get_agent_direct_thread(first_worker.id, pm.id, limit=20)
+    first_worker_contents = [msg.content for msg in first_worker_thread]
+    assert "I am blocked because I do not have access to the launch archive." in first_worker_contents
+    assert "Understood. I am reassigning the investigation so the parent task stays on track." in first_worker_contents
+
+    second_worker_thread = db.get_agent_direct_thread(second_worker.id, pm.id, limit=20)
+    second_worker_contents = [msg.content for msg in second_worker_thread]
+    assert "I will take the reassigned investigation and report back with the summary." in second_worker_contents
+    assert "I finished the reassigned competitor launch investigation and the takeaways are ready." in second_worker_contents
+    assert "Thanks. I have the reassigned findings and I am sending the final summary to the human now." in second_worker_contents
+
+    assert pm_final_outcome.result["chat_message"]["content"] == (
+        "Taylor was blocked on archive access, so I reassigned the investigation to Morgan and now have the finished summary for you."
+    )
+
+    assert _active_activity(pm.id) is None
+    assert _active_activity(first_worker.id) is None
+    assert _active_activity(second_worker.id) is None
 
 
 @pytest.mark.asyncio

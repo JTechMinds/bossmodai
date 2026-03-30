@@ -16,6 +16,7 @@ from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
+from core.time import ensure_utc, now_local
 from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,13 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("agent_name", "Agent display name"),
     ("role", "Agent role title"),
     ("personality", "Rendered personality prompt text"),
+    ("current_date_time", "Current local date/time string for this turn"),
+    ("current_time.iso_local", "Current local time in ISO-8601 format"),
+    ("current_time.iso_utc", "Current UTC time in ISO-8601 format"),
+    ("current_time.date", "Current local calendar date"),
+    ("current_time.time", "Current local clock time"),
+    ("current_time.day_name", "Current local day name"),
+    ("current_time.timezone", "Current local timezone label"),
     ("worldStatus", "Formatted world status block"),
     ("worldStatus.location", "Current room/location label"),
     ("worldStatus.status", "Current agent status label"),
@@ -199,6 +207,7 @@ def template_syntax_examples() -> list[str]:
 
 def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     """Build the structured render context for authored prompts."""
+    current_time = _current_time_context(now_local())
     world_status = _world_status_context(
         turn.agent,
         turn.state,
@@ -213,6 +222,8 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
         "personality": "",
+        "current_date_time": current_time["value"],
+        "current_time": current_time,
         "worldStatus": world_status,
         "activity": activity,
         "task": task,
@@ -233,6 +244,21 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "cli": {
             "shell_enabled": config.get("cli_shell_enabled") == "true",
         },
+    }
+
+
+def _current_time_context(now: datetime) -> dict[str, str]:
+    """Return one stable per-turn local time context for authored prompts."""
+    local_now = now.astimezone(now.tzinfo or timezone.utc)
+    timezone_name = local_now.tzname() or "local"
+    return {
+        "value": f'{local_now.strftime("%Y-%m-%d %H:%M:%S")} {timezone_name}',
+        "iso_local": local_now.isoformat(),
+        "iso_utc": ensure_utc(local_now).isoformat(),
+        "date": local_now.date().isoformat(),
+        "time": local_now.strftime("%H:%M:%S"),
+        "day_name": local_now.strftime("%A"),
+        "timezone": timezone_name,
     }
 
 

@@ -64,6 +64,7 @@ _DECISION_TRIGGER_TYPES = {
     "channel_message",
     "channel_response",
     "task_assigned",
+    "watchdog_status_ping",
 }
 _COMMUNICATION_TRIGGER_TYPES = _DECISION_TRIGGER_TYPES - {"task_assigned"}
 

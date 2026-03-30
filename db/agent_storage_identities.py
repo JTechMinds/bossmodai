@@ -52,6 +52,23 @@ def ensure_all_agent_storage_identities() -> None:
         ensure_agent_storage_identity(str(row["id"]))
 
 
+def get_agent_names_by_storage_keys(storage_keys: list[str]) -> dict[str, str]:
+    """Map storage keys to agent display names in a single round-trip."""
+    if not storage_keys:
+        return {}
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(storage_keys)))
+    rows = query(
+        f"""
+        SELECT asi.storage_key, a.name
+        FROM agent_storage_identities asi
+        JOIN agents a ON a.id = asi.agent_id
+        WHERE asi.storage_key IN ({placeholders})
+        """,
+        storage_keys,
+    )
+    return {str(row["storage_key"]): str(row["name"]) for row in rows}
+
+
 def delete_agent_storage_identity(agent_id: str) -> None:
     """Delete one agent storage identity."""
     execute("DELETE FROM agent_storage_identities WHERE agent_id = $1", [agent_id])

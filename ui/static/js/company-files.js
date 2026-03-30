@@ -1,7 +1,8 @@
 /**
  * BossMod AI — Company Files tab.
  * Company-wide file browser rooted at the organization workspace level.
- * Supports navigation, breadcrumbs, search, and opening folders in the host file manager.
+ * Supports navigation, breadcrumbs, search, file viewing/editing, and
+ * opening folders in the host file manager.
  */
 const CompanyFiles = (() => {
     let container = null;
@@ -11,6 +12,7 @@ const CompanyFiles = (() => {
     let breadcrumbs = [];
     let searchTimer = null;
     let folderOpenerModalEl = null;
+    let fileViewerModalEl = null;
 
     // ─── Helpers ───
 
@@ -29,6 +31,30 @@ const CompanyFiles = (() => {
         if (!searchQuery) return entries;
         const q = searchQuery.toLowerCase();
         return entries.filter(e => e.name.toLowerCase().includes(q));
+    }
+
+    function renderMarkdown(raw) {
+        if (window.marked) {
+            try { return marked.parse(raw, { breaks: true, gfm: true }); } catch (_) { /* fall through */ }
+        }
+        return `<pre class="text-xs whitespace-pre-wrap break-words">${BossModUtils.escapeHtml(raw)}</pre>`;
+    }
+
+    function renderBreadcrumbs(crumbList, { clickable = true } = {}) {
+        if (!crumbList || !crumbList.length) return '';
+        const esc = BossModUtils.escapeHtml;
+        return crumbList.map((crumb, index) => {
+            const isLast = index === crumbList.length - 1;
+            const separator = index > 0 ? '<span class="text-bm-muted mx-0.5">/</span>' : '';
+            const label = esc(crumb.label || crumb.name);
+            const agentTag = crumb.agent_name
+                ? ` <span class="text-[10px] text-bm-muted">(${esc(crumb.agent_name)})</span>`
+                : '';
+            if (!clickable || isLast) {
+                return `${separator}<span class="${isLast ? 'font-medium text-bm-text' : ''}">${label}${agentTag}</span>`;
+            }
+            return `${separator}<button type="button" class="cf-crumb hover:underline hover:text-bm-accent" data-path="${esc(crumb.path)}">${label}${agentTag}</button>`;
+        }).join('');
     }
 
     // ─── Rendering ───
@@ -101,7 +127,7 @@ const CompanyFiles = (() => {
         // Breadcrumb bar
         html += `
             <div class="flex items-center gap-1 px-4 py-2 text-xs text-bm-muted border-b border-bm-border bg-slate-50/50 overflow-x-auto whitespace-nowrap">
-                ${renderBreadcrumbs()}
+                ${renderBreadcrumbs(breadcrumbs)}
             </div>`;
 
         // Entry list
@@ -158,19 +184,6 @@ const CompanyFiles = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
     }
 
-    function renderBreadcrumbs() {
-        if (!breadcrumbs.length) return '';
-        const esc = BossModUtils.escapeHtml;
-        return breadcrumbs.map((crumb, index) => {
-            const isLast = index === breadcrumbs.length - 1;
-            const separator = index > 0 ? '<span class="text-bm-muted mx-0.5">/</span>' : '';
-            if (isLast) {
-                return `${separator}<span class="font-medium text-bm-text">${esc(crumb.label || crumb.name)}</span>`;
-            }
-            return `${separator}<button type="button" class="cf-crumb hover:underline hover:text-bm-accent" data-path="${esc(crumb.path)}">${esc(crumb.label || crumb.name)}</button>`;
-        }).join('');
-    }
-
     function renderError() {
         if (!container) return;
         const esc = BossModUtils.escapeHtml;
@@ -205,7 +218,6 @@ const CompanyFiles = (() => {
                 searchTimer = setTimeout(() => {
                     searchQuery = e.target.value.trim();
                     renderDirectory({ entries, breadcrumbs });
-                    // Restore focus to search input
                     const newInput = container?.querySelector('#cf-search-input');
                     if (newInput) {
                         newInput.focus();
@@ -215,11 +227,13 @@ const CompanyFiles = (() => {
             });
         }
 
-        // Directory entry clicks
+        // Directory and file entry clicks
         container.querySelectorAll('.cf-entry').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.dataset.isDir === '1') {
                     navigateTo(btn.dataset.path);
+                } else {
+                    openFileViewer(btn.dataset.path);
                 }
             });
         });
@@ -248,6 +262,171 @@ const CompanyFiles = (() => {
         currentPath = path || '/';
         searchQuery = '';
         fetchAndRender();
+    }
+
+    // ─── File viewer overlay ───
+
+    async function openFileViewer(path) {
+        closeFileViewer();
+        try {
+            const res = await fetch(`/api/company/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(await res.text());
+            const payload = await res.json();
+            renderFileViewerModal(payload);
+        } catch (err) {
+            console.error('[CompanyFiles] Failed to load file:', err);
+        }
+    }
+
+    function renderFileViewerModal(payload) {
+        const esc = BossModUtils.escapeHtml;
+        const isMarkdown = payload.name && payload.name.toLowerCase().endsWith('.md');
+        const isBinary = !!payload.binary;
+        const sizeText = formatFileSize(payload.size_bytes);
+        const timeText = payload.updated_at ? new Date(payload.updated_at).toLocaleString() : '';
+        const breadcrumbHtml = renderBreadcrumbs(payload.breadcrumbs || [], { clickable: false });
+
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4';
+
+        let contentHtml;
+        if (isBinary) {
+            contentHtml = `
+                <div class="text-center py-12 text-bm-muted">
+                    <i data-lucide="file-warning" class="w-10 h-10 mx-auto mb-3 opacity-30"></i>
+                    <p class="text-sm font-medium">Binary file</p>
+                    <p class="text-xs mt-1">Preview not available for this file type.</p>
+                </div>`;
+        } else if (isMarkdown) {
+            contentHtml = `
+                <div id="cf-viewer-rendered" class="prose prose-sm max-w-none">${renderMarkdown(payload.content || '')}</div>
+                <textarea id="cf-viewer-editor" class="hidden w-full h-full min-h-[300px] text-xs font-mono whitespace-pre-wrap p-3 border border-bm-border rounded-lg bg-white resize-y focus:outline-none focus:border-bm-accent">${esc(payload.content || '')}</textarea>`;
+        } else {
+            contentHtml = `<pre class="text-xs whitespace-pre-wrap break-words text-bm-text">${esc(payload.content || '')}</pre>`;
+        }
+
+        overlay.innerHTML = `
+            <div class="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-xl border border-bm-border bg-white shadow-xl">
+                <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-bm-border shrink-0">
+                    <div class="min-w-0">
+                        <h3 class="text-sm font-semibold truncate">${esc(payload.name)}</h3>
+                        <div class="text-xs text-bm-muted mt-1">${breadcrumbHtml}</div>
+                        <div class="text-[11px] text-bm-muted mt-1">
+                            ${sizeText ? `<span>${esc(sizeText)}</span>` : ''}
+                            ${sizeText && timeText ? ' &middot; ' : ''}
+                            ${timeText ? `<span>${esc(timeText)}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        ${isMarkdown ? `
+                            <div class="flex rounded-lg border border-bm-border overflow-hidden text-xs" id="cf-viewer-toggle">
+                                <button type="button" id="cf-viewer-mode-view"
+                                        class="px-3 py-1.5 font-medium bg-bm-accent text-white transition-colors">View</button>
+                                <button type="button" id="cf-viewer-mode-edit"
+                                        class="px-3 py-1.5 font-medium hover:bg-slate-50 transition-colors">Edit</button>
+                            </div>
+                            <button type="button" id="cf-viewer-save"
+                                    class="hidden px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors">
+                                Save
+                            </button>` : ''}
+                        <button type="button" id="cf-viewer-close"
+                                class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors" title="Close">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-5" id="cf-viewer-content">
+                    ${contentHtml}
+                    ${payload.truncated ? '<p class="text-[11px] text-bm-muted mt-3">Preview truncated — file exceeds display limit.</p>' : ''}
+                </div>
+            </div>`;
+
+        document.body.appendChild(overlay);
+        fileViewerModalEl = overlay;
+        if (window.lucide) lucide.createIcons({ nodes: [overlay] });
+
+        // Close handlers
+        overlay.querySelector('#cf-viewer-close')?.addEventListener('click', closeFileViewer);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeFileViewer(); });
+        document.addEventListener('keydown', handleViewerEscape);
+
+        // Markdown view/edit toggle + save
+        if (isMarkdown) {
+            bindMarkdownToggle(overlay, payload);
+        }
+    }
+
+    function bindMarkdownToggle(overlay, payload) {
+        const viewBtn = overlay.querySelector('#cf-viewer-mode-view');
+        const editBtn = overlay.querySelector('#cf-viewer-mode-edit');
+        const saveBtn = overlay.querySelector('#cf-viewer-save');
+        const rendered = overlay.querySelector('#cf-viewer-rendered');
+        const editor = overlay.querySelector('#cf-viewer-editor');
+        if (!viewBtn || !editBtn || !saveBtn || !rendered || !editor) return;
+
+        let currentContent = payload.content || '';
+
+        const activeCls = 'px-3 py-1.5 font-medium bg-bm-accent text-white transition-colors';
+        const inactiveCls = 'px-3 py-1.5 font-medium hover:bg-slate-50 transition-colors';
+
+        viewBtn.addEventListener('click', () => {
+            rendered.innerHTML = renderMarkdown(currentContent);
+            rendered.classList.remove('hidden');
+            editor.classList.add('hidden');
+            saveBtn.classList.add('hidden');
+            viewBtn.className = activeCls;
+            editBtn.className = inactiveCls;
+        });
+
+        editBtn.addEventListener('click', () => {
+            editor.value = currentContent;
+            rendered.classList.add('hidden');
+            editor.classList.remove('hidden');
+            saveBtn.classList.remove('hidden');
+            editBtn.className = activeCls;
+            viewBtn.className = inactiveCls;
+        });
+
+        saveBtn.addEventListener('click', async () => {
+            const newContent = editor.value;
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+            try {
+                const res = await fetch('/api/company/files', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: payload.path, content: newContent }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                currentContent = newContent;
+                rendered.innerHTML = renderMarkdown(currentContent);
+                rendered.classList.remove('hidden');
+                editor.classList.add('hidden');
+                saveBtn.classList.add('hidden');
+                viewBtn.className = activeCls;
+                editBtn.className = inactiveCls;
+                saveBtn.textContent = 'Save';
+                saveBtn.disabled = false;
+            } catch (err) {
+                console.error('[CompanyFiles] Save failed:', err);
+                saveBtn.textContent = 'Save';
+                saveBtn.disabled = false;
+            }
+        });
+    }
+
+    function handleViewerEscape(e) {
+        if (e.key === 'Escape' && fileViewerModalEl) {
+            closeFileViewer();
+        }
+    }
+
+    function closeFileViewer() {
+        if (fileViewerModalEl) {
+            fileViewerModalEl.remove();
+            fileViewerModalEl = null;
+            document.removeEventListener('keydown', handleViewerEscape);
+        }
     }
 
     // ─── Open in file manager ───
@@ -374,6 +553,7 @@ const CompanyFiles = (() => {
     function destroy() {
         clearTimeout(searchTimer);
         closeFolderOpenerModal();
+        closeFileViewer();
         container = null;
         entries = [];
         breadcrumbs = [];

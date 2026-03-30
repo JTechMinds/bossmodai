@@ -46,6 +46,10 @@ COMMUNICATION_PROFILES: dict[str, CommunicationProfile] = {
         name="channel_thread",
         label="channel thread response turn",
     ),
+    "watchdog_status_ping": CommunicationProfile(
+        name="watchdog_status",
+        label="system watchdog status ping",
+    ),
 }
 
 

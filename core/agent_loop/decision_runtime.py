@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import db
@@ -57,6 +58,7 @@ def apply_decision(
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=False)
         else:
             _resume_previous_work_if_needed(result, active_work)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "answer":
@@ -66,6 +68,7 @@ def apply_decision(
         else:
             _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "clarify":
@@ -75,6 +78,7 @@ def apply_decision(
         else:
             _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "decline":
@@ -92,6 +96,7 @@ def apply_decision(
         else:
             _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "defer":
@@ -107,6 +112,7 @@ def apply_decision(
         else:
             _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "work":
@@ -131,6 +137,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "meeting":
@@ -155,6 +162,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "break":
@@ -178,6 +186,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
     conversation = activity_runtime.begin_commitment_activity(
@@ -201,6 +210,7 @@ def apply_decision(
     )
     _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
     _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+    _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
     return result
 
 
@@ -636,6 +646,30 @@ def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | N
             reason=f'Resume work on "{active_work.title or "your task"}".',
         )
     )
+
+
+def _record_watchdog_reply_if_needed(*, agent_id: str, trigger: dict[str, Any], reply: str | None) -> None:
+    """Refresh task liveness when the agent answers a watchdog ping."""
+    if trigger.get("type") != "watchdog_status_ping":
+        return
+    task_id = trigger.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return
+
+    now = datetime.now(timezone.utc)
+    status_note = (reply or "").strip() or None
+    update_fields: dict[str, Any] = {
+        "watchdog_pinged_at": None,
+        "last_heartbeat_at": now,
+        "last_activity": now,
+    }
+    if status_note:
+        update_fields["status_note"] = status_note
+    db.update_task(task_id, **update_fields)
+
+    active = activity_runtime.get_active_work_activity(agent_id)
+    if active and active.task_id == task_id and status_note:
+        db.update_activity(active.id, detail=status_note)
 
 
 def _complete_assignment_if_present(agent_id: str) -> None:
