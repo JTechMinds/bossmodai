@@ -28,7 +28,7 @@ You should continue the current {{trigger.activity_kind}}.
 {{elseif trigger.type = 'social'}}
 You're idle and nearby: {{trigger.nearby_names}}. Consider a brief social interaction.
 {{elseif trigger.type = 'watchdog_status_ping'}}
-Watchdog status check: you have been quiet on "{{trigger.task_title}}". Reply to the human operator with a status update, continue working, or sign off with complete/blocked/delegated/abandoned.
+Watchdog status check: you have been quiet on "{{trigger.task_title}}". Reply to the human operator with a status update, continue working, or sign off with done/block/deleg/drop.
 {{else}}
 You have been activated.
 {{end}}

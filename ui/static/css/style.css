@@ -491,6 +491,60 @@
 .bm-tier-label.tier-approval { color: #d97706; background: rgba(245,158,11,.1); }
 .bm-tier-label.tier-allowed  { color: #059669; background: rgba(16,185,129,.1); }
 
+/* ─── Center mode toggle ─── */
+.center-mode-btn {
+    color: #64748b;
+}
+.center-mode-btn:hover {
+    color: #1e293b;
+}
+.center-mode-btn.active {
+    background: white;
+    color: #1e293b;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* ─── Company sub-tab dropdown ─── */
+.company-subtab-item:hover {
+    background-color: #f8fafc;
+}
+.company-subtab-item.active {
+    color: #2563eb;
+    background-color: #eff6ff;
+}
+
+/* ─── Company dashboard tabs ─── */
+.company-tab-btn {
+    color: #64748b;
+}
+.company-tab-btn:hover {
+    color: #1e293b;
+    background-color: #f8fafc;
+}
+.company-tab-btn.active {
+    color: #2563eb;
+}
+.company-tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: #2563eb;
+    border-radius: 2px 2px 0 0;
+}
+
+/* ─── Center panel transition ─── */
+#canvas-container, #company-dashboard {
+    transition: opacity 150ms ease;
+}
+
+/* ─── Footer ─── */
+#app-footer {
+    min-height: 32px;
+}
+
 /* ─── Responsive: hide gutter on mobile ─── */
 @media (max-width: 639px) {
     .gutter {

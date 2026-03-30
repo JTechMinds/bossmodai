@@ -209,10 +209,10 @@ const AgentContext = (() => {
                     <span class="toolbar-label">Focus</span>
                 </span>
             </button>
-            <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'company' ? 'active' : ''}" data-tab="company">
+            <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'directory' ? 'active' : ''}" data-tab="directory">
                 <span class="flex items-center justify-center gap-1.5">
-                    <i data-lucide="building-2" class="w-4 h-4 shrink-0"></i>
-                    <span class="toolbar-label">Company</span>
+                    <i data-lucide="book-user" class="w-4 h-4 shrink-0"></i>
+                    <span class="toolbar-label">Directory</span>
                 </span>
             </button>
             <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'channels' ? 'active' : ''}" data-tab="channels">
@@ -243,7 +243,7 @@ const AgentContext = (() => {
 
         const isAgentContext = activeTopTab === 'focus';
 
-        // Hide chips when in Company/Channels or no interacted agents
+        // Hide chips when in Directory/Channels or no interacted agents
         if (!isAgentContext || interactedAgents.size === 0) {
             chipsEl.classList.add('hidden');
             return;
@@ -383,7 +383,7 @@ const AgentContext = (() => {
         document.getElementById('subview-tasks').classList.add('hidden');
         document.getElementById('subview-desk').classList.add('hidden');
         document.getElementById('subview-diagnostics')?.classList.add('hidden');
-        hideTopLevelPanel('tab-company');
+        hideTopLevelPanel('tab-directory');
         hideTopLevelPanel('tab-channels');
     }
 
@@ -416,10 +416,10 @@ const AgentContext = (() => {
 
         const chipsEl = document.getElementById('agent-chips');
 
-        if (activeTopTab === 'company') {
+        if (activeTopTab === 'directory') {
             hideToolbar();
             if (chipsEl) chipsEl.classList.add('hidden');
-            const container = showTopLevelPanel('tab-company');
+            const container = showTopLevelPanel('tab-directory');
             if (typeof CompanyView !== 'undefined' && container) {
                 void CompanyView.render(container);
             }

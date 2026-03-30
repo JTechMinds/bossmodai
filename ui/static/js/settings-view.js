@@ -1354,6 +1354,64 @@ const RuntimeContractsSection = (() => {
     const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
         + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent';
 
+    function collectTemplateValues() {
+        return {
+            decision: document.getElementById('runtime-decision-contract')?.value || '',
+            execution: document.getElementById('runtime-execution-contract')?.value || '',
+            trigger_event: document.getElementById('runtime-trigger-event-contract')?.value || '',
+            conversation_envelope: document.getElementById('runtime-conversation-envelope-contract')?.value || '',
+            file_deliverable_guidance: document.getElementById('runtime-file-guidance-contract')?.value || '',
+            communication_snapshot: document.getElementById('runtime-communication-snapshot-contract')?.value || '',
+        };
+    }
+
+    function renderPromptHealth(container, health) {
+        if (!container) return;
+        const status = health?.status || 'clean';
+        const issues = Array.isArray(health?.issues) ? health.issues : [];
+        const tones = {
+            clean: {
+                panel: 'bg-emerald-50 border-emerald-200',
+                badge: 'bg-emerald-100 text-emerald-700',
+                title: 'Prompt surface is clean.',
+                detail: 'No contradictory prompt-contract instructions were detected across the editable and hidden runtime prompt layers.',
+            },
+            warning: {
+                panel: 'bg-amber-50 border-amber-200',
+                badge: 'bg-amber-100 text-amber-700',
+                title: 'Prompt warnings detected.',
+                detail: 'The current prompt surface is usable, but some instructions are ambiguous enough to cause drift.',
+            },
+            error: {
+                panel: 'bg-red-50 border-red-200',
+                badge: 'bg-red-100 text-red-700',
+                title: 'Prompt issues detected.',
+                detail: 'The current prompt surface includes conflicting or legacy contract language that should be corrected before relying on it.',
+            },
+        };
+        const tone = tones[status] || tones.clean;
+        const issuesHtml = issues.length
+            ? `<ul class="mt-3 space-y-2 text-sm text-bm-text">${issues.map(issue => `
+                <li class="rounded-lg border border-white/70 bg-white/70 px-3 py-2">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${issue.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}">${BossModUtils.escapeHtml(issue.severity || 'warning')}</span>
+                        <span class="text-sm font-medium">${BossModUtils.escapeHtml(issue.surface_label || issue.surface_key || 'Prompt Surface')}</span>
+                    </div>
+                    <div class="mt-1 text-sm text-bm-text">${BossModUtils.escapeHtml(issue.message || '')}</div>
+                </li>
+            `).join('')}</ul>`
+            : '';
+        container.innerHTML = `
+            <div class="p-3 border rounded-lg ${tone.panel}">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${tone.badge}">${BossModUtils.escapeHtml(status)}</span>
+                    <p class="text-sm font-medium text-bm-text">${BossModUtils.escapeHtml(tone.title)}</p>
+                </div>
+                <p class="mt-1 text-sm text-bm-muted">${BossModUtils.escapeHtml(tone.detail)}</p>
+                ${issuesHtml}
+            </div>`;
+    }
+
     function insertAtCursor(textarea, text) {
         if (!textarea) return;
         const start = textarea.selectionStart;
@@ -1386,14 +1444,16 @@ const RuntimeContractsSection = (() => {
         const allowedVariables = payload?.allowed_variables || [];
         const syntaxExamples = payload?.template_syntax || [];
         const previewTriggers = payload?.preview_triggers || [];
+        const promptHealth = payload?.prompt_health || { status: 'clean', issues: [] };
 
         let activeTab = 'decision';
 
         el.innerHTML = `
             <div class="mb-4">
                 <h2 class="text-lg font-semibold">Runtime Contracts</h2>
-                <p class="text-sm text-bm-muted mt-0.5">Edit the runtime contracts and runtime-owned prompt blocks appended to turns. Changes apply to newly built turns immediately after save.</p>
+                <p class="text-sm text-bm-muted mt-0.5">Edit the runtime contracts and runtime-owned prompt blocks appended to turns. Changes apply to newly built turns immediately after save, and prompt health checks also cover the hidden internal follow-up prompts the runtime injects.</p>
             </div>
+            <div id="runtime-prompt-health" class="mb-4"></div>
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
                 <div class="space-y-1 text-xs font-mono text-bm-muted">
@@ -1463,12 +1523,12 @@ const RuntimeContractsSection = (() => {
                                 <button id="btn-render-preview"
                                         class="px-3 py-2 bg-bm-accent text-white rounded-lg
                                                hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                                    Render
+                                    Render Full Prompt
                                 </button>
                             </div>
                             <pre id="runtime-contract-preview-output"
                                  class="flex-1 w-full px-4 py-3 text-sm border border-bm-border rounded-lg
-                                        bg-slate-50 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">Choose a trigger and contract kind, then click Render.</pre>
+                                        bg-slate-50 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">Choose a trigger and turn kind, then click Render Full Prompt.</pre>
                         </div>
                     </div>
                     <!-- Bottom bar -->
@@ -1492,6 +1552,8 @@ const RuntimeContractsSection = (() => {
                     </div>
                 </div>
             </div>`;
+
+        renderPromptHealth(document.getElementById('runtime-prompt-health'), promptHealth);
 
         // ─── Resizable vars panel ───
         initResizeHandle(
@@ -1531,22 +1593,18 @@ const RuntimeContractsSection = (() => {
         // ─── Save ───
         document.getElementById('btn-save-runtime-contracts').addEventListener('click', async () => {
             const status = document.getElementById('runtime-contract-save-status');
-            const decision = document.getElementById('runtime-decision-contract').value;
-            const execution = document.getElementById('runtime-execution-contract').value;
-            const trigger_event = document.getElementById('runtime-trigger-event-contract').value;
-            const conversation_envelope = document.getElementById('runtime-conversation-envelope-contract').value;
-            const file_deliverable_guidance = document.getElementById('runtime-file-guidance-contract').value;
-            const communication_snapshot = document.getElementById('runtime-communication-snapshot-contract').value;
+            const templates = collectTemplateValues();
             try {
                 const res = await fetch('/api/runtime/contracts', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ decision, execution, trigger_event, conversation_envelope, file_deliverable_guidance, communication_snapshot }),
+                    body: JSON.stringify(templates),
                 });
+                const payload = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    const payload = await res.json().catch(() => ({}));
                     throw new Error(payload.detail || 'Save failed');
                 }
+                renderPromptHealth(document.getElementById('runtime-prompt-health'), payload.prompt_health);
                 status.textContent = 'Saved';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
@@ -1573,6 +1631,7 @@ const RuntimeContractsSection = (() => {
                 document.getElementById('runtime-conversation-envelope-contract').value = payload.conversation_envelope || '';
                 document.getElementById('runtime-file-guidance-contract').value = payload.file_deliverable_guidance || '';
                 document.getElementById('runtime-communication-snapshot-contract').value = payload.communication_snapshot || '';
+                renderPromptHealth(document.getElementById('runtime-prompt-health'), payload.prompt_health);
                 status.textContent = 'Reset to defaults';
                 status.className = 'text-sm text-emerald-600';
                 setTimeout(() => { status.textContent = ''; }, 2000);
@@ -1591,18 +1650,24 @@ const RuntimeContractsSection = (() => {
         document.getElementById('btn-render-preview').addEventListener('click', async () => {
             const triggerType = document.getElementById('runtime-preview-trigger').value;
             const contractKind = document.getElementById('runtime-preview-kind').value;
-            const template = document.getElementById(`runtime-${contractKind}-contract`).value;
+            const templates = collectTemplateValues();
             const output = document.getElementById('runtime-contract-preview-output');
-            output.textContent = 'Rendering preview\u2026';
+            output.textContent = 'Rendering full prompt bundle\u2026';
             try {
                 const res = await fetch('/api/runtime/contracts/preview', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contract_kind: contractKind, trigger_type: triggerType, template }),
+                    body: JSON.stringify({
+                        contract_kind: contractKind,
+                        trigger_type: triggerType,
+                        scope: 'bundle',
+                        templates,
+                    }),
                 });
                 const preview = await res.json();
                 if (!res.ok) throw new Error(preview.detail || 'Preview failed');
                 output.textContent = preview.rendered || '';
+                renderPromptHealth(document.getElementById('runtime-prompt-health'), preview.prompt_health);
             } catch (err) {
                 output.textContent = err.message || 'Preview failed';
             }

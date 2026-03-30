@@ -21,6 +21,7 @@ from api.routes import (
     CliPolicySimulateBody,
     MeetingMessageBody,
     RuntimeContractPreviewBody,
+    RuntimeContractTemplateOverridesBody,
     RuntimeContractsBody,
     RuntimeControlBody,
     TestConnectionBody as ConnectionTestBody,
@@ -358,7 +359,10 @@ def test_parse_decision_allows_reply_without_commit_or_data(isolated_db):
 def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     contract = render_decision_contract("human_chat")
     assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
-    assert "ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer" in contract
+    assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer" in contract
+    assert "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" in contract
+    assert "You may use more than one CLI lookup in the same decision turn" in contract
+    assert "Once you have enough information, end the turn with a final conversation decision object." in contract
     assert "Use one of these shapes:" in contract
     assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' in contract
     assert '{"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}' in contract
@@ -388,7 +392,7 @@ def test_render_action_contract_includes_required_schema(isolated_db):
 
 def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
     contract = render_decision_contract("task_assigned")
-    assert "ALLOWED act FOR THIS TURN: accept | clarify | defer | decline" in contract
+    assert "ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline" in contract
     assert "this is an offered assignment; use accept | clarify | defer | decline" in contract.lower()
     assert 'accept or defer should keep `commit="work"`' in contract
     assert '{"act":"accept","intent":"work","msg":"string","commit":"work","th":"string"}' in contract
@@ -1477,6 +1481,8 @@ async def test_runtime_contracts_endpoint_returns_settings_backed_templates(isol
     assert any(item["name"] == "communication_snapshot.json" for item in payload["allowed_variables"])
     assert any(example.startswith("{{if trigger.type = 'human_chat'}}") for example in payload["template_syntax"])
     assert "human_chat" in payload["preview_triggers"]
+    assert payload["prompt_health"]["ok"] is True
+    assert payload["prompt_health"]["status"] == "clean"
 
 
 @pytest.mark.asyncio
@@ -1849,13 +1855,19 @@ async def test_runtime_contract_preview_supports_unsaved_template_override(isola
         RuntimeContractPreviewBody(
             contract_kind="decision",
             trigger_type="task_assigned",
-            template="{{if trigger.type = 'task_assigned'}}ASSIGNMENT PREVIEW{{else}}OTHER PREVIEW{{end}}",
+            scope="contract",
+            templates=RuntimeContractTemplateOverridesBody(
+                decision="{{if trigger.type = 'task_assigned'}}ASSIGNMENT PREVIEW{{else}}OTHER PREVIEW{{end}}",
+            ),
         )
     )
 
     assert payload["contract_kind"] == "decision"
     assert payload["trigger_type"] == "task_assigned"
+    assert payload["scope"] == "contract"
     assert payload["rendered"] == "ASSIGNMENT PREVIEW"
+    assert payload["messages"] == []
+    assert payload["prompt_health"]["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -2622,6 +2634,204 @@ async def test_run_turn_peer_message_grounded_question_uses_shared_communication
     detail = db.get_diagnostic(diagnostics[0]["id"])
     assert detail is not None
     assert [step["action_name"] for step in detail["steps"]] == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    pm_state = db.update_agent_state(pm.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        pm.id,
+        "Please coordinate the competitor launch research and delegate the investigation to Taylor.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will coordinate the research handoff and get Taylor started.",'
+                '"commit":"work","data":{"task":{"title":"Coordinate competitor launch research",'
+                '"desc":"Coordinate the competitor launch research assignment and delegate the investigation to Taylor."}},'
+                '"th":"accept the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "assign",
+                    "data": {
+                        "aid": worker.id,
+                        "task": {
+                            "title": "Investigate competitor launches",
+                            "desc": "Review recent competitor launches and summarize the useful takeaways for Pat.",
+                        },
+                    },
+                    "th": "delegate the investigation to Taylor",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"delegated the investigation",'
+                '"msg":"I delegated the competitor launch investigation to Taylor and the handoff is in progress."},'
+                '"th":"close the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will take the investigation and report back with the findings.",'
+                '"commit":"work","th":"accept the delegated task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"researched competitor launches",'
+                '"msg":"I finished the competitor launch investigation and summarized the useful takeaways."},'
+                '"th":"report completion to Pat"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    def _materialize_trigger(request: dict[str, object]) -> dict[str, object]:
+        trigger = dict(request["payload"])
+        trigger["type"] = request["trigger_type"]
+        trigger["source_channel"] = request["source_channel"]
+        if request.get("task_id") is not None:
+            trigger["task_id"] = request["task_id"]
+        return trigger
+
+    async def _run_trigger_request(request: dict[str, object]):
+        agent = db.get_agent(request["agent_id"])
+        assert agent is not None
+        trigger = _materialize_trigger(request)
+        prepare_trigger_context(agent.id, trigger)
+        state = activity_runtime.refresh_agent_status(agent.id)
+        assert state is not None
+        return await run_turn(agent, state, trigger)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    initial_outcome = await run_turn(
+        pm,
+        pm_state,
+        {
+            "type": "human_chat",
+            "content": "Please coordinate the competitor launch research and delegate the investigation to Taylor.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    parent_tasks = db.list_tasks(assigned_to=pm.id)
+    assert len(parent_tasks) == 1
+    parent = parent_tasks[0]
+    assert parent.title == "Coordinate competitor launch research"
+    assert parent.status == "accepted"
+
+    pm_resume_request = next(
+        item
+        for item in initial_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+    delegation_outcome = await _run_trigger_request(pm_resume_request)
+
+    refreshed_parent = db.get_task(parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status == "complete"
+    assert refreshed_parent.completion_summary == "delegated the investigation"
+
+    worker_tasks = db.list_tasks(assigned_to=worker.id)
+    assert len(worker_tasks) == 1
+    child = worker_tasks[0]
+    assert child.title == "Investigate competitor launches"
+    assert child.parent_task_id == parent.id
+    assert child.requester_id == pm.id
+    assert child.owner_id == pm.id
+    assert child.status == "pending"
+
+    assignment_request = next(
+        item
+        for item in delegation_outcome.result["trigger_requests"]
+        if item["agent_id"] == worker.id and item["trigger_type"] == "task_assigned"
+    )
+    assignment_outcome = await _run_trigger_request(assignment_request)
+
+    acceptance_update = next(
+        item
+        for item in assignment_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+    )
+    assert acceptance_update["payload"]["content"] == "I will take the investigation and report back with the findings."
+
+    worker_resume_request = next(
+        item
+        for item in assignment_outcome.result["trigger_requests"]
+        if item["agent_id"] == worker.id and item["trigger_type"] == "activity_resumed"
+    )
+    completion_outcome = await _run_trigger_request(worker_resume_request)
+
+    completion_update = next(
+        item
+        for item in completion_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+    )
+    assert completion_update["payload"]["content"] == (
+        "I finished the competitor launch investigation and summarized the useful takeaways."
+    )
+
+    refreshed_child = db.get_task(child.id)
+    assert refreshed_child is not None
+    assert refreshed_child.status == "complete"
+    assert refreshed_child.completion_summary == "researched competitor launches"
+
+    manager_thread = db.get_human_chat_thread(pm.id, limit=20)
+    manager_contents = [msg.content for msg in manager_thread]
+    assert "Please coordinate the competitor launch research and delegate the investigation to Taylor." in manager_contents
+    assert "I will coordinate the research handoff and get Taylor started." in manager_contents
+    assert "I delegated the competitor launch investigation to Taylor and the handoff is in progress." in manager_contents
+
+    pm_worker_thread = db.get_agent_direct_thread(worker.id, pm.id, limit=20)
+    pm_worker_contents = [msg.content for msg in pm_worker_thread]
+    assert "I will take the investigation and report back with the findings." in pm_worker_contents
+    assert "I finished the competitor launch investigation and summarized the useful takeaways." in pm_worker_contents
+
+    assert _active_activity(pm.id) is None
+    assert _active_activity(worker.id) is None
 
 
 @pytest.mark.asyncio

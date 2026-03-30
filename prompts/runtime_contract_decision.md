@@ -13,7 +13,7 @@ Choose the smallest valid object for this turn. Omit unrelated fields.
 Do not combine conversation fields and CLI fields in the same object.
 
 {{if trigger.type = 'human_chat'}}
-ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer
+ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer
 
 Use one of these shapes:
 
@@ -37,7 +37,7 @@ For defer:
 {"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
 ```
 {{elseif trigger.type = 'peer_message'}}
-ALLOWED act FOR THIS TURN: reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline
 
 Use one of these shapes:
 
@@ -56,7 +56,7 @@ For clarify or decline:
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
 {{elseif trigger.type = 'task_assigned'}}
-ALLOWED act FOR THIS TURN: accept | clarify | defer | decline
+ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline
 
 Use one of these shapes:
 
@@ -75,7 +75,7 @@ For defer:
 {"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
 ```
 {{elseif trigger.type = 'session_message'}}
-ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
 
 Use one of these shapes:
 
@@ -99,7 +99,7 @@ For clarify or decline:
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
 {{elseif trigger.type = 'session_response'}}
-ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
 
 Use one of these shapes:
 
@@ -123,7 +123,7 @@ For clarify or decline:
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
 {{elseif trigger.type = 'channel_message'}}
-ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
 
 Use one of these shapes:
 
@@ -147,7 +147,7 @@ For clarify or decline:
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
 {{elseif trigger.type = 'channel_response'}}
-ALLOWED act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
 
 Use one of these shapes:
 
@@ -171,10 +171,20 @@ For clarify or decline:
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
 {{else}}
-ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer | observe
+ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer | observe
 
 Use the smallest valid shape for the act you choose.
 {{end}}
+
+OPTIONAL LOOKUP ACT FOR ANY DECISION TURN
+
+Use BossMod CLI only when the snapshot and surrounding turn context still lack an internal fact you genuinely need before making the final conversation decision.
+You may use more than one CLI lookup in the same decision turn when each lookup is necessary to reach the final answer.
+Once you have enough information, end the turn with a final conversation decision object.
+
+```json
+{"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
+```
 
 FIELD NOTES
 
@@ -198,14 +208,7 @@ TURN GUIDANCE
 - Accepting a break means `commit="break"` and `data.dst="break"`.
 - Deferring a real assignment should keep `commit="work"`.
 
-CLI LOOKUP
-
-Use BossMod CLI only as a lookup step, not as the final answer.
-```json
-{"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
-```
-
-CLI NOTES
+CLI LOOKUP DETAILS
 
 - bounded shell rooted at "/" with "/me" and "/projects"
 - cwd starts at "/me"

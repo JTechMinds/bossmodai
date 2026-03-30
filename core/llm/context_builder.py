@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
 from typing import Any
 
@@ -14,6 +15,7 @@ from core.agent_loop.deliverables import format_deliverables_for_context, get_wo
 from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
+from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.world.tilemap import get_room_at
 
 logger = logging.getLogger(__name__)
@@ -108,30 +110,33 @@ class TurnContext:
     communication_snapshot_json: str | None = None
 
 
-def build_context(turn: TurnContext) -> list[dict[str, str]]:
+def build_context(
+    turn: TurnContext,
+    template_overrides: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     """Assemble the full message list for an agent turn."""
     messages: list[dict[str, str]] = []
     render_context = _build_prompt_render_context(turn)
-    system_prompt = _render_system_prompt(turn, render_context)
+    system_prompt = _render_system_prompt(turn, render_context, template_overrides)
 
     messages.append({"role": "system", "content": system_prompt})
     messages.append(
         {
             "role": "system",
-            "content": _render_turn_contract(turn.contract_kind, render_context),
+            "content": _render_turn_contract(turn.contract_kind, render_context, template_overrides),
         }
     )
-    file_guidance = _render_file_deliverable_guidance(turn)
+    file_guidance = _render_file_deliverable_guidance(turn, template_overrides)
     if file_guidance:
         messages.append({"role": "system", "content": file_guidance})
     if turn.contract_kind == "decision":
         messages.append(
             {
                 "role": "system",
-                "content": _render_conversation_envelope(turn),
+                "content": _render_conversation_envelope(turn, template_overrides),
             }
         )
-        communication_snapshot = _render_communication_snapshot(turn)
+        communication_snapshot = _render_communication_snapshot(turn, template_overrides)
         if communication_snapshot:
             messages.append({"role": "system", "content": communication_snapshot})
 
@@ -146,7 +151,7 @@ def build_context(turn: TurnContext) -> list[dict[str, str]]:
             messages.append({"role": "assistant", "content": content})
 
     # ─── Trigger event ───
-    messages.append({"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind)})
+    messages.append({"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind, template_overrides)})
 
     return messages
 
@@ -162,7 +167,11 @@ def _default_role_prompt(agent: Agent) -> str:
     )
 
 
-def _render_system_prompt(turn: TurnContext, render_context: dict[str, Any]) -> str:
+def _render_system_prompt(
+    turn: TurnContext,
+    render_context: dict[str, Any],
+    template_overrides: dict[str, str] | None = None,
+) -> str:
     """Render the base authored system prompt once for any turn flavor."""
     personality_template = turn.agent.prompt_template or _default_role_prompt(turn.agent)
     rendered_personality = render_template(
@@ -172,7 +181,7 @@ def _render_system_prompt(turn: TurnContext, render_context: dict[str, Any]) -> 
     )
     render_context["personality"] = rendered_personality
     return render_template(
-        config.require("system_prompt_template"),
+        resolve_runtime_prompt_text("system_prompt_template", template_overrides),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
@@ -654,7 +663,11 @@ def _summarize_text(value: str, limit: int = 160) -> str:
     return text[: limit - 3] + "..."
 
 
-def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
+def _format_trigger(
+    trigger: dict[str, Any],
+    contract_kind: str,
+    template_overrides: dict[str, str] | None = None,
+) -> str:
     """Format the trigger event for the turn contract in use."""
     render_context = {
         "trigger": _template_trigger(trigger),
@@ -663,21 +676,56 @@ def _format_trigger(trigger: dict[str, Any], contract_kind: str) -> str:
         },
     }
     return render_template(
-        config.require("runtime_block_trigger_event"),
+        resolve_runtime_prompt_text("runtime_block_trigger_event", template_overrides),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
 
-def _render_turn_contract(contract_kind: str, render_context: dict[str, Any]) -> str:
+def _render_turn_contract(
+    contract_kind: str,
+    render_context: dict[str, Any],
+    template_overrides: dict[str, str] | None = None,
+) -> str:
     """Render the current settings-backed runtime contract for one turn."""
     setting_key = "runtime_contract_decision" if contract_kind == "decision" else "runtime_contract_execution"
-    template = config.require(setting_key)
+    template = resolve_runtime_prompt_text(setting_key, template_overrides)
     return render_template(template, render_context, allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS)
 
 
-def preview_runtime_contract(contract_kind: str, trigger_type: str, template_override: str | None = None) -> str:
+def preview_runtime_contract(
+    contract_kind: str,
+    trigger_type: str,
+    template_overrides: dict[str, str] | None = None,
+) -> str:
     """Render one runtime contract against a representative preview context."""
+    turn = _build_preview_turn_context(contract_kind, trigger_type)
+    agent = turn.agent
+    render_context = _build_prompt_render_context(turn)
+    render_context["personality"] = render_template(
+        agent.prompt_template or _default_role_prompt(agent),
+        render_context,
+        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
+    )
+    return _render_turn_contract(contract_kind, render_context, template_overrides)
+
+
+def preview_prompt_bundle(
+    contract_kind: str,
+    trigger_type: str,
+    template_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Render the representative full prompt bundle for one runtime turn."""
+    turn = _build_preview_turn_context(contract_kind, trigger_type)
+    messages = build_context(turn, template_overrides=template_overrides)
+    return {
+        "messages": messages,
+        "rendered": _render_preview_messages(messages),
+    }
+
+
+def _build_preview_turn_context(contract_kind: str, trigger_type: str) -> TurnContext:
+    """Build a representative preview turn context for prompt authoring."""
     now = datetime.now(timezone.utc)
     agent = Agent(
         id="preview-agent",
@@ -709,19 +757,65 @@ def preview_runtime_contract(contract_kind: str, trigger_type: str, template_ove
         nearby_agents=[{"name": "Morgan"}, {"name": "Riley"}],
         pending_trigger_count=1,
         contract_kind=contract_kind,
+        communication_snapshot_json=_preview_communication_snapshot_json(trigger_type),
     )
-    render_context = _build_prompt_render_context(turn)
-    render_context["personality"] = render_template(
-        agent.prompt_template or _default_role_prompt(agent),
-        render_context,
-        allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
-    )
-    if template_override is not None:
-        return render_template(template_override, render_context, allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS)
-    return _render_turn_contract(contract_kind, render_context)
+    return turn
 
 
-def _render_conversation_envelope(turn: TurnContext) -> str:
+def _preview_communication_snapshot_json(trigger_type: str) -> str | None:
+    """Return a representative snapshot JSON for previewable communication turns."""
+    profile = communication_profile_for_trigger(trigger_type)
+    if profile is None:
+        return None
+    snapshot = {
+        "communication": {
+            "profile": profile.name,
+            "trigger_type": trigger_type,
+            "speaker": "Human Operator" if trigger_type == "human_chat" else "Morgan",
+            "author_type": "human" if trigger_type == "human_chat" else "agent",
+        },
+        "runtime": {
+            "status": "idle",
+            "location": "Main Workspace",
+            "current_activity": "none",
+            "current_task": "none",
+            "open_assigned_task_count": 1,
+            "open_owned_task_count": 0,
+        },
+        "current_task": {
+            "id": "preview-task",
+            "title": "Write API summary",
+            "status": "active",
+            "description": "Summarize the current API behavior and save the result.",
+        },
+        "recent_completed_tasks": [
+            {
+                "task_id": "done-1",
+                "title": "Review deployment notes",
+                "status": "complete",
+                "summary": "Reviewed the notes and flagged rollout risks.",
+            }
+        ],
+    }
+    return json.dumps(snapshot, indent=2)
+
+
+def _render_preview_messages(messages: list[dict[str, str]]) -> str:
+    """Format one preview message bundle into a readable text block."""
+    counters: dict[str, int] = {}
+    blocks: list[str] = []
+    for message in messages:
+        role = str(message.get("role") or "unknown")
+        counters[role] = counters.get(role, 0) + 1
+        heading = f"[{role.upper()} {counters[role]}]"
+        blocks.append(f"{heading}\n{message.get('content', '')}")
+    return "\n\n".join(blocks)
+
+
+def _render_conversation_envelope(
+    turn: TurnContext,
+    template_overrides: dict[str, str] | None = None,
+) -> str:
     """Render runtime-owned speaker, audience, and channel facts for conversation turns."""
     trigger = turn.trigger
     trigger_type = str(trigger.get("type") or "unknown")
@@ -743,13 +837,16 @@ def _render_conversation_envelope(turn: TurnContext) -> str:
         }
     }
     return render_template(
-        config.require("runtime_block_conversation_envelope"),
+        resolve_runtime_prompt_text("runtime_block_conversation_envelope", template_overrides),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
 
-def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
+def _render_file_deliverable_guidance(
+    turn: TurnContext,
+    template_overrides: dict[str, str] | None = None,
+) -> str | None:
     """Return runtime-owned file-writing guidance for contract-bound work."""
     if turn.contract_kind != "execution" or not turn.current_task:
         return None
@@ -764,13 +861,16 @@ def _render_file_deliverable_guidance(turn: TurnContext) -> str | None:
         }
     }
     return render_template(
-        config.require("runtime_block_file_deliverable_guidance"),
+        resolve_runtime_prompt_text("runtime_block_file_deliverable_guidance", template_overrides),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
 
 
-def _render_communication_snapshot(turn: TurnContext) -> str | None:
+def _render_communication_snapshot(
+    turn: TurnContext,
+    template_overrides: dict[str, str] | None = None,
+) -> str | None:
     """Render the authoritative bounded snapshot for communication turns."""
     if turn.contract_kind != "decision":
         return None
@@ -784,7 +884,7 @@ def _render_communication_snapshot(turn: TurnContext) -> str | None:
         }
     }
     return render_template(
-        config.require("runtime_block_communication_snapshot"),
+        resolve_runtime_prompt_text("runtime_block_communication_snapshot", template_overrides),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )

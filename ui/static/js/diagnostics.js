@@ -175,6 +175,11 @@ const DiagnosticsView = (() => {
     async function showDetail(id) {
         selectedDiagId = id;
 
+        // Auto-switch to office mode if in company dashboard
+        if (typeof BossModApp !== 'undefined' && BossModApp.getCenterMode() === 'company') {
+            BossModApp.switchCenterMode('office');
+        }
+
         const entry = entries.find(e => idStr(e.id) === idStr(id));
         const canvasContainer = document.getElementById('canvas-container');
         const detailPanel = document.getElementById('diagnostic-detail-panel');

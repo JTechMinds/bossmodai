@@ -22,6 +22,7 @@
 
     <!-- ═══════════════ TOP NAV BAR ═══════════════ -->
     <nav class="bg-bm-surface border-b border-bm-border px-4 py-2 flex items-center justify-between shrink-0">
+        <!-- Left: Logo -->
         <div class="flex items-center gap-3">
             <div class="flex items-center gap-2">
                 <div class="w-8 h-8 bg-bm-accent rounded-lg flex items-center justify-center">
@@ -32,6 +33,35 @@
             </div>
         </div>
 
+        <!-- Center: Mode toggle (Office | Company) -->
+        <div id="center-mode-toggle" class="hidden sm:flex items-center bg-slate-100 rounded-lg p-0.5 relative">
+            <button data-mode="office" class="center-mode-btn active px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5">
+                <i data-lucide="building" class="w-3.5 h-3.5"></i>
+                Office
+            </button>
+            <button id="company-toggle-btn" data-mode="company" class="center-mode-btn px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5">
+                <i data-lucide="briefcase" class="w-3.5 h-3.5"></i>
+                <span id="company-toggle-label">Company</span>
+                <i data-lucide="chevron-down" class="w-3 h-3"></i>
+            </button>
+            <!-- Company sub-tab dropdown -->
+            <div id="company-subtab-dropdown" class="hidden absolute right-0 top-full mt-1.5 w-44 bg-white border border-bm-border rounded-lg shadow-lg z-50 py-1">
+                <button class="company-subtab-item w-full flex items-center gap-2 px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors" data-subtab="files">
+                    <i data-lucide="folder" class="w-3.5 h-3.5"></i> Files
+                </button>
+                <button class="company-subtab-item w-full flex items-center gap-2 px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors" data-subtab="tasks">
+                    <i data-lucide="list-todo" class="w-3.5 h-3.5"></i> Tasks
+                </button>
+                <button class="company-subtab-item w-full flex items-center gap-2 px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors" data-subtab="metrics">
+                    <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i> Metrics
+                </button>
+                <button class="company-subtab-item w-full flex items-center gap-2 px-3 py-2 text-xs text-bm-text hover:bg-bm-bg transition-colors" data-subtab="org">
+                    <i data-lucide="users" class="w-3.5 h-3.5"></i> Org Chart
+                </button>
+            </div>
+        </div>
+
+        <!-- Right: Action buttons -->
         <div class="flex items-center gap-2">
             <button id="btn-back-to-office"
                     class="hidden items-center gap-2 px-3 py-1.5 border border-bm-border text-bm-text rounded-lg
@@ -194,8 +224,8 @@
                 <!-- Agent diagnostics sub-view -->
                 <div id="subview-diagnostics" class="absolute inset-0 overflow-y-auto hidden"></div>
 
-                <!-- Company tab -->
-                <div id="tab-company" class="tab-content absolute inset-0 hidden"></div>
+                <!-- Directory tab -->
+                <div id="tab-directory" class="tab-content absolute inset-0 hidden"></div>
 
                 <!-- Channels tab -->
                 <div id="tab-channels" class="tab-content absolute inset-0 hidden"></div>
@@ -210,6 +240,33 @@
                 <canvas id="office-canvas" class="rounded-xl shadow-sm border border-bm-border bg-white">
                     Your browser does not support canvas.
                 </canvas>
+            </div>
+
+            <!-- Company Dashboard (replaces canvas when active) -->
+            <div id="company-dashboard" class="hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
+                <div id="company-dashboard-tabs" class="flex border-b border-bm-border bg-bm-surface shrink-0">
+                    <button class="company-tab-btn flex-1 px-3 py-2.5 text-xs font-medium transition-colors relative" data-tab="files">
+                        <span class="flex items-center justify-center gap-1.5">
+                            <i data-lucide="folder" class="w-3.5 h-3.5 shrink-0"></i> Files
+                        </span>
+                    </button>
+                    <button class="company-tab-btn flex-1 px-3 py-2.5 text-xs font-medium transition-colors relative" data-tab="tasks">
+                        <span class="flex items-center justify-center gap-1.5">
+                            <i data-lucide="list-todo" class="w-3.5 h-3.5 shrink-0"></i> Tasks
+                        </span>
+                    </button>
+                    <button class="company-tab-btn active flex-1 px-3 py-2.5 text-xs font-medium transition-colors relative" data-tab="metrics">
+                        <span class="flex items-center justify-center gap-1.5">
+                            <i data-lucide="bar-chart-3" class="w-3.5 h-3.5 shrink-0"></i> Metrics
+                        </span>
+                    </button>
+                    <button class="company-tab-btn flex-1 px-3 py-2.5 text-xs font-medium transition-colors relative" data-tab="org">
+                        <span class="flex items-center justify-center gap-1.5">
+                            <i data-lucide="users" class="w-3.5 h-3.5 shrink-0"></i> Org Chart
+                        </span>
+                    </button>
+                </div>
+                <div id="company-dashboard-content" class="flex-1 overflow-y-auto bg-bm-bg"></div>
             </div>
 
             <!-- Diagnostic detail (replaces canvas when active) -->
@@ -240,6 +297,19 @@
             </div>
         </div>
     </div>
+
+    <!-- ═══════════════ FOOTER ═══════════════ -->
+    <footer id="app-footer" class="shrink-0 border-t border-bm-border bg-bm-surface px-4 py-1.5 flex items-center justify-between text-xs text-bm-muted max-sm:hidden">
+        <span>copyright(c) 2026 JTechMinds LLC</span>
+        <div class="flex items-center gap-3">
+            <span id="footer-runtime-status" class="flex items-center gap-1.5">
+                <span id="footer-status-dot" class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                <span id="footer-status-label">Connecting...</span>
+            </span>
+            <span id="footer-agent-count">0 agents</span>
+            <span id="footer-uptime">--</span>
+        </div>
+    </footer>
 
     <!-- ═══════════════ MOBILE BOTTOM SHEET ═══════════════ -->
     <div id="mobile-sheet" class="sm:hidden fixed inset-x-0 bottom-0 bg-bm-surface rounded-t-2xl
@@ -280,6 +350,11 @@
     <script src="{{ static_url('js/canvas.js') }}"></script>
     <script src="{{ static_url('js/agent-panel.js') }}"></script>
     <script src="{{ static_url('js/company-view.js') }}"></script>
+    <script src="{{ static_url('js/company-dashboard.js') }}"></script>
+    <script src="{{ static_url('js/company-files.js') }}"></script>
+    <script src="{{ static_url('js/company-tasks.js') }}"></script>
+    <script src="{{ static_url('js/company-metrics.js') }}"></script>
+    <script src="{{ static_url('js/company-org.js') }}"></script>
     <script src="{{ static_url('js/channels-view.js') }}"></script>
     <script src="{{ static_url('js/agent-context.js') }}"></script>
     <script src="{{ static_url('js/diagnostics.js') }}"></script>

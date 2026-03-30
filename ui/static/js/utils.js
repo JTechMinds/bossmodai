@@ -27,6 +27,7 @@ const BossModUtils = (() => {
             status: w.status || 'idle',
             currentActivityKind: w.currentActivityKind || null,
             boundTaskId: w.boundTaskId || null,
+            idle_since: w.idle_since || null,
         };
     }
 
@@ -74,6 +75,36 @@ const BossModUtils = (() => {
         return status || 'idle';
     }
 
+    // ─── Formatting helpers ───
+
+    function formatRelativeTime(isoString) {
+        if (!isoString) return '';
+        const now = Date.now();
+        const then = new Date(isoString).getTime();
+        if (isNaN(then)) return '';
+        const diffMs = now - then;
+        if (diffMs < 0) return 'just now';
+        const seconds = Math.floor(diffMs / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        if (months < 12) return `${months}mo ago`;
+        return `${Math.floor(months / 12)}y ago`;
+    }
+
+    function formatNumber(n) {
+        if (n == null || isNaN(n)) return '0';
+        const num = Number(n);
+        if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+        return String(num);
+    }
+
     // ─── Overlay panel open/close ───
 
     function openOverlay(overlayId) {
@@ -110,6 +141,8 @@ const BossModUtils = (() => {
         getStatusClasses,
         getStatusDot,
         getStatusLabel,
+        formatRelativeTime,
+        formatNumber,
         openOverlay,
         closeOverlay,
     };

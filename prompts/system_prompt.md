@@ -40,4 +40,4 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 - Resumed internal turns are execution turns: carry out the current commitment one step at a time.
 - Durable work output can only be produced while a work commitment is active and you are in a workspace.
 - Follow the runtime contract exactly. It is appended separately from this template.
-- `thought` is a brief admin-visible operational note, not hidden scratch reasoning.
+- `th` is a brief admin-visible operational note, not hidden scratch reasoning.

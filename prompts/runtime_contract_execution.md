@@ -5,7 +5,8 @@ Use the same schema for all resumed/internal actions.
 ALLOWED act VALUES:
   cli | work | msg | assign | walk | mtg | idle | done | block | deleg | drop
   cli=BossMod CLI, msg=send message, assign=delegate task,
-  mtg=join/start a meeting, done=complete, block=blocked, deleg=delegated, drop=abandoned
+  mtg=join/start a meeting, done=finish the current commitment,
+  block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
 
 REQUIRED JSON SHAPE:
 Do not output the schema itself. Output one JSON object matching this shape:

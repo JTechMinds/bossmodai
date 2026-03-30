@@ -2,7 +2,8 @@
  * BossMod AI — Main application controller.
  *
  * Handles: tab switching, Split.js panel resizing, agent panel overlay,
- * mobile bottom sheet, WebSocket connection, localStorage preferences.
+ * mobile bottom sheet, WebSocket connection, localStorage preferences,
+ * center panel mode switching (office / company), and footer status.
  */
 
 const BossModApp = (() => {
@@ -13,19 +14,33 @@ const BossModApp = (() => {
     let wsReconnectTimer = null;
     const WS_RECONNECT_DELAY = 3000;
     let runtimePaused = false;
+    let centerMode = 'office';
+    let activeCompanyTab = 'metrics';
+    let runtimeStartedAt = null;
+    let uptimeInterval = null;
 
     // ─── Preferences ───
 
     function loadPrefs() {
         try {
             const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) return JSON.parse(stored);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                return {
+                    activeTab: parsed.activeTab || 'chat',
+                    splitSizes: parsed.splitSizes || [25, 50, 25],
+                    centerMode: parsed.centerMode || 'office',
+                    activeCompanyTab: parsed.activeCompanyTab || 'files',
+                };
+            }
         } catch { /* ignore corrupt data */ }
-        return { activeTab: 'chat', splitSizes: [25, 50, 25] };
+        return { activeTab: 'chat', splitSizes: [25, 50, 25], centerMode: 'office', activeCompanyTab: 'files' };
     }
 
     function savePrefs() {
         try {
+            prefs.centerMode = centerMode;
+            prefs.activeCompanyTab = activeCompanyTab;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
         } catch { /* storage full or unavailable */ }
     }
@@ -100,6 +115,142 @@ const BossModApp = (() => {
         }
     }
 
+    // ─── Center panel mode switching ───
+
+    function switchCenterMode(mode) {
+        const canvasContainer = document.getElementById('canvas-container');
+        const companyDashboard = document.getElementById('company-dashboard');
+        const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
+
+        if (mode === 'office') {
+            if (companyDashboard) companyDashboard.classList.add('hidden');
+            if (canvasContainer) canvasContainer.classList.remove('hidden');
+            requestAnimationFrame(() => window.dispatchEvent(new Event('panel-resize')));
+        } else if (mode === 'company') {
+            if (canvasContainer) canvasContainer.classList.add('hidden');
+            if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
+            if (companyDashboard) companyDashboard.classList.remove('hidden');
+            if (typeof CompanyDashboard !== 'undefined') {
+                CompanyDashboard.switchTab(activeCompanyTab);
+            }
+        }
+
+        centerMode = mode;
+        updateCenterModeToggle();
+        savePrefs();
+    }
+
+    function switchCompanyTab(tab) {
+        activeCompanyTab = tab;
+        updateCompanyToggleLabel();
+
+        if (typeof CompanyDashboard !== 'undefined') {
+            CompanyDashboard.switchTab(tab);
+        }
+
+        if (centerMode !== 'company') {
+            switchCenterMode('company');
+        }
+
+        closeCompanyDropdown();
+        savePrefs();
+    }
+
+    function updateCenterModeToggle() {
+        document.querySelectorAll('.center-mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === centerMode);
+        });
+        updateCompanyToggleLabel();
+        updateCompanySubtabHighlight();
+    }
+
+    const TAB_DISPLAY_NAMES = { files: 'Files', tasks: 'Tasks', metrics: 'Metrics', org: 'Org Chart' };
+
+    function updateCompanyToggleLabel() {
+        const label = document.getElementById('company-toggle-label');
+        if (!label) return;
+        if (centerMode === 'company') {
+            label.textContent = `Company: ${TAB_DISPLAY_NAMES[activeCompanyTab] || activeCompanyTab}`;
+        } else {
+            label.textContent = 'Company';
+        }
+    }
+
+    function updateCompanySubtabHighlight() {
+        document.querySelectorAll('.company-subtab-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.subtab === activeCompanyTab);
+        });
+    }
+
+    function closeCompanyDropdown() {
+        const dropdown = document.getElementById('company-subtab-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+    }
+
+    function getCenterMode() {
+        return centerMode;
+    }
+
+    // ─── Footer management ───
+
+    function updateFooterStatus(state) {
+        const dot = document.getElementById('footer-status-dot');
+        const label = document.getElementById('footer-status-label');
+        if (!dot || !label) return;
+
+        if (state === 'connected') {
+            dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+            label.textContent = 'Connected';
+        } else if (state === 'paused') {
+            dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
+            label.textContent = 'Paused';
+        } else if (state === 'disconnected') {
+            dot.className = 'w-1.5 h-1.5 rounded-full bg-red-500';
+            label.textContent = 'Disconnected';
+        } else {
+            dot.className = 'w-1.5 h-1.5 rounded-full bg-slate-400';
+            label.textContent = 'Connecting...';
+        }
+    }
+
+    function updateFooterAgentCount(count) {
+        const el = document.getElementById('footer-agent-count');
+        if (!el) return;
+        el.textContent = `${count} agent${count !== 1 ? 's' : ''}`;
+    }
+
+    function updateFooterUptime() {
+        const el = document.getElementById('footer-uptime');
+        if (!el) return;
+
+        if (!runtimeStartedAt) {
+            el.textContent = '--';
+            return;
+        }
+
+        const now = Date.now();
+        const diffMs = now - runtimeStartedAt;
+        const totalSeconds = Math.floor(diffMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        const pad = (n) => String(n).padStart(2, '0');
+
+        if (hours > 0) {
+            el.textContent = `${hours}h ${pad(minutes)}m`;
+        } else if (minutes > 0) {
+            el.textContent = `${minutes}m ${pad(seconds)}s`;
+        } else {
+            el.textContent = `${seconds}s`;
+        }
+    }
+
+    function startUptimeInterval() {
+        if (uptimeInterval) clearInterval(uptimeInterval);
+        uptimeInterval = setInterval(updateFooterUptime, 1000);
+    }
+
     // ─── Mobile bottom sheet ───
 
     function initMobileSheet() {
@@ -151,6 +302,7 @@ const BossModApp = (() => {
         ws.onopen = () => {
             console.log('[BossMod] WebSocket connected');
             clearTimeout(wsReconnectTimer);
+            updateFooterStatus(runtimePaused ? 'paused' : 'connected');
         };
 
         ws.onmessage = (e) => {
@@ -164,6 +316,7 @@ const BossModApp = (() => {
 
         ws.onclose = () => {
             console.log('[BossMod] WebSocket disconnected, reconnecting...');
+            updateFooterStatus('disconnected');
             wsReconnectTimer = setTimeout(initWebSocket, WS_RECONNECT_DELAY);
         };
 
@@ -190,6 +343,10 @@ const BossModApp = (() => {
                 if (typeof ActivityLog !== 'undefined') {
                     ActivityLog.updateAgentList(agents);
                 }
+                updateFooterAgentCount(agents.length);
+                if (typeof CompanyDashboard !== 'undefined') {
+                    CompanyDashboard.handleWorldUpdate(agents);
+                }
                 break;
             }
 
@@ -199,6 +356,9 @@ const BossModApp = (() => {
                 }
                 if (typeof OfficeCanvas !== 'undefined') {
                     OfficeCanvas.handleActivity(msg.data);
+                }
+                if (msg.data && typeof CompanyTasks !== 'undefined' && typeof CompanyTasks.handleTaskEvent === 'function') {
+                    CompanyTasks.handleTaskEvent(msg.data);
                 }
                 break;
 
@@ -282,6 +442,22 @@ const BossModApp = (() => {
         if (banner) {
             banner.classList.toggle('hidden', !runtimePaused);
         }
+
+        // Update footer status
+        if (runtimePaused) {
+            updateFooterStatus('paused');
+        } else if (ws && ws.readyState === WebSocket.OPEN) {
+            updateFooterStatus('connected');
+        }
+
+        // Extract runtime started_at for uptime tracking
+        if (payload?.started_at) {
+            runtimeStartedAt = new Date(payload.started_at).getTime();
+        } else if (payload?.worker?.started_at) {
+            runtimeStartedAt = new Date(payload.worker.started_at).getTime();
+        }
+        updateFooterUptime();
+
         if (window.lucide) {
             lucide.createIcons();
         }
@@ -353,7 +529,7 @@ const BossModApp = (() => {
         });
     }
 
-    // ─── Public API ───
+    // ─── Nav button initialization ───
 
     function initNavButtons() {
         const settingsBtn = document.getElementById('btn-settings');
@@ -396,24 +572,96 @@ const BossModApp = (() => {
                 void toggleRuntimeState();
             });
         }
+
+        // Center mode toggle segment buttons
+        const officeBtn = document.querySelector('.center-mode-btn[data-mode="office"]');
+        const companyBtn = document.querySelector('.center-mode-btn[data-mode="company"]');
+        const toggleEl = document.getElementById('center-mode-toggle');
+        const dropdownEl = document.getElementById('company-subtab-dropdown');
+
+        if (officeBtn) {
+            officeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeCompanyDropdown();
+                switchCenterMode('office');
+            });
+        }
+
+        if (companyBtn) {
+            // Click switches to company mode (current tab), no dropdown
+            companyBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeCompanyDropdown();
+                if (centerMode !== 'company') {
+                    switchCenterMode('company');
+                }
+            });
+        }
+
+        // Show dropdown on hover over the toggle (company side)
+        if (toggleEl && dropdownEl) {
+            let hoverTimeout = null;
+            toggleEl.addEventListener('mouseenter', () => {
+                clearTimeout(hoverTimeout);
+                dropdownEl.classList.remove('hidden');
+            });
+            toggleEl.addEventListener('mouseleave', () => {
+                hoverTimeout = setTimeout(() => {
+                    dropdownEl.classList.add('hidden');
+                }, 200);
+            });
+            dropdownEl.addEventListener('mouseenter', () => {
+                clearTimeout(hoverTimeout);
+            });
+            dropdownEl.addEventListener('mouseleave', () => {
+                hoverTimeout = setTimeout(() => {
+                    dropdownEl.classList.add('hidden');
+                }, 200);
+            });
+        }
+
+        // Company sub-tab dropdown items
+        document.querySelectorAll('.company-subtab-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                switchCompanyTab(item.dataset.subtab);
+            });
+        });
+    }
+
+    // Close company dropdown on outside click
+    function initOutsideClickHandlers() {
+        document.addEventListener('click', (e) => {
+            const toggle = document.getElementById('center-mode-toggle');
+            const dropdown = document.getElementById('company-subtab-dropdown');
+            if (dropdown && toggle && !toggle.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
     }
 
     function updateNavForSettings(inSettings) {
         const backBtn = document.getElementById('btn-back-to-office');
         const settingsBtn = document.getElementById('btn-settings');
         const newAgentBtn = document.getElementById('btn-new-agent');
+        const modeToggle = document.getElementById('center-mode-toggle');
 
         if (inSettings) {
             backBtn.classList.remove('hidden');
             backBtn.classList.add('flex');
             settingsBtn.classList.add('hidden');
             newAgentBtn.classList.add('hidden');
+            if (modeToggle) modeToggle.classList.add('hidden');
         } else {
             backBtn.classList.add('hidden');
             backBtn.classList.remove('flex');
             settingsBtn.classList.remove('hidden');
             newAgentBtn.classList.remove('hidden');
             newAgentBtn.classList.add('sm:flex');
+            if (modeToggle) {
+                modeToggle.classList.remove('hidden');
+                modeToggle.classList.add('sm:flex');
+            }
         }
 
         if (window.lucide) lucide.createIcons();
@@ -425,10 +673,23 @@ const BossModApp = (() => {
         initSplit();
         initPanelObserver();
         initNavButtons();
+        initOutsideClickHandlers();
         initMobileSheet();
         initResize();
         initWebSocket();
         void fetchRuntimeState();
+
+        // Restore center mode from prefs
+        centerMode = prefs.centerMode || 'office';
+        activeCompanyTab = prefs.activeCompanyTab || 'metrics';
+        if (centerMode !== 'office') {
+            switchCenterMode(centerMode);
+        } else {
+            updateCenterModeToggle();
+        }
+
+        // Start uptime interval
+        startUptimeInterval();
 
         console.log('[BossMod] App initialized');
     }
@@ -437,6 +698,9 @@ const BossModApp = (() => {
         init,
         selectAgent,
         switchTab,
+        switchCenterMode,
+        switchCompanyTab,
+        getCenterMode,
         updateNavForSettings,
     };
 })();

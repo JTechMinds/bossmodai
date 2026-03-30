@@ -124,11 +124,11 @@ class ConversationDecision(BaseModel):
 
 def allowed_decisions_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
     """Return the valid canonical decision names for one conversation trigger type."""
-    return tuple(_ACT_TO_DECISION[act] for act in allowed_acts_for_trigger(trigger_type))
+    return tuple(_ACT_TO_DECISION[act] for act in allowed_conversation_acts_for_trigger(trigger_type))
 
 
-def allowed_acts_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
-    """Return the valid model-facing act values for one conversation trigger type."""
+def allowed_conversation_acts_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
+    """Return the valid final conversation act values for one trigger type."""
     if trigger_type in _SHARED_CONVERSATION_TRIGGER_TYPES:
         return _SHARED_ALLOWED_ACTS
     return _ALLOWED_ACTS_BY_TRIGGER.get(str(trigger_type or ""), _DEFAULT_ALLOWED_ACTS)

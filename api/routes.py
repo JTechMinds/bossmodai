@@ -28,6 +28,7 @@ from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.task_roles import default_task_owner_id
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
+from core.prompting.runtime_prompt_lint import lint_runtime_prompts
 from core.runtime import runtime_services
 from core.messaging import route_human_dm, route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
@@ -81,10 +82,20 @@ class RuntimeContractsBody(BaseModel):
     communication_snapshot: str
 
 
+class RuntimeContractTemplateOverridesBody(BaseModel):
+    decision: str | None = None
+    execution: str | None = None
+    trigger_event: str | None = None
+    conversation_envelope: str | None = None
+    file_deliverable_guidance: str | None = None
+    communication_snapshot: str | None = None
+
+
 class RuntimeContractPreviewBody(BaseModel):
     contract_kind: Literal["decision", "execution"]
     trigger_type: str = "human_chat"
-    template: str | None = None
+    scope: Literal["contract", "bundle"] = "bundle"
+    templates: RuntimeContractTemplateOverridesBody | None = None
 
 
 class RuntimeControlBody(BaseModel):
@@ -174,7 +185,23 @@ def _runtime_contracts_payload() -> dict[str, object]:
         "allowed_variables": context_builder.template_variable_metadata(),
         "template_syntax": context_builder.template_syntax_examples(),
         "preview_triggers": list(_RUNTIME_PREVIEW_TRIGGERS),
+        "prompt_health": lint_runtime_prompts().to_payload(),
     }
+
+
+def _runtime_contract_template_overrides(
+    body: RuntimeContractsBody | RuntimeContractTemplateOverridesBody | None,
+) -> dict[str, str]:
+    """Map runtime-contract request fields to prompt-setting keys."""
+    if body is None:
+        return {}
+
+    overrides: dict[str, str] = {}
+    for field_name, setting_key in _RUNTIME_CONTRACT_KEYS.items():
+        value = getattr(body, field_name, None)
+        if value is not None:
+            overrides[setting_key] = value
+    return overrides
 
 
 # ─── WebSocket ───
@@ -236,9 +263,69 @@ async def get_agent(agent_id: str) -> Agent:
 
 
 @router.get("/company/agents")
-async def list_company_agents() -> list[dict[str, object]]:
-    """Return the live company roster for the Company tab."""
-    return [_serialize_company_agent(item) for item in db.get_world_state()]
+async def list_company_agents(include: str | None = None) -> list[dict[str, object]]:
+    """Return the live company roster for the Company tab.
+
+    Pass ``?include=stats`` to merge per-agent task/token stats into each entry.
+    """
+    agents = [_serialize_company_agent(item) for item in db.get_world_state()]
+    if include == "stats":
+        stats = await asyncio.to_thread(db.get_agent_stats_batch)
+        for agent in agents:
+            agent_stats = stats.get(agent["id"], {})
+            agent["tasks_completed"] = agent_stats.get("tasks_completed", 0)
+            agent["tokens_used"] = agent_stats.get("tokens_used", 0)
+            agent["current_task"] = agent_stats.get("current_task")
+    return agents
+
+
+@router.get("/metrics/dashboard")
+async def get_metrics_dashboard() -> dict[str, object]:
+    """Return aggregated dashboard metrics for the Company overview."""
+    return await asyncio.to_thread(db.get_dashboard_metrics)
+
+
+@router.get("/company/files")
+async def get_company_files(path: str = "/") -> dict[str, object]:
+    """Return a browsable file view rooted at the company workspace."""
+    return await asyncio.to_thread(_build_company_files_payload, path)
+
+
+@router.post("/company/files/open-folder")
+async def open_company_folder(body: dict) -> dict[str, object]:
+    """Open a company workspace folder in the host file explorer."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    raw_path = body.get("path", "/")
+    root = artifacts_root()
+    safe = _resolve_safe_company_path(root, raw_path)
+    if safe is None or not safe.exists():
+        raise HTTPException(404, "Path not found")
+
+    target = safe if safe.is_dir() else safe.parent
+    opener = config.get("desktop_open_folder_handler")
+    if opener is None:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_required",
+                "message": "Choose a folder opener once and BossMod will remember it.",
+                "options": _available_folder_opener_options(),
+            },
+        )
+    try:
+        _launch_file_explorer(target, opener=opener)
+    except OSError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_invalid",
+                "message": str(exc),
+                "options": _available_folder_opener_options(),
+            },
+        ) from exc
+
+    return {"status": "ok", "path": str(target)}
 
 
 @router.get("/channels")
@@ -655,6 +742,10 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
     y = int(item.get("y") or 0)
     room = get_room_at(x, y)
     location_name = room["name"] if room else "Unknown"
+    idle_since_raw = item.get("idle_since")
+    idle_since_iso = (
+        idle_since_raw.isoformat() if hasattr(idle_since_raw, "isoformat") else idle_since_raw
+    )
     return {
         "id": item.get("id"),
         "name": item.get("name"),
@@ -665,6 +756,7 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
         "x": x,
         "y": y,
         "location": location_name,
+        "idle_since": idle_since_iso,
     }
 
 
@@ -877,6 +969,82 @@ def _desk_display_name(path: str) -> str:
     return Path(path).name or path
 
 
+def _resolve_safe_company_path(root: Path, raw_path: str) -> Path | None:
+    """Resolve a user-supplied path against the artifacts root, rejecting traversal."""
+    cleaned = raw_path.strip().lstrip("/") or "."
+    candidate = (root / cleaned).resolve()
+    root_resolved = root.resolve()
+    if candidate == root_resolved or root_resolved in candidate.parents:
+        return candidate
+    return None
+
+
+def _build_company_files_payload(path: str) -> dict[str, object]:
+    """Build a filesystem-style payload for the company workspace browser."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    resolved = _resolve_safe_company_path(root, path)
+    if resolved is None:
+        raise HTTPException(400, "Invalid path")
+    if not resolved.exists():
+        raise HTTPException(404, "Path not found")
+
+    virtual_path = "/" + str(resolved.relative_to(root.resolve())).replace("\\", "/")
+    if virtual_path == "/.":
+        virtual_path = "/"
+
+    if resolved.is_file():
+        stat = resolved.stat()
+        return {
+            "kind": "file",
+            "path": virtual_path,
+            "name": resolved.name,
+            "breadcrumbs": _company_breadcrumbs(virtual_path),
+            "size_bytes": stat.st_size,
+            "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        }
+
+    entries: list[dict[str, object]] = []
+    with os.scandir(resolved) as iterator:
+        for entry in iterator:
+            name = entry.name
+            if name in {".git", ".gitignore", ".gitattributes"}:
+                continue
+            is_dir = entry.is_dir()
+            stat_result = entry.stat()
+            child_path = _child_virtual_path(virtual_path, name)
+            entries.append({
+                "name": name,
+                "path": child_path,
+                "is_dir": is_dir,
+                "size_bytes": None if is_dir else stat_result.st_size,
+                "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+            })
+    entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
+
+    return {
+        "kind": "directory",
+        "path": virtual_path,
+        "name": Path(virtual_path).name if virtual_path != "/" else "Company Workspace",
+        "breadcrumbs": _company_breadcrumbs(virtual_path),
+        "entries": entries,
+    }
+
+
+def _company_breadcrumbs(path: str) -> list[dict[str, str]]:
+    """Build breadcrumb trail for the company file browser."""
+    if path in {"", "/"}:
+        return [{"label": "Company", "path": "/"}]
+    parts = [item for item in path.strip("/").split("/") if item]
+    breadcrumbs: list[dict[str, str]] = [{"label": "Company", "path": "/"}]
+    current = ""
+    for part in parts:
+        current += f"/{part}"
+        breadcrumbs.append({"label": part, "path": current})
+    return breadcrumbs
+
+
 def _launch_file_explorer(path: Path, *, opener: str) -> None:
     """Open a directory in the host platform's file explorer."""
     subprocess.Popen(_file_explorer_command(path, opener=opener))
@@ -953,14 +1121,32 @@ async def list_tasks(
     requester_id: str | None = None,
     parent_task_id: str | None = None,
     status: str | None = None,
-) -> list[Task]:
-    return db.list_tasks(
+):
+    tasks = db.list_tasks(
         assigned_to=assigned_to,
         owner_id=owner_id,
         requester_id=requester_id,
         parent_task_id=parent_task_id,
         status=status,
     )
+    # Resolve agent UUIDs to human-readable names
+    agent_ids = {t.assigned_to for t in tasks if t.assigned_to}
+    agent_ids |= {t.requester_id for t in tasks if t.requester_id}
+    agent_ids |= {t.owner_id for t in tasks if t.owner_id}
+    agent_names: dict[str, str] = {}
+    for aid in agent_ids:
+        agent = db.get_agent(aid)
+        if agent:
+            agent_names[aid] = agent.name
+    return [
+        {
+            **t.model_dump(mode="json"),
+            "assigned_to_name": agent_names.get(t.assigned_to) if t.assigned_to else None,
+            "requester_name": agent_names.get(t.requester_id) if t.requester_id else None,
+            "owner_name": agent_names.get(t.owner_id) if t.owner_id else None,
+        }
+        for t in tasks
+    ]
 
 
 @router.post("/tasks", status_code=201)
@@ -1592,20 +1778,35 @@ async def reset_runtime_contracts():
 async def preview_runtime_contract(body: RuntimeContractPreviewBody):
     if body.trigger_type not in _RUNTIME_PREVIEW_TRIGGERS:
         raise HTTPException(400, f"Unsupported preview trigger: {body.trigger_type}")
+    template_overrides = _runtime_contract_template_overrides(body.templates)
     try:
-        if body.template is not None:
-            _validate_authored_prompt_template(body.template)
-        rendered = context_builder.preview_runtime_contract(
-            contract_kind=body.contract_kind,
-            trigger_type=body.trigger_type,
-            template_override=body.template,
-        )
+        for template in template_overrides.values():
+            _validate_authored_prompt_template(template)
+        prompt_health = lint_runtime_prompts(template_overrides).to_payload()
+        if body.scope == "contract":
+            rendered = context_builder.preview_runtime_contract(
+                contract_kind=body.contract_kind,
+                trigger_type=body.trigger_type,
+                template_overrides=template_overrides,
+            )
+            messages: list[dict[str, str]] = []
+        else:
+            preview = context_builder.preview_prompt_bundle(
+                contract_kind=body.contract_kind,
+                trigger_type=body.trigger_type,
+                template_overrides=template_overrides,
+            )
+            rendered = str(preview["rendered"])
+            messages = list(preview["messages"])
     except TemplateError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {
         "contract_kind": body.contract_kind,
         "trigger_type": body.trigger_type,
+        "scope": body.scope,
         "rendered": rendered,
+        "messages": messages,
+        "prompt_health": prompt_health,
     }
 
 

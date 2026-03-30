@@ -225,6 +225,9 @@ from db.diagnostics import create_diagnostic, get_diagnostic, get_diagnostic_ste
 # World state + spatial
 from db.world import get_nearby_agents, get_world_state
 
+# Metrics
+from db.metrics import get_agent_stats_batch, get_dashboard_metrics
+
 __all__ = [
     # Connection
     "close_connection",
@@ -425,4 +428,7 @@ __all__ = [
     "get_cli_approval_request",
     "list_cli_approval_requests",
     "reject_cli_approval_request",
+    # Metrics
+    "get_agent_stats_batch",
+    "get_dashboard_metrics",
 ]
