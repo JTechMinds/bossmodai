@@ -116,7 +116,7 @@ These are the most important additions beyond the current prompt audit work.
 | C-03 | Multiple lookups needed | Agent chains multiple `cli` lookups before final decision | Yes | Covered |
 | C-04 | First lookup is only to discover CLI usage/command path | Agent may use CLI discovery before the actual fact lookup | Yes | Covered |
 | C-05 | Decision turn ends on CLI instead of final answer | Forbidden | Yes but not terminal | Covered |
-| C-06 | Snapshot already has answer but agent still reaches for CLI | Should be discouraged by prompt logic | Optional but should usually not happen | Missing |
+| C-06 | Snapshot already has answer but agent still reaches for CLI | Should be discouraged by prompt logic | Optional but should usually not happen | Covered |
 
 ### 4.4 AI-to-AI Conversation
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -133,8 +133,8 @@ These are the most important additions beyond the current prompt audit work.
 | D-01 | Agent delegates a task to another agent | Child task created with correct requester/owner lineage | Optional | Covered |
 | D-02 | Assignee accepts delegated work | Assignee accepts existing assignment without inventing new task metadata | No in decision; yes later in execution | Covered |
 | D-03 | Assignee clarifies delegated work with delegator | Clarifying message goes to delegator, not to original human requester | No | Covered |
-| D-04 | Assignee defers delegated work | Deferred assignment preserves durable work commitment | No | Partial |
-| D-05 | Assignee declines delegated work | Decline is communicated clearly to delegator/owner | No | Partial |
+| D-04 | Assignee defers delegated work | Deferred assignment preserves durable work commitment | No | Covered |
+| D-05 | Assignee declines delegated work | Decline is communicated clearly to delegator/owner | No | Covered |
 | D-06 | Worker completes and reports back to delegator | Completion routes to delegator/owner appropriately | Optional | Covered |
 | D-07 | PM delegates to worker and then summarizes back to human | PM acts as aggregation/reporting layer | Optional | Covered |
 | D-08 | Worker blocks and PM reassigns to another worker | Escalation and reassignment loop works end-to-end | Optional | Covered |
@@ -142,8 +142,8 @@ These are the most important additions beyond the current prompt audit work.
 ### 4.6 Shared Channels and Meetings
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
 | --- | --- | --- | --- | --- |
-| M-01 | Shared channel message that does not require response | Agent observes only | No | Partial |
-| M-02 | Shared channel message requiring response | Agent replies in shared context | Optional | Partial |
+| M-01 | Shared channel message that does not require response | Agent observes only | No | Covered |
+| M-02 | Shared channel message requiring response | Agent replies in shared context | Optional | Covered |
 | M-03 | Meeting response turn | Agent replies in meeting transcript correctly | Optional | Covered |
 | M-04 | Meeting invitation interrupts work | Existing task pauses/replaces correctly and agent joins meeting | Optional | Covered |
 | M-05 | Meeting produces follow-up work | Agent captures action item as durable work instead of treating meeting talk as completion | Optional | Covered |
@@ -185,7 +185,7 @@ These are the most important additions beyond the current prompt audit work.
 | N-02 | Prompt tells model to emit `thought` instead of `th` | Lint should fail | N/A | Covered |
 | N-03 | Peer chat creates durable work without explicit assignment | Runtime/prompt should reject | Optional | Covered |
 | N-04 | Decision response missing required reply text | Validation fails and repairs or errors | No | Covered |
-| N-05 | Agent overuses CLI when snapshot suffices | Prompt should discourage; tests should assert bounded lookup behavior | Optional | Missing |
+| N-05 | Agent overuses CLI when snapshot suffices | Prompt should discourage; tests should assert bounded lookup behavior | Optional | Covered |
 
 ### 4.11 Prompt Budget and Context Discipline
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -284,7 +284,7 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | D-04, D-05 | Delegated defer and decline edge-case coverage | Important for realistic manager delegation behavior and clean reporting chains | Agent Runtime + Prompting/Contracts |
+| P1 | None currently open | High-value workflow gaps now mostly sit in prompt-discipline polish and delivery-quality behavior rather than core lifecycle or shared-channel routing | Keep the next pass focused on bounded lookup discipline and file-delivery polish | Agent Runtime + Prompting/Contracts |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
@@ -315,9 +315,9 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add delegated **defer / decline** edge-case coverage for `D-04` and `D-05`.
-2.  Add shared-channel **observe vs reply** coverage for `M-01` and `M-02`.
-3.  Add bounded no-lookup discipline coverage for `C-06` and `N-05`.
+1.  Add deliverable-plus-summary coverage for `F-06`.
+2.  Add unsupported/out-of-scope handling coverage for `H-06`.
+3.  Re-check broader release confidence after the remaining focused gaps are closed.
 
 ## 11. Bottom Line
 The matrix is now actionable:

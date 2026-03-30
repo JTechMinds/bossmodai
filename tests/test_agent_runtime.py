@@ -367,6 +367,7 @@ def test_parse_decision_allows_reply_without_commit_or_data(isolated_db):
 def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     contract = render_decision_contract("human_chat")
     assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
+    assert "If the snapshot already answers the question, reply directly instead of using CLI." in contract
     assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer" in contract
     assert "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" in contract
     assert "You may use more than one CLI lookup in the same decision turn" in contract
@@ -423,6 +424,8 @@ def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
     assert "ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline" in contract
     assert "this is an offered assignment; use accept | clarify | defer | decline" in contract.lower()
     assert 'accept or defer should keep `commit="work"`' in contract
+    assert "defer means the assignment stays open for later follow-up" in contract
+    assert "decline means you are not taking the assignment; tell the delegator clearly" in contract
     assert '{"act":"accept","intent":"work","msg":"string","commit":"work","th":"string"}' in contract
     assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' not in contract
 
@@ -512,6 +515,24 @@ def test_validate_decision_allows_task_assignment_accept_without_new_title(isola
             "reply": "I will take it.",
             "commitmentKind": "work",
             "thought": "accept assignment",
+        }
+    )
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type="task_assigned",
+        active_task_id=None,
+    )
+    assert error is None
+
+
+def test_validate_decision_allows_task_assignment_defer_without_new_title(isolated_db):
+    decision = ConversationDecision.model_validate(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "reply": "I need to finish the payroll audit first, then I can take this on.",
+            "commitmentKind": "work",
+            "thought": "defer the assignment",
         }
     )
     error = validate_decision_for_trigger(
@@ -2275,6 +2296,160 @@ async def test_declined_task_assignment_marks_task_declined(isolated_db, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_run_turn_deferred_task_assignment_stays_pending_and_notifies_delegator(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    delegator = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Review customer churn notes",
+        description="Review the churn notes and summarize the retention risks.",
+        assigned_to=worker.id,
+        requester_id=delegator.id,
+        owner_id=delegator.id,
+        created_by=delegator.id,
+        parent_task_id=None,
+    )
+    prepare_trigger_context(worker.id, {"type": "task_assigned", "task_id": task.id})
+    state = db.get_agent_state(worker.id)
+    assert state is not None
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"defer","intent":"work","msg":"I need to finish the payroll audit first. Please leave this queued for me.",'
+                '"commit":"work","th":"defer until current workload clears"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        worker,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert outcome.trigger_status == "completed"
+    assert outcome.result["event"] == "decision_applied"
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "pending"
+    assert refreshed_task.status_note == "I need to finish the payroll audit first. Please leave this queued for me."
+    assert db.list_tasks(assigned_to=worker.id) == [refreshed_task]
+
+    active = _active_activity(worker.id)
+    assert active is None
+
+    queued = outcome.result["trigger_requests"][0]
+    assert queued["trigger_type"] == "peer_message"
+    assert queued["agent_id"] == delegator.id
+    assert queued["payload"]["content"] == "I need to finish the payroll audit first. Please leave this queued for me."
+    assert queued["payload"]["message_type"] == "social"
+
+    thread = db.get_agent_direct_thread(worker.id, delegator.id, limit=10)
+    assert thread[-1].content == "I need to finish the payroll audit first. Please leave this queued for me."
+    assert thread[-1].message_type == "social"
+
+    diagnostics = db.get_diagnostics(agent_id=worker.id, limit=5)
+    assert diagnostics[0]["action_name"] == "defer(work)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_declined_task_assignment_notifies_delegator_and_marks_declined(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    delegator = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Prepare partner call brief",
+        description="Prepare the partner call brief for tomorrow morning.",
+        assigned_to=worker.id,
+        requester_id=delegator.id,
+        owner_id=delegator.id,
+        created_by=delegator.id,
+        parent_task_id=None,
+    )
+    prepare_trigger_context(worker.id, {"type": "task_assigned", "task_id": task.id})
+    state = db.get_agent_state(worker.id)
+    assert state is not None
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"decline","intent":"work","msg":"I cannot take this assignment right now.","th":"decline the delegated task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        worker,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert outcome.trigger_status == "completed"
+    assert outcome.result["event"] == "decision_applied"
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "declined"
+    assert refreshed_task.status_note == "I cannot take this assignment right now."
+
+    active = _active_activity(worker.id)
+    assert active is None
+
+    queued = outcome.result["trigger_requests"][0]
+    assert queued["trigger_type"] == "peer_message"
+    assert queued["agent_id"] == delegator.id
+    assert queued["payload"]["content"] == "I cannot take this assignment right now."
+    assert queued["payload"]["message_type"] == "social"
+
+    thread = db.get_agent_direct_thread(worker.id, delegator.id, limit=10)
+    assert thread[-1].content == "I cannot take this assignment right now."
+    assert thread[-1].message_type == "social"
+
+    diagnostics = db.get_diagnostics(agent_id=worker.id, limit=5)
+    assert diagnostics[0]["action_name"] == "decline(none)"
+
+
+@pytest.mark.asyncio
 async def test_reseed_application_recreates_database_from_current_schema(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -2817,12 +2992,18 @@ async def test_run_turn_human_chat_grounded_question_uses_grounded_lane(isolated
         for message in captured_messages[0]
         if message["role"] == "system"
     )
+    assert not any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[0]
+        if message["role"] == "system"
+    )
 
     thread = db.get_human_chat_thread(agent.id, limit=10)
     assert [msg.message_type for msg in thread] == ["human", "social"]
     assert thread[-1].content == "I am idle right now at the Main Workspace. I finished the Generate Words API specification earlier."
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "answer(none)"
     detail = db.get_diagnostic(diagnostics[0]["id"])
     assert detail is not None
     assert [step["action_name"] for step in detail["steps"]] == ["answer"]
@@ -3845,11 +4026,22 @@ async def test_run_turn_peer_message_grounded_question_uses_shared_communication
 
     assert outcome.result["event"] == "decision_applied"
     assert len(captured_messages) == 1
+    assert any(
+        "AUTHORITATIVE COMMUNICATION SNAPSHOT" in message["content"]
+        for message in captured_messages[0]
+        if message["role"] == "system"
+    )
+    assert not any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[0]
+        if message["role"] == "system"
+    )
     queued_peer = outcome.result["trigger_requests"]
     assert queued_peer[0]["trigger_type"] == "peer_message"
     assert queued_peer[0]["payload"]["content"] == "I am idle at my desk right now."
 
     diagnostics = db.get_diagnostics(agent_id=taylor.id, limit=5)
+    assert diagnostics[0]["action_name"] == "answer(none)"
     detail = db.get_diagnostic(diagnostics[0]["id"])
     assert detail is not None
     assert [step["action_name"] for step in detail["steps"]] == ["answer"]
@@ -6512,6 +6704,80 @@ async def test_channel_message_first_responder_answers_immediately(isolated_db, 
 
 
 @pytest.mark.asyncio
+async def test_channel_message_can_observe_without_reply(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    taylor = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(taylor.id, x=desk_x, y=desk_y, status="idle")
+    channel = db.create_channel(name="Planning", member_agent_ids=[taylor.id], created_by=HUMAN_SENDER_ID)
+    source = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Posting the updated planning notes here for visibility.",
+        source_channel="channel",
+    )
+    round_record = db.create_channel_response_round(channel_id=channel.id, source_message_id=source.id)
+    db.create_channel_response_candidate(round_id=round_record.id, agent_id=taylor.id)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_channel_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"observe","intent":"other","th":"no reply needed for this channel update"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        taylor,
+        state,
+        {
+            "type": "channel_message",
+            "content": source.content,
+            "channel_id": channel.id,
+            "round_id": round_record.id,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "source_message_id": source.id,
+            "source_channel": "channel",
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert outcome.result["detail"] == "Taylor chose to observe the shared channel"
+    assert outcome.result["trigger_requests"] == []
+    assert "channel_message" not in outcome.result
+
+    candidate = db.get_channel_response_candidate(round_id=round_record.id, agent_id=taylor.id)
+    assert candidate is not None
+    assert candidate.status == "observed"
+
+    round_state = db.get_channel_response_round(round_record.id)
+    assert round_state is not None
+    assert round_state.status == "completed"
+
+    transcript = db.list_channel_messages(channel.id, limit=10)
+    assert len(transcript) == 1
+    assert transcript[-1].author_name == "Human Operator"
+
+    diagnostics = db.get_diagnostics(agent_id=taylor.id, limit=5)
+    assert diagnostics[0]["action_name"] == "observe(none)"
+
+
+@pytest.mark.asyncio
 async def test_channel_response_serializes_and_advances_queue(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     taylor = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -6589,6 +6855,82 @@ async def test_channel_response_serializes_and_advances_queue(isolated_db, monke
     transcript = db.list_channel_messages(channel.id, limit=10)
     assert transcript[-1].author_name == "Taylor"
     assert transcript[-1].content == "I am wrapping up the planning notes."
+
+
+@pytest.mark.asyncio
+async def test_channel_response_observe_advances_queue_without_reply(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    taylor = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    joe = db.create_agent(name="Joe", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    taylor_state = db.update_agent_state(taylor.id, x=desk_x, y=desk_y, status="idle")
+    channel = db.create_channel(name="Planning", member_agent_ids=[taylor.id, joe.id], created_by=HUMAN_SENDER_ID)
+    source = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Heads up: the roadmap doc is updated. No direct answer needed unless you have concerns.",
+        source_channel="channel",
+    )
+    round_record = db.create_channel_response_round(channel_id=channel.id, source_message_id=source.id)
+    db.create_channel_response_candidate(round_id=round_record.id, agent_id=taylor.id)
+    db.create_channel_response_candidate(round_id=round_record.id, agent_id=joe.id)
+    db.update_channel_response_candidate(round_id=round_record.id, agent_id=taylor.id, status="responding", queue_position=1)
+    db.update_channel_response_candidate(round_id=round_record.id, agent_id=joe.id, status="queued", queue_position=2)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_meeting_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_channel_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"observe","intent":"other","th":"nothing to add in channel"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        taylor,
+        taylor_state,
+        {
+            "type": "channel_response",
+            "content": source.content,
+            "channel_id": channel.id,
+            "round_id": round_record.id,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "source_message_id": source.id,
+            "source_channel": "channel",
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert "channel_message" not in outcome.result
+    next_trigger = outcome.result["trigger_requests"][0]
+    assert next_trigger["trigger_type"] == "channel_response"
+    assert next_trigger["agent_id"] == joe.id
+
+    taylor_candidate = db.get_channel_response_candidate(round_id=round_record.id, agent_id=taylor.id)
+    joe_candidate = db.get_channel_response_candidate(round_id=round_record.id, agent_id=joe.id)
+    assert taylor_candidate is not None and taylor_candidate.status == "observed"
+    assert joe_candidate is not None and joe_candidate.status == "responding"
+
+    transcript = db.list_channel_messages(channel.id, limit=10)
+    assert len(transcript) == 1
+    assert transcript[-1].author_name == "Human Operator"
+
+    diagnostics = db.get_diagnostics(agent_id=taylor.id, limit=5)
+    assert diagnostics[0]["action_name"] == "observe(none)"
 
 
 @pytest.mark.asyncio

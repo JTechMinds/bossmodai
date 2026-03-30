@@ -125,6 +125,14 @@ def apply_decision(
     if decision.decision == "defer":
         if decision.commitmentKind == "work":
             task = _ensure_deferred_task(agent, trigger, decision)
+            status_note = (decision.reply or decision.detail or "").strip() or None
+            task = db.update_task(
+                task.id,
+                status="pending",
+                status_note=status_note,
+                completion_summary=None,
+                watchdog_pinged_at=None,
+            ) or task
             result["detail"] = f'{agent.name} deferred "{task.title}"'
             result.setdefault("activity_extra", {})["task_title"] = task.title
         else:
