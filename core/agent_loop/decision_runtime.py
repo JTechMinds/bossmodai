@@ -81,6 +81,29 @@ def apply_decision(
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
+    if decision.decision == "cancel":
+        if not active_work or not active_work.task_id:
+            result["event"] = "agent_error"
+            result["detail"] = f"{agent.name} tried to cancel work, but no active task was available"
+            return result
+        task = db.get_task(active_work.task_id)
+        db.update_task(
+            active_work.task_id,
+            status="abandoned",
+            status_note="Cancelled by human request.",
+            completion_summary=None,
+            watchdog_pinged_at=None,
+        )
+        activity_runtime.complete_activity(active_work.id, detail="Cancelled by human request.")
+        result["detail"] = (
+            f'{agent.name} cancelled active work on "{task.title}"'
+            if task
+            else f"{agent.name} cancelled the active task"
+        )
+        _attach_reply_artifacts(result, agent, state, trigger, decision.reply)
+        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        return result
+
     if decision.decision == "decline":
         if trigger.get("type") == "task_assigned" and trigger.get("task_id"):
             _complete_assignment_if_present(agent.id)

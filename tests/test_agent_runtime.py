@@ -223,6 +223,13 @@ def _build_turn_context(
     )
 
 
+def _bundle_token_total(messages: list[dict[str, str]], *, model: str = "gpt-4o-mini") -> int:
+    total = 0
+    for message in messages:
+        total += client.count_tokens(message.get("content", ""), model=model)
+    return total
+
+
 def test_init_db_removes_obsolete_action_contract_setting(isolated_db):
     advanced_settings = {item.key: item.value for item in db.get_settings("advanced")}
 
@@ -359,15 +366,19 @@ def test_parse_decision_allows_reply_without_commit_or_data(isolated_db):
 def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     contract = render_decision_contract("human_chat")
     assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
-    assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer" in contract
+    assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer" in contract
     assert "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" in contract
     assert "You may use more than one CLI lookup in the same decision turn" in contract
     assert "Once you have enough information, end the turn with a final conversation decision object." in contract
     assert "Use one of these shapes:" in contract
     assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' in contract
+    assert '{"act":"cancel","intent":"work","msg":"string","th":"string"}' in contract
     assert '{"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}' in contract
-    assert 'For `reply`, `clarify`, `decline`, and `observe`, leave `commit` out.' in contract
+    assert 'For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `commit` out.' in contract
     assert '`status` belongs in `intent`, never in `act`.' in contract
+    assert "If the replacement is explicit, accept the new work; the runtime will pause the older task automatically." in contract
+    assert "If it is unclear whether the current task should continue or be replaced, ask a clarifying question before switching tasks." in contract
+    assert "If a human clearly says to stop the current active task without replacing it, use `cancel`." in contract
     assert '{"act":"observe","intent":"other","th":"string"}' not in contract
 
 
@@ -458,6 +469,31 @@ def test_validate_decision_requires_direct_watchdog_reply(isolated_db):
         active_task_id="task-123",
     )
     assert error == "watchdog status pings require a direct reply"
+
+
+def test_validate_decision_cancel_requires_active_work(isolated_db):
+    decision = ConversationDecision.model_validate(
+        {
+            "decision": "cancel",
+            "intentKind": "work_request",
+            "reply": "Understood. I am cancelling the active task.",
+            "commitmentKind": "none",
+            "thought": "close the current work item",
+        }
+    )
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type="human_chat",
+        active_task_id="task-123",
+    )
+    assert error is None
+
+    missing_active_error = validate_decision_for_trigger(
+        decision,
+        trigger_type="human_chat",
+        active_task_id=None,
+    )
+    assert missing_active_error == 'cancel is only valid when there is an active task to close'
 
 
 def test_validate_decision_allows_task_assignment_accept_without_new_title(isolated_db):
@@ -1534,6 +1570,34 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     assert "RECENT WORK ARTIFACTS:" in system_prompt
     assert "RECENT RUNTIME NOTIFICATIONS:" in system_prompt
     assert "For status questions, answer from `Live Runtime State` first." in system_prompt
+
+
+def test_preview_prompt_bundles_stay_under_instruction_budget(isolated_db):
+    cases = [
+        ("decision", "human_chat"),
+        ("decision", "peer_message"),
+        ("decision", "watchdog_status_ping"),
+        ("execution", "activity_resumed"),
+    ]
+
+    for contract_kind, trigger_type in cases:
+        bundle = context_builder.preview_prompt_bundle(contract_kind, trigger_type)
+        total = _bundle_token_total(bundle["messages"])
+        assert total > 0
+        assert total < 3000, f"{contract_kind}/{trigger_type} prompt bundle exceeded budget: {total} tokens"
+
+
+def test_prompt_bundle_renders_only_relevant_dynamic_blocks(isolated_db):
+    human_bundle = context_builder.preview_prompt_bundle("decision", "human_chat")["rendered"]
+    execution_bundle = context_builder.preview_prompt_bundle("execution", "activity_resumed")["rendered"]
+
+    assert "CONVERSATION ENVELOPE:" in human_bundle
+    assert "AUTHORITATIVE COMMUNICATION SNAPSHOT (JSON):" in human_bundle
+    assert "FILE DELIVERABLE GUIDANCE:" not in human_bundle
+
+    assert "FILE DELIVERABLE GUIDANCE:" in execution_bundle
+    assert "CONVERSATION ENVELOPE:" not in execution_bundle
+    assert "AUTHORITATIVE COMMUNICATION SNAPSHOT (JSON):" not in execution_bundle
 
 
 def test_template_variable_metadata_includes_current_time_variables(isolated_db):
@@ -2880,6 +2944,243 @@ async def test_run_turn_human_chat_can_chain_cli_discovery_before_final_answer(i
     second_action = json.loads(detail["steps"][1]["parsed_action"])
     assert first_action["command"] == "help"
     assert second_action["command"] == "runtime"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_scope_change_clarifies_before_replacing_active_work(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    old_task = db.create_task(
+        title="Write API brief",
+        description="Draft the API brief for the current release.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, old_task, x=desk_x, y=desk_y)
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Instead of the API brief, should this become a launch memo, or do you want to keep the brief and add a memo too?",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"clarify","intent":"work","msg":"Do you want me to replace the current API brief with a launch memo, or keep the brief and create the memo as separate follow-up work?",'
+                '"th":"clarify whether the active task should be replaced"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Instead of the API brief, should this become a launch memo, or do you want to keep the brief and add a memo too?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+            "task_id": old_task.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert outcome.result["trigger_requests"][0]["trigger_type"] == "activity_resumed"
+    assert outcome.result["trigger_requests"][0]["task_id"] == old_task.id
+
+    tasks = db.list_tasks(assigned_to=agent.id)
+    assert len(tasks) == 1
+    assert tasks[0].id == old_task.id
+    assert tasks[0].status == "active"
+
+    active = _active_activity(agent.id)
+    assert active is not None
+    assert active.kind == "work"
+    assert active.task_id == old_task.id
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "work"]
+    assert thread[-1].content == (
+        "Do you want me to replace the current API brief with a launch memo, or keep the brief and create the memo as separate follow-up work?"
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "clarify(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_explicit_reprioritization_pauses_old_task_and_accepts_new_work(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    old_task = db.create_task(
+        title="Write API brief",
+        description="Draft the API brief for the current release.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, old_task, x=desk_x, y=desk_y)
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Stop the API brief for now. It is lower priority. Switch immediately to a launch memo for tomorrow's meeting.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"Understood. I am pausing the API brief and switching to the launch memo now.",'
+                '"commit":"work","data":{"task":{"title":"Write launch memo","desc":"Draft the launch memo for tomorrow\\u2019s meeting."}},'
+                '"th":"replace the active task with the higher-priority launch memo"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Stop the API brief for now. It is lower priority. Switch immediately to a launch memo for tomorrow's meeting.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+            "task_id": old_task.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+
+    tasks = db.list_tasks(assigned_to=agent.id)
+    assert len(tasks) == 2
+    refreshed_old_task = db.get_task(old_task.id)
+    assert refreshed_old_task is not None
+    assert refreshed_old_task.status == "pending"
+    assert refreshed_old_task.status_note == "Paused for newer accepted work."
+
+    newest_task = next(task for task in tasks if task.id != old_task.id)
+    assert newest_task.title == "Write launch memo"
+    assert newest_task.status == "accepted"
+
+    resume_request = next(
+        item for item in outcome.result["trigger_requests"] if item["trigger_type"] == "activity_resumed"
+    )
+    assert resume_request["task_id"] == newest_task.id
+
+    active = _active_activity(agent.id)
+    assert active is not None
+    assert active.kind == "work"
+    assert active.task_id == newest_task.id
+    assert _paused_work(agent.id, old_task.id) is not None
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "work"]
+    assert thread[-1].content == "Understood. I am pausing the API brief and switching to the launch memo now."
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "accept(work)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_cancel_active_task_without_replacement(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    active_task = db.create_task(
+        title="Write API brief",
+        description="Draft the API brief for the current release.",
+        assigned_to=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(agent, active_task, x=desk_x, y=desk_y)
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Cancel the API brief. Do not replace it with anything else.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"cancel","intent":"work","msg":"Understood. I am cancelling the API brief and I will not replace it with new work.",'
+                '"th":"close the active task per the human request"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Cancel the API brief. Do not replace it with anything else.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+            "task_id": active_task.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert outcome.result["trigger_requests"] == []
+
+    refreshed_task = db.get_task(active_task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "abandoned"
+    assert refreshed_task.status_note == "Cancelled by human request."
+
+    assert _active_activity(agent.id) is None
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.status == "idle"
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "work"]
+    assert thread[-1].content == "Understood. I am cancelling the API brief and I will not replace it with new work."
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "cancel(none)"
 
 
 @pytest.mark.asyncio

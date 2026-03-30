@@ -13,7 +13,7 @@ Choose the smallest valid object for this turn. Omit unrelated fields.
 Do not combine conversation fields and CLI fields in the same object.
 
 {{if trigger.type = 'human_chat'}}
-ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer
+ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer
 
 Use one of these shapes:
 
@@ -30,6 +30,11 @@ For accept:
 For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
+```
+
+For cancel:
+```json
+{"act":"cancel","intent":"work","msg":"string","th":"string"}
 ```
 
 For defer:
@@ -200,9 +205,9 @@ FIELD NOTES
 - `intent` describes what the incoming message is about.
 - `th` is a short admin-visible note.
 - Include `commit` only when this turn is creating or changing a durable commitment.
-- For `reply`, `clarify`, `decline`, and `observe`, leave `commit` out.
+- For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `commit` out.
 - Include `data` only when the chosen act actually needs it.
-- For `reply`, `clarify`, `decline`, and `observe`, leave `data` out unless there is a real reason to include it.
+- For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `data` out unless there is a real reason to include it.
 - For `accept` work on an existing assignment, you do not need to invent a new task title or description.
 - `status` belongs in `intent`, never in `act`.
 - Do not invent keys that are not listed here.
@@ -213,6 +218,10 @@ TURN GUIDANCE
 - A plain status reply should describe current work naturally without trying to restate the underlying work commitment in JSON.
 - `intent="status"` means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use BossMod CLI only if the snapshot still lacks the needed fact.
 - For `watchdog_status_ping`, reply with a concise current status update. The runtime will keep the task active and queue work resumption after your reply.
+- When a human changes or redirects work while another task is active, first decide whether they clearly want to replace the active commitment.
+- If the replacement is explicit, accept the new work; the runtime will pause the older task automatically.
+- If it is unclear whether the current task should continue or be replaced, ask a clarifying question before switching tasks.
+- If a human clearly says to stop the current active task without replacing it, use `cancel`.
 - Accepting work normally means `commit="work"`.
 - Accepting a meeting means `commit="meeting"` and `data.dst`.
 - Accepting a break means `commit="break"` and `data.dst="break"`.

@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 logger = logging.getLogger(__name__)
 
 
-DecisionType = Literal["answer", "accept", "clarify", "decline", "defer", "observe"]
+DecisionType = Literal["answer", "accept", "clarify", "cancel", "decline", "defer", "observe"]
 IntentKind = Literal[
     "question",
     "status_request",
@@ -35,6 +35,7 @@ _ACT_TO_DECISION = {
     "observe": "observe",
     "accept": "accept",
     "clarify": "clarify",
+    "cancel": "cancel",
     "decline": "decline",
     "defer": "defer",
 }
@@ -71,7 +72,7 @@ _SHARED_CONVERSATION_TRIGGER_TYPES = {
 }
 
 _ALLOWED_ACTS_BY_TRIGGER = {
-    "human_chat": ("reply", "accept", "clarify", "decline", "defer"),
+    "human_chat": ("reply", "accept", "clarify", "cancel", "decline", "defer"),
     "peer_message": ("reply", "accept", "clarify", "decline"),
     "task_assigned": ("accept", "clarify", "defer", "decline"),
     "watchdog_status_ping": ("reply",),
@@ -100,7 +101,7 @@ class ConversationDecision(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ConversationDecision":
-        if self.decision in {"answer", "clarify", "decline", "observe"} and self.commitmentKind != "none":
+        if self.decision in {"answer", "clarify", "cancel", "decline", "observe"} and self.commitmentKind != "none":
             raise ValueError(f'"{self.decision}" decisions must use commitmentKind="none"')
         if self.decision == "observe":
             if self.reply not in (None, ""):
@@ -363,6 +364,12 @@ def validate_decision_for_trigger(
         "watchdog_status_ping",
     } and decision.decision != "observe" and not (decision.reply and decision.reply.strip()):
         return 'conversation turns require a non-empty "reply" unless you choose "observe"'
+
+    if decision.decision == "cancel":
+        if active_task_id is None:
+            return 'cancel is only valid when there is an active task to close'
+        if decision.intentKind != "work_request":
+            return 'cancel decisions must use intentKind="work_request"'
 
     if trigger_type in {"human_chat", "peer_message", "task_assigned"} and decision.decision == "observe":
         return '"observe" is only valid for shared meeting/channel conversation turns'

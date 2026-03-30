@@ -89,7 +89,7 @@ These are the most important additions beyond the current prompt audit work.
 | H-06 | User asks for unsupported/out-of-scope action | Agent declines or clarifies cleanly | Optional | Missing |
 | H-07 | User asks for a factual status and snapshot is insufficient | Agent uses one or more CLI lookups, then final conversation decision | Yes | Covered |
 | H-08 | User asks for current status mid-task | Agent answers in chat, then work resumes | Optional | Covered |
-| H-09 | User changes scope mid-task | Agent clarifies whether to replace the active commitment or continue current work | Optional | Missing |
+| H-09 | User changes scope mid-task | Agent clarifies whether to replace the active commitment or continue current work | Optional | Covered |
 | H-10 | User asks about recently completed work vs current active work | Agent distinguishes active work from historical completed work | Optional | Missing |
 
 ### 4.2 Human Work Lifecycle
@@ -102,7 +102,8 @@ These are the most important additions beyond the current prompt audit work.
 | W-05 | Agent becomes blocked mid-task | Agent uses blocked path and reports blocker naturally | Optional | Partial |
 | W-06 | Human asks status while task is active | Agent answers and work resumes without losing task | Optional | Covered |
 | W-07 | Human requests revisions after completion | Agent creates or resumes follow-up work on the existing deliverable | Optional | Missing |
-| W-08 | Human cancels or deprioritizes task mid-flight | Agent pauses/abandons/replaces commitment correctly | Optional | Missing |
+| W-08 | Human deprioritizes or replaces a task mid-flight | Agent pauses the older task and replaces it with the new active commitment correctly | Optional | Covered |
+| W-09 | Human cancels an active task outright | Agent abandons or otherwise closes the current commitment correctly without inventing replacement work | Optional | Covered |
 
 ### 4.3 Decision-Turn CLI and Tool Logic
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -183,6 +184,12 @@ These are the most important additions beyond the current prompt audit work.
 | N-04 | Decision response missing required reply text | Validation fails and repairs or errors | No | Covered |
 | N-05 | Agent overuses CLI when snapshot suffices | Prompt should discourage; tests should assert bounded lookup behavior | Optional | Missing |
 
+### 4.11 Prompt Budget and Context Discipline
+| ID | Scenario | Expected Behavior | CLI/Tools | Status |
+| --- | --- | --- | --- | --- |
+| P-01 | Representative prompt bundles stay under a bounded instruction/context budget | Standard decision and execution turns remain under 3k prompt tokens in preview/test fixtures | No | Covered |
+| P-02 | Dynamic prompt blocks only appear when relevant | Conversation snapshot/envelope/file guidance and similar blocks render conditionally instead of appearing on every turn | No | Covered |
+
 ## 5. What Else Should Be Added Beyond Your Two Big Scenarios?
 Yes. The other big missing areas are:
 
@@ -231,6 +238,8 @@ These automated checks should pass in CI before treating the prompt layer as val
     *   Runtime contract rendering tests
     *   Prompt health lint tests
     *   Prompt example round-trip parsing tests
+    *   Representative prompt bundles stay under the instruction/context budget
+    *   Dynamic prompt blocks render only when relevant to the turn
 
 2.  Core interaction suite
     *   human work request acceptance
@@ -272,7 +281,6 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | H-09, W-08 | Human scope change / reprioritization while a task is active | Real operators will redirect work mid-flight | Agent Runtime + Prompting/Contracts |
 | P1 | W-07 | Revision loop after deliverable completion | Essential for real document workflows | Agent Runtime |
 | P1 | W-05 | Human-requested task becomes blocked and reports the blocker cleanly | Key for real work management outside delegation chains | Agent Runtime |
 | P1 | A-01, A-04 | AI-to-AI greeting/move/meeting conversational flows | Good conversational realism and meeting coordination coverage | Prompting/Contracts |
@@ -308,9 +316,9 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add human **scope-change / reprioritization** coverage for `H-09` and `W-08`.
-2.  Add **revision loop** coverage for `W-07`.
-3.  Add direct human **blocked-task** coverage for `W-05`.
+1.  Add **revision loop** coverage for `W-07`.
+2.  Add direct human **blocked-task** coverage for `W-05`.
+3.  Add AI-to-AI **greeting / move / meeting** conversation coverage for `A-01` and `A-04`.
 
 ## 11. Bottom Line
 The matrix is now actionable:
