@@ -76,6 +76,7 @@ RULES:
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
   - mtg + mode="remote": require data.aid
+  - idle: use when there is no useful next execution step in this turn; if work is still active, idle means yield and wait for the next trigger, not finish the task
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
@@ -115,5 +116,6 @@ CLI NOTES:
 
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
+  {"act":"idle","th":"waiting on Taylor's delegated findings before summarizing"}
   {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

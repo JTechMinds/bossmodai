@@ -41,7 +41,7 @@ import db
 
 logger = logging.getLogger(__name__)
 
-# Actions that end the multi-turn loop and return agent to idle
+# Actions that end the current multi-turn loop
 TERMINAL_ACTIONS = {"idle", "complete", "blocked", "delegated", "abandoned"}
 
 # camelCase destination names → internal room IDs
@@ -1168,8 +1168,17 @@ async def _handle_idle(
     action: dict[str, Any],
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Agent has nothing to do."""
+    """Yield the current turn without changing the active work commitment."""
     active = activity_runtime.get_active_activity(agent.id)
+    if active and active.kind == "work":
+        activity_runtime.refresh_agent_status(agent.id)
+        detail = f'{agent.name} is waiting on "{active.title or "the current task"}"'
+        return {
+            "event": "status_changed",
+            "detail": detail,
+            "agent_name": agent.name,
+        }
+
     if active and active.kind != "work":
         activity_runtime.complete_activity(active.id, detail=active.detail)
     activity_runtime.refresh_agent_status(agent.id)

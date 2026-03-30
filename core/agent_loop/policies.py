@@ -52,6 +52,7 @@ _POLICIES: dict[str, TriggerPolicy] = {
     ),
     "activity_resumed": TriggerPolicy(
         trigger_type="activity_resumed",
+        allow_idle_with_active_work=True,
     ),
     "social": TriggerPolicy(
         trigger_type="social",

@@ -384,6 +384,7 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "cli + bwrite: require data.body as a short manifest with path + goal entries" in contract
     assert "cli + repsect: require data.body as the literal new section body" in contract
     assert "cli + rewsect: require data.body as a short rewrite goal" in contract
+    assert "idle: use when there is no useful next execution step in this turn" in contract
     assert "short exact text -> write/append with body" in contract
     assert "multiple generated files -> bwrite with a short manifest body" in contract
     assert "inspect markdown structure -> ol <path>" in contract
@@ -1058,9 +1059,15 @@ def test_execute_bm_cli_audits_virtual_command_lifecycle(isolated_db):
 
 
 @pytest.mark.asyncio
-async def test_work_completion_requires_requested_saved_file(isolated_db):
+async def test_work_completion_requires_requested_saved_file(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Please write the avocado whitepaper and save it as avocado_white.md.",
+        message_type="human",
+    )
     task = db.create_task(
         title="Write avocado whitepaper",
         description="Create a concise 2-3 sentence whitepaper on avocado growth and save it as avocado_white.md.",
@@ -1072,50 +1079,112 @@ async def test_work_completion_requires_requested_saved_file(isolated_db):
         source_channel="chat",
         notification_policy="completion_blocked",
     )
-    activity_runtime.activate_work_activity(
-        agent.id,
-        task,
-        title=task.title,
-        detail=task.description,
-    )
-    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="work_active")
+    state = _activate_work(agent, task, x=desk_x, y=desk_y)
 
-    work_result = await execute_action(
-        {"action": "work", "output": "Drafted a concise avocado whitepaper."},
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"work","data":{"out":"Drafted a concise avocado whitepaper."},"th":"draft the requested whitepaper"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"drafted avocado whitepaper",'
+                '"msg":"Finished the avocado whitepaper and saved it for you."},'
+                '"th":"try to complete the task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"cli","data":{"cmd":"write /me/avocado_white.md","body":"Avocado trees thrive in warm climates."},'
+                '"th":"save the required file"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"drafted avocado whitepaper",'
+                '"msg":"Finished the avocado whitepaper and saved it for you."},'
+                '"th":"complete the task now that the file exists"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
         agent,
         state,
-    )
-    assert work_result["event"] == "agent_updated"
-    assert work_result["missing_deliverables"] == [{"type": "file", "path": "/me/avocado_white.md", "description": None}]
-
-    blocked_complete = await execute_action(
-        {"action": "complete", "summary": "Drafted and saved the avocado whitepaper."},
-        agent,
-        state,
-    )
-    assert blocked_complete["event"] == "world_feedback"
-    assert blocked_complete["missing_deliverables"] == [{"type": "file", "path": "/me/avocado_white.md", "description": None}]
-
-    write_result = await execute_action(
         {
-            "action": "bm_cli",
-            "command": "write /me/avocado_white.md",
-            "content": "Avocado trees thrive in warm climates.",
+            "type": "activity_resumed",
+            "content": 'Resume work on "Write avocado whitepaper".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+            "source_message_id": human_msg.id,
         },
-        agent,
-        state,
     )
-    assert write_result["event"] == "bm_cli_result"
 
-    completed = await execute_action(
-        {"action": "complete", "summary": "Drafted and saved the avocado whitepaper."},
-        agent,
-        state,
-    )
-    assert completed["event"] == "status_changed"
-    assert "completed task" in completed["detail"]
-    assert completed["chat_notification"]["kind"] == "completion"
-    assert completed["chat_notification"]["human_visible"] is True
+    assert outcome.trigger_status == "completed"
+    assert outcome.result["event"] == "status_changed"
+    assert outcome.result["chat_message"]["content"] == "Finished the avocado whitepaper and saved it for you."
+    assert outcome.result["chat_notification"]["kind"] == "completion"
+    assert outcome.result["chat_notification"]["human_visible"] is True
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "complete"
+    assert refreshed_task.completion_summary == "drafted avocado whitepaper"
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == "Finished the avocado whitepaper and saved it for you."
+
+    api_messages = await get_agent_messages(agent.id, limit=10)
+    system_messages = [item for item in api_messages if item["message_type"] == "system"]
+    assert len(system_messages) == 1
+    assert system_messages[0]["desk_path"] == "/me/avocado_white.md"
+
+    desk_payload = await get_agent_desk(agent.id, path="/me/avocado_white.md")
+    assert desk_payload["kind"] == "file"
+    assert desk_payload["artifact"]["virtual_path"] == "/me/avocado_white.md"
+    assert "Avocado trees thrive in warm climates." in desk_payload["content"]
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "work -> complete -> bm_cli -> complete"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    blocked_step = json.loads(detail["steps"][1]["result"])
+    assert blocked_step["event"] == "world_feedback"
+    assert blocked_step["missing_deliverables"] == [
+        {"type": "file", "path": "/me/avocado_white.md", "description": None}
+    ]
 
 
 @pytest.mark.asyncio
@@ -2637,7 +2706,76 @@ async def test_run_turn_peer_message_grounded_question_uses_shared_communication
 
 
 @pytest.mark.asyncio
-async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_db, monkeypatch):
+async def test_activity_resumed_idle_keeps_active_work_open(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    task = db.create_task(
+        title="Coordinate competitor launch research",
+        description="Delegate the investigation and wait for Taylor's report.",
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    state = _activate_work(agent, task, x=desk_x, y=desk_y)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content='{"act":"idle","th":"waiting for Taylor to finish the delegated investigation"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Coordinate competitor launch research".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+        },
+    )
+
+    assert outcome.result["event"] == "status_changed"
+    assert outcome.result["detail"] == 'Pat is waiting on "Coordinate competitor launch research"'
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "active"
+
+    refreshed_state = db.get_agent_state(agent.id)
+    assert refreshed_state is not None
+    assert refreshed_state.status == "work_active"
+
+    active = _active_activity(agent.id)
+    assert active is not None
+    assert active.kind == "work"
+    assert active.task_id == task.id
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_human(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -2692,9 +2830,7 @@ async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_d
         ),
         client.LLMResponse(
             content=(
-                '{"act":"done","data":{"sum":"delegated the investigation",'
-                '"msg":"I delegated the competitor launch investigation to Taylor and the handoff is in progress."},'
-                '"th":"close the coordination task"}'
+                '{"act":"idle","th":"wait for Taylor to finish the delegated investigation"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -2716,6 +2852,27 @@ async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_d
                 '{"act":"done","data":{"sum":"researched competitor launches",'
                 '"msg":"I finished the competitor launch investigation and summarized the useful takeaways."},'
                 '"th":"report completion to Pat"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"status","msg":"Thanks. I have the findings and I am sending the summary to the human now.",'
+                '"th":"acknowledge Taylor and resume the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"coordinated the competitor launch research",'
+                '"msg":"Taylor finished the competitor launch investigation. I reviewed the takeaways and the summary is ready for you."},'
+                '"th":"report the finished coordination back to the human"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -2772,8 +2929,17 @@ async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_d
 
     refreshed_parent = db.get_task(parent.id)
     assert refreshed_parent is not None
-    assert refreshed_parent.status == "complete"
-    assert refreshed_parent.completion_summary == "delegated the investigation"
+    assert refreshed_parent.status == "accepted"
+    assert refreshed_parent.completion_summary is None
+
+    refreshed_pm_state = db.get_agent_state(pm.id)
+    assert refreshed_pm_state is not None
+    assert refreshed_pm_state.status == "work_active"
+
+    pm_active = _active_activity(pm.id)
+    assert pm_active is not None
+    assert pm_active.kind == "work"
+    assert pm_active.task_id == parent.id
 
     worker_tasks = db.list_tasks(assigned_to=worker.id)
     assert len(worker_tasks) == 1
@@ -2819,16 +2985,46 @@ async def test_run_turn_end_to_end_delegation_reports_back_to_manager(isolated_d
     assert refreshed_child.status == "complete"
     assert refreshed_child.completion_summary == "researched competitor launches"
 
+    pm_reply_outcome = await _run_trigger_request(completion_update)
+    worker_ack = next(
+        item
+        for item in pm_reply_outcome.result["trigger_requests"]
+        if item["agent_id"] == worker.id and item["trigger_type"] == "peer_message"
+    )
+    assert worker_ack["payload"]["content"] == (
+        "Thanks. I have the findings and I am sending the summary to the human now."
+    )
+
+    pm_final_resume = next(
+        item
+        for item in pm_reply_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+    pm_final_outcome = await _run_trigger_request(pm_final_resume)
+
+    refreshed_parent = db.get_task(parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.status == "complete"
+    assert refreshed_parent.completion_summary == "coordinated the competitor launch research"
+
     manager_thread = db.get_human_chat_thread(pm.id, limit=20)
     manager_contents = [msg.content for msg in manager_thread]
     assert "Please coordinate the competitor launch research and delegate the investigation to Taylor." in manager_contents
     assert "I will coordinate the research handoff and get Taylor started." in manager_contents
-    assert "I delegated the competitor launch investigation to Taylor and the handoff is in progress." in manager_contents
+    assert (
+        "Taylor finished the competitor launch investigation. I reviewed the takeaways and the summary is ready for you."
+        in manager_contents
+    )
 
     pm_worker_thread = db.get_agent_direct_thread(worker.id, pm.id, limit=20)
     pm_worker_contents = [msg.content for msg in pm_worker_thread]
     assert "I will take the investigation and report back with the findings." in pm_worker_contents
     assert "I finished the competitor launch investigation and summarized the useful takeaways." in pm_worker_contents
+    assert "Thanks. I have the findings and I am sending the summary to the human now." in pm_worker_contents
+
+    assert pm_final_outcome.result["chat_message"]["content"] == (
+        "Taylor finished the competitor launch investigation. I reviewed the takeaways and the summary is ready for you."
+    )
 
     assert _active_activity(pm.id) is None
     assert _active_activity(worker.id) is None

@@ -44,17 +44,16 @@ These are the most important additions beyond the current prompt audit work.
 
 **What is still missing for confidence:**
 
-*   One end-to-end acceptance test that covers the full chain:
-    `human -> PM -> worker -> PM -> human`
-    Current automated coverage now includes the supported subchain
-    `human -> PM -> worker -> PM` via
-    `test_run_turn_end_to_end_delegation_reports_back_to_manager`.
 *   Prompt scenarios for:
     *   PM decides to delegate rather than do the work directly
-    *   worker clarifies with PM, not with the human
-    *   worker completes and reports to PM
-    *   PM aggregates and reports to human
     *   PM reassigns if worker declines or blocks
+
+**Automated happy-path coverage now exists for:**
+
+*   `human -> PM -> worker -> PM -> human` via
+    `test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_human`
+*   worker clarification routing to PM rather than the human
+*   worker completion routing back to PM
 
 ### B. Scheduled / Recurring Work
 **Examples:** Post to social media every morning, check email periodically, weekly scrum, periodic check-in with you.
@@ -98,8 +97,8 @@ These are the most important additions beyond the current prompt audit work.
 | --- | --- | --- | --- | --- |
 | W-01 | Human requests a task, agent accepts | Task is created, activity starts, chat reply is sent | Optional | Covered |
 | W-02 | Agent works on a long file deliverable | Agent uses managed writer / `write <path>` flow | Yes | Covered |
-| W-03 | Agent completes a human-requested task | Agent marks done and sends a requester-facing completion message | Optional on done; often yes during work | Partial |
-| W-04 | Agent attempts done before required file deliverable exists | Runtime should block completion and direct agent to save file first | Yes | Partial |
+| W-03 | Agent completes a human-requested task | Agent marks done and sends a requester-facing completion message | Optional on done; often yes during work | Covered |
+| W-04 | Agent attempts done before required file deliverable exists | Runtime should block completion and direct agent to save file first | Yes | Covered |
 | W-05 | Agent becomes blocked mid-task | Agent uses blocked path and reports blocker naturally | Optional | Partial |
 | W-06 | Human asks status while task is active | Agent answers and work resumes without losing task | Optional | Covered |
 | W-07 | Human requests revisions after completion | Agent creates or resumes follow-up work on the existing deliverable | Optional | Missing |
@@ -133,7 +132,7 @@ These are the most important additions beyond the current prompt audit work.
 | D-04 | Assignee defers delegated work | Deferred assignment preserves durable work commitment | No | Partial |
 | D-05 | Assignee declines delegated work | Decline is communicated clearly to delegator/owner | No | Partial |
 | D-06 | Worker completes and reports back to delegator | Completion routes to delegator/owner appropriately | Optional | Covered |
-| D-07 | PM delegates to worker and then summarizes back to human | PM acts as aggregation/reporting layer | Optional | Missing |
+| D-07 | PM delegates to worker and then summarizes back to human | PM acts as aggregation/reporting layer | Optional | Covered |
 | D-08 | Worker blocks and PM reassigns to another worker | Escalation and reassignment loop works end-to-end | Optional | Missing |
 
 ### 4.6 Shared Channels and Meetings
@@ -153,7 +152,7 @@ These are the most important additions beyond the current prompt audit work.
 | F-02 | Multiple deliverables | Agent uses `bwrite` or equivalent bounded multi-file flow | Yes | Covered |
 | F-03 | Saved file becomes visible in Desk | Artifact is registered and browsable | Yes | Covered |
 | F-04 | Human can read the saved document after completion | Desk/API returns file contents | Yes | Covered |
-| F-05 | Agent claims done but file is missing | Completion should be blocked and prompt should redirect to file save | Yes | Partial |
+| F-05 | Agent claims done but file is missing | Completion should be blocked and prompt should redirect to file save | Yes | Covered |
 | F-06 | Human asks for summary plus file | Agent saves file and optionally sends summary separately | Yes | Missing |
 
 ### 4.8 Observability and Status
@@ -163,7 +162,7 @@ These are the most important additions beyond the current prompt audit work.
 | O-02 | View recent work artifacts | Recent artifacts are visible in status surfaces | Yes | Covered |
 | O-03 | Watchdog pings quiet active task | Task gets status ping trigger | No | Covered |
 | O-04 | Agent answers watchdog with useful status and continues work | Status is visible and task remains active/resumes | Optional | Partial |
-| O-05 | Human sees completion reply and artifact together | Completion message and artifact visibility are aligned | Optional | Partial |
+| O-05 | Human sees completion reply and artifact together | Completion message and artifact visibility are aligned | Optional | Covered |
 
 ### 4.9 Scheduled / Recurring / Periodic Work
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -219,10 +218,10 @@ These are the fastest high-signal end-to-end checks to run in the product.
 | SM-02 | H-04, W-01 | Ask an agent to write a paper | Agent accepts, a task is created, work becomes active, reply is human-readable | `test_run_turn_human_chat_work_request_creates_task_and_accepts_assignment` |
 | SM-03 | H-08, W-06 | While that task is active, ask “what’s the status?” | Agent answers in chat, then work resumes instead of losing the active task | `test_run_turn_status_reply_schedules_activity_resume_for_active_work` |
 | SM-04 | O-01 | Check the agent’s current task from the product/runtime tools | Current task view matches the active work item | `test_execute_bm_cli_exposes_expanded_read_commands` |
-| SM-05 | W-02, F-01, F-03, F-04 | Let the agent finish a file-backed document task and then open the document | File is saved, visible in Desk, readable in Desk, and tied to the task/artifact record | `test_activity_resumed_managed_writer_saves_long_file_and_commits_once`, `test_bm_cli_write_registers_artifact_and_desk_view_can_open_it` |
-| SM-06 | W-03, O-05 | Confirm the agent sends a completion follow-up automatically to the human requester | Human sees a natural completion message and can access the deliverable | `test_complete_action_can_reply_to_human_requester_when_follow_up_message_is_provided` |
+| SM-05 | W-02, F-01, F-03, F-04, F-05 | Let the agent finish a file-backed document task and then open the document | File is saved, visible in Desk, readable in Desk, and tied to the task/artifact record; premature `done` is corrected in-turn | `test_work_completion_requires_requested_saved_file`, `test_activity_resumed_managed_writer_saves_long_file_and_commits_once`, `test_bm_cli_write_registers_artifact_and_desk_view_can_open_it` |
+| SM-06 | W-03, O-05 | Confirm the agent sends a completion follow-up automatically to the human requester | Human sees a natural completion message and can access the deliverable | `test_work_completion_requires_requested_saved_file`, `test_complete_action_can_reply_to_human_requester_when_follow_up_message_is_provided` |
 | SM-07 | A-02, A-05 | Have one agent message another directly | Target agent receives and answers peer communication cleanly | `test_run_turn_peer_message_grounded_question_uses_shared_communication_lane`, `test_message_action_routes_to_agent_by_explicit_id` |
-| SM-08 | D-01, D-02, D-03, D-06, D-07 | Ask a PM/product-manager agent for work that should be delegated to a worker and reported back up | PM delegates correctly, worker accepts/clarifies/completes, PM reports back to human | `test_run_turn_end_to_end_delegation_reports_back_to_manager` now covers `human -> PM -> worker -> PM`; PM-to-human synthesis is still the remaining gap |
+| SM-08 | D-01, D-02, D-03, D-06, D-07 | Ask a PM/product-manager agent for work that should be delegated to a worker and reported back up | PM delegates correctly, worker accepts/clarifies/completes, PM reports back to human | `test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_human` |
 
 ### 6.2 Automated Gate
 These automated checks should pass in CI before treating the prompt layer as validated for current features.
@@ -244,6 +243,7 @@ These automated checks should pass in CI before treating the prompt layer as val
     *   assignee clarification routing
     *   owner/requester lineage preservation
     *   end-to-end delegator handoff and worker report-back
+    *   PM aggregation/report-back to the human requester
 
 ## 7. Ownership Lanes
 To make the backlog actionable, scenarios should be assigned to lanes rather than left as generic “missing.”
@@ -265,8 +265,6 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.1 P0: Blockers Before Declaring Interaction Flows Ready
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P0 | D-07 | End-to-end manager delegation chain: `human -> PM -> worker -> PM -> human` | Highest-value real workflow; validates delegation, reporting, requester/owner semantics, and synthesis | Agent Runtime + Prompting/Contracts |
-| P0 | W-03, W-04, F-05 | File-backed task completion gate: required file exists before done, then requester gets auto follow-up | Adjacent to the current broader-suite deliverable completion failure and central to paper/report workflows | Agent Runtime |
 | P0 | C-03, C-04 | Multi-step decision-turn CLI lookup test, including CLI command discovery before final answer | This is now allowed by the contract and should be protected by tests | Prompting/Contracts + Agent Runtime |
 | P0 | O-04 | Watchdog ping answered with useful status and work continuation | Quiet-task recovery is core to long-running agents | Agent Runtime |
 
@@ -310,11 +308,10 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Extend delegation coverage from `human -> PM -> worker -> PM` to the full end-to-end **manager delegation chain** acceptance test and smoke script: `human -> PM -> worker -> PM -> human`.
-2.  Add a **required-file completion** acceptance test covering save -> done -> human follow-up -> Desk view.
-3.  Add a **multi-step decision-turn CLI** acceptance test.
-4.  Add a **watchdog status ping recovery** acceptance test.
-5.  Re-run the matrix and update each affected row from `Partial/Missing` to `Covered` only after both prompt-bundle review and runtime acceptance testing pass.
+1.  Add a **multi-step decision-turn CLI** acceptance test.
+2.  Add a **watchdog status ping recovery** acceptance test.
+3.  Add blocked/decline **PM reassignment** acceptance coverage for `D-08`.
+4.  Re-run the matrix and update each affected row from `Partial/Missing` to `Covered` only after both prompt-bundle review and runtime acceptance testing pass.
 
 ## 11. Bottom Line
 The matrix is now actionable:

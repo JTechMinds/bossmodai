@@ -89,8 +89,8 @@ async def run_turn(
 
     Loops calling the LLM until the agent produces a terminal action
     (idle/complete/blocked/delegated/abandoned), walks somewhere, or
-    the Guardian intervenes. Every exit path sets the agent to idle
-    (unless in_transit) and updates last_active_at.
+    the Guardian intervenes. Every exit path refreshes the visible runtime
+    status and updates last_active_at.
     """
     start = time.monotonic()
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
@@ -668,8 +668,10 @@ async def run_turn(
             )
         )
 
-        # Terminal action — loop ends
-        if action_name in TERMINAL_ACTIONS:
+        # Terminal lifecycle actions only end the turn when they succeeded.
+        # Validation-style feedback (for example missing deliverables before
+        # `done`) should keep the same turn alive so the model can correct it.
+        if action_name in TERMINAL_ACTIONS and result.get("event") not in {"world_feedback", "agent_error"}:
             break
 
         # Walk action — loop ends (movement is async via simulation)
