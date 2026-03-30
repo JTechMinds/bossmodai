@@ -81,6 +81,8 @@ RULES:
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
   - ordinary coworker chat uses msg; durable agent-to-agent work uses assign
+  - use assign for the delegation handoff itself; requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
+  - after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update
   - if work is location-bound, walk first and work second
   - if current deliverables require files, satisfy them with cli before done
   - human-requested or manager-requested tasks should usually include a short natural data.msg when you finish, block, delegate, or abandon them
@@ -116,6 +118,7 @@ CLI NOTES:
 
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
+  {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"idle","th":"waiting on Taylor's delegated findings before summarizing"}
   {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

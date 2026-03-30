@@ -41,6 +41,7 @@ const AgentContext = (() => {
             BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind)
         }`;
         label.textContent = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
+        renderAgentInfoBar();
     }
 
     // ─── Select / Deselect ───
@@ -326,9 +327,40 @@ const AgentContext = (() => {
 
     // ─── Toolbar management ───
 
+    function renderAgentInfoBar() {
+        const bar = document.getElementById('agent-info-bar');
+        if (!bar) return;
+        if (!selectedAgent) {
+            bar.classList.add('hidden');
+            return;
+        }
+        const esc = BossModUtils.escapeHtml;
+        const status = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
+        const dotCls = BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
+        const role = selectedAgent.role || 'No role assigned';
+        const taskId = selectedAgent.boundTaskId;
+
+        bar.innerHTML = `
+            <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-4 min-w-0 text-[11px]">
+                    <span class="font-semibold text-xs text-bm-text truncate" style="color: ${esc(selectedAgent.color || '#3b82f6')}">${esc(selectedAgent.name)}</span>
+                    <span class="text-bm-muted truncate" title="Role">${esc(role)}</span>
+                </div>
+                <div class="flex items-center gap-3 shrink-0 text-[11px]">
+                    ${taskId ? `<span class="text-bm-muted">Task: <span class="font-medium text-bm-text">${esc(taskId.slice(0, 8))}</span></span>` : '<span class="text-bm-muted">No active task</span>'}
+                    <span class="inline-flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full ${dotCls}"></span>
+                        <span class="text-bm-muted">${esc(status)}</span>
+                    </span>
+                </div>
+            </div>`;
+        bar.classList.remove('hidden');
+    }
+
     function showToolbar() {
         const toolbar = document.getElementById('agent-toolbar');
         toolbar.classList.remove('hidden');
+        renderAgentInfoBar();
 
         const gearBtn = toolbar.querySelector('#gear-menu-btn');
         const gearDropdown = toolbar.querySelector('#gear-menu-dropdown');
@@ -371,6 +403,7 @@ const AgentContext = (() => {
 
     function hideToolbar() {
         document.getElementById('agent-toolbar').classList.add('hidden');
+        document.getElementById('agent-info-bar')?.classList.add('hidden');
     }
 
     // ─── Sub-view management ───

@@ -8,6 +8,7 @@ from typing import Any
 import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import build_activity_resume_trigger
+from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.channel_rounds import begin_channel_response, finalize_channel_response, observe_channel_message
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.message_delivery import (
@@ -418,6 +419,15 @@ def _persist_reply(
         from_type = None
         if not target_id:
             return {}
+        assignment_follow_up = _assignment_follow_up_for_peer_message(
+            agent=agent,
+            trigger=trigger,
+            target_id=target_id,
+            reply=reply,
+            state=state,
+        )
+        if assignment_follow_up is not None:
+            return assignment_follow_up
         message_type = resolve_peer_message_type(state=state, trigger=trigger)
     else:
         return {}
@@ -459,6 +469,51 @@ def _persist_reply(
                 },
             }
         ]
+    }
+
+
+def _assignment_follow_up_for_peer_message(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    target_id: str,
+    reply: str,
+    state: AgentState,
+) -> dict[str, Any] | None:
+    """Route replies about a still-pending assignment back through task_assigned."""
+    if not trigger.get("assignment_follow_up"):
+        return None
+
+    task_id = trigger.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return None
+
+    task = db.get_task(task_id)
+    if task is None or task.status != "pending":
+        return None
+    if task.assigned_to != target_id:
+        return None
+    if task_assignment_reply_target(task, assignee_id=task.assigned_to)["agent_id"] != agent.id:
+        return None
+
+    message = db.create_message(
+        from_agent=agent.id,
+        to_agent=target_id,
+        content=reply.strip(),
+        message_type="work",
+        location_x=state.x,
+        location_y=state.y,
+    )
+    assigned_trigger = build_task_assigned_trigger(task)
+    assigned_trigger["payload"] = {
+        **assigned_trigger["payload"],
+        "content": message.content,
+        "from_agent": agent.id,
+        "from_name": agent.name,
+        "source_message_id": message.id,
+    }
+    return {
+        "trigger_requests": [assigned_trigger],
     }
 
 
@@ -539,8 +594,13 @@ def _persist_assignment_reply(
                         "from_agent": agent.id,
                         "from_name": agent.name,
                         "message_type": message.message_type,
+                        "assignment_follow_up": task.status == "pending",
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "task_description": task.description or "",
                         "source_message_id": message.id,
                     },
+                    "task_id": task.id,
                 }
             ]
         }

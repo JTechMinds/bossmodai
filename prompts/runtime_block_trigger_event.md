@@ -19,6 +19,9 @@ You have an accepted task commitment: "{{trigger.task_title}}".
 {{if trigger.task_description}}
 Task description: {{trigger.task_description}}
 {{end}}
+{{if trigger.content}}
+Latest note from [{{trigger.from_name}}]: {{trigger.content}}
+{{end}}
 {{elseif trigger.type = 'activity_resumed'}}
 {{if trigger.content}}
 {{trigger.content}}

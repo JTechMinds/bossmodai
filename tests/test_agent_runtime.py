@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 
 import db
+import db.ai_personalities as personality_store
 import db.connection as db_connection
 import db.settings as settings_store
 from db.agent_storage import normalize_agent_personal_storage
@@ -392,6 +393,8 @@ def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     assert "For self-owned reports or notes without project context, prefer `/me/...`." in contract
     assert "Prefer the existing folder structure when it is already visible." in contract
     assert "If the location is still ambiguous after inspection, clarify before saving." in contract
+    assert "If a requester asks you to get another teammate moving on work" not in contract
+    assert "Keep teammate autonomy, routing mechanics, and similar internal coordination caveats out of stakeholder-facing replies." not in contract
     assert 'current cwd is `"/me"`' not in contract
     assert "current cwd is `/" in contract
     assert "default save root for this turn is `/me`" in contract
@@ -424,10 +427,13 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "cli + repsect: require data.body as the literal new section body" in contract
     assert "cli + rewsect: require data.body as a short rewrite goal" in contract
     assert "idle: use when there is no useful next execution step in this turn" in contract
+    assert "use assign for the delegation handoff itself" in contract
+    assert "after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update" in contract
     assert "short exact text -> write/append with body" in contract
     assert "multiple generated files -> bwrite with a short manifest body" in contract
     assert "inspect markdown structure -> ol <path>" in contract
     assert 'ai-authored markdown section edit -> rewsect <path> "<heading>" with a short goal body' in contract
+    assert '{"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}' in contract
 
 
 def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
@@ -703,6 +709,174 @@ def test_apply_decision_task_assignment_clarify_replies_to_assigner(isolated_db)
     assert result["detail"] == "Taylor asked for clarification"
     assert result["trigger_requests"][0]["trigger_type"] == "peer_message"
     assert result["trigger_requests"][0]["agent_id"] == assigner.id
+    assert result["trigger_requests"][0]["task_id"] == task.id
+    assert result["trigger_requests"][0]["payload"]["assignment_follow_up"] is True
+    assert result["trigger_requests"][0]["payload"]["task_id"] == task.id
+
+
+def test_apply_decision_peer_reply_to_assignment_clarification_routes_back_as_task_assignment(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    delegator = db.create_agent(name="Michael", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    assignee = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(delegator.id, x=desk_x, y=desk_y, status="idle")
+    task = db.create_task(
+        title="Research foundation doc",
+        description="Draft the research foundation for the SLM edge white paper.",
+        assigned_to=assignee.id,
+        requester_id=delegator.id,
+        owner_id=delegator.id,
+        created_by=delegator.id,
+        source_channel="peer",
+        notification_policy="none",
+    )
+
+    result = apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "work_request",
+            "reply": "Tomorrow EOD works. Focus on the research foundation first and use the existing file path.",
+            "commitmentKind": "none",
+            "thought": "answer the assignment clarification",
+        },
+        delegator,
+        state,
+        {
+            "type": "peer_message",
+            "content": "Can you confirm the angle and due date?",
+            "from_agent": assignee.id,
+            "from_name": assignee.name,
+            "message_type": "social",
+            "assignment_follow_up": True,
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "chat",
+        },
+    )
+
+    assert result["detail"] == "Michael answered the request"
+    routed = result["trigger_requests"][0]
+    assert routed["agent_id"] == assignee.id
+    assert routed["trigger_type"] == "task_assigned"
+    assert routed["task_id"] == task.id
+    assert routed["payload"]["task_title"] == task.title
+    assert routed["payload"]["task_description"] == task.description
+    assert routed["payload"]["content"] == (
+        "Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_turn_assignment_clarification_follow_up_stays_in_assignment_lane(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    delegator = db.create_agent(name="Michael", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    assignee = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    delegator_state = db.update_agent_state(delegator.id, x=desk_x, y=desk_y, status="idle")
+    assignee_state = db.update_agent_state(assignee.id, x=desk_x, y=desk_y, status="idle")
+    task = db.create_task(
+        title="Research foundation doc",
+        description="Draft the research foundation for the SLM edge white paper.",
+        assigned_to=assignee.id,
+        requester_id=delegator.id,
+        owner_id=delegator.id,
+        created_by=delegator.id,
+        source_channel="peer",
+        notification_policy="none",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"clarify","intent":"work","msg":"Can you confirm the angle and due date?","th":"need assignment detail"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"reply","intent":"other","msg":"Tomorrow EOD works. Focus on the research foundation first and use the existing file path.","th":"answer the clarification"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"accept","intent":"work","msg":"Understood. I will produce the research foundation doc at the assigned path and report back when it is ready.","commit":"work","th":"accept the clarified assignment"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    first_outcome = await run_turn(
+        assignee,
+        assignee_state,
+        {
+            "type": "task_assigned",
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "from_agent": delegator.id,
+            "from_name": delegator.name,
+            "source_channel": "work",
+        },
+    )
+
+    clarify_trigger = first_outcome.result["trigger_requests"][0]
+    assert clarify_trigger["trigger_type"] == "peer_message"
+    assert clarify_trigger["payload"]["assignment_follow_up"] is True
+
+    reply_outcome = await run_turn(
+        delegator,
+        delegator_state,
+        {
+            **clarify_trigger["payload"],
+            "type": "peer_message",
+            "task_id": clarify_trigger["task_id"],
+            "source_channel": clarify_trigger["source_channel"],
+        },
+    )
+
+    follow_up_trigger = reply_outcome.result["trigger_requests"][0]
+    assert follow_up_trigger["trigger_type"] == "task_assigned"
+    assert follow_up_trigger["task_id"] == task.id
+    assert follow_up_trigger["payload"]["content"] == (
+        "Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
+    )
+
+    second_outcome = await run_turn(
+        assignee,
+        assignee_state,
+        {
+            **follow_up_trigger["payload"],
+            "type": "task_assigned",
+            "task_id": follow_up_trigger["task_id"],
+            "source_channel": follow_up_trigger["source_channel"],
+        },
+    )
+
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "accepted"
+    assert len(db.list_tasks(assigned_to=assignee.id)) == 1
+    assert second_outcome.result["detail"] == 'Taylor accepted work on "Research foundation doc"'
+
+    diagnostics = db.get_diagnostics(agent_id=assignee.id, limit=5)
+    assert diagnostics[0]["trigger_type"] == "task_assigned"
 
 
 @pytest.mark.asyncio
@@ -1851,6 +2025,71 @@ def test_decision_contract_renders_known_project_folder_guidance_from_context(is
     assert "For shared project work without an explicit path, save under `/projects/orchard/...`." in contract
     assert "project-folder lookup starts with `ls /projects/orchard`" in contract
     assert "default save root for this turn is `/projects/orchard/reports`" in contract
+
+
+def test_project_manager_personality_renders_coordination_ownership_guidance(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(
+        name="Michael",
+        role="Project Manager",
+        prompt_template=personality_store._PROJECT_MANAGER,
+        desk_x=desk_x,
+        desk_y=desk_y,
+    )
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            agent,
+            state,
+            trigger={
+                "type": "human_chat",
+                "content": "Can you get Taylor to write a whitepaper and manage him for me?",
+                "from_name": "Human Operator",
+                "source_channel": "chat",
+            },
+            contract_kind="decision",
+        )
+    )
+
+    system_prompt = context[0]["content"]
+    assert "Translate stakeholder asks into owned plans and decisions instead of acting like a passive relay" in system_prompt
+    assert "Never dump internal routing mechanics or teammate-autonomy caveats onto stakeholders" in system_prompt
+    assert "respond as the accountable coordinator" in system_prompt
+    assert "Default intelligently when the choice is low-risk and reversible." in system_prompt
+    assert "Ask clarifying questions when the missing answer materially changes scope, risk, ownership, or delivery." in system_prompt
+
+
+def test_task_assigned_trigger_renders_latest_assignment_note(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    assigner = db.create_agent(name="Michael", desk_x=desk_x, desk_y=desk_y)
+    assignee = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(assignee.id, x=desk_x, y=desk_y, status="idle")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            assignee,
+            state,
+            trigger={
+                "type": "task_assigned",
+                "task_id": "task-1",
+                "task_title": "Research foundation doc",
+                "task_description": "Draft the research foundation for the SLM edge white paper.",
+                "content": "Tomorrow EOD works. Focus on the research foundation first and use the existing file path.",
+                "from_agent": assigner.id,
+                "from_name": assigner.name,
+                "source_channel": "work",
+            },
+            contract_kind="decision",
+        )
+    )
+
+    trigger_block = context[-1]["content"]
+    assert '[Michael] assigned you a task: "Research foundation doc".' in trigger_block
+    assert (
+        "Latest note from [Michael]: Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
+        in trigger_block
+    )
 
 
 def test_communication_snapshot_includes_recent_artifact_paths(isolated_db):

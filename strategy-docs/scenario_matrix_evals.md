@@ -144,11 +144,13 @@ These are the most important additions beyond the current prompt audit work.
 | D-01 | Agent delegates a task to another agent | Child task created with correct requester/owner lineage | Optional | Covered |
 | D-02 | Assignee accepts delegated work | Assignee accepts existing assignment without inventing new task metadata | No in decision; yes later in execution | Covered |
 | D-03 | Assignee clarifies delegated work with delegator | Clarifying message goes to delegator, not to original human requester | No | Covered |
+| D-03b | Delegator answers an assignment clarification | Follow-up returns to the assignee as assignment context, not generic coworker chat | No | Covered |
 | D-04 | Assignee defers delegated work | Deferred assignment preserves durable work commitment | No | Covered |
 | D-05 | Assignee declines delegated work | Decline is communicated clearly to delegator/owner | No | Covered |
 | D-06 | Worker completes and reports back to delegator | Completion routes to delegator/owner appropriately | Optional | Covered |
 | D-07 | PM delegates to worker and then summarizes back to human | PM acts as aggregation/reporting layer | Optional | Covered |
 | D-08 | Worker blocks and PM reassigns to another worker | Escalation and reassignment loop works end-to-end | Optional | Covered |
+| D-09 | Human asks a PM to get another employee moving on work | PM accepts ownership of the coordination task, delegates internally, and avoids relaying internal coordination caveats back to the human | Optional | Covered |
 
 ### 4.6 Shared Channels and Meetings
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
