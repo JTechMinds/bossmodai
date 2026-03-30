@@ -33,7 +33,6 @@ from api.routes import (
     create_agent_meeting_session_message,
     create_personality as create_personality_route,
     create_task as create_task_route,
-    _file_explorer_command,
     get_channel as get_channel_route,
     get_agent_desk,
     get_agent_meeting_session,
@@ -61,6 +60,7 @@ from core.bm_cli.filesystem import agent_artifact_dir, legacy_agent_artifact_dir
 from core.bm_cli.types import BossModCliResult
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.managed_writer import run_managed_batch_write, run_managed_write
+from core.file_explorer import build_command as build_file_explorer_command
 from core.agent_loop.action_contract import render_action_contract
 from core.agent_loop.communication import build_communication_snapshot
 from core.agent_loop.decision_contract import (
@@ -369,6 +369,8 @@ def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
     assert "If the snapshot already answers the question, reply directly instead of using CLI." in contract
     assert "Decline unsupported or out-of-scope requests cleanly instead of pretending you can do them." in contract
+    assert "Use only facts that are present in the snapshot or verified by CLI / document inspection." in contract
+    assert "If a task, artifact, teammate update, meeting, or tool result is not known, clarify or check first." in contract
     assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer" in contract
     assert "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" in contract
     assert "You may use more than one CLI lookup in the same decision turn" in contract
@@ -3757,6 +3759,236 @@ async def test_run_turn_human_chat_unsupported_request_declines_without_creating
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
     assert diagnostics[0]["action_name"] == "decline(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_missing_file_question_clarifies_after_cli_error(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Can you summarize /me/q4_report.md for me?",
+        message_type="human",
+    )
+
+    captured_messages: list[list[dict[str, str]]] = []
+    responses = iter([
+        client.LLMResponse(
+            content='{"act":"cli","data":{"cmd":"cat /me/q4_report.md"},"th":"check whether the report exists"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"clarify","intent":"question","msg":"I do not have /me/q4_report.md available in my current files. If you want, point me to the right file and I can review it.",'
+                '"th":"do not invent missing file contents"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Can you summarize /me/q4_report.md for me?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 2
+    assert any(
+        "BOSSMOD CLI RESULT" in message["content"]
+        for message in captured_messages[1]
+        if message["role"] == "system"
+    )
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "I do not have /me/q4_report.md available in my current files. If you want, point me to the right file and I can review it."
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> clarify(none)"
+    detail = db.get_diagnostic(diagnostics[0]["id"])
+    assert detail is not None
+    assert [step["action_name"] for step in detail["steps"]] == ["bm_cli", "clarify"]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_manager_status_question_does_not_invent_worker_completion(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    parent = db.create_task(
+        title="Coordinate competitor research",
+        description="Coordinate the competitor research and report back.",
+        assigned_to=pm.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=pm.id,
+        created_by=HUMAN_SENDER_ID,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    db.create_task(
+        title="Investigate competitor launch",
+        description="Review the competitor launch and summarize findings.",
+        assigned_to=worker.id,
+        requester_id=pm.id,
+        owner_id=pm.id,
+        created_by=pm.id,
+        parent_task_id=parent.id,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    state = db.update_agent_state(pm.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        pm.id,
+        "Did Taylor finish the competitor launch research yet?",
+        message_type="human",
+    )
+
+    captured_messages: list[list[dict[str, str]]] = []
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        captured_messages.append(kwargs["messages"])
+        return client.LLMResponse(
+            content=(
+                '{"act":"reply","intent":"status","msg":"Not yet. Taylor still has the competitor launch assignment open, and I do not have a completion from them yet.",'
+                '"th":"report only the known worker status"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        pm,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Did Taylor finish the competitor launch research yet?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert len(captured_messages) == 1
+    assert any(
+        "AUTHORITATIVE COMMUNICATION SNAPSHOT" in message["content"]
+        and "Investigate competitor launch" in message["content"]
+        for message in captured_messages[0]
+        if message["role"] == "system"
+    )
+
+    thread = db.get_human_chat_thread(pm.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "Not yet. Taylor still has the competitor launch assignment open, and I do not have a completion from them yet."
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=pm.id, limit=5)
+    assert diagnostics[0]["action_name"] == "answer(none)"
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_unknown_meeting_clarifies_instead_of_inventing_schedule(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "What room is the 2pm design review in?",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"clarify","intent":"question","msg":"I do not have a 2pm design review in my current schedule or recent meeting context. If you mean a specific meeting, send me the details and I can help.",'
+                '"th":"do not invent a meeting that is not in context"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "What room is the 2pm design review in?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "I do not have a 2pm design review in my current schedule or recent meeting context. If you mean a specific meeting, send me the details and I can help."
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "clarify(none)"
 
 
 @pytest.mark.asyncio
@@ -7493,15 +7725,15 @@ async def test_open_agent_desk_folder_reveals_parent_directory_for_file(isolated
 
 
 def test_file_explorer_command_prefers_real_linux_file_manager(monkeypatch):
-    monkeypatch.setattr("api.routes.sys.platform", "linux")
+    monkeypatch.setattr("core.file_explorer.sys.platform", "linux")
     monkeypatch.setattr(
-        "api.routes.shutil.which",
+        "core.file_explorer.shutil.which",
         lambda binary: f"/usr/bin/{binary}" if binary == "thunar" else None,
     )
 
-    command = _file_explorer_command(Path("/tmp/demo"), opener="thunar")
+    command = build_file_explorer_command(Path("/tmp/demo"), opener="thunar")
 
-    assert command == ["thunar", "/tmp/demo"]
+    assert command == ["thunar", "--new-window", "/tmp/demo"]
 
 
 @pytest.mark.asyncio

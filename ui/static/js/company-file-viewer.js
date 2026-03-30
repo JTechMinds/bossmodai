@@ -100,10 +100,11 @@ const CompanyFileViewer = (() => {
 
     // ─── Open / Close ───
 
-    async function open(path) {
+    async function open(path, { apiUrl } = {}) {
         close();
+        const url = apiUrl || `/api/company/files?path=${encodeURIComponent(path)}`;
         try {
-            const res = await fetch(`/api/company/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+            const res = await fetch(url, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const payload = await res.json();
             currentPayload = payload;

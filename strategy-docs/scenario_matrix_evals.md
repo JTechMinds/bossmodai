@@ -186,13 +186,13 @@ These are the most important additions beyond the current prompt audit work.
 | N-03 | Peer chat creates durable work without explicit assignment | Runtime/prompt should reject | Optional | Covered |
 | N-04 | Decision response missing required reply text | Validation fails and repairs or errors | No | Covered |
 | N-05 | Agent overuses CLI when snapshot suffices | Prompt should discourage; tests should assert bounded lookup behavior | Optional | Covered |
-| N-06 | Agent invents active or completed work not present in runtime/history | Agent answers only from known state or clarifies / checks instead of fabricating work state | Optional | Missing |
-| N-07 | Agent invents artifact existence, file path, or save success | Agent verifies the artifact exists before claiming it was created, saved, or readable | Yes when verification is needed | Missing |
-| N-08 | Agent answers document-detail questions without evidence | Agent uses injected summary when sufficient or inspects the document before making detailed claims | Yes when details require retrieval | Missing |
-| N-09 | Agent invents coworker / delegated-task progress or results | Agent reports only known upstream/downstream state or checks first | Optional | Missing |
-| N-10 | Agent claims it performed unsupported external actions | Agent declines or states capability limits instead of pretending it emailed, posted, transferred money, etc. | Optional | Missing |
-| N-11 | Agent fabricates CLI/tool output or command success | Responses must reflect actual tool results; failed or absent tool results stay failed or absent | Yes | Missing |
-| N-12 | Agent invents meetings, schedules, or check-ins that do not exist | Agent answers from actual runtime/scheduler state only | Optional | Missing |
+| N-06 | Agent invents active or completed work not present in runtime/history | Agent answers only from known state or clarifies / checks instead of fabricating work state | Optional | Covered |
+| N-07 | Agent invents artifact existence, file path, or save success | Agent verifies the artifact exists before claiming it was created, saved, or readable | Yes when verification is needed | Covered |
+| N-08 | Agent answers document-detail questions without evidence | Agent uses injected summary when sufficient or inspects the document before making detailed claims | Yes when details require retrieval | Covered |
+| N-09 | Agent invents coworker / delegated-task progress or results | Agent reports only known upstream/downstream state or checks first | Optional | Covered |
+| N-10 | Agent claims it performed unsupported external actions | Agent declines or states capability limits instead of pretending it emailed, posted, transferred money, etc. | Optional | Covered |
+| N-11 | Agent fabricates CLI/tool output or command success | Responses must reflect actual tool results; failed or absent tool results stay failed or absent | Yes | Covered |
+| N-12 | Agent invents meetings, schedules, or check-ins that do not exist | Agent answers from actual runtime/scheduler state only | Optional | Covered |
 
 ### 4.11 Prompt Budget and Context Discipline
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -246,6 +246,8 @@ These are the fastest high-signal end-to-end checks to run in the product.
 | SM-07 | A-02, A-05 | Have one agent message another directly | Target agent receives and answers peer communication cleanly | `test_run_turn_peer_message_grounded_question_uses_shared_communication_lane`, `test_message_action_routes_to_agent_by_explicit_id` |
 | SM-08 | D-01, D-02, D-03, D-06, D-07 | Ask a PM/product-manager agent for work that should be delegated to a worker and reported back up | PM delegates correctly, worker accepts/clarifies/completes, PM reports back to human | `test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_human` |
 
+Automated gate command: [scripts/run_runtime_smoke_suite.sh](/home/jordan/Desktop/Projects/bossmodai/scripts/run_runtime_smoke_suite.sh)
+
 ### 6.2 Automated Gate
 These automated checks should pass in CI before treating the prompt layer as validated for current features.
 
@@ -296,12 +298,12 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | N-06, N-07, N-08, N-09, N-10, N-11, N-12 | Anti-hallucination / evidence-discipline suite | Trust, operator safety, and agent credibility depend on not inventing work state, artifacts, teammate progress, or tool outcomes | Prompting/Contracts + Agent Runtime + QA/Acceptance |
+| P1 | None currently open | Anti-hallucination / evidence-discipline gaps are covered in the focused matrix | The next work is broader release confidence rather than another single missing workflow slice | Prompting/Contracts + Agent Runtime + QA/Acceptance |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P2 | None currently open | After the anti-hallucination suite, the next work is broader release confidence and future platform epics | Shift from focused gap-closing to broader validation | Agent Runtime + Prompting/Contracts + QA/Acceptance |
+| P2 | None currently open | Focused scenario-matrix gaps are covered; the next work is broader release confidence and future platform epics | Shift from focused gap-closing to broader validation | Agent Runtime + Prompting/Contracts + QA/Acceptance |
 
 ## 9. Scheduled / Recurring Work Epic
 Recurring tasks should be tracked as a separate product/runtime epic rather than mixed into prompt-only acceptance work.
@@ -324,8 +326,8 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add anti-hallucination / evidence-discipline coverage for `N-06` through `N-12`.
-2.  Re-check broader release confidence after the anti-hallucination suite lands.
+1.  Re-check broader release confidence now that the focused matrix, including anti-hallucination coverage, is in place.
+2.  Decide whether to add a broader regression suite or a manual smoke gate for the covered scenarios.
 3.  Keep scheduled / recurring work in its separate platform epic.
 
 ## 11. Bottom Line

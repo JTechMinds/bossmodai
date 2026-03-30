@@ -355,16 +355,7 @@ async def open_company_folder(body: dict) -> dict[str, object]:
         raise HTTPException(404, "Path not found")
 
     target = safe if safe.is_dir() else safe.parent
-    opener = config.get("desktop_open_folder_handler")
-    if opener is None:
-        raise HTTPException(
-            409,
-            {
-                "code": "desk_open_folder_handler_required",
-                "message": "Choose a folder opener once and BossMod will remember it.",
-                "options": _available_folder_opener_options(),
-            },
-        )
+    opener = config.get("desktop_open_folder_handler") or "auto"
     try:
         _launch_file_explorer(target, opener=opener)
     except OSError as exc:
@@ -720,16 +711,7 @@ async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
         raise HTTPException(404, "Path not found")
 
     target = resolved.real_path.parent if resolved.real_path.is_file() else resolved.real_path
-    opener = config.get("desktop_open_folder_handler")
-    if opener is None:
-        raise HTTPException(
-            409,
-            {
-                "code": "desk_open_folder_handler_required",
-                "message": "Choose a folder opener once and BossMod will remember it.",
-                "options": _available_folder_opener_options(),
-            },
-        )
+    opener = config.get("desktop_open_folder_handler") or "auto"
     try:
         _launch_file_explorer(target, opener=opener)
     except OSError as exc:
@@ -1042,7 +1024,9 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
         raise HTTPException(404, "Path not found")
 
     if resolved.real_path is not None and resolved.real_path.is_file():
-        content, truncated = _read_desk_file_preview(resolved.real_path)
+        stat = resolved.real_path.stat()
+        binary = resolved.real_path.suffix.lower() not in _TEXT_FILE_EXTENSIONS
+        content, truncated = ("", False) if binary else _read_desk_file_preview(resolved.real_path)
         artifact = db.get_artifact_by_absolute_path(str(resolved.real_path.resolve()))
         return {
             "kind": "file",
@@ -1052,6 +1036,9 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
             "artifact": _serialize_artifact(artifact),
             "content": content,
             "truncated": truncated,
+            "size_bytes": stat.st_size,
+            "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "binary": binary,
         }
 
     entries = _list_virtual_root_entries(agent) if resolved.virtual_path == "/" else _list_desk_entries(agent, resolved)
@@ -1319,69 +1306,14 @@ def _company_breadcrumbs(path: str) -> list[dict[str, str]]:
 
 def _launch_file_explorer(path: Path, *, opener: str) -> None:
     """Open a directory in the host platform's file explorer."""
-    subprocess.Popen(_file_explorer_command(path, opener=opener))
-
-
-def _file_explorer_command(path: Path, *, opener: str) -> list[str]:
-    """Return the platform-specific file-explorer command for one directory."""
-    selected = opener.strip()
-    if not selected:
-        raise OSError("No folder opener is configured")
-
-    if selected == "system":
-        if sys.platform.startswith("darwin"):
-            return ["open", str(path)]
-        if sys.platform.startswith("win"):
-            return ["explorer", str(path)]
-        if shutil.which("xdg-open"):
-            return ["xdg-open", str(path)]
-        raise OSError("System default opener is unavailable on this machine")
-
-    if sys.platform.startswith("win") and selected.lower() == "explorer":
-        return ["explorer", str(path)]
-    if sys.platform.startswith("darwin") and selected == "open":
-        return ["open", str(path)]
-    if shutil.which(selected):
-        return [selected, str(path)]
-    raise OSError(f'Configured folder opener "{selected}" was not found on PATH')
+    from core.file_explorer import launch
+    launch(path, opener)
 
 
 def _available_folder_opener_options() -> list[dict[str, str]]:
     """Return detected folder opener choices for the current platform."""
-    if sys.platform.startswith("darwin"):
-        return [{"value": "open", "label": "Finder", "description": "Use macOS Finder."}]
-    if sys.platform.startswith("win"):
-        return [{"value": "explorer", "label": "File Explorer", "description": "Use Windows File Explorer."}]
-
-    options: list[dict[str, str]] = []
-    known_linux_openers = (
-        ("nautilus", "Nautilus"),
-        ("dolphin", "Dolphin"),
-        ("nemo", "Nemo"),
-        ("thunar", "Thunar"),
-        ("pcmanfm", "PCManFM"),
-        ("caja", "Caja"),
-        ("konqueror", "Konqueror"),
-        ("lxqt-filemanager", "LXQt File Manager"),
-    )
-    for binary, label in known_linux_openers:
-        if shutil.which(binary):
-            options.append(
-                {
-                    "value": binary,
-                    "label": label,
-                    "description": f"Open folders with {label}.",
-                }
-            )
-    if shutil.which("xdg-open"):
-        options.append(
-            {
-                "value": "system",
-                "label": "System Default",
-                "description": "Use the desktop's default folder opener.",
-            }
-        )
-    return options
+    from core.file_explorer import available_options
+    return available_options()
 
 
 # ─── Tasks CRUD ───

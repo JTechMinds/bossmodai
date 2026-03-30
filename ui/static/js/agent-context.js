@@ -1087,7 +1087,18 @@ const AgentContext = (() => {
 
     function renderDeskPayload(container, payload) {
         if (payload.kind === 'file') {
-            renderDeskFile(container, payload);
+            // Open in the shared file viewer overlay instead of inline
+            const agentId = selectedAgent?.id;
+            const filePath = payload.path;
+            if (agentId) {
+                CompanyFileViewer.open(filePath, {
+                    apiUrl: `/api/agents/${agentId}/desk?path=${encodeURIComponent(filePath)}`,
+                });
+            }
+            // Navigate back to parent so the desk panel shows the directory
+            const parentPath = parentDeskPath(filePath);
+            activeDeskPath = parentPath;
+            renderDesk(parentPath);
             return;
         }
         renderDeskDirectory(container, payload);
@@ -1222,7 +1233,7 @@ const AgentContext = (() => {
                 ${entries.map(entry => `
                     <button type="button"
                             class="desk-entry w-full text-left rounded-lg border border-bm-border bg-white px-3 py-2 hover:bg-slate-50 transition-colors"
-                            data-path="${BossModUtils.escapeHtml(entry.path)}">
+                            data-path="${BossModUtils.escapeHtml(entry.path)}" data-is-dir="${entry.is_dir ? '1' : '0'}">
                         <div class="flex items-start justify-between gap-3">
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -1257,11 +1268,24 @@ const AgentContext = (() => {
     }
 
     function bindDeskInteractions(container, filePath = null) {
-        container.querySelectorAll('.desk-entry, .desk-crumb').forEach(btn => {
+        container.querySelectorAll('.desk-crumb').forEach(btn => {
             btn.addEventListener('click', () => {
                 const path = btn.dataset.path;
                 if (!path) return;
                 openDeskPath(path);
+            });
+        });
+        container.querySelectorAll('.desk-entry').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const path = btn.dataset.path;
+                if (!path) return;
+                if (btn.dataset.isDir === '0' && selectedAgent) {
+                    CompanyFileViewer.open(path, {
+                        apiUrl: `/api/agents/${selectedAgent.id}/desk?path=${encodeURIComponent(path)}`,
+                    });
+                } else {
+                    openDeskPath(path);
+                }
             });
         });
         const refreshBtn = container.querySelector('#desk-refresh-btn');
