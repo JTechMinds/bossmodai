@@ -345,17 +345,26 @@ def test_parse_decision_accepts_compact_work_deliverables(isolated_db):
     assert parsed["deliverables"] == [{"type": "file", "path": "avocado_white.md", "description": None}]
 
 
+def test_parse_decision_allows_reply_without_commit_or_data(isolated_db):
+    parsed = parse_decision(
+        '{"act":"reply","intent":"status","msg":"I am drafting the paper now.","th":"share status"}'
+    )
+    assert parsed["decision"] == "answer"
+    assert parsed["intentKind"] == "status_request"
+    assert parsed["reply"] == "I am drafting the paper now."
+    assert parsed["commitmentKind"] == "none"
+
+
 def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     contract = render_decision_contract("human_chat")
-    assert "REQUIRED JSON SHAPE:" in contract
-    assert "FIELD DEFINITIONS:" in contract
-    assert '"act": "reply | accept | clarify | decline | defer"' in contract
-    assert '"intent": "question | status | meeting | work | move | break | social | other"' in contract
-    assert "act = the response mode you choose for this turn" in contract
-    assert "intent = what the incoming message is about" in contract
-    assert "obs" not in contract or "obs" not in contract.split("ALLOWED act FOR THIS TURN:")[1].splitlines()[0]
-    assert '"status" belongs in "intent", never in "act"' in contract
+    assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
     assert "ALLOWED act FOR THIS TURN: reply | accept | clarify | decline | defer" in contract
+    assert "Use one of these shapes:" in contract
+    assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' in contract
+    assert '{"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}' in contract
+    assert 'For `reply`, `clarify`, `decline`, and `observe`, leave `commit` out.' in contract
+    assert '`status` belongs in `intent`, never in `act`.' in contract
+    assert '{"act":"observe","intent":"other","th":"string"}' not in contract
 
 
 def test_render_action_contract_includes_required_schema(isolated_db):
@@ -381,6 +390,9 @@ def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
     contract = render_decision_contract("task_assigned")
     assert "ALLOWED act FOR THIS TURN: accept | clarify | defer | decline" in contract
     assert "this is an offered assignment; use accept | clarify | defer | decline" in contract.lower()
+    assert 'accept or defer should keep `commit="work"`' in contract
+    assert '{"act":"accept","intent":"work","msg":"string","commit":"work","th":"string"}' in contract
+    assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' not in contract
 
 
 def test_validate_decision_allows_task_assignment_clarify(isolated_db):

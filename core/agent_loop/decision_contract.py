@@ -262,7 +262,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "decision": _map_required(payload.get("act"), _ACT_TO_DECISION, "act"),
         "intentKind": _map_required(payload.get("intent"), _INTENT_TO_NAME, "intent"),
         "reply": payload.get("msg"),
-        "commitmentKind": _map_required(payload.get("commit"), _COMMIT_TO_NAME, "commit"),
+        "commitmentKind": _map_optional(payload.get("commit"), _COMMIT_TO_NAME, "commit") or "none",
         "destination": _map_optional(data.get("dst"), _DEST_TO_NAME, "data.dst"),
         "title": data.get("title"),
         "detail": data.get("detail"),
