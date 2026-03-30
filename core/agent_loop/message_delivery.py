@@ -22,8 +22,8 @@ def resolve_peer_message_type(
     Rules:
     - Agent-to-agent messages are conversational by default.
     - Social triggers always emit social messages.
-    - Replies to peer messages stay social even if the incoming payload was older
-      legacy `work` text; durable work delegation must use explicit task assignment.
+    - Replies to peer messages stay social even if the incoming payload used an
+      older `work` label; durable work delegation must use explicit task assignment.
     - This keeps coworker chatter from bootstrapping into accidental tasks.
     """
     del state

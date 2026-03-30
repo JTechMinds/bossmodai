@@ -8,9 +8,9 @@ from typing import Any, Literal
 
 from core import config
 from core.bm_cli.contract import maybe_parse_bm_cli_call
-from core.default_prompts import load_default_prompt
 from core.llm.template_engine import render_template
 from core.models.work_contract import DeliverableSpec
+from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 logger = logging.getLogger(__name__)
@@ -75,12 +75,15 @@ _ALLOWED_ACTS_BY_TRIGGER = {
     "human_chat": ("reply", "accept", "clarify", "cancel", "decline", "defer"),
     "peer_message": ("reply", "accept", "clarify", "decline"),
     "task_assigned": ("accept", "clarify", "defer", "decline"),
+    "task_follow_up": ("reply", "accept", "clarify", "defer", "decline"),
     "watchdog_status_ping": ("reply",),
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
 _CONTRACT_ALLOWED_PATHS = {
     "trigger.type",
+    "trigger.task_status",
+    "trigger.task_party",
     "cli.shell_enabled",
     "cli.cwd",
     "workspace.default_save_root",
@@ -143,8 +146,8 @@ def allowed_conversation_acts_for_trigger(trigger_type: str | None) -> tuple[str
 
 
 def default_decision_contract_template() -> str:
-    """Return the default authored decision contract template."""
-    return load_default_prompt("runtime_contract_decision")
+    """Return the current settings-backed decision contract template."""
+    return resolve_runtime_prompt_text("runtime_contract_decision")
 
 
 def render_decision_contract(trigger_type: str | None = None) -> str:
@@ -161,6 +164,8 @@ def _contract_render_context(trigger_type: str | None) -> dict[str, object]:
     return {
         "trigger": {
             "type": str(trigger_type or ""),
+            "task_status": "pending" if trigger_type == "task_follow_up" else "",
+            "task_party": "assignee" if trigger_type == "task_follow_up" else "",
         },
         "cli": {
             "shell_enabled": config.get("cli_shell_enabled") == "true",
@@ -355,6 +360,7 @@ def validate_decision_for_trigger(
     *,
     trigger_type: str,
     active_task_id: str | None,
+    trigger: dict[str, Any] | None = None,
 ) -> str | None:
     """Validate a parsed decision against the conversation turn context."""
     if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
@@ -372,6 +378,7 @@ def validate_decision_for_trigger(
         "channel_message",
         "channel_response",
         "task_assigned",
+        "task_follow_up",
         "watchdog_status_ping",
     } and decision.decision != "observe" and not (decision.reply and decision.reply.strip()):
         return 'conversation turns require a non-empty "reply" unless you choose "observe"'
@@ -382,7 +389,7 @@ def validate_decision_for_trigger(
         if decision.intentKind != "work_request":
             return 'cancel decisions must use intentKind="work_request"'
 
-    if trigger_type in {"human_chat", "peer_message", "task_assigned"} and decision.decision == "observe":
+    if trigger_type in {"human_chat", "peer_message", "task_assigned", "task_follow_up"} and decision.decision == "observe":
         return '"observe" is only valid for shared meeting/channel conversation turns'
 
     if trigger_type == "task_assigned":
@@ -394,6 +401,26 @@ def validate_decision_for_trigger(
             return 'accepting an assignment must use commitmentKind="work"'
         if decision.decision == "defer" and decision.commitmentKind != "work":
             return 'deferring an assignment must keep commitmentKind="work"'
+
+    if trigger_type == "task_follow_up":
+        task_status = str((trigger or {}).get("task_status") or "").strip().lower()
+        task_party = str((trigger or {}).get("task_party") or "").strip().lower()
+        pending_assignee_turn = task_status == "pending" and task_party == "assignee"
+
+        if pending_assignee_turn:
+            if decision.commitmentKind == "work" and decision.taskTitle:
+                return 'task follow-up decisions for an existing pending task must not invent a new "taskTitle"'
+            if decision.taskDescription:
+                return 'task follow-up decisions for an existing pending task must not invent a new "taskDescription"'
+            if decision.decision == "accept" and decision.commitmentKind != "work":
+                return 'accepting a pending task follow-up must use commitmentKind="work"'
+            if decision.decision == "defer" and decision.commitmentKind != "work":
+                return 'deferring a pending task follow-up must keep commitmentKind="work"'
+        else:
+            if decision.decision not in {"answer", "clarify"}:
+                return "task follow-up turns only allow reply or clarify unless the pending task is awaiting your decision"
+            if decision.commitmentKind != "none":
+                return 'task follow-up reply turns must use commitmentKind="none"'
 
     if trigger_type in {
         "human_chat",

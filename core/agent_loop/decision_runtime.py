@@ -7,8 +7,7 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
-from core.agent_loop.activity_scheduler import build_activity_resume_trigger
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.activity_scheduler import build_activity_resume_trigger, build_task_follow_up_trigger
 from core.agent_loop.channel_rounds import begin_channel_response, finalize_channel_response, observe_channel_message
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.message_delivery import (
@@ -29,6 +28,7 @@ from core.agent_loop.task_roles import (
 from core.agent_loop.decision_contract import ConversationDecision
 from core.models import Agent, AgentState
 from core.models.message import HUMAN_SENDER_ID
+from core.tasking.service import append_task_event, create_or_bind_subtask, create_or_bind_task
 from core.world.tilemap import get_room_at
 
 
@@ -64,6 +64,16 @@ def apply_decision(
 
     if decision.decision == "answer":
         result["detail"] = f"{agent.name} answered the request"
+        if trigger.get("type") == "task_follow_up" and trigger.get("task_id"):
+            append_task_event(
+                task_id=trigger["task_id"],
+                author_type="agent",
+                author_agent_id=agent.id,
+                author_name=agent.name,
+                event_type="answer",
+                content=decision.reply or "",
+                source_trigger_id=trigger.get("trigger_id"),
+            )
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         else:
@@ -74,6 +84,16 @@ def apply_decision(
 
     if decision.decision == "clarify":
         result["detail"] = f"{agent.name} asked for clarification"
+        if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
+            append_task_event(
+                task_id=trigger["task_id"],
+                author_type="agent",
+                author_agent_id=agent.id,
+                author_name=agent.name,
+                event_type="clarification",
+                content=decision.reply or decision.detail or "",
+                source_trigger_id=trigger.get("trigger_id"),
+            )
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         else:
@@ -106,13 +126,22 @@ def apply_decision(
         return result
 
     if decision.decision == "decline":
-        if trigger.get("type") == "task_assigned" and trigger.get("task_id"):
+        if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
             _complete_assignment_if_present(agent.id)
             db.update_task(
                 trigger["task_id"],
                 status="declined",
                 status_note=(decision.reply or decision.detail or "Assignment declined."),
                 watchdog_pinged_at=None,
+            )
+            append_task_event(
+                task_id=trigger["task_id"],
+                author_type="agent",
+                author_agent_id=agent.id,
+                author_name=agent.name,
+                event_type="status_update",
+                content=decision.reply or decision.detail or "Assignment declined.",
+                source_trigger_id=trigger.get("trigger_id"),
             )
         result["detail"] = f"{agent.name} declined the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
@@ -134,6 +163,15 @@ def apply_decision(
                 completion_summary=None,
                 watchdog_pinged_at=None,
             ) or task
+            append_task_event(
+                task_id=task.id,
+                author_type="agent",
+                author_agent_id=agent.id,
+                author_name=agent.name,
+                event_type="status_update",
+                content=status_note or f'Deferred "{task.title}".',
+                source_trigger_id=trigger.get("trigger_id"),
+            )
             result["detail"] = f'{agent.name} deferred "{task.title}"'
             result.setdefault("activity_extra", {})["task_title"] = task.title
         else:
@@ -160,6 +198,15 @@ def apply_decision(
             metadata=_build_initial_work_metadata(agent, state, decision.reply),
         )
         result["detail"] = f'{agent.name} accepted work on "{task.title}"'
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="status_update",
+            content=decision.reply or f'Accepted work on "{task.title}".',
+            source_trigger_id=trigger.get("trigger_id"),
+        )
         result.setdefault("activity_extra", {})["task_title"] = task.title
         result["trigger_requests"].append(
             build_activity_resume_trigger(
@@ -363,8 +410,8 @@ def _persist_reply(
         return {}
 
     trigger_type = trigger.get("type")
-    if trigger_type == "task_assigned":
-        return _persist_assignment_reply(agent, state, trigger, reply)
+    if trigger_type in {"task_assigned", "task_follow_up"}:
+        return _persist_task_follow_up_reply(agent, state, trigger, reply)
     if trigger_type == "human_chat":
         target_id = HUMAN_SENDER_ID
         from_type = "agent"
@@ -419,15 +466,6 @@ def _persist_reply(
         from_type = None
         if not target_id:
             return {}
-        assignment_follow_up = _assignment_follow_up_for_peer_message(
-            agent=agent,
-            trigger=trigger,
-            target_id=target_id,
-            reply=reply,
-            state=state,
-        )
-        if assignment_follow_up is not None:
-            return assignment_follow_up
         message_type = resolve_peer_message_type(state=state, trigger=trigger)
     else:
         return {}
@@ -470,66 +508,44 @@ def _persist_reply(
             }
         ]
     }
-
-
-def _assignment_follow_up_for_peer_message(
-    *,
-    agent: Agent,
-    trigger: dict[str, Any],
-    target_id: str,
-    reply: str,
-    state: AgentState,
-) -> dict[str, Any] | None:
-    """Route replies about a still-pending assignment back through task_assigned."""
-    if not trigger.get("assignment_follow_up"):
-        return None
-
-    task_id = trigger.get("task_id")
-    if not isinstance(task_id, str) or not task_id.strip():
-        return None
-
-    task = db.get_task(task_id)
-    if task is None or task.status != "pending":
-        return None
-    if task.assigned_to != target_id:
-        return None
-    if task_assignment_reply_target(task, assignee_id=task.assigned_to)["agent_id"] != agent.id:
-        return None
-
-    message = db.create_message(
-        from_agent=agent.id,
-        to_agent=target_id,
-        content=reply.strip(),
-        message_type="work",
-        location_x=state.x,
-        location_y=state.y,
-    )
-    assigned_trigger = build_task_assigned_trigger(task)
-    assigned_trigger["payload"] = {
-        **assigned_trigger["payload"],
-        "content": message.content,
-        "from_agent": agent.id,
-        "from_name": agent.name,
-        "source_message_id": message.id,
-    }
-    return {
-        "trigger_requests": [assigned_trigger],
-    }
-
-
-def _persist_assignment_reply(
+def _persist_task_follow_up_reply(
     agent: Agent,
     state: AgentState,
     trigger: dict[str, Any],
     reply: str,
 ) -> dict[str, Any]:
-    """Persist a reply to an explicit task assignment using the task's source metadata."""
+    """Persist a reply inside the canonical task-bound follow-up lane."""
     task_id = trigger.get("task_id")
     if not isinstance(task_id, str) or not task_id.strip():
         return {}
     task = db.get_task(task_id)
     if task is None:
         return {}
+
+    if trigger.get("type") == "task_follow_up" and trigger.get("from_agent"):
+        target_agent_id = str(trigger["from_agent"]).strip()
+        if target_agent_id:
+            message = db.create_message(
+                from_agent=agent.id,
+                to_agent=target_agent_id,
+                content=reply.strip(),
+                message_type="work",
+                location_x=state.x,
+                location_y=state.y,
+            )
+            return {
+                "trigger_requests": [
+                    build_task_follow_up_trigger(
+                        task,
+                        recipient_agent_id=target_agent_id,
+                        from_agent=agent.id,
+                        from_name=agent.name,
+                        content=message.content,
+                        source_message_id=message.id,
+                        source_channel="work",
+                    )
+                ]
+            }
 
     if task.notification_channel_id and task.source_channel == "channel":
         message = db.create_channel_message(
@@ -579,29 +595,21 @@ def _persist_assignment_reply(
             from_agent=agent.id,
             to_agent=reply_target["agent_id"],
             content=reply.strip(),
-            message_type="social",
+            message_type="work",
             location_x=state.x,
             location_y=state.y,
         )
         return {
             "trigger_requests": [
-                {
-                    "agent_id": reply_target["agent_id"],
-                    "trigger_type": "peer_message",
-                    "source_channel": "chat",
-                    "payload": {
-                        "content": message.content,
-                        "from_agent": agent.id,
-                        "from_name": agent.name,
-                        "message_type": message.message_type,
-                        "assignment_follow_up": task.status == "pending",
-                        "task_id": task.id,
-                        "task_title": task.title,
-                        "task_description": task.description or "",
-                        "source_message_id": message.id,
-                    },
-                    "task_id": task.id,
-                }
+                build_task_follow_up_trigger(
+                    task,
+                    recipient_agent_id=reply_target["agent_id"],
+                    from_agent=agent.id,
+                    from_name=agent.name,
+                    content=message.content,
+                    source_message_id=message.id,
+                    source_channel="work",
+                )
             ]
         }
 
@@ -632,7 +640,7 @@ def _resolve_or_create_work_task(
     decision: ConversationDecision,
 ):
     """Return the accepted work task, creating it for direct chat requests."""
-    if trigger.get("type") == "task_assigned" and trigger.get("task_id"):
+    if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
@@ -651,8 +659,6 @@ def _resolve_or_create_work_task(
             created_by = HUMAN_SENDER_ID
         elif trigger.get("from_agent"):
             created_by = trigger["from_agent"]
-    elif trigger.get("type") == "peer_message" and trigger.get("from_agent"):
-        created_by = trigger["from_agent"]
     requester_id = task_requester_id_for_trigger(trigger, default_agent_id=agent.id)
     parent_task = _follow_up_parent_task_for_trigger(agent, trigger)
     owner_id = default_task_owner_id(
@@ -662,19 +668,43 @@ def _resolve_or_create_work_task(
         parent_task=parent_task,
     )
 
-    return db.create_task(
+    if parent_task is not None:
+        return create_or_bind_subtask(
+            parent_task=parent_task,
+            title=(decision.taskTitle or "").strip(),
+            description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+            project=parent_task.project,
+            assigned_to=agent.id,
+            requester_id=requester_id,
+            owner_id=owner_id,
+            created_by=created_by,
+            work_contract=_inherited_follow_up_work_contract(parent_task, decision),
+            source_channel=task_source_channel_for_trigger(trigger),
+            notification_policy=task_notification_policy_for_trigger(trigger),
+            notification_channel_id=task_notification_channel_id_for_trigger(trigger),
+            audit_author_name=agent.name,
+            audit_author_type="agent",
+            audit_author_agent_id=agent.id,
+            audit_source_trigger_id=trigger.get("trigger_id"),
+        ).task
+    return create_or_bind_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+        project=None,
         assigned_to=agent.id,
         requester_id=requester_id,
         owner_id=owner_id,
         created_by=created_by,
-        parent_task_id=parent_task.id if parent_task else None,
+        parent_task_id=None,
         work_contract=_inherited_follow_up_work_contract(parent_task, decision),
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
         notification_channel_id=task_notification_channel_id_for_trigger(trigger),
-    )
+        audit_author_name=agent.name,
+        audit_author_type="agent",
+        audit_author_agent_id=agent.id,
+        audit_source_trigger_id=trigger.get("trigger_id"),
+    ).task
 
 
 def _ensure_deferred_task(
@@ -683,7 +713,7 @@ def _ensure_deferred_task(
     decision: ConversationDecision,
 ):
     """Return the durable task that should remain pending after a defer decision."""
-    if trigger.get("type") == "task_assigned" and trigger.get("task_id"):
+    if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
@@ -703,19 +733,43 @@ def _ensure_deferred_task(
         created_by=created_by,
         parent_task=parent_task,
     )
-    return db.create_task(
+    if parent_task is not None:
+        return create_or_bind_subtask(
+            parent_task=parent_task,
+            title=(decision.taskTitle or "").strip(),
+            description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+            project=parent_task.project,
+            assigned_to=agent.id,
+            requester_id=requester_id,
+            owner_id=owner_id,
+            created_by=created_by,
+            work_contract=_inherited_follow_up_work_contract(parent_task, decision),
+            source_channel=task_source_channel_for_trigger(trigger),
+            notification_policy=task_notification_policy_for_trigger(trigger),
+            notification_channel_id=task_notification_channel_id_for_trigger(trigger),
+            audit_author_name=agent.name,
+            audit_author_type="agent",
+            audit_author_agent_id=agent.id,
+            audit_source_trigger_id=trigger.get("trigger_id"),
+        ).task
+    return create_or_bind_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+        project=None,
         assigned_to=agent.id,
         requester_id=requester_id,
         owner_id=owner_id,
         created_by=created_by,
-        parent_task_id=parent_task.id if parent_task else None,
+        parent_task_id=None,
         work_contract=_inherited_follow_up_work_contract(parent_task, decision),
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
         notification_channel_id=task_notification_channel_id_for_trigger(trigger),
-    )
+        audit_author_name=agent.name,
+        audit_author_type="agent",
+        audit_author_agent_id=agent.id,
+        audit_source_trigger_id=trigger.get("trigger_id"),
+    ).task
 
 
 def _persist_work_contract(task, agent: Agent, decision: ConversationDecision):

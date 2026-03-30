@@ -1,4 +1,4 @@
-"""BossMod AI — Lint model-facing prompt surfaces for contract drift."""
+"""BossMod AI — Lint model-facing prompt surfaces for contract consistency."""
 
 from __future__ import annotations
 
@@ -6,51 +6,69 @@ from dataclasses import dataclass
 import re
 from typing import Literal, Mapping
 
+from core.default_prompts import load_default_prompt
 from .runtime_prompt_registry import collect_runtime_prompt_texts, runtime_prompt_surface_map
 
 
 PromptSeverity = Literal["warning", "error"]
 
-_LEGACY_TOKEN_RULES: tuple[tuple[re.Pattern[str], str, str, str], ...] = (
+_DISALLOWED_TOKEN_RULES: tuple[tuple[re.Pattern[str], str, str, str], ...] = (
     (
         re.compile(r"\bbm_cli\b"),
         "error",
-        "legacy_bm_cli",
+        "internal_bm_cli_name",
         'Use the model-facing act `cli`, not the internal runtime name `bm_cli`.',
     ),
     (
         re.compile(r"\bwalkTo\b"),
         "error",
-        "legacy_walkto",
-        'Use the model-facing act `walk`, not the legacy runtime action name `walkTo`.',
+        "internal_walkto_name",
+        'Use the model-facing act `walk`, not the internal runtime action name `walkTo`.',
     ),
     (
         re.compile(r"\bdelegateTask\b"),
         "error",
-        "legacy_delegate_task",
-        'Use the model-facing act `assign`, not the legacy runtime action name `delegateTask`.',
+        "internal_delegate_task_name",
+        'Use the model-facing act `assign`, not the internal runtime action name `delegateTask`.',
     ),
     (
         re.compile(r"\bstartTask\b"),
         "error",
-        "legacy_start_task",
-        'Use the compact decision/execution contract instead of legacy `startTask` actions.',
+        "unsupported_start_task_name",
+        'Use the compact decision/execution contract instead of `startTask` actions.',
     ),
     (
         re.compile(r"\bresumeTask\b"),
         "error",
-        "legacy_resume_task",
-        'Use the compact execution contract instead of legacy `resumeTask` actions.',
+        "unsupported_resume_task_name",
+        'Use the compact execution contract instead of `resumeTask` actions.',
     ),
 )
 
-_LEGACY_LIFECYCLE_PATTERN = re.compile(
+_LIFECYCLE_NAME_PATTERN = re.compile(
     r"complete\s*[/,]\s*blocked\s*[/,]\s*delegated\s*[/,]\s*abandoned",
     re.IGNORECASE,
 )
-_LEGACY_THOUGHT_PATTERNS: tuple[re.Pattern[str], ...] = (
+_THOUGHT_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r'[`"]thought[`"]'),
     re.compile(r'"th"\s+is\s+thought', re.IGNORECASE),
+)
+_SYSTEM_TASK_CONTEXT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (
+        re.compile(r"##\s+Open Tasks\b", re.IGNORECASE),
+        "open_tasks_section_reference",
+        "Use a board-first task section instead of `Open Tasks`.",
+    ),
+    (
+        re.compile(r"\{\{\s*pending_tasks\s*\}\}"),
+        "pending_tasks_placeholder_reference",
+        "Use the board-first prompt variable `task_board` instead of `pending_tasks`.",
+    ),
+    (
+        re.compile(r"Treat\s+`Open Tasks`", re.IGNORECASE),
+        "open_tasks_rule_reference",
+        "System-prompt task guidance should refer to the task board, not `Open Tasks`.",
+    ),
 )
 
 
@@ -111,9 +129,12 @@ def lint_runtime_prompts(overrides: Mapping[str, str] | None = None) -> PromptLi
     surfaces = runtime_prompt_surface_map()
     issues: list[PromptLintIssue] = []
 
-    for surface_key, text in collect_runtime_prompt_texts(overrides).items():
+    resolved_texts = collect_runtime_prompt_texts(overrides)
+    for surface_key, text in resolved_texts.items():
         surface = surfaces[surface_key]
         issues.extend(_lint_surface(surface_key, surface.label, text))
+        if not overrides:
+            issues.extend(_lint_saved_prompt_mismatch(surface_key, surface.label, surface.source_kind, text))
 
     return PromptLintReport(issues=tuple(issues))
 
@@ -121,7 +142,7 @@ def lint_runtime_prompts(overrides: Mapping[str, str] | None = None) -> PromptLi
 def _lint_surface(surface_key: str, surface_label: str, text: str) -> list[PromptLintIssue]:
     issues: list[PromptLintIssue] = []
 
-    for pattern, severity, code, message in _LEGACY_TOKEN_RULES:
+    for pattern, severity, code, message in _DISALLOWED_TOKEN_RULES:
         if pattern.search(text):
             issues.append(
                 PromptLintIssue(
@@ -133,27 +154,40 @@ def _lint_surface(surface_key: str, surface_label: str, text: str) -> list[Promp
                 )
             )
 
-    if _LEGACY_LIFECYCLE_PATTERN.search(text):
+    if _LIFECYCLE_NAME_PATTERN.search(text):
         issues.append(
             PromptLintIssue(
                 surface_key=surface_key,
                 surface_label=surface_label,
                 severity="error",
-                code="legacy_terminal_acts",
-                message='Use model-facing terminal acts `done`, `block`, `deleg`, and `drop` instead of legacy lifecycle names.',
+                code="terminal_act_name_mismatch",
+                message='Use model-facing terminal acts `done`, `block`, `deleg`, and `drop` instead of internal lifecycle names.',
             )
         )
 
-    if any(pattern.search(text) for pattern in _LEGACY_THOUGHT_PATTERNS):
+    if any(pattern.search(text) for pattern in _THOUGHT_KEY_PATTERNS):
         issues.append(
             PromptLintIssue(
                 surface_key=surface_key,
                 surface_label=surface_label,
                 severity="error",
-                code="legacy_thought_key",
+                code="thought_key_reference",
                 message='Use the model-facing key `th` for the short admin note. Do not instruct the model to emit `thought`.',
             )
         )
+
+    if surface_key == "system_prompt_template":
+        for pattern, code, message in _SYSTEM_TASK_CONTEXT_PATTERNS:
+            if pattern.search(text):
+                issues.append(
+                    PromptLintIssue(
+                        surface_key=surface_key,
+                        surface_label=surface_label,
+                        severity="error",
+                        code=code,
+                        message=message,
+                    )
+                )
 
     if surface_key == "runtime_contract_decision" and '{"act":"cli"' in text and "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" not in text:
         issues.append(
@@ -167,3 +201,32 @@ def _lint_surface(surface_key: str, surface_label: str, text: str) -> list[Promp
         )
 
     return issues
+
+
+def _lint_saved_prompt_mismatch(
+    surface_key: str,
+    surface_label: str,
+    source_kind: str,
+    text: str,
+) -> list[PromptLintIssue]:
+    """Warn when one saved prompt surface no longer matches the shipped default file."""
+    if source_kind != "setting":
+        return []
+    try:
+        default_text = load_default_prompt(surface_key)
+    except KeyError:
+        return []
+    if text == default_text:
+        return []
+    return [
+        PromptLintIssue(
+            surface_key=surface_key,
+            surface_label=surface_label,
+            severity="warning",
+            code="saved_prompt_differs_from_default",
+            message=(
+                "Saved prompt text differs from the current shipped default. "
+                "Review whether this customization is still intended."
+            ),
+        )
+    ]

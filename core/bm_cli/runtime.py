@@ -41,11 +41,16 @@ from core.bm_cli.shell_executor import execute_shell_command
 from core.bm_cli.state_commands import (
     handle_activity,
     handle_current_task,
+    handle_delegated_tasks,
     handle_location,
+    handle_my_board,
+    handle_owned_tasks,
     handle_recent_work,
     handle_runtime,
     handle_status,
+    handle_task_detail,
     handle_tasks,
+    handle_waiting_on_me,
 )
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path
@@ -76,6 +81,11 @@ _HANDLERS: dict[str, CliHandler] = {
     "tasks": handle_tasks,
     "recent-work": handle_recent_work,
     "location": handle_location,
+    "my-board": handle_my_board,
+    "owned-tasks": handle_owned_tasks,
+    "delegated-tasks": handle_delegated_tasks,
+    "waiting-on-me": handle_waiting_on_me,
+    "task": handle_task_detail,
     "help": handle_help,
     "categories": handle_commands,
     "fsearch": handle_fsearch,

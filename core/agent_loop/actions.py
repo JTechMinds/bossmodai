@@ -13,7 +13,7 @@ from typing import Any
 
 from core import config
 from core.agent_loop import activity_runtime
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.activity_scheduler import build_task_assigned_trigger, build_task_follow_up_trigger
 from core.agent_loop.deliverables import build_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.message_delivery import (
     resolve_peer_message_type,
@@ -26,8 +26,10 @@ from core.agent_loop.task_origins import (
 )
 from core.agent_loop.task_roles import (
     default_task_owner_id,
+    task_has_participant,
     task_assignment_reply_target,
     task_report_recipient_ids,
+    task_thread_target,
 )
 from core.bm_cli import execute_bm_cli
 from core.default_prompts import render_default_prompt
@@ -35,6 +37,12 @@ from core.llm.client import count_tokens
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
 from core.models.work_contract import WorkContract
+from core.tasking.service import (
+    append_task_event,
+    create_or_bind_subtask,
+    create_or_bind_task,
+    list_open_child_tasks,
+)
 from core.world.pathfinding import find_path
 from core.world.tilemap import DEFAULT_DESKS, DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, get_room_at
 import db
@@ -61,6 +69,7 @@ _SUPPORTED_ACTIONS = {
     "bm_cli",
     "work",
     "message",
+    "taskMessage",
     "delegateTask",
     "walkTo",
     "attendMeeting",
@@ -75,6 +84,7 @@ _MODEL_ACTION_TO_NAME = {
     "cli": "bm_cli",
     "work": "work",
     "msg": "message",
+    "taskmsg": "taskMessage",
     "assign": "delegateTask",
     "walk": "walkTo",
     "mtg": "meeting",
@@ -173,7 +183,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         extra = {}
     if not isinstance(extra, dict):
         raise ValueError('"data" must be an object when provided')
-    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "dst", "mode", "topic", "sum", "why", "task"}
+    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "tid", "dst", "mode", "topic", "sum", "why", "task"}
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
 
@@ -203,6 +213,9 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "msg":
             normalized["recipientType"] = _map_optional_code(extra.get("to"), _MESSAGE_TARGET_TO_NAME, "data.to")
             normalized["agentId"] = extra.get("aid")
+            normalized["content"] = extra.get("msg")
+        case "taskmsg":
+            normalized["taskId"] = extra.get("tid")
             normalized["content"] = extra.get("msg")
         case "assign":
             normalized["agentId"] = extra.get("aid")
@@ -310,6 +323,17 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         else:
             if action.get("agentId") not in (None, ""):
                 return '"message" to the human operator must not include "agentId"'
+        content = action.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return '"message" requires a non-empty "content"'
+
+    if action_name == "taskMessage":
+        task_id = action.get("taskId")
+        if not isinstance(task_id, str) or not task_id.strip():
+            return '"taskMessage" requires a non-empty "taskId"'
+        content = action.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return '"taskMessage" requires a non-empty "content"'
 
     if action_name == "delegateTask":
         agent_id = action.get("agentId")
@@ -485,18 +509,14 @@ def _append_task_stakeholder_reports(
             location_y=state.y,
         )
         trigger_requests.append(
-            _build_trigger_request(
-                agent_id=recipient_id,
-                trigger_type="peer_message",
+            build_task_follow_up_trigger(
+                task,
+                recipient_agent_id=recipient_id,
+                from_agent=actor.id,
+                from_name=actor.name,
+                content=message.content,
+                source_message_id=message.id,
                 source_channel=source_channel_for_message_type(message.message_type),
-                payload={
-                    "content": message.content,
-                    "from_agent": actor.id,
-                    "from_name": actor.name,
-                    "message_type": message.message_type,
-                    "source_message_id": message.id,
-                },
-                task_id=task.id,
             )
         )
 
@@ -570,23 +590,19 @@ def _append_task_follow_up_message(
             from_agent=actor.id,
             to_agent=target["agent_id"],
             content=content.strip(),
-            message_type="social",
+            message_type="work",
             location_x=state.x,
             location_y=state.y,
         )
         result.setdefault("trigger_requests", []).append(
-            _build_trigger_request(
-                agent_id=target["agent_id"],
-                trigger_type="peer_message",
-                source_channel="chat",
-                payload={
-                    "content": message.content,
-                    "from_agent": actor.id,
-                    "from_name": actor.name,
-                    "message_type": message.message_type,
-                    "source_message_id": message.id,
-                },
-                task_id=task.id,
+            build_task_follow_up_trigger(
+                task,
+                recipient_agent_id=target["agent_id"],
+                from_agent=actor.id,
+                from_name=actor.name,
+                content=message.content,
+                source_message_id=message.id,
+                source_channel="work",
             )
         )
         return {target["agent_id"]}
@@ -762,6 +778,18 @@ async def _handle_message(
         to_agent_id = target.id
         to_display = target.name
 
+    active = activity_runtime.get_active_activity(agent.id)
+    if (
+        target is not None
+        and active is not None
+        and active.kind in {"assignment", "work"}
+    ):
+        return _reject_work_lane_agent_chat(
+            agent=agent,
+            target=target,
+            active_task_id=active.task_id,
+        )
+
     if to_agent_id == HUMAN_SENDER_ID:
         message_type = "social" if state.status == "social_active" else "work"
     else:
@@ -807,6 +835,148 @@ async def _handle_message(
     return result
 
 
+def _reject_work_lane_agent_chat(
+    *,
+    agent: Agent,
+    target: Agent,
+    active_task_id: str | None,
+) -> dict[str, Any]:
+    """Return deterministic repair feedback when work execution tries to use generic coworker chat."""
+    if isinstance(active_task_id, str) and active_task_id.strip():
+        existing_children = list_open_child_tasks(parent_task_id=active_task_id, assigned_to=target.id)
+        if len(existing_children) == 1:
+            child = existing_children[0]
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    f'There is already an open task thread with {target.name} on "{child.title}" '
+                    f'({child.id}). Use "taskmsg" with that task id instead of generic "msg".'
+                ),
+                "agent_name": agent.name,
+                "task_id": child.id,
+                "expected_action": "taskMessage",
+            }
+        if len(existing_children) > 1:
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    f'There is more than one open delegated task for {target.name} under the current work. '
+                    'Use "taskmsg" with the specific task id from Task Board, or use "assign" only if this is a new task.'
+                ),
+                "agent_name": agent.name,
+                "task_ids": [task.id for task in existing_children],
+                "expected_action": "taskMessage",
+            }
+
+    return {
+        "event": "world_feedback",
+        "detail": (
+            'Agent-to-agent communication during work execution must stay in the task system. '
+            'Use "assign" to create delegated work, or "taskmsg" to continue an existing task thread.'
+        ),
+        "agent_name": agent.name,
+        "expected_actions": ["delegateTask", "taskMessage"],
+    }
+
+
+async def _handle_task_message(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append a note inside an existing task thread and route it structurally."""
+    task_id = str(action.get("taskId") or "").strip()
+    content = str(action.get("content") or "").strip()
+    task = db.get_task(task_id)
+    if task is None:
+        return {"event": "world_feedback", "detail": f'Task "{task_id}" no longer exists.', "agent_name": agent.name}
+    if not task_has_participant(task, agent_id=agent.id):
+        return {
+            "event": "world_feedback",
+            "detail": "You can only write on task threads for tasks you participate in.",
+            "agent_name": agent.name,
+        }
+
+    append_task_event(
+        task_id=task.id,
+        author_type="agent",
+        author_agent_id=agent.id,
+        author_name=agent.name,
+        event_type="comment",
+        content=content,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
+    )
+
+    target = task_thread_target(task, actor_id=agent.id)
+    if target["kind"] == "human":
+        message = db.create_message(
+            from_agent=agent.id,
+            to_agent=HUMAN_SENDER_ID,
+            content=content,
+            message_type="social",
+            location_x=state.x,
+            location_y=state.y,
+            token_count=_count_action_tokens(agent, action, content),
+        )
+        return {
+            "event": "message_sent",
+            "detail": f"{agent.name} updated the human on task \"{task.title}\"",
+            "agent_name": agent.name,
+            "chat_message": {
+                "agent_id": agent.id,
+                "content": message.content,
+                "from_type": "agent",
+                "from_name": agent.name,
+                "message_type": message.message_type,
+                "message_id": message.id,
+                "created_at": message.created_at,
+            },
+        }
+
+    target_agent_id = target.get("agent_id")
+    if not isinstance(target_agent_id, str) or not target_agent_id.strip():
+        return {
+            "event": "world_feedback",
+            "detail": "No valid task-thread recipient is available for that task update.",
+            "agent_name": agent.name,
+        }
+
+    target_agent = db.get_agent(target_agent_id)
+    if target_agent is None:
+        return {
+            "event": "world_feedback",
+            "detail": "The task-thread recipient no longer exists.",
+            "agent_name": agent.name,
+        }
+
+    message = db.create_message(
+        from_agent=agent.id,
+        to_agent=target_agent_id,
+        content=content,
+        message_type="work",
+        location_x=state.x,
+        location_y=state.y,
+        token_count=_count_action_tokens(agent, action, content),
+    )
+    return {
+        "event": "message_sent",
+        "detail": f'{agent.name} updated task "{task.title}" for {target_agent.name}',
+        "agent_name": agent.name,
+        "trigger_requests": [
+            build_task_follow_up_trigger(
+                task,
+                recipient_agent_id=target_agent_id,
+                from_agent=agent.id,
+                from_name=agent.name,
+                content=message.content,
+                source_message_id=message.id,
+                source_channel="work",
+            )
+        ],
+    }
+
+
 async def _handle_delegate_task(
     agent: Agent,
     state: AgentState,
@@ -840,26 +1010,55 @@ async def _handle_delegate_task(
         parent_task=parent_task,
     )
 
-    task = db.create_task(
-        title=task_title,
-        description=task_description,
-        project=project_name,
-        assigned_to=target.id,
-        requester_id=agent.id,
-        owner_id=owner_id,
-        created_by=agent.id,
-        parent_task_id=parent_task_id,
-        work_contract=work_contract,
-        source_channel=source_channel,
-        notification_policy=notification_policy,
-        notification_channel_id=notification_channel_id,
-    )
+    if parent_task is not None:
+        creation = create_or_bind_subtask(
+            parent_task=parent_task,
+            title=task_title,
+            description=task_description,
+            project=project_name,
+            assigned_to=target.id,
+            requester_id=agent.id,
+            owner_id=owner_id,
+            created_by=agent.id,
+            work_contract=work_contract,
+            source_channel=source_channel,
+            notification_policy=notification_policy,
+            notification_channel_id=notification_channel_id,
+            audit_author_name=agent.name,
+            audit_author_type="agent",
+            audit_author_agent_id=agent.id,
+            audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
+    else:
+        creation = create_or_bind_task(
+            title=task_title,
+            description=task_description,
+            project=project_name,
+            assigned_to=target.id,
+            requester_id=agent.id,
+            owner_id=owner_id,
+            created_by=agent.id,
+            parent_task_id=None,
+            work_contract=work_contract,
+            source_channel=source_channel,
+            notification_policy=notification_policy,
+            notification_channel_id=notification_channel_id,
+            audit_author_name=agent.name,
+            audit_author_type="agent",
+            audit_author_agent_id=agent.id,
+            audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
+    task = creation.task
 
     result = {
         "event": "status_changed",
-        "detail": f'{agent.name} assigned "{task.title}" to {target.name}',
+        "detail": (
+            f'{agent.name} assigned "{task.title}" to {target.name}'
+            if creation.outcome == "create_new_task"
+            else f'{agent.name} reused "{task.title}" for {target.name}'
+        ),
         "agent_name": agent.name,
-        "trigger_requests": [build_task_assigned_trigger(task)],
+        "trigger_requests": [build_task_assigned_trigger(task)] if task.status == "pending" else [],
         "chat_notification": {
             "kind": "handoff",
             "task_title": task.title,
@@ -877,6 +1076,15 @@ async def _handle_delegate_task(
         state=state,
         task=task,
         content=f'Assigned subtask "{task.title}" to {target.name}.',
+    )
+    append_task_event(
+        task_id=task.id,
+        author_type="agent",
+        author_agent_id=agent.id,
+        author_name=agent.name,
+        event_type="assignment",
+        content=f'Assigned "{task.title}" to {target.name}.',
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     return result
 
@@ -1253,6 +1461,16 @@ async def _handle_complete(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    if task is not None:
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="completion",
+            content=summary or f'Completed "{task.title}".',
+            source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -1321,6 +1539,16 @@ async def _handle_blocked(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    if task is not None:
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="blocker",
+            content=reason or f'Blocked on "{task.title}".',
+            source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -1373,7 +1601,8 @@ async def _handle_delegated(
     # Create a child task for the target agent (vision doc: delegation
     # creates a formal task record with its own watchdog)
     if original_task:
-        child = db.create_task(
+        child = create_or_bind_subtask(
+            parent_task=original_task,
             title=original_task.title,
             description=original_task.description,
             project=original_task.project,
@@ -1386,12 +1615,15 @@ async def _handle_delegated(
                 parent_task=original_task,
             ),
             created_by=agent.id,
-            parent_task_id=task_id,
             work_contract=original_task.work_contract,
             source_channel=original_task.source_channel,
             notification_policy=original_task.notification_policy,
             notification_channel_id=original_task.notification_channel_id,
-        )
+            audit_author_name=agent.name,
+            audit_author_type="agent",
+            audit_author_agent_id=agent.id,
+            audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+        ).task
     else:
         child = None
 
@@ -1416,7 +1648,17 @@ async def _handle_delegated(
             "human_visible": _task_is_human_visible(original_task),
         },
     }
-    if child:
+    if original_task is not None:
+        append_task_event(
+            task_id=original_task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="status_update",
+            content=f'Delegated "{original_task.title}" to {target.name}.',
+            source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
+    if child and child.status == "pending":
         result["trigger_requests"] = [build_task_assigned_trigger(child)]
     skipped = _append_task_follow_up_message(
         result=result,
@@ -1490,6 +1732,16 @@ async def _handle_abandoned(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    if task is not None:
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="status_update",
+            content=reason or f'Abandoned "{task.title}".',
+            source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -1516,6 +1768,7 @@ _ACTION_HANDLERS = {
     "bm_cli": _handle_bm_cli,
     "work": _handle_work,
     "message": _handle_message,
+    "taskMessage": _handle_task_message,
     "delegateTask": _handle_delegate_task,
     "walkTo": _handle_walk_to,
     "attendMeeting": _handle_attend_meeting,

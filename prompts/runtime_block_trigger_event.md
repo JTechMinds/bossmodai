@@ -10,6 +10,24 @@ YOUR TURN TO RESPOND IN THE MEETING after [{{trigger.from_name}}] said: {{trigge
 CURRENT REQUEST FROM [{{trigger.from_name}}]: {{trigger.content}}
 {{elseif trigger.type = 'peer_message'}}
 CURRENT REQUEST FROM [{{trigger.from_name}}]: {{trigger.content}}
+{{elseif trigger.type = 'task_follow_up'}}
+TASK THREAD UPDATE FROM [{{trigger.from_name}}] on "{{trigger.task_title}}".
+Current task status: {{trigger.task_status}}
+{{if trigger.task_description}}
+Task description: {{trigger.task_description}}
+{{end}}
+{{if trigger.content}}
+Latest note from [{{trigger.from_name}}]: {{trigger.content}}
+{{end}}
+{{if trigger.task_party = 'assignee'}}
+{{if trigger.task_status = 'pending'}}
+This pending task is still awaiting your decision.
+{{else}}
+Respond within the existing task thread for this task.
+{{end}}
+{{else}}
+Respond within the existing task thread for this task.
+{{end}}
 {{elseif trigger.type = 'task_assigned'}}
 {{if turn.contract_kind = 'decision'}}
 [{{trigger.from_name}}] assigned you a task: "{{trigger.task_title}}". Decide whether to accept it, ask a clarifying question, defer it, or decline it.

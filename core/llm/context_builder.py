@@ -17,6 +17,7 @@ from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
+from core.tasking import build_task_board
 from core.time import ensure_utc, now_local
 from core.world.tilemap import get_room_at
 
@@ -65,7 +66,12 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("task.project", "Current task project"),
     ("task.completion_summary", "Current task completion summary"),
     ("task.status_note", "Current task status note"),
-    ("pending_tasks", "Formatted open task list"),
+    ("task_board", "Formatted task board summary for open, waiting, owned, and delegated work"),
+    ("task_board.open_count", "Count of other open tasks on the personal board"),
+    ("task_board.waiting_count", "Count of owned/delegated tasks waiting on this agent"),
+    ("task_board.delegated_count", "Count of delegated child tasks this agent owns"),
+    ("task_board.blocked_count", "Count of blocked or stalled tasks visible on the board"),
+    ("pending_tasks", "Legacy alias for the old flat open-task list; prefer task_board in new prompts"),
     ("references", "Formatted reference block"),
     ("turn.contract_kind", "Current runtime contract kind"),
     ("trigger.type", "Current trigger type"),
@@ -74,6 +80,8 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("trigger.source_channel", "Trigger source channel"),
     ("trigger.task_title", "Assigned task title when present"),
     ("trigger.task_description", "Assigned task description when present"),
+    ("trigger.task_status", "Task status for task-bound follow-up turns"),
+    ("trigger.task_party", "Recipient role for task-bound follow-up turns"),
     ("trigger.activity_kind", "Activity kind for resumed work triggers"),
     ("trigger.nearby_names", "Comma-separated nearby agent names for social triggers"),
     ("channel.kind", "Current channel kind when present"),
@@ -214,6 +222,7 @@ def template_syntax_examples() -> list[str]:
 def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     """Build the structured render context for authored prompts."""
     current_time = _current_time_context(now_local())
+    task_board = _task_board_context(turn.agent.id, turn.current_task)
     world_status = _world_status_context(
         turn.agent,
         turn.state,
@@ -221,6 +230,7 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         turn.current_activity,
         turn.current_task,
         turn.pending_trigger_count,
+        open_task_count=task_board["open_count"],
     )
     activity = _activity_context(turn.current_activity)
     task = _task_context(turn.current_task)
@@ -235,6 +245,7 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "worldStatus": world_status,
         "activity": activity,
         "task": task,
+        "task_board": task_board,
         "pending_tasks": _format_pending_tasks(turn.agent.id, turn.current_task),
         "references": _format_references(
             turn.agent.id,
@@ -310,11 +321,13 @@ def _world_status_context(
     current_activity: dict[str, Any] | None = None,
     current_task: dict[str, Any] | None = None,
     pending_trigger_count: int = 0,
+    *,
+    open_task_count: int | None = None,
 ) -> dict[str, Any]:
     room = get_room_at(state.x, state.y)
     room_name = room["name"] if room else "unknown"
     status_label = _STATUS_LABELS.get(state.status, state.status)
-    open_tasks = _list_open_tasks(agent.id, current_task)
+    open_count = open_task_count if open_task_count is not None else len(_list_open_tasks(agent.id, current_task))
     nearby_names = [str(item.get("name") or "Unknown") for item in (nearby_agents or [])]
     task_summary = "none"
     if current_task:
@@ -333,12 +346,13 @@ def _world_status_context(
             current_activity,
             current_task,
             pending_trigger_count,
+            open_task_count=open_count,
         ),
         "location": room_name,
         "status": status_label,
         "nearby_agents": ", ".join(nearby_names) if nearby_names else "none",
         "pending_triggers": pending_trigger_count,
-        "open_task_count": len(open_tasks),
+        "open_task_count": open_count,
         "current_activity": activity_summary,
         "current_task": task_summary,
     }
@@ -378,6 +392,8 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
         "task_description": str(trigger.get("task_description") or ""),
+        "task_status": str(trigger.get("task_status") or ""),
+        "task_party": str(trigger.get("task_party") or ""),
         "activity_kind": str(trigger.get("activity_kind") or ""),
         "nearby_names": ", ".join(str(item or "") for item in (trigger.get("nearby_names") or [] if isinstance(trigger.get("nearby_names"), list) else [])),
     }
@@ -411,7 +427,17 @@ def _preview_trigger(trigger_type: str) -> dict[str, Any]:
         "task_description": "Summarize the current API behavior and save the draft.",
     }
     if trigger_type == "peer_message":
-        base.update({"from_name": "Morgan", "content": "Can you take a look at the deployment notes?"})
+        base.update({"from_name": "Morgan", "from_agent": "agent-morgan", "content": "Can you take a look at the deployment notes?"})
+    if trigger_type == "task_follow_up":
+        base.update(
+            {
+                "from_name": "Morgan",
+                "from_agent": "agent-morgan",
+                "content": "I finished the draft and need your review.",
+                "task_status": "accepted",
+                "task_party": "stakeholder",
+            }
+        )
     if trigger_type in {"session_message", "session_response"}:
         base.update({"from_name": "Meeting Room", "content": "Please share your progress."})
     if trigger_type in {"channel_message", "channel_response"}:
@@ -445,13 +471,13 @@ def _preview_activity(contract_kind: str, trigger_type: str) -> dict[str, Any] |
 
 
 def _preview_task(contract_kind: str, trigger_type: str) -> dict[str, Any] | None:
-    if contract_kind != "execution" and trigger_type != "task_assigned":
+    if contract_kind != "execution" and trigger_type not in {"task_assigned", "task_follow_up"}:
         return None
     return {
         "id": "preview-task",
         "title": "Write API summary",
         "description": "Summarize the current API behavior and save the result to /me/api_summary.md",
-        "status": "active" if contract_kind == "execution" else "pending",
+        "status": "active" if contract_kind == "execution" else ("accepted" if trigger_type == "task_follow_up" else "pending"),
         "project": "BossMod AI",
         "completion_summary": "",
         "status_note": "",
@@ -488,6 +514,8 @@ def _format_world_status(
     current_activity: dict[str, Any] | None = None,
     current_task: dict[str, Any] | None = None,
     pending_trigger_count: int = 0,
+    *,
+    open_task_count: int | None = None,
 ) -> str:
     """Build the structured world status block."""
     room = get_room_at(state.x, state.y)
@@ -495,7 +523,7 @@ def _format_world_status(
     status_label = _STATUS_LABELS.get(state.status, state.status)
 
     pending_count = pending_trigger_count
-    open_tasks = _list_open_tasks(agent.id, current_task)
+    open_count = open_task_count if open_task_count is not None else len(_list_open_tasks(agent.id, current_task))
 
     # Nearby agents
     nearby_str = "none"
@@ -517,7 +545,7 @@ def _format_world_status(
         f"status: {status_label}\n"
         f"nearby_agents: {nearby_str}\n"
         f"pending_triggers: {pending_count}\n"
-        f"open_task_count: {len(open_tasks)}\n"
+        f"open_task_count: {open_count}\n"
         f"current_activity: {activity_str}\n"
         f"current_task: {task_str}"
     )
@@ -585,6 +613,51 @@ def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) ->
     return "\n".join(lines)
 
 
+def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a compact board-first task summary for authored prompts."""
+    self_board = build_task_board(agent_id, scope="self")
+    owned_board = build_task_board(agent_id, scope="owned")
+    current_task_id = str((current_task or {}).get("id") or "").strip() or None
+
+    open_rows = _tasks_from_board_section(self_board, "my_open_tasks", current_task_id=current_task_id)
+    blocked_rows = _tasks_from_board_section(self_board, "my_blocked_tasks", current_task_id=current_task_id)
+    waiting_rows = _tasks_from_board_section(owned_board, "tasks_waiting_on_me")
+    delegated_rows = _tasks_from_board_section(owned_board, "tasks_i_delegated")
+    blocked_child_rows = _tasks_from_board_section(owned_board, "blocked_or_stalled_child_tasks")
+
+    sections: list[tuple[str, list[str]]] = []
+    if open_rows:
+        sections.append(("MY OPEN TASKS", _task_board_lines(open_rows, limit=5)))
+    if blocked_rows:
+        sections.append(("MY BLOCKED TASKS", _task_board_lines(blocked_rows, limit=3)))
+    if waiting_rows:
+        sections.append(("TASKS WAITING ON ME", _task_board_lines(waiting_rows, limit=3)))
+    if delegated_rows:
+        sections.append(("TASKS I DELEGATED", _task_board_lines(delegated_rows, limit=3)))
+    if blocked_child_rows:
+        sections.append(("BLOCKED OR STALLED CHILD TASKS", _task_board_lines(blocked_child_rows, limit=3)))
+    assignee_rollup = owned_board.get("assignee_rollup") or []
+    if assignee_rollup:
+        sections.append(("ASSIGNEE ROLLUP", _task_board_rollup_lines(assignee_rollup[:5])))
+
+    if not sections:
+        value = "none"
+    else:
+        rendered_sections: list[str] = []
+        for title, lines in sections:
+            rendered_sections.append(f"{title}:")
+            rendered_sections.extend(lines)
+        value = "\n".join(rendered_sections)
+
+    return {
+        "value": value,
+        "open_count": len(open_rows),
+        "waiting_count": len(waiting_rows),
+        "delegated_count": len(delegated_rows),
+        "blocked_count": len(blocked_rows) + len(blocked_child_rows),
+    }
+
+
 def _format_references(
     agent_id: str,
     reference_materials: list[str],
@@ -604,10 +677,61 @@ def _format_references(
 
 
 def _list_open_tasks(agent_id: str, current_task: dict[str, Any] | None) -> list[Any]:
-    """Return pending/accepted tasks excluding the currently active one."""
-    current_task_id = current_task.get("id") if current_task else None
-    tasks = db.list_tasks(assigned_to=agent_id, status="pending") + db.list_tasks(assigned_to=agent_id, status="accepted")
-    return [task for task in tasks if task.id != current_task_id]
+    """Return the personal board's other open tasks excluding the current one."""
+    current_task_id = str((current_task or {}).get("id") or "").strip() or None
+    board = build_task_board(agent_id, scope="self")
+    return _tasks_from_board_section(board, "my_open_tasks", current_task_id=current_task_id)
+
+
+def _tasks_from_board_section(
+    board: dict[str, Any],
+    section_name: str,
+    *,
+    current_task_id: str | None = None,
+) -> list[Any]:
+    """Return one board section with the active task filtered out when requested."""
+    rows = list((board.get("sections") or {}).get(section_name, []))
+    if not current_task_id:
+        return rows
+    return [task for task in rows if getattr(task, "id", None) != current_task_id]
+
+
+def _task_board_lines(rows: list[Any], *, limit: int) -> list[str]:
+    """Render compact task-board rows for prompt use."""
+    lines = ["task id | datetime | status | assignee | task name | description"]
+    for task in rows[:limit]:
+        assignee_name = _task_assignee_name(task)
+        lines.append(
+            " | ".join(
+                [
+                    str(getattr(task, "id", "")),
+                    _format_datetime(getattr(task, "last_activity", None) or getattr(task, "created_at", None)),
+                    str(getattr(task, "status", "unknown")),
+                    assignee_name or "-",
+                    str(getattr(task, "title", "Untitled")),
+                    _summarize_text(str(getattr(task, "description", None) or getattr(task, "status_note", None) or ""), limit=120),
+                ]
+            )
+        )
+    return lines
+
+
+def _task_assignee_name(task: Any) -> str | None:
+    """Return a display name for a task assignee when available."""
+    assignee_id = getattr(task, "assigned_to", None)
+    if not isinstance(assignee_id, str) or not assignee_id.strip():
+        return None
+    agent = db.get_agent(assignee_id)
+    return agent.name if agent is not None else assignee_id
+
+
+def _task_board_rollup_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """Render a compact assignee rollup table for prompt use."""
+    lines = ["assignee | counts"]
+    for row in rows:
+        counts = ", ".join(f"{key}={value}" for key, value in sorted((row.get("counts") or {}).items()))
+        lines.append(f"{row.get('agent_name') or row.get('agent_id')} | {counts or '-'}")
+    return lines
 
 
 def _format_team_directory(reference_materials: list[str]) -> str:
@@ -845,16 +969,64 @@ def _preview_communication_snapshot_json(trigger_type: str) -> str | None:
         "runtime": {
             "status": "idle",
             "location": "Main Workspace",
+            "cwd": "/projects/orchard",
             "current_activity": "none",
             "current_task": "none",
-            "open_assigned_task_count": 1,
-            "open_owned_task_count": 0,
+            "self_open_task_count": 1,
+            "owned_delegated_task_count": 0,
+            "waiting_on_me_count": 0,
         },
         "current_task": {
             "id": "preview-task",
             "title": "Write API summary",
             "status": "active",
             "description": "Summarize the current API behavior and save the result.",
+        },
+        "task_board": {
+            "self": {
+                "scope": "self",
+                "current_task": {
+                    "id": "preview-task",
+                    "title": "Write API summary",
+                    "status": "active",
+                    "description": "Summarize the current API behavior and save the result.",
+                },
+                "sections": {
+                    "my_open_tasks": [
+                        {
+                            "id": "preview-waiting-task",
+                            "title": "Review release notes",
+                            "status": "accepted",
+                            "description": "Review the draft release notes and flag gaps.",
+                        }
+                    ]
+                },
+            },
+            "owned": {
+                "scope": "owned",
+                "current_task": {
+                    "id": "preview-task",
+                    "title": "Write API summary",
+                    "status": "active",
+                    "description": "Summarize the current API behavior and save the result.",
+                },
+                "sections": {},
+            },
+            "project_summary": [
+                {
+                    "project": "Orchard",
+                    "path": "/projects/orchard",
+                    "counts": {"accepted": 1},
+                    "latest_tasks": [
+                        {
+                            "title": "Review release notes",
+                            "status": "accepted",
+                            "assigned_to": "preview-agent",
+                            "assignee_name": "Taylor",
+                        }
+                    ],
+                }
+            ],
         },
         "recent_completed_tasks": [
             {
@@ -963,7 +1135,7 @@ def _conversation_speaker(trigger: dict[str, Any]) -> tuple[str, str, str]:
     trigger_type = str(trigger.get("type") or "")
     if trigger_type == "human_chat":
         return "human", "Human Operator", "human"
-    if trigger_type == "task_assigned":
+    if trigger_type in {"task_assigned", "task_follow_up"}:
         if trigger.get("from_agent"):
             return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
         return "human", str(trigger.get("from_name") or "Human Operator"), "human"
@@ -996,6 +1168,10 @@ def _conversation_channel(turn: TurnContext, trigger_type: str) -> tuple[str, st
     if trigger_type == "task_assigned":
         assigner = str(turn.trigger.get("from_name") or "Assigning Party")
         return "assignment", "Task Assignment", [turn.agent.name, assigner]
+    if trigger_type == "task_follow_up":
+        counterpart = str(turn.trigger.get("from_name") or "Coworker")
+        task_title = str(turn.trigger.get("task_title") or "Task")
+        return "task_thread", f'Task Thread: {task_title}', [turn.agent.name, counterpart]
     return "direct", "Direct Chat", [turn.agent.name, "Human Operator"]
 
 
@@ -1011,6 +1187,8 @@ def _conversation_audience(turn: TurnContext, trigger_type: str) -> tuple[str, l
         return "direct", [str(turn.trigger.get("from_name") or "Coworker")]
     if trigger_type == "task_assigned":
         return "direct", [str(turn.trigger.get("from_name") or "Assigning Party")]
+    if trigger_type == "task_follow_up":
+        return "direct", [str(turn.trigger.get("from_name") or "Coworker")]
     return "direct", ["Human Operator"]
 
 
@@ -1022,4 +1200,6 @@ def _conversation_turn_purpose(trigger_type: str) -> str:
         return "shared_reply"
     if trigger_type == "task_assigned":
         return "assignment_review"
+    if trigger_type == "task_follow_up":
+        return "task_follow_up"
     return "direct_reply"

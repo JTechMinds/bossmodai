@@ -72,6 +72,62 @@ For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
+{{elseif trigger.type = 'task_follow_up'}}
+{{if trigger.task_party = 'assignee'}}
+{{if trigger.task_status = 'pending'}}
+ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | defer | decline
+
+Use one of these shapes:
+
+For reply:
+```json
+{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
+```
+
+For accept:
+```json
+{"act":"accept","intent":"work","msg":"string","commit":"work","th":"string"}
+```
+
+For clarify or decline:
+```json
+{"act":"clarify | decline","intent":"work | other","msg":"string","th":"string"}
+```
+
+For defer:
+```json
+{"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
+```
+{{else}}
+ALLOWED conversation act FOR THIS TURN: reply | clarify
+
+Use one of these shapes:
+
+For reply:
+```json
+{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
+```
+
+For clarify:
+```json
+{"act":"clarify","intent":"question | status | work | other","msg":"string","th":"string"}
+```
+{{end}}
+{{else}}
+ALLOWED conversation act FOR THIS TURN: reply | clarify
+
+Use one of these shapes:
+
+For reply:
+```json
+{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
+```
+
+For clarify:
+```json
+{"act":"clarify","intent":"question | status | work | other","msg":"string","th":"string"}
+```
+{{end}}
 {{elseif trigger.type = 'task_assigned'}}
 ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline
 
@@ -228,6 +284,12 @@ TURN GUIDANCE
 - When someone asks for revisions to finished work, treat that as new follow-up work rather than pretending the completed task is still active.
 - Distinguish active work from completed work when both are relevant.
 - Questions about prior completed work do not replace the current active task.
+- For task status, owned/delegated work, or task follow-up context, use the board/thread commands when needed:
+  - `my-board`
+  - `owned-tasks`
+  - `delegated-tasks`
+  - `waiting-on-me`
+  - `task <id>`
 - If the user gives a save or read path, use it.
 {{if workspace.project_root}}
 - Known project folder for this turn: `{{workspace.project_root}}`
@@ -285,6 +347,21 @@ CLI LOOKUP DETAILS
 {{if trigger.type = 'peer_message'}}
 PEER NOTE:
 - ordinary coworker chat is conversational only; durable work should arrive as an explicit assignment
+{{elseif trigger.type = 'task_follow_up'}}
+TASK FOLLOW-UP NOTE:
+{{if trigger.task_party = 'assignee'}}
+{{if trigger.task_status = 'pending'}}
+- this is an existing pending task thread; you may reply, accept, clarify, defer, or decline
+- accept or defer should keep `commit="work"`
+- do not invent a new task title or description for the existing task
+{{else}}
+- this is an existing task thread; reply or clarify within the task instead of treating it like generic chat
+- use `task <id>` when you need the durable task thread before replying
+{{end}}
+{{else}}
+- this is an existing task thread; reply or clarify within the task instead of treating it like generic chat
+- use `task <id>` when you need the durable task thread before replying
+{{end}}
 {{elseif trigger.type = 'task_assigned'}}
 ASSIGNMENT NOTE:
 - this is an offered assignment; use accept | clarify | defer | decline

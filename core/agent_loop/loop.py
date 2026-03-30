@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 _DECISION_TRIGGER_TYPES = {
     "human_chat",
     "peer_message",
+    "task_follow_up",
     "session_message",
     "session_response",
     "channel_message",
@@ -1049,6 +1050,7 @@ async def _run_decision_turn(
             decision,
             trigger_type=trigger_type,
             active_task_id=initial_task_id,
+            trigger=trigger,
         )
         if validation_error:
             result = {
@@ -1454,6 +1456,7 @@ def _has_pending_interrupts(agent_id: str) -> bool:
         trigger_types=[
             "human_chat",
             "peer_message",
+            "task_follow_up",
             "session_message",
             "session_response",
             "channel_message",

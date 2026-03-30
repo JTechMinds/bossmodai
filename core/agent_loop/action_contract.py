@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from core import config
-from core.default_prompts import load_default_prompt
 from core.llm.template_engine import render_template
+from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 
 _CONTRACT_ALLOWED_PATHS = {"cli.shell_enabled"}
 
 
 def default_action_contract_template() -> str:
-    """Return the default authored execution contract template."""
-    return load_default_prompt("runtime_contract_execution")
+    """Return the current settings-backed execution contract template."""
+    return resolve_runtime_prompt_text("runtime_contract_execution")
 
 
 def render_action_contract() -> str:

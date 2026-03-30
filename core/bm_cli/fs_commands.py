@@ -279,12 +279,16 @@ def handle_write(context: CliExecutionContext, parsed: ParsedCliCommand, content
     if content is None or not content.strip():
         return error_result(parsed.raw, 'Write commands require a non-empty "content" field.', cwd=context.cwd)
     try:
+        target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0])
+    except ValueError as exc:
+        return error_result(parsed.raw, str(exc), cwd=context.cwd)
+    try:
         outcome = write_virtual_text(
             context.agent,
             cwd=context.cwd,
             raw_path=parsed.args[0],
             content=content,
-            reason=f"bm_cli write {parsed.args[0]}",
+            reason=f"bm_cli write {target.virtual_path}",
         )
     except ValueError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
@@ -317,13 +321,17 @@ def handle_append(context: CliExecutionContext, parsed: ParsedCliCommand, conten
     if content is None or not content.strip():
         return error_result(parsed.raw, 'Append commands require a non-empty "content" field.', cwd=context.cwd)
     try:
+        target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0])
+    except ValueError as exc:
+        return error_result(parsed.raw, str(exc), cwd=context.cwd)
+    try:
         outcome = write_virtual_text(
             context.agent,
             cwd=context.cwd,
             raw_path=parsed.args[0],
             content=content,
             append=True,
-            reason=f"bm_cli append {parsed.args[0]}",
+            reason=f"bm_cli append {target.virtual_path}",
         )
     except ValueError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)

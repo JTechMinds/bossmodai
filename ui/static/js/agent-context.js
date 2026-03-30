@@ -1049,34 +1049,64 @@ const AgentContext = (() => {
         const container = document.getElementById('subview-tasks');
         if (!selectedAgent) return;
 
-        let tasks = [];
+        let selfBoard = null;
+        let ownedBoard = null;
         try {
-            const res = await fetch(`/api/tasks?assigned_to=${selectedAgent.id}`);
-            tasks = await res.json();
+            const [selfRes, ownedRes] = await Promise.all([
+                fetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=self`, { cache: 'no-store' }),
+                fetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=owned`, { cache: 'no-store' }),
+            ]);
+            if (selfRes.ok) selfBoard = await selfRes.json();
+            if (ownedRes.ok) ownedBoard = await ownedRes.json();
         } catch { /* ignore */ }
 
-        if (tasks.length === 0) {
+        const sections = [];
+        const pushSections = (board) => {
+            if (!board || !board.sections) return;
+            for (const [key, rows] of Object.entries(board.sections)) {
+                if (!Array.isArray(rows) || rows.length === 0) continue;
+                sections.push({ key, rows });
+            }
+        };
+        pushSections(selfBoard);
+        pushSections(ownedBoard);
+
+        if (sections.length === 0) {
             container.innerHTML = `
                 <div class="text-bm-muted text-sm text-center mt-8">
                     <i data-lucide="list-todo" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
-                    <p>No tasks assigned to ${BossModUtils.escapeHtml(selectedAgent.name)}</p>
+                    <p>No board items for ${BossModUtils.escapeHtml(selectedAgent.name)}</p>
                 </div>`;
         } else {
-            let html = `<div class="space-y-2">`;
-            for (const t of tasks) {
-                const statusColor = t.status === 'complete' ? 'text-emerald-600' :
-                                    t.status === 'accepted' ? 'text-blue-600' :
-                                    t.status === 'active' ? 'text-amber-600' :
-                                    t.status === 'blocked' ? 'text-red-600' :
-                                    t.status === 'declined' ? 'text-orange-600' : 'text-bm-muted';
-                html += `
+            let html = `<div class="space-y-4">`;
+            const renderTaskCard = (task) => {
+                const statusColor = task.status === 'complete' ? 'text-emerald-600' :
+                    task.status === 'accepted' ? 'text-blue-600' :
+                    task.status === 'active' ? 'text-amber-600' :
+                    task.status === 'blocked' || task.status === 'stalled' ? 'text-red-600' :
+                    task.status === 'declined' ? 'text-orange-600' : 'text-bm-muted';
+                return `
                     <div class="p-3 border border-bm-border rounded-lg bg-white">
-                        <div class="flex items-start justify-between">
-                            <div>
-                                <p class="text-sm font-medium">${BossModUtils.escapeHtml(t.title)}</p>
-                                ${t.description ? `<p class="text-xs text-bm-muted mt-0.5">${BossModUtils.escapeHtml(t.description.slice(0, 100))}</p>` : ''}
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <p class="text-sm font-medium">${BossModUtils.escapeHtml(task.title)}</p>
+                                ${task.description ? `<p class="text-xs text-bm-muted mt-0.5">${BossModUtils.escapeHtml(task.description.slice(0, 120))}</p>` : ''}
+                                <div class="text-[11px] text-bm-muted mt-1">
+                                    ${task.assigned_to_name ? BossModUtils.escapeHtml(task.assigned_to_name) : ''}
+                                    ${task.owner_name && task.owner_name !== task.assigned_to_name ? ` • owner: ${BossModUtils.escapeHtml(task.owner_name)}` : ''}
+                                </div>
+                                ${task.latest_event?.content ? `<p class="text-[11px] text-bm-muted mt-1">Latest: ${BossModUtils.escapeHtml(task.latest_event.content.slice(0, 140))}</p>` : ''}
                             </div>
-                            <span class="text-xs font-medium ${statusColor}">${t.status}</span>
+                            <span class="text-xs font-medium shrink-0 ${statusColor}">${task.status}</span>
+                        </div>
+                    </div>`;
+            };
+            for (const section of sections) {
+                html += `
+                    <div>
+                        <p class="text-[11px] uppercase tracking-wide text-bm-muted mb-2">${BossModUtils.escapeHtml(section.key.replaceAll('_', ' '))}</p>
+                        <div class="space-y-2">
+                            ${section.rows.map(renderTaskCard).join('')}
                         </div>
                     </div>`;
             }

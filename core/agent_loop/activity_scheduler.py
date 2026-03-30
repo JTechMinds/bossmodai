@@ -12,6 +12,7 @@ from core.models import Activity, AgentState, Task
 _INTERRUPT_TRIGGER_TYPES = {
     "human_chat",
     "peer_message",
+    "task_follow_up",
     "session_message",
     "session_response",
     "channel_message",
@@ -45,12 +46,15 @@ def can_dispatch_trigger(
 
 def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity | None:
     """Materialize any runtime activity needed before the turn starts."""
+    active = activity_runtime.get_active_activity(agent_id)
     trigger_type = trigger.get("type")
-    if trigger_type == "task_assigned" and trigger.get("task_id"):
+    if trigger_type in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
-        if task and task.status == "pending":
+        if task and task.status == "pending" and task.assigned_to == agent_id:
+            if active and not (active.kind == "assignment" and active.task_id == task.id):
+                return active
             return activity_runtime.start_assignment_activity(agent_id, task)
-    return activity_runtime.get_active_activity(agent_id)
+    return active
 
 
 def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
@@ -73,6 +77,35 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "owner_id": sender["owner_id"],
             "owner_name": sender["owner_name"],
             "notification_channel_id": task.notification_channel_id,
+        },
+    }
+
+
+def build_task_follow_up_trigger(
+    task: Task,
+    *,
+    recipient_agent_id: str,
+    from_agent: str | None,
+    from_name: str,
+    content: str,
+    source_message_id: str | None = None,
+    source_channel: str = "work",
+) -> dict[str, Any]:
+    """Build the canonical task-bound follow-up trigger for one existing task."""
+    return {
+        "agent_id": recipient_agent_id,
+        "trigger_type": "task_follow_up",
+        "source_channel": source_channel,
+        "task_id": task.id,
+        "payload": {
+            "task_title": task.title,
+            "task_description": task.description or "",
+            "task_status": task.status,
+            "task_party": "assignee" if task.assigned_to == recipient_agent_id else "stakeholder",
+            "from_agent": from_agent,
+            "from_name": from_name,
+            "content": content,
+            "source_message_id": source_message_id,
         },
     }
 

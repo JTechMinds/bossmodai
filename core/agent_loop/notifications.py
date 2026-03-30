@@ -363,4 +363,6 @@ def _notification_source_channel(trigger: dict[str, Any]) -> str:
     trigger_type = trigger.get("type")
     if trigger_type == "peer_message":
         return "peer"
+    if trigger_type == "task_follow_up":
+        return "task"
     return "chat"

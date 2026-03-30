@@ -32,6 +32,7 @@ from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
 from core.prompting.runtime_prompt_lint import lint_runtime_prompts
 from core.runtime import runtime_services
+from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
 from core.messaging import route_human_dm, route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
 from core.models import (
@@ -188,6 +189,7 @@ _RUNTIME_CONTRACT_KEYS = {
 _RUNTIME_PREVIEW_TRIGGERS = [
     "human_chat",
     "peer_message",
+    "task_follow_up",
     "task_assigned",
     "session_message",
     "session_response",
@@ -711,7 +713,16 @@ async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
         raise HTTPException(404, "Path not found")
 
     target = resolved.real_path.parent if resolved.real_path.is_file() else resolved.real_path
-    opener = config.get("desktop_open_folder_handler") or "auto"
+    opener = config.get("desktop_open_folder_handler")
+    if not opener:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_required",
+                "message": "Choose a desktop folder opener before opening Desk folders.",
+                "options": _available_folder_opener_options(),
+            },
+        )
     try:
         _launch_file_explorer(target, opener=opener)
     except OSError as exc:
@@ -1342,12 +1353,18 @@ async def list_tasks(
         agent = db.get_agent(aid)
         if agent:
             agent_names[aid] = agent.name
+    recent_events = db.list_recent_task_events([task.id for task in tasks], limit_per_task=1)
     return [
         {
             **t.model_dump(mode="json"),
             "assigned_to_name": agent_names.get(t.assigned_to) if t.assigned_to else None,
             "requester_name": agent_names.get(t.requester_id) if t.requester_id else None,
             "owner_name": agent_names.get(t.owner_id) if t.owner_id else None,
+            "latest_event": (
+                recent_events[t.id][-1].model_dump(mode="json")
+                if recent_events.get(t.id)
+                else None
+            ),
         }
         for t in tasks
     ]
@@ -1393,7 +1410,7 @@ async def create_task(body: TaskCreate) -> Task:
         parent_task=parent_task,
     )
 
-    task = db.create_task(
+    creation = create_or_bind_task(
         title=body.title,
         description=body.description,
         project=body.project,
@@ -1406,14 +1423,39 @@ async def create_task(body: TaskCreate) -> Task:
         source_channel=source_channel,
         notification_policy=notification_policy,
         notification_channel_id=body.notification_channel_id,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+        audit_author_agent_id=None,
     )
-    if body.assigned_to:
+    task = creation.task
+    if body.assigned_to and creation.outcome == "create_new_task":
         await runtime_services.enqueue_trigger(**build_task_assigned_trigger(task))
     await manager.broadcast_activity(
-        event="task_created",
-        detail=f"Task \"{task.title}\" created" + (f" → {body.assigned_to}" if body.assigned_to else ""),
+        event="task_created" if creation.outcome == "create_new_task" else "task_reused",
+        detail=(
+            f"Task \"{task.title}\" created" + (f" → {body.assigned_to}" if body.assigned_to else "")
+            if creation.outcome == "create_new_task"
+            else f'Existing task "{task.title}" reused for the same workstream'
+        ),
     )
     return task
+
+
+@router.get("/tasks/board")
+async def get_task_board(agent_id: str, scope: Literal["self", "owned", "delegated"] = "self"):
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    return serialize_task_board(build_task_board(agent.id, scope=scope))
+
+
+@router.get("/tasks/{task_id}/events")
+async def get_task_events(task_id: str, limit: int = 100):
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    events = db.list_task_events(task_id, limit=limit)
+    return [event.model_dump(mode="json") for event in events]
 
 
 @router.get("/tasks/{task_id}")

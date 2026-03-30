@@ -4,6 +4,7 @@ import re
 
 import pytest
 
+from core import config
 from api.routes import (
     RuntimeContractPreviewBody,
     RuntimeContractTemplateOverridesBody,
@@ -11,7 +12,8 @@ from api.routes import (
 )
 from core.agent_loop.actions import parse_action
 from core.agent_loop.decision_contract import parse_decision
-from core.default_prompts import prompt_file_path
+from core.default_prompts import load_default_prompt, prompt_file_path
+import db
 from core.prompting.runtime_prompt_lint import lint_runtime_prompts
 from tests.test_agent_runtime import isolated_db
 
@@ -44,7 +46,7 @@ async def test_preview_runtime_contract_bundle_renders_full_prompt_bundle(isolat
     assert payload["prompt_health"]["ok"] is True
 
 
-def test_prompt_lint_reports_legacy_tokens_in_override(isolated_db):
+def test_prompt_lint_reports_internal_runtime_names_in_override(isolated_db):
     report = lint_runtime_prompts(
         {
             "runtime_contract_decision": 'Use bm_cli for lookups. Return {"act":"reply","intent":"other","msg":"ok","th":"note"}.',
@@ -53,7 +55,38 @@ def test_prompt_lint_reports_legacy_tokens_in_override(isolated_db):
 
     assert report.ok is False
     assert report.status == "error"
-    assert any(issue.code == "legacy_bm_cli" for issue in report.issues)
+    assert any(issue.code == "internal_bm_cli_name" for issue in report.issues)
+
+
+def test_prompt_lint_reports_open_tasks_references_in_system_prompt_override(isolated_db):
+    report = lint_runtime_prompts(
+        {
+            "system_prompt_template": "## Open Tasks\n{{pending_tasks}}\nTreat `Open Tasks` as active work.",
+        }
+    )
+
+    assert report.ok is False
+    assert report.status == "error"
+    assert any(issue.code == "open_tasks_section_reference" for issue in report.issues)
+    assert any(issue.code == "pending_tasks_placeholder_reference" for issue in report.issues)
+    assert any(issue.code == "open_tasks_rule_reference" for issue in report.issues)
+
+
+def test_prompt_lint_warns_when_saved_prompt_differs_from_shipped_default(isolated_db):
+    db.set_setting(
+        "runtime_contract_decision",
+        load_default_prompt("runtime_contract_decision") + "\nCUSTOM NOTE",
+        "advanced",
+    )
+    config.reload()
+
+    report = lint_runtime_prompts()
+
+    assert report.ok is False
+    assert report.status == "warning"
+    assert any(issue.code == "saved_prompt_differs_from_default" for issue in report.issues)
+    mismatch_issue = next(issue for issue in report.issues if issue.code == "saved_prompt_differs_from_default")
+    assert mismatch_issue.surface_key == "runtime_contract_decision"
 
 
 def test_runtime_contract_decision_examples_parse(isolated_db):
@@ -92,4 +125,26 @@ async def test_preview_bundle_lints_unsaved_overrides(isolated_db):
     )
 
     assert payload["prompt_health"]["ok"] is False
-    assert any(issue["code"] == "legacy_bm_cli" for issue in payload["prompt_health"]["issues"])
+    assert any(issue["code"] == "internal_bm_cli_name" for issue in payload["prompt_health"]["issues"])
+
+
+@pytest.mark.asyncio
+async def test_runtime_contract_payload_reports_saved_prompt_difference_as_warning(isolated_db):
+    db.set_setting(
+        "runtime_contract_decision",
+        load_default_prompt("runtime_contract_decision") + "\nCUSTOM NOTE",
+        "advanced",
+    )
+    config.reload()
+
+    payload = await preview_runtime_contract_route(
+        RuntimeContractPreviewBody(
+            contract_kind="decision",
+            trigger_type="human_chat",
+            scope="bundle",
+        )
+    )
+
+    assert payload["prompt_health"]["ok"] is False
+    assert payload["prompt_health"]["status"] == "warning"
+    assert any(issue["code"] == "saved_prompt_differs_from_default" for issue in payload["prompt_health"]["issues"])

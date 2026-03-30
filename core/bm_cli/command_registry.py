@@ -365,6 +365,70 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "  recent-work       — review your latest deliverables"
         ),
     ),
+    "my-board": VirtualCommandMeta(
+        name="my-board",
+        category="agent",
+        description="Personal task board grouped by role-relevant sections.",
+        usage_syntax="my-board",
+        help_text=(
+            "Return your current task board including current work, open tasks,\n"
+            "blocked tasks, recent completed work, and tasks waiting on you.\n"
+            "\n"
+            "Examples:\n"
+            "  my-board          — inspect your personal task board"
+        ),
+    ),
+    "owned-tasks": VirtualCommandMeta(
+        name="owned-tasks",
+        category="agent",
+        description="Tasks you own, including delegated child work and rollups.",
+        usage_syntax="owned-tasks",
+        help_text=(
+            "Return the manager/owner view for tasks you are accountable for,\n"
+            "including delegated work, blocked child tasks, and assignee rollups.\n"
+            "\n"
+            "Examples:\n"
+            "  owned-tasks       — inspect your owned task board"
+        ),
+    ),
+    "delegated-tasks": VirtualCommandMeta(
+        name="delegated-tasks",
+        category="agent",
+        description="Delegated child tasks grouped by parent and assignee.",
+        usage_syntax="delegated-tasks",
+        help_text=(
+            "Return only the delegated child-task view for work you own but\n"
+            "assigned to other agents.\n"
+            "\n"
+            "Examples:\n"
+            "  delegated-tasks   — inspect delegated child work"
+        ),
+    ),
+    "waiting-on-me": VirtualCommandMeta(
+        name="waiting-on-me",
+        category="agent",
+        description="Tasks currently waiting on your answer or intervention.",
+        usage_syntax="waiting-on-me",
+        help_text=(
+            "Return tasks that currently need your decision, clarification,\n"
+            "or unblock action.\n"
+            "\n"
+            "Examples:\n"
+            "  waiting-on-me     — inspect tasks waiting on you"
+        ),
+    ),
+    "task": VirtualCommandMeta(
+        name="task",
+        category="agent",
+        description="Inspect one task and its durable task thread.",
+        usage_syntax="task <id>",
+        help_text=(
+            "Return one task plus its recent durable task-thread events.\n"
+            "\n"
+            "Examples:\n"
+            "  task 1234         — inspect task 1234 and its thread"
+        ),
+    ),
 
     # ── world ─────────────────────────────────────────────────────────────
     "activity": VirtualCommandMeta(

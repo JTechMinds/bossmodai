@@ -8,6 +8,7 @@ import db
 from core.bm_cli.results import success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.default_prompts import load_default_prompt
+from core.tasking.board import build_task_board, serialize_task_board
 from core.world.tilemap import get_room_at
 
 
@@ -19,6 +20,11 @@ _AUTHORITATIVE_NOTES = {
     "tasks": load_default_prompt("internal_cli_authoritative_tasks"),
     "recent_work": load_default_prompt("internal_cli_authoritative_recent_work"),
     "location": load_default_prompt("internal_cli_authoritative_location"),
+    "my_board": load_default_prompt("internal_cli_authoritative_tasks"),
+    "owned_tasks": load_default_prompt("internal_cli_authoritative_tasks"),
+    "delegated_tasks": load_default_prompt("internal_cli_authoritative_tasks"),
+    "waiting_on_me": load_default_prompt("internal_cli_authoritative_tasks"),
+    "task_detail": load_default_prompt("internal_cli_authoritative_current_task"),
 }
 
 
@@ -154,16 +160,115 @@ def handle_location(context: CliExecutionContext, parsed: ParsedCliCommand, cont
     )
 
 
+def handle_my_board(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
+    """Return the agent's self board."""
+    board = serialize_task_board(build_task_board(context.agent.id, scope="self"))
+    return success_result(
+        command=parsed.raw,
+        detail=f"{context.agent.name} checked the personal task board via BossMod CLI",
+        kind="my_board",
+        data=board,
+        sections=_board_sections(board),
+        authoritative_note=_AUTHORITATIVE_NOTES["my_board"],
+        cwd=context.cwd,
+    )
+
+
+def handle_owned_tasks(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
+    """Return the manager-owned board."""
+    board = serialize_task_board(build_task_board(context.agent.id, scope="owned"))
+    return success_result(
+        command=parsed.raw,
+        detail=f"{context.agent.name} checked owned tasks via BossMod CLI",
+        kind="owned_tasks",
+        data=board,
+        sections=_board_sections(board),
+        authoritative_note=_AUTHORITATIVE_NOTES["owned_tasks"],
+        cwd=context.cwd,
+    )
+
+
+def handle_delegated_tasks(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
+    """Return delegated child tasks."""
+    board = serialize_task_board(build_task_board(context.agent.id, scope="delegated"))
+    return success_result(
+        command=parsed.raw,
+        detail=f"{context.agent.name} checked delegated tasks via BossMod CLI",
+        kind="delegated_tasks",
+        data=board,
+        sections=_board_sections(board),
+        authoritative_note=_AUTHORITATIVE_NOTES["delegated_tasks"],
+        cwd=context.cwd,
+    )
+
+
+def handle_waiting_on_me(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
+    """Return tasks currently waiting on the selected agent."""
+    board = serialize_task_board(build_task_board(context.agent.id, scope="owned"))
+    waiting = board["sections"].get("tasks_waiting_on_me", [])
+    return success_result(
+        command=parsed.raw,
+        detail=f"{context.agent.name} checked tasks waiting on them via BossMod CLI",
+        kind="waiting_on_me",
+        data={"tasks_waiting_on_me": waiting},
+        sections=[("TASKS WAITING ON ME", _task_table_lines(waiting, description_label="description"))],
+        authoritative_note=_AUTHORITATIVE_NOTES["waiting_on_me"],
+        cwd=context.cwd,
+    )
+
+
+def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
+    """Return one task plus its recent task-thread events."""
+    task_id = parsed.args[0].strip() if parsed.args else ""
+    if not task_id:
+        return success_result(
+            command=parsed.raw,
+            detail="Task id required",
+            kind="task_detail",
+            data={"task": None, "events": []},
+            sections=[("TASK", ["Provide a task id. Example: task <id>"])],
+            authoritative_note=_AUTHORITATIVE_NOTES["task_detail"],
+            cwd=context.cwd,
+        )
+    task = db.get_task(task_id)
+    events = db.list_task_events(task_id, limit=10) if task is not None else []
+    lines = ["not found"] if task is None else _current_task_lines(
+        {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "description": task.description or "-",
+            "completion_summary": task.completion_summary,
+            "status_note": task.status_note,
+        }
+    )
+    sections = [("TASK", lines)]
+    sections.append(("TASK THREAD", _task_event_lines(events)))
+    return success_result(
+        command=parsed.raw,
+        detail=f"{context.agent.name} checked task detail via BossMod CLI",
+        kind="task_detail",
+        data={
+            "task": task.model_dump(mode="json") if task is not None else None,
+            "events": [event.model_dump(mode="json") for event in events],
+        },
+        sections=sections,
+        authoritative_note=_AUTHORITATIVE_NOTES["task_detail"],
+        cwd=context.cwd,
+    )
+
+
 def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
     """Build a structured snapshot for read-only BossMod CLI queries."""
     room = get_room_at(context.state.x, context.state.y)
     room_name = room["name"] if room else "unknown"
     active = db.get_active_activity(context.agent.id)
+    board = serialize_task_board(build_task_board(context.agent.id, scope="self"))
     current_task = db.get_task(active.task_id) if active and active.task_id else None
-    open_tasks = db.list_tasks(assigned_to=context.agent.id, status="pending") + db.list_tasks(
-        assigned_to=context.agent.id,
-        status="accepted",
-    )
+    open_tasks = [
+        task for task in board["sections"].get("my_open_tasks", [])
+        if not current_task or task.get("id") != current_task.id
+    ]
     recent_completed = db.get_recent_completed_tasks(context.agent.id, limit=3)
     recent_artifacts = db.get_recent_artifact_refs(context.agent.id, limit=3)
 
@@ -200,10 +305,10 @@ def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
         "current_task": task_data,
         "open_tasks": [
             {
-                "created_at": task.created_at,
-                "status": task.status,
-                "title": task.title,
-                "description": task.description or task.status_note or "-",
+                "created_at": task["created_at"],
+                "status": task["status"],
+                "title": task["title"],
+                "description": task.get("description") or task.get("status_note") or "-",
             }
             for task in open_tasks[-5:]
         ],
@@ -337,3 +442,46 @@ def _fmt_time(value: object) -> str:
     if hasattr(value, "isoformat"):
         return str(value.isoformat())
     return str(value)
+
+
+def _board_sections(board: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Render generic board sections with a consistent compact format."""
+    sections: list[tuple[str, list[str]]] = []
+    current_task = board.get("current_task")
+    sections.append(("CURRENT TASK", ["none"] if current_task is None else _current_task_lines(current_task)))
+    for name, rows in (board.get("sections") or {}).items():
+        title = name.replace("_", " ").upper()
+        sections.append((title, _task_table_lines(rows, description_label="description")))
+    if board.get("assignee_rollup"):
+        sections.append(("ASSIGNEE ROLLUP", _assignee_rollup_lines(board["assignee_rollup"])))
+    return sections
+
+
+def _assignee_rollup_lines(rows: list[dict[str, Any]]) -> list[str]:
+    lines = ["assignee | counts"]
+    if not rows:
+        lines.append("none")
+        return lines
+    for row in rows:
+        counts = ", ".join(f"{key}={value}" for key, value in sorted((row.get("counts") or {}).items()))
+        lines.append(f"{row.get('agent_name') or row.get('agent_id')} | {counts or '-'}")
+    return lines
+
+
+def _task_event_lines(events: list[Any]) -> list[str]:
+    lines = ["datetime | event | author | content"]
+    if not events:
+        lines.append("none")
+        return lines
+    for event in events:
+        lines.append(
+            " | ".join(
+                [
+                    _fmt_time(event.created_at),
+                    event.event_type,
+                    event.author_name,
+                    trim(event.content),
+                ]
+            )
+        )
+    return lines

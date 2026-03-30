@@ -39,6 +39,8 @@ from api.routes import (
     get_agent_meeting_session,
     get_agent_messages,
     get_agent_notifications,
+    get_task_board,
+    get_task_events,
     get_runtime_contracts,
     get_runtime_state as get_runtime_state_route,
     open_agent_desk_folder,
@@ -338,6 +340,15 @@ def test_parse_action_accepts_compact_delegate_task(isolated_db):
     assert parsed["deliverables"] == [{"type": "file", "path": "review.md", "description": None}]
 
 
+def test_parse_action_accepts_compact_task_message(isolated_db):
+    parsed = parse_action(
+        '{"act":"taskmsg","data":{"tid":"task-123","msg":"Please tighten the summary."},"th":"continue the task thread"}'
+    )
+    assert parsed["action"] == "taskMessage"
+    assert parsed["taskId"] == "task-123"
+    assert parsed["content"] == "Please tighten the summary."
+
+
 def test_parse_decision_rejects_legacy_work_deliverable_shape(isolated_db):
     parsed = parse_decision(
         '{"decision":"accept","intentKind":"work_request","reply":"I will save it as avocado_white.md.","commitmentKind":"work","taskTitle":"Write avocado whitepaper","taskDescription":"Create a concise whitepaper.","deliverables":[{"type":"file","path":"avocado_white.md"}],"thought":"accept the work"}'
@@ -417,8 +428,9 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     contract = render_action_contract()
     assert "REQUIRED JSON SHAPE:" in contract
     assert "FIELD DEFINITIONS:" in contract
-    assert '"act": "cli | work | msg | assign | walk | mtg | idle | done | block | deleg | drop"' in contract
+    assert '"act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop"' in contract
     assert '"to": "human | agent"' in contract
+    assert '"tid": "string"' in contract
     assert '"mode": "room | remote"' in contract
     assert "act = the next execution step you are taking" in contract
     assert "data = arguments for that execution step" in contract
@@ -428,12 +440,42 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "cli + rewsect: require data.body as a short rewrite goal" in contract
     assert "idle: use when there is no useful next execution step in this turn" in contract
     assert "use assign for the delegation handoff itself" in contract
+    assert "use taskmsg for notes or questions on an existing task thread" in contract
+    assert "during work execution, do not use generic msg to another agent; use assign for new delegated work or taskmsg for an existing task thread" in contract
     assert "after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update" in contract
     assert "short exact text -> write/append with body" in contract
     assert "multiple generated files -> bwrite with a short manifest body" in contract
     assert "inspect markdown structure -> ol <path>" in contract
     assert 'ai-authored markdown section edit -> rewsect <path> "<heading>" with a short goal body' in contract
     assert '{"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}' in contract
+    assert '{"act":"taskmsg","data":{"tid":"task-123","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}' in contract
+
+
+@pytest.mark.asyncio
+async def test_render_decision_contract_uses_saved_runtime_setting(isolated_db):
+    await set_setting_route(
+        "runtime_contract_decision",
+        "{{if trigger.type = 'human_chat'}}CUSTOM HUMAN DECISION{{else}}CUSTOM OTHER DECISION{{end}}",
+        "advanced",
+    )
+
+    assert render_decision_contract("human_chat") == "CUSTOM HUMAN DECISION"
+    assert render_decision_contract("peer_message") == "CUSTOM OTHER DECISION"
+
+
+@pytest.mark.asyncio
+async def test_render_action_contract_uses_saved_runtime_setting(isolated_db):
+    await set_setting_route(
+        "runtime_contract_execution",
+        "EXEC {{if cli.shell_enabled}}SHELL{{else}}SAFE{{end}}",
+        "advanced",
+    )
+
+    assert render_action_contract() == "EXEC SAFE"
+
+    await set_setting_route("cli_shell_enabled", "true", "cli_policy")
+
+    assert render_action_contract() == "EXEC SHELL"
 
 
 def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
@@ -445,6 +487,18 @@ def test_render_decision_contract_scopes_task_assignment_choices(isolated_db):
     assert "decline means you are not taking the assignment; tell the delegator clearly" in contract
     assert '{"act":"accept","intent":"work","msg":"string","commit":"work","th":"string"}' in contract
     assert '{"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}' not in contract
+
+
+def test_render_decision_contract_scopes_task_follow_up_choices(isolated_db):
+    contract = render_decision_contract("task_follow_up")
+    assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | defer | decline" in contract
+    assert "TASK FOLLOW-UP NOTE:" in contract
+    assert "this is an existing pending task thread; you may reply, accept, clarify, defer, or decline" in contract
+    assert "`my-board`" in contract
+    assert "`owned-tasks`" in contract
+    assert "`delegated-tasks`" in contract
+    assert "`waiting-on-me`" in contract
+    assert "`task <id>`" in contract
 
 
 def test_validate_decision_allows_task_assignment_clarify(isolated_db):
@@ -558,6 +612,42 @@ def test_validate_decision_allows_task_assignment_defer_without_new_title(isolat
         active_task_id=None,
     )
     assert error is None
+
+
+def test_validate_decision_task_follow_up_restricts_non_pending_stakeholder_turns(isolated_db):
+    decision = ConversationDecision.model_validate(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "reply": "I will take it.",
+            "commitmentKind": "work",
+            "thought": "invalid accept for stakeholder follow-up",
+        }
+    )
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type="task_follow_up",
+        active_task_id=None,
+        trigger={"task_status": "accepted", "task_party": "stakeholder"},
+    )
+    assert error == "task follow-up turns only allow reply or clarify unless the pending task is awaiting your decision"
+
+    valid = ConversationDecision.model_validate(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "reply": "Understood. I will take it.",
+            "commitmentKind": "work",
+            "thought": "accept pending follow-up",
+        }
+    )
+    valid_error = validate_decision_for_trigger(
+        valid,
+        trigger_type="task_follow_up",
+        active_task_id=None,
+        trigger={"task_status": "pending", "task_party": "assignee"},
+    )
+    assert valid_error is None
 
 
 def test_apply_decision_persists_normalized_task_work_contract(isolated_db):
@@ -707,14 +797,14 @@ def test_apply_decision_task_assignment_clarify_replies_to_assigner(isolated_db)
     )
 
     assert result["detail"] == "Taylor asked for clarification"
-    assert result["trigger_requests"][0]["trigger_type"] == "peer_message"
+    assert result["trigger_requests"][0]["trigger_type"] == "task_follow_up"
     assert result["trigger_requests"][0]["agent_id"] == assigner.id
     assert result["trigger_requests"][0]["task_id"] == task.id
-    assert result["trigger_requests"][0]["payload"]["assignment_follow_up"] is True
-    assert result["trigger_requests"][0]["payload"]["task_id"] == task.id
+    assert result["trigger_requests"][0]["payload"]["task_status"] == "pending"
+    assert result["trigger_requests"][0]["payload"]["task_party"] == "stakeholder"
 
 
-def test_apply_decision_peer_reply_to_assignment_clarification_routes_back_as_task_assignment(isolated_db):
+def test_apply_decision_task_follow_up_reply_to_assignment_clarification_routes_back_as_task_follow_up(isolated_db):
     desk_x, desk_y = _desk_xy()
     delegator = db.create_agent(name="Michael", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     assignee = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -741,26 +831,29 @@ def test_apply_decision_peer_reply_to_assignment_clarification_routes_back_as_ta
         delegator,
         state,
         {
-            "type": "peer_message",
+            "type": "task_follow_up",
             "content": "Can you confirm the angle and due date?",
             "from_agent": assignee.id,
             "from_name": assignee.name,
-            "message_type": "social",
-            "assignment_follow_up": True,
+            "message_type": "work",
             "task_id": task.id,
             "task_title": task.title,
             "task_description": task.description,
-            "source_channel": "chat",
+            "task_status": "pending",
+            "task_party": "stakeholder",
+            "source_channel": "work",
         },
     )
 
     assert result["detail"] == "Michael answered the request"
     routed = result["trigger_requests"][0]
     assert routed["agent_id"] == assignee.id
-    assert routed["trigger_type"] == "task_assigned"
+    assert routed["trigger_type"] == "task_follow_up"
     assert routed["task_id"] == task.id
     assert routed["payload"]["task_title"] == task.title
     assert routed["payload"]["task_description"] == task.description
+    assert routed["payload"]["task_status"] == "pending"
+    assert routed["payload"]["task_party"] == "assignee"
     assert routed["payload"]["content"] == (
         "Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
     )
@@ -837,23 +930,26 @@ async def test_run_turn_assignment_clarification_follow_up_stays_in_assignment_l
     )
 
     clarify_trigger = first_outcome.result["trigger_requests"][0]
-    assert clarify_trigger["trigger_type"] == "peer_message"
-    assert clarify_trigger["payload"]["assignment_follow_up"] is True
+    assert clarify_trigger["trigger_type"] == "task_follow_up"
+    assert clarify_trigger["payload"]["task_status"] == "pending"
+    assert clarify_trigger["payload"]["task_party"] == "stakeholder"
 
     reply_outcome = await run_turn(
         delegator,
         delegator_state,
         {
             **clarify_trigger["payload"],
-            "type": "peer_message",
+            "type": "task_follow_up",
             "task_id": clarify_trigger["task_id"],
             "source_channel": clarify_trigger["source_channel"],
         },
     )
 
     follow_up_trigger = reply_outcome.result["trigger_requests"][0]
-    assert follow_up_trigger["trigger_type"] == "task_assigned"
+    assert follow_up_trigger["trigger_type"] == "task_follow_up"
     assert follow_up_trigger["task_id"] == task.id
+    assert follow_up_trigger["payload"]["task_status"] == "pending"
+    assert follow_up_trigger["payload"]["task_party"] == "assignee"
     assert follow_up_trigger["payload"]["content"] == (
         "Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
     )
@@ -863,7 +959,7 @@ async def test_run_turn_assignment_clarification_follow_up_stays_in_assignment_l
         assignee_state,
         {
             **follow_up_trigger["payload"],
-            "type": "task_assigned",
+            "type": "task_follow_up",
             "task_id": follow_up_trigger["task_id"],
             "source_channel": follow_up_trigger["source_channel"],
         },
@@ -876,7 +972,7 @@ async def test_run_turn_assignment_clarification_follow_up_stays_in_assignment_l
     assert second_outcome.result["detail"] == 'Taylor accepted work on "Research foundation doc"'
 
     diagnostics = db.get_diagnostics(agent_id=assignee.id, limit=5)
-    assert diagnostics[0]["trigger_type"] == "task_assigned"
+    assert diagnostics[0]["trigger_type"] == "task_follow_up"
 
 
 @pytest.mark.asyncio
@@ -903,6 +999,34 @@ async def test_create_task_route_normalizes_assigned_work_contract(isolated_db):
     assert task.owner_id == agent.id
     assert task.source_channel == "api"
     assert task.notification_policy == "completion_blocked"
+
+
+@pytest.mark.asyncio
+async def test_create_task_route_reuses_existing_open_workstream(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+
+    first = await create_task_route(
+        TaskCreate(
+            title="Write orchard report",
+            description="Draft the orchard report and save it.",
+            assigned_to=agent.id,
+            project="orchard",
+        )
+    )
+    second = await create_task_route(
+        TaskCreate(
+            title="Write orchard report",
+            description="Draft the orchard report and save it.",
+            assigned_to=agent.id,
+            project="orchard",
+        )
+    )
+
+    assert second.id == first.id
+    assert len(db.list_tasks(assigned_to=agent.id)) == 1
+    events = db.list_task_events(first.id, limit=10)
+    assert [event.event_type for event in events] == ["assignment", "system"]
 
 
 def test_list_tasks_can_filter_by_owner_requester_and_parent(isolated_db):
@@ -937,6 +1061,79 @@ def test_list_tasks_can_filter_by_owner_requester_and_parent(isolated_db):
     assert [task.id for task in db.list_tasks(owner_id=pm.id)] == [parent.id, child.id]
     assert [task.id for task in db.list_tasks(requester_id=pm.id)] == [child.id]
     assert [task.id for task in db.list_tasks(parent_task_id=parent.id)] == [child.id]
+
+
+@pytest.mark.asyncio
+async def test_task_board_route_returns_owned_manager_sections(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y)
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    parent = db.create_task(
+        title="Launch initiative",
+        assigned_to=pm.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=pm.id,
+        created_by=HUMAN_SENDER_ID,
+        project="orchard",
+    )
+    child = db.create_task(
+        title="Draft launch checklist",
+        assigned_to=worker.id,
+        requester_id=pm.id,
+        owner_id=pm.id,
+        created_by=pm.id,
+        parent_task_id=parent.id,
+        project="orchard",
+    )
+    db.create_task_event(
+        task_id=child.id,
+        author_type="agent",
+        author_agent_id=pm.id,
+        author_name=pm.name,
+        event_type="assignment",
+        content='Created child task "Draft launch checklist" for delegated work.',
+    )
+
+    board = await get_task_board(agent_id=pm.id, scope="owned")
+
+    assert board["scope"] == "owned"
+    assert board["sections"]["tasks_i_delegated"][0]["id"] == child.id
+    assert board["child_tasks_by_parent"][parent.id][0]["id"] == child.id
+    assert board["assignee_rollup"][0]["agent_name"] == "Taylor"
+    assert board["sections"]["tasks_waiting_on_me"][0]["id"] == child.id
+
+
+@pytest.mark.asyncio
+async def test_task_events_route_returns_durable_thread(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    task = db.create_task(
+        title="Draft launch memo",
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    db.create_task_event(
+        task_id=task.id,
+        author_type="human",
+        author_name="Human Operator",
+        event_type="assignment",
+        content='Created task "Draft launch memo" for Taylor.',
+    )
+    db.create_task_event(
+        task_id=task.id,
+        author_type="agent",
+        author_agent_id=agent.id,
+        author_name=agent.name,
+        event_type="status_update",
+        content='Accepted work on "Draft launch memo".',
+    )
+
+    events = await get_task_events(task.id)
+
+    assert [event["event_type"] for event in events] == ["assignment", "status_update"]
+    assert events[-1]["author_name"] == "Taylor"
 
 
 def test_execute_bm_cli_exposes_expanded_read_commands(isolated_db):
@@ -1007,6 +1204,50 @@ def test_execute_bm_cli_exposes_expanded_read_commands(isolated_db):
     assert location.kind == "location"
     assert location.data is not None
     assert location.data["room"] == "Main Workspace"
+
+
+def test_execute_bm_cli_task_board_commands_expose_manager_views(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(pm.id, x=desk_x, y=desk_y, status="idle")
+    parent = db.create_task(
+        title="Coordinate orchard launch",
+        assigned_to=pm.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=pm.id,
+        created_by=HUMAN_SENDER_ID,
+        project="orchard",
+    )
+    child = db.create_task(
+        title="Draft orchard launch checklist",
+        assigned_to=worker.id,
+        requester_id=pm.id,
+        owner_id=pm.id,
+        created_by=pm.id,
+        parent_task_id=parent.id,
+        project="orchard",
+    )
+    db.create_task_event(
+        task_id=child.id,
+        author_type="agent",
+        author_agent_id=pm.id,
+        author_name=pm.name,
+        event_type="assignment",
+        content='Created child task "Draft orchard launch checklist" for delegated work.',
+    )
+
+    owned = execute_bm_cli(pm, state, "owned-tasks")
+    assert owned.ok is True
+    assert owned.kind == "owned_tasks"
+    assert "TASKS I DELEGATED:" in owned.prompt_content
+    assert owned.data["sections"]["tasks_i_delegated"][0]["id"] == child.id
+
+    detail = execute_bm_cli(pm, state, f"task {child.id}")
+    assert detail.ok is True
+    assert detail.kind == "task_detail"
+    assert detail.data["task"]["id"] == child.id
+    assert "TASK THREAD:" in detail.prompt_content
 
 
 def test_execute_bm_cli_virtual_shell_navigates_me_and_projects(isolated_db):
@@ -1858,7 +2099,7 @@ async def test_complete_action_reports_to_requester_and_owner_agents(isolated_db
     stakeholder_updates = sorted(
         item["agent_id"]
         for item in result["trigger_requests"]
-        if item["trigger_type"] == "peer_message"
+        if item["trigger_type"] == "task_follow_up"
     )
     assert stakeholder_updates == sorted([requester.id, owner.id])
 
@@ -1981,9 +2222,10 @@ def test_prompt_context_separates_live_state_from_recent_completed_work(isolated
     assert "## Live Runtime State" in system_prompt
     assert "status: idle" in system_prompt
     assert "current_task: none" in system_prompt
-    assert "## Open Tasks" in system_prompt
-    assert "datetime | status | task name | description" in system_prompt
-    assert "## Recent Work History / Team Directory" in system_prompt
+    assert "## Task Board" in system_prompt
+    assert "## Open Tasks" not in system_prompt
+    assert "Treat `Task Board` as authoritative" in system_prompt
+    assert "## Historical References / Team Directory" in system_prompt
     assert "RECENT COMPLETED TASKS:" in system_prompt
     assert "Generate Words API" in system_prompt
     assert "RECENT WORK ARTIFACTS:" in system_prompt
@@ -2092,6 +2334,42 @@ def test_task_assigned_trigger_renders_latest_assignment_note(isolated_db):
     )
 
 
+def test_task_follow_up_trigger_renders_task_thread_context(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    sender = db.create_agent(name="Michael", desk_x=desk_x, desk_y=desk_y)
+    recipient = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    state = db.update_agent_state(recipient.id, x=desk_x, y=desk_y, status="idle")
+
+    context = context_builder.build_context(
+        _build_turn_context(
+            recipient,
+            state,
+            trigger={
+                "type": "task_follow_up",
+                "task_id": "task-1",
+                "task_title": "Research foundation doc",
+                "task_description": "Draft the research foundation for the SLM edge white paper.",
+                "task_status": "pending",
+                "task_party": "assignee",
+                "content": "Tomorrow EOD works. Focus on the research foundation first and use the existing file path.",
+                "from_agent": sender.id,
+                "from_name": sender.name,
+                "source_channel": "work",
+            },
+            contract_kind="decision",
+        )
+    )
+
+    trigger_block = context[-1]["content"]
+    assert 'TASK THREAD UPDATE FROM [Michael] on "Research foundation doc".' in trigger_block
+    assert "Current task status: pending" in trigger_block
+    assert (
+        "Latest note from [Michael]: Tomorrow EOD works. Focus on the research foundation first and use the existing file path."
+        in trigger_block
+    )
+    assert "This pending task is still awaiting your decision." in trigger_block
+
+
 def test_communication_snapshot_includes_recent_artifact_paths(isolated_db):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -2172,7 +2450,9 @@ def test_communication_snapshot_includes_current_cwd_and_project_paths(isolated_
     )
 
     assert snapshot["runtime"]["cwd"] == "/projects/orchard/reports"
-    assert snapshot["project_rollups"] == [
+    assert "assigned_open_tasks" not in snapshot
+    assert "owned_open_tasks" not in snapshot
+    assert snapshot["task_board"]["project_summary"] == [
         {
             "project": "orchard",
             "path": "/projects/orchard",
@@ -2187,6 +2467,7 @@ def test_communication_snapshot_includes_current_cwd_and_project_paths(isolated_
             ],
         }
     ]
+    assert "project_rollups" not in snapshot
     assert snapshot["referenced_records"]["projects"] == [
         {
             "project": "orchard",
@@ -2208,6 +2489,7 @@ def test_preview_prompt_bundles_stay_under_instruction_budget(isolated_db):
     cases = [
         ("decision", "human_chat"),
         ("decision", "peer_message"),
+        ("decision", "task_follow_up"),
         ("decision", "watchdog_status_ping"),
         ("execution", "activity_resumed"),
     ]
@@ -2232,11 +2514,23 @@ def test_prompt_bundle_renders_only_relevant_dynamic_blocks(isolated_db):
     assert "AUTHORITATIVE COMMUNICATION SNAPSHOT (JSON):" not in execution_bundle
 
 
+def test_prompt_bundle_uses_board_first_task_context_without_legacy_keys(isolated_db):
+    human_bundle = context_builder.preview_prompt_bundle("decision", "human_chat")["rendered"]
+
+    assert "## Task Board" in human_bundle
+    assert "## Open Tasks" not in human_bundle
+    assert '"task_board"' in human_bundle
+    assert '"assigned_open_tasks"' not in human_bundle
+    assert '"owned_open_tasks"' not in human_bundle
+    assert '"project_rollups"' not in human_bundle
+
+
 def test_template_variable_metadata_includes_current_time_variables(isolated_db):
     names = {item["name"] for item in context_builder.template_variable_metadata()}
     assert "current_date_time" in names
     assert "current_time.iso_local" in names
     assert "current_time.iso_utc" in names
+    assert "task_board" in names
     assert "cli.cwd" in names
     assert "workspace.default_save_root" in names
     assert "workspace.project_root" in names
@@ -2892,14 +3186,15 @@ async def test_run_turn_deferred_task_assignment_stays_pending_and_notifies_dele
     assert active is None
 
     queued = outcome.result["trigger_requests"][0]
-    assert queued["trigger_type"] == "peer_message"
+    assert queued["trigger_type"] == "task_follow_up"
     assert queued["agent_id"] == delegator.id
     assert queued["payload"]["content"] == "I need to finish the payroll audit first. Please leave this queued for me."
-    assert queued["payload"]["message_type"] == "social"
+    assert queued["payload"]["task_status"] == "pending"
+    assert queued["payload"]["task_party"] == "stakeholder"
 
     thread = db.get_agent_direct_thread(worker.id, delegator.id, limit=10)
     assert thread[-1].content == "I need to finish the payroll audit first. Please leave this queued for me."
-    assert thread[-1].message_type == "social"
+    assert thread[-1].message_type == "work"
 
     diagnostics = db.get_diagnostics(agent_id=worker.id, limit=5)
     assert diagnostics[0]["action_name"] == "defer(work)"
@@ -2967,14 +3262,15 @@ async def test_run_turn_declined_task_assignment_notifies_delegator_and_marks_de
     assert active is None
 
     queued = outcome.result["trigger_requests"][0]
-    assert queued["trigger_type"] == "peer_message"
+    assert queued["trigger_type"] == "task_follow_up"
     assert queued["agent_id"] == delegator.id
     assert queued["payload"]["content"] == "I cannot take this assignment right now."
-    assert queued["payload"]["message_type"] == "social"
+    assert queued["payload"]["task_status"] == "declined"
+    assert queued["payload"]["task_party"] == "stakeholder"
 
     thread = db.get_agent_direct_thread(worker.id, delegator.id, limit=10)
     assert thread[-1].content == "I cannot take this assignment right now."
-    assert thread[-1].message_type == "social"
+    assert thread[-1].message_type == "work"
 
     diagnostics = db.get_diagnostics(agent_id=worker.id, limit=5)
     assert diagnostics[0]["action_name"] == "decline(none)"
@@ -3221,7 +3517,7 @@ async def test_run_turn_keeps_work_artifacts_out_of_human_chat(isolated_db, monk
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"act":"done","data":{"sum":"done"},"th":"finished"}',
+            content='{"act":"done","data":{"sum":"done","msg":"Finished the report and saved the work."},"th":"finished"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -5258,6 +5554,136 @@ async def test_activity_resumed_idle_keeps_active_work_open(isolated_db, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_run_turn_manager_repairs_wrong_agent_chat_lane_with_assign(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    worker = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    pm_state = db.update_agent_state(pm.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        pm.id,
+        "Please coordinate the research brief and delegate the writing to Taylor.",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content=(
+                '{"act":"accept","intent":"work","msg":"I will coordinate the brief and get Taylor started.",'
+                '"commit":"work","data":{"task":{"title":"Coordinate research brief","desc":"Coordinate the research brief and delegate the writing to Taylor."}},'
+                '"th":"accept the coordination task"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "msg",
+                    "data": {
+                        "to": "agent",
+                        "aid": worker.id,
+                        "msg": "Please start the research brief now.",
+                    },
+                    "th": "try to chat Taylor directly",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=json.dumps(
+                {
+                    "act": "assign",
+                    "data": {
+                        "aid": worker.id,
+                        "task": {
+                            "title": "Write research brief",
+                            "desc": "Draft the research brief and report back to Pat.",
+                        },
+                    },
+                    "th": "create the delegated task instead",
+                }
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content='{"act":"idle","th":"wait for Taylor to work the assigned task"}',
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    initial_outcome = await run_turn(
+        pm,
+        pm_state,
+        {
+            "type": "human_chat",
+            "content": "Please coordinate the research brief and delegate the writing to Taylor.",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    pm_resume_request = next(
+        item
+        for item in initial_outcome.result["trigger_requests"]
+        if item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed"
+    )
+
+    pm_resume_state = activity_runtime.refresh_agent_status(pm.id)
+    assert pm_resume_state is not None
+    delegation_outcome = await run_turn(
+        pm,
+        pm_resume_state,
+        {
+            **pm_resume_request["payload"],
+            "type": "activity_resumed",
+            "task_id": pm_resume_request["task_id"],
+            "source_channel": pm_resume_request["source_channel"],
+        },
+    )
+
+    assert not any(item["trigger_type"] == "peer_message" for item in delegation_outcome.result["trigger_requests"])
+    assignment_request = next(
+        item
+        for item in delegation_outcome.result["trigger_requests"]
+        if item["agent_id"] == worker.id and item["trigger_type"] == "task_assigned"
+    )
+    assert assignment_request["payload"]["task_title"] == "Write research brief"
+
+    worker_tasks = db.list_tasks(assigned_to=worker.id)
+    assert len(worker_tasks) == 1
+    assert worker_tasks[0].parent_task_id is not None
+
+    diagnostics = db.get_diagnostics(agent_id=pm.id, limit=5)
+    assert diagnostics[0]["action_name"] == "message -> delegateTask -> idle"
+
+
+@pytest.mark.asyncio
 async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_human(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     pm = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
@@ -5443,7 +5869,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
     acceptance_update = next(
         item
         for item in assignment_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert acceptance_update["payload"]["content"] == "I will take the investigation and report back with the findings."
 
@@ -5457,7 +5883,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
     completion_update = next(
         item
         for item in completion_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert completion_update["payload"]["content"] == (
         "I finished the competitor launch investigation and summarized the useful takeaways."
@@ -5472,7 +5898,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
     worker_ack = next(
         item
         for item in pm_reply_outcome.result["trigger_requests"]
-        if item["agent_id"] == worker.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == worker.id and item["trigger_type"] == "task_follow_up"
     )
     assert worker_ack["payload"]["content"] == (
         "Thanks. I have the findings and I am sending the summary to the human now."
@@ -5735,7 +6161,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     blocked_update = next(
         item
         for item in first_block_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert blocked_update["payload"]["content"] == "I am blocked because I do not have access to the launch archive."
 
@@ -5743,7 +6169,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     blocked_ack = next(
         item
         for item in pm_ack_outcome.result["trigger_requests"]
-        if item["agent_id"] == first_worker.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == first_worker.id and item["trigger_type"] == "task_follow_up"
     )
     assert blocked_ack["payload"]["content"] == (
         "Understood. I am reassigning the investigation so the parent task stays on track."
@@ -5773,7 +6199,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     completion_update = next(
         item
         for item in second_completion_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert completion_update["payload"]["content"] == (
         "I finished the reassigned competitor launch investigation and the takeaways are ready."
@@ -5783,7 +6209,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     second_worker_ack = next(
         item
         for item in pm_reply_outcome.result["trigger_requests"]
-        if item["agent_id"] == second_worker.id and item["trigger_type"] == "peer_message"
+        if item["agent_id"] == second_worker.id and item["trigger_type"] == "task_follow_up"
     )
     assert second_worker_ack["payload"]["content"] == (
         "Thanks. I have the reassigned findings and I am sending the final summary to the human now."
@@ -6984,6 +7410,124 @@ async def test_message_action_routes_to_agent_by_explicit_id(isolated_db):
 
 
 @pytest.mark.asyncio
+async def test_message_action_rejects_agent_chat_during_active_work_without_task_lane(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    manager_agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    target = db.create_agent(name="Morgan", desk_x=desk_x, desk_y=desk_y)
+    parent = db.create_task(
+        title="Coordinate release notes",
+        description="Coordinate the release-notes draft.",
+        assigned_to=manager_agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = _activate_work(manager_agent, parent, x=desk_x, y=desk_y)
+
+    result = await execute_action(
+        {
+            "action": "message",
+            "recipientType": "agent",
+            "agentId": target.id,
+            "content": "Please draft the notes.",
+            "thought": "nudge Morgan",
+        },
+        manager_agent,
+        state,
+        trigger={"type": "activity_resumed", "task_id": parent.id, "source_channel": "work"},
+    )
+
+    assert result["event"] == "world_feedback"
+    assert 'Use "assign" to create delegated work, or "taskmsg" to continue an existing task thread.' in result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_message_action_rejects_agent_chat_when_existing_child_task_thread_exists(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    manager_agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    target = db.create_agent(name="Morgan", desk_x=desk_x, desk_y=desk_y)
+    parent = db.create_task(
+        title="Coordinate release notes",
+        description="Coordinate the release-notes draft.",
+        assigned_to=manager_agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    child = db.create_task(
+        title="Draft release notes",
+        description="Draft the release notes and send them back.",
+        assigned_to=target.id,
+        requester_id=manager_agent.id,
+        owner_id=manager_agent.id,
+        created_by=manager_agent.id,
+        parent_task_id=parent.id,
+    )
+    state = _activate_work(manager_agent, parent, x=desk_x, y=desk_y)
+
+    result = await execute_action(
+        {
+            "action": "message",
+            "recipientType": "agent",
+            "agentId": target.id,
+            "content": "Any update?",
+            "thought": "follow up on the child task",
+        },
+        manager_agent,
+        state,
+        trigger={"type": "activity_resumed", "task_id": parent.id, "source_channel": "work"},
+    )
+
+    assert result["event"] == "world_feedback"
+    assert child.id in result["detail"]
+    assert '"taskmsg"' in result["detail"]
+    assert result["task_id"] == child.id
+
+
+@pytest.mark.asyncio
+async def test_task_message_action_routes_existing_task_follow_up(isolated_db):
+    desk_x, desk_y = _desk_xy()
+    manager_agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
+    worker = db.create_agent(name="Morgan", desk_x=desk_x, desk_y=desk_y)
+    parent = db.create_task(
+        title="Coordinate release notes",
+        description="Coordinate the release-notes draft.",
+        assigned_to=manager_agent.id,
+        created_by=HUMAN_SENDER_ID,
+    )
+    child = db.create_task(
+        title="Draft release notes",
+        description="Draft the release notes and send them back.",
+        assigned_to=worker.id,
+        requester_id=manager_agent.id,
+        owner_id=manager_agent.id,
+        created_by=manager_agent.id,
+        parent_task_id=parent.id,
+    )
+    state = _activate_work(manager_agent, parent, x=desk_x, y=desk_y)
+
+    result = await execute_action(
+        {
+            "action": "taskMessage",
+            "taskId": child.id,
+            "content": "Please tighten the executive summary before you send it back.",
+            "thought": "continue the child task thread",
+        },
+        manager_agent,
+        state,
+        trigger={"type": "activity_resumed", "task_id": parent.id, "source_channel": "work"},
+    )
+
+    assert result["event"] == "message_sent"
+    assert result["trigger_requests"][0]["trigger_type"] == "task_follow_up"
+    assert result["trigger_requests"][0]["task_id"] == child.id
+    assert result["trigger_requests"][0]["agent_id"] == worker.id
+    assert result["trigger_requests"][0]["payload"]["content"] == (
+        "Please tighten the executive summary before you send it back."
+    )
+
+    events = db.list_task_events(child.id, limit=10)
+    assert events[-1].event_type == "comment"
+    assert events[-1].content == "Please tighten the executive summary before you send it back."
+
+
+@pytest.mark.asyncio
 async def test_delegate_task_action_creates_assignment_for_other_agent(isolated_db):
     desk_x, desk_y = _desk_xy()
     delegator = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y)
@@ -7065,7 +7609,7 @@ async def test_delegate_task_action_inherits_parent_owner_and_reports_upstream(i
     assert child.owner_id == pm.id
     assert child.source_channel == "peer"
     assert child.notification_policy == "none"
-    stakeholder_updates = [item for item in result["trigger_requests"] if item["trigger_type"] == "peer_message"]
+    stakeholder_updates = [item for item in result["trigger_requests"] if item["trigger_type"] == "task_follow_up"]
     assert [item["agent_id"] for item in stakeholder_updates] == [pm.id]
 
 

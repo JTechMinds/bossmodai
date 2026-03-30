@@ -240,6 +240,31 @@ CREATE TABLE IF NOT EXISTS task_notification_targets (
     updated_at   TIMESTAMP DEFAULT current_timestamp
 );
 
+CREATE TABLE IF NOT EXISTS task_events (
+    id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    task_id           VARCHAR NOT NULL REFERENCES tasks(id),
+    author_type       VARCHAR NOT NULL
+                          CHECK (author_type IN ('human', 'agent', 'system')),
+    author_agent_id   VARCHAR REFERENCES agents(id),
+    author_name       VARCHAR NOT NULL,
+    event_type        VARCHAR NOT NULL
+                          CHECK (event_type IN (
+                              'comment',
+                              'clarification',
+                              'answer',
+                              'status_update',
+                              'blocker',
+                              'completion',
+                              'assignment',
+                              'reprioritized',
+                              'system'
+                          )),
+    content           TEXT NOT NULL,
+    source_message_id VARCHAR,
+    source_trigger_id VARCHAR,
+    created_at        TIMESTAMP DEFAULT current_timestamp
+);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- AI Connections — saved LLM provider configurations
 -- ───────────────────────────────────────────────────────────────────────────

@@ -1380,13 +1380,13 @@ const RuntimeContractsSection = (() => {
                 panel: 'bg-amber-50 border-amber-200',
                 badge: 'bg-amber-100 text-amber-700',
                 title: 'Prompt warnings detected.',
-                detail: 'The current prompt surface is usable, but some instructions are ambiguous enough to cause drift.',
+                detail: 'The current prompt surface is usable, but some instructions are ambiguous or overly broad.',
             },
             error: {
                 panel: 'bg-red-50 border-red-200',
                 badge: 'bg-red-100 text-red-700',
                 title: 'Prompt issues detected.',
-                detail: 'The current prompt surface includes conflicting or legacy contract language that should be corrected before relying on it.',
+                detail: 'The current prompt surface includes conflicting or invalid contract language that should be corrected before relying on it.',
             },
         };
         const tone = tones[status] || tones.clean;

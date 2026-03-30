@@ -190,6 +190,7 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply additive column migrations for existing databases."""
+    _create_task_events_table_if_missing(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
         "INTEGER NOT NULL DEFAULT 0",
@@ -225,6 +226,38 @@ def _add_column_if_missing(
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         logger.info("Migration: added column %s.%s", table, column)
+
+
+def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:
+    """Backfill the durable task-events table for existing databases."""
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_events (
+            id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+            task_id           VARCHAR NOT NULL REFERENCES tasks(id),
+            author_type       VARCHAR NOT NULL
+                                  CHECK (author_type IN ('human', 'agent', 'system')),
+            author_agent_id   VARCHAR REFERENCES agents(id),
+            author_name       VARCHAR NOT NULL,
+            event_type        VARCHAR NOT NULL
+                                  CHECK (event_type IN (
+                                      'comment',
+                                      'clarification',
+                                      'answer',
+                                      'status_update',
+                                      'blocker',
+                                      'completion',
+                                      'assignment',
+                                      'reprioritized',
+                                      'system'
+                                  )),
+            content           TEXT NOT NULL,
+            source_message_id VARCHAR,
+            source_trigger_id VARCHAR,
+            created_at        TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
 
 
 def close_thread_connection() -> None:

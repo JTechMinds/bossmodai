@@ -55,7 +55,7 @@ def _load_conversation_history(
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
         return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
-    if trigger_type == "peer_message" and trigger.get("from_agent"):
+    if trigger_type in {"peer_message", "task_follow_up"} and trigger.get("from_agent"):
         thread = db.get_agent_direct_thread(
             agent.id,
             trigger["from_agent"],

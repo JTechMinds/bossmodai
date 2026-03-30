@@ -26,6 +26,10 @@ _POLICIES: dict[str, TriggerPolicy] = {
         trigger_type="peer_message",
         end_turn_after_direct_reply=True,
     ),
+    "task_follow_up": TriggerPolicy(
+        trigger_type="task_follow_up",
+        end_turn_after_direct_reply=True,
+    ),
     "session_message": TriggerPolicy(
         trigger_type="session_message",
         end_turn_after_direct_reply=True,

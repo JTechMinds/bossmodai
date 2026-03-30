@@ -8,10 +8,8 @@ from datetime import datetime
 from typing import Any
 
 import db
-from core.bm_cli.filesystem import slugify_name
 from core.models import Agent, AgentState, Task
-
-_OPEN_TASK_STATUSES = ("pending", "accepted", "active", "blocked", "stalled")
+from core.tasking import build_project_summary, build_task_board, serialize_task_board
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +28,10 @@ COMMUNICATION_PROFILES: dict[str, CommunicationProfile] = {
     "peer_message": CommunicationProfile(
         name="peer_chat",
         label="direct coworker message",
+    ),
+    "task_follow_up": CommunicationProfile(
+        name="task_thread",
+        label="task-thread follow-up",
     ),
     "session_message": CommunicationProfile(
         name="meeting_thread",
@@ -69,8 +71,8 @@ def build_communication_snapshot(
     profile = communication_profile_for_trigger(trigger.get("type"))
     active = db.get_active_activity(agent.id)
     current_task = db.get_task(active.task_id) if active and active.task_id else None
-    assigned_open_tasks = _list_tasks_by_statuses(assigned_to=agent.id, statuses=_OPEN_TASK_STATUSES)
-    owned_open_tasks = _list_tasks_by_statuses(owner_id=agent.id, statuses=_OPEN_TASK_STATUSES)
+    self_board = build_task_board(agent.id, scope="self")
+    owned_board = build_task_board(agent.id, scope="owned")
     recent_completed_rows = db.get_recent_completed_tasks(agent.id, limit=3)
     recent_artifacts = db.get_recent_artifact_refs(agent.id, limit=2)
     recent_notifications = db.list_notifications(agent_id=agent.id, limit=5)
@@ -78,17 +80,19 @@ def build_communication_snapshot(
     cli_state = db.get_agent_cli_state(agent.id)
 
     current_task_id = current_task.id if current_task is not None else None
-    assigned_rows = [
-        _task_row(task)
-        for task in assigned_open_tasks
-        if task.id != current_task_id
-    ][:3]
-    owned_rows = [
-        _task_row(task)
-        for task in owned_open_tasks
-        if task.id != current_task_id and task.assigned_to != agent.id
-    ][:3]
-    project_rollups = _project_rollups_for_agent(agent.id, current_task_id=current_task_id)
+    self_board_payload = _compact_task_board(
+        serialize_task_board(self_board),
+        section_names=("my_open_tasks", "my_blocked_tasks"),
+        current_task_id=current_task_id,
+    )
+    owned_board_payload = _compact_task_board(
+        serialize_task_board(owned_board),
+        section_names=("tasks_i_delegated", "tasks_waiting_on_me", "blocked_or_stalled_child_tasks"),
+        current_task_id=current_task_id,
+    )
+    self_open_rows = list((self_board_payload.get("sections") or {}).get("my_open_tasks", []))
+    owned_rows = list((owned_board_payload.get("sections") or {}).get("tasks_i_delegated", []))
+    project_summary = build_project_summary(agent.id, current_task_id=current_task_id)
     recent_completed = [
         {
             "task_id": item.get("id"),
@@ -132,14 +136,17 @@ def build_communication_snapshot(
             "cwd": cli_state.cwd if cli_state is not None else "/me",
             "current_activity": active.kind if active else "none",
             "current_task": current_task.title if current_task else "none",
-            "open_assigned_task_count": len(assigned_rows) + (1 if current_task is not None else 0),
-            "open_owned_task_count": len(owned_rows),
+            "self_open_task_count": len(self_open_rows) + (1 if current_task is not None else 0),
+            "owned_delegated_task_count": len(owned_rows),
+            "waiting_on_me_count": len((owned_board_payload.get("sections") or {}).get("tasks_waiting_on_me", [])),
         },
         "current_activity": _activity_row(active),
         "current_task": _task_row(current_task),
-        "assigned_open_tasks": assigned_rows,
-        "owned_open_tasks": owned_rows,
-        "project_rollups": project_rollups,
+        "task_board": {
+            "self": self_board_payload,
+            "owned": owned_board_payload,
+            "project_summary": project_summary,
+        },
         "recent_task_updates": [
             {
                 "kind": item.kind,
@@ -166,10 +173,10 @@ def build_communication_snapshot(
         "referenced_records": _resolve_referenced_records(
             message_content=str(trigger.get("content") or ""),
             current_task=current_task,
-            assigned_rows=assigned_rows,
+            self_open_rows=self_open_rows,
             owned_rows=owned_rows,
             recent_completed=recent_completed,
-            project_rollups=project_rollups,
+            project_summary=project_summary,
             recent_meetings=recent_meetings,
         ),
     }
@@ -188,22 +195,32 @@ def _room_name(state: AgentState) -> str:
     return room["name"] if room else "unknown"
 
 
-def _list_tasks_by_statuses(
+def _compact_task_board(
+    board: dict[str, Any],
     *,
-    assigned_to: str | None = None,
-    owner_id: str | None = None,
-    statuses: tuple[str, ...],
-) -> list[Task]:
-    tasks: list[Task] = []
-    seen: set[str] = set()
-    for status in statuses:
-        for task in db.list_tasks(assigned_to=assigned_to, owner_id=owner_id, status=status):
-            if task.id in seen:
-                continue
-            seen.add(task.id)
-            tasks.append(task)
-    tasks.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
-    return tasks
+    section_names: tuple[str, ...],
+    current_task_id: str | None,
+    row_limit: int = 3,
+) -> dict[str, Any]:
+    """Trim one serialized board down to the prompt-relevant sections."""
+    sections: dict[str, list[dict[str, Any]]] = {}
+    for name in section_names:
+        rows = [
+            row
+            for row in list((board.get("sections") or {}).get(name, []))
+            if row.get("id") != current_task_id
+        ][:row_limit]
+        if rows:
+            sections[name] = rows
+    payload: dict[str, Any] = {
+        "scope": board.get("scope"),
+        "current_task": board.get("current_task"),
+        "sections": sections,
+    }
+    assignee_rollup = list(board.get("assignee_rollup") or [])
+    if assignee_rollup:
+        payload["assignee_rollup"] = assignee_rollup[:5]
+    return payload
 
 
 def _activity_row(activity: Any | None) -> dict[str, Any] | None:
@@ -241,62 +258,14 @@ def _task_row(task: Task | None) -> dict[str, Any] | None:
     }
 
 
-def _project_rollups_for_agent(agent_id: str, *, current_task_id: str | None) -> list[dict[str, Any]]:
-    relevant = _list_tasks_by_statuses(assigned_to=agent_id, statuses=_OPEN_TASK_STATUSES)
-    for status in ("complete", "blocked", "delegated", "abandoned"):
-        for task in db.list_tasks(owner_id=agent_id, status=status):
-            if all(existing.id != task.id for existing in relevant):
-                relevant.append(task)
-    for task in _list_tasks_by_statuses(owner_id=agent_id, statuses=_OPEN_TASK_STATUSES):
-        if all(existing.id != task.id for existing in relevant):
-            relevant.append(task)
-
-    grouped: dict[str, dict[str, Any]] = {}
-    for task in relevant:
-        project = str(task.project or "").strip()
-        if not project:
-            continue
-        bucket = grouped.setdefault(
-            project,
-            {
-                "project": project,
-                "path": f"/projects/{slugify_name(project)}",
-                "counts": {},
-                "latest_tasks": [],
-                "sort_ts": task.last_activity,
-            },
-        )
-        bucket["counts"][task.status] = bucket["counts"].get(task.status, 0) + 1
-        bucket["sort_ts"] = max(bucket["sort_ts"], task.last_activity)
-        if len(bucket["latest_tasks"]) < 3 and task.id != current_task_id:
-            bucket["latest_tasks"].append(
-                {
-                    "title": task.title,
-                    "status": task.status,
-                    "assigned_to": task.assigned_to,
-                    "assignee_name": _task_row(task).get("assignee_name"),
-                }
-            )
-    ordered = sorted(grouped.values(), key=lambda item: item["sort_ts"], reverse=True)
-    return [
-        {
-            "project": item["project"],
-            "path": item["path"],
-            "counts": item["counts"],
-            "latest_tasks": item["latest_tasks"],
-        }
-        for item in ordered[:3]
-    ]
-
-
 def _resolve_referenced_records(
     *,
     message_content: str,
     current_task: Task | None,
-    assigned_rows: list[dict[str, Any]],
+    self_open_rows: list[dict[str, Any]],
     owned_rows: list[dict[str, Any]],
     recent_completed: list[dict[str, Any]],
-    project_rollups: list[dict[str, Any]],
+    project_summary: list[dict[str, Any]],
     recent_meetings: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
     query = _normalize_search_text(message_content)
@@ -308,7 +277,7 @@ def _resolve_referenced_records(
         current_row = _task_row(current_task)
         if current_row is not None:
             candidate_tasks.append(current_row)
-    candidate_tasks.extend(assigned_rows)
+    candidate_tasks.extend(self_open_rows)
     candidate_tasks.extend(owned_rows)
     candidate_tasks.extend(recent_completed)
 
@@ -325,7 +294,7 @@ def _resolve_referenced_records(
     )
     project_matches = _top_matches(
         query=query,
-        rows=project_rollups,
+        rows=project_summary,
         text_parts=lambda row: [row.get("project")],
         limit=2,
     )

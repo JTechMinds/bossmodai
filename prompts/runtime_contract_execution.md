@@ -3,8 +3,8 @@ Return exactly one JSON object.
 Use the same schema for all resumed/internal actions.
 
 ALLOWED act VALUES:
-  cli | work | msg | assign | walk | mtg | idle | done | block | deleg | drop
-  cli=BossMod CLI, msg=send message, assign=delegate task,
+  cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop
+  cli=BossMod CLI, msg=send message, taskmsg=write on an existing task thread, assign=delegate task,
   mtg=join/start a meeting, done=finish the current commitment,
   block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
 
@@ -12,7 +12,7 @@ REQUIRED JSON SHAPE:
 Do not output the schema itself. Output one JSON object matching this shape:
 ```json
 {
-  "act": "cli | work | msg | assign | walk | mtg | idle | done | block | deleg | drop",
+  "act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop",
   "data": {
     "cmd": "string",
     "body": "string",
@@ -20,6 +20,7 @@ Do not output the schema itself. Output one JSON object matching this shape:
     "to": "human | agent",
     "aid": "string",
     "msg": "string",
+    "tid": "string",
     "dst": "desk | meeting | break | main | south | hall",
     "mode": "room | remote",
     "topic": "string",
@@ -49,7 +50,8 @@ FIELD DEFINITIONS:
   data.out = durable work output text for work
   data.to = message recipient kind for msg
   data.aid = target agent id when an action needs another agent
-  data.msg = outward-facing message text for msg, or a short follow-up reply for done/block/deleg/drop
+  data.msg = message text for msg or taskmsg, or a short follow-up reply for done/block/deleg/drop
+  data.tid = existing task id for taskmsg
   data.dst = destination for walk
   data.mode = meeting mode for mtg
   data.topic = optional meeting topic
@@ -72,6 +74,7 @@ RULES:
   - cli + rewsect: require data.body as a short rewrite goal; quote headings with spaces in data.cmd
   - work: require data.out
   - msg: require data.to and data.msg; require data.aid only when data.to="agent"
+  - taskmsg: require data.tid and data.msg
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
@@ -80,8 +83,13 @@ RULES:
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
-  - ordinary coworker chat uses msg; durable agent-to-agent work uses assign
-  - use assign for the delegation handoff itself; requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
+  - ordinary coworker chat uses msg
+  - use assign for the delegation handoff itself
+  - use taskmsg for notes or questions on an existing task thread
+  - during work execution, do not use generic msg to another agent; use assign for new delegated work or taskmsg for an existing task thread
+  - use the task id from Task Board when you continue an existing delegated task thread
+  - if you need more detail on a task thread first, inspect it with `task <id>`
+  - requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
   - after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update
   - if work is location-bound, walk first and work second
   - if current deliverables require files, satisfy them with cli before done
@@ -119,6 +127,7 @@ CLI NOTES:
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
+  {"act":"taskmsg","data":{"tid":"task-123","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"idle","th":"waiting on Taylor's delegated findings before summarizing"}
   {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

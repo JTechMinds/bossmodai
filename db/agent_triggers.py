@@ -20,12 +20,13 @@ CASE trigger_type
     WHEN 'human_chat' THEN 0
     WHEN 'cli_approval_resolved' THEN 1
     WHEN 'peer_message' THEN 2
-    WHEN 'session_response' THEN 3
-    WHEN 'channel_response' THEN 4
-    WHEN 'session_message' THEN 5
-    WHEN 'channel_message' THEN 6
-    WHEN 'watchdog_status_ping' THEN 7
-    WHEN 'task_assigned' THEN 8
+    WHEN 'task_follow_up' THEN 3
+    WHEN 'session_response' THEN 4
+    WHEN 'channel_response' THEN 5
+    WHEN 'session_message' THEN 6
+    WHEN 'channel_message' THEN 7
+    WHEN 'watchdog_status_ping' THEN 8
+    WHEN 'task_assigned' THEN 9
     WHEN 'activity_resumed' THEN 9
     WHEN 'social' THEN 10
     ELSE 10

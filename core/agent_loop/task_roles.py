@@ -84,6 +84,38 @@ def task_assignment_reply_target(task: Task, *, assignee_id: str | None = None) 
     return {"kind": "none", "agent_id": None}
 
 
+def task_thread_target(task: Task, *, actor_id: str) -> dict[str, str | None]:
+    """Resolve the next task-thread recipient for an existing task.
+
+    Rules:
+    - If a stakeholder/owner is writing on a delegated task, the note goes to the assignee.
+    - If the assignee is writing, the note goes upstream to the requester/owner.
+    - Human-requested tasks may route upstream to the human operator.
+    """
+    normalized_actor_id = _normalize_agent_id(actor_id)
+    if normalized_actor_id is None:
+        return {"kind": "none", "agent_id": None}
+
+    assignee_id = _normalize_agent_id(task.assigned_to)
+    if assignee_id and assignee_id != normalized_actor_id:
+        return {"kind": "agent", "agent_id": assignee_id}
+
+    return task_assignment_reply_target(task, assignee_id=normalized_actor_id)
+
+
+def task_has_participant(task: Task, *, agent_id: str) -> bool:
+    """Return whether the given agent is structurally bound to the task."""
+    normalized_agent_id = _normalize_agent_id(agent_id)
+    if normalized_agent_id is None:
+        return False
+    return normalized_agent_id in {
+        _normalize_agent_id(task.assigned_to),
+        _normalize_agent_id(task.owner_id),
+        _normalize_agent_id(task.requester_id),
+        _normalize_agent_id(task.created_by),
+    }
+
+
 def task_report_recipient_ids(task: Task, *, actor_id: str | None = None) -> list[str]:
     """Return the deduplicated agent stakeholders who should receive task updates."""
     recipients: list[str] = []
