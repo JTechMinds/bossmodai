@@ -507,7 +507,7 @@ const CompanyFiles = (() => {
                             class="px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:bg-bm-accent-hover transition-colors">Save</button>
                 </div>`;
 
-            modal.panel.querySelector('#cf-opener-cancel')?.addEventListener('click', () => { modal.close(); resolve(null); });
+            modal.panel.querySelector('#cf-opener-cancel')?.addEventListener('click', () => { resolve(null); modal.close(); });
             modal.panel.querySelector('#cf-folder-opener-custom')?.addEventListener('focus', () => {
                 const r = modal.panel.querySelector('input[name="cf-folder-opener-choice"][value="__custom__"]');
                 if (r) r.checked = true;
@@ -518,12 +518,12 @@ const CompanyFiles = (() => {
                 if (sel.value === '__custom__') {
                     const c = String(modal.panel.querySelector('#cf-folder-opener-custom')?.value || '').trim();
                     if (!c) return;
-                    modal.close();
                     resolve(c);
+                    modal.close();
                     return;
                 }
-                modal.close();
                 resolve(sel.value);
+                modal.close();
             });
         });
     }

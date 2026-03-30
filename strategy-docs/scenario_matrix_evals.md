@@ -86,7 +86,7 @@ These are the most important additions beyond the current prompt audit work.
 | H-03 | User asks ambiguous question | Agent asks a clarifying question | Optional | Covered |
 | H-04 | User asks for a work artifact (“write a paper/report/doc”) | Agent accepts, creates durable work commitment, replies naturally | Optional during decision; expected during execution | Covered |
 | H-05 | User asks for move/meeting/break | Agent accepts or clarifies without inventing work | No unless fact lookup needed | Covered |
-| H-06 | User asks for unsupported/out-of-scope action | Agent declines or clarifies cleanly | Optional | Missing |
+| H-06 | User asks for unsupported/out-of-scope action | Agent declines or clarifies cleanly | Optional | Covered |
 | H-07 | User asks for a factual status and snapshot is insufficient | Agent uses one or more CLI lookups, then final conversation decision | Yes | Covered |
 | H-08 | User asks for current status mid-task | Agent answers in chat, then work resumes | Optional | Covered |
 | H-09 | User changes scope mid-task | Agent clarifies whether to replace the active commitment or continue current work | Optional | Covered |
@@ -157,7 +157,7 @@ These are the most important additions beyond the current prompt audit work.
 | F-03 | Saved file becomes visible in Desk | Artifact is registered and browsable | Yes | Covered |
 | F-04 | Human can read the saved document after completion | Desk/API returns file contents | Yes | Covered |
 | F-05 | Agent claims done but file is missing | Completion should be blocked and prompt should redirect to file save | Yes | Covered |
-| F-06 | Human asks for summary plus file | Agent saves file and optionally sends summary separately | Yes | Missing |
+| F-06 | Human asks for summary plus file | Agent saves file and optionally sends summary separately | Yes | Covered |
 
 ### 4.8 Observability and Status
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -186,6 +186,13 @@ These are the most important additions beyond the current prompt audit work.
 | N-03 | Peer chat creates durable work without explicit assignment | Runtime/prompt should reject | Optional | Covered |
 | N-04 | Decision response missing required reply text | Validation fails and repairs or errors | No | Covered |
 | N-05 | Agent overuses CLI when snapshot suffices | Prompt should discourage; tests should assert bounded lookup behavior | Optional | Covered |
+| N-06 | Agent invents active or completed work not present in runtime/history | Agent answers only from known state or clarifies / checks instead of fabricating work state | Optional | Missing |
+| N-07 | Agent invents artifact existence, file path, or save success | Agent verifies the artifact exists before claiming it was created, saved, or readable | Yes when verification is needed | Missing |
+| N-08 | Agent answers document-detail questions without evidence | Agent uses injected summary when sufficient or inspects the document before making detailed claims | Yes when details require retrieval | Missing |
+| N-09 | Agent invents coworker / delegated-task progress or results | Agent reports only known upstream/downstream state or checks first | Optional | Missing |
+| N-10 | Agent claims it performed unsupported external actions | Agent declines or states capability limits instead of pretending it emailed, posted, transferred money, etc. | Optional | Missing |
+| N-11 | Agent fabricates CLI/tool output or command success | Responses must reflect actual tool results; failed or absent tool results stay failed or absent | Yes | Missing |
+| N-12 | Agent invents meetings, schedules, or check-ins that do not exist | Agent answers from actual runtime/scheduler state only | Optional | Missing |
 
 ### 4.11 Prompt Budget and Context Discipline
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -213,6 +220,11 @@ Yes. The other big missing areas are:
 *   **Completion synthesis**
     *   Worker finishes task and gives PM raw result
     *   PM produces a human-ready summary instead of forwarding raw worker output unchanged
+
+*   **Hallucination / evidence discipline**
+    *   Agent does not invent tasks, artifacts, or teammate status
+    *   Agent does not claim to have read or saved documents it did not actually inspect or create
+    *   Agent does not pretend unsupported actions or integrations succeeded
 
 *   **External-action realism**
     *   Anything like email, social posting, ticket updates, CRM notes, or calendar operations must be treated as tool/integration scenarios, not just prompt scenarios
@@ -284,15 +296,12 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | None currently open | High-value workflow gaps now mostly sit in prompt-discipline polish and delivery-quality behavior rather than core lifecycle or shared-channel routing | Keep the next pass focused on bounded lookup discipline and file-delivery polish | Agent Runtime + Prompting/Contracts |
+| P1 | N-06, N-07, N-08, N-09, N-10, N-11, N-12 | Anti-hallucination / evidence-discipline suite | Trust, operator safety, and agent credibility depend on not inventing work state, artifacts, teammate progress, or tool outcomes | Prompting/Contracts + Agent Runtime + QA/Acceptance |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P2 | H-06 | Unsupported/out-of-scope request handling | Improves failure quality and operator clarity | Prompting/Contracts |
-| P2 | C-06, N-05 | Bounded CLI usage when snapshot already suffices | Helps control unnecessary tool churn | Prompting/Contracts |
-| P2 | M-01, M-02 | Shared-channel observe vs reply behavior | Useful, but less critical than direct/managed workflows | Prompting/Contracts |
-| P2 | F-06 | Deliverable plus summary reply pattern | Improves polish for document-delivery flows | Agent Runtime |
+| P2 | None currently open | After the anti-hallucination suite, the next work is broader release confidence and future platform epics | Shift from focused gap-closing to broader validation | Agent Runtime + Prompting/Contracts + QA/Acceptance |
 
 ## 9. Scheduled / Recurring Work Epic
 Recurring tasks should be tracked as a separate product/runtime epic rather than mixed into prompt-only acceptance work.
@@ -315,9 +324,9 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add deliverable-plus-summary coverage for `F-06`.
-2.  Add unsupported/out-of-scope handling coverage for `H-06`.
-3.  Re-check broader release confidence after the remaining focused gaps are closed.
+1.  Add anti-hallucination / evidence-discipline coverage for `N-06` through `N-12`.
+2.  Re-check broader release confidence after the anti-hallucination suite lands.
+3.  Keep scheduled / recurring work in its separate platform epic.
 
 ## 11. Bottom Line
 The matrix is now actionable:

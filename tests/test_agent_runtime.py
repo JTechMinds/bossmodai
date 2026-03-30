@@ -368,6 +368,7 @@ def test_render_decision_contract_scopes_human_chat_choices(isolated_db):
     contract = render_decision_contract("human_chat")
     assert "Choose the smallest valid object for this turn. Omit unrelated fields." in contract
     assert "If the snapshot already answers the question, reply directly instead of using CLI." in contract
+    assert "Decline unsupported or out-of-scope requests cleanly instead of pretending you can do them." in contract
     assert "ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer" in contract
     assert "OPTIONAL LOOKUP ACT FOR ANY DECISION TURN" in contract
     assert "You may use more than one CLI lookup in the same decision turn" in contract
@@ -1305,6 +1306,117 @@ async def test_work_completion_requires_requested_saved_file(isolated_db, monkey
     assert blocked_step["missing_deliverables"] == [
         {"type": "file", "path": "/me/avocado_white.md", "description": None}
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_turn_work_completion_can_deliver_file_and_summary_together(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Please write the launch recap and save it as launch_recap.md, then give me a short summary too.",
+        message_type="human",
+    )
+    task = db.create_task(
+        title="Write launch recap",
+        description="Write the launch recap, save it as launch_recap.md, and provide a short summary.",
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=agent.id,
+        created_by=HUMAN_SENDER_ID,
+        work_contract={"deliverables": [{"type": "file", "path": "/me/launch_recap.md"}]},
+        source_channel="chat",
+        notification_policy="completion_blocked",
+    )
+    state = _activate_work(agent, task, x=desk_x, y=desk_y)
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    responses = iter([
+        client.LLMResponse(
+            content=(
+                '{"act":"cli","data":{"cmd":"write /me/launch_recap.md","body":"Launch recap\\n\\nThe launch outperformed forecast and onboarding held steady."},'
+                '"th":"save the requested launch recap"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+        client.LLMResponse(
+            content=(
+                '{"act":"done","data":{"sum":"saved launch recap",'
+                '"msg":"Finished the launch recap and saved it. Short summary: launch outperformed forecast and onboarding stayed steady."},'
+                '"th":"deliver the file and summary together"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        ),
+    ])
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "content": 'Resume work on "Write launch recap".',
+            "task_id": task.id,
+            "task_title": task.title,
+            "task_description": task.description,
+            "source_channel": "work",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.trigger_status == "completed"
+    assert outcome.result["event"] == "status_changed"
+    assert outcome.result["chat_message"]["content"] == (
+        "Finished the launch recap and saved it. Short summary: launch outperformed forecast and onboarding stayed steady."
+    )
+    assert outcome.result["chat_notification"]["kind"] == "completion"
+    assert outcome.result["chat_notification"]["human_visible"] is True
+    assert outcome.result["chat_notification"]["deliverables"] == [
+        {"type": "file", "path": "/me/launch_recap.md", "description": None}
+    ]
+
+    refreshed_task = db.get_task(task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.status == "complete"
+    assert refreshed_task.completion_summary == "saved launch recap"
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "Finished the launch recap and saved it. Short summary: launch outperformed forecast and onboarding stayed steady."
+    )
+
+    api_messages = await get_agent_messages(agent.id, limit=10)
+    system_messages = [item for item in api_messages if item["message_type"] == "system"]
+    assert len(system_messages) == 1
+    assert system_messages[0]["desk_path"] == "/me/launch_recap.md"
+
+    desk_payload = await get_agent_desk(agent.id, path="/me/launch_recap.md")
+    assert desk_payload["kind"] == "file"
+    assert desk_payload["artifact"]["virtual_path"] == "/me/launch_recap.md"
+    assert "Launch recap" in desk_payload["content"]
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "bm_cli -> complete"
 
 
 @pytest.mark.asyncio
@@ -3585,6 +3697,66 @@ async def test_run_turn_human_chat_grounded_question_can_clarify_when_snapshot_i
     thread = db.get_human_chat_thread(agent.id, limit=10)
     assert [msg.message_type for msg in thread] == ["human", "social"]
     assert thread[-1].content == "Which project do you mean? I do not have a single latest project identified in my current queue."
+
+
+@pytest.mark.asyncio
+async def test_run_turn_human_chat_unsupported_request_declines_without_creating_work(isolated_db, monkeypatch):
+    desk_x, desk_y = _desk_xy()
+    agent = db.create_agent(name="Taylor", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
+    state = db.update_agent_state(agent.id, x=desk_x, y=desk_y, status="idle")
+    human_msg = db.create_message(
+        HUMAN_SENDER_ID,
+        agent.id,
+        "Can you transfer money from the company bank account for me?",
+        message_type="human",
+    )
+
+    monkeypatch.setattr(manager, "broadcast_world_state", _noop)
+    monkeypatch.setattr(manager, "broadcast_activity", _noop)
+    monkeypatch.setattr(manager, "broadcast_feed_update", _noop)
+    monkeypatch.setattr(manager, "broadcast_chat_message", _noop)
+    monkeypatch.setattr(manager, "broadcast_diagnostic", _noop)
+    monkeypatch.setattr(manager, "broadcast_thought", _noop)
+    monkeypatch.setattr(routing, "select_model_with_source", lambda _agent, _mode: ("test-model", "agent"))
+    monkeypatch.setattr(routing, "get_api_config", lambda _agent: {})
+
+    async def fake_completion(**kwargs):
+        return client.LLMResponse(
+            content=(
+                '{"act":"decline","intent":"other","msg":"I cannot do that from here. If you need a finance approval or transfer, use the proper company process.",'
+                '"th":"decline the unsupported request cleanly"}'
+            ),
+            model="test-model",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr(client, "completion", fake_completion)
+
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Can you transfer money from the company bank account for me?",
+            "from_name": "Human Operator",
+            "source_message_id": human_msg.id,
+        },
+    )
+
+    assert outcome.result["event"] == "decision_applied"
+    assert db.list_tasks(assigned_to=agent.id) == []
+    assert _active_activity(agent.id) is None
+
+    thread = db.get_human_chat_thread(agent.id, limit=10)
+    assert [msg.message_type for msg in thread] == ["human", "social"]
+    assert thread[-1].content == (
+        "I cannot do that from here. If you need a finance approval or transfer, use the proper company process."
+    )
+
+    diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
+    assert diagnostics[0]["action_name"] == "decline(none)"
 
 
 @pytest.mark.asyncio
