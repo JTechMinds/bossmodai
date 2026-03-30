@@ -586,10 +586,12 @@ def _resolve_or_create_work_task(
     elif trigger.get("type") == "peer_message" and trigger.get("from_agent"):
         created_by = trigger["from_agent"]
     requester_id = task_requester_id_for_trigger(trigger, default_agent_id=agent.id)
+    parent_task = _follow_up_parent_task_for_trigger(agent, trigger)
     owner_id = default_task_owner_id(
         assignee_id=agent.id,
         requester_id=requester_id,
         created_by=created_by,
+        parent_task=parent_task,
     )
 
     return db.create_task(
@@ -599,6 +601,8 @@ def _resolve_or_create_work_task(
         requester_id=requester_id,
         owner_id=owner_id,
         created_by=created_by,
+        parent_task_id=parent_task.id if parent_task else None,
+        work_contract=_inherited_follow_up_work_contract(parent_task, decision),
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
         notification_channel_id=task_notification_channel_id_for_trigger(trigger),
@@ -624,10 +628,12 @@ def _ensure_deferred_task(
     else:
         created_by = trigger.get("from_agent") or agent.id
     requester_id = task_requester_id_for_trigger(trigger, default_agent_id=agent.id)
+    parent_task = _follow_up_parent_task_for_trigger(agent, trigger)
     owner_id = default_task_owner_id(
         assignee_id=agent.id,
         requester_id=requester_id,
         created_by=created_by,
+        parent_task=parent_task,
     )
     return db.create_task(
         title=(decision.taskTitle or "").strip(),
@@ -636,6 +642,8 @@ def _ensure_deferred_task(
         requester_id=requester_id,
         owner_id=owner_id,
         created_by=created_by,
+        parent_task_id=parent_task.id if parent_task else None,
+        work_contract=_inherited_follow_up_work_contract(parent_task, decision),
         source_channel=task_source_channel_for_trigger(trigger),
         notification_policy=task_notification_policy_for_trigger(trigger),
         notification_channel_id=task_notification_channel_id_for_trigger(trigger),
@@ -656,6 +664,28 @@ def _persist_work_contract(task, agent: Agent, decision: ConversationDecision):
         return task
     updated = db.update_task(task.id, work_contract=contract)
     return updated or task
+
+
+def _follow_up_parent_task_for_trigger(agent: Agent, trigger: dict[str, Any]):
+    """Return the completed task that a revision-style follow-up should attach to."""
+    task_id = trigger.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return None
+    task = db.get_task(task_id)
+    if task is None:
+        return None
+    if task.assigned_to != agent.id:
+        return None
+    if task.status != "complete":
+        return None
+    return task
+
+
+def _inherited_follow_up_work_contract(parent_task, decision: ConversationDecision):
+    """Reuse the completed task's deliverable contract when follow-up work omits a new one."""
+    if parent_task is None or parent_task.work_contract is None or decision.deliverables:
+        return None
+    return parent_task.work_contract.model_dump()
 
 def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | None) -> None:
     """Queue a work resume trigger after a direct interruption if work stayed active."""

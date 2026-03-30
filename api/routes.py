@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
+from starlette.responses import FileResponse
 
 from pydantic import BaseModel
 
@@ -84,6 +85,26 @@ class ChannelMessageBody(BaseModel):
 class CompanyFileSaveBody(BaseModel):
     path: str
     content: str
+
+
+class CompanyFileCreateBody(BaseModel):
+    path: str  # parent directory path
+    name: str
+    kind: Literal["file", "folder"]
+
+
+class CompanyFileDeleteBody(BaseModel):
+    path: str
+
+
+class CompanyFileRenameBody(BaseModel):
+    path: str
+    new_name: str
+
+
+class CompanyFileMoveBody(BaseModel):
+    source: str
+    destination: str
 
 
 class RuntimeContractsBody(BaseModel):
@@ -357,6 +378,201 @@ async def open_company_folder(body: dict) -> dict[str, object]:
         ) from exc
 
     return {"status": "ok", "path": str(target)}
+
+
+# ── Company file operations (create / delete / rename / move / copy / search / raw) ──
+
+
+_INVALID_NAME_RE = re.compile(r"(/|\.\.)")
+_GIT_NAME_RE = re.compile(r"^\.git")
+
+_IMAGE_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+}
+
+
+def _validate_name(name: str) -> None:
+    """Reject names containing path separators, traversal tokens, or .git* prefixes."""
+    if not name or _INVALID_NAME_RE.search(name) or _GIT_NAME_RE.match(name):
+        raise HTTPException(400, "Invalid name")
+
+
+@router.post("/company/files/create", status_code=201)
+async def create_company_file(body: CompanyFileCreateBody) -> dict[str, object]:
+    """Create an empty file or folder in the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    parent = _resolve_safe_company_path(root, body.path)
+    if parent is None or not parent.exists() or not parent.is_dir():
+        raise HTTPException(400, "Invalid parent path")
+
+    _validate_name(body.name)
+    target = parent / body.name
+
+    if target.exists():
+        raise HTTPException(409, "Target already exists")
+
+    if body.kind == "file":
+        await asyncio.to_thread(target.touch)
+    else:
+        await asyncio.to_thread(target.mkdir)
+
+    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
+    return {"status": "ok", "path": virtual_path}
+
+
+@router.delete("/company/files")
+async def delete_company_file(body: CompanyFileDeleteBody) -> dict[str, object]:
+    """Delete a file or empty directory from the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    resolved = _resolve_safe_company_path(root, body.path)
+    if resolved is None or not resolved.exists():
+        raise HTTPException(404, "Path not found")
+
+    if resolved.is_dir():
+        if any(resolved.iterdir()):
+            raise HTTPException(409, "Directory is not empty")
+        await asyncio.to_thread(resolved.rmdir)
+    else:
+        await asyncio.to_thread(resolved.unlink)
+
+    return {"status": "ok"}
+
+
+@router.patch("/company/files/rename")
+async def rename_company_file(body: CompanyFileRenameBody) -> dict[str, object]:
+    """Rename a file or folder in the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    resolved = _resolve_safe_company_path(root, body.path)
+    if resolved is None or not resolved.exists():
+        raise HTTPException(404, "Path not found")
+
+    _validate_name(body.new_name)
+    new_target = resolved.parent / body.new_name
+
+    await asyncio.to_thread(resolved.rename, new_target)
+
+    virtual_path = "/" + str(new_target.resolve().relative_to(root.resolve())).replace("\\", "/")
+    return {"status": "ok", "path": virtual_path}
+
+
+@router.post("/company/files/move")
+async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
+    """Move a file or folder within the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    source = _resolve_safe_company_path(root, body.source)
+    destination = _resolve_safe_company_path(root, body.destination)
+    if source is None or not source.exists():
+        raise HTTPException(404, "Source not found")
+    if destination is None or not destination.exists() or not destination.is_dir():
+        raise HTTPException(400, "Destination must be an existing directory")
+
+    target = destination / source.name
+    if target.exists():
+        raise HTTPException(409, "Target already exists in destination")
+
+    await asyncio.to_thread(shutil.move, str(source), str(target))
+
+    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
+    return {"status": "ok", "path": virtual_path}
+
+
+@router.post("/company/files/copy")
+async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
+    """Copy a file or folder within the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    source = _resolve_safe_company_path(root, body.source)
+    destination = _resolve_safe_company_path(root, body.destination)
+    if source is None or not source.exists():
+        raise HTTPException(404, "Source not found")
+    if destination is None or not destination.exists() or not destination.is_dir():
+        raise HTTPException(400, "Destination must be an existing directory")
+
+    target = destination / source.name
+    if target.exists():
+        raise HTTPException(409, "Target already exists in destination")
+
+    if source.is_dir():
+        await asyncio.to_thread(shutil.copytree, str(source), str(target))
+    else:
+        await asyncio.to_thread(shutil.copy2, str(source), str(target))
+
+    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
+    return {"status": "ok", "path": virtual_path}
+
+
+@router.get("/company/files/search")
+async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[str, object]]:
+    """Search for files and folders by name across the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    def _search() -> list[dict[str, object]]:
+        root = artifacts_root()
+        root_resolved = root.resolve()
+        query_lower = q.lower()
+        results: list[dict[str, object]] = []
+
+        for dirpath, dirnames, filenames in os.walk(root_resolved):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".git")]
+
+            for name in dirnames + filenames:
+                if name.startswith(".git"):
+                    continue
+                if query_lower not in name.lower():
+                    continue
+                full = Path(dirpath) / name
+                is_dir = full.is_dir()
+                stat_result = full.stat()
+                virtual = "/" + str(full.relative_to(root_resolved)).replace("\\", "/")
+                results.append({
+                    "name": name,
+                    "path": virtual,
+                    "is_dir": is_dir,
+                    "size_bytes": None if is_dir else stat_result.st_size,
+                    "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+                })
+                if len(results) >= 100:
+                    break
+            if len(results) >= 100:
+                break
+
+        _annotate_agent_names(results)
+        return results
+
+    return await asyncio.to_thread(_search)
+
+
+@router.get("/company/files/raw")
+async def get_company_file_raw(path: str = Query(..., min_length=1)):
+    """Return the raw bytes of a file from the company workspace."""
+    from core.bm_cli.filesystem import artifacts_root
+
+    root = artifacts_root()
+    resolved = _resolve_safe_company_path(root, path)
+    if resolved is None or not resolved.exists():
+        raise HTTPException(404, "File not found")
+    if not resolved.is_file():
+        raise HTTPException(400, "Path is not a file")
+
+    suffix = resolved.suffix.lower()
+    mime_type = _IMAGE_MIME_TYPES.get(suffix, "application/octet-stream")
+    return FileResponse(str(resolved), media_type=mime_type)
 
 
 @router.get("/channels")

@@ -165,7 +165,7 @@ def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
         status="accepted",
     )
     recent_completed = db.get_recent_completed_tasks(context.agent.id, limit=3)
-    recent_artifacts = db.get_recent_work_artifacts(context.agent.id, limit=3)
+    recent_artifacts = db.get_recent_artifact_refs(context.agent.id, limit=3)
 
     runtime = {
         "status": context.state.status,
@@ -218,9 +218,12 @@ def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
         ],
         "recent_work_artifacts": [
             {
-                "created_at": artifact.created_at,
-                "type": artifact.message_type,
-                "summary": (artifact.content or "").replace("\n", " "),
+                "created_at": artifact["created_at"],
+                "task_id": artifact["task_id"],
+                "task_title": artifact["task_title"],
+                "path": artifact["path"],
+                "title": artifact["title"],
+                "type": artifact["type"],
             }
             for artifact in recent_artifacts
         ],
@@ -309,7 +312,7 @@ def _completed_task_table_lines(tasks: list[dict[str, Any]]) -> list[str]:
 
 def _artifact_table_lines(artifacts: list[dict[str, Any]]) -> list[str]:
     """Render recent work artifacts as a compact table."""
-    lines = ["datetime | type | summary"]
+    lines = ["datetime | task | path | title"]
     if not artifacts:
         lines.append("none")
         return lines
@@ -318,8 +321,9 @@ def _artifact_table_lines(artifacts: list[dict[str, Any]]) -> list[str]:
             " | ".join(
                 [
                     _fmt_time(artifact["created_at"]),
-                    str(artifact["type"]),
-                    trim(str(artifact["summary"])),
+                    trim(str(artifact.get("task_title") or "-")),
+                    trim(str(artifact["path"])),
+                    trim(str(artifact["title"])),
                 ]
             )
         )

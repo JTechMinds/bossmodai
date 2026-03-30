@@ -90,7 +90,10 @@ These are the most important additions beyond the current prompt audit work.
 | H-07 | User asks for a factual status and snapshot is insufficient | Agent uses one or more CLI lookups, then final conversation decision | Yes | Covered |
 | H-08 | User asks for current status mid-task | Agent answers in chat, then work resumes | Optional | Covered |
 | H-09 | User changes scope mid-task | Agent clarifies whether to replace the active commitment or continue current work | Optional | Covered |
-| H-10 | User asks about recently completed work vs current active work | Agent distinguishes active work from historical completed work | Optional | Missing |
+| H-10 | User asks about recently completed work vs current active work | Agent distinguishes active work from historical completed work | Optional | Covered |
+| H-11 | User asks for a short retrospective summary of prior completed work | Agent answers from recent completed-task / artifact context when the bounded summary is sufficient | Optional | Covered |
+| H-12 | User asks a content question about a prior saved deliverable | Agent retrieves the relevant artifact/report before answering when the summary context is insufficient | Yes when retrieval is needed | Covered |
+| H-13 | User asks about prior completed work while a current task is active | Agent answers about the prior work without dropping, replacing, or confusing the active task | Optional | Covered |
 
 ### 4.2 Human Work Lifecycle
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
@@ -99,9 +102,9 @@ These are the most important additions beyond the current prompt audit work.
 | W-02 | Agent works on a long file deliverable | Agent uses managed writer / `write <path>` flow | Yes | Covered |
 | W-03 | Agent completes a human-requested task | Agent marks done and sends a requester-facing completion message | Optional on done; often yes during work | Covered |
 | W-04 | Agent attempts done before required file deliverable exists | Runtime should block completion and direct agent to save file first | Yes | Covered |
-| W-05 | Agent becomes blocked mid-task | Agent uses blocked path and reports blocker naturally | Optional | Partial |
+| W-05 | Agent becomes blocked mid-task | Agent uses blocked path and reports blocker naturally | Optional | Covered |
 | W-06 | Human asks status while task is active | Agent answers and work resumes without losing task | Optional | Covered |
-| W-07 | Human requests revisions after completion | Agent creates or resumes follow-up work on the existing deliverable | Optional | Missing |
+| W-07 | Human requests revisions after completion | Agent creates or resumes follow-up work on the existing deliverable | Optional | Covered |
 | W-08 | Human deprioritizes or replaces a task mid-flight | Agent pauses the older task and replaces it with the new active commitment correctly | Optional | Covered |
 | W-09 | Human cancels an active task outright | Agent abandons or otherwise closes the current commitment correctly without inventing replacement work | Optional | Covered |
 
@@ -118,10 +121,10 @@ These are the most important additions beyond the current prompt audit work.
 ### 4.4 AI-to-AI Conversation
 | ID | Scenario | Expected Behavior | CLI/Tools | Status |
 | --- | --- | --- | --- | --- |
-| A-01 | One agent greets another | Conversational peer reply only | No | Partial |
+| A-01 | One agent greets another | Conversational peer reply only | No | Covered |
 | A-02 | One agent asks another for status | Peer reply only, no durable work creation | Optional | Covered |
 | A-03 | Peer requests durable work informally in chat | Agent does not create durable work from peer chat alone | Optional | Covered |
-| A-04 | One agent asks another to meet/move | Agent accepts conversationally and moves/joins as appropriate | Optional | Partial |
+| A-04 | One agent asks another to meet/move | Agent accepts conversationally and moves/joins as appropriate | Optional | Covered |
 | A-05 | One agent sends a direct follow-up after work step | Message routes to explicit target agent | No | Covered |
 
 ### 4.5 Delegation and Reporting Hierarchies
@@ -143,7 +146,7 @@ These are the most important additions beyond the current prompt audit work.
 | M-02 | Shared channel message requiring response | Agent replies in shared context | Optional | Partial |
 | M-03 | Meeting response turn | Agent replies in meeting transcript correctly | Optional | Covered |
 | M-04 | Meeting invitation interrupts work | Existing task pauses/replaces correctly and agent joins meeting | Optional | Covered |
-| M-05 | Meeting produces follow-up work | Agent captures action item as durable work instead of treating meeting talk as completion | Optional | Missing |
+| M-05 | Meeting produces follow-up work | Agent captures action item as durable work instead of treating meeting talk as completion | Optional | Covered |
 | M-06 | Daily scrum / recurring meeting | Requires scheduled trigger generation | No special prompt issue until scheduler exists | Requires Platform Capability |
 
 ### 4.7 File Deliverables and Artifact Visibility
@@ -281,16 +284,12 @@ This is the recommended implementation order for turning the matrix into executa
 ### 8.2 P1: High-Value Workflow Coverage After P0
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
-| P1 | W-07 | Revision loop after deliverable completion | Essential for real document workflows | Agent Runtime |
-| P1 | W-05 | Human-requested task becomes blocked and reports the blocker cleanly | Key for real work management outside delegation chains | Agent Runtime |
-| P1 | A-01, A-04 | AI-to-AI greeting/move/meeting conversational flows | Good conversational realism and meeting coordination coverage | Prompting/Contracts |
-| P1 | M-05 | Meeting creates durable follow-up work item | Prevents meetings from becoming dead-end transcripts | Agent Runtime |
+| P1 | D-04, D-05 | Delegated defer and decline edge-case coverage | Important for realistic manager delegation behavior and clean reporting chains | Agent Runtime + Prompting/Contracts |
 
 ### 8.3 P2: Valuable But Not Immediate Release Blockers
 | Priority | Scenario IDs | Missing Test / Validation | Why It Matters | Owner Lane |
 | --- | --- | --- | --- | --- |
 | P2 | H-06 | Unsupported/out-of-scope request handling | Improves failure quality and operator clarity | Prompting/Contracts |
-| P2 | H-10 | Current-vs-recently-completed work distinction | Reduces misleading status answers | Prompting/Contracts |
 | P2 | C-06, N-05 | Bounded CLI usage when snapshot already suffices | Helps control unnecessary tool churn | Prompting/Contracts |
 | P2 | M-01, M-02 | Shared-channel observe vs reply behavior | Useful, but less critical than direct/managed workflows | Prompting/Contracts |
 | P2 | F-06 | Deliverable plus summary reply pattern | Improves polish for document-delivery flows | Agent Runtime |
@@ -316,9 +315,9 @@ Once scheduling exists, add prompt scenarios for:
 ## 10. Immediate Execution Plan
 Recommended next actions in order:
 
-1.  Add **revision loop** coverage for `W-07`.
-2.  Add direct human **blocked-task** coverage for `W-05`.
-3.  Add AI-to-AI **greeting / move / meeting** conversation coverage for `A-01` and `A-04`.
+1.  Add delegated **defer / decline** edge-case coverage for `D-04` and `D-05`.
+2.  Add shared-channel **observe vs reply** coverage for `M-01` and `M-02`.
+3.  Add bounded no-lookup discipline coverage for `C-06` and `N-05`.
 
 ## 11. Bottom Line
 The matrix is now actionable:

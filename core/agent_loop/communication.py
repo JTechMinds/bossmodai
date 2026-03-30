@@ -71,7 +71,7 @@ def build_communication_snapshot(
     assigned_open_tasks = _list_tasks_by_statuses(assigned_to=agent.id, statuses=_OPEN_TASK_STATUSES)
     owned_open_tasks = _list_tasks_by_statuses(owner_id=agent.id, statuses=_OPEN_TASK_STATUSES)
     recent_completed_rows = db.get_recent_completed_tasks(agent.id, limit=3)
-    recent_artifacts = db.get_recent_work_artifacts(agent.id, limit=2)
+    recent_artifacts = db.get_recent_artifact_refs(agent.id, limit=2)
     recent_notifications = db.list_notifications(agent_id=agent.id, limit=5)
     recent_meeting_rows = db.get_recent_meeting_summaries_for_agent(agent.id, limit_sessions=2, messages_per_session=4)
 
@@ -150,9 +150,12 @@ def build_communication_snapshot(
         "recent_completed_tasks": recent_completed,
         "recent_work_artifacts": [
             {
-                "summary": _summarize_text((item.content or "").replace("\n", " "), limit=180),
-                "message_type": item.message_type,
-                "created_at": item.created_at,
+                "task_id": item["task_id"],
+                "task_title": item["task_title"],
+                "path": item["path"],
+                "title": item["title"],
+                "type": item["type"],
+                "created_at": item["created_at"],
             }
             for item in recent_artifacts
         ],

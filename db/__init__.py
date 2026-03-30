@@ -41,6 +41,7 @@ from db.artifacts import (
     build_artifact_title,
     get_artifact,
     get_artifact_by_absolute_path,
+    get_recent_artifact_refs,
     list_artifacts,
     upsert_artifact,
 )
@@ -260,6 +261,7 @@ __all__ = [
     "get_artifact_by_absolute_path",
     "get_agent_cli_state",
     "get_agent_prompt_history_policy",
+    "get_recent_artifact_refs",
     "list_artifacts",
     "upsert_artifact",
     "update_agent_cli_state",

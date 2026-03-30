@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from core.models import Artifact
 from db.crud import execute, fetch_all, fetch_one, insert_returning
@@ -72,6 +73,28 @@ def list_artifacts(
         params,
         Artifact,
     )
+
+
+def get_recent_artifact_refs(agent_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Return recent artifacts with task linkage for prompt/runtime context."""
+    from db.tasks import get_task
+
+    artifacts = list_artifacts(agent_id=agent_id, limit=limit)
+    rows: list[dict[str, Any]] = []
+    for artifact in reversed(artifacts):
+        task = get_task(artifact.task_id) if artifact.task_id else None
+        rows.append(
+            {
+                "artifact_id": artifact.id,
+                "task_id": artifact.task_id,
+                "task_title": task.title if task else None,
+                "path": artifact.virtual_path,
+                "title": artifact.title,
+                "type": artifact.kind,
+                "created_at": artifact.created_at,
+            }
+        )
+    return rows
 
 
 def upsert_artifact(

@@ -605,8 +605,8 @@ def _format_recent_completed_tasks(agent_id: str) -> str:
 def _format_recent_work_artifacts(agent_id: str) -> str:
     """Render recent work artifacts as historical context."""
     limit = config.get_int("context_recent_work_artifacts") or 5
-    rows = db.get_recent_work_artifacts(agent_id, limit=limit)
-    lines = ["RECENT WORK ARTIFACTS:", "datetime | type | summary"]
+    rows = db.get_recent_artifact_refs(agent_id, limit=limit)
+    lines = ["RECENT WORK ARTIFACTS:", "datetime | task | path | title"]
     if not rows:
         lines.append("none")
         return "\n".join(lines)
@@ -614,9 +614,10 @@ def _format_recent_work_artifacts(agent_id: str) -> str:
         lines.append(
             " | ".join(
                 [
-                    _format_datetime(artifact.created_at),
-                    artifact.message_type,
-                    _summarize_text((artifact.content or "").strip().replace("\n", " ")),
+                    _format_datetime(artifact["created_at"]),
+                    _summarize_text(str(artifact.get("task_title") or "-")),
+                    _summarize_text(str(artifact["path"])),
+                    _summarize_text(str(artifact["title"])),
                 ]
             )
         )

@@ -105,6 +105,36 @@ const BossModUtils = (() => {
         return String(num);
     }
 
+    // ─── Modal factory ───
+
+    function createModal({ maxWidth = 'max-w-lg', onClose = null } = {}) {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4';
+
+        const panel = document.createElement('div');
+        panel.className = `w-full ${maxWidth} max-h-[85vh] flex flex-col rounded-xl border border-bm-border bg-white shadow-xl`;
+        overlay.appendChild(panel);
+
+        function close() {
+            overlay.remove();
+            document.removeEventListener('keydown', onKeyDown);
+            if (typeof onClose === 'function') onClose();
+        }
+
+        function onKeyDown(e) {
+            if (e.key === 'Escape') close();
+        }
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(overlay);
+
+        return { overlay, panel, close };
+    }
+
     // ─── Overlay panel open/close ───
 
     function openOverlay(overlayId) {
@@ -143,6 +173,7 @@ const BossModUtils = (() => {
         getStatusLabel,
         formatRelativeTime,
         formatNumber,
+        createModal,
         openOverlay,
         closeOverlay,
     };

@@ -674,6 +674,31 @@
     accent-color: #2563eb;
 }
 
+/* ─── Context menu (file browser right-click) ─── */
+.cf-context-menu {
+    animation: cf-menu-in 100ms ease-out;
+}
+@keyframes cf-menu-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Print styles (file viewer) ─── */
+@media print {
+    body > *:not(.fixed) { display: none !important; }
+    .fixed { position: static !important; background: none !important; padding: 0 !important; }
+    .fixed > div { max-width: 100% !important; max-height: none !important; border: none !important; box-shadow: none !important; }
+    #cfv-toggle, #cfv-save, #cfv-print, #cfv-close, .cf-context-menu { display: none !important; }
+    .prose pre {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+        border: 1px solid #e2e8f0;
+    }
+    .prose pre code { color: inherit !important; }
+    .hljs { background: #f8fafc !important; color: #1e293b !important; }
+    img { max-width: 100% !important; page-break-inside: avoid; }
+}
+
 /* ─── Responsive: hide gutter on mobile ─── */
 @media (max-width: 639px) {
     .gutter {
