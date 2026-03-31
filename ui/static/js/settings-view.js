@@ -1160,6 +1160,19 @@ const AdvancedSystemSection = (() => {
                         </button>
                     </div>
                 </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold">Delete All Agents</h3>
+                            <p class="text-xs text-bm-muted mt-0.5">Remove every agent, their DB history, and <strong class="text-red-600">all agent artifact files from disk</strong>. Settings and projects are preserved.</p>
+                        </div>
+                        <button id="btn-delete-all-agents"
+                                class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
+                                       hover:bg-red-50 transition-colors text-sm font-medium whitespace-nowrap">
+                            Delete All
+                        </button>
+                    </div>
+                </div>
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
@@ -1237,6 +1250,19 @@ const AdvancedSystemSection = (() => {
                 render(el); // Re-render to show updated values
             } catch {
                 alert('Reseed failed');
+            }
+        });
+
+        document.getElementById('btn-delete-all-agents').addEventListener('click', async () => {
+            if (!confirm('Delete ALL agents, their history, and artifact files from disk? Settings and projects are preserved.')) return;
+            try {
+                const res = await fetch('/api/agents', { method: 'DELETE' });
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                alert(`Deleted ${data.deleted} agent(s) and their artifacts.`);
+                window.location.reload();
+            } catch {
+                alert('Failed to delete agents');
             }
         });
 

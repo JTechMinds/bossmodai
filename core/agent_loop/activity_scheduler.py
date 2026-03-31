@@ -88,10 +88,11 @@ def build_task_follow_up_trigger(
     from_agent: str | None,
     from_name: str,
     content: str,
+    attention_kind: str,
     source_message_id: str | None = None,
     source_channel: str = "work",
 ) -> dict[str, Any]:
-    """Build the canonical task-bound follow-up trigger for one existing task."""
+    """Build a task-thread trigger that explicitly requires a response."""
     return {
         "agent_id": recipient_agent_id,
         "trigger_type": "task_follow_up",
@@ -102,6 +103,7 @@ def build_task_follow_up_trigger(
             "task_description": task.description or "",
             "task_status": task.status,
             "task_party": "assignee" if task.assigned_to == recipient_agent_id else "stakeholder",
+            "attention_kind": attention_kind,
             "from_agent": from_agent,
             "from_name": from_name,
             "content": content,

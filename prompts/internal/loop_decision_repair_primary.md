@@ -1,1 +1,3 @@
-Your previous JSON decision was invalid for the current conversation contract: {{parsed_error}}. Return exactly one corrected JSON object and nothing else.
+Your last response did not fit this conversation turn: {{parsed_error}}.
+
+Read the current turn instructions again and return one corrected JSON object only.

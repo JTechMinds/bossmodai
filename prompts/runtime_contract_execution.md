@@ -21,6 +21,7 @@ Do not output the schema itself. Output one JSON object matching this shape:
     "aid": "string",
     "msg": "string",
     "tid": "string",
+    "kind": "note | status | question | review",
     "dst": "desk | meeting | break | main | south | hall",
     "mode": "room | remote",
     "topic": "string",
@@ -52,6 +53,7 @@ FIELD DEFINITIONS:
   data.aid = target agent id when an action needs another agent
   data.msg = message text for msg or taskmsg, or a short follow-up reply for done/block/deleg/drop
   data.tid = existing task id for taskmsg
+  data.kind = task-thread message type for taskmsg
   data.dst = destination for walk
   data.mode = meeting mode for mtg
   data.topic = optional meeting topic
@@ -74,7 +76,7 @@ RULES:
   - cli + rewsect: require data.body as a short rewrite goal; quote headings with spaces in data.cmd
   - work: require data.out
   - msg: require data.to and data.msg; require data.aid only when data.to="agent"
-  - taskmsg: require data.tid and data.msg
+  - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
@@ -83,12 +85,20 @@ RULES:
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
-  - ordinary coworker chat uses msg
-  - use assign for the delegation handoff itself
-  - use taskmsg for notes or questions on an existing task thread
-  - during work execution, do not use generic msg to another agent; use assign for new delegated work or taskmsg for an existing task thread
+  - use msg for ordinary coworker chat that does not create or continue task work
+  - use assign to create new delegated work
+  - use taskmsg to continue an existing task thread
+  - when you use taskmsg, choose the kind that matches what you need:
+    note = passive comment or acknowledgement
+    status = progress or completion update that does not need a reply
+    question = you need an answer back on the task
+    review = you need the other person to review, approve, or make a decision
+  - notes and status updates stay on the task thread without waking the other agent
+  - questions and review requests ask the runtime to create one response-required task turn
+  - during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave msg for ordinary coworker chat
   - use the task id from Task Board when you continue an existing delegated task thread
   - if you need more detail on a task thread first, inspect it with `task <id>`
+  - if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved
   - requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
   - after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update
   - if work is location-bound, walk first and work second
@@ -127,7 +137,7 @@ CLI NOTES:
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
-  {"act":"taskmsg","data":{"tid":"task-123","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
+  {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"idle","th":"waiting on Taylor's delegated findings before summarizing"}
   {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

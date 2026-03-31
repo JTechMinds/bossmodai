@@ -13,6 +13,7 @@ from core import config
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.bm_cli.filesystem import slugify_name
+from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.template_engine import render_template, syntax_guide
@@ -82,6 +83,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("trigger.task_description", "Assigned task description when present"),
     ("trigger.task_status", "Task status for task-bound follow-up turns"),
     ("trigger.task_party", "Recipient role for task-bound follow-up turns"),
+    ("trigger.attention_kind", "Why this task-thread turn needs a response"),
     ("trigger.activity_kind", "Activity kind for resumed work triggers"),
     ("trigger.nearby_names", "Comma-separated nearby agent names for social triggers"),
     ("channel.kind", "Current channel kind when present"),
@@ -180,13 +182,7 @@ def build_context(
 
 def _default_role_prompt(agent: Agent) -> str:
     """Generate a default system prompt for agents without a custom template."""
-    role = agent.role or "AI Assistant"
-    return (
-        f"You are {agent.name}, a {role} at BossMod AI. "
-        f"You work in a virtual office with other AI agents. "
-        f"You communicate professionally, stay focused on your tasks, "
-        f"and collaborate effectively with your team."
-    )
+    return load_default_role_prompt()
 
 
 def _render_system_prompt(
@@ -394,6 +390,7 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "task_description": str(trigger.get("task_description") or ""),
         "task_status": str(trigger.get("task_status") or ""),
         "task_party": str(trigger.get("task_party") or ""),
+        "attention_kind": str(trigger.get("attention_kind") or ""),
         "activity_kind": str(trigger.get("activity_kind") or ""),
         "nearby_names": ", ".join(str(item or "") for item in (trigger.get("nearby_names") or [] if isinstance(trigger.get("nearby_names"), list) else [])),
     }
@@ -436,6 +433,7 @@ def _preview_trigger(trigger_type: str) -> dict[str, Any]:
                 "content": "I finished the draft and need your review.",
                 "task_status": "accepted",
                 "task_party": "stakeholder",
+                "attention_kind": "review_request",
             }
         )
     if trigger_type in {"session_message", "session_response"}:
@@ -1171,7 +1169,7 @@ def _conversation_channel(turn: TurnContext, trigger_type: str) -> tuple[str, st
     if trigger_type == "task_follow_up":
         counterpart = str(turn.trigger.get("from_name") or "Coworker")
         task_title = str(turn.trigger.get("task_title") or "Task")
-        return "task_thread", f'Task Thread: {task_title}', [turn.agent.name, counterpart]
+        return "task_thread", f'Task Attention: {task_title}', [turn.agent.name, counterpart]
     return "direct", "Direct Chat", [turn.agent.name, "Human Operator"]
 
 
@@ -1201,5 +1199,5 @@ def _conversation_turn_purpose(trigger_type: str) -> str:
     if trigger_type == "task_assigned":
         return "assignment_review"
     if trigger_type == "task_follow_up":
-        return "task_follow_up"
+        return "task_attention"
     return "direct_reply"

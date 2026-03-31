@@ -13,7 +13,10 @@ from typing import Any
 
 from core import config
 from core.agent_loop import activity_runtime
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger, build_task_follow_up_trigger
+from core.agent_loop.activity_scheduler import (
+    build_task_assigned_trigger,
+    build_task_follow_up_trigger,
+)
 from core.agent_loop.deliverables import build_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.message_delivery import (
     resolve_peer_message_type,
@@ -63,6 +66,7 @@ _DESTINATIONS = {
 }
 
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
+_VALID_TASK_MESSAGE_KINDS = {"note", "status", "question", "review"}
 _TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 _ACTION_PROMPT_ALLOWED_PATHS = {"room_name", "target", "targets"}
 _SUPPORTED_ACTIONS = {
@@ -183,7 +187,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         extra = {}
     if not isinstance(extra, dict):
         raise ValueError('"data" must be an object when provided')
-    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "tid", "dst", "mode", "topic", "sum", "why", "task"}
+    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "tid", "kind", "dst", "mode", "topic", "sum", "why", "task"}
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
 
@@ -217,6 +221,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "taskmsg":
             normalized["taskId"] = extra.get("tid")
             normalized["content"] = extra.get("msg")
+            normalized["messageKind"] = extra.get("kind") or "note"
         case "assign":
             normalized["agentId"] = extra.get("aid")
             normalized["taskTitle"] = task.get("title")
@@ -334,6 +339,9 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         content = action.get("content")
         if not isinstance(content, str) or not content.strip():
             return '"taskMessage" requires a non-empty "content"'
+        message_kind = action.get("messageKind")
+        if not isinstance(message_kind, str) or message_kind not in _VALID_TASK_MESSAGE_KINDS:
+            return '"taskMessage" requires "messageKind" to be one of: note, status, question, review'
 
     if action_name == "delegateTask":
         agent_id = action.get("agentId")
@@ -476,6 +484,7 @@ def _append_task_stakeholder_reports(
     task: Any | None,
     content: str,
     skip_recipient_ids: set[str] | None = None,
+    attention_kind: str | None = None,
 ) -> None:
     """Send durable task updates to the requesting/owning agents."""
     if task is None or not isinstance(content, str) or not content.strip():
@@ -498,7 +507,7 @@ def _append_task_stakeholder_reports(
             chat_visible=False,
             prompt_visibility=False,
         )
-        if recipient_id in skipped:
+        if attention_kind is None or recipient_id in skipped:
             continue
         message = db.create_message(
             from_agent=actor.id,
@@ -515,6 +524,7 @@ def _append_task_stakeholder_reports(
                 from_agent=actor.id,
                 from_name=actor.name,
                 content=message.content,
+                attention_kind=attention_kind,
                 source_message_id=message.id,
                 source_channel=source_channel_for_message_type(message.message_type),
             )
@@ -540,6 +550,7 @@ def _append_task_follow_up_message(
     state: AgentState,
     task: Any | None,
     content: str | None,
+    attention_kind: str | None = None,
 ) -> set[str]:
     """Persist one natural follow-up message for a task lifecycle update."""
     if task is None or not isinstance(content, str) or not content.strip():
@@ -586,6 +597,18 @@ def _append_task_follow_up_message(
         return set()
 
     if target["kind"] == "agent" and target["agent_id"]:
+        db.create_notification(
+            agent_id=target["agent_id"],
+            task_id=task.id,
+            kind="task_update",
+            content=content.strip(),
+            source_channel="task",
+            policy="none",
+            chat_visible=False,
+            prompt_visibility=False,
+        )
+        if attention_kind is None:
+            return {target["agent_id"]}
         message = db.create_message(
             from_agent=actor.id,
             to_agent=target["agent_id"],
@@ -601,6 +624,7 @@ def _append_task_follow_up_message(
                 from_agent=actor.id,
                 from_name=actor.name,
                 content=message.content,
+                attention_kind=attention_kind,
                 source_message_id=message.id,
                 source_channel="work",
             )
@@ -608,6 +632,26 @@ def _append_task_follow_up_message(
         return {target["agent_id"]}
 
     return set()
+
+
+def _task_message_event_type(message_kind: str) -> str:
+    """Map execution task-message kinds onto durable task-event types."""
+    if message_kind == "question":
+        return "clarification"
+    if message_kind == "review":
+        return "status_update"
+    if message_kind == "status":
+        return "status_update"
+    return "comment"
+
+
+def _task_message_attention_kind(message_kind: str) -> str | None:
+    """Return the attention kind for one task-thread execution message."""
+    if message_kind == "question":
+        return "question"
+    if message_kind == "review":
+        return "review_request"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -885,9 +929,10 @@ async def _handle_task_message(
     action: dict[str, Any],
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Append a note inside an existing task thread and route it structurally."""
+    """Append a task-thread event and only wake the other side when needed."""
     task_id = str(action.get("taskId") or "").strip()
     content = str(action.get("content") or "").strip()
+    message_kind = str(action.get("messageKind") or "note").strip().lower()
     task = db.get_task(task_id)
     if task is None:
         return {"event": "world_feedback", "detail": f'Task "{task_id}" no longer exists.', "agent_name": agent.name}
@@ -903,7 +948,7 @@ async def _handle_task_message(
         author_type="agent",
         author_agent_id=agent.id,
         author_name=agent.name,
-        event_type="comment",
+        event_type=_task_message_event_type(message_kind),
         content=content,
         source_trigger_id=(trigger or {}).get("trigger_id"),
     )
@@ -941,12 +986,29 @@ async def _handle_task_message(
             "detail": "No valid task-thread recipient is available for that task update.",
             "agent_name": agent.name,
         }
-
     target_agent = db.get_agent(target_agent_id)
     if target_agent is None:
         return {
             "event": "world_feedback",
             "detail": "The task-thread recipient no longer exists.",
+            "agent_name": agent.name,
+        }
+
+    db.create_notification(
+        agent_id=target_agent_id,
+        task_id=task.id,
+        kind="task_update",
+        content=content,
+        source_channel="task",
+        policy="none",
+        chat_visible=False,
+        prompt_visibility=False,
+    )
+    attention_kind = _task_message_attention_kind(message_kind)
+    if attention_kind is None:
+        return {
+            "event": "message_sent",
+            "detail": f'{agent.name} added a passive {message_kind} update to "{task.title}" for {target_agent.name}',
             "agent_name": agent.name,
         }
 
@@ -961,7 +1023,7 @@ async def _handle_task_message(
     )
     return {
         "event": "message_sent",
-        "detail": f'{agent.name} updated task "{task.title}" for {target_agent.name}',
+        "detail": f'{agent.name} requested a task-thread response from {target_agent.name} on "{task.title}"',
         "agent_name": agent.name,
         "trigger_requests": [
             build_task_follow_up_trigger(
@@ -970,6 +1032,7 @@ async def _handle_task_message(
                 from_agent=agent.id,
                 from_name=agent.name,
                 content=message.content,
+                attention_kind=attention_kind,
                 source_message_id=message.id,
                 source_channel="work",
             )
@@ -1411,6 +1474,25 @@ async def _handle_complete(
     active = activity_runtime.get_active_work_activity(agent.id)
     task = db.get_task(task_id)
     follow_up_message = action.get("followUpMessage")
+    if task is not None:
+        open_children = [
+            child
+            for child in list_open_child_tasks(parent_task_id=task.id)
+            if child.status not in {"blocked", "stalled"}
+        ]
+        if open_children:
+            child_titles = ", ".join(f'"{child.title}"' for child in open_children[:3])
+            if len(open_children) > 3:
+                child_titles += ", ..."
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    "This coordination task still has open delegated child work. "
+                    f"Resolve or replan {child_titles} before completing the parent task."
+                ),
+                "agent_name": agent.name,
+                "task_ids": [child.id for child in open_children],
+            }
     if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()
     ):
@@ -1477,6 +1559,7 @@ async def _handle_complete(
         state=state,
         task=task,
         content=follow_up_message,
+        attention_kind="completion_report",
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1555,6 +1638,7 @@ async def _handle_blocked(
         state=state,
         task=task,
         content=follow_up_message,
+        attention_kind="blocker",
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1666,6 +1750,7 @@ async def _handle_delegated(
         state=state,
         task=original_task,
         content=follow_up_message,
+        attention_kind="handoff",
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1748,6 +1833,7 @@ async def _handle_abandoned(
         state=state,
         task=task,
         content=follow_up_message,
+        attention_kind="abandoned",
     )
     _append_task_stakeholder_reports(
         result=result,

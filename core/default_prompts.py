@@ -50,6 +50,19 @@ _PROMPT_FILE_BY_KEY = {
     "internal_managed_writer_section_rewrite": "internal/managed_writer_section_rewrite.md",
     "internal_managed_writer_error_guidance": "internal/managed_writer_error_guidance.md",
 }
+_DEFAULT_PERSONALITY_FILES: tuple[tuple[str, str], ...] = (
+    ("Research Analyst", "personalities/research_analyst.md"),
+    ("Software Engineer", "personalities/software_engineer.md"),
+    ("Growth Marketer", "personalities/growth_marketer.md"),
+    ("UI/UX Designer", "personalities/ui_ux_designer.md"),
+    ("Project Manager", "personalities/project_manager.md"),
+    ("Data Analyst", "personalities/data_analyst.md"),
+    ("QA Engineer", "personalities/qa_engineer.md"),
+    ("Technical Writer", "personalities/technical_writer.md"),
+    ("Creative Writer", "personalities/creative_writer.md"),
+)
+_DEFAULT_PERSONALITY_FILE_BY_NAME = dict(_DEFAULT_PERSONALITY_FILES)
+_DEFAULT_ROLE_PROMPT_FILE = _PROMPTS_DIR / "personalities" / "default_role.md"
 
 
 def prompt_file_path(setting_key: str) -> Path:
@@ -65,6 +78,32 @@ def load_default_prompt(setting_key: str) -> str:
     """Load one default prompt template from the repo prompt files."""
     path = prompt_file_path(setting_key)
     return path.read_text(encoding="utf-8").rstrip("\n")
+
+
+def personality_prompt_file_path(name: str) -> Path:
+    """Return the on-disk markdown path for one seeded default personality."""
+    filename = _DEFAULT_PERSONALITY_FILE_BY_NAME.get(name)
+    if filename is None:
+        raise KeyError(f"Unknown default personality prompt: {name}")
+    return _PROMPTS_DIR / filename
+
+
+@lru_cache(maxsize=None)
+def load_default_personality_prompt(name: str) -> str:
+    """Load one default personality template from the repo prompt files."""
+    path = personality_prompt_file_path(name)
+    return path.read_text(encoding="utf-8").rstrip("\n")
+
+
+def iter_default_personality_prompts() -> tuple[tuple[str, str], ...]:
+    """Return the seeded default personalities in stable order."""
+    return tuple((name, load_default_personality_prompt(name)) for name, _ in _DEFAULT_PERSONALITY_FILES)
+
+
+@lru_cache(maxsize=1)
+def load_default_role_prompt() -> str:
+    """Load the generic fallback personality prompt for agents without a custom template."""
+    return _DEFAULT_ROLE_PROMPT_FILE.read_text(encoding="utf-8").rstrip("\n")
 
 
 def render_default_prompt(

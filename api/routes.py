@@ -816,6 +816,31 @@ async def update_agent_prompt_history_policy(
     return policy
 
 
+@router.delete("/agents", status_code=200)
+async def delete_all_agents():
+    """Delete every agent, their DB history, and their artifact files from disk."""
+    import shutil as _shutil
+
+    from core.bm_cli.filesystem import agents_artifact_root, ensure_artifact_roots
+
+    agents = db.list_agents()
+    for agent in agents:
+        db.delete_agent(agent.id)
+
+    # Wipe agent artifact directories from disk
+    root = agents_artifact_root()
+    if root.exists():
+        _shutil.rmtree(root)
+    ensure_artifact_roots()
+
+    await manager.broadcast_world_state()
+    await manager.broadcast_activity(
+        event="all_agents_deleted",
+        detail=f"All {len(agents)} agent(s) deleted with artifacts",
+    )
+    return {"status": "ok", "deleted": len(agents)}
+
+
 @router.delete("/agents/{agent_id}", status_code=204)
 async def delete_agent(agent_id: str):
     # Fetch name before deleting for the activity message

@@ -53,6 +53,8 @@ def _load_conversation_history(
             earliest_ts=policy.earliest_ts_allowed,
         )
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+        if trigger_type == "human_chat":
+            formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
         return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
     if trigger_type in {"peer_message", "task_follow_up"} and trigger.get("from_agent"):
@@ -63,6 +65,7 @@ def _load_conversation_history(
             earliest_ts=policy.earliest_ts_allowed,
         )
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+        formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
         return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
     if trigger_type in {"channel_message", "channel_response"}:
@@ -72,6 +75,7 @@ def _load_conversation_history(
                 channel_id,
                 limit=fetch_limit,
             )
+            thread = _exclude_source_message(thread, trigger.get("source_message_id"))
             return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
 
     if trigger_type in {"session_message", "session_response"}:
@@ -81,6 +85,7 @@ def _load_conversation_history(
                 session_id,
                 limit=fetch_limit,
             )
+            thread = _exclude_source_message(thread, trigger.get("source_message_id"))
             return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
 
     if trigger_type == "activity_resumed":
@@ -103,6 +108,13 @@ def _load_conversation_history(
             return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
     return []
+
+
+def _exclude_source_message(messages: list[dict[str, Any]], source_message_id: Any) -> list[dict[str, Any]]:
+    source_id = str(source_message_id or "").strip()
+    if not source_id:
+        return messages
+    return [message for message in messages if str(message.get("id") or "") != source_id]
 
 
 def _load_prompt_notifications(agent_id: str, policy: Any) -> list[Notification]:

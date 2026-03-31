@@ -91,6 +91,43 @@ _CONTRACT_ALLOWED_PATHS = {
 }
 
 
+class DelegatedWorkItem(BaseModel):
+    """One delegated child-task request embedded in an accepted work decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agentId: str | None = None
+    agentName: str | None = None
+    taskTitle: str
+    taskDescription: str | None = None
+    deliverables: list[DeliverableSpec] | None = None
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> "DelegatedWorkItem":
+        if not ((self.agentId and self.agentId.strip()) or (self.agentName and self.agentName.strip())):
+            raise ValueError('delegated work must identify the assignee with "agentId" or "agentName"')
+        if not (self.taskTitle and self.taskTitle.strip()):
+            raise ValueError('delegated work requires a non-empty "taskTitle"')
+        return self
+
+
+class WorkExecutionPlan(BaseModel):
+    """Structured execution strategy for accepted work."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["self", "delegate", "mixed"] = "self"
+    delegations: list[DelegatedWorkItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "WorkExecutionPlan":
+        if self.mode == "self" and self.delegations:
+            raise ValueError('work plan mode "self" must not include delegated work')
+        if self.mode in {"delegate", "mixed"} and not self.delegations:
+            raise ValueError(f'work plan mode "{self.mode}" requires at least one delegated child task')
+        return self
+
+
 class ConversationDecision(BaseModel):
     """Structured internal result for one conversational turn."""
 
@@ -106,6 +143,7 @@ class ConversationDecision(BaseModel):
     taskTitle: str | None = None
     taskDescription: str | None = None
     deliverables: list[DeliverableSpec] | None = None
+    executionPlan: WorkExecutionPlan | None = None
     thought: str = Field(default="")
 
     @model_validator(mode="after")
@@ -126,6 +164,10 @@ class ConversationDecision(BaseModel):
             raise ValueError('"defer" decisions may only defer work or keep commitmentKind="none"')
         if self.deliverables and not (self.decision == "accept" and self.commitmentKind == "work"):
             raise ValueError('"deliverables" may only be provided for accepted work commitments')
+        if self.executionPlan and not (self.decision == "accept" and self.commitmentKind == "work"):
+            raise ValueError('"executionPlan" may only be provided for accepted work commitments')
+        if self.executionPlan and self.executionPlan.mode == "delegate" and self.deliverables:
+            raise ValueError('pure delegated work plans must put deliverables on delegated child tasks, not the parent task')
         if self.commitmentKind in {"meeting", "break"} and self.decision == "accept" and self.destination is None:
             raise ValueError(f'"accept" + commitmentKind="{self.commitmentKind}" requires "destination"')
         if self.commitmentKind == "break" and self.destination != "breakRoom":
@@ -264,7 +306,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data") or {}
     if not isinstance(data, dict):
         raise ValueError('"data" must be an object when provided')
-    extra_data = set(data) - {"dst", "title", "detail", "task"}
+    extra_data = set(data) - {"dst", "title", "detail", "task", "plan"}
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
     task = data.get("task") or {}
@@ -275,6 +317,14 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     extra_task = set(task) - {"title", "desc", "outs"}
     if extra_task:
         raise ValueError(f'unexpected data.task keys: {", ".join(sorted(extra_task))}')
+    plan = data.get("plan") or {}
+    if plan in ("", None):
+        plan = {}
+    if not isinstance(plan, dict):
+        raise ValueError('"data.plan" must be an object when provided')
+    extra_plan = set(plan) - {"mode", "children"}
+    if extra_plan:
+        raise ValueError(f'unexpected data.plan keys: {", ".join(sorted(extra_plan))}')
 
     return {
         "decision": _map_required(payload.get("act"), _ACT_TO_DECISION, "act"),
@@ -287,6 +337,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "taskTitle": task.get("title"),
         "taskDescription": task.get("desc"),
         "deliverables": _normalize_outs(task.get("outs")),
+        "executionPlan": _normalize_work_plan(plan),
         "thought": payload.get("th", ""),
     }
 
@@ -318,6 +369,46 @@ def _normalize_outs(value: Any) -> Any:
             }
         )
     return normalized
+
+
+def _normalize_work_plan(value: Any) -> Any:
+    """Normalize the compact plan payload into the canonical execution-plan shape."""
+    if value in (None, "", {}):
+        return None
+    if not isinstance(value, dict):
+        raise ValueError('"data.plan" must be an object when provided')
+
+    children = value.get("children") or []
+    if not isinstance(children, list):
+        raise ValueError('"data.plan.children" must be an array when provided')
+
+    normalized_children: list[dict[str, Any]] = []
+    for item in children:
+        if not isinstance(item, dict):
+            raise ValueError('each item in "data.plan.children" must be an object')
+        extra_item = set(item) - {"aid", "who", "task"}
+        if extra_item:
+            raise ValueError(f'unexpected delegated child keys: {", ".join(sorted(extra_item))}')
+        child_task = item.get("task") or {}
+        if not isinstance(child_task, dict):
+            raise ValueError('"data.plan.children[].task" must be an object when provided')
+        extra_task = set(child_task) - {"title", "desc", "outs"}
+        if extra_task:
+            raise ValueError(f'unexpected delegated child task keys: {", ".join(sorted(extra_task))}')
+        normalized_children.append(
+            {
+                "agentId": item.get("aid"),
+                "agentName": item.get("who"),
+                "taskTitle": child_task.get("title"),
+                "taskDescription": child_task.get("desc"),
+                "deliverables": _normalize_outs(child_task.get("outs")),
+            }
+        )
+
+    return {
+        "mode": value.get("mode") or "self",
+        "delegations": normalized_children,
+    }
 
 
 def _map_required(value: Any, mapping: dict[str, str], field_name: str) -> str:
@@ -393,6 +484,8 @@ def validate_decision_for_trigger(
         return '"observe" is only valid for shared meeting/channel conversation turns'
 
     if trigger_type == "task_assigned":
+        if decision.executionPlan is not None:
+            return 'task assignment decisions must not include an "executionPlan"'
         if decision.commitmentKind == "work" and decision.taskTitle:
             return 'task assignment decisions must not invent a new "taskTitle"'
         if decision.taskDescription:
@@ -408,6 +501,10 @@ def validate_decision_for_trigger(
         pending_assignee_turn = task_status == "pending" and task_party == "assignee"
 
         if pending_assignee_turn:
+            if decision.decision not in {"accept", "clarify", "defer", "decline"}:
+                return "pending task decisions must accept, clarify, defer, or decline the existing task"
+            if decision.executionPlan is not None:
+                return 'task follow-up decisions for an existing pending task must not include an "executionPlan"'
             if decision.commitmentKind == "work" and decision.taskTitle:
                 return 'task follow-up decisions for an existing pending task must not invent a new "taskTitle"'
             if decision.taskDescription:
@@ -434,6 +531,8 @@ def validate_decision_for_trigger(
             return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
         if decision.decision in {"accept", "defer"} and not (decision.taskTitle and decision.taskTitle.strip()):
             return 'conversation work requests must provide a non-empty "taskTitle"'
+        if decision.executionPlan is not None and trigger_type == "peer_message":
+            return 'peer messages are conversational only; delegated work plans belong on accepted task work, not coworker chat'
 
     if trigger_type in {"session_message", "channel_message"} and decision.decision == "defer":
         return 'shared-message intake turns may observe, reply, accept, clarify, or decline; defer only after you are actively replying'

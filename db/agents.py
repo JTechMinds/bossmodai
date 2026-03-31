@@ -178,6 +178,16 @@ def delete_agent(agent_id: str) -> bool:
         [agent_id],
     )
     execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
+    # tasks & task events
+    execute("UPDATE task_events SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+    execute("UPDATE tasks SET owner_id = NULL WHERE owner_id = $1", [agent_id])
+    execute("UPDATE tasks SET requester_id = NULL WHERE requester_id = $1", [agent_id])
+    # CLI approval requests
+    execute("DELETE FROM cli_approval_requests WHERE agent_id = $1", [agent_id])
+    # CLI policy rules (nullable agent_id)
+    execute("UPDATE cli_policy_rules SET agent_id = NULL WHERE agent_id = $1", [agent_id])
+    # Telegram sessions (nullable target_agent_id)
+    execute("UPDATE telegram_sessions SET target_agent_id = NULL WHERE target_agent_id = $1", [agent_id])
     # remaining FK dependents
     execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
     execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
