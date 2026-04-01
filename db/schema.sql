@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS agent_state (
     x               INTEGER DEFAULT 0,
     y               INTEGER DEFAULT 0,
     status          VARCHAR DEFAULT 'idle'
-                        CHECK (status IN ('idle', 'work_active', 'social_active', 'in_transit')),
+                        CHECK (status IN ('idle', 'waiting', 'blocked', 'work_active', 'social_active', 'in_transit')),
     last_active_at  TIMESTAMP,
     idle_since      TIMESTAMP DEFAULT current_timestamp
 );
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     owner_id       VARCHAR,
     created_by     VARCHAR,
     status         VARCHAR DEFAULT 'pending'
-                       CHECK (status IN ('pending', 'accepted', 'active', 'blocked', 'complete',
+                       CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
                                          'stalled', 'abandoned', 'delegated', 'declined')),
     parent_task_id VARCHAR,
     cost_ceiling   DECIMAL,

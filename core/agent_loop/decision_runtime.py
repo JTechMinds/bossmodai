@@ -11,6 +11,7 @@ from core.agent_loop.activity_scheduler import (
     build_activity_resume_trigger,
     build_task_assigned_trigger,
     build_task_follow_up_trigger,
+    build_task_resume_trigger,
 )
 from core.agent_loop.channel_rounds import begin_channel_response, finalize_channel_response, observe_channel_message
 from core.agent_loop.deliverables import build_work_contract
@@ -82,6 +83,13 @@ def apply_decision(
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         else:
             _resume_previous_work_if_needed(result, active_work)
+            _resume_waiting_work_after_task_attention(
+                result=result,
+                agent=agent,
+                trigger=trigger,
+                decision=decision,
+                active_work=active_work,
+            )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
@@ -558,7 +566,7 @@ def _persist_reply(
     if trigger_type == "human_chat":
         target_id = HUMAN_SENDER_ID
         from_type = "agent"
-        message_type = "work" if state.status == "work_active" else "social"
+        message_type = "work" if state.status in {"work_active", "waiting", "blocked"} else "social"
     elif trigger_type == "session_response":
         session_id = trigger.get("session_id")
         if not isinstance(session_id, str) or not session_id.strip():
@@ -1033,6 +1041,75 @@ def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | N
             reason=f'Resume work on "{active_work.title or "your task"}".',
         )
     )
+
+
+def _resume_waiting_work_after_task_attention(
+    *,
+    result: dict[str, Any],
+    agent: Agent,
+    trigger: dict[str, Any],
+    decision: ConversationDecision,
+    active_work: Any | None,
+) -> None:
+    """Resume a waiting/blocked task when a task-attention reply resolves the dependency."""
+    if active_work is not None:
+        return
+    if trigger.get("type") != "task_follow_up" or decision.decision != "answer":
+        return
+
+    task_id = trigger.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return
+    attention_kind = str(trigger.get("attention_kind") or "").strip().lower()
+    task = db.get_task(task_id)
+    if task is None:
+        return
+
+    if attention_kind in {"question", "review_request"}:
+        target_agent_id = str(trigger.get("from_agent") or "").strip()
+        if (
+            target_agent_id
+            and task.assigned_to == target_agent_id
+            and task.status in {"waiting", "blocked"}
+            and not db.has_open_trigger_matching(target_agent_id, trigger_types=["activity_resumed"], task_id=task.id)
+        ):
+            result["trigger_requests"].append(
+                build_task_resume_trigger(
+                    task,
+                    reason=f'You received the task update you needed on "{task.title}". Continue the work.',
+                )
+            )
+        return
+
+    if attention_kind not in {"completion_report", "blocker", "handoff", "abandoned"}:
+        return
+
+    parent = db.get_task(task.parent_task_id) if task.parent_task_id else None
+    if (
+        parent is not None
+        and parent.assigned_to == agent.id
+        and parent.status in {"waiting", "blocked"}
+        and not db.has_open_trigger_matching(agent.id, trigger_types=["activity_resumed"], task_id=parent.id)
+    ):
+        result["trigger_requests"].append(
+            build_task_resume_trigger(
+                parent,
+                reason=f'You received an update on "{task.title}". Continue "{parent.title}".',
+            )
+        )
+        return
+
+    if (
+        task.assigned_to == agent.id
+        and task.status in {"waiting", "blocked"}
+        and not db.has_open_trigger_matching(agent.id, trigger_types=["activity_resumed"], task_id=task.id)
+    ):
+        result["trigger_requests"].append(
+            build_task_resume_trigger(
+                task,
+                reason=f'You received the task update you needed on "{task.title}". Continue the work.',
+            )
+        )
 
 
 def _record_watchdog_reply_if_needed(*, agent_id: str, trigger: dict[str, Any], reply: str | None) -> None:

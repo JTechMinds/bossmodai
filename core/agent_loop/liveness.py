@@ -9,6 +9,7 @@ import db
 
 _PROGRESS_ACTIONS = {
     "work",
+    "waiting",
     "complete",
     "blocked",
     "delegated",

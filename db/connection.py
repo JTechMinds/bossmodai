@@ -191,6 +191,8 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply additive column migrations for existing databases."""
     _create_task_events_table_if_missing(con)
+    _ensure_agent_state_status_values(con)
+    _ensure_task_status_values(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
         "INTEGER NOT NULL DEFAULT 0",
@@ -258,6 +260,109 @@ def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:
         )
         """
     )
+
+
+def _table_sql(con: SQLiteCompatConnection, table: str) -> str:
+    """Return the normalized CREATE TABLE SQL for one table."""
+    row = con.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        [table],
+    ).fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _ensure_agent_state_status_values(con: SQLiteCompatConnection) -> None:
+    """Rebuild agent_state if it is missing the newer visible statuses."""
+    sql = _table_sql(con, "agent_state")
+    if "'waiting'" in sql and "'blocked'" in sql:
+        return
+
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_state__new (
+                agent_id        VARCHAR PRIMARY KEY REFERENCES agents(id),
+                x               INTEGER DEFAULT 0,
+                y               INTEGER DEFAULT 0,
+                status          VARCHAR DEFAULT 'idle'
+                                    CHECK (status IN ('idle', 'waiting', 'blocked', 'work_active', 'social_active', 'in_transit')),
+                last_active_at  TIMESTAMP,
+                idle_since      TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO agent_state__new (agent_id, x, y, status, last_active_at, idle_since)
+            SELECT agent_id, x, y, status, last_active_at, idle_since
+            FROM agent_state
+            """
+        )
+        con.execute("DROP TABLE agent_state")
+        con.execute("ALTER TABLE agent_state__new RENAME TO agent_state")
+        logger.info("Migration: rebuilt agent_state to add waiting/blocked statuses")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
+
+
+def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
+    """Rebuild tasks if it is missing the waiting status."""
+    sql = _table_sql(con, "tasks")
+    if "'waiting'" in sql:
+        return
+
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks__new (
+                id             VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                title          VARCHAR NOT NULL,
+                description    TEXT,
+                project        VARCHAR,
+                assigned_to    VARCHAR,
+                requester_id   VARCHAR,
+                owner_id       VARCHAR,
+                created_by     VARCHAR,
+                status         VARCHAR DEFAULT 'pending'
+                                   CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
+                                                     'stalled', 'abandoned', 'delegated', 'declined')),
+                parent_task_id VARCHAR,
+                cost_ceiling   DECIMAL,
+                completion_summary TEXT,
+                status_note    TEXT,
+                watchdog_pinged_at TIMESTAMP,
+                last_progress_at TIMESTAMP DEFAULT current_timestamp,
+                last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
+                last_activity  TIMESTAMP DEFAULT current_timestamp,
+                created_at     TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO tasks__new (
+                id, title, description, project, assigned_to, requester_id, owner_id, created_by,
+                status, parent_task_id, cost_ceiling, completion_summary, status_note,
+                watchdog_pinged_at, last_progress_at, last_heartbeat_at, last_activity, created_at
+            )
+            SELECT
+                id, title, description, project, assigned_to, requester_id, owner_id, created_by,
+                status, parent_task_id, cost_ceiling, completion_summary, status_note,
+                watchdog_pinged_at, last_progress_at, last_heartbeat_at, last_activity, created_at
+            FROM tasks
+            """
+        )
+        con.execute("DROP TABLE tasks")
+        con.execute("ALTER TABLE tasks__new RENAME TO tasks")
+        logger.info("Migration: rebuilt tasks to add waiting status")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 def close_thread_connection() -> None:

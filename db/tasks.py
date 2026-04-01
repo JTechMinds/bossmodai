@@ -222,7 +222,7 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
         fields.setdefault("last_activity", now)
         if fields.get("completion_summary"):
             fields.setdefault("last_progress_at", now)
-        elif fields.get("status") in {"complete", "blocked", "delegated", "abandoned", "stalled"}:
+        elif fields.get("status") in {"complete", "waiting", "blocked", "delegated", "abandoned", "stalled"}:
             fields.setdefault("last_progress_at", now)
 
     build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)

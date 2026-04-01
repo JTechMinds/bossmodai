@@ -23,6 +23,7 @@ TaskStatus = Literal[
     "pending",
     "accepted",
     "active",
+    "waiting",
     "blocked",
     "complete",
     "stalled",

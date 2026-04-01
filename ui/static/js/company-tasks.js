@@ -18,6 +18,7 @@ const CompanyTasks = (() => {
         active:    { dot: 'bg-green-500',   badge: 'bg-green-100 text-green-700',     row: 'bg-amber-50/50' },
         pending:   { dot: 'bg-amber-400',   badge: 'bg-amber-100 text-amber-700',     row: '' },
         accepted:  { dot: 'bg-blue-400',    badge: 'bg-blue-100 text-blue-700',       row: '' },
+        waiting:   { dot: 'bg-sky-500',     badge: 'bg-sky-100 text-sky-700',         row: '' },
         complete:  { dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700', row: '' },
         stalled:   { dot: 'bg-red-500',     badge: 'bg-red-100 text-red-700',         row: 'bg-red-50/50' },
         blocked:   { dot: 'bg-orange-500',  badge: 'bg-orange-100 text-orange-700',   row: '' },
@@ -26,7 +27,7 @@ const CompanyTasks = (() => {
         declined:  { dot: 'bg-gray-400',    badge: 'bg-gray-100 text-gray-600',       row: '' },
     };
 
-    const STATUS_FILTERS = ['all', 'active', 'pending', 'complete', 'stalled', 'blocked'];
+    const STATUS_FILTERS = ['all', 'active', 'pending', 'waiting', 'complete', 'stalled', 'blocked'];
 
     const DEFAULT_COLORS = { dot: 'bg-gray-400', badge: 'bg-gray-100 text-gray-600', row: '' };
 
@@ -65,7 +66,7 @@ const CompanyTasks = (() => {
     }
 
     function taskCounts() {
-        const counts = { total: tasks.length, active: 0, pending: 0, complete: 0, stalled: 0, blocked: 0 };
+        const counts = { total: tasks.length, active: 0, pending: 0, waiting: 0, complete: 0, stalled: 0, blocked: 0 };
         for (const task of tasks) {
             if (counts[task.status] !== undefined) counts[task.status]++;
         }

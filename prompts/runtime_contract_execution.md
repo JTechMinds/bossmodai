@@ -3,7 +3,7 @@ Return exactly one JSON object.
 Use the same schema for all resumed/internal actions.
 
 ALLOWED act VALUES:
-  cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop
+  cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop
   cli=BossMod CLI, msg=send message, taskmsg=write on an existing task thread, assign=delegate task,
   mtg=join/start a meeting, done=finish the current commitment,
   block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
@@ -12,7 +12,7 @@ REQUIRED JSON SHAPE:
 Do not output the schema itself. Output one JSON object matching this shape:
 ```json
 {
-  "act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop",
+  "act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop",
   "data": {
     "cmd": "string",
     "body": "string",
@@ -81,7 +81,8 @@ RULES:
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
   - mtg + mode="remote": require data.aid
-  - idle: use when there is no useful next execution step in this turn; if work is still active, idle means yield and wait for the next trigger, not finish the task
+  - idle: use when there is no active work and there is no useful next execution step in this turn
+  - wait: require data.why; use it when the current task stays open but is waiting on another person, review, or external dependency
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
@@ -100,10 +101,11 @@ RULES:
   - if you need more detail on a task thread first, inspect it with `task <id>`
   - if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved
   - requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
-  - after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update
+  - if the current task stays open but is waiting on delegated work or another dependency, use wait instead of idle
+  - idle is not valid while a task is still active
   - if work is location-bound, walk first and work second
   - if current deliverables require files, satisfy them with cli before done
-  - human-requested or manager-requested tasks should usually include a short natural data.msg when you finish, block, delegate, or abandon them
+  - human-requested or manager-requested tasks should usually include a short natural data.msg when you wait, finish, block, delegate, or abandon them
   - do not invent keys that are not listed
 
 CLI CALL:
@@ -138,6 +140,6 @@ EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
-  {"act":"idle","th":"waiting on Taylor's delegated findings before summarizing"}
+  {"act":"wait","data":{"why":"Waiting on Taylor's delegated findings before summarizing."},"th":"pause the task until Taylor reports back"}
   {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

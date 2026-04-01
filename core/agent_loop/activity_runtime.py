@@ -85,7 +85,16 @@ def get_active_task_id(agent_id: str) -> str | None:
 def refresh_agent_status(agent_id: str) -> AgentState | None:
     """Derive visible agent status from the active runtime activity."""
     active = get_active_activity(agent_id)
+    if active and active.kind == "work" and active.task_id:
+        task = db.get_task(active.task_id)
+        if task is not None and task.status in {"waiting", "blocked", "stalled"}:
+            status = "waiting" if task.status == "waiting" else "blocked"
+            return db.update_agent_state(agent_id, status=status)
     if not active:
+        if db.list_tasks(assigned_to=agent_id, status="blocked") or db.list_tasks(assigned_to=agent_id, status="stalled"):
+            return db.update_agent_state(agent_id, status="blocked")
+        if db.list_tasks(assigned_to=agent_id, status="waiting"):
+            return db.update_agent_state(agent_id, status="waiting")
         return db.update_agent_state(agent_id, status="idle")
     return db.update_agent_state(
         agent_id,
@@ -105,7 +114,7 @@ def reconcile_after_turn_failure(agent_id: str, *, detail: str) -> AgentState | 
     return refresh_agent_status(agent_id)
 
 
-def pause_active_work(agent_id: str, reason: str) -> Activity | None:
+def pause_active_work(agent_id: str, reason: str, *, task_status: str = "pending") -> Activity | None:
     """Pause the active work activity and return it."""
     active = get_active_work_activity(agent_id)
     if not active:
@@ -115,7 +124,7 @@ def pause_active_work(agent_id: str, reason: str) -> Activity | None:
     if active.task_id:
         db.update_task(
             active.task_id,
-            status="pending",
+            status=task_status,
             status_note=reason,
             completion_summary=None,
             watchdog_pinged_at=None,

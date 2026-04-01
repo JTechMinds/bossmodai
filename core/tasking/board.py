@@ -95,7 +95,8 @@ def _build_self_board(agent_id: str) -> dict[str, Any]:
     current_task = _current_task(agent_id)
     open_tasks = _open_tasks(assigned_to=agent_id)
     blocked = [task for task in open_tasks if task.status in {"blocked", "stalled"}]
-    waiting = [task for task in open_tasks if task.status in {"pending", "accepted"}]
+    waiting = [task for task in open_tasks if task.status == "waiting"]
+    pending_decisions = [task for task in open_tasks if task.status in {"pending", "accepted"}]
     recent_completed_ids = {row["id"] for row in db.get_recent_completed_tasks(agent_id, limit=5)}
     recent_completed = _tasks_from_ids(recent_completed_ids)
     return {
@@ -103,9 +104,10 @@ def _build_self_board(agent_id: str) -> dict[str, Any]:
         "current_task": current_task,
         "sections": {
             "my_open_tasks": open_tasks,
+            "my_waiting_tasks": waiting,
             "my_blocked_tasks": blocked,
             "recent_completed_tasks": recent_completed,
-            "tasks_waiting_on_me": waiting,
+            "tasks_waiting_on_me": pending_decisions,
         },
         "assignee_rollup": [],
         "child_tasks_by_parent": {},
@@ -116,15 +118,17 @@ def _build_owned_board(agent_id: str) -> dict[str, Any]:
     owned = _open_tasks(owner_id=agent_id)
     delegated = [task for task in owned if task.assigned_to and task.assigned_to != agent_id]
     blocked = [task for task in delegated if task.status in {"blocked", "stalled"}]
-    waiting = [task for task in delegated if task.status in {"pending", "blocked", "stalled"}]
+    waiting = [task for task in delegated if task.status == "waiting"]
+    waiting_on_owner = [task for task in delegated if task.status in {"pending", "blocked", "stalled"}]
     return {
         "scope": "owned",
         "current_task": _current_task(agent_id),
         "sections": {
             "tasks_i_own": owned,
             "tasks_i_delegated": delegated,
+            "waiting_child_tasks": waiting,
             "blocked_or_stalled_child_tasks": blocked,
-            "tasks_waiting_on_me": waiting,
+            "tasks_waiting_on_me": waiting_on_owner,
         },
         "assignee_rollup": _assignee_rollup(delegated),
         "child_tasks_by_parent": _group_children_by_parent(delegated),

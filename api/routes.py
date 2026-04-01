@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from api.websocket import manager
 from core import config
+from core.agent_loop import activity_runtime
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
@@ -1679,7 +1680,7 @@ async def reset_agent_runtime(agent_id: str):
     ]
     if open_activities:
         task = db.get_task(open_activities[0].task_id)
-        if task and task.status in ("pending", "accepted", "active"):
+        if task and task.status in ("pending", "accepted", "active", "waiting"):
             db.update_task(
                 task.id,
                 status="blocked",
@@ -1690,7 +1691,7 @@ async def reset_agent_runtime(agent_id: str):
 
     deleted_triggers = db.delete_open_triggers(agent_id)
     cancelled_activities = db.cancel_open_activities(agent_id, detail="Runtime reset by human operator.")
-    db.update_agent_state(agent_id, status="idle")
+    activity_runtime.refresh_agent_status(agent_id)
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
         event="agent_runtime_reset",

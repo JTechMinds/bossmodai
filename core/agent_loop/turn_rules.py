@@ -7,7 +7,7 @@ from typing import Any
 from core.agent_loop.policies import TriggerPolicy
 
 
-_TASK_STATE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
+_TASK_STATE_ACTIONS = {"waiting", "complete", "blocked", "delegated", "abandoned"}
 
 
 def validate_action_for_turn(
@@ -22,8 +22,8 @@ def validate_action_for_turn(
     if policy.require_work_activity and not active_task_id:
         return "trigger requires an active work activity, but no active task is bound"
 
-    if active_task_id and action_name == "idle" and not policy.allow_idle_with_active_work:
-        return 'cannot use "idle" while a task is active'
+    if active_task_id and action_name == "idle":
+        return 'cannot use "idle" while a task is active; use "wait", "done", "block", or keep working'
 
     if action_name == "work" and not active_task_id:
         return '"work" requires an active task bound by the runtime'

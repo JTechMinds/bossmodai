@@ -1,1 +1,1 @@
-Action executed: {{detail}}. Choose the next work step, or use idle if you are intentionally waiting on delegated work or another external update. Otherwise sign off with done, block, deleg, or drop.
+Action executed: {{detail}}. Choose the next work step. If the requested work is complete, use done. If the task stays open but is waiting on someone or something, use wait with a clear why. If you cannot proceed without intervention, use block. Otherwise keep working, delegate, or drop only if you are intentionally abandoning the task.

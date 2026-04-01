@@ -58,7 +58,7 @@ class Agent(BaseModel):
 # AgentState — runtime position & activity
 # ---------------------------------------------------------------------------
 
-AgentStatus = Literal["idle", "work_active", "social_active", "in_transit"]
+AgentStatus = Literal["idle", "waiting", "blocked", "work_active", "social_active", "in_transit"]
 
 
 class AgentState(BaseModel):

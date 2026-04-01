@@ -1082,6 +1082,7 @@ const AgentContext = (() => {
             const renderTaskCard = (task) => {
                 const statusColor = task.status === 'complete' ? 'text-emerald-600' :
                     task.status === 'accepted' ? 'text-blue-600' :
+                    task.status === 'waiting' ? 'text-sky-600' :
                     task.status === 'active' ? 'text-amber-600' :
                     task.status === 'blocked' || task.status === 'stalled' ? 'text-red-600' :
                     task.status === 'declined' ? 'text-orange-600' : 'text-bm-muted';

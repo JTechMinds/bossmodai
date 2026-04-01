@@ -12,7 +12,6 @@ class TriggerPolicy:
     trigger_type: str
     end_turn_after_direct_reply: bool = False
     require_work_activity: bool = False
-    allow_idle_with_active_work: bool = False
 
 
 _DEFAULT_POLICY = TriggerPolicy(trigger_type="unknown")
@@ -56,12 +55,10 @@ _POLICIES: dict[str, TriggerPolicy] = {
     ),
     "activity_resumed": TriggerPolicy(
         trigger_type="activity_resumed",
-        allow_idle_with_active_work=True,
     ),
     "social": TriggerPolicy(
         trigger_type="social",
         end_turn_after_direct_reply=True,
-        allow_idle_with_active_work=True,
     ),
 }
 

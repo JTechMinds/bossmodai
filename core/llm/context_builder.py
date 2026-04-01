@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 _STATUS_LABELS = {
     "idle": "idle",
+    "waiting": "waiting",
+    "blocked": "blocked",
     "work_active": "working",
     "social_active": "socializing",
     "in_transit": "walking",
@@ -618,20 +620,26 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> d
     current_task_id = str((current_task or {}).get("id") or "").strip() or None
 
     open_rows = _tasks_from_board_section(self_board, "my_open_tasks", current_task_id=current_task_id)
+    waiting_self_rows = _tasks_from_board_section(self_board, "my_waiting_tasks", current_task_id=current_task_id)
     blocked_rows = _tasks_from_board_section(self_board, "my_blocked_tasks", current_task_id=current_task_id)
     waiting_rows = _tasks_from_board_section(owned_board, "tasks_waiting_on_me")
     delegated_rows = _tasks_from_board_section(owned_board, "tasks_i_delegated")
+    waiting_child_rows = _tasks_from_board_section(owned_board, "waiting_child_tasks")
     blocked_child_rows = _tasks_from_board_section(owned_board, "blocked_or_stalled_child_tasks")
 
     sections: list[tuple[str, list[str]]] = []
     if open_rows:
         sections.append(("MY OPEN TASKS", _task_board_lines(open_rows, limit=5)))
+    if waiting_self_rows:
+        sections.append(("MY WAITING TASKS", _task_board_lines(waiting_self_rows, limit=3)))
     if blocked_rows:
         sections.append(("MY BLOCKED TASKS", _task_board_lines(blocked_rows, limit=3)))
     if waiting_rows:
         sections.append(("TASKS WAITING ON ME", _task_board_lines(waiting_rows, limit=3)))
     if delegated_rows:
         sections.append(("TASKS I DELEGATED", _task_board_lines(delegated_rows, limit=3)))
+    if waiting_child_rows:
+        sections.append(("WAITING CHILD TASKS", _task_board_lines(waiting_child_rows, limit=3)))
     if blocked_child_rows:
         sections.append(("BLOCKED OR STALLED CHILD TASKS", _task_board_lines(blocked_child_rows, limit=3)))
     assignee_rollup = owned_board.get("assignee_rollup") or []

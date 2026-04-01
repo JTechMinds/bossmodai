@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import db
 from core.models import Task
 
-OPEN_TASK_STATUSES = ("pending", "accepted", "active", "blocked", "stalled")
+OPEN_TASK_STATUSES = ("pending", "accepted", "active", "waiting", "blocked", "stalled")
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 

@@ -48,6 +48,19 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
     """Materialize any runtime activity needed before the turn starts."""
     active = activity_runtime.get_active_activity(agent_id)
     trigger_type = trigger.get("type")
+    if trigger_type == "activity_resumed" and trigger.get("task_id"):
+        task = db.get_task(trigger["task_id"])
+        if task and task.assigned_to == agent_id:
+            if active and active.kind == "work" and active.task_id == task.id:
+                return active
+            return activity_runtime.activate_work_activity(
+                agent_id,
+                task,
+                title=task.title,
+                detail=task.description,
+                task_status="active",
+                supersede_note="Paused for another live turn.",
+            )
     if trigger_type in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task and task.status == "pending" and task.assigned_to == agent_id:
@@ -131,6 +144,23 @@ def build_activity_resume_trigger(activity: Activity, *, reason: str) -> dict[st
         "source_channel": source_channel,
         "task_id": activity.task_id,
         "payload": payload,
+    }
+
+
+def build_task_resume_trigger(task: Task, *, reason: str) -> dict[str, Any]:
+    """Build a resume trigger for an open task when no active work activity is bound."""
+    return {
+        "agent_id": task.assigned_to,
+        "trigger_type": "activity_resumed",
+        "source_channel": "work",
+        "task_id": task.id,
+        "payload": {
+            "content": reason,
+            "activity_kind": "work",
+            "activity_title": task.title,
+            "task_title": task.title,
+            "task_description": task.description or "",
+        },
     }
 
 

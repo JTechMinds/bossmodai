@@ -447,7 +447,7 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     contract = render_action_contract()
     assert "REQUIRED JSON SHAPE:" in contract
     assert "FIELD DEFINITIONS:" in contract
-    assert '"act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | done | block | deleg | drop"' in contract
+    assert '"act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop"' in contract
     assert '"to": "human | agent"' in contract
     assert '"tid": "string"' in contract
     assert '"kind": "note | status | question | review"' in contract
@@ -458,14 +458,14 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "cli + bwrite: require data.body as a short manifest with path + goal entries" in contract
     assert "cli + repsect: require data.body as the literal new section body" in contract
     assert "cli + rewsect: require data.body as a short rewrite goal" in contract
-    assert "idle: use when there is no useful next execution step in this turn" in contract
+    assert "wait: require data.why; use it when the current task stays open but is waiting on another person, review, or external dependency" in contract
     assert "use assign to create new delegated work" in contract
     assert "use taskmsg to continue an existing task thread" in contract
     assert "note = passive comment or acknowledgement" in contract
     assert "questions and review requests ask the runtime to create one response-required task turn" in contract
     assert "during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave msg for ordinary coworker chat" in contract
     assert "if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved" in contract
-    assert "after delegating work, if there is no immediate next execution step, use idle and wait for the delegated update" in contract
+    assert "if the current task stays open but is waiting on delegated work or another dependency, use wait instead of idle" in contract
     assert "short exact text -> write/append with body" in contract
     assert "multiple generated files -> bwrite with a short manifest body" in contract
     assert "inspect markdown structure -> ol <path>" in contract
@@ -4783,7 +4783,7 @@ async def test_run_turn_human_requested_task_can_block_and_report_to_human(isola
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
-    assert refreshed_state.status == "idle"
+    assert refreshed_state.status == "blocked"
     assert _active_activity(agent.id) is None
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
@@ -5727,7 +5727,7 @@ async def test_run_turn_peer_message_meeting_request_accepts_and_walks_to_meetin
 
 
 @pytest.mark.asyncio
-async def test_activity_resumed_idle_keeps_active_work_open(isolated_db, monkeypatch):
+async def test_activity_resumed_wait_pauses_active_work_until_a_dependency_resolves(isolated_db, monkeypatch):
     desk_x, desk_y = _desk_xy()
     agent = db.create_agent(name="Pat", desk_x=desk_x, desk_y=desk_y, model_work="test-model")
     task = db.create_task(
@@ -5753,7 +5753,7 @@ async def test_activity_resumed_idle_keeps_active_work_open(isolated_db, monkeyp
 
     async def fake_completion(**kwargs):
         return client.LLMResponse(
-            content='{"act":"idle","th":"waiting for Taylor to finish the delegated investigation"}',
+            content='{"act":"wait","data":{"why":"Waiting for Taylor to finish the delegated investigation.","msg":"I delegated the investigation to Taylor and I am waiting for the report back."},"th":"pause until Taylor reports back"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -5776,23 +5776,22 @@ async def test_activity_resumed_idle_keeps_active_work_open(isolated_db, monkeyp
     )
 
     assert outcome.result["event"] == "status_changed"
-    assert outcome.result["detail"] == 'Pat is waiting on "Coordinate competitor launch research"'
+    assert outcome.result["detail"] == 'Pat is waiting on "Coordinate competitor launch research" — Waiting for Taylor to finish the delegated investigation.'
 
     refreshed_task = db.get_task(task.id)
     assert refreshed_task is not None
-    assert refreshed_task.status == "active"
+    assert refreshed_task.status == "waiting"
+    assert refreshed_task.status_note == "Waiting for Taylor to finish the delegated investigation."
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
-    assert refreshed_state.status == "work_active"
+    assert refreshed_state.status == "waiting"
 
     active = _active_activity(agent.id)
-    assert active is not None
-    assert active.kind == "work"
-    assert active.task_id == task.id
+    assert active is None
 
     diagnostics = db.get_diagnostics(agent_id=agent.id, limit=5)
-    assert diagnostics[0]["action_name"] == "idle"
+    assert diagnostics[0]["action_name"] == "waiting"
 
 
 @pytest.mark.asyncio
@@ -5866,7 +5865,7 @@ async def test_run_turn_manager_repairs_wrong_agent_chat_lane_with_assign(isolat
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"act":"idle","th":"wait for Taylor to work the assigned task"}',
+            content='{"act":"wait","data":{"why":"Waiting for Taylor to work the assigned task.","msg":"I delegated the writing to Taylor and I am waiting for the draft."},"th":"pause until Taylor starts the task"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -5922,7 +5921,7 @@ async def test_run_turn_manager_repairs_wrong_agent_chat_lane_with_assign(isolat
     assert worker_tasks[0].parent_task_id is not None
 
     diagnostics = db.get_diagnostics(agent_id=pm.id, limit=5)
-    assert diagnostics[0]["action_name"] == "message -> delegateTask -> idle"
+    assert diagnostics[0]["action_name"] == "message -> delegateTask -> waiting"
 
 
 @pytest.mark.asyncio
@@ -5981,7 +5980,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
         ),
         client.LLMResponse(
             content=(
-                '{"act":"idle","th":"wait for Taylor to finish the delegated investigation"}'
+                '{"act":"wait","data":{"why":"Waiting for Taylor to finish the delegated investigation.","msg":"Taylor owns the investigation draft and I am waiting for the findings before I wrap the coordination task."},"th":"pause until Taylor reports back"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -6080,17 +6079,15 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
 
     refreshed_parent = db.get_task(parent.id)
     assert refreshed_parent is not None
-    assert refreshed_parent.status == "accepted"
+    assert refreshed_parent.status == "waiting"
     assert refreshed_parent.completion_summary is None
 
     refreshed_pm_state = db.get_agent_state(pm.id)
     assert refreshed_pm_state is not None
-    assert refreshed_pm_state.status == "work_active"
+    assert refreshed_pm_state.status == "waiting"
 
     pm_active = _active_activity(pm.id)
-    assert pm_active is not None
-    assert pm_active.kind == "work"
-    assert pm_active.task_id == parent.id
+    assert pm_active is None
 
     worker_tasks = db.list_tasks(assigned_to=worker.id)
     assert len(worker_tasks) == 1
@@ -6232,7 +6229,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"act":"idle","th":"wait for Taylor to report back or block"}',
+            content='{"act":"wait","data":{"why":"Waiting for Taylor to report back or block.","msg":"Taylor owns the first investigation pass and I am waiting for the outcome before I continue the parent task."},"th":"pause until Taylor updates the task"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -6289,7 +6286,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
             total_tokens=20,
         ),
         client.LLMResponse(
-            content='{"act":"idle","th":"wait for Morgan to complete the reassigned investigation"}',
+            content='{"act":"wait","data":{"why":"Waiting for Morgan to complete the reassigned investigation.","msg":"I reassigned the investigation to Morgan and I am waiting for the updated findings before I complete the parent task."},"th":"pause until Morgan reports back"}',
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -9758,7 +9755,7 @@ async def test_dispatcher_exhausted_failed_turn_stalls_task_and_notifies_human(i
 
     refreshed_state = db.get_agent_state(agent.id)
     assert refreshed_state is not None
-    assert refreshed_state.status == "idle"
+    assert refreshed_state.status == "blocked"
 
     active = _active_activity(agent.id)
     assert active is None
@@ -10099,7 +10096,7 @@ async def test_reset_agent_runtime_blocks_active_task_and_clears_open_triggers(i
     assert refreshed_task.status == "blocked"
     assert refreshed_task.status_note == "Runtime reset by human operator."
     assert refreshed_state is not None
-    assert refreshed_state.status == "idle"
+    assert refreshed_state.status == "blocked"
     assert _active_activity(agent.id) is None
     assert db.count_queued_triggers(agent.id) == 0
 

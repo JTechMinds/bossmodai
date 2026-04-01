@@ -53,7 +53,7 @@ import db
 logger = logging.getLogger(__name__)
 
 # Actions that end the current multi-turn loop
-TERMINAL_ACTIONS = {"idle", "complete", "blocked", "delegated", "abandoned"}
+TERMINAL_ACTIONS = {"idle", "waiting", "complete", "blocked", "delegated", "abandoned"}
 
 # camelCase destination names → internal room IDs
 _DESTINATIONS = {
@@ -67,7 +67,7 @@ _DESTINATIONS = {
 
 _VALID_MESSAGE_RECIPIENT_TYPES = {"human", "agent"}
 _VALID_TASK_MESSAGE_KINDS = {"note", "status", "question", "review"}
-_TASK_LIFECYCLE_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
+_TASK_LIFECYCLE_ACTIONS = {"waiting", "complete", "blocked", "delegated", "abandoned"}
 _ACTION_PROMPT_ALLOWED_PATHS = {"room_name", "target", "targets"}
 _SUPPORTED_ACTIONS = {
     "bm_cli",
@@ -79,6 +79,7 @@ _SUPPORTED_ACTIONS = {
     "attendMeeting",
     "remoteMeeting",
     "idle",
+    "waiting",
     "complete",
     "blocked",
     "delegated",
@@ -93,6 +94,7 @@ _MODEL_ACTION_TO_NAME = {
     "walk": "walkTo",
     "mtg": "meeting",
     "idle": "idle",
+    "wait": "waiting",
     "done": "complete",
     "block": "blocked",
     "deleg": "delegated",
@@ -239,7 +241,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "done":
             normalized["summary"] = extra.get("sum")
             normalized["followUpMessage"] = extra.get("msg")
-        case "block" | "drop":
+        case "wait" | "block" | "drop":
             normalized["reason"] = extra.get("why")
             normalized["followUpMessage"] = extra.get("msg")
         case "deleg":
@@ -369,6 +371,11 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         agent_id = action.get("agentId")
         if not isinstance(agent_id, str) or not agent_id.strip():
             return f'"{action_name}" requires a non-empty "agentId"'
+
+    if action_name == "waiting":
+        reason = action.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            return '"waiting" requires a non-empty "reason"'
 
     if action_name in _TASK_LIFECYCLE_ACTIONS:
         follow_up_message = action.get("followUpMessage")
@@ -1442,11 +1449,9 @@ async def _handle_idle(
     """Yield the current turn without changing the active work commitment."""
     active = activity_runtime.get_active_activity(agent.id)
     if active and active.kind == "work":
-        activity_runtime.refresh_agent_status(agent.id)
-        detail = f'{agent.name} is waiting on "{active.title or "the current task"}"'
         return {
-            "event": "status_changed",
-            "detail": detail,
+            "event": "agent_error",
+            "detail": 'Idle is not valid while a task is active. Use "wait", "done", "block", or keep working.',
             "agent_name": agent.name,
         }
 
@@ -1458,6 +1463,69 @@ async def _handle_idle(
         "detail": f"{agent.name} is idle",
         "agent_name": agent.name,
     }
+
+
+async def _handle_waiting(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pause the current task in a waiting state until another event resumes it."""
+    task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="waiting")
+    if error:
+        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
+    reason = action.get("reason", "")
+
+    task = db.get_task(task_id)
+    follow_up_message = action.get("followUpMessage")
+    if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
+        isinstance(follow_up_message, str) and follow_up_message.strip()
+    ):
+        return {
+            "event": "world_feedback",
+            "detail": 'This task needs a short requester-facing update. Include data.msg in your "wait" action.',
+            "agent_name": agent.name,
+        }
+
+    paused = activity_runtime.pause_active_work(agent.id, reason or "Waiting on a dependency.", task_status="waiting")
+    if paused is None:
+        return {"event": "agent_error", "detail": '"wait" requires an active task', "agent_name": agent.name}
+
+    task = db.get_task(task_id)
+    result = {
+        "event": "status_changed",
+        "detail": f'{agent.name} is waiting on "{task.title if task else "the current task"}"' + (f" — {reason}" if reason else ""),
+        "agent_name": agent.name,
+    }
+    if task is not None:
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="status_update",
+            content=reason or f'Waiting on "{task.title}".',
+            source_trigger_id=(trigger or {}).get("trigger_id"),
+        )
+    skipped = _append_task_follow_up_message(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=follow_up_message,
+        attention_kind=None,
+    )
+    _append_task_stakeholder_reports(
+        result=result,
+        actor=agent,
+        state=state,
+        task=task,
+        content=(f'Waiting on "{task.title}": {reason}' if task and reason else f'Waiting on "{task.title}".' if task else ""),
+        skip_recipient_ids=skipped,
+        attention_kind=None,
+    )
+    return result
 
 
 async def _handle_complete(
@@ -1601,10 +1669,8 @@ async def _handle_blocked(
         completion_summary=None,
         watchdog_pinged_at=None,
     )
-    active = activity_runtime.get_active_work_activity(agent.id)
-    if active:
-        activity_runtime.complete_activity(active.id, detail=reason or active.detail)
-    else:
+    active = activity_runtime.pause_active_work(agent.id, reason or "Blocked.", task_status="blocked")
+    if active is None:
         activity_runtime.refresh_agent_status(agent.id)
 
     result = {
@@ -1860,6 +1926,7 @@ _ACTION_HANDLERS = {
     "attendMeeting": _handle_attend_meeting,
     "remoteMeeting": _handle_remote_meeting,
     "idle": _handle_idle,
+    "waiting": _handle_waiting,
     "complete": _handle_complete,
     "blocked": _handle_blocked,
     "delegated": _handle_delegated,

@@ -34,6 +34,8 @@ const BossModUtils = (() => {
     // ─── Status color mappings ───
 
     const STATUS_CONFIG = {
+        waiting:       { hex: '#2563eb', classes: 'bg-blue-50 text-blue-700',      dot: 'bg-blue-500' },
+        blocked:       { hex: '#ef4444', classes: 'bg-red-50 text-red-700',        dot: 'bg-red-500' },
         work_active:   { hex: '#f59e0b', classes: 'bg-amber-50 text-amber-700',    dot: 'bg-amber-500' },
         social_active: { hex: '#10b981', classes: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
         in_transit:    { hex: '#3b82f6', classes: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500' },
