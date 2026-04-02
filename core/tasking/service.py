@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import db
@@ -36,7 +37,7 @@ def append_task_event(
     text = str(content or "").strip()
     if not text:
         return None
-    return db.create_task_event(
+    event = db.create_task_event(
         task_id=task_id,
         author_type=author_type,
         author_agent_id=author_agent_id,
@@ -46,6 +47,13 @@ def append_task_event(
         source_message_id=source_message_id,
         source_trigger_id=source_trigger_id,
     )
+    now = datetime.now(timezone.utc)
+    db.update_task(
+        task_id,
+        last_activity=now,
+        last_heartbeat_at=now,
+    )
+    return event
 
 
 def create_or_bind_task(

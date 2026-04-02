@@ -35,6 +35,11 @@ Reason: the other person needs clarification from you before the task can move.
 {{elseif trigger.attention_kind = 'decision_needed'}}
 Reason: the task is waiting on your decision.
 {{end}}
+{{if trigger.attention_kind = 'completion_report'}}
+Guidance: Treat this as a state transition. Do NOT redelegate duplicate work. Review the task-thread update and any deliverables, then either complete the coordination/parent task or delegate a clearly new next step.
+{{elseif trigger.attention_kind = 'blocker'}}
+Guidance: Do NOT restart the same delegated work. Decide how to unblock (clarify, provide access, or reassign with a new child task) and then continue the parent coordination task.
+{{end}}
 {{if trigger.content}}
 Latest note from [{{trigger.from_name}}]: {{trigger.content}}
 {{end}}

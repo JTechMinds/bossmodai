@@ -47,6 +47,14 @@ def _load_conversation_history(
     trigger_type = trigger.get("type")
     fetch_limit = _history_fetch_limit(policy.last_n_histories)
 
+    if trigger_type == "activity_resumed" and trigger.get("task_id"):
+        thread = load_task_thread_history(
+            task_id=str(trigger["task_id"]),
+            limit=fetch_limit,
+            earliest_ts=policy.earliest_ts_allowed,
+        )
+        return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
     if trigger_type in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         thread = load_task_thread_history(
             task_id=str(trigger["task_id"]),

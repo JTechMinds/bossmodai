@@ -3,8 +3,8 @@ Return exactly one JSON object.
 Use the same schema for all resumed/internal actions.
 
 ALLOWED act VALUES:
-  cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop
-  cli=BossMod CLI, msg=send message, taskmsg=write on an existing task thread, assign=delegate task,
+  cli | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop
+  cli=BossMod CLI, socialmsg=send social/non-task message, taskmsg=write on an existing task thread, assign=delegate task,
   mtg=join/start a meeting, done=finish the current commitment,
   block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
 
@@ -12,7 +12,7 @@ REQUIRED JSON SHAPE:
 Do not output the schema itself. Output one JSON object matching this shape:
 ```json
 {
-  "act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop",
+  "act": "cli | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop",
   "data": {
     "cmd": "string",
     "body": "string",
@@ -49,9 +49,9 @@ FIELD DEFINITIONS:
   data.cmd = BossMod CLI command text for cli
   data.body = optional body text or manifest for cli commands that use it
   data.out = durable work output text for work
-  data.to = message recipient kind for msg
+  data.to = message recipient kind for socialmsg
   data.aid = target agent id when an action needs another agent
-  data.msg = message text for msg or taskmsg, or a short follow-up reply for done/block/deleg/drop
+  data.msg = message text for socialmsg or taskmsg, or a short follow-up reply for done/block/deleg/drop
   data.tid = existing task id for taskmsg
   data.kind = task-thread message type for taskmsg
   data.dst = destination for walk
@@ -75,7 +75,7 @@ RULES:
   - cli + repsect: require data.body as the literal new section body; quote headings with spaces in data.cmd
   - cli + rewsect: require data.body as a short rewrite goal; quote headings with spaces in data.cmd
   - work: require data.out
-  - msg: require data.to and data.msg; require data.aid only when data.to="agent"
+  - socialmsg: require data.to and data.msg; require data.aid only when data.to="agent"
   - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional
   - walk: require data.dst
@@ -86,7 +86,7 @@ RULES:
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
-  - use msg for ordinary coworker chat that does not create or continue task work
+  - use socialmsg for ordinary coworker chat that does not create or continue task work
   - use assign to create new delegated work
   - use taskmsg to continue an existing task thread
   - when you use taskmsg, choose the kind that matches what you need:
@@ -96,10 +96,12 @@ RULES:
     review = you need the other person to review, approve, or make a decision
   - notes and status updates stay on the task thread without waking the other agent
   - questions and review requests ask the runtime to create one response-required task turn
-  - during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave msg for ordinary coworker chat
+  - during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave socialmsg for ordinary coworker chat
   - use the task id from Task Board when you continue an existing delegated task thread
+  - before you use assign, scan Task Board for an existing child task (open or recently completed) that matches the same workstream; do not create duplicate delegated tasks
   - if you need more detail on a task thread first, inspect it with `task <id>`
   - if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved
+  - when a delegated child task reports completion or a blocker, do not re-delegate the same work; review the child update/deliverable, then either (a) continue the parent task, (b) delegate a new clearly different child task, or (c) complete the parent task and report back
   - requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
   - if the current task stays open but is waiting on delegated work or another dependency, use wait instead of idle
   - idle is not valid while a task is still active
@@ -138,6 +140,7 @@ CLI NOTES:
 
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
+  {"act":"socialmsg","data":{"to":"human","msg":"Got it. I'll take a look and report back soon."},"th":"send a non-task social message"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"wait","data":{"why":"Waiting on Taylor's delegated findings before summarizing."},"th":"pause the task until Taylor reports back"}

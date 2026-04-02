@@ -446,7 +446,7 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     contract = render_action_contract()
     assert "REQUIRED JSON SHAPE:" in contract
     assert "FIELD DEFINITIONS:" in contract
-    assert '"act": "cli | work | msg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop"' in contract
+    assert '"act": "cli | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop"' in contract
     assert '"to": "human | agent"' in contract
     assert '"tid": "string"' in contract
     assert '"kind": "note | status | question | review"' in contract
@@ -462,7 +462,7 @@ def test_render_action_contract_includes_required_schema(isolated_db):
     assert "use taskmsg to continue an existing task thread" in contract
     assert "note = passive comment or acknowledgement" in contract
     assert "questions and review requests ask the runtime to create one response-required task turn" in contract
-    assert "during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave msg for ordinary coworker chat" in contract
+    assert "during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave socialmsg for ordinary coworker chat" in contract
     assert "if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved" in contract
     assert "if the current task stays open but is waiting on delegated work or another dependency, use wait instead of idle" in contract
     assert "short exact text -> write/append with body" in contract
@@ -2373,7 +2373,10 @@ async def test_child_completion_appends_parent_status_update_and_resumes_waiting
     parent_events = db.list_task_events(parent.id, limit=10)
     assert any("Child task" in event.content and "completed" in event.content for event in parent_events)
     assert any(
-        item["agent_id"] == pm.id and item["trigger_type"] == "activity_resumed" and item.get("task_id") == parent.id
+        item["agent_id"] == pm.id
+        and item["trigger_type"] == "task_follow_up"
+        and item.get("task_id") == parent.id
+        and item["payload"]["attention_kind"] == "completion_report"
         for item in result.get("trigger_requests", [])
     )
 
@@ -5927,15 +5930,15 @@ async def test_run_turn_manager_repairs_wrong_agent_chat_lane_with_assign(isolat
             completion_tokens=10,
             total_tokens=20,
         ),
-        client.LLMResponse(
-            content=json.dumps(
-                {
-                    "act": "msg",
-                    "data": {
-                        "to": "agent",
-                        "aid": worker.id,
-                        "msg": "Please start the research brief now.",
-                    },
+            client.LLMResponse(
+                content=json.dumps(
+                    {
+                        "act": "socialmsg",
+                        "data": {
+                            "to": "agent",
+                            "aid": worker.id,
+                            "msg": "Please start the research brief now.",
+                        },
                     "th": "try to chat Taylor directly",
                 }
             ),
@@ -6222,7 +6225,9 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
         if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert completion_update["payload"]["attention_kind"] == "completion_report"
+    assert completion_update["task_id"] == parent.id
     assert completion_update["payload"]["content"] == (
+        'Child task "Investigate competitor launches" completed by Taylor: '
         "I finished the competitor launch investigation and summarized the useful takeaways."
     )
 
@@ -6258,11 +6263,15 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
         in manager_contents
     )
 
-    pm_worker_events = db.list_task_events(child.id, limit=50)
-    pm_worker_contents = [event.content for event in pm_worker_events]
-    assert "I will take the investigation and report back with the findings." in pm_worker_contents
-    assert "I finished the competitor launch investigation and summarized the useful takeaways." in pm_worker_contents
-    assert "Thanks. I have the findings and I am sending the summary to the human now." in pm_worker_contents
+    worker_events = db.list_task_events(child.id, limit=50)
+    worker_contents = [event.content for event in worker_events]
+    assert "I will take the investigation and report back with the findings." in worker_contents
+    assert "I finished the competitor launch investigation and summarized the useful takeaways." in worker_contents
+
+    parent_events = db.list_task_events(parent.id, limit=50)
+    parent_contents = [event.content for event in parent_events]
+    assert 'Child task "Investigate competitor launches" completed by Taylor:' in " ".join(parent_contents)
+    assert "Thanks. I have the findings and I am sending the summary to the human now." in parent_contents
 
     assert pm_final_outcome.result["chat_message"]["content"] == (
         "Taylor finished the competitor launch investigation. I reviewed the takeaways and the summary is ready for you."
@@ -6497,7 +6506,11 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
         if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert blocked_update["payload"]["attention_kind"] == "blocker"
-    assert blocked_update["payload"]["content"] == "I am blocked because I do not have access to the launch archive."
+    assert blocked_update["task_id"] == parent.id
+    assert blocked_update["payload"]["content"] == (
+        'Child task "Investigate competitor launches" blocked by Taylor: '
+        "I am blocked because I do not have access to the launch archive."
+    )
 
     pm_ack_outcome = await _run_trigger_request(blocked_update)
     assert not any(
@@ -6532,7 +6545,9 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
         if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
     )
     assert completion_update["payload"]["attention_kind"] == "completion_report"
+    assert completion_update["task_id"] == parent.id
     assert completion_update["payload"]["content"] == (
+        'Child task "Investigate competitor launches" completed by Morgan: '
         "I finished the reassigned competitor launch investigation and the takeaways are ready."
     )
 
@@ -6576,13 +6591,18 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     first_worker_events = db.list_task_events(first_child.id, limit=50)
     first_worker_contents = [event.content for event in first_worker_events]
     assert "I am blocked because I do not have access to the launch archive." in first_worker_contents
-    assert "Understood. I am reassigning the investigation so the parent task stays on track." in first_worker_contents
 
     second_worker_events = db.list_task_events(second_child.id, limit=50)
     second_worker_contents = [event.content for event in second_worker_events]
     assert "I will take the reassigned investigation and report back with the summary." in second_worker_contents
     assert "I finished the reassigned competitor launch investigation and the takeaways are ready." in second_worker_contents
-    assert "Thanks. I have the reassigned findings and I am sending the final summary to the human now." in second_worker_contents
+
+    parent_events = db.list_task_events(parent.id, limit=80)
+    parent_contents = [event.content for event in parent_events]
+    assert 'Child task "Investigate competitor launches" blocked by Taylor:' in " ".join(parent_contents)
+    assert "Understood. I am reassigning the investigation so the parent task stays on track." in parent_contents
+    assert 'Child task "Investigate competitor launches" completed by Morgan:' in " ".join(parent_contents)
+    assert "Thanks. I have the reassigned findings and I am sending the final summary to the human now." in parent_contents
 
     assert pm_final_outcome.result["chat_message"]["content"] == (
         "Taylor was blocked on archive access, so I reassigned the investigation to Morgan and now have the finished summary for you."
@@ -6682,7 +6702,7 @@ async def test_activity_resumed_conversation_reply_ends_turn_before_follow_up_ac
     call_count = 0
     responses = iter([
         client.LLMResponse(
-            content="{\"act\":\"msg\",\"data\":{\"to\":\"human\",\"msg\":\"Sure, let's discuss the project timeline.\"},\"th\":\"reply in the room\"}",
+            content="{\"act\":\"socialmsg\",\"data\":{\"to\":\"human\",\"msg\":\"Sure, let's discuss the project timeline.\"},\"th\":\"reply in the room\"}",
             model="test-model",
             prompt_tokens=10,
             completion_tokens=10,
@@ -7851,7 +7871,7 @@ def test_parse_action_rejects_removed_start_task_action(isolated_db):
 
 
 def test_parse_action_requires_explicit_message_recipient_contract(isolated_db):
-    parsed = parse_action('{"act":"msg","data":{"msg":"hi"},"th":"reply"}')
+    parsed = parse_action('{"act":"socialmsg","data":{"msg":"hi"},"th":"reply"}')
     assert parsed["action"] == "_parse_failed"
     assert "recipientType" in parsed["_raw_snippet"]
 
