@@ -70,6 +70,7 @@ _DECISION_TRIGGER_TYPES = {
 _COMMUNICATION_TRIGGER_TYPES = _DECISION_TRIGGER_TYPES - {"task_assigned"}
 
 _MAX_DECISION_REPAIR_ATTEMPTS = 2
+_MAX_EXECUTION_REPAIR_ATTEMPTS = 2
 _LOOP_PROMPT_ALLOWED_PATHS = {"command", "reason", "parsed_error", "detail", "target"}
 
 
@@ -241,6 +242,7 @@ async def run_turn(
     step_traces: list[dict[str, Any]] = []
     next_step_delta: str | None = None
     scheduled_triggers: list[dict[str, Any]] = []
+    execution_repair_attempts = 0
 
     while True:
         action_count += 1
@@ -321,6 +323,36 @@ async def run_turn(
         # Handle parse failure
         if action_name == "_parse_failed":
             logger.warning("Parse failure for %s: %s", agent.name, action.get("_raw_snippet", ""))
+            if execution_repair_attempts < _MAX_EXECUTION_REPAIR_ATTEMPTS:
+                execution_repair_attempts += 1
+                continuation_messages = _build_execution_repair_messages(
+                    parsed_error=action.get("_raw_snippet", ""),
+                )
+                result = {
+                    "event": "execution_repair_requested",
+                    "detail": "Execution action JSON was invalid; asked the model to correct it.",
+                    "agent_name": agent.name,
+                }
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=action_count,
+                        context_snapshot=prompt_delta,
+                        raw_response=last_response_content,
+                        action=action,
+                        result=result,
+                        prompt_tokens=step_prompt_tokens,
+                        completion_tokens=step_completion_tokens,
+                        total_tokens=step_total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
+                    )
+                )
+                context.extend(
+                    [{"role": "assistant", "content": response.content}, *continuation_messages]
+                )
+                next_step_delta = _serialize_trace_value(continuation_messages)
+                continue
+
             result = {
                 "event": "agent_error",
                 "detail": f"{agent.name} returned invalid action JSON",
@@ -1411,6 +1443,19 @@ def _build_continuation_instruction(
     """Build the next-step instruction after a non-terminal execution action."""
     detail = result.get("detail", action_name)
     if active_activity_kind == "work":
+        if result.get("event") == "world_feedback":
+            expected_action = result.get("expected_action") or ""
+            if not isinstance(expected_action, str):
+                expected_action = ""
+            expected_actions = result.get("expected_actions") or []
+            if not isinstance(expected_actions, list):
+                expected_actions = []
+            expected = ", ".join([expected_action.strip(), *[str(item).strip() for item in expected_actions if str(item).strip()]])
+            expected = expected.strip(", ").strip()
+            return _render_loop_prompt(
+                "internal_loop_execution_continue_work_world_feedback",
+                detail=(detail + (f" Expected: {expected}." if expected else "")),
+            )
         missing_deliverables = result.get("missing_deliverables") or []
         if missing_deliverables:
             first = missing_deliverables[0]
@@ -1495,6 +1540,27 @@ def _build_decision_repair_messages(*, parsed_error: str) -> list[dict[str, str]
         },
     ]
     return messages
+
+
+def _build_execution_repair_messages(*, parsed_error: str) -> list[dict[str, str]]:
+    """Build one strict repair prompt after invalid execution JSON."""
+    return [
+        {
+            "role": "system",
+            "content": _render_loop_prompt(
+                "internal_loop_execution_repair_primary",
+                parsed_error=parsed_error,
+            ),
+        },
+        {
+            "role": "system",
+            "content": load_default_prompt("internal_loop_execution_repair_keys"),
+        },
+        {
+            "role": "user",
+            "content": load_default_prompt("internal_loop_execution_repair_followup"),
+        },
+    ]
 
 
 def _diagnostic_mode(trigger_type: str) -> str:

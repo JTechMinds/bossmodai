@@ -172,7 +172,7 @@ from db.runtime_control import (
 )
 
 # Tasks
-from db.tasks import create_task, get_task, list_tasks, update_task
+from db.tasks import create_task, get_task, list_recent_tasks, list_tasks, update_task
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import (

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from core.models import TaskEvent
 from db.crud import fetch_all, insert_returning
 
@@ -51,19 +53,27 @@ def create_task_event(
     )
 
 
-def list_task_events(task_id: str, *, limit: int = 100) -> list[TaskEvent]:
-    """Return task-thread events oldest first."""
-    return fetch_all(
+def list_task_events(task_id: str, *, limit: int = 100, earliest_ts: datetime | None = None) -> list[TaskEvent]:
+    """Return task-thread events oldest-first, bounded to the most recent `limit`."""
+    conditions = ["task_id = $1"]
+    params: list[object] = [task_id]
+    if earliest_ts is not None:
+        params.append(earliest_ts)
+        conditions.append(f"created_at >= ${len(params)}")
+    params.append(limit)
+    rows = fetch_all(
         f"""
         SELECT {_TASK_EVENT_COLUMNS}
         FROM task_events
-        WHERE task_id = $1
-        ORDER BY created_at ASC
-        LIMIT $2
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ${len(params)}
         """,
-        [task_id, limit],
+        params,
         TaskEvent,
     )
+    rows.reverse()
+    return rows
 
 
 def list_recent_task_events(task_ids: list[str], *, limit_per_task: int = 3) -> dict[str, list[TaskEvent]]:
@@ -79,7 +89,7 @@ def list_recent_task_events(task_ids: list[str], *, limit_per_task: int = 3) -> 
         FROM (
             SELECT
                 {_TASK_EVENT_COLUMNS},
-                ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at DESC) AS row_num
+                ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at DESC, rowid DESC) AS row_num
             FROM task_events
             WHERE task_id IN ({placeholders})
         )

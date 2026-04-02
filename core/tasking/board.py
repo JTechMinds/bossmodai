@@ -120,12 +120,18 @@ def _build_owned_board(agent_id: str) -> dict[str, Any]:
     blocked = [task for task in delegated if task.status in {"blocked", "stalled"}]
     waiting = [task for task in delegated if task.status == "waiting"]
     waiting_on_owner = [task for task in delegated if task.status in {"pending", "blocked", "stalled"}]
+    recent_completed_delegated = [
+        task
+        for task in db.list_recent_tasks(owner_id=agent_id, status="complete", limit=6)
+        if task.assigned_to and task.assigned_to != agent_id
+    ]
     return {
         "scope": "owned",
         "current_task": _current_task(agent_id),
         "sections": {
             "tasks_i_own": owned,
             "tasks_i_delegated": delegated,
+            "recent_completed_delegated_tasks": recent_completed_delegated,
             "waiting_child_tasks": waiting,
             "blocked_or_stalled_child_tasks": blocked,
             "tasks_waiting_on_me": waiting_on_owner,

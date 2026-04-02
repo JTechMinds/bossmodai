@@ -200,6 +200,53 @@ def list_tasks(
     return [_task_from_row(row) for row in rows]
 
 
+def list_recent_tasks(
+    *,
+    assigned_to: str | None = None,
+    owner_id: str | None = None,
+    requester_id: str | None = None,
+    parent_task_id: str | None = None,
+    status: str | None = None,
+    limit: int = 10,
+) -> list[Task]:
+    """Return tasks ordered by most recent activity first."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if assigned_to is not None:
+        params.append(assigned_to)
+        conditions.append(f"t.assigned_to = ${len(params)}")
+    if owner_id is not None:
+        params.append(owner_id)
+        conditions.append(f"t.owner_id = ${len(params)}")
+    if requester_id is not None:
+        params.append(requester_id)
+        conditions.append(f"t.requester_id = ${len(params)}")
+    if parent_task_id is not None:
+        params.append(parent_task_id)
+        conditions.append(f"t.parent_task_id = ${len(params)}")
+    if status is not None:
+        params.append(status)
+        conditions.append(f"t.status = ${len(params)}")
+
+    params.append(int(limit))
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
+        {where}
+        ORDER BY t.last_activity DESC, t.created_at DESC
+        LIMIT ${len(params)}
+        """,
+        params,
+    )
+    return [_task_from_row(row) for row in rows]
+
+
 def update_task(task_id: str, **fields: Any) -> Task | None:
     """Update task fields. Auto-updates last_activity on status change."""
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...

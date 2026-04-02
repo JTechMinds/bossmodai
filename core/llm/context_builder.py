@@ -624,6 +624,7 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> d
     blocked_rows = _tasks_from_board_section(self_board, "my_blocked_tasks", current_task_id=current_task_id)
     waiting_rows = _tasks_from_board_section(owned_board, "tasks_waiting_on_me")
     delegated_rows = _tasks_from_board_section(owned_board, "tasks_i_delegated")
+    recent_completed_delegated_rows = _tasks_from_board_section(owned_board, "recent_completed_delegated_tasks")
     waiting_child_rows = _tasks_from_board_section(owned_board, "waiting_child_tasks")
     blocked_child_rows = _tasks_from_board_section(owned_board, "blocked_or_stalled_child_tasks")
 
@@ -638,6 +639,8 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> d
         sections.append(("TASKS WAITING ON ME", _task_board_lines(waiting_rows, limit=3)))
     if delegated_rows:
         sections.append(("TASKS I DELEGATED", _task_board_lines(delegated_rows, limit=3)))
+    if recent_completed_delegated_rows:
+        sections.append(("RECENT COMPLETED DELEGATIONS", _task_board_lines(recent_completed_delegated_rows, limit=3)))
     if waiting_child_rows:
         sections.append(("WAITING CHILD TASKS", _task_board_lines(waiting_child_rows, limit=3)))
     if blocked_child_rows:
@@ -895,9 +898,12 @@ def preview_runtime_contract(
     contract_kind: str,
     trigger_type: str,
     template_overrides: dict[str, str] | None = None,
+    trigger_overrides: dict[str, Any] | None = None,
 ) -> str:
     """Render one runtime contract against a representative preview context."""
     turn = _build_preview_turn_context(contract_kind, trigger_type)
+    if trigger_overrides:
+        turn.trigger = {**turn.trigger, **trigger_overrides}
     agent = turn.agent
     render_context = _build_prompt_render_context(turn)
     render_context["personality"] = render_template(

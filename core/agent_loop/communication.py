@@ -87,7 +87,7 @@ def build_communication_snapshot(
     )
     owned_board_payload = _compact_task_board(
         serialize_task_board(owned_board),
-        section_names=("tasks_i_delegated", "tasks_waiting_on_me", "blocked_or_stalled_child_tasks"),
+        section_names=("tasks_i_delegated", "recent_completed_delegated_tasks", "tasks_waiting_on_me", "blocked_or_stalled_child_tasks"),
         current_task_id=current_task_id,
     )
     self_open_rows = list((self_board_payload.get("sections") or {}).get("my_open_tasks", []))

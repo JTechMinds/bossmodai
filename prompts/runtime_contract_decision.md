@@ -346,6 +346,11 @@ For this turn, choose one:
 - defer
 - decline
 
+Convergence rules:
+- Ask all clarifying questions in a single message.
+- If the stakeholder answers, accept and proceed (or explicitly defer/decline). Do not ask another clarification unless the scope truly changed.
+- If critical details are still missing after one clarification exchange, accept with explicit assumptions or explicitly defer/decline. Do not loop.
+
 If you accept or defer:
 - respond to the existing task
 - keep `commit="work"`
@@ -376,6 +381,10 @@ For this turn, choose one:
 - ask a clarifying question
 - defer it for later
 - decline it
+
+Convergence rules:
+- Ask all necessary clarifying questions in one message.
+- After you receive answers, accept and proceed (or explicitly defer/decline). Avoid repeated clarification cycles.
 
 If you accept or defer:
 - respond to the existing assignment

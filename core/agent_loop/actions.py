@@ -16,6 +16,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
     build_task_assigned_trigger,
     build_task_follow_up_trigger,
+    build_task_resume_trigger,
 )
 from core.agent_loop.deliverables import build_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.message_delivery import (
@@ -492,6 +493,7 @@ def _append_task_stakeholder_reports(
     content: str,
     skip_recipient_ids: set[str] | None = None,
     attention_kind: str | None = None,
+    source_task_event_id: str | None = None,
 ) -> None:
     """Send durable task updates to the requesting/owning agents."""
     if task is None or not isinstance(content, str) or not content.strip():
@@ -514,28 +516,26 @@ def _append_task_stakeholder_reports(
             chat_visible=False,
             prompt_visibility=False,
         )
-        if attention_kind is None or recipient_id in skipped:
-            continue
-        message = db.create_message(
+    if attention_kind is None:
+        return
+
+    reply_target = task_assignment_reply_target(task, assignee_id=actor.id)
+    if reply_target["kind"] != "agent" or not reply_target["agent_id"]:
+        return
+    if reply_target["agent_id"] in skipped:
+        return
+    trigger_requests.append(
+        build_task_follow_up_trigger(
+            task,
+            recipient_agent_id=reply_target["agent_id"],
             from_agent=actor.id,
-            to_agent=recipient_id,
+            from_name=actor.name,
             content=content.strip(),
-            message_type="work",
-            location_x=state.x,
-            location_y=state.y,
+            attention_kind=attention_kind,
+            source_task_event_id=source_task_event_id,
+            source_channel="work",
         )
-        trigger_requests.append(
-            build_task_follow_up_trigger(
-                task,
-                recipient_agent_id=recipient_id,
-                from_agent=actor.id,
-                from_name=actor.name,
-                content=message.content,
-                attention_kind=attention_kind,
-                source_message_id=message.id,
-                source_channel=source_channel_for_message_type(message.message_type),
-            )
-        )
+    )
 
 
 def _task_requires_conversational_follow_up(task: Any | None, *, actor_id: str) -> bool:
@@ -558,6 +558,7 @@ def _append_task_follow_up_message(
     task: Any | None,
     content: str | None,
     attention_kind: str | None = None,
+    source_trigger_id: str | None = None,
 ) -> set[str]:
     """Persist one natural follow-up message for a task lifecycle update."""
     if task is None or not isinstance(content, str) or not content.strip():
@@ -614,25 +615,26 @@ def _append_task_follow_up_message(
             chat_visible=False,
             prompt_visibility=False,
         )
+        persisted = append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=actor.id,
+            author_name=actor.name,
+            event_type="answer" if attention_kind == "completion_report" else "status_update",
+            content=content.strip(),
+            source_trigger_id=source_trigger_id,
+        )
         if attention_kind is None:
             return {target["agent_id"]}
-        message = db.create_message(
-            from_agent=actor.id,
-            to_agent=target["agent_id"],
-            content=content.strip(),
-            message_type="work",
-            location_x=state.x,
-            location_y=state.y,
-        )
         result.setdefault("trigger_requests", []).append(
             build_task_follow_up_trigger(
                 task,
                 recipient_agent_id=target["agent_id"],
                 from_agent=actor.id,
                 from_name=actor.name,
-                content=message.content,
+                content=content.strip(),
                 attention_kind=attention_kind,
-                source_message_id=message.id,
+                source_task_event_id=persisted.id if persisted is not None else None,
                 source_channel="work",
             )
         )
@@ -659,6 +661,12 @@ def _task_message_attention_kind(message_kind: str) -> str | None:
     if message_kind == "review":
         return "review_request"
     return None
+
+
+_CHILD_UPDATES_TO_PARENT_EVENT_TYPES = {
+    "completion": "status_update",
+    "blocker": "status_update",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -950,7 +958,7 @@ async def _handle_task_message(
             "agent_name": agent.name,
         }
 
-    append_task_event(
+    persisted = append_task_event(
         task_id=task.id,
         author_type="agent",
         author_agent_id=agent.id,
@@ -1019,15 +1027,6 @@ async def _handle_task_message(
             "agent_name": agent.name,
         }
 
-    message = db.create_message(
-        from_agent=agent.id,
-        to_agent=target_agent_id,
-        content=content,
-        message_type="work",
-        location_x=state.x,
-        location_y=state.y,
-        token_count=_count_action_tokens(agent, action, content),
-    )
     return {
         "event": "message_sent",
         "detail": f'{agent.name} requested a task-thread response from {target_agent.name} on "{task.title}"',
@@ -1038,9 +1037,9 @@ async def _handle_task_message(
                 recipient_agent_id=target_agent_id,
                 from_agent=agent.id,
                 from_name=agent.name,
-                content=message.content,
+                content=content,
                 attention_kind=attention_kind,
-                source_message_id=message.id,
+                source_task_event_id=persisted.id if persisted is not None else None,
                 source_channel="work",
             )
         ],
@@ -1120,13 +1119,21 @@ async def _handle_delegate_task(
         )
     task = creation.task
 
+    if creation.outcome != "create_new_task":
+        return {
+            "event": "world_feedback",
+            "detail": (
+                f'There is already an open task thread with {target.name} on "{task.title}" ({task.id}). '
+                'Use "taskmsg" with that task id instead of delegating a duplicate assignment.'
+            ),
+            "agent_name": agent.name,
+            "task_id": task.id,
+            "expected_action": "taskMessage",
+        }
+
     result = {
         "event": "status_changed",
-        "detail": (
-            f'{agent.name} assigned "{task.title}" to {target.name}'
-            if creation.outcome == "create_new_task"
-            else f'{agent.name} reused "{task.title}" for {target.name}'
-        ),
+        "detail": f'{agent.name} assigned "{task.title}" to {target.name}',
         "agent_name": agent.name,
         "trigger_requests": [build_task_assigned_trigger(task)] if task.status == "pending" else [],
         "chat_notification": {
@@ -1515,6 +1522,7 @@ async def _handle_waiting(
         task=task,
         content=follow_up_message,
         attention_kind=None,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1612,7 +1620,7 @@ async def _handle_complete(
         },
     }
     if task is not None:
-        append_task_event(
+        completion_event = append_task_event(
             task_id=task.id,
             author_type="agent",
             author_agent_id=agent.id,
@@ -1621,6 +1629,40 @@ async def _handle_complete(
             content=summary or f'Completed "{task.title}".',
             source_trigger_id=(trigger or {}).get("trigger_id"),
         )
+        if task.parent_task_id:
+            parent = db.get_task(task.parent_task_id)
+            if parent is not None:
+                parent_note = (
+                    f'Child task "{task.title}" completed by {agent.name}. '
+                    f"{summary}".strip()
+                    if summary
+                    else f'Child task "{task.title}" completed by {agent.name}.'
+                )
+                append_task_event(
+                    task_id=parent.id,
+                    author_type="system",
+                    author_name="BossMod",
+                    event_type=_CHILD_UPDATES_TO_PARENT_EVENT_TYPES["completion"],
+                    content=parent_note,
+                    source_trigger_id=(trigger or {}).get("trigger_id"),
+                )
+                if (
+                    parent.assigned_to
+                    and parent.status in {"waiting", "blocked"}
+                    and not db.has_open_trigger_matching(
+                        parent.assigned_to,
+                        trigger_types=["activity_resumed"],
+                        task_id=parent.id,
+                    )
+                ):
+                    result.setdefault("trigger_requests", []).append(
+                        build_task_resume_trigger(
+                            parent,
+                            reason=f'Child task "{task.title}" completed. Continue "{parent.title}".',
+                        )
+                    )
+    else:
+        completion_event = None
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -1628,6 +1670,7 @@ async def _handle_complete(
         task=task,
         content=follow_up_message,
         attention_kind="completion_report",
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1636,6 +1679,8 @@ async def _handle_complete(
         task=task,
         content=(f'Completed "{task.title}": {summary}' if task and summary else f'Completed "{task.title}".' if task else ""),
         skip_recipient_ids=skipped,
+        attention_kind="completion_report",
+        source_task_event_id=completion_event.id if completion_event is not None else None,
     )
     return result
 
@@ -1689,7 +1734,7 @@ async def _handle_blocked(
         },
     }
     if task is not None:
-        append_task_event(
+        blocker_event = append_task_event(
             task_id=task.id,
             author_type="agent",
             author_agent_id=agent.id,
@@ -1698,6 +1743,39 @@ async def _handle_blocked(
             content=reason or f'Blocked on "{task.title}".',
             source_trigger_id=(trigger or {}).get("trigger_id"),
         )
+        if task.parent_task_id:
+            parent = db.get_task(task.parent_task_id)
+            if parent is not None:
+                parent_note = (
+                    f'Child task "{task.title}" blocked by {agent.name}: {reason}'.strip()
+                    if reason
+                    else f'Child task "{task.title}" blocked by {agent.name}.'
+                )
+                append_task_event(
+                    task_id=parent.id,
+                    author_type="system",
+                    author_name="BossMod",
+                    event_type=_CHILD_UPDATES_TO_PARENT_EVENT_TYPES["blocker"],
+                    content=parent_note,
+                    source_trigger_id=(trigger or {}).get("trigger_id"),
+                )
+                if (
+                    parent.assigned_to
+                    and parent.status in {"waiting", "blocked"}
+                    and not db.has_open_trigger_matching(
+                        parent.assigned_to,
+                        trigger_types=["activity_resumed"],
+                        task_id=parent.id,
+                    )
+                ):
+                    result.setdefault("trigger_requests", []).append(
+                        build_task_resume_trigger(
+                            parent,
+                            reason=f'Child task "{task.title}" reported a blocker. Continue "{parent.title}".',
+                        )
+                    )
+    else:
+        blocker_event = None
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -1705,6 +1783,7 @@ async def _handle_blocked(
         task=task,
         content=follow_up_message,
         attention_kind="blocker",
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1713,6 +1792,8 @@ async def _handle_blocked(
         task=task,
         content=(f'Blocked on "{task.title}": {reason}' if task and reason else f'Blocked on "{task.title}".' if task else ""),
         skip_recipient_ids=skipped,
+        attention_kind="blocker",
+        source_task_event_id=blocker_event.id if blocker_event is not None else None,
     )
     return result
 
@@ -1817,6 +1898,7 @@ async def _handle_delegated(
         task=original_task,
         content=follow_up_message,
         attention_kind="handoff",
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -1900,6 +1982,7 @@ async def _handle_abandoned(
         task=task,
         content=follow_up_message,
         attention_kind="abandoned",
+        source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     _append_task_stakeholder_reports(
         result=result,

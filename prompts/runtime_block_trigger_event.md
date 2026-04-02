@@ -13,6 +13,8 @@ CURRENT REQUEST FROM [{{trigger.from_name}}]: {{trigger.content}}
 {{elseif trigger.type = 'task_follow_up'}}
 A task needs your response on "{{trigger.task_title}}".
 Current task status: {{trigger.task_status}}
+If task-thread history is shown above this trigger, it is the canonical transcript for this task.
+Use it to avoid repeating questions or mixing in unrelated direct messages.
 {{if trigger.task_description}}
 Task description: {{trigger.task_description}}
 {{end}}
@@ -49,6 +51,8 @@ Respond within the existing task thread for this task.
 {{if turn.contract_kind = 'decision'}}
 [{{trigger.from_name}}] assigned you a task: "{{trigger.task_title}}".
 This task already exists on your task board.
+If task-thread history is shown above this trigger, it is the canonical transcript for this task.
+Keep task coordination on the task thread (not in unrelated direct messages).
 Decide whether to accept it, ask a clarifying question, defer it, or decline it.
 {{else}}
 You have an accepted task commitment: "{{trigger.task_title}}".

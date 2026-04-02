@@ -6,11 +6,8 @@ import json
 import logging
 from typing import Any, Literal
 
-from core import config
 from core.bm_cli.contract import maybe_parse_bm_cli_call
-from core.llm.template_engine import render_template
 from core.models.work_contract import DeliverableSpec
-from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 logger = logging.getLogger(__name__)
@@ -80,16 +77,6 @@ _ALLOWED_ACTS_BY_TRIGGER = {
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
-_CONTRACT_ALLOWED_PATHS = {
-    "trigger.type",
-    "trigger.task_status",
-    "trigger.task_party",
-    "cli.shell_enabled",
-    "cli.cwd",
-    "workspace.default_save_root",
-    "workspace.project_root",
-}
-
 
 class DelegatedWorkItem(BaseModel):
     """One delegated child-task request embedded in an accepted work decision."""
@@ -185,39 +172,6 @@ def allowed_conversation_acts_for_trigger(trigger_type: str | None) -> tuple[str
     if trigger_type in _SHARED_CONVERSATION_TRIGGER_TYPES:
         return _SHARED_ALLOWED_ACTS
     return _ALLOWED_ACTS_BY_TRIGGER.get(str(trigger_type or ""), _DEFAULT_ALLOWED_ACTS)
-
-
-def default_decision_contract_template() -> str:
-    """Return the current settings-backed decision contract template."""
-    return resolve_runtime_prompt_text("runtime_contract_decision")
-
-
-def render_decision_contract(trigger_type: str | None = None) -> str:
-    """Render the unified prompt contract for all conversation turns."""
-    return render_template(
-        default_decision_contract_template(),
-        _contract_render_context(trigger_type),
-        allowed_paths=_CONTRACT_ALLOWED_PATHS,
-    )
-
-
-def _contract_render_context(trigger_type: str | None) -> dict[str, object]:
-    """Return the minimal template context needed by the decision contract."""
-    return {
-        "trigger": {
-            "type": str(trigger_type or ""),
-            "task_status": "pending" if trigger_type == "task_follow_up" else "",
-            "task_party": "assignee" if trigger_type == "task_follow_up" else "",
-        },
-        "cli": {
-            "shell_enabled": config.get("cli_shell_enabled") == "true",
-            "cwd": "/me",
-        },
-        "workspace": {
-            "default_save_root": "/me",
-            "project_root": "",
-        },
-    }
 
 
 def parse_decision(raw_response: str) -> dict[str, Any]:

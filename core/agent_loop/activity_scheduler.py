@@ -103,25 +103,29 @@ def build_task_follow_up_trigger(
     content: str,
     attention_kind: str,
     source_message_id: str | None = None,
+    source_task_event_id: str | None = None,
     source_channel: str = "work",
 ) -> dict[str, Any]:
     """Build a task-thread trigger that explicitly requires a response."""
+    payload: dict[str, Any] = {
+        "task_title": task.title,
+        "task_description": task.description or "",
+        "task_status": task.status,
+        "task_party": "assignee" if task.assigned_to == recipient_agent_id else "stakeholder",
+        "attention_kind": attention_kind,
+        "from_agent": from_agent,
+        "from_name": from_name,
+        "content": content,
+        "source_message_id": source_message_id,
+    }
+    if source_task_event_id:
+        payload["source_task_event_id"] = source_task_event_id
     return {
         "agent_id": recipient_agent_id,
         "trigger_type": "task_follow_up",
         "source_channel": source_channel,
         "task_id": task.id,
-        "payload": {
-            "task_title": task.title,
-            "task_description": task.description or "",
-            "task_status": task.status,
-            "task_party": "assignee" if task.assigned_to == recipient_agent_id else "stakeholder",
-            "attention_kind": attention_kind,
-            "from_agent": from_agent,
-            "from_name": from_name,
-            "content": content,
-            "source_message_id": source_message_id,
-        },
+        "payload": payload,
     }
 
 

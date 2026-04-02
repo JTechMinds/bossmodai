@@ -42,6 +42,46 @@ def create_agent_trigger(
     task_id: str | None = None,
 ) -> AgentTrigger:
     """Insert a queued trigger for an agent."""
+    if trigger_type == "task_follow_up" and task_id:
+        existing = query_one(
+            f"""
+            SELECT id
+            FROM agent_triggers
+            WHERE agent_id = $1
+              AND trigger_type = $2
+              AND task_id = $3
+              AND status = 'queued'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            [agent_id, trigger_type, task_id],
+        )
+        if existing and existing.get("id"):
+            trigger_id = str(existing["id"])
+            execute(
+                """
+                UPDATE agent_triggers
+                SET payload = $1,
+                    source_channel = $2
+                WHERE id = $3 AND status = 'queued'
+                """,
+                [json.dumps(payload), source_channel, trigger_id],
+            )
+            execute(
+                """
+                DELETE FROM agent_triggers
+                WHERE agent_id = $1
+                  AND trigger_type = $2
+                  AND task_id = $3
+                  AND status = 'queued'
+                  AND id != $4
+                """,
+                [agent_id, trigger_type, task_id, trigger_id],
+            )
+            refreshed = get_agent_trigger(trigger_id)
+            if refreshed is not None:
+                return refreshed
+
     return insert_returning(
         f"""
         INSERT INTO agent_triggers (agent_id, trigger_type, source_channel, payload, task_id)

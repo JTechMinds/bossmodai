@@ -696,6 +696,65 @@ def _task_turn_attention_kind(
         return "decision_needed"
     return str(trigger.get("attention_kind") or "task_response")
 
+def _clarification_streak(task_id: str, *, limit: int = 50) -> list[Any]:
+    """Return the trailing clarification streak for a task thread (oldest-first)."""
+    events = db.list_task_events(task_id, limit=limit)
+    streak: list[Any] = []
+    for event in reversed(events):
+        if event.event_type != "clarification":
+            break
+        streak.append(event)
+    streak.reverse()
+    return streak
+
+
+def _block_task_for_clarification_loop(
+    *,
+    task,
+    latest_question: str,
+    source_trigger_id: str | None,
+    streak_len: int,
+) -> str:
+    snippet = (latest_question or "").strip()
+    if len(snippet) > 280:
+        snippet = snippet[:277] + "..."
+    note = (
+        f"Blocked: clarification loop detected ({streak_len} consecutive clarifications without progress). "
+        "Consolidate required details into one decision. "
+        f"Latest clarification: {snippet or '-'}"
+    )
+    db.update_task(
+        task.id,
+        status="blocked",
+        status_note=note,
+        completion_summary=None,
+        watchdog_pinged_at=None,
+    )
+    append_task_event(
+        task_id=task.id,
+        author_type="system",
+        author_name="BossMod",
+        event_type="blocker",
+        content=note,
+        source_trigger_id=source_trigger_id,
+    )
+    for notify_target in (getattr(task, "owner_id", None), getattr(task, "requester_id", None)):
+        if not isinstance(notify_target, str) or not notify_target:
+            continue
+        if notify_target in {HUMAN_SENDER_ID, task.assigned_to}:
+            continue
+        db.create_notification(
+            agent_id=notify_target,
+            task_id=task.id,
+            kind="task_update",
+            content=note,
+            source_channel="task",
+            policy="none",
+            chat_visible=False,
+            prompt_visibility=False,
+        )
+    return note
+
 
 def _persist_task_follow_up_reply(
     agent: Agent,
@@ -715,18 +774,59 @@ def _persist_task_follow_up_reply(
         return {}
     requires_response = _task_turn_requires_response(trigger=trigger, decision=decision)
     attention_kind = _task_turn_attention_kind(trigger=trigger, decision=decision)
+    if decision.decision == "clarify" and requires_response:
+        streak = _clarification_streak(task.id, limit=60)
+        tail_size = 6
+        tail = streak[-tail_size:] if len(streak) >= tail_size else []
+        actors = {event.author_agent_id for event in tail if getattr(event, "author_agent_id", None)}
+        if tail and len(actors) >= 2:
+            note = _block_task_for_clarification_loop(
+                task=task,
+                latest_question=reply,
+                source_trigger_id=trigger.get("trigger_id"),
+                streak_len=len(streak),
+            )
+            reply_target = task_assignment_reply_target(task, assignee_id=agent.id)
+            if reply_target["kind"] == "human":
+                message = db.create_message(
+                    from_agent=agent.id,
+                    to_agent=HUMAN_SENDER_ID,
+                    content=note,
+                    message_type="social",
+                    location_x=state.x,
+                    location_y=state.y,
+                )
+                return {
+                    "chat_message": {
+                        "agent_id": agent.id,
+                        "content": message.content,
+                        "from_type": "agent",
+                        "from_name": agent.name,
+                        "message_type": message.message_type,
+                        "message_id": message.id,
+                        "created_at": message.created_at,
+                    }
+                }
+            return {}
+
+    event_type = "comment"
+    if decision.decision == "clarify":
+        event_type = "clarification"
+    elif decision.decision == "answer":
+        event_type = "answer"
+    persisted = append_task_event(
+        task_id=task.id,
+        author_type="agent",
+        author_agent_id=agent.id,
+        author_name=agent.name,
+        event_type=event_type,
+        content=reply,
+        source_trigger_id=trigger.get("trigger_id"),
+    )
 
     if trigger.get("type") == "task_follow_up" and trigger.get("from_agent"):
         target_agent_id = str(trigger["from_agent"]).strip()
         if target_agent_id:
-            message = db.create_message(
-                from_agent=agent.id,
-                to_agent=target_agent_id,
-                content=reply,
-                message_type="work",
-                location_x=state.x,
-                location_y=state.y,
-            )
             db.create_notification(
                 agent_id=target_agent_id,
                 task_id=task.id,
@@ -746,9 +846,9 @@ def _persist_task_follow_up_reply(
                         recipient_agent_id=target_agent_id,
                         from_agent=agent.id,
                         from_name=agent.name,
-                        content=message.content,
+                        content=reply,
                         attention_kind=attention_kind,
-                        source_message_id=message.id,
+                        source_task_event_id=persisted.id if persisted is not None else None,
                         source_channel="work",
                     )
                 ]
@@ -798,14 +898,6 @@ def _persist_task_follow_up_reply(
         }
 
     if reply_target["kind"] == "agent" and reply_target["agent_id"]:
-        message = db.create_message(
-            from_agent=agent.id,
-            to_agent=reply_target["agent_id"],
-            content=reply,
-            message_type="work",
-            location_x=state.x,
-            location_y=state.y,
-        )
         db.create_notification(
             agent_id=reply_target["agent_id"],
             task_id=task.id,
@@ -825,9 +917,9 @@ def _persist_task_follow_up_reply(
                     recipient_agent_id=reply_target["agent_id"],
                     from_agent=agent.id,
                     from_name=agent.name,
-                    content=message.content,
+                    content=reply,
                     attention_kind=attention_kind,
-                    source_message_id=message.id,
+                    source_task_event_id=persisted.id if persisted is not None else None,
                     source_channel="work",
                 )
             ]

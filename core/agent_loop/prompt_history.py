@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import db
+from core.agent_loop.task_thread_history import load_task_thread_history
 from core.llm.client import count_tokens
 from core.models import Agent, Notification
 
@@ -46,6 +47,16 @@ def _load_conversation_history(
     trigger_type = trigger.get("type")
     fetch_limit = _history_fetch_limit(policy.last_n_histories)
 
+    if trigger_type in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
+        thread = load_task_thread_history(
+            task_id=str(trigger["task_id"]),
+            limit=fetch_limit,
+            earliest_ts=policy.earliest_ts_allowed,
+            exclude_source_message_id=trigger.get("source_message_id"),
+            exclude_source_task_event_id=trigger.get("source_task_event_id"),
+        )
+        return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
     if trigger_type in ("human_chat", "watchdog_status_ping"):
         thread = db.get_human_chat_thread(
             agent.id,
@@ -57,7 +68,7 @@ def _load_conversation_history(
             formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
         return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
-    if trigger_type in {"peer_message", "task_follow_up"} and trigger.get("from_agent"):
+    if trigger_type == "peer_message" and trigger.get("from_agent"):
         thread = db.get_agent_direct_thread(
             agent.id,
             trigger["from_agent"],
