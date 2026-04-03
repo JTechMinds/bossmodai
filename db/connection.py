@@ -425,11 +425,13 @@ def init_db() -> None:
 def reset_database() -> None:
     """Recreate the database file from the current schema and seed data.
 
-    Also wipes the artifacts directory so the filesystem matches the fresh DB.
+    Clears per-agent artifact workspaces so reseeded agents start clean.
+
+    Note: Shared project files under `artifacts/projects` are preserved.
     """
     import shutil
 
-    from core.bm_cli.filesystem import artifacts_root, ensure_artifact_roots
+    from core.bm_cli.filesystem import agents_artifact_root, ensure_artifact_roots
 
     close_connection()
     db_path = Path(_DB_PATH)
@@ -440,8 +442,8 @@ def reset_database() -> None:
         if sidecar.exists():
             sidecar.unlink()
 
-    # Wipe artifact files so filesystem matches fresh DB
-    root = artifacts_root()
+    # Wipe per-agent workspaces so filesystem matches fresh DB agents.
+    root = agents_artifact_root()
     if root.exists():
         shutil.rmtree(root)
     ensure_artifact_roots()
