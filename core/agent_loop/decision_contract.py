@@ -70,9 +70,10 @@ _SHARED_CONVERSATION_TRIGGER_TYPES = {
 
 _ALLOWED_ACTS_BY_TRIGGER = {
     "human_chat": ("reply", "accept", "clarify", "cancel", "decline", "defer"),
-    "peer_message": ("reply", "accept", "clarify", "decline"),
+    "peer_message": ("observe", "reply", "accept", "clarify", "decline"),
     "task_assigned": ("accept", "clarify", "defer", "decline"),
     "task_follow_up": ("reply", "accept", "clarify", "defer", "decline"),
+    "task_update": ("observe",),
     "watchdog_status_ping": ("reply",),
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
@@ -434,8 +435,8 @@ def validate_decision_for_trigger(
         if decision.intentKind != "work_request":
             return 'cancel decisions must use intentKind="work_request"'
 
-    if trigger_type in {"human_chat", "peer_message", "task_assigned", "task_follow_up"} and decision.decision == "observe":
-        return '"observe" is only valid for shared meeting/channel conversation turns'
+    if decision.decision == "observe" and trigger_type not in {"peer_message", "task_update", *_SHARED_CONVERSATION_TRIGGER_TYPES}:
+        return '"observe" is only valid for peer messages, task updates, or shared meeting/channel conversation turns'
 
     if trigger_type == "task_assigned":
         if decision.executionPlan is not None:

@@ -129,6 +129,45 @@ def build_task_follow_up_trigger(
     }
 
 
+def build_task_update_trigger(
+    task: Task,
+    *,
+    recipient_agent_id: str,
+    from_agent: str | None,
+    from_name: str,
+    content: str,
+    attention_kind: str,
+    source_message_id: str | None = None,
+    source_task_event_id: str | None = None,
+    source_channel: str = "work",
+) -> dict[str, Any]:
+    """Build a task update trigger that does not require a response.
+
+    This is for informational task updates (completion, blocker, status) that should
+    wake the recipient to review the task thread without forcing a reply.
+    """
+    payload: dict[str, Any] = {
+        "task_title": task.title,
+        "task_description": task.description or "",
+        "task_status": task.status,
+        "task_party": "assignee" if task.assigned_to == recipient_agent_id else "stakeholder",
+        "attention_kind": attention_kind,
+        "from_agent": from_agent,
+        "from_name": from_name,
+        "content": content,
+        "source_message_id": source_message_id,
+    }
+    if source_task_event_id:
+        payload["source_task_event_id"] = source_task_event_id
+    return {
+        "agent_id": recipient_agent_id,
+        "trigger_type": "task_update",
+        "source_channel": source_channel,
+        "task_id": task.id,
+        "payload": payload,
+    }
+
+
 def build_activity_resume_trigger(activity: Activity, *, reason: str) -> dict[str, Any]:
     """Build the internal trigger used to continue an existing activity."""
     source_channel = "work" if activity.kind in {"assignment", "work"} else "chat"

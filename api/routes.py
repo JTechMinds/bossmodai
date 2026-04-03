@@ -1375,15 +1375,18 @@ async def list_tasks(
     agent_ids |= {t.requester_id for t in tasks if t.requester_id}
     agent_ids |= {t.owner_id for t in tasks if t.owner_id}
     agent_names: dict[str, str] = {}
+    agent_storage_keys: dict[str, str] = {}
     for aid in agent_ids:
         agent = db.get_agent(aid)
         if agent:
             agent_names[aid] = agent.name
+            agent_storage_keys[aid] = agent.storage_key
     recent_events = db.list_recent_task_events([task.id for task in tasks], limit_per_task=1)
     return [
         {
             **t.model_dump(mode="json"),
             "assigned_to_name": agent_names.get(t.assigned_to) if t.assigned_to else None,
+            "assigned_to_storage_key": agent_storage_keys.get(t.assigned_to) if t.assigned_to else None,
             "requester_name": agent_names.get(t.requester_id) if t.requester_id else None,
             "owner_name": agent_names.get(t.owner_id) if t.owner_id else None,
             "latest_event": (

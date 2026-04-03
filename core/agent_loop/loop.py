@@ -60,6 +60,7 @@ _DECISION_TRIGGER_TYPES = {
     "human_chat",
     "peer_message",
     "task_follow_up",
+    "task_update",
     "session_message",
     "session_response",
     "channel_message",

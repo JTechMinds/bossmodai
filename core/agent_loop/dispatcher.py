@@ -327,7 +327,7 @@ class TurnDispatcher:
             trigger_type=trigger.get("type", "unknown"),
             trigger_data=json.dumps(trigger),
             status="error",
-            mode="decision" if trigger.get("type") in {"human_chat", "peer_message", "task_follow_up", "session_message", "session_response", "channel_message", "channel_response", "task_assigned"} else "execution",
+                mode="decision" if trigger.get("type") in {"human_chat", "peer_message", "task_follow_up", "task_update", "session_message", "session_response", "channel_message", "channel_response", "task_assigned"} else "execution",
             model=None,
             model_source="runtime",
             context=None,

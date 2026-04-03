@@ -21,15 +21,16 @@ CASE trigger_type
     WHEN 'cli_approval_resolved' THEN 1
     WHEN 'peer_message' THEN 2
     WHEN 'task_follow_up' THEN 3
-    WHEN 'session_response' THEN 4
-    WHEN 'channel_response' THEN 5
-    WHEN 'session_message' THEN 6
-    WHEN 'channel_message' THEN 7
-    WHEN 'watchdog_status_ping' THEN 8
-    WHEN 'task_assigned' THEN 9
-    WHEN 'activity_resumed' THEN 9
-    WHEN 'social' THEN 10
-    ELSE 10
+    WHEN 'task_update' THEN 4
+    WHEN 'session_response' THEN 5
+    WHEN 'channel_response' THEN 6
+    WHEN 'session_message' THEN 7
+    WHEN 'channel_message' THEN 8
+    WHEN 'watchdog_status_ping' THEN 9
+    WHEN 'task_assigned' THEN 10
+    WHEN 'activity_resumed' THEN 10
+    WHEN 'social' THEN 11
+    ELSE 11
 END
 """
 
@@ -42,7 +43,7 @@ def create_agent_trigger(
     task_id: str | None = None,
 ) -> AgentTrigger:
     """Insert a queued trigger for an agent."""
-    if trigger_type == "task_follow_up" and task_id:
+    if trigger_type in {"task_follow_up", "task_update"} and task_id:
         existing = query_one(
             f"""
             SELECT id

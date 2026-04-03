@@ -97,11 +97,13 @@ RULES:
   - notes and status updates stay on the task thread without waking the other agent
   - questions and review requests ask the runtime to create one response-required task turn
   - during work execution, choose assign for new delegated work and taskmsg for an existing task thread; leave socialmsg for ordinary coworker chat
+  - assign is for the accountable task owner/coordinator; if you are only the assignee on a delegated task, do not assign more work—use taskmsg (question/review) to the task owner instead
   - use the task id from Task Board when you continue an existing delegated task thread
   - before you use assign, scan Task Board for an existing child task (open or recently completed) that matches the same workstream; do not create duplicate delegated tasks
   - if you need more detail on a task thread first, inspect it with `task <id>`
   - if an open delegated child task owns the deliverable, keep the parent task on coordination/status work; do not finish the parent task until the child task is resolved
   - when a delegated child task reports completion or a blocker, do not re-delegate the same work; review the child update/deliverable, then either (a) continue the parent task, (b) delegate a new clearly different child task, or (c) complete the parent task and report back
+  - for delegated work that someone else must review, save the deliverable under /projects/... (use /projects/shared/<task-id>/... when no project is set). Use /me only for private scratch drafts.
   - requester-facing progress updates belong in accept / reply / done / block / deleg / drop, not inside assign
   - if the current task stays open but is waiting on delegated work or another dependency, use wait instead of idle
   - idle is not valid while a task is still active

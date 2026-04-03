@@ -29,6 +29,10 @@ def resolve_peer_message_type(
     del state
     if isinstance(trigger, dict) and str(trigger.get("type") or "").strip().lower() == "social":
         return "social"
+    if isinstance(trigger, dict):
+        incoming_type = str(trigger.get("message_type") or "").strip().lower()
+        if incoming_type == "meeting":
+            return "meeting"
     return "social"
 
 

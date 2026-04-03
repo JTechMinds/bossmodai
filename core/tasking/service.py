@@ -8,8 +8,10 @@ from typing import Any
 
 import db
 from core.agent_loop.task_roles import default_task_owner_id
+from core.bm_cli.filesystem import slugify_name
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
+from core.models.work_contract import WorkContract, DeliverableSpec
 from core.tasking.resolution import OPEN_TASK_STATUSES, TaskResolution, resolve_existing_task
 
 
@@ -118,6 +120,17 @@ def create_or_bind_task(
         notification_policy=notification_policy,
         notification_channel_id=notification_channel_id,
     )
+
+    rewritten_contract = _rewrite_shared_work_contract(
+        task=task,
+        work_contract=work_contract,
+        assigned_to=assigned_to,
+        requester_id=requester_id,
+        owner_id=requested_owner_id,
+    )
+    if rewritten_contract is not None:
+        task = db.update_task(task.id, work_contract=rewritten_contract) or task
+
     append_task_event(
         task_id=task.id,
         author_type=audit_author_type,
@@ -228,3 +241,78 @@ def _agent_id_for_author(created_by: str | None, author_type: str) -> str | None
     if not created_by or created_by == HUMAN_SENDER_ID:
         return None
     return created_by
+
+
+def _rewrite_shared_work_contract(
+    *,
+    task: Task,
+    work_contract: Any | None,
+    assigned_to: str | None,
+    requester_id: str | None,
+    owner_id: str | None,
+) -> WorkContract | None:
+    """Rewrite /me file deliverables into shared /projects paths for delegated work.
+
+    Policy:
+    - /me is private scratch per-agent.
+    - If another agent (requester/owner) must review the output, file deliverables must
+      live under /projects/<project-or-shared>/<task-id>/... so they are shareable.
+    """
+    if work_contract is None:
+        return None
+
+    assignee = str(assigned_to or "").strip()
+    if not assignee:
+        return None
+
+    if not _outputs_should_be_shared(assignee_id=assignee, requester_id=requester_id, owner_id=owner_id):
+        return None
+
+    contract = work_contract if isinstance(work_contract, WorkContract) else WorkContract.model_validate(work_contract)
+    if not contract.deliverables:
+        return None
+
+    project_slug = slugify_name(task.project) if task.project else "shared"
+    shared_root = f"/projects/{project_slug}/{task.id}"
+
+    changed = False
+    rewritten: list[DeliverableSpec] = []
+    for item in contract.deliverables:
+        if item.type != "file":
+            rewritten.append(item)
+            continue
+        path = str(item.path or "").strip()
+        if not path.startswith("/me/"):
+            rewritten.append(item)
+            continue
+        basename = path.rsplit("/", 1)[-1].strip() or "output"
+        rewritten.append(
+            DeliverableSpec(
+                type="file",
+                path=f"{shared_root}/{basename}",
+                description=item.description,
+            )
+        )
+        changed = True
+
+    if not changed:
+        return None
+    return WorkContract(deliverables=rewritten)
+
+
+def _outputs_should_be_shared(*, assignee_id: str, requester_id: str | None, owner_id: str | None) -> bool:
+    """Return whether task outputs should be written to shared /projects paths."""
+    if _is_other_agent(actor_id=requester_id, assignee_id=assignee_id):
+        return True
+    if _is_other_agent(actor_id=owner_id, assignee_id=assignee_id):
+        return True
+    return False
+
+
+def _is_other_agent(*, actor_id: str | None, assignee_id: str) -> bool:
+    candidate = str(actor_id or "").strip()
+    if not candidate:
+        return False
+    if candidate == HUMAN_SENDER_ID:
+        return False
+    return candidate != assignee_id

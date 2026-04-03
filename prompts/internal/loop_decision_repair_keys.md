@@ -6,3 +6,5 @@ Use the contract keys exactly:
 - `th` is a short admin-visible note
 
 Use `status` only in `intent`, never in `act`.
+
+Never add additional top-level keys beyond what the current contract shape allows.

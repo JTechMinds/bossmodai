@@ -802,7 +802,11 @@ def test_apply_decision_accept_with_delegation_plan_creates_child_task_before_re
     assert child.owner_id == pm.id
     assert child.work_contract is not None
     assert [item.model_dump() for item in child.work_contract.deliverables] == [
-        {"type": "file", "path": "/me/slm-edge-whitepaper.md", "description": "finished delegated whitepaper"}
+        {
+            "type": "file",
+            "path": f"/projects/shared/{child.id}/slm-edge-whitepaper.md",
+            "description": "finished delegated whitepaper",
+        }
     ]
     assert assignment_request["task_id"] == child.id
 
@@ -2374,7 +2378,7 @@ async def test_child_completion_appends_parent_status_update_and_resumes_waiting
     assert any("Child task" in event.content and "completed" in event.content for event in parent_events)
     assert any(
         item["agent_id"] == pm.id
-        and item["trigger_type"] == "task_follow_up"
+        and item["trigger_type"] == "task_update"
         and item.get("task_id") == parent.id
         and item["payload"]["attention_kind"] == "completion_report"
         for item in result.get("trigger_requests", [])
@@ -5727,9 +5731,7 @@ async def test_run_turn_peer_message_social_greeting_replies_conversationally(is
     )
 
     assert outcome.result["event"] == "decision_applied"
-    queued_peer = outcome.result["trigger_requests"]
-    assert queued_peer[0]["trigger_type"] == "peer_message"
-    assert queued_peer[0]["payload"]["content"] == "Morning Jason. I am here and ready to help."
+    assert outcome.result["trigger_requests"] == []
     assert db.list_tasks(assigned_to=taylor.id) == []
 
     diagnostics = db.get_diagnostics(agent_id=taylor.id, limit=5)
@@ -6112,8 +6114,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
         ),
         client.LLMResponse(
             content=(
-                '{"act":"reply","intent":"status","msg":"Thanks. I have the findings and I am sending the summary to the human now.",'
-                '"th":"acknowledge Taylor and resume the coordination task"}'
+                '{"act":"observe","intent":"other","th":"review the completion update and continue coordination work"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -6222,7 +6223,7 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
     completion_update = next(
         item
         for item in completion_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_update"
     )
     assert completion_update["payload"]["attention_kind"] == "completion_report"
     assert completion_update["task_id"] == parent.id
@@ -6271,7 +6272,6 @@ async def test_run_turn_end_to_end_manager_delegation_chain_reports_back_to_huma
     parent_events = db.list_task_events(parent.id, limit=50)
     parent_contents = [event.content for event in parent_events]
     assert 'Child task "Investigate competitor launches" completed by Taylor:' in " ".join(parent_contents)
-    assert "Thanks. I have the findings and I am sending the summary to the human now." in parent_contents
 
     assert pm_final_outcome.result["chat_message"]["content"] == (
         "Taylor finished the competitor launch investigation. I reviewed the takeaways and the summary is ready for you."
@@ -6366,8 +6366,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
         ),
         client.LLMResponse(
             content=(
-                '{"act":"reply","intent":"status","msg":"Understood. I am reassigning the investigation so the parent task stays on track.",'
-                '"th":"acknowledge the blocker and keep the parent task moving"}'
+                '{"act":"observe","intent":"other","th":"review the blocker update and continue coordination work"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -6423,8 +6422,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
         ),
         client.LLMResponse(
             content=(
-                '{"act":"reply","intent":"status","msg":"Thanks. I have the reassigned findings and I am sending the final summary to the human now.",'
-                '"th":"acknowledge Morgan and resume the coordination task"}'
+                '{"act":"observe","intent":"other","th":"review the completion update and continue coordination work"}'
             ),
             model="test-model",
             prompt_tokens=10,
@@ -6503,7 +6501,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     blocked_update = next(
         item
         for item in first_block_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_update"
     )
     assert blocked_update["payload"]["attention_kind"] == "blocker"
     assert blocked_update["task_id"] == parent.id
@@ -6542,7 +6540,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     completion_update = next(
         item
         for item in second_completion_outcome.result["trigger_requests"]
-        if item["agent_id"] == pm.id and item["trigger_type"] == "task_follow_up"
+        if item["agent_id"] == pm.id and item["trigger_type"] == "task_update"
     )
     assert completion_update["payload"]["attention_kind"] == "completion_report"
     assert completion_update["task_id"] == parent.id
@@ -6600,9 +6598,7 @@ async def test_run_turn_end_to_end_manager_reassigns_after_worker_block_and_repo
     parent_events = db.list_task_events(parent.id, limit=80)
     parent_contents = [event.content for event in parent_events]
     assert 'Child task "Investigate competitor launches" blocked by Taylor:' in " ".join(parent_contents)
-    assert "Understood. I am reassigning the investigation so the parent task stays on track." in parent_contents
     assert 'Child task "Investigate competitor launches" completed by Morgan:' in " ".join(parent_contents)
-    assert "Thanks. I have the reassigned findings and I am sending the final summary to the human now." in parent_contents
 
     assert pm_final_outcome.result["chat_message"]["content"] == (
         "Taylor was blocked on archive access, so I reassigned the investigation to Morgan and now have the finished summary for you."
@@ -8191,13 +8187,10 @@ async def test_delegate_task_action_inherits_parent_owner_and_reports_upstream(i
         trigger={"type": "activity_resumed", "source_channel": "work"},
     )
 
-    child = db.list_tasks(assigned_to=target.id)[0]
-    assert child.requester_id == worker.id
-    assert child.owner_id == pm.id
-    assert child.source_channel == "peer"
-    assert child.notification_policy == "none"
-    stakeholder_updates = [item for item in result["trigger_requests"] if item["trigger_type"] == "task_follow_up"]
-    assert stakeholder_updates == []
+    assert result["event"] == "world_feedback"
+    assert "Only the task owner can delegate new child tasks" in result["detail"]
+    assert result.get("task_id") == parent.id
+    assert db.list_tasks(assigned_to=target.id) == []
 
 
 @pytest.mark.asyncio
@@ -10231,6 +10224,9 @@ def test_peer_message_social_reply_stays_social(isolated_db):
     queued = result["trigger_requests"][0]
     assert queued["source_channel"] == "chat"
     assert queued["payload"]["message_type"] == "social"
+    assert queued["payload"]["reply_chain_depth"] == 1
+    thread = db.get_agent_direct_thread(sender.id, recipient.id, limit=10)
+    assert thread[-1].message_type == "social"
     assert db.list_tasks(assigned_to=sender.id) == []
 
 

@@ -55,7 +55,7 @@ def _load_conversation_history(
         )
         return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
 
-    if trigger_type in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
+    if trigger_type in {"task_assigned", "task_follow_up", "task_update"} and trigger.get("task_id"):
         thread = load_task_thread_history(
             task_id=str(trigger["task_id"]),
             limit=fetch_limit,

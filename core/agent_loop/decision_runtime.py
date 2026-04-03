@@ -64,6 +64,11 @@ def apply_decision(
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=False)
         else:
             _resume_previous_work_if_needed(result, active_work)
+            _resume_waiting_work_after_task_update(
+                result=result,
+                agent_id=agent.id,
+                trigger=trigger,
+            )
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
@@ -400,7 +405,8 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
         if delegation.agentId and delegation.agentId.strip():
             target = by_id.get(delegation.agentId.strip())
         if target is None and delegation.agentName and delegation.agentName.strip():
-            matches = by_name.get(delegation.agentName.strip().lower(), [])
+            requested_name = delegation.agentName.strip().lower()
+            matches = by_name.get(requested_name, [])
             if len(matches) == 1:
                 target = matches[0]
             elif len(matches) > 1:
@@ -414,6 +420,27 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
                         "agent_name": agent.name,
                     }
                 }
+            elif not matches:
+                prefix_matches = [
+                    item
+                    for key, items in by_name.items()
+                    if key.startswith(requested_name)
+                    for item in items
+                ]
+                if len(prefix_matches) == 1:
+                    target = prefix_matches[0]
+                elif len(prefix_matches) > 1:
+                    options = ", ".join(sorted({item.name for item in prefix_matches}))
+                    return {
+                        "error_result": {
+                            "event": "world_feedback",
+                            "detail": (
+                                f'More than one teammate matches "{delegation.agentName}". '
+                                f"Be specific. Matching teammates: {options}."
+                            ),
+                            "agent_name": agent.name,
+                        }
+                    }
         if target is None:
             requested = delegation.agentName or delegation.agentId or "that teammate"
             available = ", ".join(sorted(item.name for item in agents if item.id != agent.id))
@@ -643,6 +670,25 @@ def _persist_reply(
             }
         }
 
+    if trigger_type == "peer_message":
+        incoming_type = str(trigger.get("message_type") or "").strip().lower()
+        incoming_content = str(trigger.get("content") or "")
+        try:
+            incoming_depth = int(trigger.get("reply_chain_depth") or 0)
+        except (TypeError, ValueError):
+            incoming_depth = 0
+        reply_intent = str(getattr(decision, "intentKind", "") or "").strip().lower()
+        should_wake = (
+            incoming_type in {"work", "meeting"}
+            or decision.decision in {"clarify", "accept", "decline"}
+            or reply_intent == "question"
+            or (incoming_depth <= 0 and "?" in incoming_content)
+        )
+        if incoming_type == "social" and incoming_depth > 0 and should_wake:
+            should_wake = False
+        if not should_wake:
+            return {}
+
     return {
         "trigger_requests": [
             {
@@ -655,6 +701,8 @@ def _persist_reply(
                     "from_name": agent.name,
                     "message_type": message.message_type,
                     "source_message_id": message.id,
+                    "in_reply_to_message_id": trigger.get("source_message_id"),
+                    "reply_chain_depth": incoming_depth + 1 if trigger_type == "peer_message" else 0,
                 },
             }
         ]
@@ -668,6 +716,10 @@ def _task_turn_requires_response(
     trigger_type = str(trigger.get("type") or "")
     if trigger_type == "task_assigned":
         return decision.decision in {"clarify", "defer", "decline"}
+
+    attention_kind = str(trigger.get("attention_kind") or "").strip().lower()
+    if attention_kind in {"question", "review_request"}:
+        return decision.decision in {"answer", "clarify"}
 
     task_status = str(trigger.get("task_status") or "").strip().lower()
     task_party = str(trigger.get("task_party") or "").strip().lower()
@@ -1202,6 +1254,35 @@ def _resume_waiting_work_after_task_attention(
                 reason=f'You received the task update you needed on "{task.title}". Continue the work.',
             )
         )
+
+
+def _resume_waiting_work_after_task_update(
+    *,
+    result: dict[str, Any],
+    agent_id: str,
+    trigger: dict[str, Any],
+) -> None:
+    """Resume waiting/blocked work after a task_update (informational) trigger."""
+    if trigger.get("type") != "task_update":
+        return
+    task_id = trigger.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return
+    task = db.get_task(task_id)
+    if task is None:
+        return
+    if task.assigned_to != agent_id:
+        return
+    if task.status not in {"waiting", "blocked"}:
+        return
+    if db.has_open_trigger_matching(agent_id, trigger_types=["activity_resumed"], task_id=task.id):
+        return
+    result["trigger_requests"].append(
+        build_task_resume_trigger(
+            task,
+            reason=f'You received an update on "{task.title}". Continue the work.',
+        )
+    )
 
 
 def _record_watchdog_reply_if_needed(*, agent_id: str, trigger: dict[str, Any], reply: str | None) -> None:

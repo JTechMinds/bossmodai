@@ -33,6 +33,10 @@ COMMUNICATION_PROFILES: dict[str, CommunicationProfile] = {
         name="task_thread",
         label="task-thread follow-up",
     ),
+    "task_update": CommunicationProfile(
+        name="task_thread",
+        label="task-thread update",
+    ),
     "session_message": CommunicationProfile(
         name="meeting_thread",
         label="meeting thread message",

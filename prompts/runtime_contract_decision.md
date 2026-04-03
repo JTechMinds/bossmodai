@@ -52,9 +52,14 @@ For reply:
 {"act":"reply","intent":"status | other","msg":"string","th":"string"}
 ```
 {{elseif trigger.type = 'peer_message'}}
-ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
 
 Use one of these shapes:
+
+For observe:
+```json
+{"act":"observe","intent":"other","th":"string"}
+```
 
 For reply:
 ```json
@@ -121,6 +126,15 @@ For clarify:
 {"act":"clarify","intent":"question | status | work | other","msg":"string","th":"string"}
 ```
 {{end}}
+{{elseif trigger.type = 'task_update'}}
+ALLOWED conversation act FOR THIS TURN: observe
+
+Use this shape:
+
+For observe:
+```json
+{"act":"observe","intent":"other","th":"string"}
+```
 {{elseif trigger.type = 'task_assigned'}}
 ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline
 

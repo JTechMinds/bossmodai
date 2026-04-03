@@ -16,6 +16,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
     build_task_assigned_trigger,
     build_task_follow_up_trigger,
+    build_task_update_trigger,
 )
 from core.agent_loop.deliverables import build_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.message_delivery import (
@@ -523,14 +524,17 @@ def _append_task_stakeholder_reports(
         return
     if reply_target["agent_id"] in skipped:
         return
+    effective_kind = _effective_attention_kind(attention_kind, content)
+    requires_response = _attention_kind_requires_response(effective_kind) or _content_asks_question(content)
+    builder = build_task_follow_up_trigger if requires_response else build_task_update_trigger
     trigger_requests.append(
-        build_task_follow_up_trigger(
+        builder(
             task,
             recipient_agent_id=reply_target["agent_id"],
             from_agent=actor.id,
             from_name=actor.name,
             content=content.strip(),
-            attention_kind=attention_kind,
+            attention_kind=str(effective_kind or "").strip() or "task_update",
             source_task_event_id=source_task_event_id,
             source_channel="work",
         )
@@ -625,14 +629,17 @@ def _append_task_follow_up_message(
         )
         if attention_kind is None:
             return {target["agent_id"]}
+        effective_kind = _effective_attention_kind(attention_kind, content)
+        requires_response = _attention_kind_requires_response(effective_kind) or _content_asks_question(content)
+        builder = build_task_follow_up_trigger if requires_response else build_task_update_trigger
         result.setdefault("trigger_requests", []).append(
-            build_task_follow_up_trigger(
+            builder(
                 task,
                 recipient_agent_id=target["agent_id"],
                 from_agent=actor.id,
                 from_name=actor.name,
                 content=content.strip(),
-                attention_kind=attention_kind,
+                attention_kind=str(effective_kind or "").strip() or "task_update",
                 source_task_event_id=persisted.id if persisted is not None else None,
                 source_channel="work",
             )
@@ -666,6 +673,32 @@ _CHILD_UPDATES_TO_PARENT_EVENT_TYPES = {
     "completion": "status_update",
     "blocker": "status_update",
 }
+
+_RESPONSE_REQUIRED_ATTENTION_KINDS = {
+    "question",
+    "review_request",
+    "decision_needed",
+    "clarification_requested",
+}
+
+
+def _attention_kind_requires_response(attention_kind: str | None) -> bool:
+    """Return whether one task attention kind should require a follow-up response."""
+    return str(attention_kind or "").strip().lower() in _RESPONSE_REQUIRED_ATTENTION_KINDS
+
+
+def _content_asks_question(content: str | None) -> bool:
+    """Heuristic: treat content with a question mark as requiring a response."""
+    return isinstance(content, str) and "?" in content
+
+
+def _effective_attention_kind(attention_kind: str | None, content: str | None) -> str | None:
+    """Prefer explicit question attention when the message asks one."""
+    if attention_kind is None:
+        return None
+    if _content_asks_question(content):
+        return "question"
+    return attention_kind
 
 
 # ---------------------------------------------------------------------------
@@ -1061,6 +1094,22 @@ async def _handle_delegate_task(
 
     parent_task_id = activity_runtime.get_active_task_id(agent.id)
     parent_task = db.get_task(parent_task_id) if parent_task_id else None
+    if parent_task is not None:
+        owner_id = str(parent_task.owner_id or "").strip()
+        if owner_id and owner_id != agent.id:
+            owner = db.get_agent(owner_id)
+            owner_name = owner.name if owner is not None else owner_id
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    "Only the task owner can delegate new child tasks under an existing delegated workstream. "
+                    f'This task is owned by {owner_name}. Use "taskmsg" (kind=question/review) on this task thread '
+                    "to ask for clarification or request a new delegation."
+                ),
+                "agent_name": agent.name,
+                "task_id": parent_task.id,
+                "expected_actions": ["taskMessage"],
+            }
 
     task_title = str(action.get("taskTitle") or "").strip()
     task_description = str(action.get("taskDescription") or "").strip()
@@ -1651,7 +1700,7 @@ async def _handle_complete(
             )
             if parent.assigned_to and parent.assigned_to != agent.id:
                 result.setdefault("trigger_requests", []).append(
-                    build_task_follow_up_trigger(
+                    build_task_update_trigger(
                         parent,
                         recipient_agent_id=parent.assigned_to,
                         from_agent=agent.id,
@@ -1769,7 +1818,7 @@ async def _handle_blocked(
                 )
                 if parent.assigned_to and parent.assigned_to != agent.id:
                     result.setdefault("trigger_requests", []).append(
-                        build_task_follow_up_trigger(
+                        build_task_update_trigger(
                             parent,
                             recipient_agent_id=parent.assigned_to,
                             from_agent=agent.id,
