@@ -39,6 +39,23 @@ const CompanyTaskDetail = (() => {
         return virtualPath;
     }
 
+    function renderDeliverableCard(d, storageKey) {
+        const esc = config.escapeHtml;
+        const viewerPath = resolveDeliverablePath(d.path, storageKey);
+        const fileName = d.path.split('/').pop() || d.path;
+        return `
+            <div class="ct-file-open flex items-center gap-2 px-2 py-1.5 rounded border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer transition-colors text-xs"
+                 data-path="${esc(viewerPath)}">
+                <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-500 shrink-0"></i>
+                <div class="flex-1 min-w-0">
+                    <span class="font-medium text-blue-600 truncate block">${esc(fileName)}</span>
+                    ${d.description ? `<span class="text-bm-muted block">${esc(d.description)}</span>` : ''}
+                    <span class="text-[10px] text-bm-muted block truncate">${esc(d.path)}</span>
+                </div>
+                <i data-lucide="external-link" class="w-3 h-3 text-blue-400 shrink-0"></i>
+            </div>`;
+    }
+
     // ─── Public API ───
 
     function init(cfg) {
@@ -66,6 +83,7 @@ const CompanyTaskDetail = (() => {
         const esc = config.escapeHtml;
         const frt = config.formatRelativeTime;
         const colors = config.statusColors[task.status] || { dot: 'bg-gray-400', badge: 'bg-gray-100 text-gray-600' };
+        const children = allTasks.filter(t => t.parent_task_id === task.id);
 
         const isNewTask = currentTaskId !== task.id;
         currentTaskId = task.id;
@@ -130,29 +148,30 @@ const CompanyTaskDetail = (() => {
             html += `</div>`;
         }
 
-        // ── Deliverables (file links) ──
+        // ── Deliverables (file links) — rolls up child deliverables into parent ──
         const deliverables = task.work_contract?.deliverables || [];
-        if (deliverables.length > 0) {
+        const childDeliverableCount = children.reduce((sum, c) => sum + (c.work_contract?.deliverables || []).length, 0);
+        const totalDeliverableCount = deliverables.length + childDeliverableCount;
+        if (totalDeliverableCount > 0) {
             html += `<div class="ct-detail-section">`;
             html += `<div class="flex items-center gap-1.5 mb-2">`;
             html += `<i data-lucide="package" class="w-3.5 h-3.5 text-bm-muted"></i>`;
-            html += `<span class="text-xs font-semibold text-bm-text">Deliverables (${deliverables.length})</span>`;
+            html += `<span class="text-xs font-semibold text-bm-text">Deliverables (${totalDeliverableCount})</span>`;
             html += `</div>`;
             html += `<div class="space-y-1.5">`;
+            if (deliverables.length > 0 && childDeliverableCount > 0) {
+                html += `<div class="text-[11px] font-semibold text-bm-muted mb-1">This task</div>`;
+            }
             for (const d of deliverables) {
-                const viewerPath = resolveDeliverablePath(d.path, task.assigned_to_storage_key);
-                const fileName = d.path.split('/').pop() || d.path;
-                html += `
-                    <div class="ct-file-open flex items-center gap-2 px-2 py-1.5 rounded border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer transition-colors text-xs"
-                         data-path="${esc(viewerPath)}">
-                        <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-500 shrink-0"></i>
-                        <div class="flex-1 min-w-0">
-                            <span class="font-medium text-blue-600 truncate block">${esc(fileName)}</span>
-                            ${d.description ? `<span class="text-bm-muted block">${esc(d.description)}</span>` : ''}
-                            <span class="text-[10px] text-bm-muted block truncate">${esc(d.path)}</span>
-                        </div>
-                        <i data-lucide="external-link" class="w-3 h-3 text-blue-400 shrink-0"></i>
-                    </div>`;
+                html += renderDeliverableCard(d, task.assigned_to_storage_key);
+            }
+            for (const child of children) {
+                const cDeliverables = child.work_contract?.deliverables || [];
+                if (cDeliverables.length === 0) continue;
+                html += `<div class="text-[11px] font-semibold text-bm-muted mt-3 mb-1">${esc(child.title)}</div>`;
+                for (const d of cDeliverables) {
+                    html += renderDeliverableCard(d, child.assigned_to_storage_key);
+                }
             }
             html += `</div></div>`;
         }
@@ -184,7 +203,6 @@ const CompanyTaskDetail = (() => {
         }
 
         // ── Subtasks ──
-        const children = allTasks.filter(t => t.parent_task_id === task.id);
         if (children.length > 0) {
             html += `<div class="ct-detail-section">`;
             html += `<div class="flex items-center gap-1.5 mb-2">`;

@@ -1346,11 +1346,15 @@ async def _handle_remote_meeting(
 
     active = activity_runtime.get_active_activity(agent.id)
     if active and active.kind == "meeting":
+        current_detail = str(active.detail or "").strip()
+        next_detail = current_detail or meeting_content
         db.update_activity(
             active.id,
             title=topic or active.title,
-            detail=meeting_content,
-            metadata={**active.metadata, "topic": topic, "meeting_mode": "remote"} if topic else {**active.metadata, "meeting_mode": "remote"},
+            detail=next_detail,
+            metadata={**active.metadata, "topic": topic, "meeting_mode": "remote"}
+            if topic
+            else {**active.metadata, "meeting_mode": "remote"},
         )
     else:
         parent = activity_runtime.get_active_activity(agent.id)
@@ -1406,6 +1410,24 @@ async def _handle_attend_meeting(
         target = _resolve_agent_by_id(action.get("agentId"))
         if target is None:
             return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
+    else:
+        other_participants = [
+            participant
+            for participant in db.list_active_meeting_participants(room["id"])
+            if str(participant.get("id") or "").strip() and str(participant.get("id")) != agent.id
+        ]
+        if not other_participants:
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    "No one else is currently in the Meeting Room. "
+                    'If you were asked to meet with someone, invite them by re-running `mtg` with `data.mode="room"` '
+                    "and the teammate's `data.aid`, or send them a `socialmsg` asking them to join the Meeting Room. "
+                    "If you don't actually need a meeting right now, end the meeting commitment with `idle`."
+                ),
+                "agent_name": agent.name,
+                "feedback_code": "meeting_requires_participant",
+            }
 
     meeting_content = f"In-person meeting in Meeting Room: {topic}" if topic else "In-person meeting in Meeting Room"
     msg = db.create_message(
@@ -1439,10 +1461,12 @@ async def _handle_attend_meeting(
     active = activity_runtime.get_active_activity(agent.id)
     if active and active.kind == "meeting":
         metadata = {**active.metadata, "session_id": session.id}
+        current_detail = str(active.detail or "").strip()
+        next_detail = current_detail or meeting_content
         db.update_activity(
             active.id,
             title=topic or active.title,
-            detail=meeting_content,
+            detail=next_detail,
             metadata={**metadata, "topic": topic} if topic else metadata,
         )
         current_meeting = db.get_activity(active.id) or active

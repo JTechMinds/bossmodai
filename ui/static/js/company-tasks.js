@@ -18,6 +18,7 @@ const CompanyTasks = (() => {
     let refreshTimer = null;
     let splitInstance = null;
     let initialized = false;
+    let showChildren = false;
 
     const STATUS_COLORS = {
         active:    { dot: 'bg-green-500',   badge: 'bg-green-100 text-green-700' },
@@ -71,6 +72,7 @@ const CompanyTasks = (() => {
 
     function filteredTasks() {
         return tasks.filter(task => {
+            if (!showChildren && task.parent_task_id) return false;
             if (statusFilter !== 'all' && task.status !== statusFilter) return false;
             if (agentFilter && task.assigned_to !== agentFilter) return false;
             if (searchQuery) {
@@ -112,11 +114,33 @@ const CompanyTasks = (() => {
     }
 
     function taskCounts() {
-        const counts = { total: tasks.length, active: 0, pending: 0, waiting: 0, complete: 0, stalled: 0, blocked: 0 };
-        for (const task of tasks) {
+        const visible = showChildren ? tasks : tasks.filter(t => !t.parent_task_id);
+        const counts = { total: visible.length, active: 0, pending: 0, waiting: 0, complete: 0, stalled: 0, blocked: 0 };
+        for (const task of visible) {
             if (counts[task.status] !== undefined) counts[task.status]++;
         }
         return counts;
+    }
+
+    function buildDisplayOrder(sorted) {
+        if (!showChildren) return sorted;
+        const topLevel = [];
+        const childrenByParent = new Map();
+        for (const t of sorted) {
+            if (t.parent_task_id) {
+                if (!childrenByParent.has(t.parent_task_id)) childrenByParent.set(t.parent_task_id, []);
+                childrenByParent.get(t.parent_task_id).push(t);
+            } else {
+                topLevel.push(t);
+            }
+        }
+        const result = [];
+        for (const parent of topLevel) {
+            result.push(parent);
+            const kids = childrenByParent.get(parent.id);
+            if (kids) for (const child of kids) result.push(child);
+        }
+        return result;
     }
 
     // ─── Rendering ───
@@ -200,14 +224,20 @@ const CompanyTasks = (() => {
                                     data-status="${escape(s)}">${escape(label)} <span class="ml-0.5 opacity-70">${count}</span></button>`;
                     }).join('')}
                 </div>
-                ${agents.length > 0 ? `
-                    <div class="ml-auto shrink-0">
+                <div class="ml-auto flex items-center gap-2 shrink-0">
+                    ${agents.length > 0 ? `
                         <select id="ct-agent-filter"
                                 class="text-xs border border-bm-border rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-bm-accent">
                             <option value="">All Agents</option>
                             ${agents.map(a => `<option value="${escape(a.id)}" ${agentFilter === a.id ? 'selected' : ''}>${escape(a.name)}</option>`).join('')}
-                        </select>
-                    </div>` : ''}
+                        </select>` : ''}
+                    <label class="inline-flex items-center gap-1.5 text-xs text-bm-muted cursor-pointer select-none">
+                        <input type="checkbox" id="ct-show-children"
+                               class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
+                               ${showChildren ? 'checked' : ''}>
+                        Show child tasks
+                    </label>
+                </div>
             </div>`;
 
         // ── 2-column body (Split.js resizable) ──
@@ -271,7 +301,7 @@ const CompanyTasks = (() => {
     function renderTableRows() {
         const escape = BossModUtils.escapeHtml;
         const relTime = BossModUtils.formatRelativeTime;
-        const sorted = sortedFilteredTasks();
+        const sorted = buildDisplayOrder(sortedFilteredTasks());
 
         if (sorted.length === 0) {
             const msg = (statusFilter !== 'all' || agentFilter || searchQuery)
@@ -287,14 +317,15 @@ const CompanyTasks = (() => {
         for (const task of sorted) {
             const colors = getColors(task.status);
             const isSelected = selectedTaskId === task.id;
+            const isChild = !!task.parent_task_id;
             const subCount = subtaskCountMap.get(task.id) || 0;
             const timeText = relTime(task.last_activity);
 
             html += `
-                <div class="ct-task-row ${isSelected ? 'ct-selected' : ''}" data-task-id="${escape(task.id)}">
+                <div class="ct-task-row ${isSelected ? 'ct-selected' : ''} ${isChild ? 'ct-child-row' : ''}" data-task-id="${escape(task.id)}">
                     <div class="flex items-center px-1 py-2">
                         <div class="w-[32px] flex justify-center shrink-0">
-                            <span class="w-2 h-2 rounded-full ${colors.dot}"></span>
+                            ${isChild ? `<span class="text-[11px] text-bm-muted/50 leading-none">↳</span>` : `<span class="w-2 h-2 rounded-full ${colors.dot}"></span>`}
                         </div>
                         <div class="flex-1 min-w-0 flex items-center gap-2 pr-2">
                             <span class="text-sm font-medium truncate">${escape(task.title)}</span>
@@ -386,6 +417,16 @@ const CompanyTasks = (() => {
             refreshTableBody();
         });
 
+        // Show child tasks toggle
+        container.querySelector('#ct-show-children')?.addEventListener('change', (e) => {
+            showChildren = e.target.checked;
+            if (!showChildren && selectedTaskId) {
+                const selected = tasks.find(t => t.id === selectedTaskId);
+                if (selected && selected.parent_task_id) selectedTaskId = null;
+            }
+            renderLayout();
+        });
+
         // Sort headers
         container.querySelectorAll('.ct-sort-header').forEach(header => {
             header.addEventListener('click', () => handleSort(header.dataset.sort));
@@ -456,12 +497,19 @@ const CompanyTasks = (() => {
         });
     }
 
+    function scrollToRow(taskId) {
+        container?.querySelector(`.ct-task-row[data-task-id="${taskId}"]`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
     function navigateToTask(taskId) {
+        const target = tasks.find(t => t.id === taskId);
+        if (target?.parent_task_id && !showChildren) {
+            showChildren = true;
+        }
         selectedTaskId = taskId;
-        updateRowSelection();
-        renderDetailPanel();
-        const row = container?.querySelector(`.ct-task-row[data-task-id="${taskId}"]`);
-        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        renderLayout();
+        scrollToRow(taskId);
     }
 
     // ─── WebSocket event handler ───
@@ -508,6 +556,7 @@ const CompanyTasks = (() => {
         selectedTaskId = null;
         sortColumn = null;
         sortDirection = 'asc';
+        showChildren = false;
         initialized = false;
     }
 

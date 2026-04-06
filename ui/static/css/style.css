@@ -727,6 +727,13 @@
 .ct-event-entry:last-child {
     border-bottom: none;
 }
+.ct-child-row {
+    padding-left: 16px;
+    background-color: #fafbfc;
+}
+.ct-child-row:hover {
+    background-color: #eef2f7;
+}
 .ct-subtask-badge {
     display: inline-flex;
     align-items: center;

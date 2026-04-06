@@ -81,6 +81,7 @@ RULES:
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
   - mtg + mode="remote": require data.aid
+  - mtg + mode="room": if the goal is to meet with a teammate (not just enter the room), include data.aid to invite one teammate; do not claim the meeting happened unless they actually join/respond
   - idle: use when there is no active work and there is no useful next execution step in this turn
   - wait: require data.why; use it when the current task stays open but is waiting on another person, review, or external dependency
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
