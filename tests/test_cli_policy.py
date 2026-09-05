@@ -158,11 +158,16 @@ def test_execute_approved_command_still_applies_path_jail() -> None:
     assert state is not None
     workspace = agent_artifact_dir(agent.storage_key)
     try:
+        outside = db.create_cli_approval_request(
+            agent_id=agent.id,
+            command="cat /etc/passwd",
+            cwd="/me",
+        )
         denied = execute_approved_command(
             agent,
             state,
             "cat /etc/passwd",
-            approval_request_id="approved-outside",
+            approval_request_id=outside.id,
         )
         assert denied.ok is False
         assert denied.executor == "shell"
@@ -172,11 +177,16 @@ def test_execute_approved_command_still_applies_path_jail() -> None:
 
         notes = workspace / "notes.md"
         notes.write_text("approved-ok", encoding="utf-8")
+        inside = db.create_cli_approval_request(
+            agent_id=agent.id,
+            command="cat notes.md",
+            cwd="/me",
+        )
         allowed = execute_approved_command(
             agent,
             state,
             "cat notes.md",
-            approval_request_id="approved-inside",
+            approval_request_id=inside.id,
         )
         assert allowed.ok is True
         assert "approved-ok" in allowed.prompt_content
