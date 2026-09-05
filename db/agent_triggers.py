@@ -292,7 +292,7 @@ def complete_agent_trigger(
             f"""
             UPDATE agent_triggers
             SET status = 'completed', completed_at = $1
-            WHERE id = $2 AND status = 'claimed'
+            WHERE id = $2 AND status IN ('queued', 'claimed')
             RETURNING {_TRIGGER_COLUMNS}
             """,
             [datetime.now(timezone.utc), trigger_id],
