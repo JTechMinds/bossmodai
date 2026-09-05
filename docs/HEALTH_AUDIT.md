@@ -20,7 +20,8 @@ The health problem is **concentration + thin verification**, not missing feature
 2. **Security batch #1 is in flight, not done.** PR #2 covers SEC-P0-01 (Telegram fail-closed) and SEC-P0-02 (redact secrets + local API token). On current `main` those P0s are still live. Remaining P0s — shell host escape (SEC-P0-03) and company-files root over `artifacts/db_backups/` (SEC-P0-04) — are untouched.
 3. **Critical behavior is almost untested.** `tests/` on `main` is one 42-line meeting-kickoff test. `scripts/run_runtime_smoke_suite.sh` points at `tests/test_agent_runtime.py` cases that **do not exist**. PR #2 adds Telegram/API security tests only.
 4. **The operator cannot assign a task from the UI.** README promises “assign real work.” `POST /api/tasks` exists; no JS calls it. Chat is the only first-class human → work path. Company Tasks is a read-only board.
-5. **Globals and a `db` barrel make the interesting code hard to unit-test.** `runtime_services`, `dispatcher`, `policy_engine`, `manager`, `config._cache` are process singletons. `core/runtime/services.py` imports `api.websocket`.
+5. **Two more correctness P0s on the approval / skip paths.** Telegram `/approve` and callback buttons write the approval row but never enqueue `cli_approval_resolved` (desktop does). A no-model skip returns `trigger_status="skipped"`, which the dispatcher treats as non-retryable failure and **exhausts** the trigger (and can stall the task).
+6. **Globals and a `db` barrel make the interesting code hard to unit-test.** `runtime_services`, `dispatcher`, `policy_engine`, `manager`, `config._cache` are process singletons. `core/runtime/services.py` imports `api.websocket`.
 
 **Do not rewrite.** Land PR #2, close the two remaining security P0s, restore a critical-path test suite, then peel monoliths and fix the task/meeting glitches in small PRs.
 
@@ -157,13 +158,18 @@ Severity here is **behavior/data-loss**, not style.
 | Finding | Evidence | Why |
 | --- | --- | --- |
 | **Reused task does not wake the assignee** | `api/routes.py` `create_task`: enqueue only if `creation.outcome == "create_new_task"`. `create_or_bind_task` can return `bind_existing_task`. | Human (or later UI) “assigns the same workstream” again → 201-ish reuse, **no `task_assigned` trigger**. Silent no-op. |
-| **No-model skip can block the task** | `loop.py` `_skip_turn`: if `trigger.task_id`, sets status `blocked`. First-run with empty `default_model_*` + a chat that created a task. | Looks like a task failure, not a settings gap. |
+| **Telegram CLI approval does not resume the agent** | `integrations/telegram/bot.py` `cmd_approve` / `handle_approval_callback` call `approve_cli_approval_request` / `reject` only. Desktop `api/routes.py` `approve_cli_request` also creates `cli_approval_resolved`. | Buttons look successful; agent stays paused. Approval-bypass (`execute_approved_command`) never runs from Telegram. |
+| **No-model skip permanently fails the trigger** | `outcomes.py` `skipped` → `trigger_status="skipped"`. Dispatcher only retries `"failed"`; anything else goes to `_exhaust_failed_trigger` (fail trigger, possibly stall task). `_skip_turn` also sets the task `blocked` when `trigger.task_id` is set. | First-run / missing model **drops the human message** and can stall work. |
 | **Company files can read/delete DB backups** | `_build_company_files_payload` + `artifacts_root()`; `reset_database()` writes `artifacts/db_backups/*.bak` | Same as SEC-P0-04; also a data-loss path (Delete in the file browser). |
 
 ### P1
 
 | Finding | Evidence | Why |
 | --- | --- | --- |
+| **Ambiguous task match creates a duplicate** | `resolution.py` can return `clarify_ambiguous_match`; `create_or_bind_task` only special-cases `bind_existing_task` then always `create_task`. | Two open “Plan” tasks instead of a clarify. |
+| **`task_assigned` waits forever if any activity is active** | `activity_scheduler.can_dispatch_trigger`: `task_assigned` requires `active_activity is None`. | New assignment sits `queued` through a meeting/chat/walk. |
+| **Desktop CLI approve does not wake the worker** | `approve_cli_request` uses `db.create_agent_trigger` directly, not `runtime_services.enqueue_trigger`. | Trigger exists; worker may sleep until the next poll/other wake. |
+| **`expire_stale_requests` is never called** | `db/cli_approval_requests.py` defines it; no worker/watchdog caller. | Expired approvals leave agents mid-pause. |
 | **Task status has no state machine** | `db/tasks.py` `update_task` accepts any CHECK-legal status | Watchdog, reset-runtime, skip-turn, and agent `done` all write status independently. Easy to strand `accepted` forever (watchdog only lists `status="active"`). |
 | **Watchdog ignores non-active work** | `watchdog.py` `_check_tasks`: `db.list_tasks(status="active")` | `accepted` / `waiting` / `pending` never get a ping. Matches “assignment bugs exist” commit history. |
 | **Telegram `/meeting` is a channel, not a meeting** | `bot.py` `cmd_meeting` → `_open_group_session` → `create_channel` | Desktop meetings are `meeting_sessions` + room assembly + watchdog. Telegram “meeting” never hits that state machine. Product mismatch + two group-chat implementations. |
@@ -270,6 +276,8 @@ List/read/raw/write/delete/rename/move/copy/search all use `artifacts_root()`. B
 | SEC-NEW-04 | P1 product/security | CDN scripts + Tauri CSP allowlist | Offline claim false; supply-chain on every launch. |
 | SEC-NEW-05 | P2 after PR #2 | Token injected into `index.html`; WS `?token=` | Stops drive-by CSRF from random sites (they lack the token). Residual: XSS/extension can read the page; query-string token hits logs. No Origin check. |
 | SEC-NEW-06 | P2 | `/health` open, static `/` open | Correct for desktop. Don’t “fix” by locking `/`. |
+| SEC-NEW-07 | P2 | FastAPI `/docs` + `/openapi.json` (PR #2 middleware is `/api/*` only) | Documents destructive routes. Disable docs in the desktop build. |
+| SEC-NEW-08 | P1 on `main`, P2 after PR #2 | `GET /api/diagnostics/{id}` returns full prompt/context blobs | Can echo secrets from tool output. Redact or gate separately. |
 
 Virtual FS traversal and `shell=True`/`eval`/`pickle` — still clean (agree with PR #1).
 
@@ -298,7 +306,7 @@ flowchart TD
   A[This docs PR] --> B[Merge PR #2 SEC-P0-01/02]
   B --> C[PR A: SEC-P0-04 company files root]
   C --> D[PR B: SEC-P0-03 + SEC-P1-04 shell policy + path jail]
-  D --> E[PR C: restore smoke tests + fix task-reuse enqueue]
+  D --> E[PR C: tests + task-reuse + Telegram resume + skip-turn]
   E --> F[Peel routes.py / actions.py]
   E --> G[Product: Assign Task UI]
   E --> H[SEC-P1-01 tool output role]
@@ -308,7 +316,7 @@ flowchart TD
 
 1. **Company files root** (SEC-P0-04) — smallest remaining P0, clear tests, no behavior change for project files.
 2. **Shell seed + argv path confinement** (SEC-P0-03 + SEC-P1-04) — do this before anyone is told to enable shell.
-3. **Critical-path tests + task-reuse trigger** (TEST-P1-08 + CORR-P0-01) — puts a net under the loop before more refactors.
+3. **Critical-path tests + task-reuse + Telegram resume + skip-turn** (HA-TEST-P1-01, HA-CORR-P0-01/02/03) — puts a net under the loop and unblocks two live P0s.
 
 Do **not** start monolith splits until (3) exists. Do **not** rewrite `loop.py` as a platform.
 
@@ -320,6 +328,6 @@ Do **not** start monolith splits until (3) exists. Do **not** rewrite `loop.py` 
 | --- | --- |
 | Remaining security | HA-SEC-P0-03, HA-SEC-P0-04, HA-SEC-P1-01, HA-SEC-P1-04, HA-SEC-P1-03 |
 | Structure / DI | HA-STRUCT-P1-01 (routes), HA-STRUCT-P1-02 (actions), HA-STRUCT-P1-06 (core→api), HA-STRUCT-P1-07 (rounds DRY) |
-| Correctness / glitches | HA-CORR-P0-01, HA-CORR-P1-02, HA-CORR-P1-03, HA-CORR-P1-04 |
+| Correctness / glitches | HA-CORR-P0-01, HA-CORR-P0-02, HA-CORR-P0-03, HA-CORR-P1-02, HA-CORR-P1-03, HA-CORR-P1-04 |
 | Tests | HA-TEST-P1-01, HA-TEST-P1-02, HA-TEST-P1-03 |
 | Product / DX | HA-PROD-P1-01 (assign-task UI), HA-OPS-P1-01 (no-model guard), HA-OPS-P1-02 (CDN/offline) |

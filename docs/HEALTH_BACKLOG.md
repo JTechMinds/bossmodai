@@ -17,38 +17,41 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 | 1 | HA-SEC-P0-04 | Narrow company-files root; hide backups | P0 | security |
 | 2 | HA-SEC-P0-03 | Shell path jail + dangerous seed rules | P0 | security |
 | 3 | HA-TEST-P1-01 | Restore critical-path pytest module | P1 | tests |
-| 4 | HA-CORR-P0-01 | Reused tasks must wake the assignee | P0 | correctness |
-| 5 | HA-SEC-P1-04 | Policy: `xargs` / shells / argv[0] | P1 | security |
-| 6 | HA-SEC-P1-01 | CLI output must not be `role=system` | P1 | security |
-| 7 | HA-PROD-P1-01 | Assign Task UI + reuse outcome in API | P1 | product |
-| 8 | HA-CORR-P1-02 | Task status transition table | P1 | correctness |
-| 9 | HA-CORR-P1-03 | Watchdog covers accepted/waiting | P1 | correctness |
-| 10 | HA-CORR-P1-04 | Telegram `/meeting` vs room meetings | P1 | correctness |
-| 11 | HA-SEC-P1-03 | Unique approval IDs | P1 | security |
-| 12 | HA-OPS-P1-01 | First-run no-model guard | P1 | ops |
-| 13 | HA-OPS-P1-02 | Offline UI (vendor Tailwind or honest README) | P1 | ops |
-| 14 | HA-STRUCT-P1-01 | Split `api/routes.py` | P1 | structure |
-| 15 | HA-STRUCT-P1-02 | Split `actions.py` handlers | P1 | structure |
-| 16 | HA-STRUCT-P1-03 | Split `loop.py` / `decision_runtime.py` | P1 | structure |
-| 17 | HA-STRUCT-P1-04 | Split settings + CLI-policy JS | P1 | structure |
-| 18 | HA-STRUCT-P1-05 | Split `managed_writer.py` + `context_builder.py` preview | P1 | structure |
-| 19 | HA-STRUCT-P1-06 | Remove `core` → `api.websocket` import | P1 | DI |
-| 20 | HA-STRUCT-P1-07 | Dedup meeting/channel rounds | P1 | DRY |
-| 21 | HA-SEC-P1-05 | Secret-at-rest plan (keychain / encrypt) | P1 | security |
-| 22 | HA-SEC-P1-02 | Trigger leases / heartbeat | P1 | correctness |
-| 23 | HA-LOOP-P1-07 | Seed meeting watchdog settings | P1 | ops |
-| 24 | HA-SEC-P1-06 | Simulator default dry-run | P1 | security |
-| 25 | HA-CORR-P1-05 | Reset-runtime + skip-turn task hygiene | P1 | correctness |
-| 26 | HA-TEST-P1-02 | Policy + path-jail regression tests | P1 | tests |
-| 27 | HA-TEST-P1-03 | Task/meeting/channel pytest slice | P1 | tests |
-| 28 | HA-STRUCT-P1-08 | Shared JS API client (finish PR #2 migration) | P1 | DRY |
-| 29 | HA-SEC-NEW-01 | Connection-test URL allowlist | P2 | security |
-| 30 | HA-OPS-P2-01 | Drop unused `duckdb` / `twilio` | P2 | ops |
-| 31 | HA-OPS-P2-02 | Desktop `pkill` → recorded PID | P2 | ops |
-| 32 | HA-OPS-P2-03 | README stack / token / offline copy | P2 | product |
-| 33 | HA-CORR-P2-01 | Safe `config.get_int` | P2 | correctness |
-| 34 | HA-STRUCT-P2-01 | Stop growing `db/__init__.py` | P2 | DI |
-| 35 | HA-PROD-P2-01 | Chat empty-reply UX | P2 | product |
+| 4 | HA-CORR-P0-02 | Telegram CLI approve must resume the agent | P0 | correctness |
+| 5 | HA-CORR-P0-03 | Skip-turn must not exhaust the trigger | P0 | correctness |
+| 6 | HA-CORR-P0-01 | Reused tasks must wake the assignee | P0 | correctness |
+| 7 | HA-SEC-P1-04 | Policy: `xargs` / shells / argv[0] | P1 | security |
+| 8 | HA-SEC-P1-01 | CLI output must not be `role=system` | P1 | security |
+| 9 | HA-PROD-P1-01 | Assign Task UI + reuse outcome in API | P1 | product |
+| 10 | HA-CORR-P1-02 | Task status transition table | P1 | correctness |
+| 11 | HA-CORR-P1-03 | Watchdog covers accepted/waiting | P1 | correctness |
+| 12 | HA-CORR-P1-04 | Telegram `/meeting` vs room meetings | P1 | correctness |
+| 13 | HA-SEC-P1-03 | Unique approval IDs | P1 | security |
+| 15 | HA-OPS-P1-02 | Offline UI (vendor Tailwind or honest README) | P1 | ops |
+| 16 | HA-STRUCT-P1-01 | Split `api/routes.py` | P1 | structure |
+| 17 | HA-STRUCT-P1-02 | Split `actions.py` handlers | P1 | structure |
+| 18 | HA-STRUCT-P1-03 | Split `loop.py` / `decision_runtime.py` | P1 | structure |
+| 19 | HA-STRUCT-P1-04 | Split settings + CLI-policy JS | P1 | structure |
+| 20 | HA-STRUCT-P1-05 | Split `managed_writer.py` + `context_builder.py` preview | P1 | structure |
+| 21 | HA-STRUCT-P1-06 | Remove `core` → `api.websocket` import | P1 | DI |
+| 22 | HA-STRUCT-P1-07 | Dedup meeting/channel rounds | P1 | DRY |
+| 23 | HA-SEC-P1-05 | Secret-at-rest plan (keychain / encrypt) | P1 | security |
+| 24 | HA-SEC-P1-02 | Trigger leases / heartbeat | P1 | correctness |
+| 25 | HA-LOOP-P1-07 | Seed meeting watchdog settings | P1 | ops |
+| 26 | HA-SEC-P1-06 | Simulator default dry-run | P1 | security |
+| 27 | HA-CORR-P1-05 | Reset-runtime + skip-turn task hygiene | P1 | correctness |
+| 28 | HA-CORR-P1-06 | Handle `clarify_ambiguous_match`; don’t create a duplicate | P1 | correctness |
+| 29 | HA-CORR-P1-07 | Dispatch `task_assigned` while another activity is live | P1 | correctness |
+| 30 | HA-TEST-P1-02 | Policy + path-jail regression tests | P1 | tests |
+| 31 | HA-TEST-P1-03 | Task/meeting/channel pytest slice | P1 | tests |
+| 32 | HA-STRUCT-P1-08 | Shared JS API client (finish PR #2 migration) | P1 | DRY |
+| 33 | HA-SEC-NEW-01 | Connection-test URL allowlist | P2 | security |
+| 34 | HA-OPS-P2-01 | Drop unused `duckdb` / `twilio` | P2 | ops |
+| 35 | HA-OPS-P2-02 | Desktop `pkill` → recorded PID | P2 | ops |
+| 36 | HA-OPS-P2-03 | README stack / token / offline copy | P2 | product |
+| 37 | HA-CORR-P2-01 | Safe `config.get_int` | P2 | correctness |
+| 38 | HA-STRUCT-P2-01 | Stop growing `db/__init__.py` | P2 | DI |
+| 39 | HA-PROD-P2-01 | Chat empty-reply UX | P2 | product |
 
 ---
 
@@ -167,6 +170,85 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [ ] Re-POST same title/assignee → trigger row queued or already-open trigger updated.
 - [ ] Response body includes `outcome` (`create_new_task` \| `bind_existing_task` \| `clarify_ambiguous_match`).
 - [ ] Pytest in the module from HA-TEST-P1-01.
+
+---
+
+### HA-CORR-P0-02 — Telegram CLI approve must resume the agent
+
+| | |
+| --- | --- |
+| **Severity** | P0 |
+| **Area** | correctness / Telegram / CLI |
+
+**Problem.** `cmd_approve` and `handle_approval_callback` persist approve/reject and reply in Telegram. They never create `cli_approval_resolved` or wake the worker. Desktop `POST /api/cli-policy/approvals/{id}/approve` does create the trigger but via `db.create_agent_trigger` (no `runtime_services.enqueue_trigger` / `wake_dispatcher`). `expire_stale_cli_approval_requests` is never called.
+
+**Why it matters.** Telegram buttons look successful; the agent stays paused. Desktop resume can sit until the next accidental wake.
+
+**Approach.** One helper `resume_cli_approval(request_id, *, approved, note)` used by API and Telegram: persist decision, enqueue `cli_approval_resolved`, wake dispatcher. Call `expire_stale_cli_approval_requests` from the task or meeting watchdog loop.
+
+**Acceptance**
+
+- [ ] Telegram approve → queued `cli_approval_resolved` + worker wake (or equivalent `runtime_services.enqueue_trigger`).
+- [ ] Telegram reject → same trigger type with `status=rejected`.
+- [ ] Desktop approve uses the same helper (wake guaranteed).
+- [ ] Pytest: approve path creates the trigger without starting Telegram.
+
+---
+
+### HA-CORR-P0-03 — Skip-turn must not exhaust the trigger
+
+| | |
+| --- | --- |
+| **Severity** | P0 |
+| **Area** | correctness / dispatcher |
+
+**Problem.** `_skip_turn` returns `TurnOutcome.skipped` (`trigger_status="skipped"`). Dispatcher treats only `"completed"` as success and only `"failed"` as retryable; `"skipped"` hits `_exhaust_failed_trigger` (permanent fail, may stall the task). `_skip_turn` also sets the task `blocked` when `trigger.task_id` is set.
+
+**Why it matters.** First-run with no model **drops the human chat** and can stall work. Looks like a crash, not a settings gap.
+
+**Approach.** Treat `skipped` as completed-without-retry (or requeue until a model exists). Do not `blocked`/`stalled` the task. Surface the existing “no model configured” activity. Pair with HA-OPS-P1-01 UI banner.
+
+**Acceptance**
+
+- [ ] No-model `human_chat` → trigger not `failed`; task not `stalled`/`blocked`.
+- [ ] Activity/diagnostic still records the skip reason.
+- [ ] Pytest on dispatcher supervision with a skipped outcome.
+
+---
+
+### HA-CORR-P1-06 — Ambiguous task match must not create a duplicate
+
+| | |
+| --- | --- |
+| **Severity** | P1 |
+| **Area** | correctness / tasks |
+
+**Problem.** `resolve_existing_task` can return `clarify_ambiguous_match`. `create_or_bind_task` only short-circuits `bind_existing_task`, then always `create_task`.
+
+**Approach.** Return the ambiguous outcome to the API/decision layer; do not insert a third open task. Decision path should `clarify`.
+
+**Acceptance**
+
+- [ ] Two open same-title tasks + new bind → no third row.
+- [ ] API response `outcome=clarify_ambiguous_match` with candidate IDs.
+
+---
+
+### HA-CORR-P1-07 — `task_assigned` while another activity is live
+
+| | |
+| --- | --- |
+| **Severity** | P1 |
+| **Area** | correctness / dispatcher |
+
+**Problem.** `can_dispatch_trigger` returns false for `task_assigned` unless `active_activity is None`. Assignment sits `queued` through meetings/chats/walks.
+
+**Approach.** Allow `task_assigned` to preempt or queue behind a defined set (e.g. allow during conversation; keep blocking only `in_transit`). Document the rule in `policies.py`.
+
+**Acceptance**
+
+- [ ] Agent in a conversation still receives `task_assigned` within one dispatcher drain (or a stated max delay).
+- [ ] In-transit still waits for arrival.
 
 ---
 
