@@ -6,8 +6,9 @@ Commands are parsed via shlex.split() and run without a shell (``shell=False``)
 to prevent shell injection.
 
 The path jail (HA-SEC-P0-03) inspects argv tokens that look like filesystem
-paths and rejects any that resolve outside the allowed roots (agent workspace
-and the projects mount). Approval does not bypass this check.
+paths and rejects any that resolve outside the allowed roots (agent workspace,
+the projects mount, and any operator-configured extra host roots). Approval
+does not bypass this check.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
+from core.bm_cli.host_roots import allowed_workspace_roots, is_within_roots
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +71,11 @@ class PathJailError(ValueError):
 def allowed_shell_roots(agent_storage_key: str) -> tuple[Path, ...]:
     """Return the real filesystem roots a native shell command may touch.
 
-    Roots are the agent's personal workspace and the shared projects mount.
-    ``artifacts/db_backups`` and other agents' workspaces are outside the jail.
+    Roots are the agent's personal workspace, the shared projects mount, and
+    any operator-configured extra host roots. ``artifacts/db_backups`` and
+    other agents' workspaces stay outside the jail.
     """
-    return (
-        agent_artifact_dir(agent_storage_key).resolve(),
-        projects_artifact_root().resolve(),
-    )
+    return allowed_workspace_roots(agent_storage_key)
 
 
 def _looks_like_path(token: str) -> bool:
@@ -136,16 +135,6 @@ def _resolve_user_path(token: str, cwd: Path) -> Path:
     return path.resolve()
 
 
-def _is_within_roots(path: Path, roots: Sequence[Path]) -> bool:
-    """Return True if *path* is equal to or inside any allowed root."""
-    resolved = path.resolve()
-    for root in roots:
-        root_resolved = Path(root).resolve()
-        if resolved == root_resolved or root_resolved in resolved.parents:
-            return True
-    return False
-
-
 def resolve_jailed_path(token: str, *, cwd: Path) -> Path | None:
     """Return the resolved path a token refers to, or None if it is not a path.
 
@@ -178,10 +167,10 @@ def assert_argv_within_path_jail(
     cwd_resolved = Path(cwd).resolve()
     roots = tuple(Path(root).resolve() for root in allowed_roots) or (cwd_resolved,)
 
-    if not _is_within_roots(cwd_resolved, roots):
+    if not is_within_roots(cwd_resolved, roots):
         raise PathJailError(
             f"Path jail: working directory {str(cwd_resolved)!r} is outside "
-            "the agent workspace and projects mount"
+            "the allowed workspace roots"
         )
 
     for raw_token in args[1:]:
@@ -196,10 +185,10 @@ def assert_argv_within_path_jail(
                 ) from exc
             if resolved is None:
                 continue
-            if not _is_within_roots(resolved, roots):
+            if not is_within_roots(resolved, roots):
                 raise PathJailError(
-                    f"Path jail: {candidate!r} resolves outside the agent "
-                    "workspace and projects mount"
+                    f"Path jail: {candidate!r} resolves outside the allowed "
+                    "workspace roots"
                 )
 
 

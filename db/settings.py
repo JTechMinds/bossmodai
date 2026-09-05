@@ -103,6 +103,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),
     ("cli_approval_timeout_minutes", "60", "cli_policy"),
     ("cli_default_policy", "deny", "cli_policy"),
+    # Extra host directories a named absolute path may open/read/edit.
+    # Empty = no extra host access (fail-closed). Not a full host mount.
+    ("workspace_host_roots", "", "cli_policy"),
 
     # ── Agent defaults ──
     ("default_spawn_x", "14", "simulation"),

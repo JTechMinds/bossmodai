@@ -377,6 +377,9 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
     ("always_allowed", "cat", "prefix", "Print file contents to stdout.", "filesystem",
      "cat [options] <file...>",
      "Print file contents to stdout.\nExample: cat config.yaml"),
+    ("always_allowed", "uname", "prefix", "Print kernel and OS identity.", "system",
+     "uname [options]",
+     "Print the kernel name and related system identity. Pathless diagnostic.\nExample: uname -a"),
 
     # ── approval_required — prefix ──
     ("approval_required", "rm", "prefix", "Remove files or directories.", "filesystem",
@@ -509,4 +512,39 @@ def reconcile_hardened_seed_rules() -> int:
             )
             if updated is not None:
                 changes += 1
+    changes += _ensure_safe_diagnostic_seed_rules()
+    return changes
+
+
+_SAFE_DIAGNOSTIC_ALWAYS_ALLOWED = (
+    ("always_allowed", "uname", "prefix", "Print kernel and OS identity.", "system",
+     "uname [options]",
+     "Print the kernel name and related system identity. Pathless diagnostic.\nExample: uname -a"),
+)
+
+
+def _ensure_safe_diagnostic_seed_rules() -> int:
+    """Insert missing pathless diagnostic always-allowed seed rules.
+
+    Does not overwrite an operator-customized existing ``uname`` row.
+    """
+    changes = 0
+    for tier, pattern, match_mode, description, category, usage_syntax, help_text in _SAFE_DIAGNOSTIC_ALWAYS_ALLOWED:
+        existing = query_one(
+            "SELECT id FROM cli_policy_rules WHERE pattern = $1 AND match_mode = $2 AND agent_id IS NULL",
+            [pattern, match_mode],
+        )
+        if existing is not None:
+            continue
+        execute(
+            """
+            INSERT INTO cli_policy_rules (
+                tier, pattern, match_mode, description,
+                category, usage_syntax, help_text
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            [tier, pattern, match_mode, description, category, usage_syntax, help_text],
+        )
+        changes += 1
     return changes
