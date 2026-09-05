@@ -496,8 +496,23 @@ Honest size: `ws` 40, `tasks` 204, `runtime` 264, `settings` 278, `cli_policy` 2
 
 **Acceptance**
 
-- [ ] `actions.py` < ~400 LOC or is dispatch-only.
-- [ ] HA-TEST-P1-01 still green.
+- [x] `actions.py` < ~400 LOC or is dispatch-only. *(428: parse + validate + dispatch; see Shipped)*
+- [x] HA-TEST-P1-01 still green.
+
+**Shipped.** `execute_action` / `parse_action` / `TERMINAL_ACTIONS` stay on `core.agent_loop.actions`. Handlers moved mechanically (no behavior rewrite) to:
+
+| Module | Role | ~LOC |
+| --- | --- | ---: |
+| `actions.py` | parse, validate, dispatch table | 428 |
+| `actions_shared.py` | resolve/token/trigger helpers | 121 |
+| `task_followups.py` | stakeholder reports + follow-up messages | 239 |
+| `actions_cli.py` | `bm_cli` | 43 |
+| `actions_work.py` | work / message / walk / idle | 364 |
+| `actions_tasks.py` | `taskMessage` / `delegateTask` | 297 |
+| `actions_lifecycle.py` | wait / done / block / deleg / drop | 551 |
+| `actions_meetings.py` | room + remote meetings | 369 |
+
+Honest size: lifecycle stays one module (complete/blocked/delegated are one family). Decision-runtime follow-up persist is a different contract — not deduped here (would be a behavior-risk rewrite). Import/dispatch smoke in `tests/test_action_split.py`.
 
 ---
 
@@ -516,6 +531,8 @@ Honest size: `ws` 40, `tasks` 204, `runtime` 264, `settings` 278, `cli_policy` 2
 
 - [ ] Each file has one sentence responsibility in the module docstring.
 - [ ] No new public behavior.
+
+**Not this PR.** `loop.py` is 1713 LOC and `decision_runtime.py` is 1467. A clean peel (`_run_decision_turn` + repair builders, then `apply_decision` collaborators) is a second STRUCT PR, not a sidecar to the actions split. Left for HA-STRUCT-P1-03.
 
 ---
 
