@@ -515,26 +515,31 @@ def test_create_task_api_unassigned_backlog_does_not_crash(monkeypatch: pytest.M
 
 
 def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
+    """Regression: `_require_bound_task` used to raise ValueError into apply_decision."""
     agent = _create_agent()
     state = db.get_agent_state(agent.id)
     assert state is not None
     db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
     db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
 
-    result = apply_decision(
-        {
-            "decision": "accept",
-            "intentKind": "work_request",
-            "commitmentKind": "work",
-            "taskTitle": "Plan",
-            "reply": "I'll take the plan.",
-        },
-        agent,
-        state,
-        {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
-    )
+    try:
+        result = apply_decision(
+            {
+                "decision": "accept",
+                "intentKind": "work_request",
+                "commitmentKind": "work",
+                "taskTitle": "Plan",
+                "reply": "I'll take the plan.",
+            },
+            agent,
+            state,
+            {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+        )
+    except ValueError as exc:
+        pytest.fail(f"ambiguous accept must not raise ValueError (turn crash): {exc}")
 
     assert result["event"] == "world_feedback"
+    assert result["event"] != "decision_applied"
     assert "multiple open tasks" in result["detail"].lower()
     assert result.get("expected_action") == "clarify"
     assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
@@ -543,32 +548,37 @@ def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
 
 
 def test_apply_decision_defer_ambiguous_match_returns_world_feedback() -> None:
+    """Regression: defer work used the same `_require_bound_task` raise."""
     agent = _create_agent()
     state = db.get_agent_state(agent.id)
     assert state is not None
     db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
     db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
 
-    result = apply_decision(
-        {
-            "decision": "defer",
-            "intentKind": "work_request",
-            "commitmentKind": "work",
-            "taskTitle": "Plan",
-            "reply": "Later.",
-        },
-        agent,
-        state,
-        {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
-    )
+    try:
+        result = apply_decision(
+            {
+                "decision": "defer",
+                "intentKind": "work_request",
+                "commitmentKind": "work",
+                "taskTitle": "Plan",
+                "reply": "Later.",
+            },
+            agent,
+            state,
+            {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+        )
+    except ValueError as exc:
+        pytest.fail(f"ambiguous defer must not raise ValueError (turn crash): {exc}")
 
     assert result["event"] == "world_feedback"
-    assert "multiple open tasks" in result["detail"].lower()
+    assert result.get("expected_action") == "clarify"
     assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
     assert activity_runtime.get_active_work_activity(agent.id) is None
 
 
 def test_apply_decision_plan_materialize_ambiguous_child_fails_honestly() -> None:
+    """Regression: `_materialize_work_execution_plan` used to `continue` and accept the parent."""
     lead = _create_agent("Ada")
     helper = _create_agent("Bea")
     state = db.get_agent_state(lead.id)
@@ -614,8 +624,11 @@ def test_apply_decision_plan_materialize_ambiguous_child_fails_honestly() -> Non
     )
 
     assert result["event"] == "world_feedback"
+    assert result["event"] != "decision_applied"
+    assert "accepted work" not in result.get("detail", "").lower()
     assert "multiple open tasks" in result["detail"].lower()
     assert "notes" in result["detail"].lower()
+    assert result.get("expected_action") == "clarify"
     assert len(_open_tasks_with_title("Notes", assigned_to=helper.id)) == 2
     refreshed = db.get_task(parent.id)
     assert refreshed is not None

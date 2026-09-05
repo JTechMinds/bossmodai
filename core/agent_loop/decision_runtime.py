@@ -1091,17 +1091,21 @@ def _ambiguous_match_feedback(
 
 def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
     """Unwrap a create-or-bind result into a task or honest clarify feedback."""
-    if creation.task is not None:
-        return {"task": creation.task}
-    title = creation.resolution.candidates[0].title if creation.resolution.candidates else "this workstream"
-    return {
-        "error_result": _ambiguous_match_feedback(
-            agent_name=agent_name,
-            title=title,
-            candidates=creation.resolution.candidates,
-            context="Clarify which existing task to use instead of creating a duplicate.",
+    if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
+        title = (
+            creation.resolution.candidates[0].title
+            if creation.resolution.candidates
+            else "this workstream"
         )
-    }
+        return {
+            "error_result": _ambiguous_match_feedback(
+                agent_name=agent_name,
+                title=title,
+                candidates=creation.resolution.candidates,
+                context="Clarify which existing task to use instead of creating a duplicate.",
+            )
+        }
+    return {"task": creation.task}
 
 
 def _resolve_or_create_work_task(
