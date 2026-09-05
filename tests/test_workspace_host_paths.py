@@ -218,8 +218,12 @@ def test_execute_bm_cli_reads_and_writes_named_host_path(tmp_path: Path) -> None
 
     denied = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert denied.ok is False
-    assert "outside the allowed workspace roots" in (denied.detail or "") + denied.prompt_content
-    assert "root:" not in denied.prompt_content
+    payload = (denied.detail or "") + denied.prompt_content
+    assert "outside the allowed workspace roots" in payload
+    assert "not a full host mount" in payload
+    assert '"/me"' in payload
+    assert str(host.resolve()) in payload
+    assert "root:" not in payload
 
 
 # ---------------------------------------------------------------------------

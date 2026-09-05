@@ -219,7 +219,7 @@ def resolve_absolute_under_roots(
     except OSError as exc:
         raise ValueError(f"Cannot resolve path {raw_path!r}: {exc}") from exc
     if not is_within_roots(resolved, roots):
-        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots))
+        raise PathOutsideRootsError(denial_message(raw_path))
     if deny_company_backup_suffix and is_denied_company_file(resolved):
         raise ValueError("File type is not allowed in the company workspace")
     return resolved
