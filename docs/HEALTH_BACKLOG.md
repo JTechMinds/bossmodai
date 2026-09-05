@@ -11,6 +11,8 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 ## Sequence at a glance
 
+**Status (verified on `main` @ `95a58ce`):** every ID in this table is **shipped**. The table is the historical sequence, not an open queue. See [`HEALTH_VERIFICATION.md`](HEALTH_VERIFICATION.md).
+
 | Order | ID | Title | Sev | Area |
 | ---: | --- | --- | --- | --- |
 | — | *(PR #2, shipped)* | Fail-closed Telegram + local API token + redaction | P0 | security |
