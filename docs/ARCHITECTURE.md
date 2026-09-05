@@ -85,7 +85,7 @@ sequenceDiagram
 | Package | Role today |
 | --- | --- |
 | `main.py` | FastAPI app, lifespan, `/` + `/health`, binds `127.0.0.1:38471` |
-| `api/` | One 2.3k-LOC router + WebSocket manager |
+| `api/` | Split routers under `api/routes/` (`ws`, `agents`, `tasks`, `company_files`, `settings`, `cli_policy`, `runtime`) + WebSocket manager. Largest leftover: `agents.py` (~808 LOC). |
 | `core/runtime/` | App↔worker gateway (`RuntimeServices` singleton) and worker loop |
 | `core/agent_loop/` | Trigger dispatch, decision/execution turns, meetings, channels, watchdogs |
 | `core/bm_cli/` | Virtual CLI + optional host shell + managed writer |
@@ -134,4 +134,4 @@ flowchart TB
 - **HA-SEC-P0-04** — company browser root is `artifacts/projects`; `db_backups/` and raw `agents/` are outside it.
 - **HA-SEC-P0-03 / HA-SEC-P1-04** — shell path jail; interpreters / `xargs` / POSIX shells are `never_allowed`; argv[0] basename matching.
 
-Residual (not “auth is missing”): `/health` and the HTML/static UI are unauthenticated by design; connection-test URLs are allowlisted (HA-SEC-NEW-01). See [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) for remaining open items.
+Residual (not “auth is missing”): `/health` and the HTML/static UI stay unauthenticated by design. Connection-test URLs are allowlisted (HA-SEC-NEW-01, shipped). Every HA-* item in [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) is shipped on current `main`; that file is the historical sequence plus out-of-scope notes, not an open queue. See [`HEALTH_VERIFICATION.md`](HEALTH_VERIFICATION.md) for the latest verification pass.

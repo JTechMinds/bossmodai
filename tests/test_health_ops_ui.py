@@ -73,6 +73,9 @@ def test_living_docs_do_not_claim_pr2_is_open() -> None:
     assert "fail-closed" in arch
     assert "No auth on main" not in arch
     assert "empty allowlist = allow all" not in arch
+    assert "2.3k-LOC router" not in arch
+    assert "remaining open items" not in arch
+    assert "every ID in this table is **shipped**" in backlog
 
 
 def test_no_bare_company_raw_img_src_in_app_js() -> None:
