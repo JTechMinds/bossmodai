@@ -190,6 +190,11 @@ _SAVE_OK_SITES = {
         "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
     ],
+    "company-files.js": [
+        "apiFetchOk(`/api/settings/workspace_host_roots?value=${encodeURIComponent(value)}&category=cli_policy`",
+        "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`",
+        "setActionError(err.message || 'Failed to open folder')",
+    ],
 }
 
 _UNGUARDED_MUTATING_FETCH = re.compile(
@@ -208,6 +213,10 @@ _ALLOWED_UNGUARDED_MUTATING = {
     # Test-connection already branches on resp.ok / result.ok before any success UI.
     "settings-connections.js": {
         "await apiFetch('/api/connections/test'",
+    },
+    # open-folder must inspect 409 handler codes before a generic error banner.
+    "company-files.js": {
+        "await apiFetch('/api/company/files/open-folder'",
     },
 }
 

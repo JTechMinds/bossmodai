@@ -86,8 +86,14 @@ const CliPolicySection = (() => {
 
     // ─── Main render ───
 
-    async function render(el) {
+    let pendingFocusKey = null;
+
+    async function render(el, options) {
         container = el;
+        if (options && typeof options.tab === 'string') {
+            activeTab = options.tab;
+        }
+        pendingFocusKey = options && typeof options.focusKey === 'string' ? options.focusKey : null;
         await fetchAgents();
         renderShell();
     }
@@ -665,6 +671,10 @@ const CliPolicySection = (() => {
         known.sort((a, b) => (SETTINGS_META[a.key]?.order ?? 999) - (SETTINGS_META[b.key]?.order ?? 999));
 
         let html = '<div class="max-w-3xl space-y-4">';
+        html += `
+            <p class="text-xs text-bm-muted">
+                Host workspace roots can also be added from Company Files. Both edit the same allowlist — this is not a full host mount.
+            </p>`;
 
         for (const s of known) {
             const meta = SETTINGS_META[s.key];
@@ -763,6 +773,15 @@ const CliPolicySection = (() => {
                 }
             });
         });
+
+        if (pendingFocusKey) {
+            const card = el.querySelector(`[data-setting-card="${pendingFocusKey}"]`);
+            if (card) {
+                card.scrollIntoView({ block: 'center' });
+                card.classList.add('ring-2', 'ring-bm-accent/40');
+            }
+            pendingFocusKey = null;
+        }
     }
 
 

@@ -482,12 +482,13 @@ def _company_workspace_note(extras) -> str:
     if extras:
         return (
             "Company Files is artifacts/projects plus the configured host roots "
-            "shown below. This is not a full unrestricted host mount."
+            "shown below. Manage them here or under Settings → CLI Policy. "
+            "This is not a full unrestricted host mount."
         )
     return (
-        "Company Files is artifacts/projects only. A path you name on disk "
-        "works after you add its directory under Settings → CLI Policy → "
-        "Host workspace roots. This is not a full unrestricted host mount."
+        "Company Files is artifacts/projects only. Use Add host folder on this "
+        "page (same allowlist as Settings → CLI Policy → Host workspace roots) "
+        "to open a named path on disk. This is not a full unrestricted host mount."
     )
 
 
