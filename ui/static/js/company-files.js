@@ -11,8 +11,11 @@ const CompanyFiles = (() => {
     let entries = [];
     let breadcrumbs = [];
     let workspaceNote = '';
+    let hostRoots = [];
+    let actionError = '';
     let searchTimer = null;
     let folderOpenerModalEl = null;
+    let hostRootsModalEl = null;
     let contextMenuEl = null;
     const filesLoad = BossModUtils.createLoadGeneration();
 
@@ -39,6 +42,44 @@ const CompanyFiles = (() => {
     }
 
     const formatRelativeTime = BossModUtils.formatRelativeTime;
+
+    function parentVirtualPath(path) {
+        const cleaned = String(path || '/').replace(/\\/g, '/');
+        if (!cleaned || cleaned === '/') return '/';
+        const trimmed = cleaned.endsWith('/') ? cleaned.slice(0, -1) : cleaned;
+        const idx = trimmed.lastIndexOf('/');
+        if (idx <= 0) return '/';
+        return trimmed.slice(0, idx) || '/';
+    }
+
+    async function readApiError(res, fallback) {
+        const fallbackText = fallback || `Request failed (${res.status})`;
+        if (window.BossModApi && typeof window.BossModApi.formatError === 'function') {
+            const payload = await res.json().catch(() => ({}));
+            return window.BossModApi.formatError(payload, res.status) || fallbackText;
+        }
+        const text = await res.text().catch(() => '');
+        return text || fallbackText;
+    }
+
+    function setActionError(message) {
+        actionError = message || '';
+        const banner = container?.querySelector('#cf-action-error');
+        if (!banner) return;
+        banner.textContent = actionError;
+        banner.classList.toggle('hidden', !actionError);
+    }
+
+    function applyDirectoryPayload(payload, requestedPath) {
+        entries = Array.isArray(payload.entries) ? payload.entries : [];
+        breadcrumbs = Array.isArray(payload.breadcrumbs) ? payload.breadcrumbs : [];
+        workspaceNote = typeof payload.workspace_note === 'string' ? payload.workspace_note : '';
+        hostRoots = Array.isArray(payload.host_roots) ? payload.host_roots : [];
+        currentPath = payload.path || requestedPath || '/';
+        searchMode = 'local';
+        searchQuery = '';
+        renderDirectory();
+    }
 
     function filteredEntries() {
         if (!searchQuery || searchMode === 'global') return entries;
@@ -83,18 +124,24 @@ const CompanyFiles = (() => {
 
         try {
             const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(requestedPath)}`, { cache: 'no-store' });
-            if (!res.ok) throw new Error(await res.text());
+            if (!res.ok) throw new Error(await readApiError(res, 'Failed to load files'));
             const payload = await res.json();
             if (!filesLoad.isCurrent(loadId) || currentPath !== requestedPath) return;
-            entries = Array.isArray(payload.entries) ? payload.entries : [];
-            breadcrumbs = Array.isArray(payload.breadcrumbs) ? payload.breadcrumbs : [];
-            workspaceNote = typeof payload.workspace_note === 'string' ? payload.workspace_note : '';
-            searchMode = 'local';
-            renderDirectory(payload);
+            if (payload.kind === 'file') {
+                CompanyFileViewer.open(payload.path || requestedPath);
+                const parent = parentVirtualPath(payload.path || requestedPath);
+                if (parent !== requestedPath) {
+                    currentPath = parent;
+                    return fetchAndRender();
+                }
+                return;
+            }
+            actionError = '';
+            applyDirectoryPayload(payload, requestedPath);
         } catch (err) {
             if (!filesLoad.isCurrent(loadId) || currentPath !== requestedPath) return;
             console.error('[CompanyFiles] Load failed:', err);
-            renderError();
+            renderError(err.message || 'Failed to load files');
         }
     }
 
@@ -145,6 +192,12 @@ const CompanyFiles = (() => {
                             </button>
                         </div>
                     </div>
+                    <button type="button" id="cf-host-roots-btn"
+                            class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors flex items-center gap-1"
+                            title="Add or edit allowlisted host folders">
+                        <i data-lucide="hard-drive" class="w-3 h-3"></i>
+                        <span class="hidden sm:inline">Host folders</span>
+                    </button>
                     <button type="button" id="cf-open-explorer-btn"
                             class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors flex items-center gap-1"
                             title="Open in file manager">
@@ -171,13 +224,28 @@ const CompanyFiles = (() => {
                 <div class="flex items-center gap-1 px-4 py-2 text-xs text-bm-muted border-b border-bm-border bg-slate-50/50 overflow-x-auto whitespace-nowrap">
                     ${renderBreadcrumbs(breadcrumbs)}
                 </div>`;
-            if (workspaceNote) {
+            if (workspaceNote || hostRoots.length) {
+                const rootsLabel = hostRoots.length
+                    ? hostRoots.map((root) => esc(root)).join(', ')
+                    : '';
                 html += `
-                    <div class="px-4 py-1.5 text-[11px] text-bm-muted border-b border-bm-border bg-amber-50/60">
-                        ${esc(workspaceNote)}
+                    <div class="px-4 py-1.5 text-[11px] text-bm-muted border-b border-bm-border bg-amber-50/60 flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <p>${esc(workspaceNote)}</p>
+                            ${rootsLabel ? `<p class="mt-1 font-mono text-[10px] truncate" title="${rootsLabel}">Host folders: ${rootsLabel}</p>` : ''}
+                        </div>
+                        <button type="button" id="cf-add-host-folder"
+                                class="shrink-0 px-2 py-1 rounded border border-amber-300 bg-white text-[11px] font-medium text-bm-text hover:bg-amber-50">
+                            ${hostRoots.length ? 'Manage host folders' : 'Add host folder'}
+                        </button>
                     </div>`;
             }
         }
+        html += `
+            <div id="cf-action-error"
+                 class="${actionError ? '' : 'hidden'} px-4 py-2 text-xs text-red-700 bg-red-50 border-b border-red-200">
+                ${esc(actionError)}
+            </div>`;
 
         // Entry list
         html += `<div class="flex-1 overflow-y-auto px-4 py-3">`;
@@ -239,9 +307,10 @@ const CompanyFiles = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
     }
 
-    function renderError() {
+    function renderError(message) {
         if (!container) return;
         const esc = BossModUtils.escapeHtml;
+        const detail = message || 'Failed to load files';
         container.innerHTML = `
             <div class="p-4">
                 <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -249,7 +318,8 @@ const CompanyFiles = (() => {
                         <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
                         <span class="font-medium">Failed to load files</span>
                     </div>
-                    <p class="text-xs text-red-600">Path: ${esc(currentPath)}</p>
+                    <p class="text-xs text-red-600">${esc(detail)}</p>
+                    <p class="text-xs text-red-600 mt-1">Path: ${esc(currentPath)}</p>
                     <button type="button" id="cf-retry-btn"
                             class="mt-3 px-3 py-1.5 rounded border border-red-300 text-xs font-medium hover:bg-red-100 transition-colors">
                         Retry
@@ -271,11 +341,7 @@ const CompanyFiles = (() => {
                 if (e.key !== 'Enter') return;
                 const named = e.target.value.trim();
                 if (!named) return;
-                if (named.includes('.') && !named.endsWith('/')) {
-                    CompanyFileViewer.open(named);
-                } else {
-                    navigateTo(named);
-                }
+                openNamedPath(named);
             });
         }
 
@@ -349,6 +415,9 @@ const CompanyFiles = (() => {
         // Open in Explorer
         container.querySelector('#cf-open-explorer-btn')?.addEventListener('click', () => openFolder(currentPath));
 
+        container.querySelector('#cf-host-roots-btn')?.addEventListener('click', () => openHostRootsModal());
+        container.querySelector('#cf-add-host-folder')?.addEventListener('click', () => openHostRootsModal());
+
         // Refresh
         container.querySelector('#cf-refresh-btn')?.addEventListener('click', () => fetchAndRender());
     }
@@ -366,11 +435,13 @@ const CompanyFiles = (() => {
             entries = Array.isArray(results) ? results : [];
             breadcrumbs = [];
             searchMode = 'global';
+            actionError = '';
             renderDirectory();
             restoreSearchFocus();
         } catch (err) {
             if (!filesLoad.isCurrent(loadId)) return;
             console.error('[CompanyFiles] Search failed:', err);
+            setActionError(err.message || 'Search failed');
         }
     }
 
@@ -474,12 +545,34 @@ const CompanyFiles = (() => {
         currentPath = path || '/';
         searchQuery = '';
         searchMode = 'local';
+        actionError = '';
         fetchAndRender();
+    }
+
+    async function openNamedPath(named) {
+        setActionError('');
+        try {
+            const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(named)}`, { cache: 'no-store' });
+            if (!res.ok) {
+                setActionError(await readApiError(res, 'Could not open that path'));
+                return;
+            }
+            const payload = await res.json();
+            if (payload.kind === 'file') {
+                CompanyFileViewer.open(payload.path || named);
+                return;
+            }
+            applyDirectoryPayload(payload, named);
+        } catch (err) {
+            console.error('[CompanyFiles] Named path open failed:', err);
+            setActionError(err.message || 'Could not open that path');
+        }
     }
 
     // ─── Open in file manager ───
 
     async function openFolder(path) {
+        setActionError('');
         try {
             const res = await apiFetch('/api/company/files/open-folder', {
                 method: 'POST',
@@ -487,24 +580,111 @@ const CompanyFiles = (() => {
                 body: JSON.stringify({ path: path || '/' }),
             });
             if (!res.ok) {
-                if (res.status === 409) {
-                    const payload = await res.json();
-                    const detail = payload?.detail;
-                    if (detail?.code === 'desk_open_folder_handler_required' || detail?.code === 'desk_open_folder_handler_invalid') {
-                        const chosen = await promptForFolderOpener(detail);
-                        if (chosen) {
-                            await apiFetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
-                                method: 'PUT',
-                            });
-                            await openFolder(path);
-                        }
-                        return;
+                const payload = await res.json().catch(() => ({}));
+                const detail = payload?.detail;
+                if (res.status === 409 && (detail?.code === 'desk_open_folder_handler_required' || detail?.code === 'desk_open_folder_handler_invalid')) {
+                    const chosen = await promptForFolderOpener(detail);
+                    if (chosen) {
+                        await apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
+                            method: 'PUT',
+                        });
+                        await openFolder(path);
                     }
+                    return;
                 }
-                throw new Error(await res.text());
+                const formatted = window.BossModApi && typeof window.BossModApi.formatError === 'function'
+                    ? window.BossModApi.formatError(payload, res.status)
+                    : (typeof detail === 'string' ? detail : `Request failed (${res.status})`);
+                throw new Error(formatted);
             }
         } catch (err) {
             console.error('[CompanyFiles] Failed to open folder:', err);
+            setActionError(err.message || 'Failed to open folder');
+        }
+    }
+
+    // ─── Host workspace roots (same workspace_host_roots setting) ───
+
+    async function openHostRootsModal() {
+        closeHostRootsModal();
+        const modal = BossModUtils.createModal({
+            maxWidth: 'max-w-lg',
+            onClose: () => { hostRootsModalEl = null; },
+        });
+        hostRootsModalEl = modal;
+
+        let currentValue = hostRoots.join('\n');
+        try {
+            const res = await apiFetch('/api/settings?category=cli_policy');
+            if (res.ok) {
+                const settings = await res.json();
+                const row = Array.isArray(settings)
+                    ? settings.find((item) => item.key === 'workspace_host_roots')
+                    : null;
+                if (row && typeof row.value === 'string') currentValue = row.value;
+            }
+        } catch {
+            /* keep the list already shown in Company Files */
+        }
+
+        modal.panel.innerHTML = `
+            <div class="px-5 py-4 border-b border-bm-border">
+                <h3 class="text-lg font-semibold">Host folders</h3>
+                <p class="text-sm text-bm-muted mt-1">Optional extra directories a named absolute path may open, read, or edit. Writes the same allowlist as Settings → CLI Policy → Host workspace roots. This is not a full host mount. /, /etc, /proc, /sys, /dev, and /root are rejected.</p>
+            </div>
+            <div class="p-5 space-y-3">
+                <label class="block text-sm font-semibold" for="cf-host-roots-input">Allowlisted host folders</label>
+                <textarea id="cf-host-roots-input" rows="5"
+                          class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono"
+                          placeholder="/home/you/src">${BossModUtils.escapeHtml(currentValue)}</textarea>
+                <p id="cf-host-roots-status" class="hidden text-xs text-red-500"></p>
+            </div>
+            <div class="px-5 py-4 border-t border-bm-border flex items-center justify-between gap-2">
+                <button type="button" id="cf-host-roots-settings"
+                        class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Open in Settings</button>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="cf-host-roots-cancel"
+                            class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Cancel</button>
+                    <button type="button" id="cf-host-roots-save"
+                            class="px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:bg-bm-accent-hover transition-colors">Save</button>
+                </div>
+            </div>`;
+
+        const status = modal.panel.querySelector('#cf-host-roots-status');
+        modal.panel.querySelector('#cf-host-roots-cancel')?.addEventListener('click', () => modal.close());
+        modal.panel.querySelector('#cf-host-roots-settings')?.addEventListener('click', () => {
+            modal.close();
+            if (typeof SettingsView !== 'undefined' && typeof SettingsView.open === 'function') {
+                SettingsView.open('cli-policy', { tab: 'settings', focusKey: 'workspace_host_roots' });
+            }
+        });
+        modal.panel.querySelector('#cf-host-roots-save')?.addEventListener('click', async () => {
+            const value = String(modal.panel.querySelector('#cf-host-roots-input')?.value || '');
+            if (status) {
+                status.textContent = '';
+                status.classList.add('hidden');
+            }
+            try {
+                await apiFetchOk(`/api/settings/workspace_host_roots?value=${encodeURIComponent(value)}&category=cli_policy`, {
+                    method: 'PUT',
+                });
+                modal.close();
+                fetchAndRender();
+            } catch (err) {
+                if (status) {
+                    status.textContent = err.message || 'Save failed';
+                    status.classList.remove('hidden');
+                } else {
+                    setActionError(err.message || 'Save failed');
+                }
+            }
+        });
+    }
+
+    function closeHostRootsModal() {
+        if (hostRootsModalEl) {
+            hostRootsModalEl.close();
+            hostRootsModalEl = null;
         }
     }
 
@@ -584,15 +764,18 @@ const CompanyFiles = (() => {
         filesLoad.next();
         clearTimeout(searchTimer);
         closeFolderOpenerModal();
+        closeHostRootsModal();
         dismissContextMenu();
         CompanyFileViewer.close();
         container = null;
         entries = [];
         breadcrumbs = [];
+        hostRoots = [];
+        actionError = '';
         searchQuery = '';
         searchMode = 'local';
         currentPath = '/';
     }
 
-    return { render, destroy };
+    return { render, destroy, openNamedPath };
 })();

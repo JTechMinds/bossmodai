@@ -74,4 +74,4 @@ Honest failures covered by pytest (not a GUI demo):
 1. **Named path open/read/edit.** `resolve_cli_path`, Company Files, and agent `cli` accept a user-named absolute path when it stays under `/me`, `/projects`, or Host workspace roots.
 2. **Diagnostic CLI.** With shell enabled, pathless diagnostics such as `uname -a` run under the existing jail. Escapes such as `cat /etc/passwd` are denied. Approval does not jailbreak.
 
-Operator setup for extra host roots is unchanged: one existing absolute directory per line; `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/root` rejected; empty setting = no extra host access; `cli_shell_enabled` stays fail-closed until opted in.
+Operator setup for extra host roots is unchanged: one existing absolute directory per line from Company Files or Settings → CLI Policy (same `workspace_host_roots` setting); `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/root` rejected; empty setting = no extra host access; `cli_shell_enabled` stays fail-closed until opted in.

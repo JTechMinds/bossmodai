@@ -138,6 +138,16 @@ def test_settings_api_rejects_filesystem_root_as_host_root() -> None:
     assert config.get("workspace_host_roots") is None
 
 
+def test_company_files_empty_roots_note_points_at_add_host_folder() -> None:
+    listed = _client().get("/api/company/files", params={"path": "/"}, headers=_auth_headers())
+    assert listed.status_code == 200
+    note = listed.json()["workspace_note"]
+    assert "Add host folder" in note
+    assert "Settings → CLI Policy → Host workspace roots" in note
+    assert "not a full unrestricted host mount" in note
+    assert listed.json()["host_roots"] == []
+
+
 # ---------------------------------------------------------------------------
 # Virtual CLI named paths
 # ---------------------------------------------------------------------------
@@ -251,6 +261,7 @@ def test_company_files_named_path_read_edit_and_deny(tmp_path: Path) -> None:
     assert body["kind"] == "file"
     assert body["content"] == "x = 1\n"
     assert "not a full unrestricted host mount" in body["workspace_note"]
+    assert "Manage them here" in body["workspace_note"]
     assert str(host.resolve()) in body["host_roots"]
 
     saved = client.put(

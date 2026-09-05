@@ -7,6 +7,7 @@
 const SettingsView = (() => {
     let activeSection = 'connections';
     let isOpen = false;
+    let sectionOptions = null;
 
     const NAV_ITEMS = [
         { id: 'connections',   label: 'AI Connections',  icon: 'plug' },
@@ -24,7 +25,11 @@ const SettingsView = (() => {
 
     // ─── Open / Close ───
 
-    function open() {
+    function open(sectionId, options) {
+        if (typeof sectionId === 'string' && sectionId) {
+            activeSection = sectionId;
+        }
+        sectionOptions = options && typeof options === 'object' ? options : null;
         const mainLayout = document.getElementById('main-layout');
         const settingsLayout = document.getElementById('settings-layout');
         const mobileSheet = document.getElementById('mobile-sheet');
@@ -89,6 +94,8 @@ const SettingsView = (() => {
 
     function switchSection(sectionId) {
         activeSection = sectionId;
+        const pendingOptions = sectionOptions;
+        sectionOptions = null;
         renderNav();
 
         const content = document.getElementById('settings-content');
@@ -104,7 +111,7 @@ const SettingsView = (() => {
                 SystemSection.render(content);
                 break;
             case 'cli-policy':
-                CliPolicySection.render(content);
+                CliPolicySection.render(content, pendingOptions);
                 break;
             case 'telegram':
                 TelegramSection.render(content);
