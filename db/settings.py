@@ -76,6 +76,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("watchdog_check_interval_seconds", "5", "simulation"),
     ("watchdog_soft_ping_minutes", "15", "simulation"),
     ("watchdog_escalation_minutes", "15", "simulation"),
+    # HA-LOOP-P1-07: meeting watchdog keys (fallbacks in meeting_watchdog.py
+    # must stay equal to these seed values).
+    ("meeting_watchdog_check_interval_seconds", "5", "simulation"),
+    ("meeting_invite_accept_timeout_seconds", "90", "simulation"),
+    ("meeting_invite_arrival_timeout_seconds", "180", "simulation"),
 
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),

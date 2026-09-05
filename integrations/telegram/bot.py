@@ -35,6 +35,21 @@ from integrations.telegram.sessions import (
 
 logger = logging.getLogger(__name__)
 
+# HA-CORR-P1-04: Telegram group chat is a channel, not a spatial office meeting.
+# /meeting stays as a legacy alias so existing muscle memory still works.
+TELEGRAM_START_COMMAND_HELP = (
+    "Commands:\n"
+    "/agents — list agents\n"
+    "/chat <name> — chat with an agent\n"
+    "/chat <name1> <name2> — group chat\n"
+    "/chat — close active session\n"
+    "/group — all-agent group channel (not a spatial office meeting)\n"
+    "/meeting — same as /group (legacy alias)\n"
+    "/channels — list active channels\n"
+    "/status — quick summary\n"
+    "/approve — pending approvals"
+)
+
 
 def create_application(
     token: str,
@@ -50,6 +65,7 @@ def create_application(
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("agents", cmd_agents))
     app.add_handler(CommandHandler("chat", cmd_chat))
+    app.add_handler(CommandHandler("group", cmd_group))
     app.add_handler(CommandHandler("meeting", cmd_meeting))
     app.add_handler(CommandHandler("channels", cmd_channels))
     app.add_handler(CommandHandler("status", cmd_status))
@@ -102,15 +118,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Welcome to BossMod AI.\n"
         f"Your Telegram user ID: {user_id}\n\n"
-        f"Commands:\n"
-        f"/agents — list agents\n"
-        f"/chat <name> — chat with an agent\n"
-        f"/chat <name1> <name2> — group chat\n"
-        f"/chat — close active session\n"
-        f"/meeting — all-agent group chat\n"
-        f"/channels — list active channels\n"
-        f"/status — quick summary\n"
-        f"/approve — pending approvals"
+        f"{TELEGRAM_START_COMMAND_HELP}"
     )
 
 
@@ -206,10 +214,11 @@ async def _open_group_session(
 
 
 # ---------------------------------------------------------------------------
-# /meeting
+# /group  (legacy alias: /meeting)
 # ---------------------------------------------------------------------------
 
-async def cmd_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Open an all-agent group channel. This is not a spatial office meeting."""
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
@@ -218,6 +227,11 @@ async def cmd_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("No agents available.")
         return
     await _open_group_session(update, update.effective_user.id, agents)
+
+
+async def cmd_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Legacy alias for /group. Still a channel, not a room meeting."""
+    await cmd_group(update, context)
 
 
 # ---------------------------------------------------------------------------

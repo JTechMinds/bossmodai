@@ -16,6 +16,27 @@ import db
 
 logger = logging.getLogger(__name__)
 
+# Keep equal to _SEED_SETTINGS in db/settings.py (HA-LOOP-P1-07).
+MEETING_WATCHDOG_CHECK_INTERVAL_FALLBACK = 5.0
+MEETING_INVITE_ACCEPT_TIMEOUT_FALLBACK = 90
+MEETING_INVITE_ARRIVAL_TIMEOUT_FALLBACK = 180
+
+
+def read_meeting_watchdog_settings() -> tuple[float, int, int]:
+    """Return (check interval, accept timeout, arrival timeout) from config.
+
+    Fallbacks match the seeded defaults so a missing key does not change
+    behavior. Settings UI edits flow through ``config.get_*`` after reload.
+    """
+    interval = config.get_float("meeting_watchdog_check_interval_seconds")
+    accept_timeout = config.get_int("meeting_invite_accept_timeout_seconds")
+    arrival_timeout = config.get_int("meeting_invite_arrival_timeout_seconds")
+    return (
+        interval if interval else MEETING_WATCHDOG_CHECK_INTERVAL_FALLBACK,
+        accept_timeout if accept_timeout else MEETING_INVITE_ACCEPT_TIMEOUT_FALLBACK,
+        arrival_timeout if arrival_timeout else MEETING_INVITE_ARRIVAL_TIMEOUT_FALLBACK,
+    )
+
 
 def _as_datetime(value: Any) -> datetime | None:
     if value is None:
@@ -62,13 +83,12 @@ class MeetingWatchdog:
                 break
             except Exception:
                 logger.exception("Meeting watchdog loop error")
-            interval = config.get_float("meeting_watchdog_check_interval_seconds") or 5.0
+            interval, _, _ = read_meeting_watchdog_settings()
             await asyncio.sleep(interval)
 
     async def _check_meetings(self) -> None:
         now = datetime.now(timezone.utc)
-        accept_timeout = config.get_int("meeting_invite_accept_timeout_seconds") or 90
-        arrival_timeout = config.get_int("meeting_invite_arrival_timeout_seconds") or 180
+        _, accept_timeout, arrival_timeout = read_meeting_watchdog_settings()
 
         sessions = db.query(
             """

@@ -391,8 +391,10 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] UI copy + `/start` help match the implementation.
-- [ ] No new untested meeting state machine if A is chosen.
+- [x] UI copy + `/start` help match the implementation.
+- [x] No new untested meeting state machine if A is chosen.
+
+**Shipped (A).** Telegram `/group` opens the existing all-agent **channel** (`_open_group_session`). `/meeting` remains a legacy alias for the same handler — it does **not** create a `meeting_session` or hit the room/invite watchdog. `/start` help and Settings → Telegram command copy say so. Spatial office meetings stay desktop-only.
 
 ---
 
@@ -636,8 +638,10 @@ Label hunches: keychain UX on Linux is messy; file-based key may be enough for d
 
 **Acceptance**
 
-- [ ] Fresh DB contains the three keys.
-- [ ] Settings page can change them; watchdog reads `config.get_*`.
+- [x] Fresh DB contains the three keys.
+- [x] Settings page can change them; watchdog reads `config.get_*`.
+
+**Shipped.** Seeded under `simulation`: `meeting_watchdog_check_interval_seconds=5`, `meeting_invite_accept_timeout_seconds=90`, `meeting_invite_arrival_timeout_seconds=180`. Settings → Simulation exposes the three rows. `read_meeting_watchdog_settings()` uses `config.get_*` with fallbacks equal to those seeds. Existing DBs pick up missing keys on `init_db` via `seed_defaults()` (no overwrite).
 
 ---
 
@@ -673,8 +677,10 @@ Label hunches: keychain UX on Linux is messy; file-based key may be enough for d
 
 **Acceptance**
 
-- [ ] Two open work activities → both tasks `blocked` or both `waiting` with a note.
-- [ ] Pytest with two activities.
+- [x] Two open work activities → both tasks `blocked` or both `waiting` with a note.
+- [x] Pytest with two activities.
+
+**Shipped.** `POST /api/agents/{id}/reset-runtime` blocks **every** distinct open work-activity task (`pending`/`accepted`/`active`/`waiting` → `blocked` with an operator note), not just `open_activities[0]`. Response keeps `blocked_task_id` and adds `blocked_task_ids`. Skip-turn already does not block (HA-CORR-P0-03); this PR adds a two-activity skip regression so neither task flips to `blocked`.
 
 ---
 

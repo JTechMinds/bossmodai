@@ -3,6 +3,7 @@
 Covers HA-TEST-P1-01 (smoke-suite module), HA-CORR-P0-01 (reused tasks
 wake the assignee), HA-CORR-P0-02 (CLI approval resume),
 HA-CORR-P0-03 (skip-turn must not exhaust the trigger),
+HA-CORR-P1-05 (reset-runtime blocks every open work task),
 HA-CORR-P1-06 (ambiguous match must not create a duplicate), and
 HA-PROD-P1-01 (Assign Task API outcomes, including unassigned backlog).
 """
@@ -926,3 +927,113 @@ async def test_watchdog_skips_pending_assigned_task() -> None:
     assert refreshed is not None
     assert refreshed.status == "pending"
     assert refreshed.watchdog_pinged_at is None
+
+
+# ---------------------------------------------------------------------------
+# HA-CORR-P1-05 — reset-runtime + skip-turn hygiene
+# ---------------------------------------------------------------------------
+
+
+def _open_two_work_activities(agent_id: str) -> tuple[Any, Any]:
+    """Create two in-flight work activities (one paused, one active)."""
+    first = _create_task(agent_id=agent_id, title="First open work")
+    second = _create_task(agent_id=agent_id, title="Second open work")
+    transition_task(
+        first.task.id,
+        "active",
+        reason="Test fixture: first work is in flight.",
+        actor="pytest",
+    )
+    transition_task(
+        second.task.id,
+        "active",
+        reason="Test fixture: second work is in flight.",
+        actor="pytest",
+    )
+    db.create_runtime_activity(
+        agent_id=agent_id,
+        kind="work",
+        status="paused",
+        task_id=first.task.id,
+        title=first.task.title,
+        detail="Paused for newer work.",
+    )
+    db.create_runtime_activity(
+        agent_id=agent_id,
+        kind="work",
+        status="active",
+        task_id=second.task.id,
+        title=second.task.title,
+        detail="Current work.",
+    )
+    return first.task, second.task
+
+
+def test_reset_runtime_blocks_all_open_work_activity_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _create_agent()
+    first, second = _open_two_work_activities(agent.id)
+    assert first.id != second.id
+
+    async def _noop_reset(agent_id: str) -> None:
+        assert agent_id == agent.id
+
+    monkeypatch.setattr(runtime_services, "reset_agent_runtime", _noop_reset)
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(f"/api/agents/{agent.id}/reset-runtime", headers=_task_api_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["blocked_task_ids"]) == {first.id, second.id}
+    assert body["blocked_task_id"] in {first.id, second.id}
+
+    refreshed_first = db.get_task(first.id)
+    refreshed_second = db.get_task(second.id)
+    assert refreshed_first is not None and refreshed_first.status == "blocked"
+    assert refreshed_second is not None and refreshed_second.status == "blocked"
+    assert "Runtime reset by human operator" in (refreshed_first.status_note or "")
+    assert "Runtime reset by human operator" in (refreshed_second.status_note or "")
+
+    open_activities = [
+        activity
+        for activity in db.list_activities(agent_id=agent.id, limit=50)
+        if activity.status in {"active", "paused"}
+    ]
+    assert open_activities == []
+
+
+@pytest.mark.asyncio
+async def test_skip_turn_does_not_block_either_of_two_open_work_tasks() -> None:
+    agent = _create_agent()
+    first, second = _open_two_work_activities(agent.id)
+    trigger_row = db.create_agent_trigger(
+        agent_id=agent.id,
+        trigger_type="human_chat",
+        source_channel="chat",
+        payload={"content": "Please continue", "from_name": "Human"},
+        task_id=first.id,
+    )
+    claimed = db.claim_trigger(trigger_row.id)
+    assert claimed is not None
+
+    payload = json.loads(claimed.payload) if claimed.payload else {}
+    payload.update(
+        {
+            "type": claimed.trigger_type,
+            "trigger_id": claimed.id,
+            "task_id": claimed.task_id,
+            "source_channel": claimed.source_channel,
+        }
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    await TurnDispatcher()._run_trigger(agent, state, payload)
+
+    refreshed_first = db.get_task(first.id)
+    refreshed_second = db.get_task(second.id)
+    assert refreshed_first is not None
+    assert refreshed_second is not None
+    assert refreshed_first.status not in {"blocked", "stalled"}
+    assert refreshed_second.status not in {"blocked", "stalled"}
+    assert refreshed_first.status == "active"
+    assert refreshed_second.status == "active"
