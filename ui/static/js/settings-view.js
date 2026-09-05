@@ -205,8 +205,8 @@ const ConnectionsSection = (() => {
         } else {
             html += '<div class="space-y-3">';
             for (const conn of connections) {
-                const maskedKey = conn.api_key
-                    ? conn.api_key.slice(0, 4) + '••••' + conn.api_key.slice(-2)
+                const maskedKey = conn.has_api_key
+                    ? `••••${BossModUtils.escapeHtml(conn.api_key_last4 || '')}`
                     : 'No API key';
                 html += `
                 <div class="border border-bm-border rounded-lg p-4 bg-white">
@@ -218,24 +218,8 @@ const ConnectionsSection = (() => {
                             </div>
                             <p class="text-sm text-bm-muted mt-1">${BossModUtils.escapeHtml(conn.api_base_url)}</p>
                             <div class="mt-1.5">
-                                <input id="conn-api-key-${conn.id}" type="password" readonly
-                                       value="${BossModUtils.escapeHtml(conn.api_key || '')}"
-                                       class="w-full max-w-md px-2 py-1 text-xs border border-bm-border rounded bg-slate-50 font-mono text-bm-muted">
-                                <div class="flex items-center gap-2 mt-1">
-                                    <button type="button"
-                                            data-toggle-api-key="conn-api-key-${conn.id}"
-                                            class="text-xs text-bm-accent hover:underline">
-                                        Show
-                                    </button>
-                                    <button type="button"
-                                            data-copy-api-key="conn-api-key-${conn.id}"
-                                            data-copy-status="conn-api-key-status-${conn.id}"
-                                            class="text-xs text-bm-accent hover:underline"
-                                            ${conn.api_key ? '' : 'disabled'}>
-                                        Copy
-                                    </button>
-                                    <span id="conn-api-key-status-${conn.id}" class="text-[11px] text-bm-muted">${BossModUtils.escapeHtml(maskedKey)}</span>
-                                </div>
+                                <p class="text-xs font-mono text-bm-muted">${maskedKey}</p>
+                                <p class="text-[11px] text-bm-muted mt-1">Full API keys are never returned after save. Re-enter a key only when rotating it.</p>
                             </div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
@@ -309,11 +293,13 @@ const ConnectionsSection = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Optional. Leave blank for local OpenAI-compatible servers. The runtime supplies a harmless transport placeholder when the upstream library requires one.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">${isEdit && conn?.has_api_key
+                            ? `A key is saved (last 4: ${BossModUtils.escapeHtml(conn.api_key_last4 || '')}). Leave blank to keep it, or enter a new key to rotate.`
+                            : 'Optional. Leave blank for local OpenAI-compatible servers. The runtime supplies a harmless transport placeholder when the upstream library requires one.'}</p>
                         <div class="flex gap-2">
                             <input id="connection-api-key-input" type="password" name="api_key"
-                                   value="${BossModUtils.escapeHtml(conn?.api_key || '')}"
-                                   placeholder="sk-..."
+                                   value=""
+                                   placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModUtils.escapeHtml(conn.api_key_last4 || '') : 'sk-...'}"
                                    class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                           focus:border-bm-accent">
@@ -391,6 +377,7 @@ const ConnectionsSection = (() => {
                         api_base_url: fd.get('api_base_url'),
                         api_key: fd.get('api_key') || null,
                         model: fd.get('model') || null,
+                        connection_id: isEdit ? conn.id : null,
                     }),
                 });
                 const result = await resp.json();
@@ -434,10 +421,15 @@ const ConnectionsSection = (() => {
             const data = {
                 name: fd.get('name'),
                 api_base_url: fd.get('api_base_url'),
-                api_key: fd.get('api_key') || null,
                 model: fd.get('model') || null,
                 extra_body: fd.get('extra_body')?.trim() || null,
             };
+            const enteredKey = fd.get('api_key');
+            if (enteredKey) {
+                data.api_key = enteredKey;
+            } else if (!isEdit) {
+                data.api_key = null;
+            }
             try {
                 if (isEdit) {
                     await fetch(`/api/connections/${conn.id}`, {
@@ -1724,9 +1716,12 @@ const TelegramSection = (() => {
             return;
         }
 
-        const get = (key) => (settings.find(s => s.key === key) || {}).value || '';
+        const getSetting = (key) => settings.find(s => s.key === key) || {};
+        const get = (key) => getSetting(key).value || '';
         const isEnabled = get('telegram_enabled') === 'true';
-        const token = get('telegram_bot_token');
+        const tokenSetting = getSetting('telegram_bot_token');
+        const hasToken = !!tokenSetting.has_value;
+        const tokenLast4 = tokenSetting.value_last4 || '';
         const allowedUsers = get('telegram_allowed_user_ids');
 
         let html = `
@@ -1748,6 +1743,7 @@ const TelegramSection = (() => {
                         <li>Open Telegram and message <strong>@BotFather</strong></li>
                         <li>Send <code class="px-1.5 py-0.5 bg-slate-100 rounded text-xs">/newbot</code> and follow the prompts</li>
                         <li>Copy the bot token and paste it below</li>
+                        <li>Add your Telegram user ID to the allowlist (required &mdash; empty means nobody can use the bot)</li>
                         <li>Enable the integration with the toggle</li>
                         <li>Restart BossMod &mdash; then send <code class="px-1.5 py-0.5 bg-slate-100 rounded text-xs">/start</code> to your bot in Telegram</li>
                     </ol>
@@ -1776,14 +1772,16 @@ const TelegramSection = (() => {
                 <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
                     <label class="block text-sm font-medium mb-1">Bot Token</label>
                     <p class="text-xs text-bm-muted mb-1.5">
-                        The API token from @BotFather. Treated as a secret &mdash; saved on change.
+                        The API token from @BotFather. Treated as a secret &mdash; the full value is never shown after save.
+                        ${hasToken ? `A token is saved (last 4: ${BossModUtils.escapeHtml(tokenLast4)}). Leave blank to keep it.` : 'Saved on change.'}
                     </p>
                     <input type="password"
                            id="telegram-bot-token"
                            data-setting-key="telegram_bot_token"
                            data-setting-category="telegram"
-                           value="${BossModUtils.escapeHtml(token)}"
-                           placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                           data-has-secret="${hasToken ? 'true' : 'false'}"
+                           value=""
+                           placeholder="${hasToken ? '••••' + BossModUtils.escapeHtml(tokenLast4) : '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                   focus:border-bm-accent font-mono">
@@ -1793,8 +1791,9 @@ const TelegramSection = (() => {
                 <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
                     <label class="block text-sm font-medium mb-1">Allowed User IDs</label>
                     <p class="text-xs text-bm-muted mb-1.5">
-                        Comma-separated Telegram user IDs that can interact with the bot.
-                        Leave empty to allow everyone. To find your user ID, search for
+                        Required. Comma-separated Telegram user IDs that can interact with the bot.
+                        An empty allowlist denies everyone and the bot will not start.
+                        To find your user ID, search for
                         <strong>@userinfobot</strong> in Telegram and start a chat &mdash; it will reply with your ID.
                     </p>
                     <input type="text"
@@ -1859,11 +1858,34 @@ const TelegramSection = (() => {
             const btn = e.currentTarget;
             const wasEnabled = btn.getAttribute('aria-checked') === 'true';
             const newValue = wasEnabled ? 'false' : 'true';
+            const allowlist = (document.getElementById('telegram-allowed-users')?.value || '').trim();
+            if (newValue === 'true' && !allowlist) {
+                showStatus('Add at least one Telegram user ID before enabling the bot.', 'error');
+                return;
+            }
 
             try {
-                await fetch('/api/settings/telegram_enabled?value=' + encodeURIComponent(newValue) + '&category=telegram', {
+                if (newValue === 'true') {
+                    const allowRes = await fetch(
+                        '/api/settings/telegram_allowed_user_ids?value='
+                        + encodeURIComponent(allowlist)
+                        + '&category=telegram',
+                        { method: 'PUT' },
+                    );
+                    if (!allowRes.ok) {
+                        const err = await allowRes.json().catch(() => ({}));
+                        showStatus(err.detail || 'Failed to save allowlist.', 'error');
+                        return;
+                    }
+                }
+                const res = await fetch('/api/settings/telegram_enabled?value=' + encodeURIComponent(newValue) + '&category=telegram', {
                     method: 'PUT',
                 });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showStatus(err.detail || 'Failed to update setting.', 'error');
+                    return;
+                }
                 btn.setAttribute('aria-checked', String(!wasEnabled));
                 btn.classList.toggle('bg-bm-accent', !wasEnabled);
                 btn.classList.toggle('bg-slate-300', wasEnabled);
@@ -1884,13 +1906,27 @@ const TelegramSection = (() => {
                 const key = e.target.dataset.settingKey;
                 const category = e.target.dataset.settingCategory;
                 const value = e.target.value;
+                if (key === 'telegram_bot_token' && !value && e.target.dataset.hasSecret === 'true') {
+                    return;
+                }
                 try {
-                    await fetch(
+                    const res = await fetch(
                         '/api/settings/' + encodeURIComponent(key)
                         + '?value=' + encodeURIComponent(value)
                         + '&category=' + encodeURIComponent(category),
                         { method: 'PUT' },
                     );
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        e.target.classList.add('border-red-400');
+                        setTimeout(() => e.target.classList.remove('border-red-400'), 1500);
+                        showStatus(err.detail || 'Failed to save setting.', 'error');
+                        return;
+                    }
+                    if (key === 'telegram_bot_token' && value) {
+                        e.target.value = '';
+                        e.target.dataset.hasSecret = 'true';
+                    }
                     e.target.classList.add('border-emerald-400');
                     setTimeout(() => e.target.classList.remove('border-emerald-400'), 1500);
                     showStatus('Saved. Restart BossMod for changes to take effect.', 'success');

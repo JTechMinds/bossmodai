@@ -19,11 +19,11 @@ from telegram.ext import (
     filters,
 )
 
-from core import config
 from core.messaging import route_human_dm, route_human_channel_message
 import db
 
 from integrations.telegram import formatters
+from integrations.telegram.auth import is_telegram_user_allowed
 from integrations.telegram.sessions import (
     clear_session,
     find_channel_for_names_key,
@@ -64,12 +64,13 @@ def create_application(
 # ---------------------------------------------------------------------------
 
 def _check_auth(update: Update) -> bool:
-    """Return True if the user is allowed to interact with the bot."""
-    allowed_raw = config.get("telegram_allowed_user_ids")
-    if not allowed_raw:
-        return True
-    allowed = {int(uid.strip()) for uid in allowed_raw.split(",") if uid.strip()}
-    return update.effective_user is not None and update.effective_user.id in allowed
+    """Return True if the user is on the Telegram allowlist.
+
+    Empty allowlist is deny-all (fail-closed). Approvals use this same gate.
+    """
+    user = update.effective_user
+    user_id = user.id if user is not None else None
+    return is_telegram_user_allowed(user_id)
 
 
 def _resolve_agent_by_name(name: str) -> dict[str, Any] | None:

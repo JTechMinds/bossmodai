@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from api.auth import ensure_local_api_token, install_local_api_auth
 from api.routes import router as api_router
 from core.runtime import runtime_services
 from db import init_db, close_connection
@@ -31,6 +32,7 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    ensure_local_api_token()
     await runtime_services.start()
 
     try:
@@ -65,6 +67,7 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(api_router)
+install_local_api_auth(app)
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -84,7 +87,11 @@ templates.env.globals["static_url"] = static_url
 
 @app.get("/")
 async def index(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"local_api_token": ensure_local_api_token()},
+    )
 
 
 @app.get("/health")

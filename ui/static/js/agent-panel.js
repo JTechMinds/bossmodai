@@ -458,7 +458,7 @@ const AgentPanel = (() => {
             } catch { /* use null */ }
         }
 
-        // Resolve connection IDs → copy api_base_url, api_key, model into agent fields
+        // Resolve connection IDs → copy model names; backend copies stored secrets.
         const connMap = {};
         for (const c of connections) connMap[c.id] = c;
 
@@ -471,9 +471,9 @@ const AgentPanel = (() => {
                     throw new Error(`Connection "${conn.name}" is missing an explicit model identifier`);
                 }
                 agentData[t.key] = runtimeModel;
-                if (!agentData.api_base_url) {
+                if (!agentData.connection_id) {
+                    agentData.connection_id = conn.id;
                     agentData.api_base_url = conn.api_base_url;
-                    agentData.api_key = conn.api_key || null;
                     agentData.extra_body = conn.extra_body || null;
                 }
             } else {

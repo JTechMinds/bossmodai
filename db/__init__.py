@@ -196,7 +196,14 @@ from db.task_notification_targets import (
 )
 
 # Settings
-from db.settings import force_reseed, get_seed_setting_default, get_settings, reset_setting_to_seed, set_setting
+from db.settings import (
+    ensure_local_api_token,
+    force_reseed,
+    get_seed_setting_default,
+    get_settings,
+    reset_setting_to_seed,
+    set_setting,
+)
 
 # Activity log
 from db.activity_log import create_activity_log_entry, get_recent_activity_log_entries
@@ -393,6 +400,7 @@ __all__ = [
     "get_task_notification_target_channel_id",
     "set_task_notification_target_channel_id",
     # Settings
+    "ensure_local_api_token",
     "force_reseed",
     "get_seed_setting_default",
     "get_settings",

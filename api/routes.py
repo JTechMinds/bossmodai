@@ -13,7 +13,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -22,7 +22,15 @@ from starlette.responses import FileResponse
 
 from pydantic import BaseModel
 
+from api.auth import websocket_authorized
+from api.redaction import (
+    serialize_connection,
+    serialize_secret_field,
+    serialize_setting,
+    serialize_settings,
+)
 from api.websocket import manager
+from integrations.telegram.auth import parse_allowed_user_ids
 from core import config
 from core.agent_loop import activity_runtime
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
@@ -42,7 +50,6 @@ from core.models import (
     AgentPromptHistoryPolicy,
     AgentPromptHistoryPolicyUpdate,
     AgentUpdate,
-    AIConnection,
     AIConnectionCreate,
     AIConnectionUpdate,
     AIPersonality,
@@ -179,6 +186,35 @@ class CliApprovalDecisionBody(BaseModel):
     decision_note: str | None = None
 
 
+def _credentials_from_connection(connection_id: str | None) -> dict[str, Any]:
+    """Resolve stored connection secrets so the UI never needs raw keys."""
+    if not connection_id:
+        return {}
+    conn = db.get_connection_by_id(connection_id)
+    if conn is None:
+        raise HTTPException(400, "Connection not found")
+    return {
+        "api_base_url": conn.api_base_url,
+        "api_key": conn.api_key,
+        "extra_body": conn.extra_body,
+    }
+
+
+def _apply_connection_credentials(fields: dict[str, Any]) -> dict[str, Any]:
+    """Fill api_base_url / api_key / extra_body from connection_id when omitted."""
+    connection_id = fields.pop("connection_id", None)
+    if not connection_id:
+        return fields
+    creds = _credentials_from_connection(connection_id)
+    if not fields.get("api_base_url"):
+        fields["api_base_url"] = creds["api_base_url"]
+    if not fields.get("api_key"):
+        fields["api_key"] = creds["api_key"]
+    if fields.get("extra_body") is None:
+        fields["extra_body"] = creds["extra_body"]
+    return fields
+
+
 _RUNTIME_CONTRACT_KEYS = {
     "decision": "runtime_contract_decision",
     "execution": "runtime_contract_execution",
@@ -250,6 +286,10 @@ async def websocket_endpoint(ws: WebSocket):
     On connect, sends the full world state and recent activity history.
     Then keeps the connection alive, forwarding broadcasts.
     """
+    if not websocket_authorized(ws):
+        await ws.close(code=4401)
+        return
+
     await manager.connect(ws)
 
     # Send initial world state
@@ -672,11 +712,11 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
 
 @router.get("/agents/{agent_id}/api-key")
 async def get_agent_api_key(agent_id: str):
-    """Return the agent's API key (for the agent editor only)."""
+    """Return whether an agent has an API key, plus last-4 only."""
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
-    return {"api_key": agent.api_key}
+    return serialize_secret_field("api_key", agent.api_key)
 
 
 @router.get("/agents/{agent_id}/prompt-history-policy")
@@ -746,6 +786,12 @@ async def create_agent(body: AgentCreate) -> Agent:
             _validate_authored_prompt_template(body.prompt_template)
         except TemplateError as exc:
             raise HTTPException(400, str(exc)) from exc
+    creds = _apply_connection_credentials({
+        "connection_id": body.connection_id,
+        "api_base_url": body.api_base_url,
+        "api_key": body.api_key,
+        "extra_body": body.extra_body,
+    })
     agent = db.create_agent(
         name=body.name,
         role=body.role,
@@ -758,9 +804,9 @@ async def create_agent(body: AgentCreate) -> Agent:
         model_reasoning=body.model_reasoning,
         model_extraction=body.model_extraction,
         model_self_queue=body.model_self_queue,
-        api_base_url=body.api_base_url,
-        api_key=body.api_key,
-        extra_body=body.extra_body,
+        api_base_url=creds.get("api_base_url"),
+        api_key=creds.get("api_key"),
+        extra_body=creds.get("extra_body"),
     )
     # Broadcast to all connected clients
     await manager.broadcast_world_state()
@@ -774,7 +820,7 @@ async def create_agent(body: AgentCreate) -> Agent:
 
 @router.patch("/agents/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
-    fields = body.model_dump(exclude_none=True)
+    fields = _apply_connection_credentials(body.model_dump(exclude_none=True))
     if not fields:
         raise HTTPException(400, "No fields to update")
     prompt_template = fields.get("prompt_template")
@@ -1970,7 +2016,7 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
 
 @router.get("/settings")
 async def get_settings(category: str | None = None):
-    return db.get_settings(category)
+    return serialize_settings(db.get_settings(category))
 
 
 @router.get("/settings/desktop-open-folder-options")
@@ -2116,7 +2162,25 @@ async def reset_setting_to_default(key: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.reload()
-    return result
+    return serialize_setting(result)
+
+
+def _validate_telegram_settings(key: str, value: str) -> None:
+    """Reject Telegram enablement without a usable allowlist (SEC-P0-01)."""
+    if key == "telegram_enabled" and value == "true":
+        if not parse_allowed_user_ids(config.get("telegram_allowed_user_ids")):
+            raise HTTPException(
+                400,
+                "Add at least one Telegram user ID before enabling the bot. "
+                "An empty allowlist is deny-all and the bot will not start.",
+            )
+    if key == "telegram_allowed_user_ids":
+        if not parse_allowed_user_ids(value) and config.get("telegram_enabled") == "true":
+            raise HTTPException(
+                400,
+                "Cannot clear the Telegram allowlist while the bot is enabled. "
+                "Disable Telegram first, or keep at least one user ID.",
+            )
 
 
 @router.put("/settings/{key}")
@@ -2126,49 +2190,52 @@ async def set_setting(key: str, value: str, category: str = "general"):
             _validate_authored_prompt_template(value)
         except TemplateError as exc:
             raise HTTPException(400, str(exc)) from exc
+    _validate_telegram_settings(key, value)
     try:
         result = db.set_setting(key, value, category)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.reload()  # Invalidate cache so changes take effect immediately
-    return result
+    return serialize_setting(result)
 
 
 # ─── AI Connections CRUD ───
 
 @router.get("/connections")
-async def list_connections() -> list[AIConnection]:
-    return db.list_connections()
+async def list_connections():
+    return [serialize_connection(conn) for conn in db.list_connections()]
 
 
 @router.get("/connections/{connection_id}")
-async def get_connection(connection_id: str) -> AIConnection:
+async def get_connection(connection_id: str):
     conn = db.get_connection_by_id(connection_id)
     if not conn:
         raise HTTPException(404, "Connection not found")
-    return conn
+    return serialize_connection(conn)
 
 
 @router.post("/connections", status_code=201)
-async def create_connection(body: AIConnectionCreate) -> AIConnection:
-    return db.create_connection(
+async def create_connection(body: AIConnectionCreate):
+    return serialize_connection(db.create_connection(
         name=body.name,
         api_base_url=body.api_base_url,
         api_key=body.api_key,
         model=body.model,
         extra_body=body.extra_body,
-    )
+    ))
 
 
 @router.patch("/connections/{connection_id}")
-async def update_connection(connection_id: str, body: AIConnectionUpdate) -> AIConnection:
+async def update_connection(connection_id: str, body: AIConnectionUpdate):
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
+    if fields.get("api_key") == "":
+        fields.pop("api_key", None)
     conn = db.update_connection(connection_id, **fields)
     if not conn:
         raise HTTPException(404, "Connection not found")
-    return conn
+    return serialize_connection(conn)
 
 
 @router.delete("/connections/{connection_id}", status_code=204)
@@ -2181,6 +2248,7 @@ class TestConnectionBody(BaseModel):
     api_base_url: str
     api_key: str | None = None
     model: str | None = None
+    connection_id: str | None = None
 
 
 @router.post("/connections/test")
@@ -2197,9 +2265,15 @@ async def test_connection(body: TestConnectionBody):
             "error": "Use the API base URL, not a completions endpoint. Example: https://host/v1",
         }
 
+    api_key = body.api_key
+    if not api_key and body.connection_id:
+        stored = db.get_connection_by_id(body.connection_id)
+        if stored is not None:
+            api_key = stored.api_key
+
     headers = {}
-    if body.api_key:
-        headers["Authorization"] = f"Bearer {body.api_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

@@ -120,6 +120,20 @@ uv run python main.py    # start the backend directly
 ./run.sh                 # full desktop app launch
 ```
 
+### Local API authentication
+
+The FastAPI backend generates a `local_api_token` on first run and requires it on every `/api` request (REST and WebSocket). This is a localhost desktop gate, not multi-tenant auth.
+
+| Client | How to send the token |
+| --- | --- |
+| Desktop UI | Injected into the index page and attached automatically as `X-BossMod-Token` (WebSocket uses `?token=`) |
+| Scripts / curl | `X-BossMod-Token: <token>` or `Authorization: Bearer <token>` |
+| Tests / automation | Set `BOSSMOD_LOCAL_API_TOKEN` to a known value |
+
+`GET /health` and the HTML/static UI stay unauthenticated. Secret fields such as `telegram_bot_token` and connection `api_key` are redacted on list/get responses (`has_*` + last-4 only), even for authenticated callers.
+
+Telegram is fail-closed: if the bot is enabled with an empty allowlist, it will not start, and no Telegram user is authorized.
+
 ## License
 
 BossMod AI is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
