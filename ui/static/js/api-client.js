@@ -26,6 +26,36 @@
         return window.fetch(input, withAuthHeaders(input, init));
     }
 
+    function formatApiError(payload, status) {
+        const detail = payload && payload.detail;
+        if (typeof detail === 'string' && detail.trim()) return detail;
+        if (Array.isArray(detail) && detail.length) {
+            const parts = detail.map((item) => {
+                if (typeof item === 'string') return item;
+                if (item && typeof item.msg === 'string') return item.msg;
+                return '';
+            }).filter(Boolean);
+            if (parts.length) return parts.join('; ');
+        }
+        if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+            return payload.error;
+        }
+        return `Request failed (${status})`;
+    }
+
+    async function apiErrorMessage(res) {
+        const payload = await res.json().catch(() => ({}));
+        return formatApiError(payload, res.status);
+    }
+
+    async function apiFetchOk(input, init) {
+        const res = await apiFetch(input, init);
+        if (!res.ok) {
+            throw new Error(await apiErrorMessage(res));
+        }
+        return res;
+    }
+
     async function apiFetchBlobUrl(input, init) {
         const res = await apiFetch(input, init);
         if (!res.ok) {
@@ -36,10 +66,13 @@
     }
 
     window.apiFetch = apiFetch;
+    window.apiFetchOk = apiFetchOk;
     window.apiFetchBlobUrl = apiFetchBlobUrl;
     window.BossModApi = {
         fetch: apiFetch,
+        fetchOk: apiFetchOk,
         fetchBlobUrl: apiFetchBlobUrl,
+        formatError: formatApiError,
         tokenHeader: TOKEN_HEADER,
     };
 })();

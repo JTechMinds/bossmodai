@@ -243,7 +243,7 @@ const SystemSection = (() => {
                 const category = e.target.dataset.settingCategory;
                 const value = e.target.value;
                 try {
-                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
+                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
                         method: 'PUT',
                     });
                     e.target.classList.add('border-emerald-400');

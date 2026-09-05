@@ -67,6 +67,23 @@ const CliPolicySection = (() => {
         setTimeout(() => el.classList.remove(cls), 1000);
     }
 
+    function applySettingSaveResult(card, ok, message) {
+        if (!card) return;
+        flashBorder(card, ok);
+        let node = card.querySelector('[data-setting-status]');
+        if (!message) {
+            if (node) node.textContent = '';
+            return;
+        }
+        if (!node) {
+            node = document.createElement('p');
+            node.setAttribute('data-setting-status', '');
+            card.appendChild(node);
+        }
+        node.textContent = message;
+        node.className = ok ? 'text-xs mt-2 text-emerald-600' : 'text-xs mt-2 text-red-500';
+    }
+
     // ─── Main render ───
 
     async function render(el) {
@@ -388,14 +405,16 @@ const CliPolicySection = (() => {
                 const rule = rulesCache.find(r => r.id === toggle.dataset.toggleRule);
                 if (!rule) return;
                 try {
-                    await apiFetch(`/api/cli-policy/rules/${rule.id}`, {
+                    await apiFetchOk(`/api/cli-policy/rules/${rule.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ enabled: !rule.enabled }),
                     });
                     rule.enabled = !rule.enabled;
                     renderTableBody();
-                } catch { /* silent */ }
+                } catch (err) {
+                    alert(err.message || 'Failed to update rule.');
+                }
             }
 
             if (edit) {
@@ -406,11 +425,11 @@ const CliPolicySection = (() => {
             if (del) {
                 if (!confirm('Delete this rule?')) return;
                 try {
-                    await apiFetch(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
+                    await apiFetchOk(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
                     rulesCache = rulesCache.filter(r => r.id !== del.dataset.deleteRule);
                     renderTableBody();
-                } catch {
-                    alert('Failed to delete rule.');
+                } catch (err) {
+                    alert(err.message || 'Failed to delete rule.');
                 }
             }
         });
@@ -422,10 +441,10 @@ const CliPolicySection = (() => {
         document.getElementById('btn-seed-defaults').addEventListener('click', async () => {
             if (!confirm('This will delete ALL existing rules and replace them with the defaults. Continue?')) return;
             try {
-                await apiFetch('/api/cli-policy/rules/seed-defaults', { method: 'POST' });
+                await apiFetchOk('/api/cli-policy/rules/seed-defaults', { method: 'POST' });
                 renderRulesTab(el);
-            } catch {
-                alert('Failed to seed defaults.');
+            } catch (err) {
+                alert(err.message || 'Failed to seed defaults.');
             }
         });
     }
@@ -563,13 +582,13 @@ const CliPolicySection = (() => {
 
             try {
                 if (isEdit) {
-                    await apiFetch(`/api/cli-policy/rules/${rule.id}`, {
+                    await apiFetchOk(`/api/cli-policy/rules/${rule.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    await apiFetch('/api/cli-policy/rules', {
+                    await apiFetchOk('/api/cli-policy/rules', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
@@ -577,8 +596,8 @@ const CliPolicySection = (() => {
                 }
                 const tabContent = document.getElementById('cli-tab-content');
                 if (tabContent) renderRulesTab(tabContent);
-            } catch {
-                alert('Failed to save rule.');
+            } catch (err) {
+                alert(err.message || 'Failed to save rule.');
             }
         });
     }
@@ -717,13 +736,13 @@ const CliPolicySection = (() => {
                 const newVal = (!current).toString();
                 const card = el.querySelector(`[data-setting-card="${key}"]`);
                 try {
-                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`, {
+                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`, {
                         method: 'PUT',
                     });
-                    if (card) flashBorder(card, true);
+                    applySettingSaveResult(card, true, '');
                     renderSettingsTab(el);
-                } catch {
-                    if (card) flashBorder(card, false);
+                } catch (err) {
+                    applySettingSaveResult(card, false, err.message || 'Save failed');
                 }
             });
         });
@@ -735,12 +754,12 @@ const CliPolicySection = (() => {
                 const value = e.target.value;
                 const card = el.querySelector(`[data-setting-card="${key}"]`);
                 try {
-                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
+                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
                         method: 'PUT',
                     });
-                    if (card) flashBorder(card, true);
-                } catch {
-                    if (card) flashBorder(card, false);
+                    applySettingSaveResult(card, true, '');
+                } catch (err) {
+                    applySettingSaveResult(card, false, err.message || 'Save failed');
                 }
             });
         });
@@ -876,11 +895,11 @@ const CliPolicySection = (() => {
         el.querySelectorAll('[data-approve]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 try {
-                    await apiFetch(`/api/cli-policy/approvals/${btn.dataset.approve}/approve`, { method: 'POST' });
+                    await apiFetchOk(`/api/cli-policy/approvals/${btn.dataset.approve}/approve`, { method: 'POST' });
                     renderApprovalsTab(el);
                     refreshApprovalBadge();
-                } catch {
-                    alert('Failed to approve.');
+                } catch (err) {
+                    alert(err.message || 'Failed to approve.');
                 }
             });
         });
@@ -900,15 +919,15 @@ const CliPolicySection = (() => {
                 const noteInput = document.getElementById(`reject-note-input-${reqId}`);
                 const note = noteInput ? noteInput.value.trim() : '';
                 try {
-                    await apiFetch(`/api/cli-policy/approvals/${reqId}/reject`, {
+                    await apiFetchOk(`/api/cli-policy/approvals/${reqId}/reject`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ decision_note: note || null }),
                     });
                     renderApprovalsTab(el);
                     refreshApprovalBadge();
-                } catch {
-                    alert('Failed to reject.');
+                } catch (err) {
+                    alert(err.message || 'Failed to reject.');
                 }
             });
         });

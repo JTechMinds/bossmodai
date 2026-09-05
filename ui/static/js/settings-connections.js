@@ -132,10 +132,14 @@ const ConnectionsSection = (() => {
         container.querySelectorAll('[data-delete-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 if (!confirm('Delete this connection?')) return;
-                await apiFetch(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
-                await renderList();
-                if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
-                    void BossModApp.refreshModelAvailability();
+                try {
+                    await apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
+                    await renderList();
+                    if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
+                        void BossModApp.refreshModelAvailability();
+                    }
+                } catch (err) {
+                    alert(err.message || 'Failed to delete connection.');
                 }
             });
         });
@@ -213,6 +217,7 @@ const ConnectionsSection = (() => {
                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                          focus:border-bm-accent font-mono">${BossModUtils.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
+                    <div id="connection-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">
                         <button type="submit"
@@ -257,11 +262,15 @@ const ConnectionsSection = (() => {
                         connection_id: isEdit ? conn.id : null,
                     }),
                 });
-                const result = await resp.json();
+                const result = await resp.json().catch(() => ({}));
 
-                if (!result.ok) {
+                if (!resp.ok || !result.ok) {
+                    const formatError = window.BossModApi && window.BossModApi.formatError;
+                    const message = (formatError
+                        ? formatError(result, resp.status)
+                        : (result.error || result.detail || `Test failed (${resp.status})`));
                     resultEl.className = 'p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
-                    resultEl.textContent = result.error;
+                    resultEl.textContent = message;
                 } else {
                     const isWarning = !!result.warning;
                     resultEl.className = isWarning
@@ -307,15 +316,21 @@ const ConnectionsSection = (() => {
             } else if (!isEdit) {
                 data.api_key = null;
             }
+            const status = document.getElementById('connection-save-status');
+            if (status) {
+                status.className = 'p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+                status.textContent = 'Saving...';
+                status.classList.remove('hidden');
+            }
             try {
                 if (isEdit) {
-                    await apiFetch(`/api/connections/${conn.id}`, {
+                    await apiFetchOk(`/api/connections/${conn.id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    await apiFetch('/api/connections', {
+                    await apiFetchOk('/api/connections', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
@@ -327,6 +342,11 @@ const ConnectionsSection = (() => {
                 }
             } catch (err) {
                 console.error('[Connections] Save failed:', err);
+                if (status) {
+                    status.className = 'p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                    status.textContent = err.message || 'Save failed';
+                    status.classList.remove('hidden');
+                }
             }
         });
     }
