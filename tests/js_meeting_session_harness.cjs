@@ -159,6 +159,22 @@ global.BossModUtils = {
             },
         };
     },
+    createChatTypingController() {
+        return {
+            show() {
+                return false;
+            },
+            hide() {
+                return true;
+            },
+            sync() {
+                return false;
+            },
+            ownerId() {
+                return null;
+            },
+        };
+    },
 };
 
 // eslint-disable-next-line no-eval
