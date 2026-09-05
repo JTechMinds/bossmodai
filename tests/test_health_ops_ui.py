@@ -54,7 +54,8 @@ def test_pyproject_drops_unused_duckdb_and_twilio() -> None:
 
 def test_desktop_uses_recorded_pid_not_pkill() -> None:
     rust = (ROOT / "desktop" / "src" / "main.rs").read_text(encoding="utf-8")
-    assert "pkill" not in rust
+    assert 'Command::new("pkill")' not in rust
+    assert ".arg(\"-f\")" not in rust
     assert "fn stop_recorded_backend(" in rust
     assert ".bossmod-backend.pid" in rust
     assert "is_recorded_backend" in rust

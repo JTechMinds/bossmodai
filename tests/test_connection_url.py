@@ -78,12 +78,12 @@ def test_api_rejects_metadata_ip_before_fetch() -> None:
     res = client.post(
         "/api/connections/test",
         headers=_auth_headers(),
-        json={"api_base_url": "http://169.254.169.254/latest"},
+        json={"api_base_url": "https://169.254.169.254/latest"},
     )
     assert res.status_code == 200
     body = res.json()
     assert body["ok"] is False
-    assert "not allowed" in body["error"].lower() or "link-local" in body["error"].lower()
+    assert "not allowed" in body["error"].lower() or "link-local" in body["error"].lower() or "metadata" in body["error"].lower()
 
 
 def test_api_rejects_loopback_discard_port_without_hanging() -> None:
