@@ -70,7 +70,7 @@ def test_settings_shell_no_longer_owns_section_iifes() -> None:
     for global_name in SECTION_FILES.values():
         assert f"const {global_name}" not in shell
         assert f"{global_name}.render(content)" in shell
-    assert "CliPolicySection.render(content)" in shell
+    assert "CliPolicySection.render(content, pendingOptions)" in shell
     assert "function initResizeHandle" not in shell
 
 
