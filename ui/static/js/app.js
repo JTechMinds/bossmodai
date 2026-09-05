@@ -116,21 +116,23 @@ const BossModApp = (() => {
         }
     }
 
-    // ─── Center panel mode switching ───
+    // ─── Exclusive center pane (office map OR one company view) ───
+
+    const CENTER_PANE_IDS = ['canvas-container', 'company-dashboard', 'diagnostic-detail-panel'];
+
+    function showCenterPane(visibleId) {
+        CENTER_PANE_IDS.forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle('hidden', id !== visibleId);
+        });
+    }
 
     function switchCenterMode(mode) {
-        const canvasContainer = document.getElementById('canvas-container');
-        const companyDashboard = document.getElementById('company-dashboard');
-        const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
-
         if (mode === 'office') {
-            if (companyDashboard) companyDashboard.classList.add('hidden');
-            if (canvasContainer) canvasContainer.classList.remove('hidden');
+            showCenterPane('canvas-container');
             requestAnimationFrame(() => window.dispatchEvent(new Event('panel-resize')));
         } else if (mode === 'company') {
-            if (canvasContainer) canvasContainer.classList.add('hidden');
-            if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
-            if (companyDashboard) companyDashboard.classList.remove('hidden');
+            showCenterPane('company-dashboard');
             if (typeof CompanyDashboard !== 'undefined') {
                 CompanyDashboard.switchTab(activeCompanyTab);
             }

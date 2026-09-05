@@ -535,6 +535,18 @@
     border-radius: 2px 2px 0 0;
 }
 
+/* ─── Exclusive center pane (map OR company OR diagnostic) ───
+   #panel-map is a single slot, not a row of siblings. Tailwind's
+   `.flex` otherwise wins over `.hidden` (same specificity), which
+   squeezed Files/Tasks/Metrics/Org beside the map as a third column.
+   !important matches the existing `.tab-content` hide rule. */
+#panel-map {
+    display: block;
+}
+.center-pane.hidden {
+    display: none !important;
+}
+
 /* ─── Center panel transition ─── */
 #canvas-container, #company-dashboard {
     transition: opacity 150ms ease;

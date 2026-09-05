@@ -269,16 +269,16 @@
 
         <!-- ─── Split handle is managed by Split.js ─── -->
 
-        <!-- ─── RIGHT PANEL: OFFICE MAP (70%) ─── -->
-        <div id="panel-map" class="flex-1 flex items-center justify-center bg-bm-bg p-2 sm:p-4">
-            <div id="canvas-container" class="w-full h-full flex items-center justify-center">
+        <!-- ─── CENTER SLOT: exclusive office map OR company view ─── -->
+        <div id="panel-map" class="flex-1 min-h-0 bg-bm-bg p-2 sm:p-4">
+            <div id="canvas-container" class="center-pane w-full h-full flex items-center justify-center">
                 <canvas id="office-canvas" class="rounded-xl shadow-sm border border-bm-border bg-white">
                     Your browser does not support canvas.
                 </canvas>
             </div>
 
-            <!-- Company Dashboard (replaces canvas when active) -->
-            <div id="company-dashboard" class="hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
+            <!-- Company Dashboard (exclusive center pane; not a sibling column) -->
+            <div id="company-dashboard" class="center-pane hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
                 <div id="company-dashboard-tabs" class="flex border-b border-bm-border bg-bm-surface shrink-0">
                     <button class="company-tab-btn flex-1 px-3 py-2.5 text-xs font-medium transition-colors relative" data-tab="files">
                         <span class="flex items-center justify-center gap-1.5">
@@ -304,8 +304,8 @@
                 <div id="company-dashboard-content" class="flex-1 overflow-y-auto bg-bm-bg"></div>
             </div>
 
-            <!-- Diagnostic detail (replaces canvas when active) -->
-            <div id="diagnostic-detail-panel" class="hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
+            <!-- Diagnostic detail (exclusive center pane when active) -->
+            <div id="diagnostic-detail-panel" class="center-pane hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
                 <div id="diag-detail-header" class="flex items-center justify-between p-4 border-b border-bm-border bg-bm-surface shrink-0">
                     <div id="diag-detail-summary" class="flex items-center gap-3 min-w-0"></div>
                     <button id="diag-detail-close" class="p-2 rounded-lg hover:bg-slate-100 transition-colors shrink-0" title="Close detail">
