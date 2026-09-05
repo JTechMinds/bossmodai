@@ -203,5 +203,5 @@ class ConnectionManager:
         await self.broadcast({"type": "activity_update", "data": entry})
 
 
-# Module-level singleton — imported by routes.py
+# Module-level singleton — imported by api.routes and wired into RuntimeServices in main.py
 manager = ConnectionManager()

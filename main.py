@@ -33,10 +33,12 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 async def lifespan(app: FastAPI):
     init_db()
     ensure_local_api_token()
+    from api.websocket import manager
+
+    runtime_services.set_event_sink(manager)
     await runtime_services.start()
 
     try:
-        from api.websocket import manager
         from integrations import telegram as tg
         telegram_bridge = await tg.start(services=runtime_services, broadcast_manager=manager)
         if telegram_bridge:

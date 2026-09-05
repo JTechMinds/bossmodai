@@ -12,7 +12,7 @@ flowchart LR
 
   subgraph app [FastAPI process]
     Main["main.py lifespan"]
-    API["api/routes.py"]
+    API["api/routes/"]
     WS["api/websocket.py manager"]
     RS["core/runtime/services.py<br/>runtime_services"]
     TG["integrations/telegram"]
@@ -103,7 +103,7 @@ sequenceDiagram
 ## Coupling hotspots
 
 - **God objects / process globals:** `runtime_services`, `dispatcher`, `simulation`, `watchdog`, `meeting_watchdog`, `policy_engine`, `manager` (WebSocket), `runtime_events`, `config._cache`.
-- **Layer inversion:** `core/runtime/services.py` imports `api.websocket.manager` to broadcast. Worker code aliases `runtime_events as manager` so the same call sites work in both processes.
+- **Layer inversion:** `RuntimeServices` broadcasts through an `EventSink` set in `main.py` lifespan (`set_event_sink(manager)`). `core/` does not import `api`. Worker code still aliases `runtime_events as manager` so the same call sites work in both processes.
 - **Barrel import:** almost all persistence goes `import db` → `db/__init__.py`. Easy to call, hard to fake in tests.
 - **Dual enqueue:** API/Telegram use `runtime_services.enqueue_trigger` (cross-process). Worker-side watchdogs/meetings use `dispatcher.enqueue_trigger` (in-process). Correct given the split; easy to call the wrong one from new code.
 - **Lazy imports** inside functions (`from core.world.simulation import simulation`, `from core.bm_cli.runtime import execute_approved_command`) paper over cycles rather than invert dependencies.
