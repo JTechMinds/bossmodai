@@ -14,6 +14,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
     build_task_assigned_trigger,
     can_dispatch_trigger,
+    persist_result_triggers,
     plan_arrival_follow_up,
     prepare_trigger_context,
 )
@@ -339,14 +340,9 @@ class TurnDispatcher:
 
     def _enqueue_result_triggers(self, result: dict[str, Any]) -> None:
         """Persist any follow-up triggers emitted by a successful turn."""
-        for queued in result.get("trigger_requests", []):
-            self.enqueue_trigger(
-                agent_id=queued["agent_id"],
-                trigger_type=queued["trigger_type"],
-                source_channel=queued["source_channel"],
-                payload=queued["payload"],
-                task_id=queued.get("task_id"),
-            )
+        persisted = persist_result_triggers(result)
+        if persisted:
+            self.notify()
 
     async def _record_dispatcher_exception(self, *, agent: Any, trigger: dict[str, Any], exc: Exception) -> None:
         """Persist a diagnostic row for exceptions raised outside normal turn finalization."""

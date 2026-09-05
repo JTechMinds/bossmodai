@@ -97,6 +97,8 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
         raise HTTPException(400, "Task owner must be an agent, not the human operator")
     if body.owner_id and not db.get_agent(body.owner_id):
         raise HTTPException(404, "Owner agent not found")
+    if body.assigned_to and not db.get_agent(body.assigned_to):
+        raise HTTPException(404, "Assigned agent not found")
     if body.parent_task_id:
         parent_task = db.get_task(body.parent_task_id)
         if not parent_task:
