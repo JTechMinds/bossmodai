@@ -91,6 +91,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_max_read_lines", "200", "advanced"),
 
     # ── CLI policy ──
+    # HA-SEC-P0-03: native shell stays off until an operator opts in.
     ("cli_shell_enabled", "false", "cli_policy"),
     ("cli_shell_timeout_seconds", "30", "cli_policy"),
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),

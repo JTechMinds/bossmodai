@@ -37,7 +37,7 @@ from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.results import approval_required_result, error_result, shell_result
 from core.bm_cli.session import get_cli_cwd
-from core.bm_cli.shell_executor import execute_shell_command
+from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
 from core.bm_cli.state_commands import (
     handle_activity,
     handle_current_task,
@@ -227,27 +227,51 @@ def execute_approved_command(
     cwd: str | None = None,
     trigger_type: str | None = None,
 ) -> BossModCliResult:
-    """Execute a previously-approved shell command (bypasses policy)."""
+    """Execute a previously-approved shell command.
+
+    Command-tier policy is not re-evaluated (the operator already approved
+    this argv), but the path jail still applies. Approval is not a jailbreak.
+    """
     cwd_before = cwd or get_cli_cwd(agent.id)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
 
-    try:
-        resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
-    except ValueError as exc:
-        return error_result(command, str(exc), cwd=cwd_before, executor="shell")
-    shell_cwd = Path(resolved.real_path) if resolved and resolved.real_path else Path.cwd()
-    timeout = config.get_int("cli_shell_timeout_seconds") or 30
-    max_output = config.get_int("cli_shell_max_output_bytes") or 65536
+    prepared = _prepare_native_shell(agent, parsed.raw, cwd_before)
+    if isinstance(prepared, BossModCliResult):
+        return prepared
+    shell_cwd, roots, timeout, max_output = prepared
 
     shell_exec = execute_shell_command(
         parsed.raw,
         cwd=shell_cwd,
         timeout_seconds=timeout,
         max_output_bytes=max_output,
+        allowed_roots=roots,
     )
+    if shell_exec.denied_by_path_jail:
+        result = error_result(
+            parsed.raw,
+            shell_exec.stderr,
+            cwd=cwd_before,
+            executor="shell",
+        )
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor="shell",
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier="approved",
+            decision="denied",
+            result=result,
+            trigger_type=trigger_type,
+            approval_request_id=approval_request_id,
+        )
+        return result
+
     result = shell_result(
         command=parsed.raw,
         exit_code=shell_exec.exit_code,
@@ -393,6 +417,33 @@ def _execute_virtual(
     return result
 
 
+def _prepare_native_shell(
+    agent: Agent,
+    command: str,
+    cwd_before: str,
+) -> tuple[Path, tuple[Path, ...], int, int] | BossModCliResult:
+    """Resolve a real workspace cwd and path-jail roots, or return an error."""
+    try:
+        resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
+    except ValueError as exc:
+        return error_result(command, str(exc), cwd=cwd_before, executor="shell")
+    if resolved is None or resolved.real_path is None:
+        return error_result(
+            command,
+            "Shell cwd is not a real workspace path",
+            cwd=cwd_before,
+            executor="shell",
+        )
+    timeout = config.get_int("cli_shell_timeout_seconds") or 30
+    max_output = config.get_int("cli_shell_max_output_bytes") or 65536
+    return (
+        Path(resolved.real_path),
+        allowed_shell_roots(agent.storage_key),
+        timeout,
+        max_output,
+    )
+
+
 def _execute_shell(
     *,
     agent: Agent,
@@ -403,17 +454,39 @@ def _execute_shell(
     trigger_type: str | None,
 ) -> BossModCliResult:
     """Run a native shell command and record the audit event."""
-    resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
-    shell_cwd = Path(resolved.real_path) if resolved and resolved.real_path else Path.cwd()
-    timeout = config.get_int("cli_shell_timeout_seconds") or 30
-    max_output = config.get_int("cli_shell_max_output_bytes") or 65536
+    prepared = _prepare_native_shell(agent, parsed.raw, cwd_before)
+    if isinstance(prepared, BossModCliResult):
+        return prepared
+    shell_cwd, roots, timeout, max_output = prepared
 
     shell_exec = execute_shell_command(
         parsed.raw,
         cwd=shell_cwd,
         timeout_seconds=timeout,
         max_output_bytes=max_output,
+        allowed_roots=roots,
     )
+    if shell_exec.denied_by_path_jail:
+        result = error_result(
+            parsed.raw,
+            shell_exec.stderr,
+            cwd=cwd_before,
+            executor="shell",
+        )
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor="shell",
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier=policy.tier,
+            decision="denied",
+            result=result,
+            trigger_type=trigger_type,
+        )
+        return result
+
     result = shell_result(
         command=parsed.raw,
         exit_code=shell_exec.exit_code,

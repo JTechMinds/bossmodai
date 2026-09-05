@@ -1,20 +1,32 @@
 """Sandboxed native shell command executor.
 
 Executes real shell commands (npm, pip, python, curl, etc.) with timeout
-enforcement, output truncation, and environment sanitization. Commands are
-parsed via shlex.split() and run without a shell (shell=False) to prevent
-shell injection.
+enforcement, output truncation, environment sanitization, and a path jail.
+Commands are parsed via shlex.split() and run without a shell (``shell=False``)
+to prevent shell injection.
+
+The path jail (HA-SEC-P0-03) inspects argv tokens that look like filesystem
+paths and rejects any that resolve outside the allowed roots (agent workspace
+and the projects mount). Approval does not bypass this check.
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import shlex
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
+
 logger = logging.getLogger(__name__)
+
+# Permission-denied style exit: the command was not started.
+PATH_JAIL_DENIED_EXIT_CODE = 126
 
 # ── Environment allowlist ────────────────────────────────────────────
 # Only these environment variables are forwarded to child processes.
@@ -48,6 +60,158 @@ class ShellExecutionResult:
     stderr: str
     timed_out: bool
     duration_ms: int
+    denied_by_path_jail: bool = False
+
+
+class PathJailError(ValueError):
+    """Raised when an argv path token resolves outside the allowed roots."""
+
+
+def allowed_shell_roots(agent_storage_key: str) -> tuple[Path, ...]:
+    """Return the real filesystem roots a native shell command may touch.
+
+    Roots are the agent's personal workspace and the shared projects mount.
+    ``artifacts/db_backups`` and other agents' workspaces are outside the jail.
+    """
+    return (
+        agent_artifact_dir(agent_storage_key).resolve(),
+        projects_artifact_root().resolve(),
+    )
+
+
+def _looks_like_path(token: str) -> bool:
+    """Return True when *token* should be treated as a filesystem path."""
+    if not token or token == "-":
+        return False
+    if token.startswith("~"):
+        return True
+    if token in {".", ".."}:
+        return True
+    if token.startswith("./") or token.startswith("../"):
+        return True
+    if token.startswith("/") or token.startswith("\\"):
+        return True
+    if "/" in token or "\\" in token:
+        return True
+    return False
+
+
+def _path_candidates_from_token(token: str) -> list[str]:
+    """Extract path-like payloads from an argv token.
+
+    Handles bare paths, ``--flag=/abs/path``, and attached forms like
+    ``-f/etc/passwd``. Flag-only tokens are ignored.
+    """
+    if not token or token == "-":
+        return []
+    if token.startswith("-"):
+        if "=" in token:
+            return _path_candidates_from_token(token.split("=", 1)[1])
+        for index, char in enumerate(token):
+            if char in "/~":
+                return [token[index:]]
+        return []
+    return [token]
+
+
+def _resolve_user_path(token: str, cwd: Path) -> Path:
+    """Resolve a user-supplied path token against *cwd*.
+
+    ``~`` expands to *cwd* (the sanitized ``HOME``). ``~otheruser`` is
+    rejected — the jail must not follow the host passwd database.
+    """
+    if token.startswith("~"):
+        rest = token[1:]
+        if rest.startswith("/") or rest.startswith("\\"):
+            rest = rest[1:]
+        elif rest:
+            raise PathJailError(
+                f"Path jail: {token!r} is not allowed (~user home expansion is disabled)"
+            )
+        return (cwd / rest).resolve() if rest else cwd.resolve()
+
+    path = Path(token)
+    if not path.is_absolute():
+        path = cwd / path
+    return path.resolve()
+
+
+def _is_within_roots(path: Path, roots: Sequence[Path]) -> bool:
+    """Return True if *path* is equal to or inside any allowed root."""
+    resolved = path.resolve()
+    for root in roots:
+        root_resolved = Path(root).resolve()
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            return True
+    return False
+
+
+def resolve_jailed_path(token: str, *, cwd: Path) -> Path | None:
+    """Return the resolved path a token refers to, or None if it is not a path.
+
+    Bare words that do not exist under *cwd* are treated as non-paths (e.g.
+    ``echo hello``). Bare names that exist — including symlinks — are resolved
+    so a workspace symlink cannot point at ``/etc/passwd``.
+    """
+    if _looks_like_path(token):
+        return _resolve_user_path(token, cwd)
+    candidate = cwd / token
+    try:
+        if candidate.is_symlink() or candidate.exists():
+            return candidate.resolve()
+    except OSError:
+        return None
+    return None
+
+
+def assert_argv_within_path_jail(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    allowed_roots: Sequence[Path],
+) -> None:
+    """Reject argv path tokens that resolve outside *allowed_roots*.
+
+    ``args[0]`` (the executable) is not jailed: binaries live on ``PATH``
+    outside the workspace. File operands and option values are jailed.
+    """
+    cwd_resolved = Path(cwd).resolve()
+    roots = tuple(Path(root).resolve() for root in allowed_roots) or (cwd_resolved,)
+
+    if not _is_within_roots(cwd_resolved, roots):
+        raise PathJailError(
+            f"Path jail: working directory {str(cwd_resolved)!r} is outside "
+            "the agent workspace and projects mount"
+        )
+
+    for raw_token in args[1:]:
+        for candidate in _path_candidates_from_token(raw_token):
+            try:
+                resolved = resolve_jailed_path(candidate, cwd=cwd_resolved)
+            except PathJailError:
+                raise
+            except OSError as exc:
+                raise PathJailError(
+                    f"Path jail: cannot resolve {candidate!r}: {exc}"
+                ) from exc
+            if resolved is None:
+                continue
+            if not _is_within_roots(resolved, roots):
+                raise PathJailError(
+                    f"Path jail: {candidate!r} resolves outside the agent "
+                    "workspace and projects mount"
+                )
+
+
+def _path_jail_denied_result(message: str) -> ShellExecutionResult:
+    return ShellExecutionResult(
+        exit_code=PATH_JAIL_DENIED_EXIT_CODE,
+        stdout="",
+        stderr=message,
+        timed_out=False,
+        duration_ms=0,
+        denied_by_path_jail=True,
+    )
 
 
 def _sanitize_env(cwd: Path) -> dict[str, str]:
@@ -78,6 +242,7 @@ def execute_shell_command(
     cwd: Path,
     timeout_seconds: int = 30,
     max_output_bytes: int = 65_536,
+    allowed_roots: Sequence[Path] | None = None,
 ) -> ShellExecutionResult:
     """Execute a native shell command and return the result.
 
@@ -85,6 +250,10 @@ def execute_shell_command(
     (``shell=False``) to prevent shell injection.  The process runs with
     the given *cwd* and a sanitized environment that strips secrets and
     overrides ``HOME`` to the workspace directory.
+
+    Path-like argv tokens are resolved and must stay inside *allowed_roots*
+    (default: *cwd* only). This check runs even for previously approved
+    commands — approval is not a path-jail bypass.
 
     Parameters
     ----------
@@ -96,6 +265,8 @@ def execute_shell_command(
         Maximum wall-clock seconds before the process is killed.
     max_output_bytes:
         Stdout and stderr are each truncated to this many bytes.
+    allowed_roots:
+        Real directories the command may read or write. Defaults to *cwd*.
 
     Returns
     -------
@@ -122,6 +293,13 @@ def execute_shell_command(
             timed_out=False,
             duration_ms=0,
         )
+
+    roots = tuple(allowed_roots) if allowed_roots else (Path(cwd),)
+    try:
+        assert_argv_within_path_jail(args, cwd=Path(cwd), allowed_roots=roots)
+    except PathJailError as exc:
+        logger.warning("shell command=%r denied by path jail: %s", command, exc)
+        return _path_jail_denied_result(str(exc))
 
     sanitized_env = _sanitize_env(cwd)
     start = time.monotonic()
