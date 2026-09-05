@@ -117,6 +117,17 @@
         AI runtime is paused. Agents will not take new turns until you resume the system.
     </div>
 
+    <div id="no-model-banner"
+         class="hidden shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+         role="status">
+        No AI model is connected.
+        <button type="button" id="no-model-banner-settings"
+                class="underline font-medium hover:text-amber-950">
+            Connect a model in Settings
+        </button>
+        — chat Send stays disabled until a connection exists.
+    </div>
+
     <!-- ═══════════════ SETTINGS VIEW (hidden by default) ═══════════════ -->
     <div id="settings-layout" class="flex-1 flex overflow-hidden hidden">
         <!-- Settings nav -->
@@ -221,10 +232,12 @@
                                       placeholder="Type a message... (Shift+Enter for new line)"
                                       class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
                                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                             focus:border-bm-accent resize-none"></textarea>
+                                             focus:border-bm-accent resize-none
+                                             disabled:opacity-60 disabled:cursor-not-allowed"></textarea>
                             <button id="chat-send"
                                     class="px-3 py-2 bg-bm-accent text-white rounded-lg
-                                           hover:bg-bm-accent-hover transition-colors shrink-0">
+                                           hover:bg-bm-accent-hover transition-colors shrink-0
+                                           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-bm-accent">
                                 <i data-lucide="send" class="w-4 h-4"></i>
                             </button>
                         </div>

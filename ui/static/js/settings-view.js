@@ -47,6 +47,9 @@ const SettingsView = (() => {
         mainLayout.classList.remove('hidden');
         if (mobileSheet) mobileSheet.classList.remove('hidden');
         isOpen = false;
+        if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
+            void BossModApp.refreshModelAvailability();
+        }
     }
 
     // ─── Nav rendering ───

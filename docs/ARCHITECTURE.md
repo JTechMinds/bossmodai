@@ -95,8 +95,8 @@ sequenceDiagram
 | `core/config.py` | Process-wide settings cache over `settings` table |
 | `db/` | SQLite access; `db/__init__.py` re-exports ~200 symbols |
 | `integrations/telegram/` | Bot commands, in-memory chat sessions, approval buttons |
-| `ui/` | Vanilla JS IIFEs + Tailwind CDN + Jinja `index.html` |
-| `desktop/` | Tauri 2 wrapper; `pkill -f main.py` then spawn backend |
+| `ui/` | Vanilla JS IIFEs + vendored Tailwind/Lucide/Split + Jinja `index.html` |
+| `desktop/` | Tauri 2 wrapper; records backend PID and signals that process on relaunch |
 | `prompts/` | Authored contracts, personalities, internal repair/continue text |
 | `plugins/` | Empty directory (no plugin loader) |
 

@@ -14,6 +14,7 @@ const BossModApp = (() => {
     let wsReconnectTimer = null;
     const WS_RECONNECT_DELAY = 3000;
     let runtimePaused = false;
+    let hasUsableModel = false;
     let centerMode = 'office';
     let activeCompanyTab = 'metrics';
     let runtimeStartedAt = null;
@@ -539,10 +540,14 @@ const BossModApp = (() => {
 
         if (settingsBtn) {
             settingsBtn.addEventListener('click', () => {
-                if (typeof SettingsView !== 'undefined') {
-                    SettingsView.open();
-                    updateNavForSettings(true);
-                }
+                openSettings();
+            });
+        }
+
+        const noModelSettings = document.getElementById('no-model-banner-settings');
+        if (noModelSettings) {
+            noModelSettings.addEventListener('click', () => {
+                openSettings();
             });
         }
 
@@ -551,6 +556,7 @@ const BossModApp = (() => {
                 if (typeof SettingsView !== 'undefined') {
                     SettingsView.close();
                     updateNavForSettings(false);
+                    void refreshModelAvailability();
                     // Re-render canvas after returning
                     if (typeof OfficeCanvas !== 'undefined') {
                         window.dispatchEvent(new Event('panel-resize'));
@@ -678,6 +684,7 @@ const BossModApp = (() => {
         initResize();
         initWebSocket();
         void fetchRuntimeState();
+        void refreshModelAvailability();
 
         // Restore center mode from prefs
         centerMode = prefs.centerMode || 'office';
@@ -694,6 +701,36 @@ const BossModApp = (() => {
         console.log('[BossMod] App initialized');
     }
 
+    function openSettings() {
+        if (typeof SettingsView !== 'undefined') {
+            SettingsView.open();
+            updateNavForSettings(true);
+        }
+    }
+
+    function applyNoModelBanner() {
+        const banner = document.getElementById('no-model-banner');
+        if (banner) {
+            banner.classList.toggle('hidden', hasUsableModel);
+        }
+        if (typeof AgentContext !== 'undefined' && typeof AgentContext.applyChatSendState === 'function') {
+            AgentContext.applyChatSendState();
+        }
+    }
+
+    async function refreshModelAvailability() {
+        try {
+            const res = await apiFetch('/api/connections', { cache: 'no-store' });
+            const connections = res.ok ? await res.json() : [];
+            hasUsableModel = Array.isArray(connections) && connections.length > 0;
+        } catch (err) {
+            console.error('[BossMod] Failed to load AI connections:', err);
+            hasUsableModel = false;
+        }
+        applyNoModelBanner();
+        return hasUsableModel;
+    }
+
     return {
         init,
         selectAgent,
@@ -702,6 +739,9 @@ const BossModApp = (() => {
         switchCompanyTab,
         getCenterMode,
         updateNavForSettings,
+        openSettings,
+        hasUsableModel: () => hasUsableModel,
+        refreshModelAvailability,
     };
 })();
 

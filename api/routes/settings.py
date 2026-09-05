@@ -12,6 +12,7 @@ from api.routes._shared import (
 )
 from api.websocket import manager
 from core import config
+from core.llm.connection_url import ConnectionUrlError, validate_connection_test_url
 from core.llm.template_engine import TemplateError
 from core.models import (
     AIConnectionCreate,
@@ -169,7 +170,10 @@ async def test_connection(body: TestConnectionBody):
     Verifies the host is reachable, auth works, and the response
     is OpenAI-compatible. Optionally checks the model exists.
     """
-    base = body.api_base_url.rstrip("/")
+    try:
+        base = validate_connection_test_url(body.api_base_url).rstrip("/")
+    except ConnectionUrlError as exc:
+        return {"ok": False, "error": str(exc)}
     if base.endswith("/chat/completions") or base.endswith("/completions"):
         return {
             "ok": False,

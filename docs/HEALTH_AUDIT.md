@@ -41,7 +41,7 @@ The health problem is **concentration + thin verification**, not missing feature
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for mermaid. Short version:
 
-**Boot:** `run.sh` → Tauri (`desktop/src/main.rs`) `pkill`s stale `main.py` → FastAPI `lifespan` → `init_db` (schema + seed settings/personalities/CLI rules) → `runtime_services.start()` spawns `python -m core.runtime.worker` → worker starts dispatcher, simulation, task watchdog, meeting watchdog → optional Telegram.
+**Boot:** `run.sh` → Tauri (`desktop/src/main.rs`) stops a recorded backend PID if it is still this repo’s `main.py` → FastAPI `lifespan` → `init_db` (schema + seed settings/personalities/CLI rules) → `runtime_services.start()` spawns `python -m core.runtime.worker` → worker starts dispatcher, simulation, task watchdog, meeting watchdog → optional Telegram.
 
 **Agent turn:** API/Telegram persist a row in `agent_triggers` and wake the worker via `runtime_commands`. Dispatcher claims one trigger per agent (`_active_turns`), calls `run_turn` (`loop.py`). Decision triggers (`human_chat`, `task_assigned`, meeting/channel responses, …) go through `decision_runtime.apply_decision`. Execution triggers loop LLM → `actions.execute_action` (CLI, walk, complete, delegate, …). Results become more triggers, WebSocket events, Telegram bridge events, diagnostics.
 

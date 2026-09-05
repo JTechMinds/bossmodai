@@ -56,6 +56,7 @@ def _script_sources() -> list[str]:
 def test_api_client_defines_apifetch_and_delegates_to_window_fetch() -> None:
     source = _read("api-client.js")
     assert "function apiFetch(" in source
+    assert "function apiFetchBlobUrl(" in source
     assert "window.apiFetch = apiFetch" in source
     assert "window.BossModApi" in source
     assert "return window.fetch(input, withAuthHeaders(input, init))" in source
