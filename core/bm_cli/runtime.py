@@ -35,7 +35,7 @@ from core.bm_cli.help_commands import (
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
-from core.bm_cli.results import approval_required_result, error_result, shell_result
+from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
 from core.bm_cli.state_commands import (
