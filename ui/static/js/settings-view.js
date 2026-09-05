@@ -692,6 +692,21 @@ const SystemSection = (() => {
             label: 'Watchdog Escalation Delay (minutes)',
             description: 'How much additional quiet time is allowed after a soft ping before the task is marked stalled.',
         },
+        meeting_watchdog_check_interval_seconds: {
+            order: 72,
+            label: 'Meeting Watchdog Check Interval (seconds)',
+            description: 'How often the meeting watchdog scans assembling room meetings for invite and arrival timeouts.',
+        },
+        meeting_invite_accept_timeout_seconds: {
+            order: 74,
+            label: 'Meeting Invite Accept Timeout (seconds)',
+            description: 'How long an invited agent may stay unanswered before the meeting marks them timed out.',
+        },
+        meeting_invite_arrival_timeout_seconds: {
+            order: 76,
+            label: 'Meeting Invite Arrival Timeout (seconds)',
+            description: 'How long an accepted agent may take to arrive at the meeting room before they are marked timed out.',
+        },
         thought_bubble_duration_ms: {
             order: 80,
             label: 'Thought Bubble Duration (ms)',
@@ -1828,8 +1843,12 @@ const TelegramSection = (() => {
                             <span class="text-bm-muted font-sans">Close active session</span>
                         </div>
                         <div class="flex gap-3">
+                            <span class="text-bm-accent shrink-0">/group</span>
+                            <span class="text-bm-muted font-sans">All-agent group channel (not a spatial office meeting)</span>
+                        </div>
+                        <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/meeting</span>
-                            <span class="text-bm-muted font-sans">All-agent group chat</span>
+                            <span class="text-bm-muted font-sans">Legacy alias for /group</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/channels</span>

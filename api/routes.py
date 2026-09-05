@@ -1772,28 +1772,38 @@ async def reset_agent_runtime(agent_id: str):
 
     await runtime_services.reset_agent_runtime(agent_id)
 
-    blocked_task_id = None
-    open_activities = [
+    reset_note = "Runtime reset by human operator."
+    blocked_task_ids: list[str] = []
+    seen_task_ids: set[str] = set()
+    open_work_activities = [
         activity
         for activity in db.list_activities(agent_id=agent_id, limit=100)
-        if activity.status in {"active", "paused"} and activity.task_id
+        if activity.status in {"active", "paused"}
+        and activity.kind == "work"
+        and activity.task_id
     ]
-    if open_activities:
-        task = db.get_task(open_activities[0].task_id)
+    for activity in open_work_activities:
+        task_id = activity.task_id
+        if not task_id or task_id in seen_task_ids:
+            continue
+        task = db.get_task(task_id)
         if task and task.status in ("pending", "accepted", "active", "waiting"):
             transition_task(
                 task.id,
                 "blocked",
-                reason="Runtime reset by human operator.",
+                reason=reset_note,
                 actor="Human Operator",
                 actor_type="human",
-                status_note="Runtime reset by human operator.",
+                status_note=reset_note,
                 watchdog_pinged_at=None,
             )
-            blocked_task_id = task.id
+            seen_task_ids.add(task.id)
+            blocked_task_ids.append(task.id)
+
+    blocked_task_id = blocked_task_ids[0] if blocked_task_ids else None
 
     deleted_triggers = db.delete_open_triggers(agent_id)
-    cancelled_activities = db.cancel_open_activities(agent_id, detail="Runtime reset by human operator.")
+    cancelled_activities = db.cancel_open_activities(agent_id, detail=reset_note)
     activity_runtime.refresh_agent_status(agent_id)
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
@@ -1803,6 +1813,7 @@ async def reset_agent_runtime(agent_id: str):
         extra={
             "deleted_triggers": deleted_triggers,
             "blocked_task_id": blocked_task_id,
+            "blocked_task_ids": blocked_task_ids,
             "cancelled_activities": cancelled_activities,
         },
     )
@@ -1811,6 +1822,7 @@ async def reset_agent_runtime(agent_id: str):
         "status": "ok",
         "deleted_triggers": deleted_triggers,
         "blocked_task_id": blocked_task_id,
+        "blocked_task_ids": blocked_task_ids,
         "cancelled_activities": cancelled_activities,
     }
 
