@@ -1,13 +1,11 @@
 /**
  * BossMod AI — Company Dashboard controller.
  *
- * Manages sub-tab switching within the company dashboard view.
- * Delegates rendering to individual tab modules.
+ * Renders Files / Tasks / Metrics / Org into dock window bodies.
  */
 
 const CompanyDashboard = (() => {
     let activeTab = 'files';
-    let initialized = false;
 
     const TAB_MODULES = {
         files: () => typeof CompanyFiles !== 'undefined' ? CompanyFiles : null,
@@ -16,37 +14,19 @@ const CompanyDashboard = (() => {
         org: () => typeof CompanyOrg !== 'undefined' ? CompanyOrg : null,
     };
 
-    function getContentEl() {
-        return document.getElementById('company-dashboard-content');
-    }
-
-    function updateTabBar() {
-        document.querySelectorAll('.company-tab-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === activeTab);
-        });
-    }
-
-    function bindTabClicks() {
-        if (initialized) return;
-        document.querySelectorAll('.company-tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (typeof BossModApp !== 'undefined') {
-                    BossModApp.switchCompanyTab(btn.dataset.tab);
-                }
-            });
-        });
-        initialized = true;
+    function getContentEl(tab) {
+        const id = tab || activeTab;
+        return document.getElementById(`dock-${id}-body`);
     }
 
     function switchTab(tab) {
         if (!TAB_MODULES[tab]) return;
         activeTab = tab;
-        updateTabBar();
-        bindTabClicks();
 
-        const contentEl = getContentEl();
+        const contentEl = getContentEl(tab);
         if (!contentEl) return;
         contentEl.innerHTML = '';
+        contentEl.dataset.rendered = tab;
 
         const mod = TAB_MODULES[tab]();
         if (mod && typeof mod.render === 'function') {
@@ -56,6 +36,18 @@ const CompanyDashboard = (() => {
         }
 
         if (window.lucide) lucide.createIcons({ nodes: [contentEl] });
+    }
+
+    function unmount(tab) {
+        const contentEl = getContentEl(tab);
+        const mod = TAB_MODULES[tab] ? TAB_MODULES[tab]() : null;
+        if (mod && typeof mod.destroy === 'function') {
+            mod.destroy();
+        }
+        if (contentEl) {
+            contentEl.innerHTML = '';
+            delete contentEl.dataset.rendered;
+        }
     }
 
     function handleWorldUpdate(agents) {
@@ -69,5 +61,5 @@ const CompanyDashboard = (() => {
         return activeTab;
     }
 
-    return { switchTab, handleWorldUpdate, getActiveTab };
+    return { switchTab, unmount, handleWorldUpdate, getActiveTab, getContentEl };
 })();
