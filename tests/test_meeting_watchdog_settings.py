@@ -81,8 +81,8 @@ def test_watchdog_fallbacks_apply_when_keys_missing() -> None:
 
 
 def test_settings_ui_exposes_meeting_watchdog_rows() -> None:
-    settings_js = (Path(__file__).resolve().parents[1] / "ui/static/js/settings-view.js").read_text(
-        encoding="utf-8"
-    )
+    settings_js = (
+        Path(__file__).resolve().parents[1] / "ui/static/js/settings-system.js"
+    ).read_text(encoding="utf-8")
     for key in MEETING_WATCHDOG_KEYS:
         assert f"{key}:" in settings_js
