@@ -96,7 +96,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "\n"
             "Examples:\n"
             "  cat README.md          — read a file in cwd\n"
-            "  cat /me/notes/todo.md  — read via absolute path"
+            "  cat /me/notes/todo.md  — read via virtual absolute path\n"
+            "  cat /home/you/app.py   — read a named host path if that directory is an allowed root"
         ),
         discovery_hint="full-file read; use for short files or final verification",
     ),

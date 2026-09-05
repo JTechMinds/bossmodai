@@ -59,9 +59,7 @@ async def get_company_files(path: str = "/") -> dict[str, object]:
 async def save_company_file(body: CompanyFileSaveBody) -> dict[str, object]:
     """Write content back to a file in the company workspace."""
     root = _company_files_root()
-    resolved = _resolve_safe_company_path(root, body.path)
-    if resolved is None:
-        raise HTTPException(400, "Invalid path")
+    resolved = _resolve_company_path_or_http(root, body.path)
     if not resolved.exists() or not resolved.is_file():
         raise HTTPException(404, "File not found")
 
@@ -230,31 +228,36 @@ async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[s
 
     def _search() -> list[dict[str, object]]:
         root = _company_files_root()
-        root_resolved = root.resolve()
         query_lower = q.lower()
         results: list[dict[str, object]] = []
 
-        for dirpath, dirnames, filenames in os.walk(root_resolved):
-            dirnames[:] = [
-                d for d in dirnames
-                if not d.startswith(".git") and not is_denied_company_file(Path(d))
-            ]
+        search_roots = _company_named_roots()
+        for search_root in search_roots:
+            if not search_root.exists():
+                continue
+            for dirpath, dirnames, filenames in os.walk(search_root):
+                dirnames[:] = [
+                    d for d in dirnames
+                    if not d.startswith(".git") and not is_denied_company_file(Path(d))
+                ]
 
-            for name in dirnames + filenames:
-                if name.startswith(".git") or is_denied_company_file(Path(name)):
-                    continue
-                if query_lower not in name.lower():
-                    continue
-                full = Path(dirpath) / name
-                is_dir = full.is_dir()
-                stat_result = full.stat()
-                results.append({
-                    "name": name,
-                    "path": _company_virtual_path(root, full),
-                    "is_dir": is_dir,
-                    "size_bytes": None if is_dir else stat_result.st_size,
-                    "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
-                })
+                for name in dirnames + filenames:
+                    if name.startswith(".git") or is_denied_company_file(Path(name)):
+                        continue
+                    if query_lower not in name.lower():
+                        continue
+                    full = Path(dirpath) / name
+                    is_dir = full.is_dir()
+                    stat_result = full.stat()
+                    results.append({
+                        "name": name,
+                        "path": _company_virtual_path(root, full),
+                        "is_dir": is_dir,
+                        "size_bytes": None if is_dir else stat_result.st_size,
+                        "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+                    })
+                    if len(results) >= 100:
+                        break
                 if len(results) >= 100:
                     break
             if len(results) >= 100:
@@ -270,8 +273,8 @@ async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[s
 async def get_company_file_raw(path: str = Query(..., min_length=1)):
     """Return the raw bytes of a file from the company workspace."""
     root = _company_files_root()
-    resolved = _resolve_safe_company_path(root, path)
-    if resolved is None or not resolved.exists():
+    resolved = _resolve_company_path_or_http(root, path)
+    if not resolved.exists():
         raise HTTPException(404, "File not found")
     if not resolved.is_file():
         raise HTTPException(400, "Path is not a file")
@@ -287,25 +290,109 @@ def _company_files_root() -> Path:
     return company_files_root()
 
 
+def _company_named_roots() -> tuple[Path, ...]:
+    """Projects mount plus any operator-configured extra host roots."""
+    from core.bm_cli.host_roots import configured_host_roots
+
+    projects = _company_files_root().resolve()
+    extras = configured_host_roots()
+    seen = {projects}
+    roots = [projects]
+    for extra in extras:
+        if extra in seen:
+            continue
+        seen.add(extra)
+        roots.append(extra)
+    return tuple(roots)
+
+
 def _company_virtual_path(root: Path, resolved: Path) -> str:
-    """Return the company-browser virtual path for a resolved filesystem path."""
-    relative = str(resolved.relative_to(root.resolve())).replace("\\", "/")
-    if relative in {"", "."}:
-        return "/"
-    return f"/{relative}"
+    """Return the company-browser virtual path for a resolved filesystem path.
+
+    Paths under the projects mount stay company-relative (``/alpha/notes.md``).
+    Paths under a configured host root keep the named absolute path.
+    """
+    from core.bm_cli.host_roots import is_within_roots
+
+    resolved = resolved.resolve()
+    projects = root.resolve()
+    if is_within_roots(resolved, (projects,)):
+        relative = str(resolved.relative_to(projects)).replace("\\", "/")
+        if relative in {"", "."}:
+            return "/"
+        return f"/{relative}"
+    return str(resolved)
 
 
 def _resolve_safe_company_path(root: Path, raw_path: str) -> Path | None:
-    """Resolve a user-supplied company path via ``resolve_relative_path``.
+    """Resolve a user-supplied company or named absolute path.
 
-    Rejects traversal and backup/database suffixes (``*.bak``, ``*.sqlite3``, ``*.db``).
+    Rejects traversal, backup/database suffixes, and paths outside the
+    projects mount plus configured host roots.
     """
-    from core.bm_cli.filesystem import resolve_company_relative_path
-
     try:
-        return resolve_company_relative_path(root, raw_path)
+        return _resolve_company_or_named_path(root, raw_path)
     except (ValueError, OSError):
         return None
+
+
+def _resolve_company_path_or_http(root: Path, raw_path: str) -> Path:
+    """Resolve a company/named path or raise an HTTP error with a clear denial."""
+    from core.bm_cli.host_roots import PathOutsideRootsError
+
+    try:
+        return _resolve_company_or_named_path(root, raw_path)
+    except PathOutsideRootsError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, "Invalid path") from exc
+
+
+def _matches_named_root_prefix(token: str, roots: tuple[Path, ...]) -> bool:
+    """Return True when *token* is the real path of an allowlisted root or a child."""
+    cleaned = token.rstrip("/")
+    for root in roots:
+        root_text = str(root)
+        if cleaned == root_text or cleaned.startswith(f"{root_text}/"):
+            return True
+    return False
+
+
+def _resolve_company_or_named_path(root: Path, raw_path: str) -> Path:
+    """Resolve *raw_path* or raise ``PathOutsideRootsError`` / ``ValueError``."""
+    from core.bm_cli.filesystem import resolve_company_relative_path
+    from core.bm_cli.host_roots import (
+        PathOutsideRootsError,
+        is_within_roots,
+        resolve_absolute_under_roots,
+    )
+
+    roots = _company_named_roots()
+    token = (raw_path or "").strip() or "/"
+    if _matches_named_root_prefix(token, roots):
+        return resolve_absolute_under_roots(
+            token,
+            roots,
+            deny_company_backup_suffix=True,
+        )
+    if token.startswith("/") and Path(token).is_absolute() and token not in {"/", "/projects"} and not token.startswith("/projects/"):
+        try:
+            existing = Path(token).resolve()
+        except OSError:
+            existing = None
+        if existing is not None and existing.exists():
+            if is_within_roots(existing, roots):
+                return resolve_absolute_under_roots(
+                    token,
+                    roots,
+                    deny_company_backup_suffix=True,
+                )
+            raise PathOutsideRootsError(
+                f"Path {token!r} is outside the allowed workspace roots "
+                f"(company projects plus configured host roots). "
+                "This is an allowlisted-roots model, not a full host mount."
+            )
+    return resolve_company_relative_path(root, token)
 
 
 def _annotate_agent_names(items: list[dict], name_key: str = "name") -> None:
@@ -329,15 +416,15 @@ def _annotate_agent_names(items: list[dict], name_key: str = "name") -> None:
 def _build_company_files_payload(path: str) -> dict[str, object]:
     """Build a filesystem-style payload for the company workspace browser."""
     from core.bm_cli.filesystem import is_denied_company_file
+    from core.bm_cli.host_roots import configured_host_roots
 
     root = _company_files_root()
-    resolved = _resolve_safe_company_path(root, path)
-    if resolved is None:
-        raise HTTPException(400, "Invalid path")
+    resolved = _resolve_company_path_or_http(root, path)
     if not resolved.exists():
         raise HTTPException(404, "Path not found")
 
     virtual_path = _company_virtual_path(root, resolved)
+    extras = configured_host_roots()
 
     if resolved.is_file():
         stat = resolved.stat()
@@ -353,6 +440,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
             "content": content,
             "truncated": truncated,
             "binary": binary,
+            "host_roots": [str(item) for item in extras],
+            "workspace_note": _company_workspace_note(extras),
         }
 
     entries: list[dict[str, object]] = []
@@ -373,6 +462,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
                 "size_bytes": None if is_dir else stat_result.st_size,
                 "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
             })
+    if virtual_path == "/":
+        entries.extend(_host_root_entries(extras))
     entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
     _annotate_agent_names(entries)
 
@@ -382,13 +473,67 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
         "name": Path(virtual_path).name if virtual_path != "/" else "Company Workspace",
         "breadcrumbs": _company_breadcrumbs(virtual_path),
         "entries": entries,
+        "host_roots": [str(item) for item in extras],
+        "workspace_note": _company_workspace_note(extras),
     }
+
+
+def _company_workspace_note(extras) -> str:
+    if extras:
+        return (
+            "Company Files is artifacts/projects plus the configured host roots "
+            "shown below. This is not a full unrestricted host mount."
+        )
+    return (
+        "Company Files is artifacts/projects only. A path you name on disk "
+        "works after you add its directory under Settings → CLI Policy → "
+        "Host workspace roots. This is not a full unrestricted host mount."
+    )
+
+
+def _host_root_entries(extras) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for extra in extras:
+        if not extra.exists() or not extra.is_dir():
+            continue
+        stat_result = extra.stat()
+        entries.append({
+            "name": extra.name or str(extra),
+            "path": str(extra),
+            "is_dir": True,
+            "size_bytes": None,
+            "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+            "mount": "host",
+        })
+    return entries
 
 
 def _company_breadcrumbs(path: str) -> list[dict[str, str]]:
     """Build breadcrumb trail for the company file browser."""
     if path in {"", "/"}:
         return [{"label": "Company", "path": "/"}]
+    from core.bm_cli.host_roots import configured_host_roots, is_within_roots
+
+    extras = configured_host_roots()
+    if extras and path.startswith("/"):
+        try:
+            candidate = Path(path).resolve()
+        except OSError:
+            candidate = None
+        if candidate is not None:
+            for extra in extras:
+                if not is_within_roots(candidate, (extra,)):
+                    continue
+                crumbs: list[dict[str, str]] = [
+                    {"label": "Company", "path": "/"},
+                    {"label": extra.name or str(extra), "path": str(extra)},
+                ]
+                if candidate != extra:
+                    current = str(extra)
+                    for part in candidate.relative_to(extra).as_posix().split("/"):
+                        current = f"{current}/{part}"
+                        crumbs.append({"label": part, "path": current})
+                return crumbs
     parts = [item for item in path.strip("/").split("/") if item]
     breadcrumbs: list[dict[str, str]] = [{"label": "Company", "path": "/"}]
     current = ""

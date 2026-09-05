@@ -124,7 +124,7 @@ flowchart TB
     Exec["subprocess.run shell=False + argv path jail + hardened seed"]
   end
   subgraph files [Company files]
-    Projects["rooted at artifacts/projects; backups and raw agent dirs denied"]
+    Projects["artifacts/projects plus optional allowlisted host roots; not a full host mount; backups and raw agent dirs denied"]
   end
 ```
 
@@ -133,5 +133,7 @@ flowchart TB
 - **PR #2** — local API token (`X-BossMod-Token` / `Authorization: Bearer`) on `/api` REST and WebSocket; settings/connections redact secrets; Telegram empty allowlist is deny-all and refuses start.
 - **HA-SEC-P0-04** — company browser root is `artifacts/projects`; `db_backups/` and raw `agents/` are outside it.
 - **HA-SEC-P0-03 / HA-SEC-P1-04** — shell path jail; interpreters / `xargs` / POSIX shells are `never_allowed`; argv[0] basename matching.
+
+Day-one workspace (see [`CAPABILITY_PASS.md`](CAPABILITY_PASS.md)): a user-named absolute path can be opened/read/edited when it stays under `/me`, `/projects`, or Settings → CLI Policy → Host workspace roots. Extra roots default to empty. This is an allowlisted-roots model, not a full host mount. Peer assign/deliver is not part of that pass.
 
 Residual (not “auth is missing”): `/health` and the HTML/static UI stay unauthenticated by design. Connection-test URLs are allowlisted (HA-SEC-NEW-01, shipped). Every HA-* item in [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) is shipped on current `main`; that file is the historical sequence plus out-of-scope notes, not an open queue. See [`HEALTH_VERIFICATION.md`](HEALTH_VERIFICATION.md) for the latest verification pass.

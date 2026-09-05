@@ -219,6 +219,7 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert POSIX_SHELL_PATTERNS <= never
     assert HARDENED_NEVER_ALLOWED_PATTERNS <= never
     assert "cat" in always
+    assert "uname" in always
 
 
 def test_reconcile_hardens_legacy_always_allowed_rows() -> None:

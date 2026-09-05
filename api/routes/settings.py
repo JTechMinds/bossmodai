@@ -103,6 +103,14 @@ async def set_setting(key: str, value: str, category: str = "general"):
         except TemplateError as exc:
             raise HTTPException(400, str(exc)) from exc
     _validate_telegram_settings(key, value)
+    if key == "workspace_host_roots":
+        from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
+
+        try:
+            value = normalize_host_root_setting(value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        category = SETTING_CATEGORY
     try:
         result = db.set_setting(key, value, category)
     except ValueError as exc:

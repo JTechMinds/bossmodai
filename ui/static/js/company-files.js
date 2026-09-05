@@ -10,6 +10,7 @@ const CompanyFiles = (() => {
     let searchMode = 'local'; // 'local' | 'global'
     let entries = [];
     let breadcrumbs = [];
+    let workspaceNote = '';
     let searchTimer = null;
     let folderOpenerModalEl = null;
     let contextMenuEl = null;
@@ -72,6 +73,7 @@ const CompanyFiles = (() => {
             const payload = await res.json();
             entries = Array.isArray(payload.entries) ? payload.entries : [];
             breadcrumbs = Array.isArray(payload.breadcrumbs) ? payload.breadcrumbs : [];
+            workspaceNote = typeof payload.workspace_note === 'string' ? payload.workspace_note : '';
             searchMode = 'local';
             renderDirectory(payload);
         } catch (err) {
@@ -99,6 +101,12 @@ const CompanyFiles = (() => {
                     <h3 class="text-sm font-semibold truncate">Company Files</h3>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
+                    <div class="relative">
+                        <input type="text" id="cf-path-input" placeholder="Open named path…"
+                               class="w-56 pl-7 pr-2 py-1 text-xs border border-bm-border rounded-lg bg-white focus:outline-none focus:border-bm-accent font-mono"
+                               title="Paste an absolute path under a configured host root, or a company-relative path">
+                        <i data-lucide="terminal" class="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-bm-muted pointer-events-none"></i>
+                    </div>
                     <div class="relative">
                         <input type="text" id="cf-search-input" placeholder="Search files..."
                                value="${esc(searchQuery)}"
@@ -147,6 +155,12 @@ const CompanyFiles = (() => {
                 <div class="flex items-center gap-1 px-4 py-2 text-xs text-bm-muted border-b border-bm-border bg-slate-50/50 overflow-x-auto whitespace-nowrap">
                     ${renderBreadcrumbs(breadcrumbs)}
                 </div>`;
+            if (workspaceNote) {
+                html += `
+                    <div class="px-4 py-1.5 text-[11px] text-bm-muted border-b border-bm-border bg-amber-50/60">
+                        ${esc(workspaceNote)}
+                    </div>`;
+            }
         }
 
         // Entry list
@@ -234,6 +248,20 @@ const CompanyFiles = (() => {
 
     function bindInteractions() {
         if (!container) return;
+
+        const pathInput = container.querySelector('#cf-path-input');
+        if (pathInput) {
+            pathInput.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                const named = e.target.value.trim();
+                if (!named) return;
+                if (named.includes('.') && !named.endsWith('/')) {
+                    CompanyFileViewer.open(named);
+                } else {
+                    navigateTo(named);
+                }
+            });
+        }
 
         // Search
         const searchInput = container.querySelector('#cf-search-input');

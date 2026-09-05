@@ -68,7 +68,8 @@ RULES:
 CLI CALL:
   {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
 CLI NOTES:
-  - bounded shell rooted at "/" with "/me" and "/projects"
+  - bounded paths: "/me", "/projects", and any operator-configured host roots (not a full host mount)
+  - a user-named absolute path works only when it stays inside those roots; otherwise the command is denied
   - cwd starts at "/me"
   - "/me" is git-tracked; "/me/scratchpad" is untracked
   - results are turn-local
