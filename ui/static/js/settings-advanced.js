@@ -161,7 +161,7 @@ const AdvancedSystemSection = (() => {
         document.getElementById('btn-reseed-settings').addEventListener('click', async () => {
             if (!confirm('Reset all editable seed settings to defaults? This will overwrite your saved system prompt template and other seed settings.')) return;
             try {
-                await apiFetch('/api/settings/reseed', { method: 'POST' });
+                await apiFetchOk('/api/settings/reseed', { method: 'POST' });
                 render(el); // Re-render to show updated values
             } catch {
                 alert('Reseed failed');
@@ -198,7 +198,12 @@ const AdvancedSystemSection = (() => {
             const nowEnabled = btn.getAttribute('aria-checked') === 'true';
             const newValue = nowEnabled ? 'false' : 'true';
 
-            await apiFetch(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`, { method: 'PUT' });
+            try {
+                await apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`, { method: 'PUT' });
+            } catch {
+                alert('Failed to update diagnostics setting.');
+                return;
+            }
 
             btn.setAttribute('aria-checked', String(!nowEnabled));
             btn.classList.toggle('bg-bm-accent', !nowEnabled);
@@ -211,7 +216,7 @@ const AdvancedSystemSection = (() => {
         document.getElementById('diag-retention-limit').addEventListener('change', async (e) => {
             const value = e.target.value;
             try {
-                await apiFetch(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                await apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
                 e.target.classList.add('border-emerald-400');
                 setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
             } catch {
@@ -223,7 +228,7 @@ const AdvancedSystemSection = (() => {
         document.getElementById('cli-read-range-limit').addEventListener('change', async (e) => {
             const value = e.target.value;
             try {
-                await apiFetch(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                await apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
                 e.target.classList.add('border-emerald-400');
                 setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
             } catch {
@@ -261,7 +266,7 @@ const AdvancedSystemSection = (() => {
             const selected = openerSelect.value;
             const resolvedValue = selected === '__custom__' ? openerCustom.value.trim() : selected;
             try {
-                await apiFetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`, { method: 'PUT' });
+                await apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`, { method: 'PUT' });
                 setFolderOpenerStatus(resolvedValue ? `Saved: ${resolvedValue}` : 'BossMod will ask on first use.');
             } catch {
                 setFolderOpenerStatus('Failed to save folder opener.', true);
@@ -270,7 +275,7 @@ const AdvancedSystemSection = (() => {
 
         document.getElementById('btn-reset-folder-opener').addEventListener('click', async () => {
             try {
-                await apiFetch('/api/settings/desktop_open_folder_handler?value=&category=advanced', { method: 'PUT' });
+                await apiFetchOk('/api/settings/desktop_open_folder_handler?value=&category=advanced', { method: 'PUT' });
                 openerSelect.value = '';
                 openerCustom.value = '';
                 setFolderOpenerStatus('BossMod will ask on first use.');

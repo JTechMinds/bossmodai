@@ -56,13 +56,19 @@ def _script_sources() -> list[str]:
 def test_api_client_defines_apifetch_and_delegates_to_window_fetch() -> None:
     source = _read("api-client.js")
     assert "function apiFetch(" in source
+    assert "function apiFetchOk(" in source
+    assert "function formatApiError(" in source
     assert "function apiFetchBlobUrl(" in source
     assert "window.apiFetch = apiFetch" in source
+    assert "window.apiFetchOk = apiFetchOk" in source
     assert "window.BossModApi" in source
     assert "return window.fetch(input, withAuthHeaders(input, init))" in source
     assert "X-BossMod-Token" in source
     assert "BOSSMOD_API_TOKEN" in source
     assert "function withAuthHeaders(" in source
+    # apiFetch stays non-throwing so existing callers can inspect res.ok.
+    assert "function apiFetch(input, init)" in source
+    assert "if (!res.ok)" in source
 
 
 def test_api_auth_token_wrap_still_patches_window_fetch() -> None:
@@ -136,3 +142,85 @@ def test_api_fetch_attaches_token_and_still_calls_wrapped_fetch() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {"ok": True, "calls": 3, "wrapped": True}
+
+
+def test_api_fetch_ok_throws_on_http_error_with_parsed_detail() -> None:
+    """apiFetch returns 4xx; apiFetchOk throws so save UIs cannot flash success."""
+    harness = Path(__file__).resolve().parent / "js_api_fetch_ok_harness.cjs"
+    result = subprocess.run(
+        [
+            "node",
+            str(harness),
+            str(JS / "api-auth.js"),
+            str(JS / "api-client.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["ok"] is True
+    assert payload["apiFetchDoesNotThrowOn400"] is True
+    assert payload["stringDetail"] == "Host workspace root must be an absolute path"
+    assert payload["listDetail"] == "Field required"
+    assert payload["emptyDetail"] == "Request failed (500)"
+    assert payload["formatted"] == "Host workspace root must be an absolute path"
+
+
+# Settings / CLI mutating saves that previously ignored res.ok (false-green).
+_SAVE_OK_SITES = {
+    "settings-connections.js": [
+        "apiFetchOk(`/api/connections/${conn.id}`",
+        "apiFetchOk('/api/connections'",
+        "apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`",
+    ],
+    "cli-policy-section.js": [
+        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`",
+        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`",
+        "apiFetchOk('/api/cli-policy/rules'",
+        "applySettingSaveResult(card, false",
+    ],
+    "settings-system.js": [
+        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`",
+    ],
+    "settings-advanced.js": [
+        "apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`",
+        "apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`",
+        "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
+        "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
+    ],
+}
+
+_UNGUARDED_MUTATING_FETCH = re.compile(
+    r"await apiFetch(?!Ok)\("
+    r"(?:[^;]|\n){0,500}?"
+    r"method:\s*'(?:PUT|POST|PATCH|DELETE)'",
+    re.S,
+)
+
+# These already inspect res.ok before success UI; leave the explicit check.
+_ALLOWED_UNGUARDED_MUTATING = {
+    "settings-advanced.js": {
+        "await apiFetch('/api/agents'",
+        "await apiFetch('/api/settings/reseed-application'",
+    },
+    # Test-connection already branches on resp.ok / result.ok before any success UI.
+    "settings-connections.js": {
+        "await apiFetch('/api/connections/test'",
+    },
+}
+
+
+def test_settings_cli_saves_use_apifetch_ok() -> None:
+    for name, needles in _SAVE_OK_SITES.items():
+        source = _read(name)
+        for needle in needles:
+            assert needle in source, f"{name} missing {needle}"
+        leftover = []
+        for match in _UNGUARDED_MUTATING_FETCH.finditer(source):
+            snippet = " ".join(match.group(0).split())
+            allowed = _ALLOWED_UNGUARDED_MUTATING.get(name, set())
+            if not any(token in match.group(0) for token in allowed):
+                leftover.append(snippet[:160])
+        assert leftover == [], f"{name} still has unguarded mutating apiFetch: {leftover}"
