@@ -185,6 +185,7 @@ async def test_peer_delegate_assign_accept_write_complete_wakes_assigner() -> No
 
     observer_triggers = _queued(assigner.id, trigger_type="task_update", task_id=task.id)
     assert observer_triggers
+    assert _payload(observer_triggers[0]).get("task_status") == "complete"
     notes = db.list_notifications(agent_id=assigner.id)
     assert any(item.task_id == task.id for item in notes)
     events = db.list_task_events(task.id)

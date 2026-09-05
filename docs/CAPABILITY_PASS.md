@@ -51,16 +51,16 @@ BOSSMOD_DB_PATH=/tmp/bossmod-cap-peer/bossmod.sqlite3 \
   uv run python scripts/run_peer_assign_scenario.py
 ```
 
-Happy path (captured on this pass):
+Happy path captured by `scripts/run_peer_assign_scenario.py` (`2026-09-05T21:13Z`):
 
 | Step | Call | Result |
 | --- | --- | --- |
-| 1 create | `POST /api/agents` Cap Assigner + Cap Worker | **201** / **201** |
-| 2 assign | `POST /api/tasks` requester=Cap Assigner, assigned_to=Cap Worker, `/me/status-note.md` | **201** `create_new_task` status=`pending`; path rewritten under `/projects/cap-peer/<task-id>/` |
-| 3 wake | `GET /api/agents/{worker}/triggers` | **200**; queued `task_assigned` from Cap Assigner |
-| 4 accept | `apply_decision` accept on that `task_assigned` | `decision_applied`; task status=`accepted` |
-| 5 deliver | `execute_action` `bm_cli write` + `complete` | `bm_cli_result` + `status_changed`; task status=`complete` |
-| 6 observe | `GET /api/tasks/{id}`, events, company file, assigner triggers | status=`complete`; file content includes `Peer assign/deliver loop completed.`; assigner has queued `task_update` |
+| 1 create | `POST /api/agents` Cap Assigner + Cap Worker | **201** / **201**; ids `3e3d1921-b5f3-4f72-98ad-8403978c33a5` / `e9d8990f-e715-40e0-b8b4-26ffdaf80c94` |
+| 2 assign | `POST /api/tasks` requester=Cap Assigner, assigned_to=Cap Worker, `/me/status-note.md` | **201** `create_new_task` status=`pending` task=`0064a1d4-eb82-44f2-9fd8-3c9fcf8ebc3d`; path `/projects/cap-peer/0064a1d4-eb82-44f2-9fd8-3c9fcf8ebc3d/status-note.md` |
+| 3 wake | `GET /api/agents/{worker}/triggers` | **200**; queued `task_assigned` from=`Cap Assigner` |
+| 4 accept | `apply_decision` accept on that `task_assigned` | `decision_applied`; GET task **200** status=`accepted` |
+| 5 deliver | `execute_action` `bm_cli write` + `complete` | `bm_cli_result` + `status_changed`; GET task **200** status=`complete` |
+| 6 observe | events + company file + assigner triggers | **200** (6 events: pending→accepted, accepted→complete, completion); file **200** content `# Cap status note` / `Peer assign/deliver loop completed.`; queued `task_update` on Cap Assigner with `task_status=complete` |
 
 Honest failures covered by pytest (not claimed as a GUI demo):
 
