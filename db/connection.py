@@ -436,6 +436,20 @@ def reset_database() -> None:
     close_connection()
     db_path = Path(_DB_PATH)
     if db_path.exists():
+        # Safety rail: always create a timestamped backup before deleting.
+        backup_dir = _PROJECT_ROOT / "artifacts" / "db_backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup_base = backup_dir / f"{db_path.name}.{stamp}.bak"
+        try:
+            shutil.copy2(db_path, backup_base)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(f"{db_path}{suffix}")
+                if sidecar.exists():
+                    shutil.copy2(sidecar, Path(f"{backup_base}{suffix}"))
+            logger.warning("Database reset requested; backup created at %s", str(backup_base))
+        except Exception:
+            logger.exception("Failed to create DB backup before reset; proceeding with reset anyway")
         db_path.unlink()
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{db_path}{suffix}")

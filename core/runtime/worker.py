@@ -13,6 +13,7 @@ from typing import Any
 import db
 from core import config
 from core.agent_loop.dispatcher import dispatcher
+from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
 from core.world.simulation import simulation
@@ -52,8 +53,10 @@ class RuntimeController:
         dispatcher.start()
         simulation.start()
         watchdog.start()
+        meeting_watchdog.start()
 
     async def _stop_services(self) -> None:
+        await meeting_watchdog.stop()
         await watchdog.stop()
         await dispatcher.stop()
         await simulation.stop()

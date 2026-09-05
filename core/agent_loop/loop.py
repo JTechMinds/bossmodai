@@ -1389,12 +1389,16 @@ def _get_current_session(agent_id: str, trigger: dict[str, Any]) -> dict[str, An
     if session is None:
         return None
     participants = db.list_active_meeting_participants(session.room_id)
+    meta = db.get_meeting_session_meta(session.id)
+    expected = db.list_meeting_participant_details(session.id) if meta is not None else []
     return {
         "id": session.id,
         "title": session.title,
         "room_id": session.room_id,
         "room_name": "Meeting Room" if session.room_id == "meeting_room" else session.room_id,
         "participants": participants,
+        "phase": (meta or {}).get("phase") if meta is not None else None,
+        "expected_participants": expected,
     }
 
 

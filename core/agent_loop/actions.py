@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from core import config
@@ -23,6 +24,7 @@ from core.agent_loop.message_delivery import (
     resolve_peer_message_type,
     source_channel_for_message_type,
 )
+from core.agent_loop.meeting_orchestrator import maybe_start_meeting_kickoff_round
 from core.agent_loop.task_origins import (
     task_notification_channel_id_for_trigger,
     task_notification_policy_for_trigger,
@@ -190,7 +192,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         extra = {}
     if not isinstance(extra, dict):
         raise ValueError('"data" must be an object when provided')
-    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "msg", "tid", "kind", "dst", "mode", "topic", "sum", "why", "task"}
+    extra_data = set(extra) - {"cmd", "body", "out", "to", "aid", "aids", "msg", "tid", "kind", "dst", "mode", "topic", "sum", "why", "task"}
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
 
@@ -237,7 +239,9 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             if meeting_mode is None:
                 raise ValueError('missing "data.mode"')
             normalized["action"] = meeting_mode
-            normalized["agentId"] = extra.get("aid")
+            normalized["agentIds"] = extra.get("aids")
+            if extra.get("aid") not in (None, ""):
+                raise ValueError('"mtg" does not accept "data.aid"; use "data.aids" (list) even for one participant')
             normalized["topic"] = extra.get("topic")
         case "done":
             normalized["summary"] = extra.get("sum")
@@ -368,10 +372,30 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
             except Exception as exc:
                 return f'"delegateTask" invalid deliverables: {exc}'
 
-    if action_name in {"remoteMeeting", "delegated"}:
+    if action_name == "remoteMeeting":
+        if action.get("agentId") not in (None, ""):
+            return '"remoteMeeting" no longer accepts "agentId"; use "agentIds" (list) even for one participant'
+        agent_ids = action.get("agentIds")
+        has_many = isinstance(agent_ids, list) and any(isinstance(item, str) and item.strip() for item in agent_ids)
+        if not has_many:
+            return '"remoteMeeting" requires a non-empty "agentIds" list'
+
+    if action_name == "delegated":
         agent_id = action.get("agentId")
         if not isinstance(agent_id, str) or not agent_id.strip():
-            return f'"{action_name}" requires a non-empty "agentId"'
+            return '"delegated" requires a non-empty "agentId"'
+
+    if action_name == "remoteMeeting" and action.get("agentIds") is not None:
+        agent_ids = action.get("agentIds")
+        if not isinstance(agent_ids, list) or not all(isinstance(item, str) and item.strip() for item in agent_ids):
+            return '"remoteMeeting" "agentIds" must be a list of non-empty strings when provided'
+        if len(agent_ids) != 1:
+            return '"remoteMeeting" requires "agentIds" to contain exactly one participant'
+
+    if action_name == "attendMeeting" and action.get("agentIds") is not None:
+        agent_ids = action.get("agentIds")
+        if not isinstance(agent_ids, list) or not all(isinstance(item, str) and item.strip() for item in agent_ids):
+            return '"attendMeeting" "agentIds" must be a list of non-empty strings when provided'
 
     if action_name == "waiting":
         reason = action.get("reason")
@@ -384,9 +408,7 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
             return f'"{action_name}" "followUpMessage" must be a non-empty string when provided'
 
     if action_name == "attendMeeting" and action.get("agentId") not in (None, ""):
-        agent_id = action.get("agentId")
-        if not isinstance(agent_id, str) or not agent_id.strip():
-            return '"attendMeeting" requires a non-empty "agentId" when provided'
+        return '"attendMeeting" no longer accepts "agentId"; use "agentIds" (list) even for one participant'
 
     if action_name in _TASK_LIFECYCLE_ACTIONS and action.get("taskId") not in (None, ""):
         return f'"{action_name}" must not include "taskId"; the runtime binds the active task'
@@ -1312,7 +1334,12 @@ async def _handle_remote_meeting(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a remote meeting from the agent's current location."""
-    target = _resolve_agent_by_id(action.get("agentId"))
+    target = None
+    agent_ids = []
+    if isinstance(action.get("agentIds"), list):
+        agent_ids = [item.strip() for item in action.get("agentIds") if isinstance(item, str) and item.strip()]
+    if len(agent_ids) == 1:
+        target = _resolve_agent_by_id(agent_ids[0])
     topic = action.get("topic", "")
 
     if target is None:
@@ -1395,7 +1422,7 @@ async def _handle_attend_meeting(
 ) -> dict[str, Any]:
     """Attend an in-person meeting from the meeting room."""
     topic = (action.get("topic") or "").strip()
-    target = None
+    agent_ids: list[str] = []
     room = get_room_at(state.x, state.y)
 
     if not room or room["room_type"] != "meeting":
@@ -1406,33 +1433,66 @@ async def _handle_attend_meeting(
             "agent_name": agent.name,
         }
 
-    if action.get("agentId") not in (None, ""):
-        target = _resolve_agent_by_id(action.get("agentId"))
-        if target is None:
-            return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
-    else:
-        other_participants = [
-            participant
-            for participant in db.list_active_meeting_participants(room["id"])
-            if str(participant.get("id") or "").strip() and str(participant.get("id")) != agent.id
-        ]
-        if not other_participants:
-            return {
-                "event": "world_feedback",
-                "detail": (
-                    "No one else is currently in the Meeting Room. "
-                    'If you were asked to meet with someone, invite them by re-running `mtg` with `data.mode="room"` '
-                    "and the teammate's `data.aid`, or send them a `socialmsg` asking them to join the Meeting Room. "
-                    "If you don't actually need a meeting right now, end the meeting commitment with `idle`."
-                ),
-                "agent_name": agent.name,
-                "feedback_code": "meeting_requires_participant",
-            }
+    if isinstance(action.get("agentIds"), list):
+        agent_ids = [item.strip() for item in action.get("agentIds") if isinstance(item, str) and item.strip()]
+
+    if not agent_ids:
+        active = activity_runtime.get_active_activity(agent.id)
+        existing_session_id = None
+        if active and active.kind == "meeting":
+            existing_session_id = str((active.metadata or {}).get("session_id") or "").strip() or None
+
+        if existing_session_id:
+            # Joining an already-orchestrated meeting (invited participants may arrive before others).
+            pass
+        else:
+            existing_session = db.get_active_meeting_session_by_room(room["id"])
+            if existing_session:
+                meta = db.get_meeting_session_meta(existing_session.id)
+                if meta is not None:
+                    # Joining an orchestrated meeting session even if you're early/alone.
+                    pass
+                else:
+                    other_participants = [
+                        participant
+                        for participant in db.list_active_meeting_participants(room["id"])
+                        if str(participant.get("id") or "").strip() and str(participant.get("id")) != agent.id
+                    ]
+                    if not other_participants:
+                        return {
+                            "event": "world_feedback",
+                            "detail": (
+                                "No one else is currently in the Meeting Room. "
+                                'If you were asked to meet with someone, invite them by re-running `mtg` with `data.mode="room"` '
+                                "and the teammate's `data.aids` (list), or send them a `socialmsg` asking them to join the Meeting Room. "
+                                "If you don't actually need a meeting right now, end the meeting commitment with `idle`."
+                            ),
+                            "agent_name": agent.name,
+                            "feedback_code": "meeting_requires_participant",
+                        }
+            else:
+                other_participants = [
+                    participant
+                    for participant in db.list_active_meeting_participants(room["id"])
+                    if str(participant.get("id") or "").strip() and str(participant.get("id")) != agent.id
+                ]
+                if not other_participants:
+                    return {
+                        "event": "world_feedback",
+                        "detail": (
+                            "No one else is currently in the Meeting Room. "
+                            'If you were asked to meet with someone, invite them by re-running `mtg` with `data.mode="room"` '
+                            "and the teammate's `data.aids` (list), or send them a `socialmsg` asking them to join the Meeting Room. "
+                            "If you don't actually need a meeting right now, end the meeting commitment with `idle`."
+                        ),
+                        "agent_name": agent.name,
+                        "feedback_code": "meeting_requires_participant",
+                    }
 
     meeting_content = f"In-person meeting in Meeting Room: {topic}" if topic else "In-person meeting in Meeting Room"
     msg = db.create_message(
         from_agent=agent.id,
-        to_agent=target.id if target else None,
+        to_agent=None,
         content=meeting_content,
         message_type="meeting",
         location_x=state.x,
@@ -1441,8 +1501,6 @@ async def _handle_attend_meeting(
     )
 
     detail = f"{agent.name} joined an in-person meeting"
-    if target:
-        detail += f" with {target.name}"
     if topic:
         detail += f": {topic}"
 
@@ -1452,13 +1510,19 @@ async def _handle_attend_meeting(
         "agent_name": agent.name,
     }
     session_title = topic or "In-person meeting"
-    session = db.ensure_room_meeting_session(
-        room["id"],
-        title=session_title,
-        created_by_agent_id=agent.id,
-    )
-
     active = activity_runtime.get_active_activity(agent.id)
+    session = None
+    if active and active.kind == "meeting":
+        session_id_hint = str((active.metadata or {}).get("session_id") or "").strip()
+        if session_id_hint:
+            session = db.get_meeting_session(session_id_hint)
+    if session is None:
+        session = db.ensure_room_meeting_session(
+            room["id"],
+            title=session_title,
+            created_by_agent_id=agent.id,
+        )
+
     if active and active.kind == "meeting":
         metadata = {**active.metadata, "session_id": session.id}
         current_detail = str(active.detail or "").strip()
@@ -1504,19 +1568,109 @@ async def _handle_attend_meeting(
             "message_id": session_message.id,
             "created_at": session_message.created_at,
         }
-    if target:
-        result["trigger_requests"] = [_build_trigger_request(
-            agent_id=target.id,
-            trigger_type="peer_message",
-            source_channel="chat",
-            payload={
-                "content": meeting_content,
-                "from_agent": agent.id,
-                "from_name": agent.name,
-                "message_type": "meeting",
-                "source_message_id": msg.id,
-            },
-        )]
+    if agent_ids:
+        # Orchestrated meeting: create a durable context packet + invite triggers.
+        now = datetime.now(timezone.utc)
+        meta = db.get_meeting_session_meta(session.id)
+        if meta is None:
+            context_summary = topic or (active.title if active else "") or "Meeting"
+            context_payload = {
+                "topic": topic,
+                "purpose": (active.detail if active else "") or meeting_content,
+                "host_agent_id": agent.id,
+                "host_name": agent.name,
+                "room_id": room["id"],
+                "meeting_mode": "room",
+                "created_at": now.isoformat(),
+            }
+            packet = db.create_meeting_context_packet(
+                session_id=session.id,
+                summary=context_summary,
+                payload=context_payload,
+            )
+            db.upsert_meeting_session_meta(
+                session_id=session.id,
+                host_agent_id=agent.id,
+                meeting_mode="room",
+                phase="assembling",
+                context_packet_id=str(packet.get("id")),
+            )
+            db.upsert_meeting_session_participant(session_id=session.id, agent_id=agent.id, state="arrived", required=True)
+            for invited_id in sorted({*agent_ids}):
+                if invited_id == agent.id:
+                    continue
+                db.upsert_meeting_session_participant(
+                    session_id=session.id,
+                    agent_id=invited_id,
+                    state="invited",
+                    required=True,
+                )
+            roster = db.list_meeting_participant_details(session.id)
+            roster_names = ", ".join([str(item.get("name") or "") for item in roster if item.get("name")]) or "unknown"
+            db.create_meeting_session_message(
+                session_id=session.id,
+                author_type="system",
+                author_name="BossMod",
+                content=(
+                    f"MEETING PRE-READ\n"
+                    f"topic: {context_summary}\n"
+                    f"host: {agent.name}\n"
+                    f"required participants: {roster_names}\n"
+                    f"notes: arrive in the Meeting Room; accept/decline invite with a reason.\n"
+                ),
+                source_channel="meeting",
+            )
+            invite_content = (
+                f'Meeting invite from {agent.name}: "{context_summary}". '
+                f"Please accept or decline with a reason. If you accept, walk to the Meeting Room and join."
+            )
+            result["trigger_requests"] = [
+                _build_trigger_request(
+                    agent_id=invited_id,
+                    trigger_type="meeting_invite",
+                    source_channel="meeting",
+                    payload={
+                        "content": invite_content,
+                        "from_agent": agent.id,
+                        "from_name": agent.name,
+                        "session_id": session.id,
+                        "meeting_title": session_title,
+                        "meeting_mode": "room",
+                        "room_id": room["id"],
+                        "context_summary": context_summary,
+                        "context_packet_id": str(packet.get("id")),
+                    },
+                )
+                for invited_id in sorted({*agent_ids})
+                if invited_id != agent.id
+            ]
+        else:
+            result["detail"] = f"{agent.name} is waiting for invited participants to arrive"
+
+    # If this is an orchestrated meeting session, update arrival state and kick off the first structured round
+    # once everyone is accounted for.
+    meta = db.get_meeting_session_meta(session.id)
+    if meta is not None:
+        now = datetime.now(timezone.utc)
+        participant = db.get_meeting_session_participant(session.id, agent.id)
+        if participant is not None and participant.get("state") != "arrived":
+            db.update_meeting_session_participant_state(
+                session_id=session.id,
+                agent_id=agent.id,
+                state="arrived",
+                arrived_at=now,
+            )
+            db.create_meeting_session_message(
+                session_id=session.id,
+                author_type="system",
+                author_name="BossMod",
+                content=f"{agent.name} arrived in the Meeting Room.",
+                source_channel="meeting",
+            )
+
+        kickoff_requests = maybe_start_meeting_kickoff_round(session_id=session.id)
+        for req in kickoff_requests:
+            result.setdefault("trigger_requests", []).append(req)
     return result
 
 

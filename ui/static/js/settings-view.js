@@ -1269,7 +1269,8 @@ const AdvancedSystemSection = (() => {
         document.getElementById('btn-reseed-application').addEventListener('click', async () => {
             if (!confirm('Recreate the entire application database from the current schema? This deletes agents, tasks, chat history, diagnostics, runtime state, and clears agent Desk files (/me). Project files (/projects) are preserved.')) return;
             try {
-                await fetch('/api/settings/reseed-application', { method: 'POST' });
+                const res = await fetch('/api/settings/reseed-application', { method: 'POST' });
+                if (!res.ok) throw new Error();
                 window.location.reload();
             } catch {
                 alert('Application reseed failed');

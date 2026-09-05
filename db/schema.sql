@@ -134,6 +134,46 @@ CREATE TABLE IF NOT EXISTS meeting_response_candidates (
     UNIQUE(round_id, agent_id)
 );
 
+-- ───────────────────────────────────────────────────────────────────────────
+-- Meeting orchestration (invites + context packets)
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS meeting_context_packets (
+    id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    session_id  VARCHAR NOT NULL REFERENCES meeting_sessions(id),
+    summary     TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at  TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS meeting_session_meta (
+    session_id        VARCHAR PRIMARY KEY REFERENCES meeting_sessions(id),
+    host_agent_id     VARCHAR NOT NULL REFERENCES agents(id),
+    meeting_mode      VARCHAR NOT NULL
+                          CHECK (meeting_mode IN ('room', 'remote')),
+    phase             VARCHAR NOT NULL
+                          CHECK (phase IN ('assembling', 'active', 'ended', 'canceled')),
+    context_packet_id VARCHAR REFERENCES meeting_context_packets(id),
+    kickoff_round_id  VARCHAR REFERENCES meeting_response_rounds(id),
+    created_at        TIMESTAMP DEFAULT current_timestamp,
+    updated_at        TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS meeting_session_participants (
+    session_id   VARCHAR NOT NULL REFERENCES meeting_sessions(id),
+    agent_id     VARCHAR NOT NULL REFERENCES agents(id),
+    required     INTEGER NOT NULL DEFAULT 1,
+    state        VARCHAR NOT NULL
+                     CHECK (state IN ('invited', 'accepted', 'declined', 'in_transit', 'arrived', 'timed_out')),
+    reason       TEXT,
+    invited_at   TIMESTAMP DEFAULT current_timestamp,
+    responded_at TIMESTAMP,
+    arrived_at   TIMESTAMP,
+    last_pinged_at TIMESTAMP,
+    updated_at   TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (session_id, agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS channels (
     id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     name        VARCHAR NOT NULL,

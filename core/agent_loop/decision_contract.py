@@ -71,6 +71,7 @@ _SHARED_CONVERSATION_TRIGGER_TYPES = {
 _ALLOWED_ACTS_BY_TRIGGER = {
     "human_chat": ("reply", "accept", "clarify", "cancel", "decline", "defer"),
     "peer_message": ("observe", "reply", "accept", "clarify", "decline"),
+    "meeting_invite": ("accept", "clarify", "decline"),
     "task_assigned": ("accept", "clarify", "defer", "decline"),
     "task_follow_up": ("reply", "accept", "clarify", "defer", "decline"),
     "task_update": ("observe",),
@@ -419,6 +420,7 @@ def validate_decision_for_trigger(
     if trigger_type in {
         "human_chat",
         "peer_message",
+        "meeting_invite",
         "session_message",
         "session_response",
         "channel_message",
@@ -474,9 +476,16 @@ def validate_decision_for_trigger(
             if decision.commitmentKind != "none":
                 return 'task follow-up reply turns must use commitmentKind="none"'
 
+    if trigger_type == "meeting_invite":
+        if decision.decision == "accept" and decision.commitmentKind != "meeting":
+            return 'accepting a meeting invite must use commitmentKind="meeting"'
+        if decision.decision in {"clarify", "decline"} and decision.commitmentKind != "none":
+            return 'meeting invite clarify/decline turns must use commitmentKind="none"'
+
     if trigger_type in {
         "human_chat",
         "peer_message",
+        "meeting_invite",
         "session_message",
         "session_response",
         "channel_message",
@@ -484,6 +493,8 @@ def validate_decision_for_trigger(
     } and decision.commitmentKind == "work":
         if trigger_type == "peer_message":
             return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
+        if trigger_type == "meeting_invite":
+            return 'meeting invites are coordination only; accept/decline the meeting and use tasks for durable work'
         if decision.decision in {"accept", "defer"} and not (decision.taskTitle and decision.taskTitle.strip()):
             return 'conversation work requests must provide a non-empty "taskTitle"'
         if decision.executionPlan is not None and trigger_type == "peer_message":

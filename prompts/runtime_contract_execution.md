@@ -9,58 +9,10 @@ ALLOWED act VALUES:
   block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
 
 REQUIRED JSON SHAPE:
-Do not output the schema itself. Output one JSON object matching this shape:
-```json
-{
-  "act": "cli | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop",
-  "data": {
-    "cmd": "string",
-    "body": "string",
-    "out": "string",
-    "to": "human | agent",
-    "aid": "string",
-    "msg": "string",
-    "tid": "string",
-    "kind": "note | status | question | review",
-    "dst": "desk | meeting | break | main | south | hall",
-    "mode": "room | remote",
-    "topic": "string",
-    "sum": "string",
-    "why": "string",
-    "task": {
-      "title": "string",
-      "desc": "string",
-      "outs": [
-        {
-          "type": "file",
-          "path": "string",
-          "desc": "string | null"
-        }
-      ]
-    }
-  },
-  "th": "string"
-}
-```
-
-FIELD DEFINITIONS:
-  act = the next execution step you are taking
-  data = arguments for that execution step; only populate fields the chosen act needs
-  data.cmd = BossMod CLI command text for cli
-  data.body = optional body text or manifest for cli commands that use it
-  data.out = durable work output text for work
-  data.to = message recipient kind for socialmsg
-  data.aid = target agent id when an action needs another agent
-  data.msg = message text for socialmsg or taskmsg, or a short follow-up reply for done/block/deleg/drop
-  data.tid = existing task id for taskmsg
-  data.kind = task-thread message type for taskmsg
-  data.dst = destination for walk
-  data.mode = meeting mode for mtg
-  data.topic = optional meeting topic
-  data.sum = completion summary for done
-  data.why = blocking/abandon reason
-  data.task = delegated task payload for assign
-  th = short admin-visible note
+- Do not output any schema, markdown fences, or extra text.
+- Output exactly one JSON object with this minimal shape:
+  {"act":"...","data":{...},"th":"..."}
+- Include ONLY the keys required for the chosen act.
 
 FIELD VALUES:
   data.to = human | agent
@@ -80,8 +32,8 @@ RULES:
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
-  - mtg + mode="remote": require data.aid
-  - mtg + mode="room": if the goal is to meet with a teammate (not just enter the room), include data.aid to invite one teammate; do not claim the meeting happened unless they actually join/respond
+  - mtg + mode="remote": require data.aids (list of exactly one teammate); NEVER use data.aid
+  - mtg + mode="room": if the goal is to run a meeting with teammates, include data.aids (list, even for one); NEVER use data.aid
   - idle: use when there is no active work and there is no useful next execution step in this turn
   - wait: require data.why; use it when the current task stays open but is waiting on another person, review, or external dependency
   - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
@@ -147,5 +99,6 @@ EXAMPLES:
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"wait","data":{"why":"Waiting on Taylor's delegated findings before summarizing."},"th":"pause the task until Taylor reports back"}
-  {"act":"mtg","data":{"mode":"room","topic":"Planning"},"th":"join the meeting room session"}
+  {"act":"mtg","data":{"mode":"room","aids":["agent-123","agent-456"],"topic":"Planning"},"th":"invite participants and join the meeting room"}
+  {"act":"mtg","data":{"mode":"remote","aids":["agent-123"],"topic":"Quick sync"},"th":"start a remote meeting"}
   {"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft and saved it. Want a short summary too?"},"th":"complete and report back"}

@@ -818,12 +818,24 @@ def _format_current_session(session: dict[str, Any] | None) -> str:
         f"title: {session.get('title') or 'Meeting'}",
         f"room: {session.get('room_name') or session.get('room_id') or 'meeting'}",
     ]
+    phase = str(session.get("phase") or "").strip()
+    if phase:
+        lines.append(f"phase: {phase}")
     participants = session.get("participants") or []
     if participants:
         names = [str(item.get("name") or "Unknown") for item in participants]
         lines.append(f"participants: {', '.join(names)}")
     else:
         lines.append("participants: none")
+
+    expected = session.get("expected_participants") or []
+    if expected:
+        rendered = []
+        for item in expected:
+            name = str(item.get("name") or "Unknown")
+            state = str(item.get("state") or "?")
+            rendered.append(f"{name}({state})")
+        lines.append(f"expected: {', '.join(rendered)}")
     return "\n".join(lines)
 
 

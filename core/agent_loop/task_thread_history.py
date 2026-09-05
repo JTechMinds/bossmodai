@@ -31,9 +31,6 @@ def load_task_thread_history(
 def _format_task_event(event: TaskEvent) -> dict[str, Any]:
     """Format one TaskEvent into a conversation-history row."""
     content = str(event.content or "").strip()
-    event_type = str(event.event_type or "").strip()
-    if event_type and event_type not in {"comment"}:
-        content = f"({event_type}) {content}"
     return {
         "id": event.id,
         "from_agent": event.author_agent_id,

@@ -10,6 +10,8 @@ YOUR TURN TO RESPOND IN THE MEETING after [{{trigger.from_name}}] said: {{trigge
 CURRENT REQUEST FROM [{{trigger.from_name}}]: {{trigger.content}}
 {{elseif trigger.type = 'peer_message'}}
 CURRENT REQUEST FROM [{{trigger.from_name}}]: {{trigger.content}}
+{{elseif trigger.type = 'meeting_invite'}}
+MEETING INVITE FROM [{{trigger.from_name}}]: {{trigger.content}}
 {{elseif trigger.type = 'task_follow_up'}}
 A task needs your response on "{{trigger.task_title}}".
 Current task status: {{trigger.task_status}}

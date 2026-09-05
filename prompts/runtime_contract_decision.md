@@ -75,6 +75,22 @@ For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
 ```
+{{elseif trigger.type = 'meeting_invite'}}
+ALLOWED conversation act FOR THIS TURN: accept | clarify | decline
+
+This is a meeting invite with authoritative session metadata (session id, host, room/mode, and a pre-read/context packet).
+
+Use one of these shapes:
+
+For accept:
+```json
+{"act":"accept","intent":"meeting","msg":"string","commit":"meeting","data":{"dst":"meeting","title":"string","detail":"string"},"th":"string"}
+```
+
+For clarify or decline:
+```json
+{"act":"clarify | decline","intent":"meeting | other","msg":"string","th":"string"}
+```
 {{elseif trigger.type = 'task_follow_up'}}
 {{if trigger.task_party = 'assignee'}}
 {{if trigger.task_status = 'pending'}}

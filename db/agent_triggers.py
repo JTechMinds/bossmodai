@@ -20,6 +20,7 @@ CASE trigger_type
     WHEN 'human_chat' THEN 0
     WHEN 'cli_approval_resolved' THEN 1
     WHEN 'peer_message' THEN 2
+    WHEN 'meeting_invite' THEN 2
     WHEN 'task_follow_up' THEN 3
     WHEN 'task_update' THEN 4
     WHEN 'session_response' THEN 5

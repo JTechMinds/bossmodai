@@ -74,16 +74,6 @@ def apply_decision(
 
     if decision.decision == "answer":
         result["detail"] = f"{agent.name} answered the request"
-        if trigger.get("type") == "task_follow_up" and trigger.get("task_id"):
-            append_task_event(
-                task_id=trigger["task_id"],
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="answer",
-                content=decision.reply or "",
-                source_trigger_id=trigger.get("trigger_id"),
-            )
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         else:
@@ -101,16 +91,6 @@ def apply_decision(
 
     if decision.decision == "clarify":
         result["detail"] = f"{agent.name} asked for clarification"
-        if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
-            append_task_event(
-                task_id=trigger["task_id"],
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="clarification",
-                content=decision.reply or decision.detail or "",
-                source_trigger_id=trigger.get("trigger_id"),
-            )
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         else:
@@ -143,6 +123,50 @@ def apply_decision(
         return result
 
     if decision.decision == "decline":
+        if trigger.get("type") == "meeting_invite":
+            session_id = str(trigger.get("session_id") or "").strip()
+            if session_id:
+                now = datetime.now(timezone.utc)
+                reason = (decision.reply or decision.detail or "Declined.").strip()
+                participant = db.get_meeting_session_participant(session_id, agent.id)
+                if participant is None:
+                    db.upsert_meeting_session_participant(
+                        session_id=session_id,
+                        agent_id=agent.id,
+                        state="declined",
+                        required=True,
+                        reason=reason,
+                    )
+                db.update_meeting_session_participant_state(
+                    session_id=session_id,
+                    agent_id=agent.id,
+                    state="declined",
+                    reason=reason,
+                    responded_at=now,
+                )
+                db.create_meeting_session_message(
+                    session_id=session_id,
+                    author_type="system",
+                    author_name="BossMod",
+                    content=f"{agent.name} declined the meeting invite: {reason}",
+                    source_channel="meeting",
+                )
+                meta = db.get_meeting_session_meta(session_id)
+                host_id = str((meta or {}).get("host_agent_id") or "").strip()
+                if host_id and host_id != agent.id:
+                    result["trigger_requests"].append(
+                        {
+                            "agent_id": host_id,
+                            "trigger_type": "activity_resumed",
+                            "source_channel": "meeting",
+                            "payload": {
+                                "content": f'{agent.name} declined the meeting invite: {reason}',
+                                "activity_kind": "meeting",
+                                "activity_title": str(trigger.get("meeting_title") or "Meeting"),
+                                "session_id": session_id,
+                            },
+                        }
+                    )
         if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
             _complete_assignment_if_present(agent.id)
             db.update_task(
@@ -254,6 +278,31 @@ def apply_decision(
         return result
 
     if decision.commitmentKind == "meeting":
+        if trigger.get("type") == "meeting_invite":
+            session_id = str(trigger.get("session_id") or "").strip()
+            if session_id:
+                now = datetime.now(timezone.utc)
+                participant = db.get_meeting_session_participant(session_id, agent.id)
+                if participant is None:
+                    db.upsert_meeting_session_participant(
+                        session_id=session_id,
+                        agent_id=agent.id,
+                        state="accepted",
+                        required=True,
+                    )
+                db.update_meeting_session_participant_state(
+                    session_id=session_id,
+                    agent_id=agent.id,
+                    state="accepted",
+                    responded_at=now,
+                )
+                db.create_meeting_session_message(
+                    session_id=session_id,
+                    author_type="system",
+                    author_name="BossMod",
+                    content=f"{agent.name} accepted the meeting invite.",
+                    source_channel="meeting",
+                )
         meeting = activity_runtime.begin_commitment_activity(
             agent.id,
             kind="meeting",
@@ -263,6 +312,8 @@ def apply_decision(
                 "preferred_destination": decision.destination,
                 "source_channel": trigger.get("source_channel", "chat"),
                 "acknowledged_by_reply": bool(decision.reply and decision.reply.strip()),
+                "session_id": str(trigger.get("session_id") or "").strip() or None,
+                "meeting_mode": str(trigger.get("meeting_mode") or "").strip() or None,
             },
             reason="Replaced by a newer accepted meeting.",
         )
@@ -719,7 +770,7 @@ def _task_turn_requires_response(
 
     attention_kind = str(trigger.get("attention_kind") or "").strip().lower()
     if attention_kind in {"question", "review_request"}:
-        return decision.decision in {"answer", "clarify"}
+        return decision.decision == "clarify"
 
     task_status = str(trigger.get("task_status") or "").strip().lower()
     task_party = str(trigger.get("task_party") or "").strip().lower()
@@ -728,7 +779,7 @@ def _task_turn_requires_response(
         return decision.decision in {"clarify", "defer", "decline"}
     pending_stakeholder_turn = task_status == "pending" and task_party == "stakeholder"
     if pending_stakeholder_turn:
-        return decision.decision in {"answer", "clarify"}
+        return decision.decision == "clarify"
     return decision.decision == "clarify"
 
 
