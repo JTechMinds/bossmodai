@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
+from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
 from core.tasking.resolution import OPEN_TASK_STATUSES
@@ -28,10 +29,19 @@ def can_dispatch_trigger(
     state: AgentState | None,
     active_activity: Activity | None,
 ) -> bool:
-    """Return whether an agent is currently eligible for a trigger."""
+    """Return whether an agent is currently eligible for a trigger.
+
+    Rules are documented on :class:`core.agent_loop.policies.TriggerPolicy`.
+    ``task_assigned`` may claim during a live conversation; movement still waits.
+    """
     if state is None:
         return False
-    if state.status == "in_transit":
+
+    policy = get_trigger_policy(trigger_type)
+    in_transit = state.status == "in_transit" or (
+        active_activity is not None and active_activity.kind == "movement"
+    )
+    if policy.blocks_on_in_transit and in_transit:
         return False
 
     if trigger_type == "social":
@@ -39,7 +49,7 @@ def can_dispatch_trigger(
             return False
         return active_activity is None
 
-    if trigger_type == "task_assigned":
+    if policy.blocks_on_active_activity:
         return active_activity is None
 
     return True

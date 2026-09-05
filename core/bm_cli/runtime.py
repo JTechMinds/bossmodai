@@ -35,7 +35,7 @@ from core.bm_cli.help_commands import (
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
-from core.bm_cli.results import approval_required_result, error_result, shell_result
+from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
 from core.bm_cli.state_commands import (
@@ -93,6 +93,95 @@ _HANDLERS: dict[str, CliHandler] = {
 }
 
 VIRTUAL_COMMANDS: frozenset[str] = frozenset(_HANDLERS.keys())
+
+
+def preview_bm_cli(
+    agent: Agent,
+    state: AgentState,
+    command: str,
+    content: str | None = None,
+) -> BossModCliResult:
+    """Parse and evaluate policy without writing files or running shell.
+
+    Used by the CLI simulator dry-run default (HA-SEC-P1-06). ``content`` is
+    accepted so the request shape matches execute, but it is never applied.
+    """
+    del state, content
+    cwd_before = get_cli_cwd(agent.id)
+    try:
+        parsed = parse_cli_command(command)
+    except ValueError as exc:
+        return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
+
+    policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
+
+    if policy.approval_required:
+        return approval_required_result(
+            parsed.raw,
+            policy.message or f"Command requires approval: {parsed.name}",
+            cwd=cwd_before,
+            executor=policy.executor,
+            matched_rule_id=policy.matched_rule_id,
+        )
+
+    if not policy.allowed:
+        denied = error_result(
+            parsed.raw,
+            policy.message or f"Command not permitted: {parsed.name}",
+            cwd=cwd_before,
+            executor=policy.executor,
+        )
+        return BossModCliResult(
+            command=denied.command,
+            ok=False,
+            detail=denied.detail,
+            prompt_content=denied.prompt_content,
+            kind=denied.kind,
+            data=denied.data,
+            cwd=denied.cwd,
+            executor=denied.executor,
+            exit_code=denied.exit_code,
+            matched_rule_id=policy.matched_rule_id,
+        )
+
+    preview = success_result(
+        command=parsed.raw,
+        detail=(
+            f"Dry-run: {parsed.name} would run via {policy.executor} "
+            "(parse + policy only; no writes or shell)."
+        ),
+        kind="dry_run",
+        data={
+            "dry_run": True,
+            "would_executor": policy.executor,
+            "policy_tier": policy.tier,
+        },
+        sections=[
+            (
+                "DRY RUN",
+                [
+                    "No files were written and no shell command ran.",
+                    f"executor: {policy.executor}",
+                    f"tier: {policy.tier}",
+                    "Send execute=true to run this command for real.",
+                ],
+            )
+        ],
+        cwd=cwd_before,
+        executor=policy.executor,
+    )
+    return BossModCliResult(
+        command=preview.command,
+        ok=preview.ok,
+        detail=preview.detail,
+        prompt_content=preview.prompt_content,
+        kind=preview.kind,
+        data=preview.data,
+        cwd=preview.cwd,
+        executor=preview.executor,
+        exit_code=preview.exit_code,
+        matched_rule_id=policy.matched_rule_id,
+    )
 
 
 def execute_bm_cli(
