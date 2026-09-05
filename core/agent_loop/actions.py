@@ -1190,6 +1190,18 @@ async def _handle_delegate_task(
         )
     task = creation.task
 
+    if creation.outcome == "clarify_ambiguous_match" or task is None:
+        candidate_ids = ", ".join(item.id for item in creation.resolution.candidates) or "none"
+        return {
+            "event": "world_feedback",
+            "detail": (
+                f'Multiple open tasks with {target.name} already match "{task_title}" ({candidate_ids}). '
+                "Clarify which existing task to use instead of delegating a duplicate assignment."
+            ),
+            "agent_name": agent.name,
+            "expected_action": "taskMessage",
+        }
+
     if creation.outcome != "create_new_task":
         return {
             "event": "world_feedback",

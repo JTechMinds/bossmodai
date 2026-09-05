@@ -19,6 +19,13 @@ const CompanyTasks = (() => {
     let splitInstance = null;
     let initialized = false;
     let showChildren = false;
+    let rosterAgents = [];
+    let assignFormOpen = false;
+    let assignTitle = '';
+    let assignDescription = '';
+    let assignAgentId = '';
+    let assignSubmitting = false;
+    let assignResult = null;
 
     const STATUS_COLORS = {
         active:    { dot: 'bg-green-500',   badge: 'bg-green-100 text-green-700' },
@@ -174,6 +181,7 @@ const CompanyTasks = (() => {
             if (!res.ok) throw new Error(await res.text());
             tasks = await res.json();
             if (!Array.isArray(tasks)) tasks = [];
+            await loadRosterAgents();
             agents = uniqueAgents();
             subtaskCountMap = buildSubtaskCounts();
             renderLayout();
@@ -205,12 +213,19 @@ const CompanyTasks = (() => {
                                class="w-40 pl-7 pr-2 py-1 text-xs border border-bm-border rounded-lg bg-white focus:outline-none focus:border-bm-accent">
                         <i data-lucide="search" class="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-bm-muted pointer-events-none"></i>
                     </div>
+                    <button type="button" id="ct-assign-toggle"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded border border-bm-accent/40 bg-bm-accent/10 text-xs font-medium text-bm-accent hover:bg-bm-accent/15 transition-colors"
+                            title="Assign a task">
+                        <i data-lucide="plus" class="w-3 h-3"></i>
+                        Assign Task
+                    </button>
                     <button type="button" id="ct-refresh-btn"
                             class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors" title="Refresh">
                         <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                     </button>
                 </div>
             </div>`;
+        html += renderAssignPanel();
 
         // ── Filter row ──
         html += `
@@ -437,6 +452,7 @@ const CompanyTasks = (() => {
 
         // Refresh
         container.querySelector('#ct-refresh-btn')?.addEventListener('click', () => fetchAndRender());
+        bindAssignForm();
     }
 
     function bindRowClicks() {
@@ -512,6 +528,236 @@ const CompanyTasks = (() => {
         scrollToRow(taskId);
     }
 
+    // ─── Assign Task form ───
+
+    async function loadRosterAgents() {
+        try {
+            const res = await fetch('/api/agents', { cache: 'no-store' });
+            if (!res.ok) return;
+            const listed = await res.json();
+            rosterAgents = Array.isArray(listed)
+                ? listed.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                : [];
+        } catch {
+            // Keep the last successful roster; the form still works with an empty list.
+        }
+    }
+
+    function renderAssignPanel() {
+        const escape = BossModUtils.escapeHtml;
+        if (!assignFormOpen) return '';
+
+        const agentOptions = rosterAgents.map(agent => (
+            `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(agent.name)}${agent.role ? ` — ${escape(agent.role)}` : ''}</option>`
+        )).join('');
+
+        return `
+            <div id="ct-assign-panel" class="px-4 py-3 border-b border-bm-border bg-white shrink-0">
+                <form id="ct-assign-form" class="space-y-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="block min-w-0">
+                            <span class="block text-[11px] font-medium text-bm-muted mb-1">Title</span>
+                            <input type="text" id="ct-assign-title" required maxlength="200"
+                                   value="${escape(assignTitle)}"
+                                   placeholder="What should they work on?"
+                                   class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent">
+                        </label>
+                        <label class="block min-w-0">
+                            <span class="block text-[11px] font-medium text-bm-muted mb-1">Assignee</span>
+                            <select id="ct-assign-agent"
+                                    class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent">
+                                <option value="">Unassigned backlog</option>
+                                ${agentOptions}
+                            </select>
+                        </label>
+                    </div>
+                    <label class="block">
+                        <span class="block text-[11px] font-medium text-bm-muted mb-1">Description <span class="font-normal">(optional)</span></span>
+                        <textarea id="ct-assign-description" rows="2" maxlength="4000"
+                                  placeholder="Context, constraints, or the expected deliverable"
+                                  class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-y">${escape(assignDescription)}</textarea>
+                    </label>
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate.</p>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" id="ct-assign-cancel"
+                                    class="px-2.5 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">Cancel</button>
+                            <button type="submit" id="ct-assign-submit" ${assignSubmitting ? 'disabled' : ''}
+                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-bm-accent text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-colors">
+                                <i data-lucide="send" class="w-3 h-3"></i>
+                                ${assignSubmitting ? 'Assigning…' : 'Assign'}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                ${renderAssignResult()}
+            </div>`;
+    }
+
+    function resolveAssigneeName(task) {
+        if (!task) return '';
+        if (task.assigned_to_name) return task.assigned_to_name;
+        const match = rosterAgents.find(agent => agent.id === task.assigned_to);
+        return match ? match.name : '';
+    }
+
+    function renderAssignResult() {
+        const escape = BossModUtils.escapeHtml;
+        if (!assignResult) return '';
+
+        if (assignResult.error) {
+            return `
+                <div class="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    ${escape(assignResult.error)}
+                </div>`;
+        }
+
+        if (assignResult.outcome === 'create_new_task') {
+            const task = assignResult.task || {};
+            const assignee = resolveAssigneeName(task) || (task.assigned_to ? 'the assignee' : 'the unassigned backlog');
+            return `
+                <div class="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    Created <span class="font-semibold">${escape(task.title || 'task')}</span> and added it to ${escape(assignee)}.
+                    ${task.assigned_to ? ' The assignee was notified.' : ''}
+                </div>`;
+        }
+
+        if (assignResult.outcome === 'bind_existing_task') {
+            const task = assignResult.task || {};
+            return `
+                <div class="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                    Reused the existing open task <span class="font-semibold">${escape(task.title || 'task')}</span>
+                    instead of creating a duplicate.
+                    ${task.assigned_to ? ' The assignee was notified again.' : ''}
+                </div>`;
+        }
+
+        if (assignResult.outcome === 'clarify_ambiguous_match') {
+            const candidates = Array.isArray(assignResult.candidates) ? assignResult.candidates : [];
+            const reason = assignResult.reason || 'Multiple open tasks match this title.';
+            const rows = candidates.length === 0
+                ? `<p class="text-[11px] text-amber-800">No candidate IDs were returned. Change the title to create a new workstream.</p>`
+                : candidates.map(candidate => `
+                    <div class="flex items-center justify-between gap-2 py-1.5 border-t border-amber-200 first:border-t-0">
+                        <button type="button" class="ct-clarify-view text-left min-w-0"
+                                data-task-id="${escape(candidate.id)}">
+                            <span class="block text-xs font-medium text-amber-950 truncate">${escape(candidate.title || 'Untitled')}</span>
+                            <span class="block text-[11px] text-amber-800 truncate">
+                                ${escape(candidate.assigned_to_name || 'Unassigned')} · ${escape(candidate.status || '')} · ${escape(candidate.id)}
+                            </span>
+                        </button>
+                        <button type="button" class="ct-clarify-reuse shrink-0 px-2 py-1 rounded border border-amber-300 bg-white text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                                data-task-id="${escape(candidate.id)}">Reuse this</button>
+                    </div>`).join('');
+            return `
+                <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p class="text-xs font-medium text-amber-950 mb-1">Need a clarification — no new task was created</p>
+                    <p class="text-[11px] text-amber-800 mb-1">${escape(reason)} Pick one to reuse, or change the title to create a distinct workstream.</p>
+                    ${rows}
+                </div>`;
+        }
+
+        return `
+            <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-bm-muted">
+                Unexpected outcome: ${escape(assignResult.outcome || 'unknown')}
+            </div>`;
+    }
+
+    function bindAssignForm() {
+        if (!container) return;
+
+        container.querySelector('#ct-assign-toggle')?.addEventListener('click', () => {
+            assignFormOpen = !assignFormOpen;
+            if (!assignFormOpen) assignResult = null;
+            renderLayout();
+        });
+
+        const titleInput = container.querySelector('#ct-assign-title');
+        const descInput = container.querySelector('#ct-assign-description');
+        const agentSelect = container.querySelector('#ct-assign-agent');
+        titleInput?.addEventListener('input', (e) => { assignTitle = e.target.value; });
+        descInput?.addEventListener('input', (e) => { assignDescription = e.target.value; });
+        agentSelect?.addEventListener('change', (e) => { assignAgentId = e.target.value; });
+
+        container.querySelector('#ct-assign-cancel')?.addEventListener('click', () => {
+            assignFormOpen = false;
+            assignResult = null;
+            renderLayout();
+        });
+
+        container.querySelector('#ct-assign-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitAssignForm();
+        });
+
+        container.querySelectorAll('.ct-clarify-view').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.taskId) navigateToTask(btn.dataset.taskId);
+            });
+        });
+        container.querySelectorAll('.ct-clarify-reuse').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.taskId) submitAssignForm({ bindTaskId: btn.dataset.taskId });
+            });
+        });
+    }
+
+    async function submitAssignForm({ bindTaskId } = {}) {
+        const title = (assignTitle || '').trim();
+        if (!title) {
+            assignResult = { error: 'Title is required.' };
+            renderLayout();
+            container?.querySelector('#ct-assign-title')?.focus();
+            return;
+        }
+
+        assignSubmitting = true;
+        assignResult = null;
+        renderLayout();
+
+        const payload = {
+            title,
+            description: (assignDescription || '').trim() || null,
+        };
+        if (assignAgentId) payload.assigned_to = assignAgentId;
+        if (bindTaskId) payload.bind_task_id = bindTaskId;
+
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            let body = null;
+            try { body = await res.json(); } catch { body = null; }
+            if (!body || typeof body !== 'object') {
+                assignResult = { error: res.ok ? 'The server returned an empty response.' : `Assign failed (${res.status}).` };
+                return;
+            }
+            if (body.detail && !body.outcome) {
+                const detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+                assignResult = { error: detail };
+                return;
+            }
+            assignResult = {
+                outcome: body.outcome,
+                task: body.task,
+                candidates: body.candidates || [],
+                reason: body.reason || null,
+            };
+            if (body.task && body.task.id && body.outcome !== 'clarify_ambiguous_match') {
+                selectedTaskId = body.task.id;
+                await refreshSilent();
+                return;
+            }
+        } catch (err) {
+            assignResult = { error: err && err.message ? err.message : 'Assign failed.' };
+        } finally {
+            assignSubmitting = false;
+            if (container) renderLayout();
+        }
+    }
+
     // ─── WebSocket event handler ───
 
     function handleTaskEvent() {
@@ -528,6 +774,7 @@ const CompanyTasks = (() => {
             const newTasks = await res.json();
             if (!Array.isArray(newTasks)) return;
             tasks = newTasks;
+            await loadRosterAgents();
             agents = uniqueAgents();
             subtaskCountMap = buildSubtaskCounts();
             if (selectedTaskId && !tasks.find(t => t.id === selectedTaskId)) {
@@ -558,6 +805,13 @@ const CompanyTasks = (() => {
         sortDirection = 'asc';
         showChildren = false;
         initialized = false;
+        rosterAgents = [];
+        assignFormOpen = false;
+        assignTitle = '';
+        assignDescription = '';
+        assignAgentId = '';
+        assignSubmitting = false;
+        assignResult = null;
     }
 
     return { render, handleTaskEvent, destroy };

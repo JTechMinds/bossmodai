@@ -195,7 +195,10 @@ def apply_decision(
 
     if decision.decision == "defer":
         if decision.commitmentKind == "work":
-            task = _ensure_deferred_task(agent, trigger, decision)
+            bound = _ensure_deferred_task(agent, trigger, decision)
+            if bound.get("error_result"):
+                return bound["error_result"]
+            task = bound["task"]
             status_note = (decision.reply or decision.detail or "").strip() or None
             task = db.update_task(
                 task.id,
@@ -230,15 +233,21 @@ def apply_decision(
         plan_resolution = _resolve_work_execution_plan(agent, decision)
         if plan_resolution.get("error_result"):
             return plan_resolution["error_result"]
-        task = _resolve_or_create_work_task(agent, trigger, decision)
+        bound = _resolve_or_create_work_task(agent, trigger, decision)
+        if bound.get("error_result"):
+            return bound["error_result"]
+        task = bound["task"]
         task = _persist_work_contract(task, agent, decision)
-        delegated_children = _materialize_work_execution_plan(
+        materialized = _materialize_work_execution_plan(
             agent=agent,
             parent_task=task,
             trigger=trigger,
             plan_resolution=plan_resolution,
             result=result,
         )
+        if materialized.get("error_result"):
+            return materialized["error_result"]
+        delegated_children = materialized["children"]
         work_activity = activity_runtime.activate_work_activity(
             agent.id,
             task,
@@ -531,7 +540,7 @@ def _materialize_work_execution_plan(
     trigger: dict[str, Any],
     plan_resolution: dict[str, Any],
     result: dict[str, Any],
-) -> list[Any]:
+) -> dict[str, Any]:
     """Persist delegated child tasks from an accepted work plan and queue assignee triggers."""
     delegated_children: list[Any] = []
     for delegation in plan_resolution.get("delegations") or []:
@@ -560,11 +569,23 @@ def _materialize_work_execution_plan(
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
         )
+        if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
+            return {
+                "error_result": _ambiguous_match_feedback(
+                    agent_name=agent.name,
+                    title=delegation["taskTitle"],
+                    candidates=creation.resolution.candidates,
+                    context=(
+                        f'Clarify which existing task with {target.name} to use '
+                        "instead of delegating a duplicate assignment."
+                    ),
+                )
+            }
         child = creation.task
         delegated_children.append(child)
         if child.status == "pending":
             result["trigger_requests"].append(build_task_assigned_trigger(child))
-    return delegated_children
+    return {"children": delegated_children}
 
 
 def _prepare_shared_response_trigger(
@@ -1049,6 +1070,44 @@ def _attach_reply_artifacts(
     result["trigger_requests"].extend(reply_artifacts.get("trigger_requests", []))
 
 
+def _ambiguous_match_feedback(
+    *,
+    agent_name: str,
+    title: str,
+    candidates,
+    context: str,
+) -> dict[str, Any]:
+    """Return world_feedback asking the agent to clarify an ambiguous workstream match."""
+    candidate_ids = ", ".join(item.id for item in candidates) or "none"
+    return {
+        "event": "world_feedback",
+        "detail": (
+            f'Multiple open tasks already match "{title}" ({candidate_ids}). {context}'
+        ),
+        "agent_name": agent_name,
+        "expected_action": "clarify",
+    }
+
+
+def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
+    """Unwrap a create-or-bind result into a task or honest clarify feedback."""
+    if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
+        title = (
+            creation.resolution.candidates[0].title
+            if creation.resolution.candidates
+            else "this workstream"
+        )
+        return {
+            "error_result": _ambiguous_match_feedback(
+                agent_name=agent_name,
+                title=title,
+                candidates=creation.resolution.candidates,
+                context="Clarify which existing task to use instead of creating a duplicate.",
+            )
+        }
+    return {"task": creation.task}
+
+
 def _resolve_or_create_work_task(
     agent: Agent,
     trigger: dict[str, Any],
@@ -1059,7 +1118,7 @@ def _resolve_or_create_work_task(
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
-        return task
+        return {"task": task}
 
     created_by = agent.id
     if trigger.get("type") == "human_chat":
@@ -1084,15 +1143,37 @@ def _resolve_or_create_work_task(
     )
 
     if parent_task is not None:
-        return create_or_bind_subtask(
-            parent_task=parent_task,
+        return _task_from_creation(
+            create_or_bind_subtask(
+                parent_task=parent_task,
+                title=(decision.taskTitle or "").strip(),
+                description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+                project=parent_task.project,
+                assigned_to=agent.id,
+                requester_id=requester_id,
+                owner_id=owner_id,
+                created_by=created_by,
+                work_contract=_inherited_follow_up_work_contract(parent_task, decision),
+                source_channel=task_source_channel_for_trigger(trigger),
+                notification_policy=task_notification_policy_for_trigger(trigger),
+                notification_channel_id=task_notification_channel_id_for_trigger(trigger),
+                audit_author_name=agent.name,
+                audit_author_type="agent",
+                audit_author_agent_id=agent.id,
+                audit_source_trigger_id=trigger.get("trigger_id"),
+            ),
+            agent_name=agent.name,
+        )
+    return _task_from_creation(
+        create_or_bind_task(
             title=(decision.taskTitle or "").strip(),
             description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
-            project=parent_task.project,
+            project=None,
             assigned_to=agent.id,
             requester_id=requester_id,
             owner_id=owner_id,
             created_by=created_by,
+            parent_task_id=None,
             work_contract=_inherited_follow_up_work_contract(parent_task, decision),
             source_channel=task_source_channel_for_trigger(trigger),
             notification_policy=task_notification_policy_for_trigger(trigger),
@@ -1101,25 +1182,9 @@ def _resolve_or_create_work_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
-        ).task
-    return create_or_bind_task(
-        title=(decision.taskTitle or "").strip(),
-        description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
-        project=None,
-        assigned_to=agent.id,
-        requester_id=requester_id,
-        owner_id=owner_id,
-        created_by=created_by,
-        parent_task_id=None,
-        work_contract=_inherited_follow_up_work_contract(parent_task, decision),
-        source_channel=task_source_channel_for_trigger(trigger),
-        notification_policy=task_notification_policy_for_trigger(trigger),
-        notification_channel_id=task_notification_channel_id_for_trigger(trigger),
-        audit_author_name=agent.name,
-        audit_author_type="agent",
-        audit_author_agent_id=agent.id,
-        audit_source_trigger_id=trigger.get("trigger_id"),
-    ).task
+        ),
+        agent_name=agent.name,
+    )
 
 
 def _ensure_deferred_task(
@@ -1132,7 +1197,7 @@ def _ensure_deferred_task(
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
-        return task
+        return {"task": task}
 
     if trigger.get("type") == "human_chat":
         created_by = HUMAN_SENDER_ID
@@ -1149,15 +1214,37 @@ def _ensure_deferred_task(
         parent_task=parent_task,
     )
     if parent_task is not None:
-        return create_or_bind_subtask(
-            parent_task=parent_task,
+        return _task_from_creation(
+            create_or_bind_subtask(
+                parent_task=parent_task,
+                title=(decision.taskTitle or "").strip(),
+                description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+                project=parent_task.project,
+                assigned_to=agent.id,
+                requester_id=requester_id,
+                owner_id=owner_id,
+                created_by=created_by,
+                work_contract=_inherited_follow_up_work_contract(parent_task, decision),
+                source_channel=task_source_channel_for_trigger(trigger),
+                notification_policy=task_notification_policy_for_trigger(trigger),
+                notification_channel_id=task_notification_channel_id_for_trigger(trigger),
+                audit_author_name=agent.name,
+                audit_author_type="agent",
+                audit_author_agent_id=agent.id,
+                audit_source_trigger_id=trigger.get("trigger_id"),
+            ),
+            agent_name=agent.name,
+        )
+    return _task_from_creation(
+        create_or_bind_task(
             title=(decision.taskTitle or "").strip(),
             description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
-            project=parent_task.project,
+            project=None,
             assigned_to=agent.id,
             requester_id=requester_id,
             owner_id=owner_id,
             created_by=created_by,
+            parent_task_id=None,
             work_contract=_inherited_follow_up_work_contract(parent_task, decision),
             source_channel=task_source_channel_for_trigger(trigger),
             notification_policy=task_notification_policy_for_trigger(trigger),
@@ -1166,25 +1253,9 @@ def _ensure_deferred_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
-        ).task
-    return create_or_bind_task(
-        title=(decision.taskTitle or "").strip(),
-        description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
-        project=None,
-        assigned_to=agent.id,
-        requester_id=requester_id,
-        owner_id=owner_id,
-        created_by=created_by,
-        parent_task_id=None,
-        work_contract=_inherited_follow_up_work_contract(parent_task, decision),
-        source_channel=task_source_channel_for_trigger(trigger),
-        notification_policy=task_notification_policy_for_trigger(trigger),
-        notification_channel_id=task_notification_channel_id_for_trigger(trigger),
-        audit_author_name=agent.name,
-        audit_author_type="agent",
-        audit_author_agent_id=agent.id,
-        audit_source_trigger_id=trigger.get("trigger_id"),
-    ).task
+        ),
+        agent_name=agent.name,
+    )
 
 
 def _persist_work_contract(task, agent: Agent, decision: ConversationDecision):

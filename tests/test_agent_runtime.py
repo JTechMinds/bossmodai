@@ -1,8 +1,10 @@
 """Critical-path agent runtime tests — no live LLM.
 
 Covers HA-TEST-P1-01 (smoke-suite module), HA-CORR-P0-01 (reused tasks
-wake the assignee), HA-CORR-P0-02 (CLI approval resume), and
-HA-CORR-P0-03 (skip-turn must not exhaust the trigger).
+wake the assignee), HA-CORR-P0-02 (CLI approval resume),
+HA-CORR-P0-03 (skip-turn must not exhaust the trigger),
+HA-CORR-P1-06 (ambiguous match must not create a duplicate), and
+HA-PROD-P1-01 (Assign Task API outcomes, including unassigned backlog).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, build_task_assigned_trigger
 from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.loop import run_turn
 from core.agent_loop.watchdog import TaskWatchdog
 from core.bm_cli.approvals import resume_cli_approval
@@ -403,3 +406,232 @@ def test_repost_same_task_coalesces_already_queued_assignment(monkeypatch: pytes
     queued = _queued_assignment_triggers(agent.id, task_id)
     assert len(queued) == 1
     assert queued[0]["id"] == first_id
+
+
+# ---------------------------------------------------------------------------
+# HA-CORR-P1-06 / HA-PROD-P1-01 — clarify + unassigned assign
+# ---------------------------------------------------------------------------
+
+
+def _open_tasks_with_title(title: str, *, assigned_to: str | None = None) -> list:
+    rows = db.list_tasks(assigned_to=assigned_to) if assigned_to else db.list_tasks()
+    return [task for task in rows if task.title == title]
+
+
+def test_create_or_bind_task_ambiguous_match_does_not_create_duplicate() -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    assert first.id != second.id
+
+    creation = create_or_bind_task(
+        title="Plan",
+        description="Which plan?",
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel=None,
+        notification_policy=None,
+        notification_channel_id=None,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+
+    assert creation.outcome == "clarify_ambiguous_match"
+    assert creation.task is None
+    assert {item.id for item in creation.resolution.candidates} == {first.id, second.id}
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+
+
+def test_create_task_api_ambiguous_match_returns_candidates_without_third_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": "Plan", "assigned_to": agent.id},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["outcome"] == "clarify_ambiguous_match"
+    assert body["task"] is None
+    candidate_ids = {item["id"] for item in body["candidates"]}
+    assert candidate_ids == {first.id, second.id}
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert not db.list_agent_triggers(agent.id)
+
+
+def test_create_task_api_bind_task_id_reuses_chosen_ambiguous_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    client = _task_api_client(monkeypatch)
+    headers = _task_api_headers()
+
+    clarified = client.post("/api/tasks", headers=headers, json={"title": "Plan", "assigned_to": agent.id})
+    assert clarified.status_code == 409
+
+    bound = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={"title": "Plan", "assigned_to": agent.id, "bind_task_id": first.id},
+    )
+
+    assert bound.status_code == 201
+    body = bound.json()
+    assert body["outcome"] == "bind_existing_task"
+    assert body["task"]["id"] == first.id
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert _queued_assignment_triggers(agent.id, first.id)
+
+
+def test_create_task_api_unassigned_backlog_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": "Inbox later", "description": "No owner yet"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["outcome"] == "create_new_task"
+    assert body["task"]["title"] == "Inbox later"
+    assert body["task"]["assigned_to"] is None
+    assert db.get_task(body["task"]["id"]) is not None
+
+
+def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
+    """Regression: `_require_bound_task` used to raise ValueError into apply_decision."""
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+
+    try:
+        result = apply_decision(
+            {
+                "decision": "accept",
+                "intentKind": "work_request",
+                "commitmentKind": "work",
+                "taskTitle": "Plan",
+                "reply": "I'll take the plan.",
+            },
+            agent,
+            state,
+            {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+        )
+    except ValueError as exc:
+        pytest.fail(f"ambiguous accept must not raise ValueError (turn crash): {exc}")
+
+    assert result["event"] == "world_feedback"
+    assert result["event"] != "decision_applied"
+    assert "multiple open tasks" in result["detail"].lower()
+    assert result.get("expected_action") == "clarify"
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert activity_runtime.get_active_work_activity(agent.id) is None
+    assert all(task.status != "accepted" for task in _open_tasks_with_title("Plan", assigned_to=agent.id))
+
+
+def test_apply_decision_defer_ambiguous_match_returns_world_feedback() -> None:
+    """Regression: defer work used the same `_require_bound_task` raise."""
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+
+    try:
+        result = apply_decision(
+            {
+                "decision": "defer",
+                "intentKind": "work_request",
+                "commitmentKind": "work",
+                "taskTitle": "Plan",
+                "reply": "Later.",
+            },
+            agent,
+            state,
+            {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+        )
+    except ValueError as exc:
+        pytest.fail(f"ambiguous defer must not raise ValueError (turn crash): {exc}")
+
+    assert result["event"] == "world_feedback"
+    assert result.get("expected_action") == "clarify"
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert activity_runtime.get_active_work_activity(agent.id) is None
+
+
+def test_apply_decision_plan_materialize_ambiguous_child_fails_honestly() -> None:
+    """Regression: `_materialize_work_execution_plan` used to `continue` and accept the parent."""
+    lead = _create_agent("Ada")
+    helper = _create_agent("Bea")
+    state = db.get_agent_state(lead.id)
+    assert state is not None
+    parent = db.create_task(title="Ship release", assigned_to=lead.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Ship release",
+            "reply": "Bea can take notes.",
+            "executionPlan": {
+                "mode": "delegate",
+                "delegations": [{"agentId": helper.id, "taskTitle": "Notes"}],
+            },
+        },
+        lead,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": parent.id,
+            "content": "Ship the release",
+            "from_name": "Human",
+        },
+    )
+
+    assert result["event"] == "world_feedback"
+    assert result["event"] != "decision_applied"
+    assert "accepted work" not in result.get("detail", "").lower()
+    assert "multiple open tasks" in result["detail"].lower()
+    assert "notes" in result["detail"].lower()
+    assert result.get("expected_action") == "clarify"
+    assert len(_open_tasks_with_title("Notes", assigned_to=helper.id)) == 2
+    refreshed = db.get_task(parent.id)
+    assert refreshed is not None
+    assert refreshed.status != "accepted"
+    assert activity_runtime.get_active_work_activity(lead.id) is None
+    assert not any(row["trigger_type"] == "task_assigned" and row["task_id"] != parent.id for row in db.list_agent_triggers(helper.id))
