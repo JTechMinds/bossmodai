@@ -25,6 +25,35 @@
 3. Empty setting = no extra host access (default).
 4. Settings → CLI Policy → Shell Executor stays off until you want native diagnostics (`uname`, `ls` of an allowed path, …). Virtual `cat` / `write` of an allowed named path do not require shell.
 
-## Live scenario
+## Live scenario (reproducible)
 
-See the pull request body for the reproducible API + CLI executor run (fixture file, read/edit, denied `/etc/passwd`, `uname -a`, path-escape jail). A true interactive GUI agent loop was not required for that proof.
+A true interactive GUI agent loop was **not** run. The same contracts the live loop calls were exercised against a live FastAPI process (`uv run python main.py`) with `X-BossMod-Token`.
+
+```bash
+# fixture
+mkdir -p /tmp/bossmod-cap-host
+printf '%s\n' '# fixture named by the operator' 'print("before-review")' > /tmp/bossmod-cap-host/review.py
+
+# server
+BOSSMOD_DB_PATH=/tmp/bossmod-cap/bossmod.sqlite3
+BOSSMOD_LOCAL_API_TOKEN=cap-token-c3b7
+BOSSMOD_HOST=127.0.0.1
+BOSSMOD_PORT=38472
+# then: PUT workspace_host_roots=/tmp/bossmod-cap-host
+#       PUT cli_shell_enabled=true   # opt-in for native uname/head only; seed default stays false
+#       POST /api/agents  {"name":"Hugh Proof","role":"Reviewer"}
+```
+
+Captured on this pass (`ed5f9ab`, 2026-09-05T20:49:31Z):
+
+| Step | Call | Result |
+| --- | --- | --- |
+| A read | `GET /api/company/files?path=/tmp/bossmod-cap-host/review.py` | **200**; content `print("before-review")` |
+| A edit | `PUT /api/company/files` same path | **200**; file became `print("after-review")` |
+| A CLI | `POST /api/cli-policy/simulator/execute` `cat` / `write` `execute=true` | **200** `ok=true` `exit_code=0` `executor=virtual` |
+| A deny | `GET /api/company/files?path=/etc/passwd` | **400** outside allowed roots; not a full host mount |
+| B ok | `uname -a` via simulator `execute=true` | **200** `ok=true` `exit_code=0` `executor=shell`; stdout starts `Linux cursor 6.12.94+` |
+| B ok | `ls /tmp/bossmod-cap-host` | **200** `ok=true`; listing `review.py` |
+| B deny | `head /etc/passwd` (native, not virtual `cat`) | **200** `ok=false` `exit_code=1` `executor=shell`; `Path jail: '/etc/passwd' resolves outside the allowed workspace roots` |
+
+Virtual `cat /etc/passwd` is denied by named-path confinement (`ok=false`, `executor=virtual`) before the shell jail. Full transcripts are in the pull request body.
