@@ -134,7 +134,18 @@ const AgentContext = (() => {
     let folderOpenerModalEl = null;
     const chatCache = new Map();
     const deskCache = new Map();
-    let activeChatLoadId = 0;
+    const selectGeneration = BossModUtils.createLoadGeneration();
+    const chatLoad = BossModUtils.createLoadGeneration();
+    const meetingLoad = BossModUtils.createLoadGeneration();
+    const tasksLoad = BossModUtils.createLoadGeneration();
+    const deskLoad = BossModUtils.createLoadGeneration();
+
+    function isLiveAgentLoad(generation, loadId, agentId, subview) {
+        if (!generation.isCurrent(loadId)) return false;
+        if (!selectedAgent || selectedAgent.id !== agentId) return false;
+        if (subview && activeSubview !== subview) return false;
+        return true;
+    }
 
     function mergeAgentSnapshot(agentDetails, runtimeSnapshot = null) {
         if (!agentDetails) return null;
@@ -164,14 +175,19 @@ const AgentContext = (() => {
 
     async function selectAgent(agentData) {
         creatingAgent = false;
-        // Fetch full agent details
+        const loadId = selectGeneration.next();
+        const requestedId = agentData?.id;
+        let details;
         try {
-            const res = await apiFetch(`/api/agents/${agentData.id}`);
+            const res = await apiFetch(`/api/agents/${requestedId}`);
             if (!res.ok) return;
-            selectedAgent = mergeAgentSnapshot(await res.json(), agentData);
+            details = await res.json();
         } catch {
             return;
         }
+        if (!selectGeneration.isCurrent(loadId)) return;
+
+        selectedAgent = mergeAgentSnapshot(details, agentData);
 
         // Track this agent in session chip bar
         interactedAgents.set(selectedAgent.id, selectedAgent);
@@ -185,6 +201,7 @@ const AgentContext = (() => {
     }
 
     function deselectAgent() {
+        selectGeneration.next();
         selectedAgent = null;
         creatingAgent = false;
         activeTopTab = 'focus';
@@ -197,6 +214,7 @@ const AgentContext = (() => {
     }
 
     function startCreateAgent() {
+        selectGeneration.next();
         selectedAgent = null;
         creatingAgent = true;
         activeTopTab = 'focus';
@@ -429,6 +447,7 @@ const AgentContext = (() => {
         clearDeskCacheForAgent(agentId);
 
         if (wasSelected) {
+            selectGeneration.next();
             selectedAgent = null;
             creatingAgent = false;
 
@@ -691,7 +710,7 @@ const AgentContext = (() => {
     }
 
     async function refreshChatMessages(agentId) {
-        const loadId = ++activeChatLoadId;
+        const loadId = chatLoad.next();
         let messages = [];
 
         try {
@@ -703,7 +722,7 @@ const AgentContext = (() => {
 
         setCachedChat(agentId, messages);
 
-        if (!selectedAgent || selectedAgent.id !== agentId || activeSubview !== 'chat' || loadId !== activeChatLoadId) {
+        if (!isLiveAgentLoad(chatLoad, loadId, agentId, 'chat')) {
             return;
         }
 
@@ -947,6 +966,8 @@ const AgentContext = (() => {
         const container = document.getElementById('subview-meeting');
         if (!selectedAgent || !container) return;
 
+        const agentId = selectedAgent.id;
+        const loadId = meetingLoad.next();
         const keepShell = MeetingSessionDom.isMounted(container);
         if (!keepShell) {
             container.innerHTML = `
@@ -958,11 +979,12 @@ const AgentContext = (() => {
         }
 
         try {
-            const res = await apiFetch(`/api/agents/${selectedAgent.id}/meeting-session?limit=80`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/agents/${agentId}/meeting-session?limit=80`, { cache: 'no-store' });
             if (!res.ok) {
                 throw new Error(await res.text());
             }
             const payload = await res.json();
+            if (!isLiveAgentLoad(meetingLoad, loadId, agentId, 'meeting')) return;
             if (!payload.active || !payload.session) {
                 activeMeetingSessionId = null;
                 renderMeetingEmpty(container);
@@ -980,6 +1002,7 @@ const AgentContext = (() => {
             }
             renderMeetingSession(container, payload.session);
         } catch (err) {
+            if (!isLiveAgentLoad(meetingLoad, loadId, agentId, 'meeting')) return;
             if (!keepShell) {
                 activeMeetingSessionId = null;
                 renderMeetingError(container);
@@ -1194,18 +1217,24 @@ const AgentContext = (() => {
 
     async function renderTasks() {
         const container = document.getElementById('subview-tasks');
-        if (!selectedAgent) return;
+        if (!selectedAgent || !container) return;
+
+        const agentId = selectedAgent.id;
+        const agentName = selectedAgent.name;
+        const loadId = tasksLoad.next();
 
         let selfBoard = null;
         let ownedBoard = null;
         try {
             const [selfRes, ownedRes] = await Promise.all([
-                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=self`, { cache: 'no-store' }),
-                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=owned`, { cache: 'no-store' }),
+                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(agentId)}&scope=self`, { cache: 'no-store' }),
+                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(agentId)}&scope=owned`, { cache: 'no-store' }),
             ]);
             if (selfRes.ok) selfBoard = await selfRes.json();
             if (ownedRes.ok) ownedBoard = await ownedRes.json();
         } catch { /* ignore */ }
+
+        if (!isLiveAgentLoad(tasksLoad, loadId, agentId, 'tasks')) return;
 
         const sections = [];
         const pushSections = (board) => {
@@ -1222,7 +1251,7 @@ const AgentContext = (() => {
             container.innerHTML = `
                 <div class="text-bm-muted text-sm text-center mt-8">
                     <i data-lucide="list-todo" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
-                    <p>No board items for ${BossModUtils.escapeHtml(selectedAgent.name)}</p>
+                    <p>No board items for ${BossModUtils.escapeHtml(agentName)}</p>
                 </div>`;
         } else {
             let html = `<div class="space-y-4">`;
@@ -1270,9 +1299,14 @@ const AgentContext = (() => {
     async function renderDesk(path = '/me', { forceRefresh = false } = {}) {
         const container = document.getElementById('subview-desk');
         if (!selectedAgent || !container) return;
-        activeDeskPath = path || '/me';
-        const cached = !forceRefresh ? getCachedDesk(selectedAgent.id, activeDeskPath) : null;
+        const agentId = selectedAgent.id;
+        const requestedPath = path || '/me';
+        activeDeskPath = requestedPath;
+        const loadId = deskLoad.next();
+
+        const cached = !forceRefresh ? getCachedDesk(agentId, requestedPath) : null;
         if (cached) {
+            if (!isLiveAgentLoad(deskLoad, loadId, agentId, 'desk') || activeDeskPath !== requestedPath) return;
             renderDeskPayload(container, cached);
             return;
         }
@@ -1283,15 +1317,17 @@ const AgentContext = (() => {
             </div>`;
 
         try {
-            const res = await apiFetch(`/api/agents/${selectedAgent.id}/desk?path=${encodeURIComponent(activeDeskPath)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/agents/${agentId}/desk?path=${encodeURIComponent(requestedPath)}`, { cache: 'no-store' });
             if (!res.ok) {
                 throw new Error(await res.text());
             }
             const payload = await res.json();
-            setCachedDesk(selectedAgent.id, activeDeskPath, payload);
+            setCachedDesk(agentId, requestedPath, payload);
+            if (!isLiveAgentLoad(deskLoad, loadId, agentId, 'desk') || activeDeskPath !== requestedPath) return;
             renderDeskPayload(container, payload);
         } catch (err) {
-            renderDeskError(container, activeDeskPath);
+            if (!isLiveAgentLoad(deskLoad, loadId, agentId, 'desk') || activeDeskPath !== requestedPath) return;
+            renderDeskError(container, requestedPath);
             console.error('[AgentContext] Desk load failed:', err);
         }
     }

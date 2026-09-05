@@ -14,6 +14,18 @@ const CompanyFiles = (() => {
     let searchTimer = null;
     let folderOpenerModalEl = null;
     let contextMenuEl = null;
+    const filesLoad = BossModUtils.createLoadGeneration();
+
+    function onDocumentClickCloseNewMenu(event) {
+        if (!container) return;
+        const wrap = container.querySelector('#cf-new-dropdown-wrap');
+        const dropdown = container.querySelector('#cf-new-dropdown');
+        if (!dropdown || dropdown.classList.contains('hidden')) return;
+        if (wrap && wrap.contains(event.target)) return;
+        dropdown.classList.add('hidden');
+    }
+
+    document.addEventListener('click', onDocumentClickCloseNewMenu);
 
     // ─── Helpers ───
 
@@ -60,6 +72,8 @@ const CompanyFiles = (() => {
 
     async function fetchAndRender() {
         if (!container) return;
+        const loadId = filesLoad.next();
+        const requestedPath = currentPath;
         container.innerHTML = `
             <div class="p-6 text-center text-bm-muted">
                 <i data-lucide="loader" class="w-6 h-6 mx-auto mb-2 opacity-40 animate-spin"></i>
@@ -68,15 +82,17 @@ const CompanyFiles = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
 
         try {
-            const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(currentPath)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(requestedPath)}`, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const payload = await res.json();
+            if (!filesLoad.isCurrent(loadId) || currentPath !== requestedPath) return;
             entries = Array.isArray(payload.entries) ? payload.entries : [];
             breadcrumbs = Array.isArray(payload.breadcrumbs) ? payload.breadcrumbs : [];
             workspaceNote = typeof payload.workspace_note === 'string' ? payload.workspace_note : '';
             searchMode = 'local';
             renderDirectory(payload);
         } catch (err) {
+            if (!filesLoad.isCurrent(loadId) || currentPath !== requestedPath) return;
             console.error('[CompanyFiles] Load failed:', err);
             renderError();
         }
@@ -274,6 +290,7 @@ const CompanyFiles = (() => {
                     if (q.length >= 3) {
                         performGlobalSearch(q);
                     } else {
+                        filesLoad.next();
                         searchMode = 'local';
                         renderDirectory();
                         restoreSearchFocus();
@@ -327,12 +344,6 @@ const CompanyFiles = (() => {
                 newDropdown.classList.add('hidden');
                 CompanyFileOps.showCreateDialog(currentPath, 'folder', { onComplete: fetchAndRender });
             });
-            // Close dropdown on outside click
-            document.addEventListener('click', (e) => {
-                if (!newBtn.contains(e.target) && !newDropdown.contains(e.target)) {
-                    newDropdown.classList.add('hidden');
-                }
-            });
         }
 
         // Open in Explorer
@@ -345,16 +356,20 @@ const CompanyFiles = (() => {
     // ─── Search ───
 
     async function performGlobalSearch(query) {
+        const loadId = filesLoad.next();
+        const requestedQuery = query;
         try {
-            const res = await apiFetch(`/api/company/files/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/company/files/search?q=${encodeURIComponent(requestedQuery)}`, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const results = await res.json();
+            if (!filesLoad.isCurrent(loadId)) return;
             entries = Array.isArray(results) ? results : [];
             breadcrumbs = [];
             searchMode = 'global';
             renderDirectory();
             restoreSearchFocus();
         } catch (err) {
+            if (!filesLoad.isCurrent(loadId)) return;
             console.error('[CompanyFiles] Search failed:', err);
         }
     }
@@ -566,6 +581,7 @@ const CompanyFiles = (() => {
     // ─── Cleanup ───
 
     function destroy() {
+        filesLoad.next();
         clearTimeout(searchTimer);
         closeFolderOpenerModal();
         dismissContextMenu();

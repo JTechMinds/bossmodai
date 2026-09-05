@@ -166,6 +166,21 @@ const BossModUtils = (() => {
         setTimeout(hide, 400);
     }
 
+    // ─── Async load generation ───
+
+    function createLoadGeneration() {
+        let current = 0;
+        return {
+            next() {
+                current += 1;
+                return current;
+            },
+            isCurrent(id) {
+                return id === current;
+            },
+        };
+    }
+
     return {
         escapeHtml,
         normalizeAgent,
@@ -178,5 +193,6 @@ const BossModUtils = (() => {
         createModal,
         openOverlay,
         closeOverlay,
+        createLoadGeneration,
     };
 })();
