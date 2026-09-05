@@ -147,6 +147,8 @@ class TaskWatchdog:
                 },
                 task_id=task.id,
             )
+
+
 def _list_watchdog_tasks():
     """Return assigned in-flight tasks the watchdog should ping."""
     tasks = []

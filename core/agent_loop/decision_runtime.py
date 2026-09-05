@@ -194,15 +194,6 @@ def apply_decision(
                 status_note=(decision.reply or decision.detail or "Assignment declined."),
                 watchdog_pinged_at=None,
             )
-            append_task_event(
-                task_id=trigger["task_id"],
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="status_update",
-                content=decision.reply or decision.detail or "Assignment declined.",
-                source_trigger_id=trigger.get("trigger_id"),
-            )
         result["detail"] = f"{agent.name} declined the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
@@ -230,15 +221,6 @@ def apply_decision(
                 status_note=status_note,
                 completion_summary=None,
                 watchdog_pinged_at=None,
-            )
-            append_task_event(
-                task_id=task.id,
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="status_update",
-                content=status_note or f'Deferred "{task.title}".',
-                source_trigger_id=trigger.get("trigger_id"),
             )
             result["detail"] = f'{agent.name} deferred "{task.title}"'
             result.setdefault("activity_extra", {})["task_title"] = task.title
@@ -288,15 +270,6 @@ def apply_decision(
             ),
         )
         result["detail"] = f'{agent.name} accepted work on "{task.title}"'
-        append_task_event(
-            task_id=task.id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            event_type="status_update",
-            content=decision.reply or f'Accepted work on "{task.title}".',
-            source_trigger_id=trigger.get("trigger_id"),
-        )
         result.setdefault("activity_extra", {})["task_title"] = task.title
         if _should_queue_initial_work_resume(task=task, plan_mode=str(plan_resolution.get("mode") or "self")):
             result["trigger_requests"].append(

@@ -1754,16 +1754,6 @@ async def _handle_waiting(
         "detail": f'{agent.name} is waiting on "{task.title if task else "the current task"}"' + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
     }
-    if task is not None:
-        append_task_event(
-            task_id=task.id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            event_type="status_update",
-            content=reason or f'Waiting on "{task.title}".',
-            source_trigger_id=(trigger or {}).get("trigger_id"),
-        )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -2150,16 +2140,6 @@ async def _handle_delegated(
             "human_visible": _task_is_human_visible(original_task),
         },
     }
-    if original_task is not None:
-        append_task_event(
-            task_id=original_task.id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            event_type="status_update",
-            content=f'Delegated "{original_task.title}" to {target.name}.',
-            source_trigger_id=(trigger or {}).get("trigger_id"),
-        )
     if child and child.status == "pending":
         result["trigger_requests"] = [build_task_assigned_trigger(child)]
     skipped = _append_task_follow_up_message(
@@ -2241,16 +2221,6 @@ async def _handle_abandoned(
             "human_visible": _task_is_human_visible(task),
         },
     }
-    if task is not None:
-        append_task_event(
-            task_id=task.id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            event_type="status_update",
-            content=reason or f'Abandoned "{task.title}".',
-            source_trigger_id=(trigger or {}).get("trigger_id"),
-        )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,

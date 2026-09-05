@@ -551,6 +551,108 @@ def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
     assert all(task.status != "accepted" for task in _open_tasks_with_title("Plan", assigned_to=agent.id))
 
 
+def _status_updates(task_id: str) -> list:
+    return [event for event in db.list_task_events(task_id) if event.event_type == "status_update"]
+
+
+def test_apply_decision_decline_writes_one_status_update() -> None:
+    """One pending→declined jump must not leave two status_update rows."""
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task(title="Write report", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    assert _status_updates(task.id) == []
+
+    result = apply_decision(
+        {
+            "decision": "decline",
+            "intentKind": "work_request",
+            "commitmentKind": "none",
+            "reply": "I cannot take this.",
+        },
+        agent,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": task.id,
+            "content": "Please write the report",
+            "from_name": "Human",
+        },
+    )
+
+    assert result["event"] == "decision_applied"
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "declined"
+    updates = _status_updates(task.id)
+    assert len(updates) == 1
+    assert "pending → declined" in updates[0].content
+
+
+def test_apply_decision_defer_does_not_double_log_status_update() -> None:
+    """Defer must not append a leftover status_update after transition_task."""
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    pending = db.create_task(title="Write report", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    assert pending.status == "pending"
+
+    pending_result = apply_decision(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Write report",
+            "reply": "Later.",
+        },
+        agent,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": pending.id,
+            "content": "Please write the report",
+            "from_name": "Human",
+        },
+    )
+    assert pending_result["event"] == "decision_applied"
+    still_pending = db.get_task(pending.id)
+    assert still_pending is not None
+    assert still_pending.status == "pending"
+    # Identity pending→pending is not a jump, so transition_task writes no event.
+    assert _status_updates(pending.id) == []
+
+    accepted = _create_task(agent_id=agent.id, title="Draft brief")
+    transition_task(accepted.task.id, "accepted", reason="setup accepted", actor="pytest")
+    before = len(_status_updates(accepted.task.id))
+
+    accepted_result = apply_decision(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Draft brief",
+            "reply": "Park this for now.",
+        },
+        agent,
+        state,
+        {
+            "type": "task_follow_up",
+            "task_id": accepted.task.id,
+            "task_status": "accepted",
+            "task_party": "assignee",
+            "content": "Any update?",
+            "from_name": "Human",
+        },
+    )
+    assert accepted_result["event"] == "decision_applied"
+    deferred = db.get_task(accepted.task.id)
+    assert deferred is not None
+    assert deferred.status == "pending"
+    after = _status_updates(accepted.task.id)
+    assert len(after) == before + 1
+    assert "accepted → pending" in after[-1].content
+
+
 def test_apply_decision_defer_ambiguous_match_returns_world_feedback() -> None:
     """Regression: defer work used the same `_require_bound_task` raise."""
     agent = _create_agent()

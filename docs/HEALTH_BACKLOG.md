@@ -349,7 +349,7 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [x] Existing happy paths (`pending→accepted→active→complete`) still work.
 - [x] Table-driven pytest.
 
-**Shipped.** `transition_task(task_id, to, *, reason, actor)` in `core/tasking/transitions.py` is the shared graph. Identity is allowed; `pending → complete` and other terminal reopen jumps raise `IllegalTaskTransition` and leave the row unchanged. `db.update_task(..., status=...)` uses the same allow-map (no bypass). Status-changing callers (actions, decision_runtime, activity_runtime, watchdog, dispatcher, reset-runtime) go through `transition_task` and write a `task_events` `status_update` row.
+**Shipped.** `transition_task(task_id, to, *, reason, actor)` in `core/tasking/transitions.py` is the shared graph. Identity is allowed; `pending → complete` and other terminal reopen jumps raise `IllegalTaskTransition` and leave the row unchanged. `db.update_task(..., status=...)` uses the same allow-map (no bypass). Status-changing callers (actions, decision_runtime, activity_runtime, watchdog, dispatcher, reset-runtime) go through `transition_task` and write one `task_events` `status_update` row per real jump. Decline/defer/accept no longer append a second `status_update` after `transition_task`. Domain events (`completion`, `blocker`) still sit beside the transition row.
 
 ---
 
