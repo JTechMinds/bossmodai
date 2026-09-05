@@ -371,9 +371,7 @@ async def get_company_files(path: str = "/") -> dict[str, object]:
 @router.put("/company/files")
 async def save_company_file(body: CompanyFileSaveBody) -> dict[str, object]:
     """Write content back to a file in the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     resolved = _resolve_safe_company_path(root, body.path)
     if resolved is None:
         raise HTTPException(400, "Invalid path")
@@ -382,17 +380,14 @@ async def save_company_file(body: CompanyFileSaveBody) -> dict[str, object]:
 
     await asyncio.to_thread(resolved.write_text, body.content, encoding="utf-8")
     stat = await asyncio.to_thread(resolved.stat)
-    virtual_path = "/" + str(resolved.relative_to(root.resolve())).replace("\\", "/")
-    return {"status": "ok", "path": virtual_path, "size_bytes": stat.st_size}
+    return {"status": "ok", "path": _company_virtual_path(root, resolved), "size_bytes": stat.st_size}
 
 
 @router.post("/company/files/open-folder")
 async def open_company_folder(body: dict) -> dict[str, object]:
     """Open a company workspace folder in the host file explorer."""
-    from core.bm_cli.filesystem import artifacts_root
-
     raw_path = body.get("path", "/")
-    root = artifacts_root()
+    root = _company_files_root()
     safe = _resolve_safe_company_path(root, raw_path)
     if safe is None or not safe.exists():
         raise HTTPException(404, "Path not found")
@@ -434,16 +429,18 @@ _IMAGE_MIME_TYPES = {
 
 def _validate_name(name: str) -> None:
     """Reject names containing path separators, traversal tokens, or .git* prefixes."""
+    from core.bm_cli.filesystem import is_denied_company_file
+
     if not name or _INVALID_NAME_RE.search(name) or _GIT_NAME_RE.match(name):
+        raise HTTPException(400, "Invalid name")
+    if is_denied_company_file(Path(name)):
         raise HTTPException(400, "Invalid name")
 
 
 @router.post("/company/files/create", status_code=201)
 async def create_company_file(body: CompanyFileCreateBody) -> dict[str, object]:
     """Create an empty file or folder in the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     parent = _resolve_safe_company_path(root, body.path)
     if parent is None or not parent.exists() or not parent.is_dir():
         raise HTTPException(400, "Invalid parent path")
@@ -459,16 +456,13 @@ async def create_company_file(body: CompanyFileCreateBody) -> dict[str, object]:
     else:
         await asyncio.to_thread(target.mkdir)
 
-    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
-    return {"status": "ok", "path": virtual_path}
+    return {"status": "ok", "path": _company_virtual_path(root, target.resolve())}
 
 
 @router.delete("/company/files")
 async def delete_company_file(body: CompanyFileDeleteBody) -> dict[str, object]:
     """Delete a file or empty directory from the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     resolved = _resolve_safe_company_path(root, body.path)
     if resolved is None or not resolved.exists():
         raise HTTPException(404, "Path not found")
@@ -486,9 +480,7 @@ async def delete_company_file(body: CompanyFileDeleteBody) -> dict[str, object]:
 @router.patch("/company/files/rename")
 async def rename_company_file(body: CompanyFileRenameBody) -> dict[str, object]:
     """Rename a file or folder in the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     resolved = _resolve_safe_company_path(root, body.path)
     if resolved is None or not resolved.exists():
         raise HTTPException(404, "Path not found")
@@ -498,16 +490,13 @@ async def rename_company_file(body: CompanyFileRenameBody) -> dict[str, object]:
 
     await asyncio.to_thread(resolved.rename, new_target)
 
-    virtual_path = "/" + str(new_target.resolve().relative_to(root.resolve())).replace("\\", "/")
-    return {"status": "ok", "path": virtual_path}
+    return {"status": "ok", "path": _company_virtual_path(root, new_target.resolve())}
 
 
 @router.post("/company/files/move")
 async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
     """Move a file or folder within the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     source = _resolve_safe_company_path(root, body.source)
     destination = _resolve_safe_company_path(root, body.destination)
     if source is None or not source.exists():
@@ -521,16 +510,13 @@ async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
 
     await asyncio.to_thread(shutil.move, str(source), str(target))
 
-    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
-    return {"status": "ok", "path": virtual_path}
+    return {"status": "ok", "path": _company_virtual_path(root, target.resolve())}
 
 
 @router.post("/company/files/copy")
 async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
     """Copy a file or folder within the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     source = _resolve_safe_company_path(root, body.source)
     destination = _resolve_safe_company_path(root, body.destination)
     if source is None or not source.exists():
@@ -547,36 +533,37 @@ async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
     else:
         await asyncio.to_thread(shutil.copy2, str(source), str(target))
 
-    virtual_path = "/" + str(target.resolve().relative_to(root.resolve())).replace("\\", "/")
-    return {"status": "ok", "path": virtual_path}
+    return {"status": "ok", "path": _company_virtual_path(root, target.resolve())}
 
 
 @router.get("/company/files/search")
 async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[str, object]]:
     """Search for files and folders by name across the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
+    from core.bm_cli.filesystem import is_denied_company_file
 
     def _search() -> list[dict[str, object]]:
-        root = artifacts_root()
+        root = _company_files_root()
         root_resolved = root.resolve()
         query_lower = q.lower()
         results: list[dict[str, object]] = []
 
         for dirpath, dirnames, filenames in os.walk(root_resolved):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".git")]
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".git") and not is_denied_company_file(Path(d))
+            ]
 
             for name in dirnames + filenames:
-                if name.startswith(".git"):
+                if name.startswith(".git") or is_denied_company_file(Path(name)):
                     continue
                 if query_lower not in name.lower():
                     continue
                 full = Path(dirpath) / name
                 is_dir = full.is_dir()
                 stat_result = full.stat()
-                virtual = "/" + str(full.relative_to(root_resolved)).replace("\\", "/")
                 results.append({
                     "name": name,
-                    "path": virtual,
+                    "path": _company_virtual_path(root, full),
                     "is_dir": is_dir,
                     "size_bytes": None if is_dir else stat_result.st_size,
                     "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
@@ -595,9 +582,7 @@ async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[s
 @router.get("/company/files/raw")
 async def get_company_file_raw(path: str = Query(..., min_length=1)):
     """Return the raw bytes of a file from the company workspace."""
-    from core.bm_cli.filesystem import artifacts_root
-
-    root = artifacts_root()
+    root = _company_files_root()
     resolved = _resolve_safe_company_path(root, path)
     if resolved is None or not resolved.exists():
         raise HTTPException(404, "File not found")
@@ -1286,14 +1271,31 @@ def _desk_display_name(path: str) -> str:
     return Path(path).name or path
 
 
+def _company_files_root() -> Path:
+    """Return the company browser root (``artifacts/projects``)."""
+    from core.bm_cli.filesystem import company_files_root
+    return company_files_root()
+
+
+def _company_virtual_path(root: Path, resolved: Path) -> str:
+    """Return the company-browser virtual path for a resolved filesystem path."""
+    relative = str(resolved.relative_to(root.resolve())).replace("\\", "/")
+    if relative in {"", "."}:
+        return "/"
+    return f"/{relative}"
+
+
 def _resolve_safe_company_path(root: Path, raw_path: str) -> Path | None:
-    """Resolve a user-supplied path against the artifacts root, rejecting traversal."""
-    cleaned = raw_path.strip().lstrip("/") or "."
-    candidate = (root / cleaned).resolve()
-    root_resolved = root.resolve()
-    if candidate == root_resolved or root_resolved in candidate.parents:
-        return candidate
-    return None
+    """Resolve a user-supplied company path via ``resolve_relative_path``.
+
+    Rejects traversal and backup/database suffixes (``*.bak``, ``*.sqlite3``, ``*.db``).
+    """
+    from core.bm_cli.filesystem import resolve_company_relative_path
+
+    try:
+        return resolve_company_relative_path(root, raw_path)
+    except (ValueError, OSError):
+        return None
 
 
 def _annotate_agent_names(items: list[dict], name_key: str = "name") -> None:
@@ -1316,18 +1318,16 @@ def _annotate_agent_names(items: list[dict], name_key: str = "name") -> None:
 
 def _build_company_files_payload(path: str) -> dict[str, object]:
     """Build a filesystem-style payload for the company workspace browser."""
-    from core.bm_cli.filesystem import artifacts_root
+    from core.bm_cli.filesystem import is_denied_company_file
 
-    root = artifacts_root()
+    root = _company_files_root()
     resolved = _resolve_safe_company_path(root, path)
     if resolved is None:
         raise HTTPException(400, "Invalid path")
     if not resolved.exists():
         raise HTTPException(404, "Path not found")
 
-    virtual_path = "/" + str(resolved.relative_to(root.resolve())).replace("\\", "/")
-    if virtual_path == "/.":
-        virtual_path = "/"
+    virtual_path = _company_virtual_path(root, resolved)
 
     if resolved.is_file():
         stat = resolved.stat()
@@ -1350,6 +1350,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
         for entry in iterator:
             name = entry.name
             if name in {".git", ".gitignore", ".gitattributes"}:
+                continue
+            if is_denied_company_file(Path(name)):
                 continue
             is_dir = entry.is_dir()
             stat_result = entry.stat()
