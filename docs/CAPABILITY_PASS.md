@@ -1,6 +1,6 @@
 # BossMod AI — Day-one capability pass (host file + CLI)
 
-**Scope:** Jordan’s (1) and (2) only. Peer assign/deliver is **out of scope** and not claimed here.
+**Scope:** day-one named-path + jailed CLI only. Capability item (3) peer assign/deliver is **out of scope** and not claimed here.
 
 **Honesty:** “My PC projects” is still `artifacts/projects` plus optional **allowlisted extra host roots**. This is not a full unrestricted host mount. A path the user names works when it stays inside `/me`, `/projects`, or a configured host root. Paths outside those roots fail with a clear denial. `cli_shell_enabled` stays fail-closed (`false`). Approval does not bypass the path jail.
 
@@ -15,7 +15,7 @@
 ## What did not ship
 
 - A bind-mount of the operator’s whole home directory or an unnamed “open any host path” mode
-- Peer collaboration / assign-and-deliver (Jordan’s (3))
+- Peer collaboration / assign-and-deliver (capability item (3) peer assign)
 - A live multi-agent GUI loop in this verification environment (contracts are proven via the same API + `execute_bm_cli` / company-files paths the live loop calls)
 
 ## Operator setup
@@ -41,7 +41,7 @@ BOSSMOD_HOST=127.0.0.1
 BOSSMOD_PORT=38472
 # then: PUT workspace_host_roots=/tmp/bossmod-cap-host
 #       PUT cli_shell_enabled=true   # opt-in for native uname/head only; seed default stays false
-#       POST /api/agents  {"name":"Hugh Proof","role":"Reviewer"}
+#       POST /api/agents  {"name":"Cap Proof","role":"Reviewer"}
 ```
 
 Captured on this pass (`ed5f9ab`, 2026-09-05T20:49:31Z):
