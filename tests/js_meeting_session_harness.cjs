@@ -148,6 +148,17 @@ global.BossModUtils = {
             },
         };
     },
+    setComposerError() {},
+    createComposerSendGate() {
+        return {
+            busy() {
+                return false;
+            },
+            async submit() {
+                return { submitted: false, ok: false, reason: "blocked" };
+            },
+        };
+    },
 };
 
 // eslint-disable-next-line no-eval
