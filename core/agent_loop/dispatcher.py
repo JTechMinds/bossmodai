@@ -449,6 +449,11 @@ class TurnDispatcher:
                     from core.world.simulation import simulation
 
                     simulation.set_agent_path(result["agent_id"], result["path"])
+            elif outcome.trigger_status == "skipped":
+                # No-model (and other) skips are not failures. Completing the
+                # trigger avoids _exhaust_failed_trigger, which would mark the
+                # row failed and can stall the bound task (HA-CORR-P0-03).
+                db.complete_agent_trigger(trigger_id)
             else:
                 await self._supervise_failed_turn(
                     agent=agent,
