@@ -1,59 +1,77 @@
-# BossMod AI — Day-one capability pass (host file + CLI)
+# BossMod AI — Day-one capability pass
 
-**Scope:** day-one named-path + jailed CLI only. Capability item (3) peer assign/deliver is **out of scope** and not claimed here.
+Locked order: **(1) named-path open/read/edit** and **(2) jailed diagnostic CLI** shipped on `main` (PR #22). This note covers **(3) peer assign/deliver** combined with that host-roots model.
 
-**Honesty:** “My PC projects” is still `artifacts/projects` plus optional **allowlisted extra host roots**. This is not a full unrestricted host mount. A path the user names works when it stays inside `/me`, `/projects`, or a configured host root. Paths outside those roots fail with a clear denial. `cli_shell_enabled` stays fail-closed (`false`). Approval does not bypass the path jail.
+Public wording stays impersonal. Fixture agents are **Cap Assigner** and **Cap Worker**.
 
-## What shipped
+## Honesty bar
 
-1. **Named path open/read/edit.** `resolve_cli_path`, Company Files, and agent `cli` (`cat` / `write` / …) accept a user-named absolute path when it resolves under:
-   - the agent workspace (`/me`)
-   - the shared projects mount (`/projects` → `artifacts/projects`)
-   - extra directories in Settings → CLI Policy → **Host workspace roots** (`workspace_host_roots`)
-2. **Diagnostic CLI.** With shell enabled, pathless diagnostics such as `uname -a` run under the existing jail/policy. `ls` / `cat` of an allowed path work. `cat /etc/passwd` (and other escapes) are denied by virtual-path confinement or the argv path jail. Approval still does not jailbreak.
+| Item | Status | What is proven | What is not proven |
+| --- | --- | --- | --- |
+| (1) Named path | Shipped | User-named path under `/me`, `/projects`, or a configured host root opens/reads/edits | Full unrestricted host mount |
+| (2) Diagnostic CLI | Shipped | Pathless `uname` and allowed `ls`/`cat` under the jail; `/etc/passwd` denied | Shell enabled by default (`cli_shell_enabled` stays fail-closed) |
+| (3) Peer assign/deliver on a host-path task | Proven here via the same APIs/actions/triggers the live loop calls | Cap Assigner owns a host-root task, assigns it to Cap Worker; Worker is woken, reads/edits under the allowlisted root, completes; assigner/operator can observe; `/etc/passwd` still denied | A true interactive dual-LLM GUI loop in this verification environment |
 
-## What did not ship
+Host-roots / shell jail from PR #22 are unchanged. Personal `/me` + shared `/projects` remain; extra host FS is still opt-in allowlist.
 
-- A bind-mount of the operator’s whole home directory or an unnamed “open any host path” mode
-- Peer collaboration / assign-and-deliver (capability item (3) peer assign)
-- A live multi-agent GUI loop in this verification environment (contracts are proven via the same API + `execute_bm_cli` / company-files paths the live loop calls)
+## Item (3) — what shipped
 
-## Operator setup
+1. **Host-path task.** Cap Assigner receives a task whose work contract is a file under Settings → CLI Policy → Host workspace roots (same allowlist as #22).
+2. **Assign.** Cap Assigner `delegateTask`s that host file to Cap Worker (peer action). `POST /api/tasks` with `requester_id` remains the operator Assign Task path.
+3. **Wake.** Worker gets a durable `task_assigned` row (`GET /api/agents/{id}/triggers`).
+4. **Edit under the allowlisted root.** Worker `accept` → `cat` / `write` the named host path via the same `execute_action` `bm_cli` the live loop calls. The host file is the deliverable (not rewritten to `/projects`; `/me` peer outputs still rewrite).
+5. **Observe.** Child task `complete`, host file content visible via Company Files, assigner `task_update` on the parent workstream.
+6. **Deny stays closed.** Worker `cat /etc/passwd` is `bm_cli_error`; Company Files GET `/etc/passwd` is **400**. Assigning `/etc/passwd` as a work-contract path is **400** / `world_feedback`, not a 500.
 
-1. Settings → CLI Policy → Host workspace roots: one absolute directory per line (must exist).
-2. Rejected as extra roots: `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/root`.
-3. Empty setting = no extra host access (default).
-4. Settings → CLI Policy → Shell Executor stays off until you want native diagnostics (`uname`, `ls` of an allowed path, …). Virtual `cat` / `write` of an allowed named path do not require shell.
+Follow-up triggers persist through `persist_result_triggers` (same helper the dispatcher uses). Unknown `assigned_to` on `POST /api/tasks` is **404**.
+
+## Item (3) — what did not ship
+
+- A dual-LLM interactive GUI run (no models configured in this environment; turns would skip)
+- Meetings/channels as the assign path
+- Changing host-roots, path jail, Telegram fail-closed, or auth
+- Treating an extra host root as a full home-directory mount
+
+## Residual gaps
+
+- The worker still needs a configured model to *choose* accept/write/complete. This pass proves the runtime path those choices call, not model quality.
+- Operator Assign Task and `delegateTask` both wake the assignee; this note does not claim every chat/meeting paraphrase of “please do this” creates a peer task.
+- `task_assigned` is queued even if the assignee is busy; dispatch still waits on movement (`in_transit`).
+- After a child completes, the parent coordination task may stay `accepted` until the owner closes it. Observation is the parent `task_update` plus the host file.
 
 ## Live scenario (reproducible)
 
-A true interactive GUI agent loop was **not** run. The same contracts the live loop calls were exercised against a live FastAPI process (`uv run python main.py`) with `X-BossMod-Token`.
+A true interactive dual-LLM GUI loop was **not** run. The same contracts the live loop calls were exercised:
 
 ```bash
-# fixture
-mkdir -p /tmp/bossmod-cap-host
-printf '%s\n' '# fixture named by the operator' 'print("before-review")' > /tmp/bossmod-cap-host/review.py
-
-# server
-BOSSMOD_DB_PATH=/tmp/bossmod-cap/bossmod.sqlite3
-BOSSMOD_LOCAL_API_TOKEN=cap-token-c3b7
-BOSSMOD_HOST=127.0.0.1
-BOSSMOD_PORT=38472
-# then: PUT workspace_host_roots=/tmp/bossmod-cap-host
-#       PUT cli_shell_enabled=true   # opt-in for native uname/head only; seed default stays false
-#       POST /api/agents  {"name":"Cap Proof","role":"Reviewer"}
+uv run pytest -q tests/test_peer_assign_deliver.py
+BOSSMOD_DB_PATH=/tmp/bossmod-cap-peer/bossmod.sqlite3 \
+BOSSMOD_CAP_HOST_ROOT=/tmp/bossmod-cap-host \
+  uv run python scripts/run_peer_assign_scenario.py
 ```
 
-Captured on this pass (`ed5f9ab`, 2026-09-05T20:49:31Z):
+Captured `2026-09-05T21:16:15Z`:
 
 | Step | Call | Result |
 | --- | --- | --- |
-| A read | `GET /api/company/files?path=/tmp/bossmod-cap-host/review.py` | **200**; content `print("before-review")` |
-| A edit | `PUT /api/company/files` same path | **200**; file became `print("after-review")` |
-| A CLI | `POST /api/cli-policy/simulator/execute` `cat` / `write` `execute=true` | **200** `ok=true` `exit_code=0` `executor=virtual` |
-| A deny | `GET /api/company/files?path=/etc/passwd` | **400** outside allowed roots; not a full host mount |
-| B ok | `uname -a` via simulator `execute=true` | **200** `ok=true` `exit_code=0` `executor=shell`; stdout starts `Linux cursor 6.12.94+` |
-| B ok | `ls /tmp/bossmod-cap-host` | **200** `ok=true`; listing `review.py` |
-| B deny | `head /etc/passwd` (native, not virtual `cat`) | **200** `ok=false` `exit_code=1` `executor=shell`; `Path jail: '/etc/passwd' resolves outside the allowed workspace roots` |
+| 0 roots | `PUT /api/settings/workspace_host_roots` = `/tmp/bossmod-cap-host` | **200**; fixture `review.py` starts as `print("before-review")` |
+| 1 create | `POST /api/agents` Cap Assigner + Cap Worker | **201** / **201**; `b3f6f058-…` / `9a1ab6b5-…` |
+| 2 own | `POST /api/tasks` assigned_to=Cap Assigner, deliverable=`/tmp/bossmod-cap-host/review.py` | **201** parent=`2aab14ae-3ee6-4a8b-b55a-8e108ab344e9` status=`pending` |
+| 3 assign | `execute_action` `delegateTask` → Cap Worker, same host path | `status_changed` child=`fef5d64f-2a53-4fb2-9287-0c2b409fd7bf` path stays `/tmp/bossmod-cap-host/review.py` |
+| 4 wake | `GET /api/agents/{worker}/triggers` | **200**; queued `task_assigned` `1595dfb0-…` from=`Cap Assigner` |
+| 5 accept | `apply_decision` accept | `decision_applied`; GET child **200** status=`accepted` |
+| 6 edit + deny | `bm_cli` `cat`/`write` host path; `cat /etc/passwd`; GET company `/etc/passwd` | cat/write `bm_cli_result`; file becomes `print("after-review")`; CLI deny `bm_cli_error` “outside the allowed workspace roots” / “not a full host mount”; company **400** |
+| 7 deliver | `complete` + GET child/events/file/assigner triggers | GET **200** status=`complete`; company file **200** content `print("after-review")`; queued parent `task_update` on Cap Assigner |
 
-Virtual `cat /etc/passwd` is denied by named-path confinement (`ok=false`, `executor=virtual`) before the shell jail. Full transcripts are in the pull request body.
+Honest failures covered by pytest (not a GUI demo):
+
+- Assignee **declines** → status=`declined`, no artifact, assigner `task_follow_up`
+- Work-plan assignee name matches **more than one** teammate → parent is not accepted, no child
+- Host-path work contract or `delegateTask` targeting `/etc/passwd` → **400** / `world_feedback`, no task row
+
+## Items (1)+(2) — still true (PR #22)
+
+1. **Named path open/read/edit.** `resolve_cli_path`, Company Files, and agent `cli` accept a user-named absolute path when it stays under `/me`, `/projects`, or Host workspace roots.
+2. **Diagnostic CLI.** With shell enabled, pathless diagnostics such as `uname -a` run under the existing jail. Escapes such as `cat /etc/passwd` are denied. Approval does not jailbreak.
+
+Operator setup for extra host roots is unchanged: one existing absolute directory per line; `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/root` rejected; empty setting = no extra host access; `cli_shell_enabled` stays fail-closed until opted in.

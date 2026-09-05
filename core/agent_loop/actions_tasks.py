@@ -31,6 +31,7 @@ from core.agent_loop.task_roles import (
     task_has_participant,
     task_thread_target,
 )
+from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
 from core.tasking.service import (
@@ -185,7 +186,14 @@ async def _handle_delegate_task(
     task_description = str(action.get("taskDescription") or "").strip()
     project = action.get("project")
     project_name = str(project).strip() if isinstance(project, str) and project.strip() else (parent_task.project if parent_task else None)
-    work_contract = _normalize_delegate_work_contract(agent=agent, action=action)
+    try:
+        work_contract = _normalize_delegate_work_contract(agent=agent, action=action)
+    except PathOutsideRootsError as exc:
+        return {
+            "event": "world_feedback",
+            "detail": str(exc),
+            "agent_name": agent.name,
+        }
     source_channel = task_source_channel_for_trigger(trigger or {}) or (parent_task.source_channel if parent_task else None)
     notification_policy = task_notification_policy_for_trigger(trigger or {}) or (parent_task.notification_policy if parent_task else None)
     notification_channel_id = (

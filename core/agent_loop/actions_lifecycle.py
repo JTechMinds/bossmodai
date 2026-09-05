@@ -152,6 +152,7 @@ async def _handle_complete(
         status_note=None,
         watchdog_pinged_at=None,
     )
+    task = db.get_task(task_id)
     active = activity_runtime.get_active_work_activity(agent.id)
     if active:
         activity_runtime.complete_activity(active.id, detail=summary or active.detail)

@@ -81,6 +81,41 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
     return active
 
 
+def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
+    """Write ``trigger_requests`` onto the durable queue.
+
+    This is the same persist the dispatcher uses after a successful turn, so
+    tests and live scenarios can enqueue assign/deliver follow-ups without
+    inventing a second queue.
+    """
+    persisted: list[Any] = []
+    for queued in result.get("trigger_requests") or []:
+        if not isinstance(queued, dict):
+            continue
+        agent_id = queued.get("agent_id")
+        trigger_type = queued.get("trigger_type")
+        source_channel = queued.get("source_channel")
+        payload = queued.get("payload")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            continue
+        if not isinstance(trigger_type, str) or not trigger_type.strip():
+            continue
+        if not isinstance(source_channel, str) or not source_channel.strip():
+            continue
+        if not isinstance(payload, dict):
+            payload = {}
+        persisted.append(
+            db.create_agent_trigger(
+                agent_id=agent_id,
+                trigger_type=trigger_type,
+                source_channel=source_channel,
+                payload=payload,
+                task_id=queued.get("task_id"),
+            )
+        )
+    return persisted
+
+
 def assignment_wake_trigger(task: Task) -> dict[str, Any] | None:
     """Return a task_assigned spec when an open assigned task should wake the assignee.
 

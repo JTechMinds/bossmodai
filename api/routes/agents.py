@@ -1,6 +1,7 @@
 """Agent CRUD, desk, chat, meetings, channels, and runtime reset."""
 
 import asyncio
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -515,6 +516,44 @@ async def get_agent_notifications(
         }
         for item in notifications
     ]
+
+
+def _serialize_agent_trigger(row: dict[str, Any]) -> dict[str, Any]:
+    """Operator-facing trigger row. Omits internal claim-lease material."""
+    payload = row.get("payload")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {"raw": payload}
+    created_at = row.get("created_at")
+    return {
+        "id": row.get("id"),
+        "agent_id": row.get("agent_id"),
+        "trigger_type": row.get("trigger_type"),
+        "source_channel": row.get("source_channel"),
+        "payload": payload if isinstance(payload, dict) else {},
+        "task_id": row.get("task_id"),
+        "status": row.get("status"),
+        "retry_count": row.get("retry_count"),
+        "failure_reason": row.get("failure_reason"),
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+    }
+
+
+@router.get("/agents/{agent_id}/triggers")
+async def get_agent_triggers(
+    agent_id: str,
+    status: str | None = None,
+    limit: int = 50,
+):
+    """Return recent durable wake-up triggers for one agent."""
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    max_limit = config.get_int("api_message_limit_max") or 200
+    rows = db.list_agent_triggers(agent_id, status=status, limit=min(max(limit, 1), max_limit))
+    return [_serialize_agent_trigger(row) for row in rows]
 
 
 def _meeting_room_name(room_id: str) -> str:

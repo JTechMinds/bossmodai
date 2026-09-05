@@ -8,6 +8,7 @@ from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.task_roles import default_task_owner_id
+from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models import Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
@@ -97,6 +98,8 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
         raise HTTPException(400, "Task owner must be an agent, not the human operator")
     if body.owner_id and not db.get_agent(body.owner_id):
         raise HTTPException(404, "Owner agent not found")
+    if body.assigned_to and not db.get_agent(body.assigned_to):
+        raise HTTPException(404, "Assigned agent not found")
     if body.parent_task_id:
         parent_task = db.get_task(body.parent_task_id)
         if not parent_task:
@@ -107,11 +110,14 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             if not agent:
                 raise HTTPException(404, "Assigned agent not found")
             cli_state = db.ensure_agent_cli_state(agent.id)
-            work_contract = build_work_contract(
-                work_contract.deliverables,
-                agent_storage_key=agent.storage_key,
-                cwd=cli_state.cwd,
-            )
+            try:
+                work_contract = build_work_contract(
+                    work_contract.deliverables,
+                    agent_storage_key=agent.storage_key,
+                    cwd=cli_state.cwd,
+                )
+            except PathOutsideRootsError as exc:
+                raise HTTPException(400, str(exc)) from exc
         elif any(item.type == "file" and not item.path.startswith("/") for item in work_contract.deliverables):
             raise HTTPException(
                 400,
