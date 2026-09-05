@@ -807,7 +807,12 @@ const CliPolicySection = (() => {
                     <div class="flex items-center gap-2">
                         ${shellBadge}
                         ${policyBadge}
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/20">DRY-RUN DEFAULT</span>
                     </div>
+                    <button id="btn-sim-execute-real"
+                            class="text-xs font-semibold text-amber-300 hover:text-amber-200 border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                        <i data-lucide="play" class="w-3 h-3"></i> Execute for real
+                    </button>
                     <button id="btn-sim-clear"
                             class="ml-auto text-xs text-bm-muted hover:text-bm-text flex items-center gap-1">
                         <i data-lucide="trash-2" class="w-3 h-3"></i> Clear
@@ -836,7 +841,7 @@ const CliPolicySection = (() => {
                                placeholder="Type a command..."
                                autocomplete="off" spellcheck="false">
                         <span class="text-gray-600 text-xs ml-2 select-none hidden sm:inline" id="cli-sim-hint">
-                            &uarr;&darr; history
+                            Enter = dry-run &middot; &uarr;&darr; history
                         </span>
                     </div>
                 </div>
@@ -867,6 +872,21 @@ const CliPolicySection = (() => {
             _simBlank();
         });
 
+        document.getElementById('btn-sim-execute-real').addEventListener('click', async () => {
+            const cmd = (input.value.trim() || simCommandHistory[simCommandHistory.length - 1] || '').trim();
+            if (!cmd) {
+                _simLine('amber', 'Type a command first, then click Execute for real.');
+                _simBlank();
+                return;
+            }
+            input.value = '';
+            if (simCommandHistory[simCommandHistory.length - 1] !== cmd) {
+                simCommandHistory.push(cmd);
+            }
+            simHistoryIdx = simCommandHistory.length;
+            await _executeSimCommand(cmd, { execute: true });
+        });
+
         // Clear
         document.getElementById('btn-sim-clear').addEventListener('click', () => {
             const out = document.getElementById('cli-sim-output');
@@ -886,7 +906,7 @@ const CliPolicySection = (() => {
                 simCommandHistory.push(cmd);
                 simHistoryIdx = simCommandHistory.length;
 
-                await _executeSimCommand(cmd);
+                await _executeSimCommand(cmd, { execute: false });
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 if (simHistoryIdx > 0) {
@@ -938,9 +958,9 @@ const CliPolicySection = (() => {
         _simLine('dim',    `Shell executor: ${shellStatus}`);
         _simLine('dim',    `Default policy: <span class="text-gray-300">${esc(simDefaultPolicy)}</span> (when no rule matches)`);
         _simBlank();
-        _simLine('dim',    'This terminal runs commands exactly as the selected agent would.');
-        _simLine('dim',    'Every command goes through the full BM_CLI pipeline:');
-        _simLine('dim',    '  policy check → execute → result');
+        _simLine('dim',    'Enter is dry-run: parse + policy only. No files or shell.');
+        _simLine('dim',    'Use <span class="text-amber-400">Execute for real</span> to run writes/shell through the full pipeline.');
+        _simLine('dim',    '  policy check → (dry-run stops here) → execute → result');
         _simBlank();
         _simLine('dim',    'Try these:');
         _simLine('text',   '  <span class="text-cyan-400">help</span>             — discover available commands');
@@ -978,7 +998,7 @@ const CliPolicySection = (() => {
         _appendOutput('text-gray-200', `<span class="text-emerald-400 font-semibold">${esc(name)} $</span> ${esc(cmd)}`);
     }
 
-    async function _executeSimCommand(cmd) {
+    async function _executeSimCommand(cmd, { execute = false } = {}) {
         // Unwrap bm_cli("...") / bm_cli('...') wrapper if the user types it
         const wrapMatch = cmd.match(/^bm_cli\s*\(\s*["'](.+?)["']\s*\)$/);
         if (wrapMatch) cmd = wrapMatch[1];
@@ -992,19 +1012,25 @@ const CliPolicySection = (() => {
             return;
         }
 
-        // Every command goes through the real BM_CLI pipeline — no shortcuts
         simRunning = true;
         const loadingEl = document.createElement('div');
         loadingEl.className = 'text-gray-600 animate-pulse';
-        loadingEl.textContent = 'executing...';
+        loadingEl.textContent = execute ? 'executing...' : 'dry-run...';
         const out = document.getElementById('cli-sim-output');
         if (out) { out.appendChild(loadingEl); out.scrollTop = out.scrollHeight; }
 
         try {
+            const body = { command: cmd, agent_id: agentId };
+            if (execute) {
+                body.execute = true;
+                body.dry_run = false;
+            } else {
+                body.dry_run = true;
+            }
             const res = await fetch('/api/cli-policy/simulator/execute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: cmd, agent_id: agentId }),
+                body: JSON.stringify(body),
             });
             const data = await res.json();
 
@@ -1029,7 +1055,12 @@ const CliPolicySection = (() => {
 
     function _renderExecutionResult(data) {
         // ── Status banner ──
-        if (data.ok) {
+        if (data.dry_run && data.ok) {
+            _appendOutput(
+                'bg-sky-500/10 text-sky-400 px-3 py-1.5 rounded-md text-xs font-medium mt-1 border border-sky-500/20',
+                `&#9711; DRY RUN — ${esc(data.kind)} (${esc(data.executor)}) — no files or shell`
+            );
+        } else if (data.ok) {
             _appendOutput(
                 'bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-md text-xs font-medium mt-1 border border-emerald-500/20',
                 `&#10003; OK — ${esc(data.kind)} (${esc(data.executor)})`

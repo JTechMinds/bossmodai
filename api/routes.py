@@ -184,6 +184,8 @@ class CliSimulatorExecuteBody(BaseModel):
     command: str
     agent_id: str
     content: str | None = None
+    dry_run: bool = True
+    execute: bool = False
 
 
 class CliApprovalDecisionBody(BaseModel):
@@ -2016,17 +2018,25 @@ async def simulate_cli_policy(body: CliPolicySimulateBody):
     }
 
 
-# Simulator — full interactive execution (runs the real BM_CLI pipeline)
+def _simulator_executes_for_real(body: CliSimulatorExecuteBody) -> bool:
+    """Real execution requires an explicit execute=true (or dry_run=false)."""
+    if body.execute:
+        return True
+    if body.dry_run is False:
+        return True
+    return False
+
+
+# Simulator — default dry-run; explicit execute=true runs the real pipeline
 @router.post("/cli-policy/simulator/execute")
 async def simulator_execute(body: CliSimulatorExecuteBody):
-    """Execute a command through the full BM_CLI pipeline as a specific agent.
+    """Preview or execute a command through the BM_CLI pipeline as an agent.
 
-    This is the interactive simulator — it actually runs the command (virtual or
-    shell) and returns real output, exactly as the agent would experience it.
-    Approval-required commands return the approval gate instead of executing.
+    Default is dry-run (parse + policy only). Writes and shell require
+    ``execute=true`` (or ``dry_run=false``). Approval-required commands still
+    return the approval gate without creating a request on dry-run.
     """
-    from core.bm_cli.runtime import execute_bm_cli
-    from fastapi.encoders import jsonable_encoder
+    from core.bm_cli.runtime import execute_bm_cli, preview_bm_cli
 
     if not body.command.strip():
         raise HTTPException(400, "Command cannot be empty")
@@ -2039,13 +2049,22 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
     if state is None:
         raise HTTPException(404, f"Agent state not found: {body.agent_id}")
 
-    cli_result = execute_bm_cli(
-        agent,
-        state,
-        body.command.strip(),
-        body.content,
-        trigger_type="simulator",
-    )
+    execute_for_real = _simulator_executes_for_real(body)
+    if execute_for_real:
+        cli_result = execute_bm_cli(
+            agent,
+            state,
+            body.command.strip(),
+            body.content,
+            trigger_type="simulator",
+        )
+    else:
+        cli_result = preview_bm_cli(
+            agent,
+            state,
+            body.command.strip(),
+            body.content,
+        )
 
     return {
         "command": cli_result.command,
@@ -2059,6 +2078,7 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
         "approval_required": cli_result.approval_required,
         "approval_request_id": cli_result.approval_request_id,
         "matched_rule_id": cli_result.matched_rule_id,
+        "dry_run": not execute_for_real,
     }
 
 

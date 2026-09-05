@@ -261,8 +261,10 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Agent in a conversation still receives `task_assigned` within one dispatcher drain (or a stated max delay).
-- [ ] In-transit still waits for arrival.
+- [x] Agent in a conversation still receives `task_assigned` within one dispatcher drain (or a stated max delay).
+- [x] In-transit still waits for arrival.
+
+**Shipped.** `can_dispatch_trigger` reads `TriggerPolicy` from `policies.py`. `task_assigned` no longer requires `active_activity is None`; it may claim during conversation / meeting / work / assignment. Movement / `in_transit` still blocks every trigger (including assignment) until arrival. `social` still requires idle + no activity. Tests in `tests/test_dispatch_policy.py`.
 
 ---
 
@@ -659,8 +661,10 @@ Label hunches: keychain UX on Linux is messy; file-based key may be enough for d
 
 **Acceptance**
 
-- [ ] Default POST does not create files.
-- [ ] Explicit execute still works for operators.
+- [x] Default POST does not create files.
+- [x] Explicit execute still works for operators.
+
+**Shipped.** `POST /api/cli-policy/simulator/execute` defaults to `dry_run=true` (`preview_bm_cli`: parse + policy only). Real writes/shell require `execute=true` or `dry_run=false`. Settings → CLI Policy simulator Enter is dry-run; a separate **Execute for real** button sends `execute=true`. Tests in `tests/test_cli_simulator.py`.
 
 ---
 
@@ -695,7 +699,10 @@ Companion to HA-SEC-P0-03 / HA-SEC-P1-04 if those PRs shipped without tests (the
 
 **Acceptance.** Interpreters not always-allowed; absolute path denied; unique approval prefix (if HA-SEC-P1-03 landed).
 
-Path-jail + seed/policy tests landed with HA-SEC-P0-03 in `tests/test_cli_policy.py`. Unique-approval-prefix coverage landed with HA-SEC-P1-03 in `tests/test_cli_approval_prefix.py`.
+- [x] Interpreters not always-allowed; absolute path denied.
+- [x] Unique approval prefix (HA-SEC-P1-03).
+
+**Shipped (already on main).** Path-jail + seed/policy tests landed with HA-SEC-P0-03 / HA-SEC-P1-04 in `tests/test_cli_policy.py`. Unique-approval-prefix coverage landed with HA-SEC-P1-03 in `tests/test_cli_approval_prefix.py`. No additional standalone PR.
 
 ---
 
@@ -708,7 +715,15 @@ Path-jail + seed/policy tests landed with HA-SEC-P0-03 in `tests/test_cli_policy
 
 Add: bind vs create; kickoff (exists); one channel round observe; watchdog ping enqueue. No LLM.
 
-**Acceptance.** `pytest tests/test_tasking.py tests/test_meeting_orchestrator.py tests/test_channel_rounds.py` green.
+**Acceptance**
+
+- [x] Bind vs create (and ambiguous match does not insert a third row).
+- [x] Meeting kickoff (existing `tests/test_meeting_orchestrator.py`).
+- [x] One channel round observe.
+- [x] Watchdog ping enqueue.
+- [x] `pytest tests/test_tasking.py tests/test_meeting_orchestrator.py tests/test_channel_rounds.py` green.
+
+**Shipped.** `tests/test_tasking.py` covers create/bind/clarify + watchdog ping enqueue. `tests/test_channel_rounds.py` observes one shared-channel candidate and completes the round. Meeting kickoff was already in `tests/test_meeting_orchestrator.py`.
 
 ---
 
