@@ -249,7 +249,9 @@ const DockManager = (() => {
         nowOpen.forEach((id) => {
             if (prevOpen.indexOf(id) === -1) renderDock(id);
         });
-        window.dispatchEvent(new Event('panel-resize'));
+        requestAnimationFrame(() => {
+            window.dispatchEvent(new Event('panel-resize'));
+        });
     }
 
     function renderTab(paneId, active) {
@@ -487,3 +489,5 @@ const DockManager = (() => {
         DOCK_IDS,
     };
 })();
+
+window.DockManager = DockManager;
