@@ -535,20 +535,108 @@
     border-radius: 2px 2px 0 0;
 }
 
-/* ─── Exclusive center pane (map OR company OR diagnostic) ───
-   #panel-map is a single slot, not a row of siblings. Tailwind's
-   `.flex` otherwise wins over `.hidden` (same specificity), which
-   squeezed Files/Tasks/Metrics/Org beside the map as a third column.
-   !important matches the existing `.tab-content` hide rule. */
-#panel-map {
+/* ─── Center workspace + company docks ───
+   #panel-map is a single workspace (not a flex row). Company views
+   float as docks over the map so they cannot squeeze a third column
+   between the map and Activity. */
+#panel-map,
+.dock-workspace {
     display: block;
+    position: relative;
+    overflow: hidden;
 }
-.center-pane.hidden {
+.center-pane.hidden,
+.dock-window.hidden {
     display: none !important;
 }
 
+.dock-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 20;
+}
+
+.dock-window {
+    position: absolute;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 280px;
+    min-height: 200px;
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+.dock-window.is-active {
+    box-shadow: 0 16px 40px rgba(37, 99, 235, 0.18);
+}
+.dock-window-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0.55rem;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+}
+.dock-dragging,
+.dock-dragging .dock-window-titlebar {
+    cursor: grabbing;
+}
+.dock-window-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+.dock-window-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+}
+.dock-window-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 0.375rem;
+    color: #64748b;
+}
+.dock-window-btn:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+.dock-window-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    background: #f8fafc;
+}
+.dock-window-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+}
+
+#diagnostic-detail-panel {
+    position: relative;
+    z-index: 30;
+}
+
 /* ─── Center panel transition ─── */
-#canvas-container, #company-dashboard {
+#canvas-container {
     transition: opacity 150ms ease;
 }
 

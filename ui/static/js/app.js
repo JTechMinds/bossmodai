@@ -3,7 +3,7 @@
  *
  * Handles: tab switching, Split.js panel resizing, agent panel overlay,
  * mobile bottom sheet, WebSocket connection, localStorage preferences,
- * center panel mode switching (office / company), and footer status.
+ * center dock windows (office map + company views), and footer status.
  */
 
 const BossModApp = (() => {
@@ -32,16 +32,20 @@ const BossModApp = (() => {
                     splitSizes: parsed.splitSizes || [25, 50, 25],
                     centerMode: parsed.centerMode || 'office',
                     activeCompanyTab: parsed.activeCompanyTab || 'files',
+                    docks: parsed.docks && typeof parsed.docks === 'object' ? parsed.docks : {},
                 };
             }
         } catch { /* ignore corrupt data */ }
-        return { activeTab: 'chat', splitSizes: [25, 50, 25], centerMode: 'office', activeCompanyTab: 'files' };
+        return { activeTab: 'chat', splitSizes: [25, 50, 25], centerMode: 'office', activeCompanyTab: 'files', docks: {} };
     }
 
     function savePrefs() {
         try {
-            prefs.centerMode = centerMode;
+            prefs.centerMode = typeof DockManager !== 'undefined' && DockManager.hasOpen() ? 'company' : centerMode;
             prefs.activeCompanyTab = activeCompanyTab;
+            if (typeof DockManager !== 'undefined') {
+                prefs.docks = DockManager.snapshot();
+            }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
         } catch { /* storage full or unavailable */ }
     }
@@ -116,25 +120,31 @@ const BossModApp = (() => {
         }
     }
 
-    // ─── Exclusive center pane (office map OR one company view) ───
+    // ─── Center docks (map stays mounted; company views are windows) ───
 
-    const CENTER_PANE_IDS = ['canvas-container', 'company-dashboard', 'diagnostic-detail-panel'];
-
-    function showCenterPane(visibleId) {
-        CENTER_PANE_IDS.forEach((id) => {
-            const el = document.getElementById(id);
-            if (el) el.classList.toggle('hidden', id !== visibleId);
-        });
+    function syncCenterModeFromDocks() {
+        centerMode = (typeof DockManager !== 'undefined' && DockManager.hasOpen()) ? 'company' : 'office';
+        if (typeof DockManager !== 'undefined' && DockManager.getFocused()) {
+            activeCompanyTab = DockManager.getFocused();
+        }
+        updateCenterModeToggle();
+        savePrefs();
     }
 
     function switchCenterMode(mode) {
+        const canvasContainer = document.getElementById('canvas-container');
+        const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
+
         if (mode === 'office') {
-            showCenterPane('canvas-container');
+            if (typeof DockManager !== 'undefined') DockManager.closeAll();
+            if (canvasContainer) canvasContainer.classList.remove('hidden');
+            if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
             requestAnimationFrame(() => window.dispatchEvent(new Event('panel-resize')));
         } else if (mode === 'company') {
-            showCenterPane('company-dashboard');
-            if (typeof CompanyDashboard !== 'undefined') {
-                CompanyDashboard.switchTab(activeCompanyTab);
+            if (canvasContainer) canvasContainer.classList.remove('hidden');
+            if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
+            if (typeof DockManager !== 'undefined') {
+                DockManager.open(activeCompanyTab);
             }
         }
 
@@ -145,18 +155,15 @@ const BossModApp = (() => {
 
     function switchCompanyTab(tab) {
         activeCompanyTab = tab;
-        updateCompanyToggleLabel();
-
-        if (typeof CompanyDashboard !== 'undefined') {
-            CompanyDashboard.switchTab(tab);
+        const canvasContainer = document.getElementById('canvas-container');
+        const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
+        if (canvasContainer) canvasContainer.classList.remove('hidden');
+        if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
+        if (typeof DockManager !== 'undefined') {
+            DockManager.open(tab);
         }
-
-        if (centerMode !== 'company') {
-            switchCenterMode('company');
-        }
-
         closeCompanyDropdown();
-        savePrefs();
+        syncCenterModeFromDocks();
     }
 
     function updateCenterModeToggle() {
@@ -172,8 +179,10 @@ const BossModApp = (() => {
     function updateCompanyToggleLabel() {
         const label = document.getElementById('company-toggle-label');
         if (!label) return;
-        if (centerMode === 'company') {
-            label.textContent = `Company: ${TAB_DISPLAY_NAMES[activeCompanyTab] || activeCompanyTab}`;
+        const focused = typeof DockManager !== 'undefined' ? DockManager.getFocused() : null;
+        const tab = focused || activeCompanyTab;
+        if (centerMode === 'company' && tab) {
+            label.textContent = `Company: ${TAB_DISPLAY_NAMES[tab] || tab}`;
         } else {
             label.textContent = 'Company';
         }
@@ -191,6 +200,7 @@ const BossModApp = (() => {
     }
 
     function getCenterMode() {
+        if (typeof DockManager !== 'undefined' && DockManager.hasOpen()) return 'company';
         return centerMode;
     }
 
@@ -688,14 +698,18 @@ const BossModApp = (() => {
         void fetchRuntimeState();
         void refreshModelAvailability();
 
-        // Restore center mode from prefs
-        centerMode = prefs.centerMode || 'office';
-        activeCompanyTab = prefs.activeCompanyTab || 'metrics';
-        if (centerMode !== 'office') {
-            switchCenterMode(centerMode);
-        } else {
-            updateCenterModeToggle();
+        activeCompanyTab = prefs.activeCompanyTab || 'files';
+        if (typeof DockManager !== 'undefined') {
+            DockManager.init({
+                layout: prefs.docks,
+                onPersist: (layout) => {
+                    prefs.docks = layout;
+                    savePrefs();
+                },
+            });
+            window.addEventListener('dock-change', syncCenterModeFromDocks);
         }
+        syncCenterModeFromDocks();
 
         // Start uptime interval
         startUptimeInterval();
