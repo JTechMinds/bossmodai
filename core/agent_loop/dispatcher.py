@@ -230,7 +230,19 @@ class TurnDispatcher:
     ) -> None:
         """Fail the trigger permanently, reconcile state, and surface the stall."""
         trigger_id = trigger["trigger_id"]
-        db.fail_agent_trigger(trigger_id, failure_detail)
+        claim_generation = self._claim_generation_for(trigger)
+        failed = db.fail_agent_trigger(
+            trigger_id,
+            failure_detail,
+            claim_generation=claim_generation,
+        )
+        if failed is None:
+            logger.warning(
+                "Skipped stale fail for trigger %s generation %s",
+                trigger_id,
+                claim_generation,
+            )
+            return
 
         task = self._resolve_stuck_task(agent.id, trigger)
         if task is not None:
@@ -289,8 +301,19 @@ class TurnDispatcher:
         trigger_record = db.get_agent_trigger(trigger["trigger_id"])
         retry_limit = self._retry_limit()
         if retryable and trigger_record is not None and trigger_record.retry_count < retry_limit:
-            retried = db.retry_agent_trigger(trigger["trigger_id"], normalized_detail)
-            retry_count = retried.retry_count if retried is not None else trigger_record.retry_count + 1
+            retried = db.retry_agent_trigger(
+                trigger["trigger_id"],
+                normalized_detail,
+                claim_generation=self._claim_generation_for(trigger),
+            )
+            if retried is None:
+                logger.warning(
+                    "Skipped stale retry for trigger %s generation %s",
+                    trigger.get("trigger_id"),
+                    trigger.get("claim_generation"),
+                )
+                return
+            retry_count = retried.retry_count
             await manager.broadcast_activity(
                 event="trigger_retry_scheduled",
                 detail=(
@@ -401,18 +424,30 @@ class TurnDispatcher:
 
             agent = db.get_agent(candidate.agent_id)
             if not agent:
-                db.fail_agent_trigger(candidate.id, "Agent not found")
+                db.fail_agent_trigger(
+                    candidate.id,
+                    "Agent not found",
+                    claim_generation=candidate.claim_generation,
+                )
                 continue
 
             prepare_trigger_context(agent.id, payload)
             policy = get_trigger_policy(candidate.trigger_type)
             state = activity_runtime.refresh_agent_status(agent.id)
             if state is None:
-                db.fail_agent_trigger(candidate.id, "Agent state not found")
+                db.fail_agent_trigger(
+                    candidate.id,
+                    "Agent state not found",
+                    claim_generation=candidate.claim_generation,
+                )
                 continue
 
             if policy.require_work_activity and not activity_runtime.get_active_task_id(agent.id):
-                db.fail_agent_trigger(candidate.id, "Trigger requires active work activity")
+                db.fail_agent_trigger(
+                    candidate.id,
+                    "Trigger requires active work activity",
+                    claim_generation=candidate.claim_generation,
+                )
                 activity_runtime.refresh_agent_status(agent.id)
                 continue
 

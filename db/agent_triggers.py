@@ -200,8 +200,33 @@ def release_trigger(trigger_id: str) -> AgentTrigger | None:
     )
 
 
-def retry_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
-    """Return a claimed trigger to the queue and increment its retry count."""
+def retry_agent_trigger(
+    trigger_id: str,
+    reason: str,
+    *,
+    claim_generation: int | None = None,
+) -> AgentTrigger | None:
+    """Return a claimed trigger to the queue and increment its retry count.
+
+    When ``claim_generation`` is set, a stale turn cannot bounce a newer
+    claim back to ``queued``.
+    """
+    if claim_generation is None:
+        return fetch_one(
+            f"""
+            UPDATE agent_triggers
+            SET status = 'queued',
+                retry_count = retry_count + 1,
+                failure_reason = $1,
+                claimed_at = NULL,
+                claim_lease = NULL,
+                failed_at = NULL
+            WHERE id = $2 AND status IN ('claimed', 'queued')
+            RETURNING {_TRIGGER_COLUMNS}
+            """,
+            [reason, trigger_id],
+            AgentTrigger,
+        )
     return fetch_one(
         f"""
         UPDATE agent_triggers
@@ -211,10 +236,10 @@ def retry_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
             claimed_at = NULL,
             claim_lease = NULL,
             failed_at = NULL
-        WHERE id = $2 AND status IN ('claimed', 'queued')
+        WHERE id = $2 AND status = 'claimed' AND claim_generation = $3
         RETURNING {_TRIGGER_COLUMNS}
         """,
-        [reason, trigger_id],
+        [reason, trigger_id, claim_generation],
         AgentTrigger,
     )
 
@@ -310,16 +335,37 @@ def complete_agent_trigger(
     )
 
 
-def fail_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
-    """Mark a trigger failed with a reason."""
+def fail_agent_trigger(
+    trigger_id: str,
+    reason: str,
+    *,
+    claim_generation: int | None = None,
+) -> AgentTrigger | None:
+    """Mark a trigger failed with a reason.
+
+    When ``claim_generation`` is set, an older in-flight turn cannot fail
+    a row that was requeued and reclaimed. Unguarded calls (no generation)
+    still refuse ``completed`` / ``failed`` rows.
+    """
+    if claim_generation is None:
+        return fetch_one(
+            f"""
+            UPDATE agent_triggers
+            SET status = 'failed', failure_reason = $1, failed_at = $2
+            WHERE id = $3 AND status IN ('queued', 'claimed')
+            RETURNING {_TRIGGER_COLUMNS}
+            """,
+            [reason, datetime.now(timezone.utc), trigger_id],
+            AgentTrigger,
+        )
     return fetch_one(
         f"""
         UPDATE agent_triggers
         SET status = 'failed', failure_reason = $1, failed_at = $2
-        WHERE id = $3
+        WHERE id = $3 AND status = 'claimed' AND claim_generation = $4
         RETURNING {_TRIGGER_COLUMNS}
         """,
-        [reason, datetime.now(timezone.utc), trigger_id],
+        [reason, datetime.now(timezone.utc), trigger_id, claim_generation],
         AgentTrigger,
     )
 

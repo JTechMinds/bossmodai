@@ -124,15 +124,20 @@ def test_dead_worker_requeues_stale_claim() -> None:
     assert refreshed.status == "queued"
 
 
-def test_stale_generation_cannot_complete_a_reclaimed_trigger() -> None:
-    agent = _create_agent()
-    row = _queued_trigger(agent.id)
+def _reclaim_after_force(agent_id: str):
+    row = _queued_trigger(agent_id)
     first = db.claim_trigger(row.id)
     assert first is not None
     db.requeue_stale_triggers(1, force=True)
     second = db.claim_trigger(row.id)
     assert second is not None
     assert second.claim_generation == first.claim_generation + 1
+    return row, first, second
+
+
+def test_stale_generation_cannot_complete_a_reclaimed_trigger() -> None:
+    agent = _create_agent()
+    row, first, second = _reclaim_after_force(agent.id)
 
     assert db.complete_agent_trigger(row.id, claim_generation=first.claim_generation) is None
     still = db.get_agent_trigger(row.id)
@@ -143,6 +148,110 @@ def test_stale_generation_cannot_complete_a_reclaimed_trigger() -> None:
     done = db.complete_agent_trigger(row.id, claim_generation=second.claim_generation)
     assert done is not None
     assert done.status == "completed"
+
+
+def test_stale_generation_cannot_fail_a_reclaimed_trigger() -> None:
+    agent = _create_agent()
+    row, first, second = _reclaim_after_force(agent.id)
+
+    assert db.fail_agent_trigger(
+        row.id, "stale fail", claim_generation=first.claim_generation
+    ) is None
+    still = db.get_agent_trigger(row.id)
+    assert still is not None
+    assert still.status == "claimed"
+    assert still.claim_generation == second.claim_generation
+    assert still.failure_reason is None
+
+    failed = db.fail_agent_trigger(
+        row.id, "live fail", claim_generation=second.claim_generation
+    )
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.failure_reason == "live fail"
+
+
+def test_stale_generation_cannot_retry_a_reclaimed_trigger() -> None:
+    agent = _create_agent()
+    row, first, second = _reclaim_after_force(agent.id)
+
+    assert db.retry_agent_trigger(
+        row.id, "stale retry", claim_generation=first.claim_generation
+    ) is None
+    still = db.get_agent_trigger(row.id)
+    assert still is not None
+    assert still.status == "claimed"
+    assert still.claim_generation == second.claim_generation
+    assert still.retry_count == 0
+    assert still.failure_reason is None
+
+    retried = db.retry_agent_trigger(
+        row.id, "live retry", claim_generation=second.claim_generation
+    )
+    assert retried is not None
+    assert retried.status == "queued"
+    assert retried.retry_count == 1
+    assert retried.failure_reason == "live retry"
+
+
+def test_unguarded_fail_does_not_flip_completed() -> None:
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    db.complete_agent_trigger(row.id, claim_generation=claimed.claim_generation)
+
+    assert db.fail_agent_trigger(row.id, "too late") is None
+    refreshed = db.get_agent_trigger(row.id)
+    assert refreshed is not None
+    assert refreshed.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_stale_supervise_retry_does_not_wreck_reclaimed_claim() -> None:
+    agent = _create_agent()
+    row, first, second = _reclaim_after_force(agent.id)
+    stale = {
+        "type": first.trigger_type,
+        "trigger_id": first.id,
+        "task_id": first.task_id,
+        "source_channel": first.source_channel,
+        "claim_generation": first.claim_generation,
+    }
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent,
+        trigger=stale,
+        failure_detail="stale boom",
+        retryable=True,
+    )
+    refreshed = db.get_agent_trigger(row.id)
+    assert refreshed is not None
+    assert refreshed.status == "claimed"
+    assert refreshed.claim_generation == second.claim_generation
+    assert refreshed.retry_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_supervise_exhaust_does_not_fail_reclaimed_claim() -> None:
+    agent = _create_agent()
+    row, first, second = _reclaim_after_force(agent.id)
+    stale = {
+        "type": first.trigger_type,
+        "trigger_id": first.id,
+        "task_id": first.task_id,
+        "source_channel": first.source_channel,
+        "claim_generation": first.claim_generation,
+    }
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent,
+        trigger=stale,
+        failure_detail="stale exhaust",
+        retryable=False,
+    )
+    refreshed = db.get_agent_trigger(row.id)
+    assert refreshed is not None
+    assert refreshed.status == "claimed"
+    assert refreshed.claim_generation == second.claim_generation
 
 
 def test_heartbeat_advances_claimed_at() -> None:

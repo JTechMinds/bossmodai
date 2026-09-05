@@ -626,7 +626,7 @@ Prefer A unless product insists on spatial meetings from Telegram.
 - [x] Worker kill mid-claim eventually requeues once.
 - [x] Test with a fake long turn (monkeypatch).
 
-**Shipped.** `claim_trigger` issues `claim_generation` + `claim_lease` and heartbeats `claimed_at` during `_run_trigger`. `complete_agent_trigger(..., claim_generation=)` refuses a stale generation. `requeue_stale_triggers(force=True)` on dispatcher start recovers orphaned `claimed` rows only (completed stays completed). A live worker (`runtime_worker_state` running + fresh heartbeat) is not stolen by a timeout-only requeue. Tests in `tests/test_trigger_leases.py`.
+**Shipped.** `claim_trigger` issues `claim_generation` + `claim_lease` and heartbeats `claimed_at` during `_run_trigger`. `complete_agent_trigger` / `fail_agent_trigger` / `retry_agent_trigger` refuse a stale `claim_generation` (claimed + matching generation only). Dispatcher fail/retry/exhaust call sites pass the in-flight generation and no-op if the lease was reclaimed. `requeue_stale_triggers(force=True)` on dispatcher start recovers orphaned `claimed` rows only (completed stays completed). A live worker (`runtime_worker_state` running + fresh heartbeat) is not stolen by a timeout-only requeue. Unguarded complete/fail/retry (no generation) remain helper hatches on `queued`/`claimed` only — they do not flip a completed row. `claim_lease` is still written/cleared, not checked (generation is the guard). Tests in `tests/test_trigger_leases.py`.
 
 ---
 
