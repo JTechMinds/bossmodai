@@ -23,7 +23,7 @@ const CliPolicySimulator = (() => {
 
     async function _fetchSimStatus() {
         try {
-            const res = await fetch('/api/settings?category=cli_policy');
+            const res = await apiFetch('/api/settings?category=cli_policy');
             const settings = await res.json();
             for (const s of settings) {
                 if (s.key === 'cli_shell_enabled') simShellEnabled = s.value === 'true';
@@ -37,7 +37,7 @@ const CliPolicySimulator = (() => {
 
         if (agentsCache.length === 0) {
             try {
-                const res = await fetch('/api/agents');
+                const res = await apiFetch('/api/agents');
                 agentsCache = await res.json();
             } catch {
                 agentsCache = [];
@@ -47,7 +47,7 @@ const CliPolicySimulator = (() => {
         // Pre-fetch rules for matched rule hints
         if (rulesCache.length === 0) {
             try {
-                const res = await fetch('/api/cli-policy/rules');
+                const res = await apiFetch('/api/cli-policy/rules');
                 rulesCache = await res.json();
             } catch { /* non-critical */ }
         }
@@ -310,7 +310,7 @@ const CliPolicySimulator = (() => {
             } else {
                 body.dry_run = true;
             }
-            const res = await fetch('/api/cli-policy/simulator/execute', {
+            const res = await apiFetch('/api/cli-policy/simulator/execute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),

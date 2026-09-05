@@ -25,8 +25,8 @@ const PromptTemplateSection = (() => {
         let runtimeMeta = { allowed_variables: [], template_syntax: [] };
         try {
             const [settingsRes, runtimeRes] = await Promise.all([
-                fetch('/api/settings?category=advanced'),
-                fetch('/api/runtime/contracts'),
+                apiFetch('/api/settings?category=advanced'),
+                apiFetch('/api/runtime/contracts'),
             ]);
             settings = await settingsRes.json();
             runtimeMeta = await runtimeRes.json();
@@ -114,7 +114,7 @@ const PromptTemplateSection = (() => {
             const value = document.getElementById('system-prompt-textarea').value;
             const status = document.getElementById('template-save-status');
             try {
-                const res = await fetch(`/api/settings/system_prompt_template?value=${encodeURIComponent(value)}&category=advanced`, {
+                const res = await apiFetch(`/api/settings/system_prompt_template?value=${encodeURIComponent(value)}&category=advanced`, {
                     method: 'PUT',
                 });
                 if (!res.ok) {
@@ -135,7 +135,7 @@ const PromptTemplateSection = (() => {
             const textarea = document.getElementById('system-prompt-textarea');
             const status = document.getElementById('template-save-status');
             try {
-                const res = await fetch('/api/settings/system_prompt_template/reset', {
+                const res = await apiFetch('/api/settings/system_prompt_template/reset', {
                     method: 'POST',
                 });
                 if (!res.ok) {

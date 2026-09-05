@@ -3,6 +3,9 @@
  *
  * The token is injected into the index page (same-origin desktop UI) and
  * sent as X-BossMod-Token on fetch, or ?token= on WebSocket.
+ *
+ * UI call sites should use apiFetch() from api-client.js. This wrap stays as
+ * a safety net so any leftover raw fetch to the local API still authenticates.
  */
 (function attachBossModApiAuth() {
     const TOKEN_HEADER = 'X-BossMod-Token';

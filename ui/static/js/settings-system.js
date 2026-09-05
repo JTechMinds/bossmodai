@@ -142,7 +142,7 @@ const SystemSection = (() => {
     async function render(el) {
         let settings = [];
         try {
-            const res = await fetch('/api/settings');
+            const res = await apiFetch('/api/settings');
             settings = await res.json();
         } catch (err) {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
@@ -243,7 +243,7 @@ const SystemSection = (() => {
                 const category = e.target.dataset.settingCategory;
                 const value = e.target.value;
                 try {
-                    await fetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
+                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
                         method: 'PUT',
                     });
                     e.target.classList.add('border-emerald-400');

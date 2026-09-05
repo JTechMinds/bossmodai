@@ -50,7 +50,7 @@ const AgentContext = (() => {
         creatingAgent = false;
         // Fetch full agent details
         try {
-            const res = await fetch(`/api/agents/${agentData.id}`);
+            const res = await apiFetch(`/api/agents/${agentData.id}`);
             if (!res.ok) return;
             selectedAgent = mergeAgentSnapshot(await res.json(), agentData);
         } catch {
@@ -569,7 +569,7 @@ const AgentContext = (() => {
         let messages = [];
 
         try {
-            const res = await fetch(`/api/agents/${agentId}/messages?limit=50`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/agents/${agentId}/messages?limit=50`, { cache: 'no-store' });
             if (res.ok) messages = await res.json();
         } catch {
             messages = getCachedChat(agentId) || [];
@@ -645,7 +645,7 @@ const AgentContext = (() => {
             showTypingIndicator();
 
             try {
-                const res = await fetch(`/api/agents/${selectedAgent.id}/activate`, {
+                const res = await apiFetch(`/api/agents/${selectedAgent.id}/activate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text }),
@@ -801,7 +801,7 @@ const AgentContext = (() => {
             </div>`;
 
         try {
-            const res = await fetch(`/api/agents/${selectedAgent.id}/meeting-session?limit=80`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/agents/${selectedAgent.id}/meeting-session?limit=80`, { cache: 'no-store' });
             if (!res.ok) {
                 throw new Error(await res.text());
             }
@@ -936,7 +936,7 @@ const AgentContext = (() => {
             input.style.height = 'auto';
 
             try {
-                const res = await fetch(`/api/agents/${selectedAgent.id}/meeting-session/messages`, {
+                const res = await apiFetch(`/api/agents/${selectedAgent.id}/meeting-session/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text }),
@@ -999,7 +999,7 @@ const AgentContext = (() => {
 
         if (selectedAgent?.id) {
             try {
-                const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
+                const res = await apiFetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
                 if (res.ok) {
                     selectedAgent = mergeAgentSnapshot(await res.json(), selectedAgent);
                     updateTabs();
@@ -1024,7 +1024,7 @@ const AgentContext = (() => {
 
                 if (!selectedAgent?.id) return;
                 try {
-                    const res = await fetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
+                    const res = await apiFetch(`/api/agents/${selectedAgent.id}`, { cache: 'no-store' });
                     if (res.ok) {
                         selectedAgent = mergeAgentSnapshot(await res.json(), selectedAgent);
                         updateTabs();
@@ -1053,8 +1053,8 @@ const AgentContext = (() => {
         let ownedBoard = null;
         try {
             const [selfRes, ownedRes] = await Promise.all([
-                fetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=self`, { cache: 'no-store' }),
-                fetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=owned`, { cache: 'no-store' }),
+                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=self`, { cache: 'no-store' }),
+                apiFetch(`/api/tasks/board?agent_id=${encodeURIComponent(selectedAgent.id)}&scope=owned`, { cache: 'no-store' }),
             ]);
             if (selfRes.ok) selfBoard = await selfRes.json();
             if (ownedRes.ok) ownedBoard = await ownedRes.json();
@@ -1136,7 +1136,7 @@ const AgentContext = (() => {
             </div>`;
 
         try {
-            const res = await fetch(`/api/agents/${selectedAgent.id}/desk?path=${encodeURIComponent(activeDeskPath)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/agents/${selectedAgent.id}/desk?path=${encodeURIComponent(activeDeskPath)}`, { cache: 'no-store' });
             if (!res.ok) {
                 throw new Error(await res.text());
             }
@@ -1396,7 +1396,7 @@ const AgentContext = (() => {
     async function openDeskFolder(path) {
         if (!selectedAgent) return;
         try {
-            const res = await fetch(`/api/agents/${selectedAgent.id}/desk/open-folder?path=${encodeURIComponent(path || '/me')}`, {
+            const res = await apiFetch(`/api/agents/${selectedAgent.id}/desk/open-folder?path=${encodeURIComponent(path || '/me')}`, {
                 method: 'POST',
             });
             if (!res.ok) {
@@ -1406,7 +1406,7 @@ const AgentContext = (() => {
                     if (detail?.code === 'desk_open_folder_handler_required' || detail?.code === 'desk_open_folder_handler_invalid') {
                         const chosen = await promptForFolderOpener(detail);
                         if (chosen) {
-                            await fetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
+                            await apiFetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
                                 method: 'PUT',
                             });
                             await openDeskFolder(path);

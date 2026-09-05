@@ -76,7 +76,7 @@ const OfficeCanvas = (() => {
 
         // Fetch map data from API
         try {
-            const res = await fetch('/api/map');
+            const res = await apiFetch('/api/map');
             mapData = await res.json();
         } catch (err) {
             console.error('[OfficeCanvas] Failed to load map:', err);
@@ -87,7 +87,7 @@ const OfficeCanvas = (() => {
 
         // Load agents from API
         try {
-            const worldRes = await fetch('/api/world');
+            const worldRes = await apiFetch('/api/world');
             const world = await worldRes.json();
             agents = world.map(BossModUtils.normalizeAgent);
         } catch (err) {
@@ -295,7 +295,7 @@ const OfficeCanvas = (() => {
 
     async function loadThoughtDuration() {
         try {
-            const res = await fetch('/api/settings?category=simulation');
+            const res = await apiFetch('/api/settings?category=simulation');
             if (!res.ok) return;
             const settings = await res.json();
             const setting = settings.find(s => s.key === 'thought_bubble_duration_ms');

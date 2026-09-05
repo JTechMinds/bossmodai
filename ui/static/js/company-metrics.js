@@ -100,7 +100,7 @@ const CompanyMetrics = (() => {
 
     async function fetchMetrics() {
         try {
-            const res = await fetch('/api/metrics/dashboard', { cache: 'no-store' });
+            const res = await apiFetch('/api/metrics/dashboard', { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (!container) return;

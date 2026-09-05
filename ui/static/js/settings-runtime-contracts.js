@@ -83,7 +83,7 @@ const RuntimeContractsSection = (() => {
     async function render(el) {
         let payload = null;
         try {
-            const res = await fetch('/api/runtime/contracts');
+            const res = await apiFetch('/api/runtime/contracts');
             payload = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load runtime contracts.</p>';
@@ -250,7 +250,7 @@ const RuntimeContractsSection = (() => {
             const status = document.getElementById('runtime-contract-save-status');
             const templates = collectTemplateValues();
             try {
-                const res = await fetch('/api/runtime/contracts', {
+                const res = await apiFetch('/api/runtime/contracts', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(templates),
@@ -273,7 +273,7 @@ const RuntimeContractsSection = (() => {
             if (!confirm('Reset both runtime contracts to their seeded defaults?')) return;
             const status = document.getElementById('runtime-contract-save-status');
             try {
-                const res = await fetch('/api/runtime/contracts/reset', {
+                const res = await apiFetch('/api/runtime/contracts/reset', {
                     method: 'POST',
                 });
                 const payload = await res.json();
@@ -309,7 +309,7 @@ const RuntimeContractsSection = (() => {
             const output = document.getElementById('runtime-contract-preview-output');
             output.textContent = 'Rendering full prompt bundle\u2026';
             try {
-                const res = await fetch('/api/runtime/contracts/preview', {
+                const res = await apiFetch('/api/runtime/contracts/preview', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
