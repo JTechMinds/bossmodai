@@ -9,6 +9,7 @@ from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.decision_task_bind import _ambiguous_match_feedback
 from core.agent_loop.deliverables import build_work_contract
+from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models import Agent, AgentState
 from core.tasking.service import create_or_bind_subtask
 from core.world.tilemap import get_room_at
@@ -197,11 +198,20 @@ def _persist_work_execution_children(
     for delegation in plan_resolution.get("delegations") or []:
         target = delegation["agent"]
         child_cli_state = db.ensure_agent_cli_state(target.id)
-        work_contract = build_work_contract(
-            delegation.get("deliverables"),
-            agent_storage_key=target.storage_key,
-            cwd=child_cli_state.cwd,
-        )
+        try:
+            work_contract = build_work_contract(
+                delegation.get("deliverables"),
+                agent_storage_key=target.storage_key,
+                cwd=child_cli_state.cwd,
+            )
+        except PathOutsideRootsError as exc:
+            raise _WorkPlanMaterializeAborted(
+                {
+                    "event": "world_feedback",
+                    "detail": str(exc),
+                    "agent_name": agent.name,
+                }
+            ) from exc
         creation = create_or_bind_subtask(
             parent_task=parent_task,
             title=delegation["taskTitle"],

@@ -1,7 +1,7 @@
-"""Capability pass item (3) — peer assign → wake → accept → deliver.
+"""Capability pass item (3) — host-path peer assign → wake → edit → deliver.
 
 Uses the same actions/decisions/triggers the live loop calls. No LLM.
-Fixture names stay impersonal.
+Fixture names stay impersonal. Host-roots jail stays fail-closed.
 """
 
 from __future__ import annotations
@@ -24,6 +24,15 @@ from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_runtime import apply_decision
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.runtime import runtime_services
+
+
+def _set_host_roots(*roots: Path) -> None:
+    db.set_setting(
+        "workspace_host_roots",
+        "\n".join(str(root) for root in roots),
+        "cli_policy",
+    )
+    config.reload()
 
 
 def setup_function() -> None:
@@ -89,8 +98,40 @@ def _file_text(storage_key: str, virtual_path: str) -> str:
     return resolved.real_path.read_text(encoding="utf-8")
 
 
+def _accept_work(agent, state, task, *, from_name: str, from_agent: str | None, reply: str):
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": task.title,
+            "reply": reply,
+        },
+        agent,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": task.id,
+            "content": task.description,
+            "from_name": from_name,
+            "from_agent": from_agent,
+        },
+    )
+    persist_result_triggers(result)
+    return result
+
+
 @pytest.mark.asyncio
-async def test_peer_delegate_assign_accept_write_complete_wakes_assigner() -> None:
+async def test_host_path_owner_assigns_worker_edits_and_deny_stays_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "cap-host"
+    host.mkdir()
+    fixture = host / "review.py"
+    fixture.write_text('print("before-review")\n', encoding="utf-8")
+    _set_host_roots(host)
+
     assigner = db.create_agent("Cap Assigner", role="Lead", desk_x=1, desk_y=1)
     worker = db.create_agent("Cap Worker", role="Writer", desk_x=2, desk_y=1)
     assigner_state = db.get_agent_state(assigner.id)
@@ -98,15 +139,47 @@ async def test_peer_delegate_assign_accept_write_complete_wakes_assigner() -> No
     assert assigner_state is not None
     assert worker_state is not None
 
+    client = _task_api_client(monkeypatch)
+    headers = _headers()
+    owned = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={
+            "title": "Review host fixture",
+            "description": "Review the allowlisted host file, then hand it off.",
+            "assigned_to": assigner.id,
+            "work_contract": {
+                "deliverables": [
+                    {"type": "file", "path": str(fixture), "description": "Host review file"},
+                ]
+            },
+        },
+    )
+    assert owned.status_code == 201
+    parent = db.get_task(owned.json()["task"]["id"])
+    assert parent is not None
+    assert parent.assigned_to == assigner.id
+    parent_path = parent.work_contract.deliverables[0].path
+    assert Path(parent_path) == fixture.resolve()
+
+    accepted_parent = _accept_work(
+        assigner,
+        assigner_state,
+        parent,
+        from_name="Operator",
+        from_agent=None,
+        reply="I will hand this host-path review to Cap Worker.",
+    )
+    assert accepted_parent["event"] == "decision_applied"
+
     assigned = await execute_action(
         {
             "action": "delegateTask",
             "agentId": worker.id,
-            "taskTitle": "Write cap status note",
-            "taskDescription": "Write a short status note for the capability pass.",
-            "project": "cap-peer",
+            "taskTitle": "Edit host review file",
+            "taskDescription": "Read and edit the allowlisted host fixture.",
             "deliverables": [
-                {"type": "file", "path": "/me/status-note.md", "description": "Status note"},
+                {"type": "file", "path": str(fixture), "description": "Host review file"},
             ],
         },
         assigner,
@@ -115,62 +188,70 @@ async def test_peer_delegate_assign_accept_write_complete_wakes_assigner() -> No
     assert assigned["event"] == "status_changed"
     persist_result_triggers(assigned)
 
-    tasks = db.list_tasks(assigned_to=worker.id)
-    assert len(tasks) == 1
-    task = tasks[0]
-    assert task.status == "pending"
-    assert task.requester_id == assigner.id
-    assert task.work_contract is not None
-    deliverable_path = task.work_contract.deliverables[0].path
-    assert deliverable_path.startswith(f"/projects/cap-peer/{task.id}/")
-    assert deliverable_path.endswith("status-note.md")
+    children = db.list_tasks(parent_task_id=parent.id, assigned_to=worker.id)
+    assert len(children) == 1
+    child = children[0]
+    assert child.status == "pending"
+    assert child.requester_id == assigner.id
+    deliverable_path = child.work_contract.deliverables[0].path
+    assert Path(deliverable_path) == fixture.resolve()
+    assert not deliverable_path.startswith("/projects/")
 
-    wakes = _queued(worker.id, trigger_type="task_assigned", task_id=task.id)
+    wakes = _queued(worker.id, trigger_type="task_assigned", task_id=child.id)
     assert len(wakes) == 1
-    wake_payload = _payload(wakes[0])
-    assert wake_payload.get("from_agent") == assigner.id
-    assert wake_payload.get("from_name") == "Cap Assigner"
+    assert _payload(wakes[0]).get("from_agent") == assigner.id
 
-    accepted = apply_decision(
-        {
-            "decision": "accept",
-            "intentKind": "work_request",
-            "commitmentKind": "work",
-            "taskTitle": task.title,
-            "reply": "I will write the status note.",
-        },
+    accepted = _accept_work(
         worker,
         worker_state,
-        {
-            "type": "task_assigned",
-            "task_id": task.id,
-            "content": task.description,
-            "from_name": assigner.name,
-            "from_agent": assigner.id,
-        },
+        child,
+        from_name=assigner.name,
+        from_agent=assigner.id,
+        reply="I will edit the host fixture.",
     )
     assert accepted["event"] == "decision_applied"
-    persist_result_triggers(accepted)
-    refreshed = db.get_task(task.id)
-    assert refreshed is not None
-    assert refreshed.status == "accepted"
+    assert db.get_task(child.id).status == "accepted"
+
+    read = await execute_action(
+        {"action": "bm_cli", "command": f"cat {deliverable_path}"},
+        worker,
+        worker_state,
+    )
+    assert read["event"] == "bm_cli_result"
+    assert "before-review" in read.get("cli_prompt_content", "") + read.get("detail", "")
 
     written = await execute_action(
         {
             "action": "bm_cli",
             "command": f"write {deliverable_path}",
-            "content": "# Cap status note\nPeer assign/deliver loop completed.\n",
+            "content": 'print("after-review")\n',
         },
         worker,
         worker_state,
     )
     assert written["event"] == "bm_cli_result"
+    assert fixture.read_text(encoding="utf-8") == 'print("after-review")\n'
+
+    denied = await execute_action(
+        {"action": "bm_cli", "command": "cat /etc/passwd"},
+        worker,
+        worker_state,
+    )
+    assert denied["event"] == "bm_cli_error"
+    deny_text = (denied.get("detail") or "") + (denied.get("cli_prompt_content") or "")
+    assert "outside the allowed workspace roots" in deny_text
+    assert "not a full host mount" in deny_text
+    assert fixture.read_text(encoding="utf-8") == 'print("after-review")\n'
+
+    http_deny = client.get("/api/company/files", params={"path": "/etc/passwd"}, headers=headers)
+    assert http_deny.status_code == 400
+    assert "outside the allowed workspace roots" in http_deny.json()["detail"]
 
     completed = await execute_action(
         {
             "action": "complete",
-            "summary": "Wrote the status note.",
-            "followUpMessage": "Status note is in the shared project folder.",
+            "summary": "Updated the host review file.",
+            "followUpMessage": "Host fixture is edited under the allowlisted root.",
         },
         worker,
         worker_state,
@@ -178,20 +259,23 @@ async def test_peer_delegate_assign_accept_write_complete_wakes_assigner() -> No
     assert completed["event"] == "status_changed"
     persist_result_triggers(completed)
 
-    done = db.get_task(task.id)
+    done = db.get_task(child.id)
     assert done is not None
     assert done.status == "complete"
-    assert "Peer assign/deliver loop completed." in _file_text(worker.storage_key, deliverable_path)
+    assert 'print("after-review")' in _file_text(worker.storage_key, deliverable_path)
 
-    observer_triggers = _queued(assigner.id, trigger_type="task_update", task_id=task.id)
-    assert observer_triggers
-    assert _payload(observer_triggers[0]).get("task_status") == "complete"
+    opened = client.get("/api/company/files", params={"path": str(fixture)}, headers=headers)
+    assert opened.status_code == 200
+    assert opened.json()["content"] == 'print("after-review")\n'
+
     notes = db.list_notifications(agent_id=assigner.id)
-    assert any(item.task_id == task.id for item in notes)
-    events = db.list_task_events(task.id)
-    assert any(event.event_type == "completion" for event in events)
-    assert any(event.event_type == "status_update" and "pending → accepted" in event.content for event in events)
-    assert any(event.event_type == "status_update" and "→ complete" in event.content for event in events)
+    assert any(item.task_id in {child.id, parent.id} for item in notes)
+    observer_triggers = _queued(assigner.id, trigger_type="task_update")
+    assert observer_triggers
+    assert any(row["task_id"] in {child.id, parent.id} for row in observer_triggers)
+    parent_updates = [row for row in observer_triggers if row["task_id"] == parent.id]
+    if parent_updates:
+        assert "completed" in _payload(parent_updates[0]).get("content", "").lower()
 
 
 @pytest.mark.asyncio
@@ -331,6 +415,64 @@ def test_create_task_api_peer_requester_queues_wake_and_lists_triggers(
         and row["payload"].get("from_agent") == assigner.id
         for row in rows
     )
+
+
+def test_create_task_api_host_path_outside_roots_is_400(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "cap-host"
+    host.mkdir()
+    _set_host_roots(host)
+    agent = db.create_agent("Cap Assigner", role="Lead", desk_x=1, desk_y=1)
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_headers(),
+        json={
+            "title": "Escape host jail",
+            "assigned_to": agent.id,
+            "work_contract": {
+                "deliverables": [
+                    {"type": "file", "path": "/etc/passwd", "description": "Denied"},
+                ]
+            },
+        },
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "outside the allowed workspace roots" in detail
+    assert "not a full host mount" in detail
+    assert db.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_delegate_task_host_path_outside_roots_fails_closed(tmp_path: Path) -> None:
+    host = tmp_path / "cap-host"
+    host.mkdir()
+    _set_host_roots(host)
+    assigner = db.create_agent("Cap Assigner", role="Lead", desk_x=1, desk_y=1)
+    worker = db.create_agent("Cap Worker", role="Writer", desk_x=2, desk_y=1)
+    state = db.get_agent_state(assigner.id)
+    assert state is not None
+
+    result = await execute_action(
+        {
+            "action": "delegateTask",
+            "agentId": worker.id,
+            "taskTitle": "Escape host jail",
+            "taskDescription": "This path must stay denied.",
+            "deliverables": [
+                {"type": "file", "path": "/etc/passwd", "description": "Denied"},
+            ],
+        },
+        assigner,
+        state,
+    )
+    assert result["event"] == "world_feedback"
+    assert "outside the allowed workspace roots" in result["detail"]
+    assert db.list_tasks(assigned_to=worker.id) == []
 
 
 def test_create_task_api_unknown_assignee_is_404(monkeypatch: pytest.MonkeyPatch) -> None:
