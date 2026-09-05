@@ -6,6 +6,122 @@
  * sub-views: Chat, Edit, Tasks.
  */
 
+const MeetingSessionDom = (() => {
+    function isMounted(container) {
+        return Boolean(
+            container
+            && container.querySelector('#meeting-messages')
+            && container.querySelector('#meeting-input')
+        );
+    }
+
+    function shouldReloadOnWorldUpdate(previousActivityKind, nextActivityKind) {
+        return (previousActivityKind || null) !== (nextActivityKind || null);
+    }
+
+    function messageKey(message) {
+        return message?.id || message?.message_id || null;
+    }
+
+    function hasMessage(messagesEl, key) {
+        if (!messagesEl || !key) return false;
+        const nodes = messagesEl.querySelectorAll('[data-meeting-message-id]');
+        for (const node of nodes) {
+            if (node.getAttribute('data-meeting-message-id') === String(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isNearBottom(messagesEl) {
+        if (!messagesEl) return true;
+        return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <= 24;
+    }
+
+    function renderParticipants(participants) {
+        const list = Array.isArray(participants) ? participants : [];
+        if (!list.length) {
+            return '<span class="text-xs text-bm-muted">No active participants</span>';
+        }
+        const esc = BossModUtils.escapeHtml;
+        return list.map(participant => `
+                            <span class="inline-flex items-center gap-1.5 rounded-full border border-bm-border bg-white px-2 py-1 text-xs text-bm-text">
+                                <span class="w-2 h-2 rounded-full bg-bm-accent"></span>
+                                ${esc(participant.name || 'Unknown')}
+                            </span>`).join('');
+    }
+
+    function updateSessionChrome(container, session) {
+        if (!container || !session) return;
+        const titleEl = container.querySelector('#meeting-title');
+        const roomEl = container.querySelector('#meeting-room');
+        const participantsEl = container.querySelector('#meeting-participants');
+        if (titleEl) titleEl.textContent = session.title || 'Meeting';
+        if (roomEl) roomEl.textContent = session.room_name || 'Meeting Room';
+        if (participantsEl) participantsEl.innerHTML = renderParticipants(session.participants);
+    }
+
+    function appendMessage(messagesEl, message, options = {}) {
+        if (!messagesEl || !message) return false;
+        const key = messageKey(message);
+        if (hasMessage(messagesEl, key)) return false;
+
+        const emptyHint = messagesEl.querySelector('.text-center');
+        if (emptyHint) emptyHint.remove();
+
+        const authorType = message.author_type || 'agent';
+        const authorName = message.author_name || 'Unknown';
+        const bubbleClass =
+            authorType === 'human'
+                ? 'from-human'
+                : (authorType === 'system' ? 'from-system' : 'from-agent');
+
+        const wrapper = document.createElement('div');
+        wrapper.className = `chat-msg ${bubbleClass} mb-2`;
+        if (key) wrapper.setAttribute('data-meeting-message-id', String(key));
+
+        const label = document.createElement('div');
+        label.className = 'text-[11px] font-medium opacity-70 mb-1';
+        label.textContent = authorName;
+        wrapper.appendChild(label);
+
+        const body = document.createElement('div');
+        body.innerText = message.content || '';
+        wrapper.appendChild(body);
+
+        messagesEl.appendChild(wrapper);
+        if (options.autoScroll !== false) {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        return true;
+    }
+
+    function syncMessages(messagesEl, messages) {
+        if (!messagesEl) return;
+        const stickToBottom = isNearBottom(messagesEl);
+        let appended = false;
+        for (const message of Array.isArray(messages) ? messages : []) {
+            if (appendMessage(messagesEl, message, { autoScroll: false })) {
+                appended = true;
+            }
+        }
+        if (appended && stickToBottom) {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+    }
+
+    return {
+        isMounted,
+        shouldReloadOnWorldUpdate,
+        messageKey,
+        renderParticipants,
+        updateSessionChrome,
+        appendMessage,
+        syncMessages,
+    };
+})();
+
 const AgentContext = (() => {
     const SHOW_SYSTEM_RECEIPTS_KEY = 'bossmod.chat.showSystemReceipts';
     let selectedAgent = null;
@@ -107,7 +223,9 @@ const AgentContext = (() => {
         updateSelectedAgentRuntimeDisplay();
         if (activeSubview === 'meeting') {
             const nextActivityKind = selectedAgent.currentActivityKind || null;
-            if (previousActivityKind !== nextActivityKind || nextActivityKind === 'meeting') {
+            // Stay on the mounted session while activity remains "meeting".
+            // World ticks used to call renderMeeting() and wipe scroll + draft.
+            if (MeetingSessionDom.shouldReloadOnWorldUpdate(previousActivityKind, nextActivityKind)) {
                 void renderMeeting();
             }
         }
@@ -829,12 +947,15 @@ const AgentContext = (() => {
         const container = document.getElementById('subview-meeting');
         if (!selectedAgent || !container) return;
 
-        container.innerHTML = `
+        const keepShell = MeetingSessionDom.isMounted(container);
+        if (!keepShell) {
+            container.innerHTML = `
             <div class="flex-1 overflow-y-auto p-4">
                 <div class="text-bm-muted text-sm text-center mt-6">
                     <p>Loading meeting...</p>
                 </div>
             </div>`;
+        }
 
         try {
             const res = await apiFetch(`/api/agents/${selectedAgent.id}/meeting-session?limit=80`, { cache: 'no-store' });
@@ -847,11 +968,22 @@ const AgentContext = (() => {
                 renderMeetingEmpty(container);
                 return;
             }
+            const sameSession = keepShell && activeMeetingSessionId === payload.session.id;
             activeMeetingSessionId = payload.session.id;
+            if (sameSession) {
+                MeetingSessionDom.updateSessionChrome(container, payload.session);
+                MeetingSessionDom.syncMessages(
+                    container.querySelector('#meeting-messages'),
+                    payload.session.messages || []
+                );
+                return;
+            }
             renderMeetingSession(container, payload.session);
         } catch (err) {
-            activeMeetingSessionId = null;
-            renderMeetingError(container);
+            if (!keepShell) {
+                activeMeetingSessionId = null;
+                renderMeetingError(container);
+            }
             console.error('[AgentContext] Meeting load failed:', err);
         }
     }
@@ -878,29 +1010,23 @@ const AgentContext = (() => {
     }
 
     function renderMeetingSession(container, session) {
-        const participants = Array.isArray(session.participants) ? session.participants : [];
         const messages = Array.isArray(session.messages) ? session.messages : [];
         container.innerHTML = `
-            <div class="flex-1 min-h-0 flex flex-col">
+            <div class="flex-1 min-h-0 flex flex-col" data-meeting-session-id="${BossModUtils.escapeHtml(session.id || '')}">
                 <div class="border-b border-bm-border px-4 py-3 shrink-0">
                     <div class="flex items-start justify-between gap-3">
                         <div>
                             <p class="text-xs uppercase tracking-wide text-bm-muted">Meeting Session</p>
-                            <h3 class="text-sm font-semibold mt-1">${BossModUtils.escapeHtml(session.title || 'Meeting')}</h3>
-                            <p class="text-xs text-bm-muted mt-1">${BossModUtils.escapeHtml(session.room_name || 'Meeting Room')}</p>
+                            <h3 id="meeting-title" class="text-sm font-semibold mt-1">${BossModUtils.escapeHtml(session.title || 'Meeting')}</h3>
+                            <p id="meeting-room" class="text-xs text-bm-muted mt-1">${BossModUtils.escapeHtml(session.room_name || 'Meeting Room')}</p>
                         </div>
                         <button type="button" id="meeting-refresh-btn"
                                 class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
                             Refresh
                         </button>
                     </div>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                        ${participants.length ? participants.map(participant => `
-                            <span class="inline-flex items-center gap-1.5 rounded-full border border-bm-border bg-white px-2 py-1 text-xs text-bm-text">
-                                <span class="w-2 h-2 rounded-full bg-bm-accent"></span>
-                                ${BossModUtils.escapeHtml(participant.name || 'Unknown')}
-                            </span>
-                        `).join('') : '<span class="text-xs text-bm-muted">No active participants</span>'}
+                    <div id="meeting-participants" class="mt-3 flex flex-wrap gap-2">
+                        ${MeetingSessionDom.renderParticipants(session.participants)}
                     </div>
                 </div>
                 <div id="meeting-messages" class="flex-1 min-h-0 overflow-y-auto p-4">
@@ -921,9 +1047,7 @@ const AgentContext = (() => {
 
         const messagesEl = container.querySelector('#meeting-messages');
         if (messagesEl) {
-            for (const message of messages) {
-                appendMeetingMessage(messagesEl, message);
-            }
+            MeetingSessionDom.syncMessages(messagesEl, messages);
             messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
@@ -932,31 +1056,6 @@ const AgentContext = (() => {
             void renderMeeting();
         });
         if (window.lucide) lucide.createIcons({ nodes: [container] });
-    }
-
-    function appendMeetingMessage(messagesEl, message) {
-        if (!messagesEl || !message) return;
-        const authorType = message.author_type || 'agent';
-        const authorName = message.author_name || 'Unknown';
-        const bubbleClass =
-            authorType === 'human'
-                ? 'from-human'
-                : (authorType === 'system' ? 'from-system' : 'from-agent');
-
-        const wrapper = document.createElement('div');
-        wrapper.className = `chat-msg ${bubbleClass} mb-2`;
-
-        const label = document.createElement('div');
-        label.className = 'text-[11px] font-medium opacity-70 mb-1';
-        label.textContent = authorName;
-        wrapper.appendChild(label);
-
-        const body = document.createElement('div');
-        body.innerText = message.content || '';
-        wrapper.appendChild(body);
-
-        messagesEl.appendChild(wrapper);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     function bindMeetingSend(sessionId) {
@@ -1001,8 +1100,20 @@ const AgentContext = (() => {
     function handleMeetingMessage(data) {
         if (!selectedAgent) return;
         if (!data?.session_id) return;
-        if (activeMeetingSessionId && data.session_id !== activeMeetingSessionId) return;
         if (activeSubview !== 'meeting') return;
+
+        const container = document.getElementById('subview-meeting');
+        if (activeMeetingSessionId === data.session_id && MeetingSessionDom.isMounted(container)) {
+            MeetingSessionDom.appendMessage(container.querySelector('#meeting-messages'), {
+                id: data.message_id,
+                author_type: data.author_type,
+                author_name: data.author_name,
+                content: data.content,
+                created_at: data.created_at,
+            });
+            return;
+        }
+        // Empty/error/loading shell, or a different session: load once.
         void renderMeeting();
     }
 
