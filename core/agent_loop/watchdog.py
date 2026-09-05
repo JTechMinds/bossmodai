@@ -1,4 +1,4 @@
-"""BossMod AI — Active-task watchdog."""
+"""BossMod AI — In-flight task watchdog (active, accepted, waiting)."""
 
 from __future__ import annotations
 
@@ -11,14 +11,19 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import dispatcher
 from core.runtime.events import runtime_events as manager
+from core.tasking.transitions import transition_task
 from core.time import ensure_utc
 import db
+
+# Assigned work that can go quiet without a ping. Pending-without-assignee is
+# backlog, not in-flight work — leave it off this list (HA-CORR-P1-03).
+_WATCHDOG_TASK_STATUSES = ("active", "accepted", "waiting")
 
 logger = logging.getLogger(__name__)
 
 
 class TaskWatchdog:
-    """Monitors active tasks and nudges stalled agents."""
+    """Monitors assigned in-flight tasks and nudges quiet agents."""
 
     def __init__(self) -> None:
         self._running = False
@@ -61,8 +66,8 @@ class TaskWatchdog:
         escalation_minutes = config.get_int("watchdog_escalation_minutes") or 15
 
         now = datetime.now(timezone.utc)
-        active_tasks = db.list_tasks(status="active")
-        for task in active_tasks:
+        watched_tasks = _list_watchdog_tasks()
+        for task in watched_tasks:
             if not task.assigned_to:
                 continue
 
@@ -87,9 +92,15 @@ class TaskWatchdog:
                     continue
 
                 if now - pinged_at >= escalation_threshold and task.status != "stalled":
-                    db.update_task(
+                    if task.status == "waiting":
+                        # Waiting on a human (clarify / dependency). A ping already
+                        # exists or was recorded — do not stall the task.
+                        continue
+                    transition_task(
                         task.id,
-                        status="stalled",
+                        "stalled",
+                        reason="Watchdog escalated after no heartbeat from the agent.",
+                        actor="BossMod",
                         status_note="Watchdog escalated after no heartbeat from the agent.",
                     )
                     db.cancel_open_activities(
@@ -136,6 +147,21 @@ class TaskWatchdog:
                 },
                 task_id=task.id,
             )
+
+
+def _list_watchdog_tasks():
+    """Return assigned in-flight tasks the watchdog should ping."""
+    tasks = []
+    seen: set[str] = set()
+    for status in _WATCHDOG_TASK_STATUSES:
+        for task in db.list_tasks(status=status):
+            if task.id in seen:
+                continue
+            seen.add(task.id)
+            tasks.append(task)
+    return tasks
+
+
 def _agent_name(agent_id: str) -> str | None:
     agent = db.get_agent(agent_id)
     return agent.name if agent else None

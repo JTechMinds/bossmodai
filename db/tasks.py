@@ -248,7 +248,19 @@ def list_recent_tasks(
 
 
 def update_task(task_id: str, **fields: Any) -> Task | None:
-    """Update task fields. Auto-updates last_activity on status change."""
+    """Update task fields. Auto-updates last_activity on status change.
+
+    Status changes go through the shared allow-map in
+    ``core.tasking.transitions``. Illegal jumps raise
+    ``IllegalTaskTransition`` and leave the row unchanged.
+    """
+    if "status" in fields:
+        from core.tasking.transitions import assert_valid_task_transition
+
+        current = get_task(task_id)
+        if current is not None:
+            assert_valid_task_transition(current.status, str(fields["status"]))
+
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
     notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...

@@ -34,7 +34,16 @@ from core.agent_loop.decision_contract import ConversationDecision
 from core.models import Agent, AgentState
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import append_task_event, create_or_bind_subtask, create_or_bind_task
+from core.tasking.transitions import transition_task
 from core.world.tilemap import get_room_at
+
+
+class _WorkPlanMaterializeAborted(Exception):
+    """Abort child materialization so the surrounding transaction rolls back."""
+
+    def __init__(self, error_result: dict[str, Any]) -> None:
+        self.error_result = error_result
+        super().__init__("work plan materialization aborted")
 
 
 def apply_decision(
@@ -105,9 +114,14 @@ def apply_decision(
             result["detail"] = f"{agent.name} tried to cancel work, but no active task was available"
             return result
         task = db.get_task(active_work.task_id)
-        db.update_task(
+        transition_task(
             active_work.task_id,
-            status="abandoned",
+            "abandoned",
+            reason="Cancelled by human request.",
+            actor=agent.name,
+            actor_type="agent",
+            actor_agent_id=agent.id,
+            source_trigger_id=trigger.get("trigger_id"),
             status_note="Cancelled by human request.",
             completion_summary=None,
             watchdog_pinged_at=None,
@@ -169,20 +183,16 @@ def apply_decision(
                     )
         if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
             _complete_assignment_if_present(agent.id)
-            db.update_task(
+            transition_task(
                 trigger["task_id"],
-                status="declined",
+                "declined",
+                reason=decision.reply or decision.detail or "Assignment declined.",
+                actor=agent.name,
+                actor_type="agent",
+                actor_agent_id=agent.id,
+                source_trigger_id=trigger.get("trigger_id"),
                 status_note=(decision.reply or decision.detail or "Assignment declined."),
                 watchdog_pinged_at=None,
-            )
-            append_task_event(
-                task_id=trigger["task_id"],
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="status_update",
-                content=decision.reply or decision.detail or "Assignment declined.",
-                source_trigger_id=trigger.get("trigger_id"),
             )
         result["detail"] = f"{agent.name} declined the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
@@ -200,21 +210,17 @@ def apply_decision(
                 return bound["error_result"]
             task = bound["task"]
             status_note = (decision.reply or decision.detail or "").strip() or None
-            task = db.update_task(
+            task = transition_task(
                 task.id,
-                status="pending",
+                "pending",
+                reason=status_note or f'Deferred "{task.title}".',
+                actor=agent.name,
+                actor_type="agent",
+                actor_agent_id=agent.id,
+                source_trigger_id=trigger.get("trigger_id"),
                 status_note=status_note,
                 completion_summary=None,
                 watchdog_pinged_at=None,
-            ) or task
-            append_task_event(
-                task_id=task.id,
-                author_type="agent",
-                author_agent_id=agent.id,
-                author_name=agent.name,
-                event_type="status_update",
-                content=status_note or f'Deferred "{task.title}".',
-                source_trigger_id=trigger.get("trigger_id"),
             )
             result["detail"] = f'{agent.name} deferred "{task.title}"'
             result.setdefault("activity_extra", {})["task_title"] = task.title
@@ -264,15 +270,6 @@ def apply_decision(
             ),
         )
         result["detail"] = f'{agent.name} accepted work on "{task.title}"'
-        append_task_event(
-            task_id=task.id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            event_type="status_update",
-            content=decision.reply or f'Accepted work on "{task.title}".',
-            source_trigger_id=trigger.get("trigger_id"),
-        )
         result.setdefault("activity_extra", {})["task_title"] = task.title
         if _should_queue_initial_work_resume(task=task, plan_mode=str(plan_resolution.get("mode") or "self")):
             result["trigger_requests"].append(
@@ -541,8 +538,37 @@ def _materialize_work_execution_plan(
     plan_resolution: dict[str, Any],
     result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Persist delegated child tasks from an accepted work plan and queue assignee triggers."""
+    """Persist delegated child tasks from an accepted work plan and queue assignee triggers.
+
+    Child inserts run in one transaction. If a later child hits
+    ``clarify_ambiguous_match``, earlier new rows roll back so the failed
+    plan does not leave orphan assignments (PR #9 follow-up).
+    """
+    try:
+        with db.transaction():
+            delegated_children, pending_triggers = _persist_work_execution_children(
+                agent=agent,
+                parent_task=parent_task,
+                trigger=trigger,
+                plan_resolution=plan_resolution,
+            )
+    except _WorkPlanMaterializeAborted as exc:
+        return {"error_result": exc.error_result}
+
+    result["trigger_requests"].extend(pending_triggers)
+    return {"children": delegated_children}
+
+
+def _persist_work_execution_children(
+    *,
+    agent: Agent,
+    parent_task,
+    trigger: dict[str, Any],
+    plan_resolution: dict[str, Any],
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Insert/bind each planned child. Raises to roll back the whole batch."""
     delegated_children: list[Any] = []
+    pending_triggers: list[dict[str, Any]] = []
     for delegation in plan_resolution.get("delegations") or []:
         target = delegation["agent"]
         child_cli_state = db.ensure_agent_cli_state(target.id)
@@ -570,8 +596,8 @@ def _materialize_work_execution_plan(
             audit_source_trigger_id=trigger.get("trigger_id"),
         )
         if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
-            return {
-                "error_result": _ambiguous_match_feedback(
+            raise _WorkPlanMaterializeAborted(
+                _ambiguous_match_feedback(
                     agent_name=agent.name,
                     title=delegation["taskTitle"],
                     candidates=creation.resolution.candidates,
@@ -580,12 +606,12 @@ def _materialize_work_execution_plan(
                         "instead of delegating a duplicate assignment."
                     ),
                 )
-            }
+            )
         child = creation.task
         delegated_children.append(child)
         if child.status == "pending":
-            result["trigger_requests"].append(build_task_assigned_trigger(child))
-    return {"children": delegated_children}
+            pending_triggers.append(build_task_assigned_trigger(child))
+    return delegated_children, pending_triggers
 
 
 def _prepare_shared_response_trigger(
@@ -847,9 +873,12 @@ def _block_task_for_clarification_loop(
         "Consolidate required details into one decision. "
         f"Latest clarification: {snippet or '-'}"
     )
-    db.update_task(
+    transition_task(
         task.id,
-        status="blocked",
+        "blocked",
+        reason=note,
+        actor="BossMod",
+        source_trigger_id=source_trigger_id,
         status_note=note,
         completion_summary=None,
         watchdog_pinged_at=None,

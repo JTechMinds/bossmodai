@@ -38,6 +38,7 @@ from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.task_roles import default_task_owner_id
+from core.tasking.transitions import transition_task
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
 from core.prompting.runtime_prompt_lint import lint_runtime_prompts
@@ -1780,9 +1781,12 @@ async def reset_agent_runtime(agent_id: str):
     if open_activities:
         task = db.get_task(open_activities[0].task_id)
         if task and task.status in ("pending", "accepted", "active", "waiting"):
-            db.update_task(
+            transition_task(
                 task.id,
-                status="blocked",
+                "blocked",
+                reason="Runtime reset by human operator.",
+                actor="Human Operator",
+                actor_type="human",
                 status_note="Runtime reset by human operator.",
                 watchdog_pinged_at=None,
             )

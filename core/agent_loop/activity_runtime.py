@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.models import Activity, AgentState, Task
+from core.tasking.transitions import transition_task
 
 _VISIBLE_STATUS_BY_KIND = {
     "assignment": "work_active",
@@ -122,9 +123,11 @@ def pause_active_work(agent_id: str, reason: str, *, task_status: str = "pending
 
     db.update_activity(active.id, status="paused", detail=reason)
     if active.task_id:
-        db.update_task(
+        transition_task(
             active.task_id,
-            status=task_status,
+            task_status,
+            reason=reason or f"Paused ({task_status}).",
+            actor="BossMod",
             status_note=reason,
             completion_summary=None,
             watchdog_pinged_at=None,
@@ -279,7 +282,14 @@ def activate_work_activity(
     """Create or reactivate the runtime work activity for a task."""
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id == task.id:
-        db.update_task(task.id, status=task_status, status_note=None, watchdog_pinged_at=None)
+        transition_task(
+            task.id,
+            task_status,
+            reason=f"Work activity already active ({task_status}).",
+            actor="BossMod",
+            status_note=None,
+            watchdog_pinged_at=None,
+        )
         merged_metadata = metadata or active.metadata
         if merged_metadata != active.metadata:
             db.update_activity(active.id, metadata=merged_metadata)
@@ -314,7 +324,14 @@ def activate_work_activity(
             metadata=metadata or {},
         )
 
-    db.update_task(task.id, status=task_status, status_note=None, watchdog_pinged_at=None)
+    transition_task(
+        task.id,
+        task_status,
+        reason=f"Activated work activity ({task_status}).",
+        actor="BossMod",
+        status_note=None,
+        watchdog_pinged_at=None,
+    )
     refresh_agent_status(agent_id)
     return activity
 
