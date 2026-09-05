@@ -15,7 +15,7 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(fs.readFileSync(process.argv[2], "utf8"));
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
 
 if (typeof BossModUtils !== "object" || typeof BossModUtils.createLoadGeneration !== "function") {
     throw new Error("createLoadGeneration missing");
@@ -62,13 +62,13 @@ async function main() {
         throw new Error(`expected agent-b, got ${selected.value}`);
     }
 
-    const desk = { path: null };
+    const desk = { value: null };
     const deskGen = BossModUtils.createLoadGeneration();
     const deskApplied = await Promise.all([
         applyIfCurrent(deskGen, "/me", 20, desk),
         applyIfCurrent(deskGen, "/projects", 2, desk),
     ]);
-    if (deskApplied[0] !== false || deskApplied[1] !== true || desk.path !== "/projects") {
+    if (deskApplied[0] !== false || deskApplied[1] !== true || desk.value !== "/projects") {
         throw new Error("stale desk path must not overwrite the later navigation");
     }
 
@@ -84,7 +84,7 @@ async function main() {
     process.stdout.write(JSON.stringify({
         ok: true,
         lastSelectWins: selected.value === "agent-b",
-        lastDeskPathWins: desk.path === "/projects",
+        lastDeskPathWins: desk.value === "/projects",
         invalidatedSearchDropped: searchApplied === false,
     }));
 }
