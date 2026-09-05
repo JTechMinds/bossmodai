@@ -136,6 +136,18 @@ global.BossModUtils = {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;");
     },
+    createLoadGeneration() {
+        let current = 0;
+        return {
+            next() {
+                current += 1;
+                return current;
+            },
+            isCurrent(id) {
+                return id === current;
+            },
+        };
+    },
 };
 
 // eslint-disable-next-line no-eval
