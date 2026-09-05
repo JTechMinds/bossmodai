@@ -134,6 +134,6 @@ flowchart TB
 - **HA-SEC-P0-04** — company browser root is `artifacts/projects`; `db_backups/` and raw `agents/` are outside it.
 - **HA-SEC-P0-03 / HA-SEC-P1-04** — shell path jail; interpreters / `xargs` / POSIX shells are `never_allowed`; argv[0] basename matching.
 
-Day-one workspace (see [`CAPABILITY_PASS.md`](CAPABILITY_PASS.md)): a user-named absolute path can be opened/read/edited when it stays under `/me`, `/projects`, or Settings → CLI Policy → Host workspace roots. Extra roots default to empty. This is an allowlisted-roots model, not a full host mount. Peer assign/deliver is not part of that pass.
+Day-one workspace (see [`CAPABILITY_PASS.md`](CAPABILITY_PASS.md)): a user-named absolute path can be opened/read/edited when it stays under `/me`, `/projects`, or Settings → CLI Policy → Host workspace roots. Extra roots default to empty. This is an allowlisted-roots model, not a full host mount. Peer assign/deliver (capability item 3) is proven via the same assign/accept/complete actions and `task_assigned` / `task_update` triggers the live loop calls — not via a dual-LLM GUI run in the verification environment.
 
 Residual (not “auth is missing”): `/health` and the HTML/static UI stay unauthenticated by design. Connection-test URLs are allowlisted (HA-SEC-NEW-01, shipped). Every HA-* item in [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) is shipped on current `main`; that file is the historical sequence plus out-of-scope notes, not an open queue. See [`HEALTH_VERIFICATION.md`](HEALTH_VERIFICATION.md) for the latest verification pass.
