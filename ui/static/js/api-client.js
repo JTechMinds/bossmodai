@@ -26,9 +26,20 @@
         return window.fetch(input, withAuthHeaders(input, init));
     }
 
+    async function apiFetchBlobUrl(input, init) {
+        const res = await apiFetch(input, init);
+        if (!res.ok) {
+            throw new Error(await res.text() || `Request failed (${res.status})`);
+        }
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    }
+
     window.apiFetch = apiFetch;
+    window.apiFetchBlobUrl = apiFetchBlobUrl;
     window.BossModApi = {
         fetch: apiFetch,
+        fetchBlobUrl: apiFetchBlobUrl,
         tokenHeader: TOKEN_HEADER,
     };
 })();

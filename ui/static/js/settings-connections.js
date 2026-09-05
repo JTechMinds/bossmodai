@@ -134,6 +134,9 @@ const ConnectionsSection = (() => {
                 if (!confirm('Delete this connection?')) return;
                 await apiFetch(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
                 await renderList();
+                if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
+                    void BossModApp.refreshModelAvailability();
+                }
             });
         });
     }
@@ -319,6 +322,9 @@ const ConnectionsSection = (() => {
                     });
                 }
                 await renderList();
+                if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
+                    void BossModApp.refreshModelAvailability();
+                }
             } catch (err) {
                 console.error('[Connections] Save failed:', err);
             }

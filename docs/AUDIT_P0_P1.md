@@ -1,5 +1,7 @@
 # BossMod AI — Forensic Audit (P0 / P1)
 
+**This file is a snapshot, not current status.** It records `main` @ `f5405bc`. **PR #2 is merged:** local API token + Telegram fail-closed + redaction are on `main`. Later HA-* items closed the shell jail, company-files root, and much of the test gap. For current state see [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md).
+
 **Repo:** https://github.com/JTechMinds/bossmodai  
 **Branch audited:** `main` @ `f5405bc` (“loop bugfixes”, 2026-09-05)  
 **Method:** Remote-only via `gh api` / contents fetches (no clone, no repo edits)  

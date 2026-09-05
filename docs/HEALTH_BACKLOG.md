@@ -3,7 +3,7 @@
 Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant to be **one PR**. Do not combine a security P0 with a JS split.
 
 **Legend:** P0 = correctness / security / data-loss. P1 = high-leverage health. P2 = cleanup.  
-**In-flight (do not redo):** PR #1 (this audit’s security ancestor), PR #2 (SEC-P0-01 / SEC-P0-02).
+**Already on `main` (do not redo):** PR #1 (audit ancestor), **PR #2** (SEC-P0-01 / SEC-P0-02 — fail-closed Telegram + local API token + redaction). Those are live, not open.
 
 **ID prefix:** `HA-` (health audit) so these do not collide with `SEC-P0-*` in `docs/AUDIT_P0_P1.md`. Where an item continues that audit, the old ID is listed under **Alias**.
 
@@ -13,7 +13,7 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 | Order | ID | Title | Sev | Area |
 | ---: | --- | --- | --- | --- |
-| — | *(PR #2)* | Fail-closed Telegram + local API token + redaction | P0 | security |
+| — | *(PR #2, shipped)* | Fail-closed Telegram + local API token + redaction | P0 | security |
 | 1 | HA-SEC-P0-04 | Narrow company-files root; hide backups | P0 | security |
 | 2 | HA-SEC-P0-03 | Shell path jail + dangerous seed rules | P0 | security |
 | 3 | HA-TEST-P1-01 | Restore critical-path pytest module | P1 | tests |
@@ -55,13 +55,13 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 ---
 
-## In-flight (not in this backlog)
+## Already shipped (not in this backlog)
 
 ### PR #2 — SEC-P0-01 / SEC-P0-02
 
 - **Problem:** Telegram fail-open; unauthenticated REST/WS return secrets and expose reseed/simulator.
-- **Status:** Open branch `cursor/sec-p0-01-p0-02-b82e`. Review and merge before starting HA-STRUCT-P1-08 (JS must send `X-BossMod-Token`).
-- **Acceptance:** Empty allowlist denies; settings/connections redact; unauthenticated `POST /api/settings/reseed` → 401. Already claimed by that PR’s tests.
+- **Status:** **Merged on `main`.** Empty allowlist is deny-all and the bot will not start; `/api` REST and WebSocket require `X-BossMod-Token` (or `Authorization: Bearer`); settings/connections redact secrets. Unauthenticated `POST /api/settings/reseed` → 401.
+- **Do not treat as open.** JS call sites send the token via `apiFetch` (HA-STRUCT-P1-08). Residual first-run UX is HA-OPS-P1-01 (banner / send-disabled), not missing auth.
 
 ---
 
@@ -436,7 +436,9 @@ Prefer A unless product insists on spatial meetings from Telegram.
 **Acceptance**
 
 - [x] No model + human_chat → activity message, task not `blocked`. *(skip-turn half shipped with HA-CORR-P0-03)*
-- [ ] Banner or send-disabled in UI when no connections/models.
+- [x] Banner or send-disabled in UI when no connections/models.
+
+**Shipped.** Persistent `#no-model-banner` (“Connect a model in Settings”) when `GET /api/connections` is empty. Chat Send + input are disabled until at least one AI connection exists. Banner / send state refresh on app boot, Settings close, and connection create/delete. Skip-turn still does not block the task (HA-CORR-P0-03). Tests in `tests/test_health_ops_ui.py` (source) plus existing `test_run_turn_human_chat_without_model_skips_without_crash`.
 
 ---
 
@@ -827,7 +829,9 @@ Add: bind vs create; kickoff (exists); one channel round observe; watchdog ping 
 
 **Shipped.** New `ui/static/js/api-client.js` exports `apiFetch()` / `window.BossModApi.fetch` (same signature as `fetch`). Every previous `ui/static/js` `/api` call site now uses it. `api-auth.js` still patches `window.fetch` and WebSocket `?token=` — `apiFetch` delegates to that wrap and also sets `X-BossMod-Token` itself. Script order: `api-auth.js` → `api-client.js` → the rest. Tests in `tests/test_js_api_client.py` (source lint + Node harness).
 
-Honest leftover: company-file-ops still has local `apiPost` / `apiPatch` / `apiDelete` wrappers; they now call `apiFetch`. No JSON convenience layer — call sites still parse `res.json()` themselves. HA-OPS-P1-01 banner / send-disabled is still open.
+Honest leftover: company-file-ops still has local `apiPost` / `apiPatch` / `apiDelete` wrappers; they now call `apiFetch`. No JSON convenience layer — call sites still parse `res.json()` themselves.
+
+PR #19 follow-up (this PR): company image preview no longer uses bare `<img src="/api/company/files/raw">`. `apiFetchBlobUrl()` loads the bytes with `X-BossMod-Token` and sets a blob object URL (revoked on close).
 
 ---
 
@@ -844,6 +848,10 @@ Honest leftover: company-file-ops still has local `apiPost` / `apiPatch` / `apiD
 
 **Acceptance.** `http://127.0.0.1:9` and a documented-bad IP rejected.
 
+**Shipped.** `validate_connection_test_url()` in `core/llm/connection_url.py` allows https (non-metadata) and http/https loopback (`127.0.0.1`, `::1`, `localhost`) for local Ollama / LM Studio. Blocks non-loopback http, link-local (`169.254.0.0/16`), AWS/GCP/Alibaba metadata hosts, and userinfo in the URL. `POST /api/connections/test` returns `{ok: false}` before fetch on allowlist failure.
+
+Honest leftover: `http://127.0.0.1:9` is **allowed by the allowlist** (loopback) and then fails closed on connect (`ok: false`) — rejecting loopback http would break local models. Documented-bad IP `http://169.254.169.254/` is rejected before fetch. Tests in `tests/test_connection_url.py`.
+
 ---
 
 ### HA-OPS-P2-01 — Unused dependencies
@@ -856,6 +864,8 @@ Honest leftover: company-file-ops still has local `apiPost` / `apiPatch` / `apiD
 Remove `duckdb` from `pyproject.toml` (runtime is SQLite). Remove unused `twilio` extra or implement it. Keep SQL `$1` rewriter — it is SQLite compat, not DuckDB.
 
 **Acceptance.** `rg duckdb` / `rg twilio` only in lockfile history/docs; `uv lock` updated.
+
+**Shipped.** Removed `duckdb` from main dependencies and dropped the unused `notifications` extra (`twilio` + duplicate `python-telegram-bot`). Telegram stays a main dependency. SQL `$1` / `ILIKE` rewriter in `db/connection.py` is unchanged (SQLite compat, not DuckDB). Docs still mention the old unused deps as historical audit notes.
 
 ---
 
@@ -871,6 +881,10 @@ Replace `pkill -f <main.py path>` with the Child PID Tauri already stores.
 
 **Acceptance.** Second launch does not kill unrelated `python …/main.py` processes (document how you tested).
 
+**Shipped.** `desktop/src/main.rs` writes `.bossmod-backend.pid` after spawn. Relaunch reads that PID and `kill`s it only if `/proc/{pid}/cmdline` still contains this repo’s `main.py`. Window close removes the pid file after killing the recorded child. `pkill -f` is gone. `.bossmod-backend.pid` is gitignored.
+
+How this was tested: source contract in `tests/test_health_ops_ui.py` (`pkill` absent; pid-file + cmdline check present). A live second Tauri launch was **not** run in this environment (no desktop session).
+
 ---
 
 ### HA-OPS-P2-03 — README accuracy
@@ -883,6 +897,8 @@ Replace `pkill -f <main.py path>` with the Child PID Tauri already stores.
 Stack table still says SQLITE (correct) while `pyproject.toml` unused-depends on DuckDB — mention SQLite only, or drop the dep (HA-OPS-P2-01). After PR #2, document `X-BossMod-Token`. UI chrome CDN claim is closed by HA-OPS-P1-02 (vendored). Personality count (9 seeded) is already accurate.
 
 **Acceptance.** README stack/auth/offline sentences match the tree; no false “10 personalities” nit.
+
+**Shipped.** README stack table is SQLite (no DuckDB). Local API token (`X-BossMod-Token`) and vendored offline UI chrome were already documented after PR #2 / HA-OPS-P1-02. Personality count remains 9. ARCHITECTURE desktop/UI rows updated (PID file, vendored Tailwind).
 
 ---
 
@@ -897,6 +913,8 @@ Stack table still says SQLITE (correct) while `pyproject.toml` unused-depends on
 
 **Acceptance.** Setting `tick_interval=nope` does not take down the worker.
 
+**Shipped.** `config.get_int` / `get_float` catch `ValueError`, log a warning, and return `None`. Call sites that already use `or <default>` keep running. `require_int` / `require_float` raise `ConfigError` instead of a bare `ValueError`. Tests in `tests/test_config_ints.py`.
+
 ---
 
 ### HA-STRUCT-P2-01 — `db` barrel diet
@@ -910,6 +928,16 @@ Stop adding to `db/__init__.py`. New modules import `db.tasks`. Optional later: 
 
 **Acceptance.** Review checklist in CONTRIBUTING or this file; one new endpoint does not add 10 re-exports “just in case.”
 
+**Shipped (checklist only — no barrel rewrite).** There is no CONTRIBUTING file; the review rule lives here:
+
+1. New persistence helpers go in a domain module (`db/tasks.py`, `db/settings.py`, …).
+2. Callers that already `import db` may keep using the barrel **only** if the symbol is already exported.
+3. New endpoints / new modules should `from db.tasks import …` (or the matching domain module) instead of adding re-exports “just in case.”
+4. Do not grow `db/__init__.py` unless an existing `import db` call site would otherwise break, and then add the minimum symbol.
+5. Never import `api` from `db/`.
+
+This PR does not add re-exports to `db/__init__.py`.
+
 ---
 
 ### HA-PROD-P2-01 — Chat no-reply UX
@@ -922,6 +950,8 @@ Stop adding to `db/__init__.py`. New modules import `db.tasks`. Optional later: 
 Walk/idle after chat leaves an empty thread. Show a system receipt (“Alex is walking to their desk”) using existing activity/WS events.
 
 **Acceptance.** After a walk_to turn, chat shows a receipt without enabling “show system notifications” if that is the default operator path (product call).
+
+**Shipped.** Walk / meeting receipts (`notification_kind=receipt`) stay visible in the chat thread even when “Show system notifications” is off. The toggle still hides other system rows (completion / blocked / handoff). Backend already persisted and broadcast these receipts on `human_chat` + `walkTo`. Tests: `tests/test_chat_receipts.py` + source lint in `tests/test_health_ops_ui.py`.
 
 ---
 

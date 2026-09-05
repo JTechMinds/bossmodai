@@ -194,9 +194,16 @@ const AgentContext = (() => {
         }
     }
 
+    function isWalkReceipt(msg) {
+        return (msg?.message_type === 'system' || msg?.from === 'system')
+            && msg?.notification_kind === 'receipt';
+    }
+
     function getVisibleChatMessages(messages) {
         if (shouldShowSystemReceipts()) return messages || [];
-        return (messages || []).filter(msg => msg.message_type !== 'system');
+        // HA-PROD-P2-01: walk/idle receipts stay visible on the default operator path
+        // even when the system-notification toggle is off.
+        return (messages || []).filter(msg => msg.message_type !== 'system' || isWalkReceipt(msg));
     }
 
     // ─── Tab header management ───
@@ -561,6 +568,7 @@ const AgentContext = (() => {
         }
 
         bindChatSend();
+        applyChatSendState();
         void refreshChatMessages(agentId);
     }
 
@@ -631,14 +639,41 @@ const AgentContext = (() => {
         });
     }
 
+    function applyChatSendState() {
+        const sendBtn = document.getElementById('chat-send');
+        const input = document.getElementById('chat-input');
+        if (!sendBtn || !input) return;
+        const allowed = typeof BossModApp !== 'undefined'
+            && typeof BossModApp.hasUsableModel === 'function'
+            && BossModApp.hasUsableModel();
+        sendBtn.disabled = !allowed;
+        input.disabled = !allowed;
+        input.setAttribute('aria-disabled', allowed ? 'false' : 'true');
+        sendBtn.setAttribute('title', allowed
+            ? 'Send message'
+            : 'Connect a model in Settings to send');
+        if (!allowed) {
+            input.placeholder = 'Connect a model in Settings to send messages';
+        } else if (input.placeholder.indexOf('Connect a model') === 0) {
+            input.placeholder = 'Type a message... (Shift+Enter for new line)';
+        }
+    }
+
     function bindChatSend() {
         const sendBtn = document.getElementById('chat-send');
         const input = document.getElementById('chat-input');
+        applyChatSendState();
 
         async function handleSend() {
+            applyChatSendState();
             const el = document.getElementById('chat-input');
             const text = el?.value.trim();
             if (!text || !selectedAgent) return;
+            if (typeof BossModApp !== 'undefined'
+                && typeof BossModApp.hasUsableModel === 'function'
+                && !BossModApp.hasUsableModel()) {
+                return;
+            }
 
             el.value = '';
             el.style.height = 'auto';
@@ -680,7 +715,8 @@ const AgentContext = (() => {
     }
 
     function appendChatMessage(text, fromType, messageType = null, message = null) {
-        if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts()) {
+        const receipt = message?.notification_kind === 'receipt';
+        if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts() && !receipt) {
             return;
         }
         const messagesEl = document.getElementById('chat-messages');
@@ -1537,6 +1573,7 @@ const AgentContext = (() => {
         handleChannelUpdated,
         handleWorldUpdate,
         openChannel,
+        applyChatSendState,
     };
 })();
 

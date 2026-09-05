@@ -70,25 +70,45 @@ def require(key: str) -> str:
 
 
 def get_int(key: str) -> int | None:
-    """Get a setting as an integer, or ``None``."""
+    """Get a setting as an integer, or ``None`` if missing or not an int."""
     val = get(key)
-    return int(val) if val else None
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        logger.warning("Setting %s=%r is not an integer; ignoring", key, val)
+        return None
 
 
 def require_int(key: str) -> int:
     """Get a required setting as an integer."""
-    return int(require(key))
+    val = require(key)
+    try:
+        return int(val)
+    except ValueError as exc:
+        raise ConfigError(f"Required setting '{key}' is not an integer: {val!r}") from exc
 
 
 def get_float(key: str) -> float | None:
-    """Get a setting as a float, or ``None``."""
+    """Get a setting as a float, or ``None`` if missing or not a float."""
     val = get(key)
-    return float(val) if val else None
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except ValueError:
+        logger.warning("Setting %s=%r is not a float; ignoring", key, val)
+        return None
 
 
 def require_float(key: str) -> float:
     """Get a required setting as a float."""
-    return float(require(key))
+    val = require(key)
+    try:
+        return float(val)
+    except ValueError as exc:
+        raise ConfigError(f"Required setting '{key}' is not a float: {val!r}") from exc
 
 
 class ConfigError(Exception):

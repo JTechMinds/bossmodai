@@ -7,6 +7,7 @@ const CompanyFileViewer = (() => {
     let modalRef = null;
     let currentPayload = null;
     let currentContent = '';
+    let currentImageObjectUrl = null;
 
     const _EXT_LANG_MAP = {
         '.py': 'python', '.js': 'javascript', '.jsx': 'javascript',
@@ -116,7 +117,15 @@ const CompanyFileViewer = (() => {
         }
     }
 
+    function revokeImageObjectUrl() {
+        if (currentImageObjectUrl) {
+            URL.revokeObjectURL(currentImageObjectUrl);
+            currentImageObjectUrl = null;
+        }
+    }
+
     function close() {
+        revokeImageObjectUrl();
         if (modalRef) {
             modalRef.close();
             modalRef = null;
@@ -180,10 +189,10 @@ const CompanyFileViewer = (() => {
         if (img) {
             contentHtml = `
                 <div class="flex flex-col items-center gap-3 py-6">
-                    <img src="/api/company/files/raw?path=${encodeURIComponent(payload.path)}"
-                         alt="${esc(payload.name)}"
-                         class="max-w-full max-h-[60vh] rounded-lg border border-bm-border"
+                    <img alt="${esc(payload.name)}"
+                         class="max-w-full max-h-[60vh] rounded-lg border border-bm-border hidden"
                          id="cfv-image" />
+                    <p id="cfv-image-status" class="text-xs text-bm-muted">Loading preview…</p>
                     <p id="cfv-image-dims" class="text-[11px] text-bm-muted"></p>
                 </div>`;
         } else if (binary) {
@@ -220,18 +229,48 @@ const CompanyFileViewer = (() => {
         // Print button
         modal.panel.querySelector('#cfv-print')?.addEventListener('click', handlePrint);
 
-        // Image dimensions
+        // Authenticated image preview (apiFetch → blob URL; <img src="/api"> cannot send X-BossMod-Token)
         const imgEl = modal.panel.querySelector('#cfv-image');
         if (imgEl) {
             imgEl.addEventListener('load', () => {
                 const dimsEl = modal.panel.querySelector('#cfv-image-dims');
                 if (dimsEl) dimsEl.textContent = `${imgEl.naturalWidth} × ${imgEl.naturalHeight} px`;
             });
+            void loadAuthenticatedImage(imgEl, payload.path);
         }
 
         // View/Edit toggle + Save
         if (!binary && !img) {
             bindToggle(modal.panel, payload);
+        }
+    }
+
+    async function loadAuthenticatedImage(imgEl, path) {
+        const statusEl = modalRef?.panel?.querySelector('#cfv-image-status');
+        const rawUrl = `/api/company/files/raw?path=${encodeURIComponent(path)}`;
+        try {
+            const loader = (typeof apiFetchBlobUrl === 'function')
+                ? apiFetchBlobUrl
+                : (window.BossModApi && window.BossModApi.fetchBlobUrl);
+            if (typeof loader !== 'function') {
+                throw new Error('Authenticated image loader is not available');
+            }
+            revokeImageObjectUrl();
+            const objectUrl = await loader(rawUrl, { cache: 'no-store' });
+            if (!modalRef || !imgEl.isConnected) {
+                URL.revokeObjectURL(objectUrl);
+                return;
+            }
+            currentImageObjectUrl = objectUrl;
+            imgEl.src = objectUrl;
+            imgEl.classList.remove('hidden');
+            if (statusEl) statusEl.remove();
+        } catch (err) {
+            console.error('[CompanyFileViewer] Image preview failed:', err);
+            if (statusEl) {
+                statusEl.className = 'text-xs text-red-600';
+                statusEl.textContent = 'Could not load image preview (authentication required).';
+            }
         }
     }
 

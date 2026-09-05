@@ -1,6 +1,6 @@
 # BossMod AI — Current-state architecture
 
-**As of:** `main` @ `f5405bc` (2026-09-05). This is a map of what exists, not a target design.
+**As of:** current tree after PR #2 and the HA-* health landings (2026-09-05). This is a map of what exists, not a target design. [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md) is a **snapshot** of `main` @ `f5405bc` and is not current for security status.
 
 ## Process topology
 
@@ -95,8 +95,8 @@ sequenceDiagram
 | `core/config.py` | Process-wide settings cache over `settings` table |
 | `db/` | SQLite access; `db/__init__.py` re-exports ~200 symbols |
 | `integrations/telegram/` | Bot commands, in-memory chat sessions, approval buttons |
-| `ui/` | Vanilla JS IIFEs + Tailwind CDN + Jinja `index.html` |
-| `desktop/` | Tauri 2 wrapper; `pkill -f main.py` then spawn backend |
+| `ui/` | Vanilla JS IIFEs + vendored Tailwind/Lucide/Split + Jinja `index.html` |
+| `desktop/` | Tauri 2 wrapper; records backend PID and signals that process on relaunch |
 | `prompts/` | Authored contracts, personalities, internal repair/continue text |
 | `plugins/` | Empty directory (no plugin loader) |
 
@@ -108,24 +108,30 @@ sequenceDiagram
 - **Dual enqueue:** API/Telegram use `runtime_services.enqueue_trigger` (cross-process). Worker-side watchdogs/meetings use `dispatcher.enqueue_trigger` (in-process). Correct given the split; easy to call the wrong one from new code.
 - **Lazy imports** inside functions (`from core.world.simulation import simulation`, `from core.bm_cli.runtime import execute_approved_command`) paper over cycles rather than invert dependencies.
 
-## Trust boundaries (current `main`)
+## Trust boundaries (current tree)
 
 ```mermaid
 flowchart TB
-  subgraph unauth [No auth on main]
-    REST["/api/* including settings, keys, reseed, simulator"]
-    WSep["/api/ws"]
-    Health["/health"]
+  subgraph localAuth [Local API token — PR #2, on main]
+    REST["/api/* requires X-BossMod-Token or Bearer"]
+    WSep["/api/ws?token= for WebSocket"]
+    Health["GET /health and HTML/static stay open"]
   end
-  subgraph telegram [Telegram]
-    Allow["_check_auth: empty allowlist = allow all"]
+  subgraph telegram [Telegram — PR #2, fail-closed]
+    Allow["empty allowlist = deny-all; bot will not start"]
   end
   subgraph shell [Host shell if enabled]
-    Exec["subprocess.run shell=False, no path jail"]
+    Exec["subprocess.run shell=False + argv path jail + hardened seed"]
   end
   subgraph files [Company files]
-    Artifacts["rooted at artifacts/ including db_backups/"]
+    Projects["rooted at artifacts/projects; backups and raw agent dirs denied"]
   end
 ```
 
-PR #2 (`cursor/sec-p0-01-p0-02-b82e`, open) adds a local API token and fail-closed Telegram allowlist. It does **not** change the shell jail or company-files root. See `docs/HEALTH_AUDIT.md`.
+**Shipped on `main` (do not describe as open):**
+
+- **PR #2** — local API token (`X-BossMod-Token` / `Authorization: Bearer`) on `/api` REST and WebSocket; settings/connections redact secrets; Telegram empty allowlist is deny-all and refuses start.
+- **HA-SEC-P0-04** — company browser root is `artifacts/projects`; `db_backups/` and raw `agents/` are outside it.
+- **HA-SEC-P0-03 / HA-SEC-P1-04** — shell path jail; interpreters / `xargs` / POSIX shells are `never_allowed`; argv[0] basename matching.
+
+Residual (not “auth is missing”): `/health` and the HTML/static UI are unauthenticated by design; connection-test URLs are allowlisted (HA-SEC-NEW-01). See [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) for remaining open items.

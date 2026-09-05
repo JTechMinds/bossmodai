@@ -1,10 +1,12 @@
 # BossMod AI — Project health audit
 
+**This file is a snapshot, not current status.** It records `main` @ `f5405bc` (2026-09-05) and compared then-open PR #1 / PR #2. **PR #2 is merged on `main`:** Telegram is fail-closed (empty allowlist denies and the bot will not start); REST/WS require `X-BossMod-Token`; settings/connections redact. Later HA-* P0/P1 items (company-files root, shell path jail, tests, splits, …) also landed. For what exists now, read [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md). Do not treat findings below as still-open unless the backlog still lists them.
+
 **Repo:** https://github.com/JTechMinds/bossmodai  
 **Branch audited:** `main` @ `f5405bc` (“loop bugfixes”)  
-**Compared against:** open PR #1 (`docs/AUDIT_P0_P1.md`) and open PR #2 (`cursor/sec-p0-01-p0-02-b82e`)  
+**Compared against (at audit time):** PR #1 (`docs/AUDIT_P0_P1.md`) and PR #2 (`cursor/sec-p0-01-p0-02-b82e`, then open; **now merged**)  
 **Scope:** architecture, monoliths, DRY/KISS, DI/boundaries, correctness/glitches, product vs README, tests, remaining security, ops/DX  
-**Method:** local clone of latest `main`; PR #2 inspected via `git show` (not merged). No application refactors in this PR.
+**Method:** local clone of then-current `main`; PR #2 inspected via `git show` (not yet merged at audit time). No application refactors in the audit PR.
 
 Companion docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) (current-state diagrams), [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) (PR-sized work items).
 
@@ -41,7 +43,7 @@ The health problem is **concentration + thin verification**, not missing feature
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for mermaid. Short version:
 
-**Boot:** `run.sh` → Tauri (`desktop/src/main.rs`) `pkill`s stale `main.py` → FastAPI `lifespan` → `init_db` (schema + seed settings/personalities/CLI rules) → `runtime_services.start()` spawns `python -m core.runtime.worker` → worker starts dispatcher, simulation, task watchdog, meeting watchdog → optional Telegram.
+**Boot:** `run.sh` → Tauri (`desktop/src/main.rs`) stops a recorded backend PID if it is still this repo’s `main.py` → FastAPI `lifespan` → `init_db` (schema + seed settings/personalities/CLI rules) → `runtime_services.start()` spawns `python -m core.runtime.worker` → worker starts dispatcher, simulation, task watchdog, meeting watchdog → optional Telegram.
 
 **Agent turn:** API/Telegram persist a row in `agent_triggers` and wake the worker via `runtime_commands`. Dispatcher claims one trigger per agent (`_active_turns`), calls `run_turn` (`loop.py`). Decision triggers (`human_chat`, `task_assigned`, meeting/channel responses, …) go through `decision_runtime.apply_decision`. Execution triggers loop LLM → `actions.execute_action` (CLI, walk, complete, delegate, …). Results become more triggers, WebSocket events, Telegram bridge events, diagnostics.
 

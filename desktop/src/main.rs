@@ -16,25 +16,49 @@ const BACKEND_PORT: &str = "38471";
 
 struct BackendProcess(Mutex<Option<Child>>);
 
-fn stop_stale_backend(project_root: &Path) {
-    let main_py = project_root.join("main.py");
-    let pattern = main_py.to_string_lossy().to_string();
-
-    let _ = Command::new("pkill")
-        .arg("-f")
-        .arg(&pattern)
-        .status();
-
-    thread::sleep(Duration::from_millis(300));
+fn backend_pid_path(project_root: &Path) -> std::path::PathBuf {
+    project_root.join(".bossmod-backend.pid")
 }
 
-fn start_backend() -> Child {
+fn is_recorded_backend(pid: u32, project_root: &Path) -> bool {
+    let cmdline_path = format!("/proc/{}/cmdline", pid);
+    let Ok(bytes) = std::fs::read(&cmdline_path) else {
+        return false;
+    };
+    let cmdline = String::from_utf8_lossy(&bytes);
+    let main_py = project_root.join("main.py");
+    cmdline.contains(main_py.to_string_lossy().as_ref())
+}
+
+fn stop_recorded_backend(project_root: &Path) {
+    // HA-OPS-P2-02: signal only the PID we recorded last launch.
+    // Do not pkill -f — that can match unrelated python …/main.py processes.
+    let pid_path = backend_pid_path(project_root);
+    let Ok(contents) = std::fs::read_to_string(&pid_path) else {
+        return;
+    };
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        let _ = std::fs::remove_file(&pid_path);
+        return;
+    };
+    if is_recorded_backend(pid, project_root) {
+        let _ = Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+        thread::sleep(Duration::from_millis(300));
+    }
+    let _ = std::fs::remove_file(&pid_path);
+}
+
+fn find_project_root() -> std::path::PathBuf {
     // Project root is one level up from the desktop/ directory
-    let project_root = std::env::current_exe()
-        .expect("Cannot determine executable path")
-        .ancestors()  // walk up from target/release/bossmod-desktop
-        .find(|p| p.join("main.py").exists())
-        .map(|p| p.to_path_buf())
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.ancestors()
+                .find(|p| p.join("main.py").exists())
+                .map(|p| p.to_path_buf())
+        })
         .unwrap_or_else(|| {
             // Fallback: try cwd parent (when run via `cargo run` from desktop/)
             std::env::current_dir()
@@ -42,7 +66,11 @@ fn start_backend() -> Child {
                 .parent()
                 .expect("Cannot determine project root")
                 .to_path_buf()
-        });
+        })
+}
+
+fn start_backend() -> Child {
+    let project_root = find_project_root();
 
     let venv_python = project_root.join(".venv/bin/python");
     let python = if venv_python.exists() {
@@ -53,15 +81,18 @@ fn start_backend() -> Child {
 
     let main_py = project_root.join("main.py");
 
-    stop_stale_backend(&project_root);
+    stop_recorded_backend(&project_root);
 
-    Command::new(&python)
+    let child = Command::new(&python)
         .arg(main_py.to_string_lossy().as_ref())
         .env("BOSSMOD_HOST", BACKEND_HOST)
         .env("BOSSMOD_PORT", BACKEND_PORT)
         .current_dir(&project_root)
         .spawn()
-        .unwrap_or_else(|e| panic!("Failed to start backend with {}: {}", python, e))
+        .unwrap_or_else(|e| panic!("Failed to start backend with {}: {}", python, e));
+
+    let _ = std::fs::write(backend_pid_path(&project_root), child.id().to_string());
+    child
 }
 
 fn wait_for_backend(url: &str, timeout_secs: u64) -> bool {
@@ -109,6 +140,7 @@ fn main() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
+                let _ = std::fs::remove_file(backend_pid_path(&find_project_root()));
                 drop(guard);
             }
         })

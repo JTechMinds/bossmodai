@@ -107,7 +107,7 @@ For the technically curious:
 |-------|------|
 | Desktop shell | Tauri |
 | Backend | FastAPI + asyncio |
-| Database | SQLITE |
+| Database | SQLite |
 | Frontend | Vanilla JS + Tailwind |
 | Model routing | litellm |
 

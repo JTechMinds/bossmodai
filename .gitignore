@@ -20,6 +20,7 @@ wheels/
 .env
 .env.*
 .bossmod_data_key
+.bossmod-backend.pid
 
 # IDE
 .idea/
