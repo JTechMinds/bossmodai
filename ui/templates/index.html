@@ -139,12 +139,15 @@
     </div>
 
     <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
-    <!-- Desktop: side-by-side with Split.js. Mobile: stacked with bottom sheet. -->
+    <!-- Desktop: three named slots (left / center / right) sized by Split.js. -->
     <div id="main-layout" class="flex-1 flex overflow-hidden">
 
-        <!-- ─── LEFT PANEL (30%) ─── -->
-        <div id="panel-left" class="flex flex-col bg-bm-surface border-r border-bm-border
-                                     max-sm:hidden">
+        <div id="slot-left" class="dock-slot max-sm:hidden" data-slot="left">
+            <div class="dock-slot-tabbar" data-slot-tabs="left" role="tablist" aria-label="Left slot panes"></div>
+            <div class="dock-slot-body" data-slot-body="left">
+
+        <!-- ─── FOCUS PANE (default: left) ─── -->
+        <div id="panel-left" class="dock-pane flex flex-col bg-bm-surface" data-pane="focus">
 
             <!-- Tab headers (Focus | Company | Channels) -->
             <div id="left-panel-tabs" class="flex border-b border-bm-border shrink-0">
@@ -267,88 +270,22 @@
             </div>
         </div>
 
-        <!-- ─── Split handle is managed by Split.js ─── -->
+            </div>
+        </div>
 
-        <!-- ─── CENTER WORKSPACE: map stays primary; company views are docks ─── -->
-        <div id="panel-map" class="dock-workspace relative flex-1 min-h-0 bg-bm-bg p-2 sm:p-4">
+        <!-- ─── CENTER SLOT (default: office map) ─── -->
+        <div id="slot-center" class="dock-slot flex-1 min-h-0" data-slot="center">
+            <div class="dock-slot-tabbar" data-slot-tabs="center" role="tablist" aria-label="Center slot panes"></div>
+            <div class="dock-slot-body" data-slot-body="center">
+
+        <div id="panel-map" class="dock-pane dock-pane-map relative bg-bm-bg p-2 sm:p-4" data-pane="map">
             <div id="canvas-container" class="center-pane w-full h-full flex items-center justify-center">
                 <canvas id="office-canvas" class="rounded-xl shadow-sm border border-bm-border bg-white">
                     Your browser does not support canvas.
                 </canvas>
             </div>
 
-            <div id="dock-layer" class="dock-layer">
-                <div id="dock-files" class="dock-window hidden" data-dock="files">
-                    <div class="dock-window-titlebar" data-dock-drag>
-                        <span class="dock-window-title">
-                            <i data-lucide="folder" class="w-3.5 h-3.5"></i> Files
-                        </span>
-                        <div class="dock-window-actions">
-                            <button type="button" class="dock-window-btn" data-dock-action="fill" title="Fill center" aria-label="Fill Files dock">
-                                <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button type="button" class="dock-window-btn" data-dock-action="close" title="Close" aria-label="Close Files dock">
-                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="dock-files-body" class="dock-window-body"></div>
-                    <div class="dock-window-resize" data-dock-resize aria-hidden="true"></div>
-                </div>
-                <div id="dock-tasks" class="dock-window hidden" data-dock="tasks">
-                    <div class="dock-window-titlebar" data-dock-drag>
-                        <span class="dock-window-title">
-                            <i data-lucide="list-todo" class="w-3.5 h-3.5"></i> Tasks
-                        </span>
-                        <div class="dock-window-actions">
-                            <button type="button" class="dock-window-btn" data-dock-action="fill" title="Fill center" aria-label="Fill Tasks dock">
-                                <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button type="button" class="dock-window-btn" data-dock-action="close" title="Close" aria-label="Close Tasks dock">
-                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="dock-tasks-body" class="dock-window-body"></div>
-                    <div class="dock-window-resize" data-dock-resize aria-hidden="true"></div>
-                </div>
-                <div id="dock-metrics" class="dock-window hidden" data-dock="metrics">
-                    <div class="dock-window-titlebar" data-dock-drag>
-                        <span class="dock-window-title">
-                            <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i> Metrics
-                        </span>
-                        <div class="dock-window-actions">
-                            <button type="button" class="dock-window-btn" data-dock-action="fill" title="Fill center" aria-label="Fill Metrics dock">
-                                <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button type="button" class="dock-window-btn" data-dock-action="close" title="Close" aria-label="Close Metrics dock">
-                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="dock-metrics-body" class="dock-window-body"></div>
-                    <div class="dock-window-resize" data-dock-resize aria-hidden="true"></div>
-                </div>
-                <div id="dock-org" class="dock-window hidden" data-dock="org">
-                    <div class="dock-window-titlebar" data-dock-drag>
-                        <span class="dock-window-title">
-                            <i data-lucide="users" class="w-3.5 h-3.5"></i> Org Chart
-                        </span>
-                        <div class="dock-window-actions">
-                            <button type="button" class="dock-window-btn" data-dock-action="fill" title="Fill center" aria-label="Fill Org Chart dock">
-                                <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button type="button" class="dock-window-btn" data-dock-action="close" title="Close" aria-label="Close Org Chart dock">
-                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="dock-org-body" class="dock-window-body"></div>
-                    <div class="dock-window-resize" data-dock-resize aria-hidden="true"></div>
-                </div>
-            </div>
-
-            <!-- Diagnostic detail (exclusive center pane when active) -->
+            <!-- Diagnostic detail (exclusive overlay inside the map pane) -->
             <div id="diagnostic-detail-panel" class="center-pane hidden w-full h-full flex flex-col overflow-hidden rounded-xl border border-bm-border bg-white">
                 <div id="diag-detail-header" class="flex items-center justify-between p-4 border-b border-bm-border bg-bm-surface shrink-0">
                     <div id="diag-detail-summary" class="flex items-center gap-3 min-w-0"></div>
@@ -360,8 +297,15 @@
             </div>
         </div>
 
-        <!-- ─── RIGHT PANEL: ACTIVITY (25%) ─── -->
-        <div id="panel-activity" class="flex flex-col bg-bm-surface border-l border-bm-border max-sm:hidden">
+            </div>
+        </div>
+
+        <!-- ─── RIGHT SLOT (default: Activity) ─── -->
+        <div id="slot-right" class="dock-slot max-sm:hidden" data-slot="right">
+            <div class="dock-slot-tabbar" data-slot-tabs="right" role="tablist" aria-label="Right slot panes"></div>
+            <div class="dock-slot-body" data-slot-body="right">
+
+        <div id="panel-activity" class="dock-pane flex flex-col bg-bm-surface" data-pane="activity">
             <div class="px-3 py-2.5 border-b border-bm-border shrink-0">
                 <span class="flex items-center gap-1.5 text-sm font-medium text-bm-text">
                     <i data-lucide="activity" class="w-4 h-4"></i>
@@ -374,6 +318,25 @@
             <div id="activity-feed" class="flex-1 overflow-y-auto p-3">
                 <!-- entries rendered here -->
             </div>
+        </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Closed company panes live here until assigned to a slot. -->
+    <div id="dock-pane-pool" class="hidden" aria-hidden="true">
+        <div id="pane-files" class="dock-pane hidden" data-pane="files">
+            <div id="dock-files-body" class="dock-pane-body"></div>
+        </div>
+        <div id="pane-tasks" class="dock-pane hidden" data-pane="tasks">
+            <div id="dock-tasks-body" class="dock-pane-body"></div>
+        </div>
+        <div id="pane-metrics" class="dock-pane hidden" data-pane="metrics">
+            <div id="dock-metrics-body" class="dock-pane-body"></div>
+        </div>
+        <div id="pane-org" class="dock-pane hidden" data-pane="org">
+            <div id="dock-org-body" class="dock-pane-body"></div>
         </div>
     </div>
 

@@ -3,7 +3,7 @@
  *
  * Handles: tab switching, Split.js panel resizing, agent panel overlay,
  * mobile bottom sheet, WebSocket connection, localStorage preferences,
- * center dock windows (office map + company views), and footer status.
+ * modular slot shell (office map + company views), and footer status.
  */
 
 const BossModApp = (() => {
@@ -73,11 +73,11 @@ const BossModApp = (() => {
         // Only on desktop (sm breakpoint = 640px)
         if (window.innerWidth < 640) return;
 
-        const leftPanel = document.getElementById('panel-left');
-        const mapPanel = document.getElementById('panel-map');
-        const activityPanel = document.getElementById('panel-activity');
+        const leftSlot = document.getElementById('slot-left');
+        const centerSlot = document.getElementById('slot-center');
+        const rightSlot = document.getElementById('slot-right');
 
-        if (!leftPanel || !mapPanel || !activityPanel) return;
+        if (!leftSlot || !centerSlot || !rightSlot) return;
 
         // Migrate old 2-panel prefs to 3-panel
         if (prefs.splitSizes.length !== 3) {
@@ -85,7 +85,7 @@ const BossModApp = (() => {
             savePrefs();
         }
 
-        Split(['#panel-left', '#panel-map', '#panel-activity'], {
+        Split(['#slot-left', '#slot-center', '#slot-right'], {
             sizes: prefs.splitSizes,
             minSize: [200, 400, 180],
             gutterSize: 6,
@@ -123,7 +123,7 @@ const BossModApp = (() => {
         }
     }
 
-    // ─── Center docks (map stays mounted; company views are windows) ───
+    // ─── Slot shell (map is a dockable pane; company views are slot tabs) ───
 
     function syncCenterModeFromDocks() {
         centerMode = (typeof DockManager !== 'undefined' && DockManager.hasOpen()) ? 'company' : 'office';
@@ -139,12 +139,14 @@ const BossModApp = (() => {
         const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
 
         if (mode === 'office') {
-            if (typeof DockManager !== 'undefined') DockManager.closeAll();
+            if (typeof DockManager !== 'undefined') {
+                DockManager.closeAll();
+                DockManager.activate('map');
+            }
             if (canvasContainer) canvasContainer.classList.remove('hidden');
             if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
             requestAnimationFrame(() => window.dispatchEvent(new Event('panel-resize')));
         } else if (mode === 'company') {
-            if (canvasContainer) canvasContainer.classList.remove('hidden');
             if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
             if (typeof DockManager !== 'undefined') {
                 DockManager.open(activeCompanyTab);
@@ -158,9 +160,7 @@ const BossModApp = (() => {
 
     function switchCompanyTab(tab) {
         activeCompanyTab = tab;
-        const canvasContainer = document.getElementById('canvas-container');
         const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
-        if (canvasContainer) canvasContainer.classList.remove('hidden');
         if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
         if (typeof DockManager !== 'undefined') {
             DockManager.open(tab);

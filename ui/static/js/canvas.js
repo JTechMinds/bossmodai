@@ -125,6 +125,7 @@ const OfficeCanvas = (() => {
         const container = document.getElementById('canvas-container');
         const containerW = container.clientWidth;
         const containerH = container.clientHeight;
+        if (containerW < 8 || containerH < 8) return;
 
         const mapPixelW = mapData.width * TILE_SIZE;
         const mapPixelH = mapData.height * TILE_SIZE;

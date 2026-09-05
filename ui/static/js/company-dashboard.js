@@ -1,7 +1,7 @@
 /**
  * BossMod AI — Company Dashboard controller.
  *
- * Renders Files / Tasks / Metrics / Org into dock window bodies.
+ * Renders Files / Tasks / Metrics / Org into slot pane bodies.
  */
 
 const CompanyDashboard = (() => {
