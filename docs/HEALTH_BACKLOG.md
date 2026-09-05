@@ -529,10 +529,25 @@ Honest size: lifecycle stays one module (complete/blocked/delegated are one fami
 
 **Acceptance**
 
-- [ ] Each file has one sentence responsibility in the module docstring.
-- [ ] No new public behavior.
+- [x] Each file has one sentence responsibility in the module docstring.
+- [x] No new public behavior.
 
-**Not this PR.** `loop.py` is 1713 LOC and `decision_runtime.py` is 1467. A clean peel (`_run_decision_turn` + repair builders, then `apply_decision` collaborators) is a second STRUCT PR, not a sidecar to the actions split. Left for HA-STRUCT-P1-03.
+**Shipped.** `run_turn` stays on `core.agent_loop.loop`; `apply_decision` / `summarize_decision` stay on `core.agent_loop.decision_runtime`. `_cli_result_to_turn_result` is still importable from `loop` (re-export). Mechanical peel — no contract or feature rewrite.
+
+| Module | Role | ~LOC |
+| --- | --- | ---: |
+| `loop.py` | public `run_turn` router (mode/model/context + dispatch) | 178 |
+| `decision_turn.py` | decision LLM loop + CLI lookup + apply | 467 |
+| `execution_turn.py` | execution action loop + CLI-approval resume | 659 |
+| `turn_context.py` | trigger classification + prompt snapshot fields | 132 |
+| `turn_helpers.py` | repair/continuation, traces, CLI result, skip/finalize | 409 |
+| `decision_runtime.py` | `apply_decision` / `summarize_decision` dispatch | 386 |
+| `decision_work_plan.py` | resolve + materialize delegated work plans | 239 |
+| `decision_task_bind.py` | create/bind/defer work tasks + contracts | 238 |
+| `decision_replies.py` | persist replies + shared meeting/channel queues | 500 |
+| `decision_resume.py` | resume waiting work + close assignment wrappers | 154 |
+
+Honest leftover size: `execution_turn.py` stays large because the multi-step action loop is one control flow (extracting it further would be a rewrite). `decision_replies.py` is one family (persist reply + task follow-up + shared-queue advance). Import/dispatch smoke in `tests/test_loop_split.py`. HA-STRUCT-P1-05 (managed_writer / context_builder preview) is **not** this PR.
 
 ---
 
@@ -569,6 +584,8 @@ Honest size: lifecycle stays one module (complete/blocked/delegated are one fami
 
 - [ ] Settings contract preview still renders.
 - [ ] Managed write / batch / section entrypoints unchanged.
+
+**Not this PR.** Left standalone so the loop/decision peel stays reviewable. `managed_writer.py` and `context_builder.py` were not opened here.
 
 ---
 
