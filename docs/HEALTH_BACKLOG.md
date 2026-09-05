@@ -83,11 +83,11 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 **Acceptance**
 
-- [ ] `GET /api/company/files?path=/` lists `projects` contents (or only project dirs), not `db_backups` or raw `agents`.
-- [ ] `GET /api/company/files/raw?path=/db_backups/<file>` → 400/404.
-- [ ] Delete/rename of a backup path fails.
-- [ ] Existing project files still open/edit.
-- [ ] Pytest for the three path cases (no need to run a browser).
+- [x] `GET /api/company/files?path=/` lists `projects` contents (or only project dirs), not `db_backups` or raw `agents`.
+- [x] `GET /api/company/files/raw?path=/db_backups/<file>` → 400/404.
+- [x] Delete/rename of a backup path fails.
+- [x] Existing project files still open/edit.
+- [x] Pytest for the three path cases (no need to run a browser).
 
 ---
 
