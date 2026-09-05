@@ -181,6 +181,70 @@ const BossModUtils = (() => {
         };
     }
 
+    // ─── Composer send (clear only after ack) ───
+
+    function setComposerError(el, message) {
+        if (!el) return;
+        const text = String(message || '').trim();
+        el.textContent = text;
+        el.classList.toggle('hidden', !text);
+    }
+
+    function createComposerSendGate() {
+        let inFlight = false;
+
+        function busy() {
+            return inFlight;
+        }
+
+        async function submit({
+            input,
+            sendBtn,
+            send,
+            applyIdleState,
+            onSuccess,
+            onError,
+            canSubmit,
+        } = {}) {
+            if (inFlight) return { submitted: false, ok: false, reason: 'in-flight' };
+            if (typeof canSubmit === 'function' && !canSubmit()) {
+                return { submitted: false, ok: false, reason: 'blocked' };
+            }
+            const draft = String(input && input.value != null ? input.value : '').trim();
+            if (!draft) return { submitted: false, ok: false, reason: 'empty' };
+            if (typeof send !== 'function') {
+                return { submitted: false, ok: false, reason: 'blocked' };
+            }
+
+            inFlight = true;
+            if (sendBtn) sendBtn.disabled = true;
+            if (input) input.disabled = true;
+
+            try {
+                await send(draft);
+                if (input) {
+                    input.value = '';
+                    if (input.style) input.style.height = 'auto';
+                }
+                if (typeof onSuccess === 'function') onSuccess(draft);
+                return { submitted: true, ok: true };
+            } catch (err) {
+                if (typeof onError === 'function') onError(err, draft);
+                return { submitted: true, ok: false, error: err };
+            } finally {
+                inFlight = false;
+                if (typeof applyIdleState === 'function') {
+                    applyIdleState();
+                } else {
+                    if (sendBtn) sendBtn.disabled = false;
+                    if (input) input.disabled = false;
+                }
+            }
+        }
+
+        return { busy, submit };
+    }
+
     return {
         escapeHtml,
         normalizeAgent,
@@ -194,5 +258,7 @@ const BossModUtils = (() => {
         openOverlay,
         closeOverlay,
         createLoadGeneration,
+        setComposerError,
+        createComposerSendGate,
     };
 })();
