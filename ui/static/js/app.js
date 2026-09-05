@@ -12,7 +12,10 @@ const BossModApp = (() => {
     let prefs = loadPrefs();
     let ws = null;
     let wsReconnectTimer = null;
-    const WS_RECONNECT_DELAY = 3000;
+    let wsReconnectAttempt = 0;
+    let wsUnloadClose = false;
+    const WS_RECONNECT_MIN_MS = 1000;
+    const WS_RECONNECT_MAX_MS = 30000;
     let runtimePaused = false;
     let hasUsableModel = false;
     let centerMode = 'office';
@@ -306,6 +309,28 @@ const BossModApp = (() => {
 
     // ─── WebSocket connection ───
 
+    function nextWsReconnectDelay(attempt) {
+        const exp = Math.max(0, attempt | 0);
+        return Math.min(WS_RECONNECT_MIN_MS * (2 ** exp), WS_RECONNECT_MAX_MS);
+    }
+
+    function initUnloadGuard() {
+        window.addEventListener('beforeunload', () => {
+            wsUnloadClose = true;
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+            if (ws) ws.close();
+        });
+    }
+
+    function scheduleWsReconnect() {
+        if (wsUnloadClose) return;
+        clearTimeout(wsReconnectTimer);
+        const delay = nextWsReconnectDelay(wsReconnectAttempt);
+        wsReconnectAttempt += 1;
+        wsReconnectTimer = setTimeout(initWebSocket, delay);
+    }
+
     function initWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/api/ws`;
@@ -315,6 +340,8 @@ const BossModApp = (() => {
         ws.onopen = () => {
             console.log('[BossMod] WebSocket connected');
             clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+            wsReconnectAttempt = 0;
             updateFooterStatus(runtimePaused ? 'paused' : 'connected');
         };
 
@@ -328,19 +355,16 @@ const BossModApp = (() => {
         };
 
         ws.onclose = () => {
+            if (wsUnloadClose) return;
             console.log('[BossMod] WebSocket disconnected, reconnecting...');
             updateFooterStatus('disconnected');
-            wsReconnectTimer = setTimeout(initWebSocket, WS_RECONNECT_DELAY);
+            scheduleWsReconnect();
         };
 
         ws.onerror = (err) => {
             console.error('[BossMod] WebSocket error:', err);
             ws.close();
         };
-
-        window.addEventListener('beforeunload', () => {
-            if (ws) ws.close();
-        });
     }
 
     function handleWSMessage(msg) {
@@ -694,6 +718,7 @@ const BossModApp = (() => {
         initOutsideClickHandlers();
         initMobileSheet();
         initResize();
+        initUnloadGuard();
         initWebSocket();
         void fetchRuntimeState();
         void refreshModelAvailability();

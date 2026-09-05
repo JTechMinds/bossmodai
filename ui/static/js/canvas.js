@@ -108,12 +108,8 @@ const OfficeCanvas = (() => {
             render();
         });
 
-        // Resize when panels change or window resizes
+        // Resize when the app signals a panel/window change (single path).
         window.addEventListener('panel-resize', () => {
-            sizeCanvas();
-            render();
-        });
-        window.addEventListener('resize', () => {
             sizeCanvas();
             render();
         });
