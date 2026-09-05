@@ -166,6 +166,27 @@ def get_runtime_worker_state(worker_name: str = _DEFAULT_WORKER_NAME) -> Runtime
     )
 
 
+def is_runtime_worker_live(
+    worker_name: str = _DEFAULT_WORKER_NAME,
+    *,
+    stale_after_seconds: int = 15,
+) -> bool:
+    """Return whether the worker is running with a fresh heartbeat.
+
+    Used by trigger-lease recovery so a healthy long turn is not stolen.
+    """
+    state = get_runtime_worker_state(worker_name)
+    if state is None or state.lifecycle_state != "running":
+        return False
+    if state.last_heartbeat_at is None:
+        return False
+    heartbeat = state.last_heartbeat_at
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+    return age < max(1, stale_after_seconds)
+
+
 def mark_runtime_worker_starting(
     pid: int | None = None,
     *,

@@ -27,6 +27,8 @@ class AgentTrigger(BaseModel):
     retry_count: int = 0
     failure_reason: str | None = None
     claimed_at: datetime | None = None
+    claim_generation: int = 0
+    claim_lease: str | None = None
     completed_at: datetime | None = None
     failed_at: datetime | None = None
     created_at: datetime

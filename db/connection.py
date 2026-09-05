@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DB_PATH = os.environ.get("BOSSMOD_DB_PATH", str(_PROJECT_ROOT / "bossmod.sqlite3"))
+
+
+def database_path() -> Path:
+    """Return the configured SQLite file path."""
+    return Path(_DB_PATH)
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 _SHOW_TABLES_SQL = """
 SELECT name
@@ -216,6 +221,13 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     )
     _add_column_if_missing(
         con, "cli_policy_rules", "help_text", "TEXT",
+    )
+    _add_column_if_missing(
+        con, "agent_triggers", "claim_generation",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_column_if_missing(
+        con, "agent_triggers", "claim_lease", "VARCHAR",
     )
 
 
@@ -420,6 +432,11 @@ def init_db() -> None:
 
     from db.agent_storage import normalize_agent_personal_storage_roots
     normalize_agent_personal_storage_roots()
+
+    from db.secret_store import migrate_plaintext_secrets
+    migrated = migrate_plaintext_secrets()
+    if migrated:
+        logger.info("Encrypted %d leftover plaintext secret column(s)", migrated)
 
     logger.info("Database initialised")
 

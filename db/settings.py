@@ -17,6 +17,7 @@ from core.default_prompts import (
 )
 from core.models import Setting
 from db.crud import execute, fetch_all, query_one
+from db.secret_store import decrypt_secret, decrypt_setting_value, encrypt_setting_value
 
 logger = logging.getLogger(__name__)
 RUNTIME_CONTROL_STATE = "running"
@@ -156,7 +157,8 @@ def ensure_local_api_token() -> str:
     )
     value = ""
     if existing is not None and existing.get("value") is not None:
-        value = str(existing["value"]).strip()
+        value = decrypt_secret(str(existing["value"])) or ""
+        value = value.strip()
     if value:
         return value
     token = secrets.token_urlsafe(32)
@@ -201,16 +203,21 @@ def reset_setting_to_seed(key: str) -> Setting:
 def get_settings(category: str | None = None) -> list[Setting]:
     """Return settings, optionally filtered by category."""
     if category is not None:
-        return fetch_all(
+        rows = fetch_all(
             "SELECT key, value, category, updated_at FROM settings "
             "WHERE category = $1 ORDER BY key",
             [category],
             Setting,
         )
-    return fetch_all(
-        "SELECT key, value, category, updated_at FROM settings ORDER BY key",
-        model_cls=Setting,
-    )
+    else:
+        rows = fetch_all(
+            "SELECT key, value, category, updated_at FROM settings ORDER BY key",
+            model_cls=Setting,
+        )
+    return [
+        row.model_copy(update={"value": decrypt_setting_value(row.key, row.value)})
+        for row in rows
+    ]
 
 
 def set_setting(key: str, value: str, category: str = "general") -> Setting:
@@ -218,9 +225,10 @@ def set_setting(key: str, value: str, category: str = "general") -> Setting:
     if key in _OBSOLETE_SETTING_KEYS:
         raise ValueError(f"Setting '{key}' is obsolete and cannot be modified")
     now = datetime.now(timezone.utc)
+    stored = encrypt_setting_value(key, value)
     execute(
         "INSERT OR REPLACE INTO settings (key, value, category, updated_at) "
         "VALUES ($1, $2, $3, $4)",
-        [key, value, category, now],
+        [key, stored, category, now],
     )
     return Setting(key=key, value=value, category=category, updated_at=now)

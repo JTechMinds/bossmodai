@@ -19,6 +19,7 @@ wheels/
 # Environment / secrets
 .env
 .env.*
+.bossmod_data_key
 
 # IDE
 .idea/

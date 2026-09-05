@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; script-src 'self' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'"
     }
   }
 }
