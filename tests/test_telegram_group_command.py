@@ -61,7 +61,7 @@ def test_start_help_describes_group_channel_not_spatial_meeting() -> None:
 
 
 def test_settings_telegram_copy_matches_group_channel() -> None:
-    settings_js = (_REPO_ROOT / "ui/static/js/settings-view.js").read_text(encoding="utf-8")
+    settings_js = (_REPO_ROOT / "ui/static/js/settings-telegram.js").read_text(encoding="utf-8")
     assert "/group" in settings_js
     assert "not a spatial office meeting" in settings_js
     assert "Legacy alias for /group" in settings_js

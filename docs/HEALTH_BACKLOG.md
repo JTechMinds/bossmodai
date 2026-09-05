@@ -564,8 +564,26 @@ Honest leftover size: `execution_turn.py` stays large because the multi-step act
 
 **Acceptance**
 
-- [ ] Settings sections still open; simulator still executes (or dry-runs if HA-SEC-P1-06 landed).
-- [ ] After PR #2, all fetches go through the token helper.
+- [x] Settings sections still open; simulator still executes (or dry-runs if HA-SEC-P1-06 landed).
+- [x] After PR #2, all fetches go through the token helper.
+
+**Shipped.** Mechanical peel of the existing settings IIFEs into sibling files. `settings-view.js` is the shell (nav + `switchSection`). Simulator tab moved to `cli-policy-simulator.js` (`CliPolicySimulator.render`); Enter is still dry-run and **Execute for real** still sends `execute=true` (HA-SEC-P1-06). Fetches stay on `window.fetch`, which `api-auth.js` already patches with `X-BossMod-Token`. Script order locked in `tests/test_settings_js_split.py`.
+
+| Module | Role | ~LOC |
+| --- | --- | ---: |
+| `settings-view.js` | nav shell + section dispatch | 122 |
+| `settings-shared.js` | `initResizeHandle` | 34 |
+| `settings-connections.js` | AI Connections | 330 |
+| `settings-personalities.js` | AI Personalities | 176 |
+| `settings-system.js` | System Settings | 261 |
+| `settings-prompt-template.js` | System Prompt Template | 158 |
+| `settings-advanced.js` | Advanced System Settings | 285 |
+| `settings-runtime-contracts.js` | Runtime Contracts | 333 |
+| `settings-telegram.js` | Telegram | 262 |
+| `cli-policy-simulator.js` | Simulator tab | 414 |
+| `cli-policy-section.js` | CLI Policy shell + other tabs | 961 |
+
+Honest leftover: `cli-policy-section.js` stays large because Rules / Virtual Commands / Settings / Approvals share `rulesCache` / `agentsCache` in one IIFE. Splitting those tabs would be a state-module rewrite, not this peel. HA-STRUCT-P1-08 (shared JS API client) is **not** this PR — raw `fetch('/api/...')` remains; the token helper still wraps `window.fetch`.
 
 ---
 
