@@ -547,7 +547,7 @@ Honest size: lifecycle stays one module (complete/blocked/delegated are one fami
 | `decision_replies.py` | persist replies + shared meeting/channel queues | 500 |
 | `decision_resume.py` | resume waiting work + close assignment wrappers | 154 |
 
-Honest leftover size: `execution_turn.py` stays large because the multi-step action loop is one control flow (extracting it further would be a rewrite). `decision_replies.py` is one family (persist reply + task follow-up + shared-queue advance). Import/dispatch smoke in `tests/test_loop_split.py`. HA-STRUCT-P1-05 (managed_writer / context_builder preview) is **not** this PR.
+Honest leftover size: `execution_turn.py` stays large because the multi-step action loop is one control flow (extracting it further would be a rewrite). `decision_replies.py` is one family (persist reply + task follow-up + shared-queue advance). Import/dispatch smoke in `tests/test_loop_split.py`. HA-STRUCT-P1-05 (managed_writer / context_builder preview) shipped later.
 
 ---
 
@@ -600,10 +600,26 @@ Honest leftover: `cli-policy-section.js` stays large because Rules / Virtual Com
 
 **Acceptance**
 
-- [ ] Settings contract preview still renders.
-- [ ] Managed write / batch / section entrypoints unchanged.
+- [x] Settings contract preview still renders.
+- [x] Managed write / batch / section entrypoints unchanged.
 
-**Not this PR.** Left standalone so the loop/decision peel stays reviewable. `managed_writer.py` and `context_builder.py` were not opened here.
+**Shipped.** Package peel only — no writer/preview behavior rewrite. `from core.bm_cli.managed_writer import …` and `context_builder.preview_*` still resolve. Settings preview lives in `core/llm/context_preview.py`; `context_builder` re-exports via `__getattr__`. Tests in `tests/test_managed_writer_split.py` and `tests/test_context_preview.py`.
+
+| Module | Role | ~LOC |
+| --- | --- | ---: |
+| `managed_writer/__init__.py` | public re-exports | 27 |
+| `managed_writer/types.py` | dataclasses + sentinels | 123 |
+| `managed_writer/detect.py` | `is_managed_*_request` | 35 |
+| `managed_writer/helpers.py` | progress / annotate / text | 226 |
+| `managed_writer/prompts.py` | instruction builders | 139 |
+| `managed_writer/write.py` | `run_managed_write` | 98 |
+| `managed_writer/batch.py` | `run_managed_batch_write` + manifest | 447 |
+| `managed_writer/section.py` | `run_managed_section_rewrite` | 408 |
+| `managed_writer/generate.py` | direct + sectioned generation | 515 |
+| `context_builder.py` | live turn assembly | 977 |
+| `context_preview.py` | Settings contract/prompt preview | 282 |
+
+Honest leftover: `generate.py` / `batch.py` / `section.py` stay large because each is one authoring control flow. `context_builder.py` is still the live assembler (formatters + template context). Splitting those further would be a rewrite. HA-STRUCT-P1-08 (shared JS API client) is **not** this PR.
 
 ---
 
@@ -640,8 +656,12 @@ Honest leftover: `cli-policy-section.js` stays large because Rules / Virtual Com
 
 **Acceptance**
 
-- [ ] Single implementation of reserve / observe / complete.
-- [ ] Existing meeting kickoff test still passes; add one channel equivalent.
+- [x] Single implementation of reserve / observe / complete.
+- [x] Existing meeting kickoff test still passes; add one channel equivalent.
+
+**Shipped.** One SQL state machine in `db/response_rounds.py` (schema binds table + parent FK). One loop coordinator in `core/agent_loop/response_rounds.py`. Meeting/channel modules stay thin façades so existing `db.*` / import names do not change. `db/__init__.py` was not grown (HA-STRUCT-P2-01). Tests: `tests/test_response_rounds.py` (meeting observe + reserve/complete for both façades); existing `tests/test_meeting_orchestrator.py` kickoff and `tests/test_channel_rounds.py` observe still apply.
+
+Honest leftover: two physical tables remain (`meeting_response_*` vs `channel_response_*`). Unifying them would be a migration, not this DRY peel.
 
 ---
 
