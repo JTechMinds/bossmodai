@@ -245,6 +245,74 @@ const BossModUtils = (() => {
         return { busy, submit };
     }
 
+    // ─── Agent-scoped chat typing indicator ───
+
+    function createChatTypingController({ getMessagesEl, isActiveChat } = {}) {
+        let typingAgentId = null;
+
+        function ownerId() {
+            return typingAgentId;
+        }
+
+        function removeEl() {
+            const messagesEl = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
+            const fromList = messagesEl && typeof messagesEl.querySelector === 'function'
+                ? messagesEl.querySelector('#chat-typing-indicator')
+                : null;
+            const el = fromList || (typeof document !== 'undefined'
+                ? document.getElementById('chat-typing-indicator')
+                : null);
+            if (el) el.remove();
+        }
+
+        function sync() {
+            const messagesEl = typeof getMessagesEl === 'function' ? getMessagesEl() : null;
+            const active = Boolean(
+                typingAgentId
+                && messagesEl
+                && typeof isActiveChat === 'function'
+                && isActiveChat(typingAgentId)
+            );
+            if (!active) {
+                removeEl();
+                return false;
+            }
+            if (typeof messagesEl.querySelector === 'function'
+                && messagesEl.querySelector('#chat-typing-indicator')) {
+                return true;
+            }
+            if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+                return false;
+            }
+            const indicator = document.createElement('div');
+            indicator.id = 'chat-typing-indicator';
+            indicator.dataset.agentId = String(typingAgentId);
+            indicator.className = 'chat-msg from-agent mb-2 text-bm-muted italic';
+            indicator.textContent = 'Thinking...';
+            messagesEl.appendChild(indicator);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return true;
+        }
+
+        function show(agentId) {
+            if (!agentId) return false;
+            typingAgentId = agentId;
+            return sync();
+        }
+
+        function hide(agentId) {
+            if (agentId != null && typingAgentId != null
+                && String(typingAgentId) !== String(agentId)) {
+                return false;
+            }
+            typingAgentId = null;
+            removeEl();
+            return true;
+        }
+
+        return { show, hide, sync, ownerId };
+    }
+
     return {
         escapeHtml,
         normalizeAgent,
@@ -260,5 +328,6 @@ const BossModUtils = (() => {
         createLoadGeneration,
         setComposerError,
         createComposerSendGate,
+        createChatTypingController,
     };
 })();

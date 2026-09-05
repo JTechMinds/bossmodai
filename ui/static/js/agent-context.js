@@ -141,6 +141,18 @@ const AgentContext = (() => {
     const deskLoad = BossModUtils.createLoadGeneration();
     const chatSend = BossModUtils.createComposerSendGate();
     const meetingSend = BossModUtils.createComposerSendGate();
+    const chatTyping = BossModUtils.createChatTypingController({
+        getMessagesEl() {
+            return document.getElementById('chat-messages');
+        },
+        isActiveChat(agentId) {
+            return Boolean(
+                selectedAgent
+                && selectedAgent.id === agentId
+                && activeSubview === 'chat'
+            );
+        },
+    });
 
     function isLiveAgentLoad(generation, loadId, agentId, subview) {
         if (!generation.isCurrent(loadId)) return false;
@@ -190,6 +202,7 @@ const AgentContext = (() => {
         if (!selectGeneration.isCurrent(loadId)) return;
 
         selectedAgent = mergeAgentSnapshot(details, agentData);
+        chatTyping.sync();
 
         // Track this agent in session chip bar
         interactedAgents.set(selectedAgent.id, selectedAgent);
@@ -204,6 +217,7 @@ const AgentContext = (() => {
 
     function deselectAgent() {
         selectGeneration.next();
+        chatTyping.hide();
         selectedAgent = null;
         creatingAgent = false;
         activeTopTab = 'focus';
@@ -217,6 +231,7 @@ const AgentContext = (() => {
 
     function startCreateAgent() {
         selectGeneration.next();
+        chatTyping.hide();
         selectedAgent = null;
         creatingAgent = true;
         activeTopTab = 'focus';
@@ -447,6 +462,7 @@ const AgentContext = (() => {
         interactedAgents.delete(agentId);
         chatCache.delete(String(agentId));
         clearDeskCacheForAgent(agentId);
+        chatTyping.hide(agentId);
 
         if (wasSelected) {
             selectGeneration.next();
@@ -748,12 +764,12 @@ const AgentContext = (() => {
                     <p>Chat with <strong>${esc(agentName)}</strong></p>
                     <p class="text-xs mt-1">Send a message to activate this agent.</p>`;
             messagesEl.appendChild(empty);
-            return;
+        } else {
+            for (const msg of visibleMessages) {
+                appendChatMessage(msg.content, msg.from, msg.message_type, msg);
+            }
         }
-
-        for (const msg of visibleMessages) {
-            appendChatMessage(msg.content, msg.from, msg.message_type, msg);
-        }
+        chatTyping.sync();
     }
 
     function renderChatControls(messagesEl) {
@@ -823,7 +839,7 @@ const AgentContext = (() => {
                 },
                 async send(text) {
                     const agentId = selectedAgent.id;
-                    showTypingIndicator();
+                    chatTyping.show(agentId);
                     try {
                         const res = await apiFetch(`/api/agents/${agentId}/activate`, {
                             method: 'POST',
@@ -834,11 +850,11 @@ const AgentContext = (() => {
                             throw new Error('Failed to reach agent.');
                         }
                     } finally {
-                        // Always hide indicator once HTTP completes — WS events
-                        // arrive before this resolves, so messages are already appended.
-                        // If agent produced no reply (walk_to, idle), no WS event fires,
-                        // so we must clean up here regardless.
-                        hideTypingIndicator();
+                        // Hide only this send's agent. A later selected
+                        // agent's indicator must not be cleared by this ack.
+                        // If this agent produced no reply (walk_to, idle),
+                        // no WS event fires, so we still clean up here.
+                        chatTyping.hide(agentId);
                     }
                 },
                 onError() {
@@ -911,6 +927,7 @@ const AgentContext = (() => {
         if (viewingSharedProjectPath) {
             void renderDesk(activeDeskPath, { forceRefresh: true });
         }
+        chatTyping.hide(data.agent_id);
         if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
         if (activeSubview === 'desk' && invalidatedPaths?.has(activeDeskPath)) {
             void renderDesk(activeDeskPath, { forceRefresh: true });
@@ -927,34 +944,16 @@ const AgentContext = (() => {
             created_at: data.created_at,
         });
         setCachedChat(data.agent_id, cached);
-        hideTypingIndicator();
         appendChatMessage(data.content, data.from, data.message_type, data);
     }
 
     async function handleChatReset(data) {
         chatCache.delete(String(data.agent_id));
+        chatTyping.hide(data.agent_id);
         if (!selectedAgent || data.agent_id !== selectedAgent.id) return;
-        hideTypingIndicator();
         if (activeSubview === 'chat') {
             await renderChat();
         }
-    }
-
-    function showTypingIndicator() {
-        const messagesEl = document.getElementById('chat-messages');
-        hideTypingIndicator();
-
-        const indicator = document.createElement('div');
-        indicator.id = 'chat-typing-indicator';
-        indicator.className = 'chat-msg from-agent mb-2 text-bm-muted italic';
-        indicator.textContent = 'Thinking...';
-        messagesEl.appendChild(indicator);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function hideTypingIndicator() {
-        const el = document.getElementById('chat-typing-indicator');
-        if (el) el.remove();
     }
 
     function showChatSyncIndicator() {
