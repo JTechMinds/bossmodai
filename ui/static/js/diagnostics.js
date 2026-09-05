@@ -78,7 +78,7 @@ const DiagnosticsView = (() => {
             : '/api/diagnostics?limit=50';
 
         try {
-            const res = await fetch(url);
+            const res = await apiFetch(url);
             if (!res.ok) {
                 console.error(`[Diagnostics] load failed: ${res.status} ${res.statusText}`);
                 entries = [];
@@ -216,7 +216,7 @@ const DiagnosticsView = (() => {
 
         // Fetch full detail
         try {
-            const res = await fetch(`/api/diagnostics/${encodeURIComponent(id)}`);
+            const res = await apiFetch(`/api/diagnostics/${encodeURIComponent(id)}`);
             if (!res.ok) {
                 console.error(`[Diagnostics] detail fetch failed: ${res.status} ${res.statusText}`);
                 bodyEl.innerHTML = '<p class="text-sm text-red-500">Failed to load details.</p>';

@@ -285,7 +285,7 @@ const CompanyTaskDetail = (() => {
         eventsFailed = false;
         renderActivityContent();
         try {
-            const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/events`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/events`, { cache: 'no-store' });
             if (currentTaskId !== taskId) return;
             if (!res.ok) throw new Error(res.statusText);
             events = await res.json();

@@ -73,7 +73,7 @@ const CompanyOrg = (() => {
 
     async function fetchAgents() {
         try {
-            const res = await fetch('/api/company/agents?include=stats', { cache: 'no-store' });
+            const res = await apiFetch('/api/company/agents?include=stats', { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             agents = await res.json();
             if (!container) return;

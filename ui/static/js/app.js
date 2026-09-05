@@ -465,7 +465,7 @@ const BossModApp = (() => {
 
     async function fetchRuntimeState() {
         try {
-            const res = await fetch('/api/runtime/state', { cache: 'no-store' });
+            const res = await apiFetch('/api/runtime/state', { cache: 'no-store' });
             if (!res.ok) {
                 throw new Error(await res.text());
             }
@@ -490,7 +490,7 @@ const BossModApp = (() => {
         }
 
         try {
-            const res = await fetch('/api/runtime/state', {
+            const res = await apiFetch('/api/runtime/state', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ paused: nextPaused }),

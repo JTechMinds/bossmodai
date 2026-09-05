@@ -27,6 +27,7 @@ SHELL_GLOBALS = {
 
 REQUIRED_SCRIPTS = [
     "js/api-auth.js",
+    "js/api-client.js",
     "js/cli-policy-simulator.js",
     "js/cli-policy-section.js",
     "js/settings-shared.js",
@@ -101,7 +102,8 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
     for required in REQUIRED_SCRIPTS:
         assert required in sources, required
     index = {name: sources.index(name) for name in REQUIRED_SCRIPTS}
-    assert index["js/api-auth.js"] < index["js/cli-policy-simulator.js"]
+    assert index["js/api-auth.js"] < index["js/api-client.js"]
+    assert index["js/api-client.js"] < index["js/cli-policy-simulator.js"]
     assert index["js/cli-policy-simulator.js"] < index["js/cli-policy-section.js"]
     assert index["js/settings-shared.js"] < index["js/settings-prompt-template.js"]
     assert index["js/settings-shared.js"] < index["js/settings-runtime-contracts.js"]
@@ -111,8 +113,8 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
     assert index["js/settings-view.js"] < index["js/app.js"]
 
 
-def test_settings_and_cli_policy_fetches_still_use_window_fetch() -> None:
-    """PR #2 token helper patches window.fetch; these files must keep using it."""
+def test_settings_and_cli_policy_use_shared_api_client() -> None:
+    """HA-STRUCT-P1-08: settings/CLI policy go through apiFetch (token wrap still under it)."""
     names = [
         *SECTION_FILES,
         "settings-view.js",
@@ -123,7 +125,8 @@ def test_settings_and_cli_policy_fetches_still_use_window_fetch() -> None:
         source = _read(name)
         assert "XMLHttpRequest" not in source, name
         if "/api/" in source:
-            assert "fetch(" in source, name
+            assert "apiFetch(" in source, name
+            assert "fetch(" not in source, name
 
 
 def test_split_modules_stay_focused() -> None:

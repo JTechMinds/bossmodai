@@ -67,7 +67,7 @@ const CompanyFiles = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
 
         try {
-            const res = await fetch(`/api/company/files?path=${encodeURIComponent(currentPath)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(currentPath)}`, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const payload = await res.json();
             entries = Array.isArray(payload.entries) ? payload.entries : [];
@@ -318,7 +318,7 @@ const CompanyFiles = (() => {
 
     async function performGlobalSearch(query) {
         try {
-            const res = await fetch(`/api/company/files/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+            const res = await apiFetch(`/api/company/files/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const results = await res.json();
             entries = Array.isArray(results) ? results : [];
@@ -438,7 +438,7 @@ const CompanyFiles = (() => {
 
     async function openFolder(path) {
         try {
-            const res = await fetch('/api/company/files/open-folder', {
+            const res = await apiFetch('/api/company/files/open-folder', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: path || '/' }),
@@ -450,7 +450,7 @@ const CompanyFiles = (() => {
                     if (detail?.code === 'desk_open_folder_handler_required' || detail?.code === 'desk_open_folder_handler_invalid') {
                         const chosen = await promptForFolderOpener(detail);
                         if (chosen) {
-                            await fetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
+                            await apiFetch(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`, {
                                 method: 'PUT',
                             });
                             await openFolder(path);

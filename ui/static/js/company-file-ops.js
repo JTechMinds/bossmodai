@@ -8,7 +8,7 @@ const CompanyFileOps = (() => {
     // ─── API helpers ───
 
     async function apiPost(url, body) {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -21,7 +21,7 @@ const CompanyFileOps = (() => {
     }
 
     async function apiPatch(url, body) {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -31,7 +31,7 @@ const CompanyFileOps = (() => {
     }
 
     async function apiDelete(url, body) {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -242,7 +242,7 @@ const CompanyFileOps = (() => {
             const listEl = modal.panel.querySelector('#cfo-nav-entries');
             listEl.innerHTML = '<p class="text-xs text-bm-muted">Loading...</p>';
             try {
-                const res = await fetch(`/api/company/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+                const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
                 if (!res.ok) throw new Error(await res.text());
                 const payload = await res.json();
                 const crumbs = payload.breadcrumbs || [];

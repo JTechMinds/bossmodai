@@ -10,7 +10,7 @@ const TelegramSection = (() => {
 
         let settings = [];
         try {
-            const res = await fetch('/api/settings?category=telegram');
+            const res = await apiFetch('/api/settings?category=telegram');
             settings = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load Telegram settings.</p>';
@@ -171,7 +171,7 @@ const TelegramSection = (() => {
 
             try {
                 if (newValue === 'true') {
-                    const allowRes = await fetch(
+                    const allowRes = await apiFetch(
                         '/api/settings/telegram_allowed_user_ids?value='
                         + encodeURIComponent(allowlist)
                         + '&category=telegram',
@@ -183,7 +183,7 @@ const TelegramSection = (() => {
                         return;
                     }
                 }
-                const res = await fetch('/api/settings/telegram_enabled?value=' + encodeURIComponent(newValue) + '&category=telegram', {
+                const res = await apiFetch('/api/settings/telegram_enabled?value=' + encodeURIComponent(newValue) + '&category=telegram', {
                     method: 'PUT',
                 });
                 if (!res.ok) {
@@ -215,7 +215,7 @@ const TelegramSection = (() => {
                     return;
                 }
                 try {
-                    const res = await fetch(
+                    const res = await apiFetch(
                         '/api/settings/' + encodeURIComponent(key)
                         + '?value=' + encodeURIComponent(value)
                         + '&category=' + encodeURIComponent(category),

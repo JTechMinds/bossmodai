@@ -231,7 +231,7 @@ const ActivityLog = (() => {
         }
 
         try {
-            const res = await fetch(`/api/activity/feed?${params}`);
+            const res = await apiFetch(`/api/activity/feed?${params}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
 

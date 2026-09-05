@@ -22,7 +22,7 @@ const CompanyView = (() => {
     }
 
     async function loadRoster() {
-        const res = await fetch('/api/company/agents', { cache: 'no-store' });
+        const res = await apiFetch('/api/company/agents', { cache: 'no-store' });
         if (!res.ok) {
             throw new Error(await res.text());
         }
@@ -279,7 +279,7 @@ const CompanyView = (() => {
         const agentIds = [...selectedIds];
         if (!agentIds.length) return;
         try {
-            const res = await fetch('/api/channels', {
+            const res = await apiFetch('/api/channels', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ agent_ids: agentIds }),

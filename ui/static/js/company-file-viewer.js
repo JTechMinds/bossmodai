@@ -104,7 +104,7 @@ const CompanyFileViewer = (() => {
         close();
         const url = apiUrl || `/api/company/files?path=${encodeURIComponent(path)}`;
         try {
-            const res = await fetch(url, { cache: 'no-store' });
+            const res = await apiFetch(url, { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             const payload = await res.json();
             currentPayload = payload;
@@ -277,7 +277,7 @@ const CompanyFileViewer = (() => {
             saveBtn.textContent = 'Saving...';
             saveBtn.disabled = true;
             try {
-                const res = await fetch('/api/company/files', {
+                const res = await apiFetch('/api/company/files', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: payload.path, content: newContent }),

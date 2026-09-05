@@ -822,8 +822,12 @@ Add: bind vs create; kickoff (exists); one channel round observe; watchdog ping 
 
 **Acceptance**
 
-- [ ] `rg "fetch\\('/api" ui/static/js` only hits the helper (plus vendor).
-- [ ] Pause, chat, files, settings, simulator still work.
+- [x] `rg "fetch\\('/api" ui/static/js` only hits the helper (plus vendor).
+- [x] Pause, chat, files, settings, simulator still work.
+
+**Shipped.** New `ui/static/js/api-client.js` exports `apiFetch()` / `window.BossModApi.fetch` (same signature as `fetch`). Every previous `ui/static/js` `/api` call site now uses it. `api-auth.js` still patches `window.fetch` and WebSocket `?token=` — `apiFetch` delegates to that wrap and also sets `X-BossMod-Token` itself. Script order: `api-auth.js` → `api-client.js` → the rest. Tests in `tests/test_js_api_client.py` (source lint + Node harness).
+
+Honest leftover: company-file-ops still has local `apiPost` / `apiPatch` / `apiDelete` wrappers; they now call `apiFetch`. No JSON convenience layer — call sites still parse `res.json()` themselves. HA-OPS-P1-01 banner / send-disabled is still open.
 
 ---
 

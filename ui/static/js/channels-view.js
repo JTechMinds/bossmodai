@@ -10,7 +10,7 @@ const ChannelsView = (() => {
     let activeContainer = null;
 
     async function loadChannels() {
-        const res = await fetch('/api/channels', { cache: 'no-store' });
+        const res = await apiFetch('/api/channels', { cache: 'no-store' });
         if (!res.ok) {
             throw new Error(await res.text());
         }
@@ -25,7 +25,7 @@ const ChannelsView = (() => {
     }
 
     async function loadChannelDetail(channelId) {
-        const res = await fetch(`/api/channels/${channelId}`, { cache: 'no-store' });
+        const res = await apiFetch(`/api/channels/${channelId}`, { cache: 'no-store' });
         if (!res.ok) {
             throw new Error(await res.text());
         }
@@ -232,7 +232,7 @@ const ChannelsView = (() => {
             input.style.height = 'auto';
 
             try {
-                const res = await fetch(`/api/channels/${channelId}/messages`, {
+                const res = await apiFetch(`/api/channels/${channelId}/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text }),

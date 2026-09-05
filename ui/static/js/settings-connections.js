@@ -51,7 +51,7 @@ const ConnectionsSection = (() => {
     async function renderList() {
         let connections = [];
         try {
-            const res = await fetch('/api/connections');
+            const res = await apiFetch('/api/connections');
             connections = await res.json();
         } catch (err) {
             container.innerHTML = '<p class="text-red-500 text-sm">Failed to load connections.</p>';
@@ -124,7 +124,7 @@ const ConnectionsSection = (() => {
 
         container.querySelectorAll('[data-edit-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                const res = await fetch(`/api/connections/${btn.dataset.editConn}`);
+                const res = await apiFetch(`/api/connections/${btn.dataset.editConn}`);
                 if (res.ok) renderForm(await res.json());
             });
         });
@@ -132,7 +132,7 @@ const ConnectionsSection = (() => {
         container.querySelectorAll('[data-delete-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 if (!confirm('Delete this connection?')) return;
-                await fetch(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
+                await apiFetch(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
                 await renderList();
             });
         });
@@ -244,7 +244,7 @@ const ConnectionsSection = (() => {
             resultEl.classList.remove('hidden');
 
             try {
-                const resp = await fetch('/api/connections/test', {
+                const resp = await apiFetch('/api/connections/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -306,13 +306,13 @@ const ConnectionsSection = (() => {
             }
             try {
                 if (isEdit) {
-                    await fetch(`/api/connections/${conn.id}`, {
+                    await apiFetch(`/api/connections/${conn.id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    await fetch('/api/connections', {
+                    await apiFetch('/api/connections', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),

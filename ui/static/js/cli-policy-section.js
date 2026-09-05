@@ -24,7 +24,7 @@ const CliPolicySection = (() => {
     async function fetchAgents() {
         if (agentsFetched) return agentsCache;
         try {
-            const res = await fetch('/api/agents');
+            const res = await apiFetch('/api/agents');
             agentsCache = await res.json();
         } catch {
             agentsCache = [];
@@ -128,7 +128,7 @@ const CliPolicySection = (() => {
 
     async function refreshApprovalBadge() {
         try {
-            const res = await fetch('/api/cli-policy/approvals?status=pending&limit=200');
+            const res = await apiFetch('/api/cli-policy/approvals?status=pending&limit=200');
             const items = await res.json();
             const badge = document.getElementById('cli-approval-count-badge');
             if (!badge) return;
@@ -281,7 +281,7 @@ const CliPolicySection = (() => {
     async function renderRulesTab(el) {
         _rulesTabEl = el;
         try {
-            const res = await fetch('/api/cli-policy/rules');
+            const res = await apiFetch('/api/cli-policy/rules');
             rulesCache = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load rules.</p>';
@@ -388,7 +388,7 @@ const CliPolicySection = (() => {
                 const rule = rulesCache.find(r => r.id === toggle.dataset.toggleRule);
                 if (!rule) return;
                 try {
-                    await fetch(`/api/cli-policy/rules/${rule.id}`, {
+                    await apiFetch(`/api/cli-policy/rules/${rule.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ enabled: !rule.enabled }),
@@ -406,7 +406,7 @@ const CliPolicySection = (() => {
             if (del) {
                 if (!confirm('Delete this rule?')) return;
                 try {
-                    await fetch(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
+                    await apiFetch(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
                     rulesCache = rulesCache.filter(r => r.id !== del.dataset.deleteRule);
                     renderTableBody();
                 } catch {
@@ -422,7 +422,7 @@ const CliPolicySection = (() => {
         document.getElementById('btn-seed-defaults').addEventListener('click', async () => {
             if (!confirm('This will delete ALL existing rules and replace them with the defaults. Continue?')) return;
             try {
-                await fetch('/api/cli-policy/rules/seed-defaults', { method: 'POST' });
+                await apiFetch('/api/cli-policy/rules/seed-defaults', { method: 'POST' });
                 renderRulesTab(el);
             } catch {
                 alert('Failed to seed defaults.');
@@ -563,13 +563,13 @@ const CliPolicySection = (() => {
 
             try {
                 if (isEdit) {
-                    await fetch(`/api/cli-policy/rules/${rule.id}`, {
+                    await apiFetch(`/api/cli-policy/rules/${rule.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    await fetch('/api/cli-policy/rules', {
+                    await apiFetch('/api/cli-policy/rules', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
@@ -628,7 +628,7 @@ const CliPolicySection = (() => {
     async function renderSettingsTab(el) {
         let settings = [];
         try {
-            const res = await fetch('/api/settings?category=cli_policy');
+            const res = await apiFetch('/api/settings?category=cli_policy');
             settings = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load CLI policy settings.</p>';
@@ -704,7 +704,7 @@ const CliPolicySection = (() => {
                 const newVal = (!current).toString();
                 const card = el.querySelector(`[data-setting-card="${key}"]`);
                 try {
-                    await fetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`, {
+                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`, {
                         method: 'PUT',
                     });
                     if (card) flashBorder(card, true);
@@ -722,7 +722,7 @@ const CliPolicySection = (() => {
                 const value = e.target.value;
                 const card = el.querySelector(`[data-setting-card="${key}"]`);
                 try {
-                    await fetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
+                    await apiFetch(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
                         method: 'PUT',
                     });
                     if (card) flashBorder(card, true);
@@ -741,7 +741,7 @@ const CliPolicySection = (() => {
     async function renderVirtualCommandsTab(el) {
         let data = { commands: [], categories: [] };
         try {
-            const res = await fetch('/api/cli-policy/virtual-commands');
+            const res = await apiFetch('/api/cli-policy/virtual-commands');
             data = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load virtual commands.</p>';
@@ -816,7 +816,7 @@ const CliPolicySection = (() => {
     async function renderApprovalsTab(el) {
         let approvals = [];
         try {
-            const res = await fetch('/api/cli-policy/approvals?limit=50');
+            const res = await apiFetch('/api/cli-policy/approvals?limit=50');
             approvals = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load approvals.</p>';
@@ -863,7 +863,7 @@ const CliPolicySection = (() => {
         el.querySelectorAll('[data-approve]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 try {
-                    await fetch(`/api/cli-policy/approvals/${btn.dataset.approve}/approve`, { method: 'POST' });
+                    await apiFetch(`/api/cli-policy/approvals/${btn.dataset.approve}/approve`, { method: 'POST' });
                     renderApprovalsTab(el);
                     refreshApprovalBadge();
                 } catch {
@@ -887,7 +887,7 @@ const CliPolicySection = (() => {
                 const noteInput = document.getElementById(`reject-note-input-${reqId}`);
                 const note = noteInput ? noteInput.value.trim() : '';
                 try {
-                    await fetch(`/api/cli-policy/approvals/${reqId}/reject`, {
+                    await apiFetch(`/api/cli-policy/approvals/${reqId}/reject`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ decision_note: note || null }),

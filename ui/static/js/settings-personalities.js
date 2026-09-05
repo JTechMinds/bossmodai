@@ -13,7 +13,7 @@ const PersonalitiesSection = (() => {
     async function renderList() {
         let personalities = [];
         try {
-            const res = await fetch('/api/personalities');
+            const res = await apiFetch('/api/personalities');
             personalities = await res.json();
         } catch (err) {
             container.innerHTML = '<p class="text-red-500 text-sm">Failed to load personalities.</p>';
@@ -77,7 +77,7 @@ const PersonalitiesSection = (() => {
 
         container.querySelectorAll('[data-edit-pers]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                const res = await fetch(`/api/personalities/${btn.dataset.editPers}`);
+                const res = await apiFetch(`/api/personalities/${btn.dataset.editPers}`);
                 if (res.ok) renderForm(await res.json());
             });
         });
@@ -85,7 +85,7 @@ const PersonalitiesSection = (() => {
         container.querySelectorAll('[data-delete-pers]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 if (!confirm('Delete this personality?')) return;
-                await fetch(`/api/personalities/${btn.dataset.deletePers}`, { method: 'DELETE' });
+                await apiFetch(`/api/personalities/${btn.dataset.deletePers}`, { method: 'DELETE' });
                 await renderList();
             });
         });
@@ -147,13 +147,13 @@ const PersonalitiesSection = (() => {
             try {
                 let res;
                 if (isEdit) {
-                    res = await fetch(`/api/personalities/${p.id}`, {
+                    res = await apiFetch(`/api/personalities/${p.id}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),
                     });
                 } else {
-                    res = await fetch('/api/personalities', {
+                    res = await apiFetch('/api/personalities', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data),

@@ -54,13 +54,13 @@ const AgentPanel = (() => {
     // ─── API calls ───
 
     async function fetchAgent(id) {
-        const res = await fetch(`/api/agents/${id}`);
+        const res = await apiFetch(`/api/agents/${id}`);
         if (!res.ok) return null;
         return res.json();
     }
 
     async function apiCreateAgent(data) {
-        const res = await fetch('/api/agents', {
+        const res = await apiFetch('/api/agents', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -70,7 +70,7 @@ const AgentPanel = (() => {
     }
 
     async function apiUpdateAgent(id, data) {
-        const res = await fetch(`/api/agents/${id}`, {
+        const res = await apiFetch(`/api/agents/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -80,18 +80,18 @@ const AgentPanel = (() => {
     }
 
     async function apiDeleteAgent(id) {
-        const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
+        const res = await apiFetch(`/api/agents/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
     }
 
     async function fetchPromptHistoryPolicy(id) {
-        const res = await fetch(`/api/agents/${id}/prompt-history-policy`, { cache: 'no-store' });
+        const res = await apiFetch(`/api/agents/${id}/prompt-history-policy`, { cache: 'no-store' });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
     }
 
     async function apiUpdatePromptHistoryPolicy(id, data) {
-        const res = await fetch(`/api/agents/${id}/prompt-history-policy`, {
+        const res = await apiFetch(`/api/agents/${id}/prompt-history-policy`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -101,13 +101,13 @@ const AgentPanel = (() => {
     }
 
     async function apiClearChatHistory(id) {
-        const res = await fetch(`/api/agents/${id}/chat-history`, { method: 'DELETE' });
+        const res = await apiFetch(`/api/agents/${id}/chat-history`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
     }
 
     async function apiResetRuntime(id) {
-        const res = await fetch(`/api/agents/${id}/reset-runtime`, { method: 'POST' });
+        const res = await apiFetch(`/api/agents/${id}/reset-runtime`, { method: 'POST' });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
     }
@@ -122,8 +122,8 @@ const AgentPanel = (() => {
         let promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY };
         try {
             const requests = [
-                fetch('/api/connections'),
-                fetch('/api/personalities'),
+                apiFetch('/api/connections'),
+                apiFetch('/api/personalities'),
             ];
             if (agent?.id) {
                 requests.push(fetchPromptHistoryPolicy(agent.id));
@@ -450,7 +450,7 @@ const AgentPanel = (() => {
         const personalityId = formData.get('personality_id');
         if (personalityId) {
             try {
-                const res = await fetch(`/api/personalities/${personalityId}`);
+                const res = await apiFetch(`/api/personalities/${personalityId}`);
                 if (res.ok) {
                     const personality = await res.json();
                     agentData.prompt_template = personality.prompt_template;
@@ -496,7 +496,7 @@ const AgentPanel = (() => {
 
     async function refreshCanvas() {
         try {
-            const world = await (await fetch('/api/world')).json();
+            const world = await (await apiFetch('/api/world')).json();
             const agents = world.map(BossModUtils.normalizeAgent);
             if (typeof OfficeCanvas !== 'undefined') {
                 OfficeCanvas.updateAgents(agents);
@@ -522,7 +522,7 @@ const AgentPanel = (() => {
         // Fetch connections for submit resolution
         let connections = [];
         try {
-            const res = await fetch('/api/connections');
+            const res = await apiFetch('/api/connections');
             connections = await res.json();
         } catch { /* empty */ }
 

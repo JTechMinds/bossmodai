@@ -177,7 +177,7 @@ const CompanyTasks = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
 
         try {
-            const res = await fetch('/api/tasks', { cache: 'no-store' });
+            const res = await apiFetch('/api/tasks', { cache: 'no-store' });
             if (!res.ok) throw new Error(await res.text());
             tasks = await res.json();
             if (!Array.isArray(tasks)) tasks = [];
@@ -532,7 +532,7 @@ const CompanyTasks = (() => {
 
     async function loadRosterAgents() {
         try {
-            const res = await fetch('/api/agents', { cache: 'no-store' });
+            const res = await apiFetch('/api/agents', { cache: 'no-store' });
             if (!res.ok) return;
             const listed = await res.json();
             rosterAgents = Array.isArray(listed)
@@ -723,7 +723,7 @@ const CompanyTasks = (() => {
         if (bindTaskId) payload.bind_task_id = bindTaskId;
 
         try {
-            const res = await fetch('/api/tasks', {
+            const res = await apiFetch('/api/tasks', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -769,7 +769,7 @@ const CompanyTasks = (() => {
     async function refreshSilent() {
         if (!container) return;
         try {
-            const res = await fetch('/api/tasks', { cache: 'no-store' });
+            const res = await apiFetch('/api/tasks', { cache: 'no-store' });
             if (!res.ok) return;
             const newTasks = await res.json();
             if (!Array.isArray(newTasks)) return;
