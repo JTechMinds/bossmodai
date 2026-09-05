@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import shlex
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 import db
 from core import config
@@ -77,6 +79,58 @@ _MATCHERS = {
     "prefix": _match_prefix,
     "glob": _match_glob,
 }
+
+
+def argv0_basename_after_resolve(argv0: str) -> str:
+    """Return the basename of *argv0* after expanding/resolving path-like tokens.
+
+    Bare names (``bash``) are unchanged. Path invocations (``/bin/bash``,
+    ``./python3``, ``~/bin/sh``) resolve when possible and then use
+    :attr:`pathlib.Path.name` so policy tiers see ``bash`` / ``python3``.
+    """
+    token = (argv0 or "").strip()
+    if not token:
+        return token
+    path_like = token.startswith(("/", ".", "~")) or "/" in token
+    if path_like:
+        try:
+            resolved = Path(token).expanduser().resolve()
+            name = resolved.name
+            if name:
+                return name
+        except OSError:
+            pass
+        name = Path(token).name
+        if name:
+            return name
+    return Path(token).name or token
+
+
+def policy_command_subjects(command_str: str) -> tuple[str, ...]:
+    """Command strings to evaluate against policy rules.
+
+    Always includes the raw command. When argv[0] is a path, also includes a
+    rewrite that replaces argv[0] with its resolved basename so
+    ``/bin/bash -c id`` is evaluated as ``bash -c id``.
+    """
+    subjects = [command_str]
+    rewritten = _basename_normalized_command(command_str)
+    if rewritten is not None and rewritten not in subjects:
+        subjects.append(rewritten)
+    return tuple(subjects)
+
+
+def _basename_normalized_command(command_str: str) -> str | None:
+    try:
+        tokens = shlex.split(command_str, posix=True)
+    except ValueError:
+        tokens = command_str.split()
+    if not tokens:
+        return None
+    base = argv0_basename_after_resolve(tokens[0])
+    if not base or base == tokens[0]:
+        return None
+    return " ".join([base, *tokens[1:]])
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +259,7 @@ class PolicyEngine:
         return []
 
     def _match_rule(self, command_str: str, rule: CliPolicyRule) -> bool:
-        """Check if a single rule's pattern matches *command_str*."""
+        """Check if a single rule's pattern matches *command_str* or argv[0] basename."""
         matcher = _MATCHERS.get(rule.match_mode)
         if matcher is None:
             logger.warning(
@@ -214,7 +268,7 @@ class PolicyEngine:
                 rule.id,
             )
             return False
-        return matcher(command_str, rule.pattern)
+        return any(matcher(subject, rule.pattern) for subject in policy_command_subjects(command_str))
 
     @staticmethod
     def _decision_for_tier(tier: str, rule: CliPolicyRule) -> CommandPolicyDecision:

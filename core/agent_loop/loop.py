@@ -39,6 +39,7 @@ from core.agent_loop.turn_rules import (
     validate_action_for_turn,
 )
 from core.bm_cli import BossModCliCall, execute_bm_cli, maybe_parse_bm_cli_call
+from core.bm_cli.results import cli_approval_result_messages, cli_continuation_messages
 from core.bm_cli.managed_writer import (
     ManagedWriteProgress,
     is_managed_batch_write_request,
@@ -225,11 +226,12 @@ async def run_turn(
                 command=cmd,
                 reason=note,
             )
-        context.append({"role": "system", "content": approval_context_msg})
-        context.append({
-            "role": "user",
-            "content": load_default_prompt("internal_loop_approval_review_followup"),
-        })
+        context.extend(
+            cli_approval_result_messages(
+                approval_context_msg=approval_context_msg,
+                followup_content=load_default_prompt("internal_loop_approval_review_followup"),
+            )
+        )
 
     # 4. Multi-turn loop
     action_count = 0
@@ -730,14 +732,11 @@ async def run_turn(
 
         # Non-terminal action — feed result back and continue
         if action_name == "bm_cli" and result.get("cli_prompt_content"):
-            continuation_messages = [
-                {"role": "assistant", "content": response.content},
-                {"role": "system", "content": result["cli_prompt_content"]},
-                {
-                    "role": "user",
-                    "content": load_default_prompt("internal_loop_execution_cli_followup"),
-                },
-            ]
+            continuation_messages = cli_continuation_messages(
+                assistant_content=response.content,
+                cli_prompt_content=result["cli_prompt_content"],
+                followup_content=load_default_prompt("internal_loop_execution_cli_followup"),
+            )
         else:
             continuation_messages = [
                 {"role": "assistant", "content": response.content},
@@ -1066,14 +1065,12 @@ async def _run_decision_turn(
                 )
             )
 
-            continuation_messages = [
-                {"role": "assistant", "content": response.content},
-                {"role": "system", "content": cli_result.prompt_content},
-                {
-                    "role": "system",
-                    "content": load_default_prompt("internal_loop_decision_cli_followup"),
-                },
-            ]
+            continuation_messages = cli_continuation_messages(
+                assistant_content=response.content,
+                cli_prompt_content=cli_result.prompt_content,
+                followup_content=load_default_prompt("internal_loop_decision_cli_followup"),
+                followup_role="system",
+            )
             current_context.extend(continuation_messages)
             next_context_snapshot = _serialize_trace_value(continuation_messages)
             continue
