@@ -148,9 +148,11 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] `uv run pytest -q` on a clean checkout is green.
-- [ ] Smoke script either runs those tests or is removed.
-- [ ] Tests use `BOSSMOD_DB_PATH` temp DB (conftest already does).
+- [x] `uv run pytest -q` on a clean checkout is green.
+- [x] Smoke script either runs those tests or is removed.
+- [x] Tests use `BOSSMOD_DB_PATH` temp DB (conftest already does).
+
+**Shipped.** Restored `tests/test_agent_runtime.py` with a small no-LLM critical-path slice (human-chat skip, `create_or_bind_task` + `task_assigned` row, `done` missing-deliverable `world_feedback`, `resolve_relative_path` traversal). `scripts/run_runtime_smoke_suite.sh` now runs that module instead of 11 missing historical node-ids.
 
 ---
 
@@ -190,10 +192,12 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Telegram approve → queued `cli_approval_resolved` + worker wake (or equivalent `runtime_services.enqueue_trigger`).
-- [ ] Telegram reject → same trigger type with `status=rejected`.
-- [ ] Desktop approve uses the same helper (wake guaranteed).
-- [ ] Pytest: approve path creates the trigger without starting Telegram.
+- [x] Telegram approve → queued `cli_approval_resolved` + worker wake (or equivalent `runtime_services.enqueue_trigger`).
+- [x] Telegram reject → same trigger type with `status=rejected`.
+- [x] Desktop approve uses the same helper (wake guaranteed).
+- [x] Pytest: approve path creates the trigger without starting Telegram.
+
+**Shipped.** Shared `resume_cli_approval()` in `core/bm_cli/approvals.py` persists the decision and calls `services.enqueue_trigger` (`cli_approval_resolved`). Telegram `/approve` + callback buttons and desktop `POST /api/cli-policy/approvals/{id}/approve|reject` all use it. Task watchdog expires stale approval rows.
 
 ---
 
@@ -212,9 +216,11 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] No-model `human_chat` → trigger not `failed`; task not `stalled`/`blocked`.
-- [ ] Activity/diagnostic still records the skip reason.
-- [ ] Pytest on dispatcher supervision with a skipped outcome.
+- [x] No-model `human_chat` → trigger not `failed`; task not `stalled`/`blocked`.
+- [x] Activity/diagnostic still records the skip reason.
+- [x] Pytest on dispatcher supervision with a skipped outcome.
+
+**Shipped.** Dispatcher completes a `skipped` trigger instead of routing it through `_exhaust_failed_trigger`. `_skip_turn` no longer sets the bound task `blocked` or tears down the work activity. Diagnostic/activity still record the no-model skip reason.
 
 ---
 

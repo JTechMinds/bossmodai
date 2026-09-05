@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+from core.bm_cli.approvals import resume_cli_approval
 from core.messaging import route_human_dm, route_human_channel_message
 import db
 
@@ -282,14 +283,43 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if decision == "yes":
-        db.approve_cli_approval_request(request.id, decision_by="telegram")
+        approval = await _resume_telegram_approval(context, request.id, approved=True)
+        if approval is None:
+            await update.message.reply_text("This approval is no longer pending.")
+            return
         await update.message.reply_text(f"Approved: {request.command}")
     elif decision == "no":
         note = " ".join(args[2:]) if len(args) > 2 else None
-        db.reject_cli_approval_request(request.id, decision_by="telegram", decision_note=note)
+        approval = await _resume_telegram_approval(
+            context,
+            request.id,
+            approved=False,
+            note=note,
+        )
+        if approval is None:
+            await update.message.reply_text("This approval is no longer pending.")
+            return
         await update.message.reply_text(f"Rejected: {request.command}")
     else:
         await update.message.reply_text("Use 'yes' or 'no': /approve yes <id> or /approve no <id>")
+
+
+async def _resume_telegram_approval(
+    context: ContextTypes.DEFAULT_TYPE,
+    request_id: str,
+    *,
+    approved: bool,
+    note: str | None = None,
+) -> Any | None:
+    """Persist a Telegram approve/reject and enqueue the agent resume trigger."""
+    services = context.bot_data["services"]
+    return await resume_cli_approval(
+        request_id,
+        approved=approved,
+        note=note,
+        decision_by="telegram",
+        services=services,
+    )
 
 
 def _resolve_approval_by_prefix(prefix: str) -> Any | None:
@@ -320,10 +350,16 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
         return
 
     if action == "approve":
-        db.approve_cli_approval_request(request_id, decision_by="telegram")
+        approval = await _resume_telegram_approval(context, request_id, approved=True)
+        if approval is None:
+            await query.edit_message_text("This approval is no longer pending.")
+            return
         await query.edit_message_text(f"Approved: {request.command}")
     elif action == "reject":
-        db.reject_cli_approval_request(request_id, decision_by="telegram")
+        approval = await _resume_telegram_approval(context, request_id, approved=False)
+        if approval is None:
+            await query.edit_message_text("This approval is no longer pending.")
+            return
         await query.edit_message_text(f"Rejected: {request.command}")
     elif action == "ask":
         agent = db.get_agent(request.agent_id)

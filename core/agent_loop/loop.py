@@ -1234,16 +1234,9 @@ async def _skip_turn(
     }
     await manager.broadcast_activity(**result)
 
-    if trigger.get("task_id"):
-        db.update_task(
-            trigger["task_id"],
-            status="blocked",
-            status_note=f"No model configured for '{mode}' mode",
-            watchdog_pinged_at=None,
-        )
-        active_work = activity_runtime.get_active_work_activity(agent.id)
-        if active_work:
-            activity_runtime.complete_activity(active_work.id, detail=f"No model configured for '{mode}' mode")
+    # Do not block/stall the task or tear down work. A missing model is a
+    # settings gap; the dispatcher treats skipped as completed-without-retry
+    # so the trigger is not exhausted (HA-CORR-P0-03).
 
     return await _finalize_turn(
         agent=agent,

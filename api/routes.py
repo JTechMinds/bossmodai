@@ -33,6 +33,7 @@ from api.websocket import manager
 from integrations.telegram.auth import parse_allowed_user_ids
 from core import config
 from core.agent_loop import activity_runtime
+from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
@@ -1890,22 +1891,13 @@ async def list_cli_approval_requests(status: str | None = None, agent_id: str | 
 
 @router.post("/cli-policy/approvals/{request_id}/approve")
 async def approve_cli_request(request_id: str):
-    approval = db.approve_cli_approval_request(request_id)
+    approval = await resume_cli_approval(
+        request_id,
+        approved=True,
+        services=runtime_services,
+    )
     if approval is None:
         raise HTTPException(404, "Approval request not found or already resolved")
-    # Create a trigger so the agent resumes with the approved command
-    db.create_agent_trigger(
-        agent_id=approval.agent_id,
-        trigger_type="cli_approval_resolved",
-        source_channel="system",
-        payload={
-            "approval_request_id": approval.id,
-            "command": approval.command,
-            "content": approval.content,
-            "cwd": approval.cwd,
-            "status": "approved",
-        },
-    )
     await manager.broadcast_activity(
         event="cli_approval_approved",
         detail=f"Command approved: {approval.command}",
@@ -1916,21 +1908,14 @@ async def approve_cli_request(request_id: str):
 @router.post("/cli-policy/approvals/{request_id}/reject")
 async def reject_cli_request(request_id: str, body: CliApprovalDecisionBody | None = None):
     note = body.decision_note if body else None
-    rejection = db.reject_cli_approval_request(request_id, decision_note=note)
+    rejection = await resume_cli_approval(
+        request_id,
+        approved=False,
+        note=note,
+        services=runtime_services,
+    )
     if rejection is None:
         raise HTTPException(404, "Approval request not found or already resolved")
-    # Create a trigger so the agent knows the command was rejected
-    db.create_agent_trigger(
-        agent_id=rejection.agent_id,
-        trigger_type="cli_approval_resolved",
-        source_channel="system",
-        payload={
-            "approval_request_id": rejection.id,
-            "command": rejection.command,
-            "status": "rejected",
-            "decision_note": note,
-        },
-    )
     await manager.broadcast_activity(
         event="cli_approval_rejected",
         detail=f"Command rejected: {rejection.command}" + (f" — {note}" if note else ""),
