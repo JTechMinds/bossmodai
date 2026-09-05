@@ -279,8 +279,10 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 **Acceptance**
 
 - [x] `xargs` is not `always_allowed` in seed. *(done with HA-SEC-P0-03 seed lockdown; also `never_allowed`)*
-- [ ] `bash -c …` denied by argv[0] even if not in the raw prefix table. *(prefix `bash` is now `never_allowed`; `/bin/bash` basename matching still open)*
-- [ ] Tests for argv[0] vs raw-string mismatch.
+- [x] `bash -c …` denied by argv[0] even if not in the raw prefix table. *(prefix `bash` is `never_allowed`; `/bin/bash` / `./bash` match via resolved argv[0] basename)*
+- [x] Tests for argv[0] vs raw-string mismatch.
+
+**Shipped.** `policy_engine` evaluates the raw command **and** rewrites that replace argv[0] with its path basename (not the symlink target — `/usr/bin/python3` stays `python3`, not `python3.12`), a version-stripped form (`python3.12` → `python3`), and the symlink-target basename when it differs (`/bin/sh` → `dash`). `/bin/bash -c id`, `/usr/bin/python3`, `/bin/xargs rm`, and `./bash` are `never_allowed`. Raw prefix still does not match `/bin/bash` (regression-locked); basename subjects close that hole.
 
 ---
 
@@ -298,8 +300,10 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Grep/test: no `cli_prompt_content` attached as `system`.
-- [ ] One pytest on `_cli_result_to_turn_result` / continuation builder.
+- [x] Grep/test: no `cli_prompt_content` attached as `system`.
+- [x] One pytest on `_cli_result_to_turn_result` / continuation builder.
+
+**Shipped.** CLI / approval tool output is wrapped with `<<<BOSSMOD_UNTRUSTED_CLI_RESULT>>>` delimiters on `role=user` (`wrap_cli_tool_message` raises if `role=system`). Execution, decision, and approval-resume paths in `loop.py` use `cli_continuation_messages` / `cli_approval_result_messages`. Source lint `lint_source_for_system_role_cli_wrap` scans `core/`, `api/`, and `integrations/`.
 
 ---
 
@@ -396,9 +400,11 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] Two pending IDs sharing a prefix → `/approve yes ab` errors.
-- [ ] Unique prefix still works.
-- [ ] Pytest (pure function).
+- [x] Two pending IDs sharing a prefix → `/approve yes ab` errors.
+- [x] Unique prefix still works.
+- [x] Pytest (pure function).
+
+**Shipped.** `resolve_approval_by_unique_prefix` refuses empty, missing, and ambiguous prefixes (no first-match). Telegram `/approve` uses it; callbacks still use the full UUID. Lists show at least 8 hex and extend until unique (`display_approval_prefix`).
 
 ---
 
@@ -673,7 +679,7 @@ Companion to HA-SEC-P0-03 / HA-SEC-P1-04 if those PRs shipped without tests (the
 
 **Acceptance.** Interpreters not always-allowed; absolute path denied; unique approval prefix (if HA-SEC-P1-03 landed).
 
-Path-jail + seed/policy tests landed with HA-SEC-P0-03 in `tests/test_cli_policy.py`. Remaining work here is unique-approval-prefix coverage after HA-SEC-P1-03.
+Path-jail + seed/policy tests landed with HA-SEC-P0-03 in `tests/test_cli_policy.py`. Unique-approval-prefix coverage landed with HA-SEC-P1-03 in `tests/test_cli_approval_prefix.py`.
 
 ---
 

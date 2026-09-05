@@ -11,7 +11,13 @@ import pytest
 import db
 from core import config
 from core.bm_cli.filesystem import agent_artifact_dir
-from core.bm_cli.policy_engine import policy_engine
+from core.bm_cli.policy_engine import (
+    argv0_basename_after_resolve,
+    argv0_policy_names,
+    policy_command_subjects,
+    policy_engine,
+    _match_prefix,
+)
 from core.bm_cli.runtime import execute_approved_command
 from core.bm_cli.shell_executor import (
     PATH_JAIL_DENIED_EXIT_CODE,
@@ -268,3 +274,63 @@ def test_policy_engine_denies_hardened_commands_when_shell_enabled() -> None:
         assert decision.allowed is False, command
         assert decision.approval_required is False, command
         assert decision.tier == "never_allowed", command
+
+
+# ---------------------------------------------------------------------------
+# HA-SEC-P1-04 — argv[0] basename after resolve
+# ---------------------------------------------------------------------------
+
+
+def test_raw_prefix_does_not_see_bin_bash() -> None:
+    """The remaining hole: prefix `bash` does not match `/bin/bash` as a raw string."""
+    assert _match_prefix("bash -c id", "bash") is True
+    assert _match_prefix("/bin/bash -c id", "bash") is False
+    assert _match_prefix("/usr/bin/python3 -c 'print(1)'", "python3") is False
+
+
+def test_argv0_basename_after_resolve_strips_path() -> None:
+    assert argv0_basename_after_resolve("/bin/bash") == "bash"
+    assert argv0_basename_after_resolve("/usr/bin/python3") == "python3"
+    assert argv0_basename_after_resolve("./xargs") == "xargs"
+    assert argv0_basename_after_resolve("bash") == "bash"
+    # Do not follow the python3 → python3.12 symlink for the primary name.
+    assert argv0_basename_after_resolve("/usr/bin/python3") != "python3.12"
+
+
+def test_argv0_policy_names_include_version_strip() -> None:
+    names = argv0_policy_names("/usr/bin/python3.12")
+    assert "python3.12" in names
+    assert "python3" in names
+
+
+def test_policy_subjects_include_basename_rewrite() -> None:
+    subjects = policy_command_subjects("/bin/bash -c id")
+    assert "/bin/bash -c id" in subjects
+    assert "bash -c id" in subjects
+
+
+def test_policy_engine_denies_path_qualified_shells_and_xargs() -> None:
+    _enable_shell()
+
+    for command in (
+        "/bin/bash -c id",
+        "/usr/bin/bash -c id",
+        "/bin/sh -c id",
+        "/usr/bin/python3 -c 'print(1)'",
+        "/usr/bin/python3.12 -c 'print(1)'",
+        "/usr/bin/python -c 'print(1)'",
+        "/usr/bin/node -e 'console.log(1)'",
+        "/bin/xargs rm",
+        "./bash -c id",
+    ):
+        decision = policy_engine.evaluate(command, frozenset())
+        assert decision.allowed is False, command
+        assert decision.approval_required is False, command
+        assert decision.tier == "never_allowed", command
+
+
+def test_path_qualified_always_allowed_still_matches_basename() -> None:
+    _enable_shell()
+    decision = policy_engine.evaluate("/bin/cat notes.md", frozenset())
+    assert decision.allowed is True
+    assert decision.tier == "always_allowed"

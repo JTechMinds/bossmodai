@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import re
+import shlex
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 import db
 from core import config
@@ -77,6 +80,80 @@ _MATCHERS = {
     "prefix": _match_prefix,
     "glob": _match_glob,
 }
+
+
+# ``python3.12`` / ``python3.12.3`` should still hit the ``python3`` seed rule.
+_ARGV0_VERSION_SUFFIX_RE = re.compile(r"(?:\.\d+)+$")
+
+
+def argv0_basename_after_resolve(argv0: str) -> str:
+    """Return the basename of *argv0* after expanding a path-like token.
+
+    Uses the path's own name, not the symlink target. Following
+    ``/usr/bin/python3`` → ``python3.12`` would miss the ``python3`` seed rule
+    and is host-dependent. Bare names (``bash``) are unchanged.
+    """
+    token = (argv0 or "").strip()
+    if not token:
+        return token
+    try:
+        expanded = Path(token).expanduser()
+    except OSError:
+        expanded = Path(token)
+    return expanded.name or token
+
+
+def argv0_policy_names(argv0: str) -> tuple[str, ...]:
+    """Basenames that policy rules should see for *argv0*.
+
+    Includes the path basename, a version-stripped form (``python3.12`` →
+    ``python3``), and the symlink-target basename when that differs
+    (``/bin/sh`` → ``dash``) so both names can match ``never_allowed``.
+    """
+    token = (argv0 or "").strip()
+    if not token:
+        return ()
+    names: list[str] = []
+
+    def _add(name: str) -> None:
+        if not name or name in names:
+            return
+        names.append(name)
+        stripped = _ARGV0_VERSION_SUFFIX_RE.sub("", name)
+        if stripped and stripped not in names:
+            names.append(stripped)
+
+    _add(argv0_basename_after_resolve(token))
+    path_like = token.startswith(("/", ".", "~")) or "/" in token
+    if path_like:
+        try:
+            _add(Path(token).expanduser().resolve().name)
+        except OSError:
+            pass
+    return tuple(names)
+
+
+def policy_command_subjects(command_str: str) -> tuple[str, ...]:
+    """Command strings to evaluate against policy rules.
+
+    Always includes the raw command. When argv[0] is a path (or a versioned
+    interpreter), also includes rewrites that replace argv[0] with each
+    policy name so ``/bin/bash -c id`` is evaluated as ``bash -c id``.
+    """
+    subjects = [command_str]
+    try:
+        tokens = shlex.split(command_str, posix=True)
+    except ValueError:
+        tokens = command_str.split()
+    if not tokens:
+        return tuple(subjects)
+    for name in argv0_policy_names(tokens[0]):
+        if name == tokens[0]:
+            continue
+        rewritten = " ".join([name, *tokens[1:]])
+        if rewritten not in subjects:
+            subjects.append(rewritten)
+    return tuple(subjects)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +282,7 @@ class PolicyEngine:
         return []
 
     def _match_rule(self, command_str: str, rule: CliPolicyRule) -> bool:
-        """Check if a single rule's pattern matches *command_str*."""
+        """Check if a single rule's pattern matches *command_str* or argv[0] basename."""
         matcher = _MATCHERS.get(rule.match_mode)
         if matcher is None:
             logger.warning(
@@ -214,7 +291,7 @@ class PolicyEngine:
                 rule.id,
             )
             return False
-        return matcher(command_str, rule.pattern)
+        return any(matcher(subject, rule.pattern) for subject in policy_command_subjects(command_str))
 
     @staticmethod
     def _decision_for_tier(tier: str, rule: CliPolicyRule) -> CommandPolicyDecision:

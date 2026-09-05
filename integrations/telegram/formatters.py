@@ -11,6 +11,8 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from core.bm_cli.approvals import display_approval_prefix
+
 
 _MD_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 
@@ -96,10 +98,11 @@ def format_approval_list(
     if not requests:
         return escape_md("No pending approvals.")
 
+    sibling_ids = [req.id if hasattr(req, "id") else str(req) for req in requests]
     lines = ["*Pending Approvals*\n"]
     for req in requests:
         req_id = req.id if hasattr(req, "id") else str(req)
-        short_id = escape_md(req_id[:8])
+        short_id = escape_md(display_approval_prefix(req_id, sibling_ids))
         command = escape_md(req.command if hasattr(req, "command") else "?")
         agent = agents_map.get(req.agent_id if hasattr(req, "agent_id") else "", None)
         agent_name = escape_md(agent.name if agent and hasattr(agent, "name") else "Unknown")
@@ -118,10 +121,12 @@ def format_approval_card(
     command = escape_md(request.command if hasattr(request, "command") else "?")
     content = escape_md(request.content if hasattr(request, "content") else "")
     req_id = request.id if hasattr(request, "id") else ""
+    short_id = escape_md(display_approval_prefix(req_id, [req_id]))
 
     text_parts = [
         f"*Approval Request*\n",
         f"Agent: *{agent_name}*",
+        f"ID: `{short_id}`",
         f"Command: `{command}`",
     ]
     if content:

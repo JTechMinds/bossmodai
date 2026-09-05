@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
 )
 
-from core.bm_cli.approvals import resume_cli_approval
+from core.bm_cli.approvals import resolve_approval_by_unique_prefix, resume_cli_approval
 from core.messaging import route_human_dm, route_human_channel_message
 import db
 
@@ -277,10 +277,20 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     decision = args[0].lower()
     prefix = args[1].lower()
 
-    request = _resolve_approval_by_prefix(prefix)
-    if request is None:
+    resolved = resolve_approval_by_unique_prefix(
+        prefix,
+        db.list_cli_approval_requests(status="pending"),
+    )
+    if resolved.status == "ambiguous":
+        await update.message.reply_text(
+            f"Ambiguous approval prefix '{prefix}'. "
+            "Use more characters so it matches exactly one pending request."
+        )
+        return
+    if resolved.status != "unique" or resolved.request is None:
         await update.message.reply_text(f"No pending approval matching '{prefix}'.")
         return
+    request = resolved.request
 
     if decision == "yes":
         approval = await _resume_telegram_approval(context, request.id, approved=True)
@@ -320,16 +330,6 @@ async def _resume_telegram_approval(
         decision_by="telegram",
         services=services,
     )
-
-
-def _resolve_approval_by_prefix(prefix: str) -> Any | None:
-    """Find a pending approval request whose ID starts with the given prefix."""
-    requests = db.list_cli_approval_requests(status="pending")
-    prefix_lower = prefix.lower()
-    for req in requests:
-        if req.id.lower().startswith(prefix_lower):
-            return req
-    return None
 
 
 # ---------------------------------------------------------------------------
