@@ -23,7 +23,7 @@ CRITICAL_CALL_SITES = {
         "apiFetch('/api/runtime/state'",
     ],
     "agent-context.js": [
-        "apiFetch(`/api/agents/${selectedAgent.id}/activate`",
+        "apiFetch(`/api/agents/${agentId}/activate`",
         "apiFetch(`/api/agents/${agentId}/messages?limit=50`",
     ],
     "company-files.js": [

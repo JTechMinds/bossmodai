@@ -139,6 +139,8 @@ const AgentContext = (() => {
     const meetingLoad = BossModUtils.createLoadGeneration();
     const tasksLoad = BossModUtils.createLoadGeneration();
     const deskLoad = BossModUtils.createLoadGeneration();
+    const chatSend = BossModUtils.createComposerSendGate();
+    const meetingSend = BossModUtils.createComposerSendGate();
 
     function isLiveAgentLoad(generation, loadId, agentId, subview) {
         if (!generation.isCurrent(loadId)) return false;
@@ -783,9 +785,9 @@ const AgentContext = (() => {
         const allowed = typeof BossModApp !== 'undefined'
             && typeof BossModApp.hasUsableModel === 'function'
             && BossModApp.hasUsableModel();
-        sendBtn.disabled = !allowed;
-        input.disabled = !allowed;
-        input.setAttribute('aria-disabled', allowed ? 'false' : 'true');
+        sendBtn.disabled = !allowed || chatSend.busy();
+        input.disabled = !allowed || chatSend.busy();
+        input.setAttribute('aria-disabled', (allowed && !chatSend.busy()) ? 'false' : 'true');
         sendBtn.setAttribute('title', allowed
             ? 'Send message'
             : 'Connect a model in Settings to send');
@@ -802,38 +804,47 @@ const AgentContext = (() => {
         applyChatSendState();
 
         async function handleSend() {
-            applyChatSendState();
             const el = document.getElementById('chat-input');
-            const text = el?.value.trim();
-            if (!text || !selectedAgent) return;
-            if (typeof BossModApp !== 'undefined'
-                && typeof BossModApp.hasUsableModel === 'function'
-                && !BossModApp.hasUsableModel()) {
-                return;
-            }
+            const btn = document.getElementById('chat-send');
+            if (!el || !selectedAgent) return;
 
-            el.value = '';
-            el.style.height = 'auto';
-            showTypingIndicator();
-
-            try {
-                const res = await apiFetch(`/api/agents/${selectedAgent.id}/activate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text }),
-                });
-                // Always hide indicator once HTTP completes — WS events
-                // arrive before this resolves, so messages are already appended.
-                // If agent produced no reply (walk_to, idle), no WS event fires,
-                // so we must clean up here regardless.
-                hideTypingIndicator();
-                if (!res.ok) {
+            await chatSend.submit({
+                input: el,
+                sendBtn: btn,
+                applyIdleState: applyChatSendState,
+                canSubmit() {
+                    if (!selectedAgent) return false;
+                    if (typeof BossModApp !== 'undefined'
+                        && typeof BossModApp.hasUsableModel === 'function'
+                        && !BossModApp.hasUsableModel()) {
+                        return false;
+                    }
+                    return true;
+                },
+                async send(text) {
+                    const agentId = selectedAgent.id;
+                    showTypingIndicator();
+                    try {
+                        const res = await apiFetch(`/api/agents/${agentId}/activate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ content: text }),
+                        });
+                        if (!res.ok) {
+                            throw new Error('Failed to reach agent.');
+                        }
+                    } finally {
+                        // Always hide indicator once HTTP completes — WS events
+                        // arrive before this resolves, so messages are already appended.
+                        // If agent produced no reply (walk_to, idle), no WS event fires,
+                        // so we must clean up here regardless.
+                        hideTypingIndicator();
+                    }
+                },
+                onError() {
                     appendChatMessage('Failed to reach agent.', 'agent');
-                }
-            } catch {
-                hideTypingIndicator();
-                appendChatMessage('Failed to reach agent.', 'agent');
-            }
+                },
+            });
         }
 
         sendBtn.onclick = handleSend;
@@ -1059,12 +1070,13 @@ const AgentContext = (() => {
                     <div class="flex gap-2 items-end">
                         <textarea id="meeting-input" rows="1"
                                   placeholder="Send a message to everyone in the meeting..."
-                                  class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-none overflow-hidden"></textarea>
+                                  class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-none overflow-hidden disabled:opacity-60 disabled:cursor-not-allowed"></textarea>
                         <button id="meeting-send"
-                                class="px-3 py-2 bg-bm-accent text-white rounded-lg hover:bg-bm-accent-hover transition-colors shrink-0">
+                                class="px-3 py-2 bg-bm-accent text-white rounded-lg hover:bg-bm-accent-hover transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-bm-accent">
                             <i data-lucide="send" class="w-4 h-4"></i>
                         </button>
                     </div>
+                    <p id="meeting-send-error" class="hidden mt-2 text-xs text-red-600" role="alert"></p>
                 </div>
             </div>`;
 
@@ -1081,30 +1093,50 @@ const AgentContext = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [container] });
     }
 
+    function applyMeetingSendState() {
+        const sendBtn = document.getElementById('meeting-send');
+        const input = document.getElementById('meeting-input');
+        if (!sendBtn || !input) return;
+        const busy = meetingSend.busy();
+        sendBtn.disabled = busy;
+        input.disabled = busy;
+    }
+
     function bindMeetingSend(sessionId) {
         const sendBtn = document.getElementById('meeting-send');
         const input = document.getElementById('meeting-input');
         if (!sendBtn || !input || !selectedAgent) return;
+        applyMeetingSendState();
 
         async function handleSend() {
-            const text = String(input.value || '').trim();
-            if (!text || !selectedAgent || !sessionId) return;
+            const el = document.getElementById('meeting-input');
+            const btn = document.getElementById('meeting-send');
+            const errorEl = document.getElementById('meeting-send-error');
+            if (!el || !selectedAgent || !sessionId) return;
+            BossModUtils.setComposerError(errorEl, '');
 
-            input.value = '';
-            input.style.height = 'auto';
-
-            try {
-                const res = await apiFetch(`/api/agents/${selectedAgent.id}/meeting-session/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text }),
-                });
-                if (!res.ok) {
-                    throw new Error(await res.text());
-                }
-            } catch (err) {
-                console.error('[AgentContext] Failed to send meeting message:', err);
-            }
+            await meetingSend.submit({
+                input: el,
+                sendBtn: btn,
+                applyIdleState: applyMeetingSendState,
+                canSubmit() {
+                    return Boolean(selectedAgent && sessionId);
+                },
+                async send(text) {
+                    const agentId = selectedAgent.id;
+                    await apiFetchOk(`/api/agents/${agentId}/meeting-session/messages`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: text }),
+                    });
+                },
+                onError(err) {
+                    BossModUtils.setComposerError(
+                        document.getElementById('meeting-send-error'),
+                        (err && err.message) || 'Failed to send meeting message.',
+                    );
+                },
+            });
         }
 
         sendBtn.onclick = handleSend;
