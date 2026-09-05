@@ -242,7 +242,7 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [x] Two open same-title tasks + new bind → no third row.
 - [x] API response `outcome=clarify_ambiguous_match` with candidate IDs.
 
-**Shipped.** `create_or_bind_task` short-circuits `clarify_ambiguous_match` and does not insert another open task. `POST /api/tasks` returns 409 with `outcome`, `reason`, and candidate IDs/titles. The Assign Task UI lists those candidates; `bind_task_id` reuses a chosen one. Decision/delegate paths raise or return `world_feedback` instead of creating a duplicate.
+**Shipped.** `create_or_bind_task` short-circuits `clarify_ambiguous_match` and does not insert another open task. `POST /api/tasks` returns 409 with `outcome`, `reason`, and candidate IDs/titles. The Assign Task UI lists those candidates; `bind_task_id` reuses a chosen one. Accept/defer and delegated plan materialization return `world_feedback` (expected_action=`clarify`) instead of crashing the turn or silently dropping a child.
 
 ---
 

@@ -27,6 +27,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, build_task_assigned_trigger
 from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.loop import run_turn
 from core.agent_loop.watchdog import TaskWatchdog
 from core.bm_cli.approvals import resume_cli_approval
@@ -511,3 +512,113 @@ def test_create_task_api_unassigned_backlog_does_not_crash(monkeypatch: pytest.M
     assert body["task"]["title"] == "Inbox later"
     assert body["task"]["assigned_to"] is None
     assert db.get_task(body["task"]["id"]) is not None
+
+
+def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Plan",
+            "reply": "I'll take the plan.",
+        },
+        agent,
+        state,
+        {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "multiple open tasks" in result["detail"].lower()
+    assert result.get("expected_action") == "clarify"
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert activity_runtime.get_active_work_activity(agent.id) is None
+    assert all(task.status != "accepted" for task in _open_tasks_with_title("Plan", assigned_to=agent.id))
+
+
+def test_apply_decision_defer_ambiguous_match_returns_world_feedback() -> None:
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+
+    result = apply_decision(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Plan",
+            "reply": "Later.",
+        },
+        agent,
+        state,
+        {"type": "human_chat", "content": "Please plan this", "from_name": "Human"},
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "multiple open tasks" in result["detail"].lower()
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert activity_runtime.get_active_work_activity(agent.id) is None
+
+
+def test_apply_decision_plan_materialize_ambiguous_child_fails_honestly() -> None:
+    lead = _create_agent("Ada")
+    helper = _create_agent("Bea")
+    state = db.get_agent_state(lead.id)
+    assert state is not None
+    parent = db.create_task(title="Ship release", assigned_to=lead.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Ship release",
+            "reply": "Bea can take notes.",
+            "executionPlan": {
+                "mode": "delegate",
+                "delegations": [{"agentId": helper.id, "taskTitle": "Notes"}],
+            },
+        },
+        lead,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": parent.id,
+            "content": "Ship the release",
+            "from_name": "Human",
+        },
+    )
+
+    assert result["event"] == "world_feedback"
+    assert "multiple open tasks" in result["detail"].lower()
+    assert "notes" in result["detail"].lower()
+    assert len(_open_tasks_with_title("Notes", assigned_to=helper.id)) == 2
+    refreshed = db.get_task(parent.id)
+    assert refreshed is not None
+    assert refreshed.status != "accepted"
+    assert activity_runtime.get_active_work_activity(lead.id) is None
+    assert not any(row["trigger_type"] == "task_assigned" and row["task_id"] != parent.id for row in db.list_agent_triggers(helper.id))
