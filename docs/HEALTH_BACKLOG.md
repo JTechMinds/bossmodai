@@ -3,7 +3,7 @@
 Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant to be **one PR**. Do not combine a security P0 with a JS split.
 
 **Legend:** P0 = correctness / security / data-loss. P1 = high-leverage health. P2 = cleanup.  
-**In-flight (do not redo):** PR #1 (this audit’s security ancestor), PR #2 (SEC-P0-01 / SEC-P0-02).
+**Already on `main` (do not redo):** PR #1 (audit ancestor), **PR #2** (SEC-P0-01 / SEC-P0-02 — fail-closed Telegram + local API token + redaction). Those are live, not open.
 
 **ID prefix:** `HA-` (health audit) so these do not collide with `SEC-P0-*` in `docs/AUDIT_P0_P1.md`. Where an item continues that audit, the old ID is listed under **Alias**.
 
@@ -13,7 +13,7 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 | Order | ID | Title | Sev | Area |
 | ---: | --- | --- | --- | --- |
-| — | *(PR #2)* | Fail-closed Telegram + local API token + redaction | P0 | security |
+| — | *(PR #2, shipped)* | Fail-closed Telegram + local API token + redaction | P0 | security |
 | 1 | HA-SEC-P0-04 | Narrow company-files root; hide backups | P0 | security |
 | 2 | HA-SEC-P0-03 | Shell path jail + dangerous seed rules | P0 | security |
 | 3 | HA-TEST-P1-01 | Restore critical-path pytest module | P1 | tests |
@@ -55,13 +55,13 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 
 ---
 
-## In-flight (not in this backlog)
+## Already shipped (not in this backlog)
 
 ### PR #2 — SEC-P0-01 / SEC-P0-02
 
 - **Problem:** Telegram fail-open; unauthenticated REST/WS return secrets and expose reseed/simulator.
-- **Status:** Open branch `cursor/sec-p0-01-p0-02-b82e`. Review and merge before starting HA-STRUCT-P1-08 (JS must send `X-BossMod-Token`).
-- **Acceptance:** Empty allowlist denies; settings/connections redact; unauthenticated `POST /api/settings/reseed` → 401. Already claimed by that PR’s tests.
+- **Status:** **Merged on `main`.** Empty allowlist is deny-all and the bot will not start; `/api` REST and WebSocket require `X-BossMod-Token` (or `Authorization: Bearer`); settings/connections redact secrets. Unauthenticated `POST /api/settings/reseed` → 401.
+- **Do not treat as open.** JS call sites send the token via `apiFetch` (HA-STRUCT-P1-08). Residual first-run UX is HA-OPS-P1-01 (banner / send-disabled), not missing auth.
 
 ---
 

@@ -61,6 +61,20 @@ def test_desktop_uses_recorded_pid_not_pkill() -> None:
     assert "is_recorded_backend" in rust
 
 
+def test_living_docs_do_not_claim_pr2_is_open() -> None:
+    """HA-OPS-P2-03: PR #2 (token + fail-closed Telegram) is on main."""
+    arch = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    backlog = (ROOT / "docs" / "HEALTH_BACKLOG.md").read_text(encoding="utf-8")
+    assert "cursor/sec-p0-01-p0-02-b82e`, open)" not in arch
+    assert "Open branch `cursor/sec-p0-01-p0-02-b82e`" not in backlog
+    assert "Those are live, not open" in backlog
+    assert "Merged on `main`" in backlog
+    assert "local API token" in arch
+    assert "fail-closed" in arch
+    assert "No auth on main" not in arch
+    assert "empty allowlist = allow all" not in arch
+
+
 def test_no_bare_company_raw_img_src_in_app_js() -> None:
     pattern = re.compile(r"""<img[^>]+src=["']/api/""")
     for path in JS.rglob("*.js"):

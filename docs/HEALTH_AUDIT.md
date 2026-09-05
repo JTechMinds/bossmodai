@@ -1,10 +1,12 @@
 # BossMod AI — Project health audit
 
+**This file is a snapshot, not current status.** It records `main` @ `f5405bc` (2026-09-05) and compared then-open PR #1 / PR #2. **PR #2 is merged on `main`:** Telegram is fail-closed (empty allowlist denies and the bot will not start); REST/WS require `X-BossMod-Token`; settings/connections redact. Later HA-* P0/P1 items (company-files root, shell path jail, tests, splits, …) also landed. For what exists now, read [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md). Do not treat findings below as still-open unless the backlog still lists them.
+
 **Repo:** https://github.com/JTechMinds/bossmodai  
 **Branch audited:** `main` @ `f5405bc` (“loop bugfixes”)  
-**Compared against:** open PR #1 (`docs/AUDIT_P0_P1.md`) and open PR #2 (`cursor/sec-p0-01-p0-02-b82e`)  
+**Compared against (at audit time):** PR #1 (`docs/AUDIT_P0_P1.md`) and PR #2 (`cursor/sec-p0-01-p0-02-b82e`, then open; **now merged**)  
 **Scope:** architecture, monoliths, DRY/KISS, DI/boundaries, correctness/glitches, product vs README, tests, remaining security, ops/DX  
-**Method:** local clone of latest `main`; PR #2 inspected via `git show` (not merged). No application refactors in this PR.
+**Method:** local clone of then-current `main`; PR #2 inspected via `git show` (not yet merged at audit time). No application refactors in the audit PR.
 
 Companion docs: [`ARCHITECTURE.md`](ARCHITECTURE.md) (current-state diagrams), [`HEALTH_BACKLOG.md`](HEALTH_BACKLOG.md) (PR-sized work items).
 
