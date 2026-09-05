@@ -192,6 +192,57 @@ def delete_rule(rule_id: str) -> bool:
 # Seed defaults
 # ---------------------------------------------------------------------------
 
+# HA-SEC-P0-03 / overlapping HA-SEC-P1-04 seed lockdown.
+#
+# Choice: ``never_allowed`` (not ``approval_required``) for interpreters,
+# ``xargs``, and POSIX shells.
+#
+# Approval still runs the approved argv, but the path jail only sees
+# filesystem tokens — it cannot inspect ``python -c`` / ``node -e`` /
+# ``bash -c`` payloads. ``xargs`` is an exec multiplexer (stdin becomes
+# another command's argv). Those families therefore stay hard-blocked.
+#
+# Existing databases: :func:`reconcile_hardened_seed_rules` runs from
+# ``init_db`` and upserts these rows. Operators can also use Settings →
+# CLI Policy → Seed defaults, which wipes rules and re-inserts ``_SEED_RULES``.
+
+_HARDENED_NEVER_ALLOWED: list[tuple[str, str, str, str | None, str, str | None, str | None]] = [
+    ("never_allowed", "sh", "prefix", "POSIX shell (arbitrary command execution).", "system",
+     "sh [options] [script]",
+     "Invoke the POSIX shell. Blocked because -c and scripts execute arbitrary host commands that the path jail cannot inspect."),
+    ("never_allowed", "bash", "prefix", "Bash shell (arbitrary command execution).", "system",
+     "bash [options] [script]",
+     "Invoke bash. Blocked because -c and scripts execute arbitrary host commands that the path jail cannot inspect."),
+    ("never_allowed", "zsh", "prefix", "Zsh shell (arbitrary command execution).", "system",
+     "zsh [options] [script]",
+     "Invoke zsh. Blocked because -c and scripts execute arbitrary host commands that the path jail cannot inspect."),
+    ("never_allowed", "dash", "prefix", "Dash shell (arbitrary command execution).", "system",
+     "dash [options] [script]",
+     "Invoke dash. Blocked because -c and scripts execute arbitrary host commands that the path jail cannot inspect."),
+    ("never_allowed", "xargs", "prefix", "Build and execute commands from stdin.", "system",
+     "xargs [options] <command>",
+     "Build and execute commands from stdin. Blocked because it is an exec multiplexer that can invoke never-allowed binaries."),
+    ("never_allowed", "python", "prefix", "Run the Python interpreter.", "development",
+     "python [options] [script]",
+     "Run the Python interpreter. Blocked because -c and imported modules can read or write any host path, bypassing the path jail."),
+    ("never_allowed", "python3", "prefix", "Run the Python 3 interpreter.", "development",
+     "python3 [options] [script]",
+     "Run the Python 3 interpreter. Blocked because -c and imported modules can read or write any host path, bypassing the path jail."),
+    ("never_allowed", "node", "prefix", "Run the Node.js runtime.", "development",
+     "node [options] [script]",
+     "Run the Node.js runtime. Blocked because -e and required modules can read or write any host path, bypassing the path jail."),
+]
+
+HARDENED_NEVER_ALLOWED_PATTERNS: frozenset[str] = frozenset(
+    pattern for _tier, pattern, *_rest in _HARDENED_NEVER_ALLOWED
+)
+
+INTERPRETER_AND_XARGS_PATTERNS: frozenset[str] = frozenset(
+    {"python", "python3", "node", "xargs"}
+)
+
+POSIX_SHELL_PATTERNS: frozenset[str] = frozenset({"sh", "bash", "zsh", "dash"})
+
 _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]] = [
     # (tier, pattern, match_mode, description, category, usage_syntax, help_text)
 
@@ -226,6 +277,7 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
     ("never_allowed", "systemctl", "prefix", "Control systemd services.", "system",
      "systemctl <action> <unit>",
      "Control systemd services and system state. Blocked because agents must not manage system services."),
+    *_HARDENED_NEVER_ALLOWED,
 
     # ── never_allowed — glob ──
     ("never_allowed", "rm -rf /", "glob", "Recursive root delete.", "filesystem",
@@ -295,9 +347,6 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
     ("always_allowed", "tee", "prefix", "Write stdin to stdout and a file.", "general",
      "tee [options] <file>",
      "Read stdin and write to both stdout and a file.\nExample: ls | tee listing.txt"),
-    ("always_allowed", "xargs", "prefix", "Build and execute commands from stdin.", "general",
-     "xargs [options] <command>",
-     "Build and execute commands from stdin.\nExample: find . -name '*.tmp' | xargs rm"),
     ("always_allowed", "seq", "prefix", "Print a sequence of numbers.", "general",
      "seq [first [incr]] <last>",
      "Print a sequence of numbers.\nExample: seq 1 5"),
@@ -313,15 +362,6 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
     ("always_allowed", "expr", "prefix", "Evaluate arithmetic or string expressions.", "general",
      "expr <expression>",
      "Evaluate arithmetic or string expressions.\nExample: expr 2 + 3"),
-    ("always_allowed", "python", "prefix", "Run the Python interpreter.", "development",
-     "python [options] [script]",
-     "Run the Python interpreter or a script.\nExample: python -c 'print(1+1)'"),
-    ("always_allowed", "python3", "prefix", "Run the Python 3 interpreter.", "development",
-     "python3 [options] [script]",
-     "Run the Python 3 interpreter or a script.\nExample: python3 manage.py runserver"),
-    ("always_allowed", "node", "prefix", "Run the Node.js runtime.", "development",
-     "node [options] [script]",
-     "Run the Node.js JavaScript runtime.\nExample: node -e 'console.log(42)'"),
     ("always_allowed", "npm run", "prefix", "Run an NPM script.", "development",
      "npm run <script>",
      "Execute a script defined in package.json.\nExample: npm run build"),
@@ -410,3 +450,63 @@ def seed_default_rules() -> None:
             """,
             [tier, pattern, match_mode, description, category, usage_syntax, help_text],
         )
+
+
+def reconcile_hardened_seed_rules() -> int:
+    """Apply HA-SEC-P0-03 lockdown to existing databases.
+
+    Updates every row (global or agent-specific) whose pattern is in
+    :data:`_HARDENED_NEVER_ALLOWED` so it cannot remain ``always_allowed``
+    or ``approval_required``. Inserts any missing global rows.
+
+    Called from :func:`db.connection.init_db` after :func:`seed_default_rules`.
+    Settings → CLI Policy → Seed defaults remains the full wipe/reseed path.
+
+    Returns the number of inserted or updated rows.
+    """
+    changes = 0
+    for tier, pattern, match_mode, description, category, usage_syntax, help_text in _HARDENED_NEVER_ALLOWED:
+        existing = fetch_all(
+            f"""
+            SELECT {_ALL_COLUMNS}
+            FROM cli_policy_rules
+            WHERE pattern = $1 AND match_mode = $2
+            """,
+            [pattern, match_mode],
+            CliPolicyRule,
+        )
+        if not existing:
+            execute(
+                """
+                INSERT INTO cli_policy_rules (
+                    tier, pattern, match_mode, description,
+                    category, usage_syntax, help_text
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                [tier, pattern, match_mode, description, category, usage_syntax, help_text],
+            )
+            changes += 1
+            continue
+        for rule in existing:
+            if (
+                rule.tier == tier
+                and rule.description == description
+                and rule.category == category
+                and rule.usage_syntax == usage_syntax
+                and rule.help_text == help_text
+                and rule.enabled
+            ):
+                continue
+            updated = update_rule(
+                rule.id,
+                tier=tier,
+                description=description,
+                category=category,
+                usage_syntax=usage_syntax,
+                help_text=help_text,
+                enabled=True,
+            )
+            if updated is not None:
+                changes += 1
+    return changes

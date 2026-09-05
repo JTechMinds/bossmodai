@@ -410,8 +410,10 @@ def init_db() -> None:
     from db.ai_personalities import seed_default_personalities
     seed_default_personalities()
 
-    from db.cli_policy_rules import seed_default_rules
+    from db.cli_policy_rules import reconcile_hardened_seed_rules, seed_default_rules
     seed_default_rules()
+    # HA-SEC-P0-03: existing DBs still have old always_allowed interpreter/xargs rows.
+    reconcile_hardened_seed_rules()
 
     from db.agent_storage_identities import ensure_all_agent_storage_identities
     ensure_all_agent_storage_identities()

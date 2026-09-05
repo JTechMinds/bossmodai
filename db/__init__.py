@@ -52,6 +52,7 @@ from db.cli_policy_rules import (
     get_rule as get_cli_policy_rule,
     get_rules_by_tier as get_cli_policy_rules_by_tier,
     list_rules as list_cli_policy_rules,
+    reconcile_hardened_seed_rules as reconcile_hardened_cli_policy_rules,
     seed_default_rules as seed_default_cli_policy_rules,
     update_rule as update_cli_policy_rule,
 )
@@ -448,6 +449,7 @@ __all__ = [
     "get_cli_policy_rule",
     "get_cli_policy_rules_by_tier",
     "list_cli_policy_rules",
+    "reconcile_hardened_cli_policy_rules",
     "seed_default_cli_policy_rules",
     "update_cli_policy_rule",
     # CLI Approval Requests

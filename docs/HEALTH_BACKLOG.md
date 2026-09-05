@@ -115,10 +115,12 @@ OS sandboxes (landlock/bwrap) can be a follow-up PR if needed.
 
 **Acceptance**
 
-- [ ] `cat /etc/passwd` denied by path jail even if policy would allow `cat`.
-- [ ] Seed rules: no interpreter/`xargs` in `always_allowed`; shells in `never_allowed`.
-- [ ] Existing seed users: migration or “seed defaults” button updates dangerous rows (document the choice).
-- [ ] Tests in `tests/test_cli_policy.py` (can land with HA-TEST-P1-02 if this PR is too fat — prefer tests here).
+- [x] `cat /etc/passwd` denied by path jail even if policy would allow `cat`.
+- [x] Seed rules: no interpreter/`xargs` in `always_allowed`; shells in `never_allowed`.
+- [x] Existing seed users: migration or “seed defaults” button updates dangerous rows (document the choice).
+- [x] Tests in `tests/test_cli_policy.py` (can land with HA-TEST-P1-02 if this PR is too fat — prefer tests here).
+
+**Shipped.** Path jail in `execute_shell_command` (also applied by `execute_approved_command`). Interpreters (`python` / `python3` / `node`), `xargs`, and POSIX shells (`sh` / `bash` / `zsh` / `dash`) are `never_allowed` — not `approval_required` — because `-c` / `-e` payloads and `xargs` exec multiplexing are invisible to the path jail. Existing DBs are hardened on `init_db` via `reconcile_hardened_seed_rules()`; Settings → CLI Policy → Seed defaults still wipes and re-inserts `_SEED_RULES`. `cli_shell_enabled` default remains `false`. argv[0] basename matching is left to HA-SEC-P1-04.
 
 ---
 
@@ -268,8 +270,8 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] `xargs` is not `always_allowed` in seed.
-- [ ] `bash -c …` denied by argv[0] even if not in the raw prefix table.
+- [x] `xargs` is not `always_allowed` in seed. *(done with HA-SEC-P0-03 seed lockdown; also `never_allowed`)*
+- [ ] `bash -c …` denied by argv[0] even if not in the raw prefix table. *(prefix `bash` is now `never_allowed`; `/bin/bash` basename matching still open)*
 - [ ] Tests for argv[0] vs raw-string mismatch.
 
 ---
@@ -662,6 +664,8 @@ Label hunches: keychain UX on Linux is messy; file-based key may be enough for d
 Companion to HA-SEC-P0-03 / HA-SEC-P1-04 if those PRs shipped without tests (they should not). Standalone if needed.
 
 **Acceptance.** Interpreters not always-allowed; absolute path denied; unique approval prefix (if HA-SEC-P1-03 landed).
+
+Path-jail + seed/policy tests landed with HA-SEC-P0-03 in `tests/test_cli_policy.py`. Remaining work here is unique-approval-prefix coverage after HA-SEC-P1-03.
 
 ---
 
