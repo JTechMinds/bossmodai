@@ -1,300 +1,460 @@
 /**
- * BossMod AI — Center dock manager.
+ * BossMod AI — Modular slot shell (v1).
  *
- * Company views (Files / Tasks / Metrics / Org) open as floating windows
- * inside the map workspace. They are not flex siblings of the office map,
- * so they cannot become a squeezed third column beside Activity.
+ * Three named slots (left / center / right). Any pane can be assigned to
+ * any slot. Multiple panes in a slot become tabs. Maximize activates a
+ * pane as a tab that fills its slot — never a floating window over the map.
  */
 
 const DockManager = (() => {
-    const DOCK_IDS = ['files', 'tasks', 'metrics', 'org'];
-    const DEFAULTS = {
-        files: { x: 0.08, y: 0.07, w: 0.70, h: 0.78 },
-        tasks: { x: 0.14, y: 0.12, w: 0.70, h: 0.78 },
-        metrics: { x: 0.20, y: 0.17, w: 0.70, h: 0.78 },
-        org: { x: 0.26, y: 0.22, w: 0.70, h: 0.78 },
+    const SLOT_IDS = ['left', 'center', 'right'];
+    const CORE_PANE_IDS = ['focus', 'map', 'activity'];
+    const COMPANY_PANE_IDS = ['files', 'tasks', 'metrics', 'org'];
+    const PANE_IDS = CORE_PANE_IDS.concat(COMPANY_PANE_IDS);
+    const DOCK_IDS = COMPANY_PANE_IDS;
+    const HOME_SLOT = { focus: 'left', map: 'center', activity: 'right' };
+    const PANE_META = {
+        focus: { label: 'Focus', icon: 'message-circle' },
+        map: { label: 'Office', icon: 'building' },
+        activity: { label: 'Activity', icon: 'activity' },
+        files: { label: 'Files', icon: 'folder' },
+        tasks: { label: 'Tasks', icon: 'list-todo' },
+        metrics: { label: 'Metrics', icon: 'bar-chart-3' },
+        org: { label: 'Org Chart', icon: 'users' },
     };
-    const FILL_RECT = { x: 0.02, y: 0.02, w: 0.96, h: 0.96 };
-    const MIN_FRAC_W = 0.28;
-    const MIN_FRAC_H = 0.28;
 
-    let state = emptyLayout();
-    let zCounter = 20;
-    let focusedId = null;
+    let state = defaultLayout();
     let persist = () => {};
-    let drag = null;
+    let bound = false;
+    let lastCompany = null;
 
-    function emptyLayout() {
-        const layout = {};
-        DOCK_IDS.forEach((id) => {
-            layout[id] = { ...DEFAULTS[id], open: false, z: 1, filled: false, prev: null };
-        });
-        return layout;
-    }
-
-    function clamp01(n, min, max) {
-        const lo = min == null ? 0 : min;
-        const hi = max == null ? 1 : max;
-        return Math.min(hi, Math.max(lo, n));
-    }
-
-    function clampRect(rect) {
-        const w = clamp01(Number(rect.w) || MIN_FRAC_W, MIN_FRAC_W, 1);
-        const h = clamp01(Number(rect.h) || MIN_FRAC_H, MIN_FRAC_H, 1);
-        const x = clamp01(Number(rect.x) || 0, 0, 1 - w);
-        const y = clamp01(Number(rect.y) || 0, 0, 1 - h);
-        return { x, y, w, h };
-    }
-
-    function normalizeLayout(raw) {
-        const layout = emptyLayout();
-        if (!raw || typeof raw !== 'object') return layout;
-        DOCK_IDS.forEach((id) => {
-            const src = raw[id];
-            if (!src || typeof src !== 'object') return;
-            const geom = clampRect(src);
-            layout[id] = {
-                ...geom,
-                open: Boolean(src.open),
-                z: Number.isFinite(src.z) ? src.z : 1,
-                filled: Boolean(src.filled),
-                prev: src.prev && typeof src.prev === 'object' ? clampRect(src.prev) : null,
+    function cloneLayout(layout) {
+        const out = { version: 2, slots: {} };
+        SLOT_IDS.forEach((slotId) => {
+            const slot = layout.slots[slotId] || { panes: [], active: null };
+            out.slots[slotId] = {
+                panes: slot.panes.slice(),
+                active: slot.active || null,
             };
-            zCounter = Math.max(zCounter, layout[id].z);
-        });
-        return layout;
-    }
-
-    function snapshot() {
-        const out = {};
-        DOCK_IDS.forEach((id) => {
-            out[id] = { ...state[id], prev: state[id].prev ? { ...state[id].prev } : null };
         });
         return out;
     }
 
-    function hostEl() {
-        return document.getElementById('dock-layer');
+    function defaultLayout() {
+        return {
+            version: 2,
+            slots: {
+                left: { panes: ['focus'], active: 'focus' },
+                center: { panes: ['map'], active: 'map' },
+                right: { panes: ['activity'], active: 'activity' },
+            },
+        };
     }
 
-    function windowEl(id) {
-        return document.getElementById(`dock-${id}`);
+    function slotOf(layout, paneId) {
+        for (let i = 0; i < SLOT_IDS.length; i += 1) {
+            const slotId = SLOT_IDS[i];
+            if (layout.slots[slotId].panes.indexOf(paneId) !== -1) return slotId;
+        }
+        return null;
     }
 
-    function applyGeom(id) {
-        const win = windowEl(id);
-        const rec = state[id];
-        if (!win || !rec) return;
-        const geom = clampRect(rec);
-        rec.x = geom.x;
-        rec.y = geom.y;
-        rec.w = geom.w;
-        rec.h = geom.h;
-        win.style.left = `${(geom.x * 100).toFixed(2)}%`;
-        win.style.top = `${(geom.y * 100).toFixed(2)}%`;
-        win.style.width = `${(geom.w * 100).toFixed(2)}%`;
-        win.style.height = `${(geom.h * 100).toFixed(2)}%`;
-        win.style.zIndex = String(rec.z || 1);
-        win.classList.toggle('hidden', !rec.open);
-        win.classList.toggle('is-active', rec.open && focusedId === id);
-        win.classList.toggle('is-filled', Boolean(rec.filled));
+    function companyOpenIds(layout) {
+        return COMPANY_PANE_IDS.filter((id) => slotOf(layout, id));
     }
 
-    function applyAll() {
-        DOCK_IDS.forEach(applyGeom);
+    function ensureActive(slot) {
+        if (slot.panes.indexOf(slot.active) === -1) {
+            slot.active = slot.panes[slot.panes.length - 1] || null;
+        }
+        return slot;
     }
 
-    function emitChange() {
-        persist(snapshot());
-        window.dispatchEvent(new CustomEvent('dock-change', { detail: { focused: focusedId, layout: snapshot() } }));
+    function removePane(layout, paneId) {
+        SLOT_IDS.forEach((slotId) => {
+            const slot = layout.slots[slotId];
+            const idx = slot.panes.indexOf(paneId);
+            if (idx === -1) return;
+            slot.panes.splice(idx, 1);
+            ensureActive(slot);
+        });
+        return layout;
     }
 
-    function focus(id) {
-        if (!state[id] || !state[id].open) return;
-        focusedId = id;
-        state[id].z = ++zCounter;
-        DOCK_IDS.forEach(applyGeom);
+    function assignPane(layout, paneId, slotId) {
+        if (PANE_IDS.indexOf(paneId) === -1 || SLOT_IDS.indexOf(slotId) === -1) {
+            return cloneLayout(layout);
+        }
+        const next = cloneLayout(layout);
+        removePane(next, paneId);
+        const slot = next.slots[slotId];
+        if (slot.panes.indexOf(paneId) === -1) slot.panes.push(paneId);
+        slot.active = paneId;
+        return next;
+    }
+
+    function openPane(layout, paneId, slotId) {
+        if (PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
+        const current = slotOf(layout, paneId);
+        const target = SLOT_IDS.indexOf(slotId) !== -1
+            ? slotId
+            : (current || HOME_SLOT[paneId] || 'center');
+        const next = assignPane(layout, paneId, target);
+        next.slots[target].active = paneId;
+        return next;
+    }
+
+    function closePane(layout, paneId) {
+        if (CORE_PANE_IDS.indexOf(paneId) !== -1) return cloneLayout(layout);
+        if (COMPANY_PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
+        const next = cloneLayout(layout);
+        removePane(next, paneId);
+        return next;
+    }
+
+    function closeAllPanes(layout) {
+        let next = cloneLayout(layout);
+        COMPANY_PANE_IDS.forEach((id) => {
+            next = closePane(next, id);
+        });
+        return next;
+    }
+
+    function maximizePane(layout, paneId) {
+        if (PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
+        const current = slotOf(layout, paneId);
+        const target = current || HOME_SLOT[paneId] || 'center';
+        const next = current ? cloneLayout(layout) : openPane(layout, paneId, target);
+        next.slots[target].active = paneId;
+        return next;
+    }
+
+    function activatePane(layout, paneId) {
+        const current = slotOf(layout, paneId);
+        if (!current) return cloneLayout(layout);
+        const next = cloneLayout(layout);
+        next.slots[current].active = paneId;
+        return next;
+    }
+
+    function migrateFloatingLayout(raw) {
+        const next = defaultLayout();
+        COMPANY_PANE_IDS.forEach((id) => {
+            const src = raw[id];
+            if (src && typeof src === 'object' && src.open) {
+                next.slots.center.panes.push(id);
+                next.slots.center.active = id;
+            }
+        });
+        return next;
+    }
+
+    function normalizeLayout(raw) {
+        if (!raw || typeof raw !== 'object') return defaultLayout();
+
+        const looksFloating = COMPANY_PANE_IDS.some((id) => raw[id] && typeof raw[id] === 'object' && ('x' in raw[id] || 'filled' in raw[id] || 'open' in raw[id]))
+            && !raw.slots;
+        if (looksFloating) return migrateFloatingLayout(raw);
+
+        const source = raw.slots && typeof raw.slots === 'object' ? raw : null;
+        if (!source) return defaultLayout();
+
+        const next = {
+            version: 2,
+            slots: {
+                left: { panes: [], active: null },
+                center: { panes: [], active: null },
+                right: { panes: [], active: null },
+            },
+        };
+        const seen = {};
+        SLOT_IDS.forEach((slotId) => {
+            const src = source.slots[slotId];
+            if (!src || typeof src !== 'object') return;
+            const panes = Array.isArray(src.panes) ? src.panes : [];
+            panes.forEach((id) => {
+                if (PANE_IDS.indexOf(id) === -1 || seen[id]) return;
+                seen[id] = true;
+                next.slots[slotId].panes.push(id);
+            });
+            if (typeof src.active === 'string' && next.slots[slotId].panes.indexOf(src.active) !== -1) {
+                next.slots[slotId].active = src.active;
+            }
+            ensureActive(next.slots[slotId]);
+        });
+
+        CORE_PANE_IDS.forEach((id) => {
+            if (seen[id]) return;
+            const home = HOME_SLOT[id];
+            next.slots[home].panes.push(id);
+            if (!next.slots[home].active) next.slots[home].active = id;
+        });
+
+        return next;
+    }
+
+    function snapshot() {
+        return cloneLayout(state);
+    }
+
+    function slotEl(slotId) {
+        return document.getElementById(`slot-${slotId}`);
+    }
+
+    function paneEl(paneId) {
+        return document.querySelector(`[data-pane="${paneId}"]`);
+    }
+
+    function poolEl() {
+        return document.getElementById('dock-pane-pool');
+    }
+
+    function tabbarEl(slotId) {
+        const slot = slotEl(slotId);
+        return slot ? slot.querySelector('[data-slot-tabs]') : null;
+    }
+
+    function bodyEl(slotId) {
+        const slot = slotEl(slotId);
+        return slot ? slot.querySelector('[data-slot-body]') : null;
     }
 
     function renderDock(id) {
+        if (COMPANY_PANE_IDS.indexOf(id) === -1) return;
         if (typeof CompanyDashboard !== 'undefined' && typeof CompanyDashboard.switchTab === 'function') {
             CompanyDashboard.switchTab(id);
         }
     }
 
-    function open(id) {
-        if (!DOCK_IDS.includes(id)) return;
-        const firstOpen = !state[id].open;
-        state[id].open = true;
-        focus(id);
-        if (firstOpen) renderDock(id);
-        emitChange();
-    }
-
-    function close(id) {
-        if (!state[id] || !state[id].open) return;
-        state[id].open = false;
-        state[id].filled = false;
+    function unmountDock(id) {
+        if (COMPANY_PANE_IDS.indexOf(id) === -1) return;
         if (typeof CompanyDashboard !== 'undefined' && typeof CompanyDashboard.unmount === 'function') {
             CompanyDashboard.unmount(id);
         }
-        if (focusedId === id) {
-            focusedId = DOCK_IDS.filter((other) => state[other].open).sort((a, b) => state[b].z - state[a].z)[0] || null;
-        }
-        applyGeom(id);
-        if (focusedId) applyGeom(focusedId);
-        emitChange();
+    }
+
+    function commit(next, options) {
+        const opts = options || {};
+        const prevOpen = companyOpenIds(state);
+        state = next;
+        applyAll();
+        if (!opts.silentPersist) persist(snapshot());
+        window.dispatchEvent(new CustomEvent('dock-change', {
+            detail: { focused: getFocused(), layout: snapshot() },
+        }));
+        const nowOpen = companyOpenIds(state);
+        prevOpen.forEach((id) => {
+            if (nowOpen.indexOf(id) === -1) unmountDock(id);
+        });
+        nowOpen.forEach((id) => {
+            if (prevOpen.indexOf(id) === -1) renderDock(id);
+        });
+        window.dispatchEvent(new Event('panel-resize'));
+    }
+
+    function renderTab(paneId, active) {
+        const meta = PANE_META[paneId] || { label: paneId, icon: 'square' };
+        const closable = COMPANY_PANE_IDS.indexOf(paneId) !== -1;
+        const tab = document.createElement('div');
+        tab.className = `dock-tab${active ? ' is-active' : ''}`;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('tabindex', '0');
+        tab.setAttribute('aria-selected', active ? 'true' : 'false');
+        tab.setAttribute('data-pane-tab', paneId);
+        tab.setAttribute('draggable', 'true');
+        tab.innerHTML = `
+            <span class="dock-tab-label">
+                <i data-lucide="${meta.icon}" class="w-3.5 h-3.5"></i>
+                <span>${meta.label}</span>
+            </span>
+            <span class="dock-tab-actions">
+                <button type="button" class="dock-tab-btn" data-dock-action="maximize" title="Maximize in slot" aria-label="Maximize ${meta.label} in slot">
+                    <i data-lucide="maximize-2" class="w-3 h-3"></i>
+                </button>
+                ${closable ? `<button type="button" class="dock-tab-btn" data-dock-action="close" title="Close" aria-label="Close ${meta.label}">
+                    <i data-lucide="x" class="w-3 h-3"></i>
+                </button>` : ''}
+            </span>
+        `;
+        return tab;
+    }
+
+    function bindTab(tab, paneId) {
+        tab.addEventListener('click', (event) => {
+            if (event.target.closest('[data-dock-action]')) return;
+            activate(paneId);
+        });
+        tab.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                activate(paneId);
+            }
+        });
+        tab.addEventListener('dragstart', (event) => {
+            event.dataTransfer.setData('text/plain', paneId);
+            event.dataTransfer.effectAllowed = 'move';
+            tab.classList.add('is-dragging');
+        });
+        tab.addEventListener('dragend', () => {
+            tab.classList.remove('is-dragging');
+            clearDropTargets();
+        });
+        tab.querySelectorAll('[data-dock-action]').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const action = btn.getAttribute('data-dock-action');
+                if (action === 'close') close(paneId);
+                if (action === 'maximize') maximize(paneId);
+            });
+        });
+    }
+
+    function renderEmptyHint(body) {
+        if (body.querySelector('[data-slot-empty]')) return;
+        const hint = document.createElement('div');
+        hint.className = 'dock-slot-empty';
+        hint.setAttribute('data-slot-empty', 'true');
+        hint.textContent = 'Drop a pane here';
+        body.appendChild(hint);
+    }
+
+    function applySlot(slotId) {
+        const slot = state.slots[slotId];
+        const host = slotEl(slotId);
+        const tabbar = tabbarEl(slotId);
+        const body = bodyEl(slotId);
+        if (!host || !tabbar || !body) return;
+
+        host.classList.toggle('is-empty', slot.panes.length === 0);
+        tabbar.innerHTML = '';
+        slot.panes.forEach((paneId) => {
+            const tab = renderTab(paneId, slot.active === paneId);
+            bindTab(tab, paneId);
+            tabbar.appendChild(tab);
+        });
+        if (window.lucide) lucide.createIcons({ nodes: [tabbar] });
+
+        const emptyHint = body.querySelector('[data-slot-empty]');
+        if (emptyHint) emptyHint.remove();
+
+        slot.panes.forEach((paneId) => {
+            const el = paneEl(paneId);
+            if (!el) return;
+            if (el.parentElement !== body) body.appendChild(el);
+            const active = slot.active === paneId;
+            el.classList.toggle('hidden', !active);
+            el.classList.toggle('is-active', active);
+            el.setAttribute('aria-hidden', active ? 'false' : 'true');
+        });
+
+        if (!slot.panes.length) renderEmptyHint(body);
+    }
+
+    function applyPool() {
+        const pool = poolEl();
+        if (!pool) return;
+        PANE_IDS.forEach((paneId) => {
+            if (slotOf(state, paneId)) return;
+            const el = paneEl(paneId);
+            if (!el) return;
+            if (el.parentElement !== pool) pool.appendChild(el);
+            el.classList.add('hidden');
+            el.classList.remove('is-active');
+        });
+    }
+
+    function applyAll() {
+        SLOT_IDS.forEach(applySlot);
+        applyPool();
+    }
+
+    function clearDropTargets() {
+        SLOT_IDS.forEach((slotId) => {
+            const el = slotEl(slotId);
+            if (el) el.classList.remove('is-drop-target');
+        });
+    }
+
+    function bindSlots() {
+        if (bound) return;
+        bound = true;
+        SLOT_IDS.forEach((slotId) => {
+            const el = slotEl(slotId);
+            if (!el) return;
+            el.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                clearDropTargets();
+                el.classList.add('is-drop-target');
+            });
+            el.addEventListener('dragleave', (event) => {
+                if (el.contains(event.relatedTarget)) return;
+                el.classList.remove('is-drop-target');
+            });
+            el.addEventListener('drop', (event) => {
+                event.preventDefault();
+                clearDropTargets();
+                const paneId = event.dataTransfer.getData('text/plain');
+                if (paneId) assign(paneId, slotId);
+            });
+        });
+    }
+
+    function open(id) {
+        if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
+        commit(openPane(state, id));
+    }
+
+    function close(id) {
+        commit(closePane(state, id));
     }
 
     function closeAll() {
-        let changed = false;
-        DOCK_IDS.forEach((id) => {
-            if (!state[id].open) return;
-            state[id].open = false;
-            state[id].filled = false;
-            if (typeof CompanyDashboard !== 'undefined' && typeof CompanyDashboard.unmount === 'function') {
-                CompanyDashboard.unmount(id);
-            }
-            applyGeom(id);
-            changed = true;
-        });
-        focusedId = null;
-        if (changed) emitChange();
+        const next = closeAllPanes(state);
+        const mapSlot = slotOf(next, 'map');
+        if (mapSlot) next.slots[mapSlot].active = 'map';
+        lastCompany = null;
+        commit(next);
     }
 
-    function fill(id) {
-        if (!state[id] || !state[id].open) return;
-        if (state[id].filled) {
-            const prev = state[id].prev || DEFAULTS[id];
-            Object.assign(state[id], clampRect(prev), { filled: false, prev: null });
-        } else {
-            state[id].prev = { x: state[id].x, y: state[id].y, w: state[id].w, h: state[id].h };
-            Object.assign(state[id], FILL_RECT, { filled: true });
-        }
-        applyGeom(id);
-        emitChange();
+    function assign(id, slotId) {
+        if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
+        commit(assignPane(state, id, slotId));
+    }
+
+    function activate(id) {
+        if (!slotOf(state, id)) return;
+        if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
+        commit(activatePane(state, id));
+    }
+
+    function maximize(id) {
+        if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
+        commit(maximizePane(state, id));
     }
 
     function hasOpen() {
-        return DOCK_IDS.some((id) => state[id] && state[id].open);
+        return companyOpenIds(state).length > 0;
     }
 
     function getFocused() {
-        return focusedId;
-    }
-
-    function maybeSnap(id) {
-        const rec = state[id];
-        if (!rec) return;
-        if (rec.x <= 0.02) {
-            rec.prev = rec.prev || { x: rec.x, y: rec.y, w: rec.w, h: rec.h };
-            Object.assign(rec, { x: 0, y: 0, w: 0.5, h: 1, filled: false });
-        } else if (rec.x + rec.w >= 0.98) {
-            rec.prev = rec.prev || { x: rec.x, y: rec.y, w: rec.w, h: rec.h };
-            Object.assign(rec, { x: 0.5, y: 0, w: 0.5, h: 1, filled: false });
+        for (let i = 0; i < SLOT_IDS.length; i += 1) {
+            const active = state.slots[SLOT_IDS[i]].active;
+            if (COMPANY_PANE_IDS.indexOf(active) !== -1) return active;
         }
-    }
-
-    function bindWindows() {
-        DOCK_IDS.forEach((id) => {
-            const win = windowEl(id);
-            if (!win) return;
-            win.addEventListener('pointerdown', () => {
-                if (state[id].open) focus(id);
-            });
-            const bar = win.querySelector('[data-dock-drag]');
-            if (bar) {
-                bar.addEventListener('pointerdown', (event) => {
-                    if (event.target.closest('[data-dock-action]')) return;
-                    beginDrag(id, 'move', event);
-                });
-            }
-            const handle = win.querySelector('[data-dock-resize]');
-            if (handle) {
-                handle.addEventListener('pointerdown', (event) => {
-                    beginDrag(id, 'resize', event);
-                });
-            }
-            win.querySelectorAll('[data-dock-action]').forEach((btn) => {
-                btn.addEventListener('click', (event) => {
-                    event.stopPropagation();
-                    const action = btn.getAttribute('data-dock-action');
-                    if (action === 'close') close(id);
-                    if (action === 'fill') fill(id);
-                });
-            });
-        });
-
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
-        window.addEventListener('pointercancel', onPointerUp);
-    }
-
-    function beginDrag(id, mode, event) {
-        const host = hostEl();
-        if (!host) return;
-        event.preventDefault();
-        const rec = state[id];
-        drag = {
-            id,
-            mode,
-            startX: event.clientX,
-            startY: event.clientY,
-            hostW: host.clientWidth || 1,
-            hostH: host.clientHeight || 1,
-            orig: { x: rec.x, y: rec.y, w: rec.w, h: rec.h },
-        };
-        rec.filled = false;
-        focus(id);
-        document.body.classList.add('dock-dragging');
-    }
-
-    function onPointerMove(event) {
-        if (!drag) return;
-        const rec = state[drag.id];
-        const dx = (event.clientX - drag.startX) / drag.hostW;
-        const dy = (event.clientY - drag.startY) / drag.hostH;
-        if (drag.mode === 'move') {
-            Object.assign(rec, clampRect({
-                x: drag.orig.x + dx,
-                y: drag.orig.y + dy,
-                w: drag.orig.w,
-                h: drag.orig.h,
-            }));
-        } else {
-            Object.assign(rec, clampRect({
-                x: drag.orig.x,
-                y: drag.orig.y,
-                w: drag.orig.w + dx,
-                h: drag.orig.h + dy,
-            }));
-        }
-        applyGeom(drag.id);
-    }
-
-    function onPointerUp() {
-        if (!drag) return;
-        if (drag.mode === 'move') maybeSnap(drag.id);
-        applyGeom(drag.id);
-        drag = null;
-        document.body.classList.remove('dock-dragging');
-        emitChange();
+        if (lastCompany && slotOf(state, lastCompany)) return lastCompany;
+        const openIds = companyOpenIds(state);
+        return openIds[openIds.length - 1] || null;
     }
 
     function init(options) {
         persist = typeof options.onPersist === 'function' ? options.onPersist : persist;
         state = normalizeLayout(options.layout);
-        bindWindows();
+        lastCompany = getFocused();
+        bindSlots();
         applyAll();
-        DOCK_IDS.forEach((id) => {
-            if (state[id].open) {
-                focusedId = id;
-                renderDock(id);
-            }
-        });
-        const openIds = DOCK_IDS.filter((id) => state[id].open).sort((a, b) => state[a].z - state[b].z);
-        if (openIds.length) focusedId = openIds[openIds.length - 1];
-        applyAll();
+        companyOpenIds(state).forEach(renderDock);
+        persist(snapshot());
     }
 
     return {
@@ -302,13 +462,28 @@ const DockManager = (() => {
         open,
         close,
         closeAll,
-        fill,
-        focus,
+        assign,
+        activate,
+        focus: activate,
+        maximize,
+        fill: maximize,
         hasOpen,
         getFocused,
         snapshot,
-        clampRect,
+        defaultLayout,
         normalizeLayout,
+        assignPane,
+        openPane,
+        closePane,
+        closeAllPanes,
+        maximizePane,
+        activatePane,
+        slotOf,
+        companyOpenIds,
+        SLOT_IDS,
+        PANE_IDS,
+        CORE_PANE_IDS,
+        COMPANY_PANE_IDS,
         DOCK_IDS,
     };
 })();
