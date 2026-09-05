@@ -85,6 +85,7 @@ class TaskCreate(BaseModel):
     requester_id: str | None = None
     owner_id: str | None = None
     parent_task_id: str | None = None
+    bind_task_id: str | None = None
     work_contract: WorkContract | None = None
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
@@ -94,8 +95,21 @@ class TaskCreate(BaseModel):
 TaskCreateOutcome = Literal["create_new_task", "bind_existing_task", "clarify_ambiguous_match"]
 
 
+class TaskCandidateSummary(BaseModel):
+    """One open task that matched an assign/reuse request."""
+
+    id: str
+    title: str
+    status: TaskStatus
+    assigned_to: str | None = None
+    assigned_to_name: str | None = None
+    last_activity: datetime | None = None
+
+
 class TaskCreateResponse(BaseModel):
     """POST /api/tasks result, including whether the workstream was reused."""
 
-    task: Task
+    task: Task | None = None
     outcome: TaskCreateOutcome
+    candidates: list[TaskCandidateSummary] = []
+    reason: str | None = None

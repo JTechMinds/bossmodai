@@ -175,7 +175,7 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [x] Response body includes `outcome` (`create_new_task` \| `bind_existing_task` \| `clarify_ambiguous_match`).
 - [x] Pytest in the module from HA-TEST-P1-01.
 
-**Shipped.** `POST /api/tasks` wakes an open assigned task on create **and** bind/reuse via `assignment_wake_trigger` (`task_assigned`). Response is `{ task, outcome }`. A second assign coalesces an already-queued `task_assigned` row (same helper as follow-up/update). Ambiguous-match short-circuit remains HA-CORR-P1-06.
+**Shipped.** `POST /api/tasks` wakes an open assigned task on create **and** bind/reuse via `assignment_wake_trigger` (`task_assigned`). Response is `{ task, outcome }`. A second assign coalesces an already-queued `task_assigned` row (same helper as follow-up/update). Ambiguous-match short-circuit is HA-CORR-P1-06 (shipped with HA-PROD-P1-01).
 
 ---
 
@@ -239,8 +239,10 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Two open same-title tasks + new bind → no third row.
-- [ ] API response `outcome=clarify_ambiguous_match` with candidate IDs.
+- [x] Two open same-title tasks + new bind → no third row.
+- [x] API response `outcome=clarify_ambiguous_match` with candidate IDs.
+
+**Shipped.** `create_or_bind_task` short-circuits `clarify_ambiguous_match` and does not insert another open task. `POST /api/tasks` returns 409 with `outcome`, `reason`, and candidate IDs/titles. The Assign Task UI lists those candidates; `bind_task_id` reuses a chosen one. Decision/delegate paths raise or return `world_feedback` instead of creating a duplicate.
 
 ---
 
@@ -320,9 +322,11 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Operator can assign a task without chatting.
-- [ ] Assignee gets a `task_assigned` trigger (manual or automated check).
-- [ ] Empty assignee allowed (unassigned backlog) without crash.
+- [x] Operator can assign a task without chatting.
+- [x] Assignee gets a `task_assigned` trigger (manual or automated check).
+- [x] Empty assignee allowed (unassigned backlog) without crash.
+
+**Shipped.** Company → Tasks has an Assign Task form (title, optional assignee, description) that calls `POST /api/tasks` with the local API token. The UI shows `create_new_task`, `bind_existing_task`, and `clarify_ambiguous_match` honestly, including candidate reuse. Pytest covers create/reuse/clarify/unassigned on the API.
 
 ---
 

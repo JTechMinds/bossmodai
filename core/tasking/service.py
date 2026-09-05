@@ -19,7 +19,7 @@ from core.tasking.resolution import OPEN_TASK_STATUSES, TaskResolution, resolve_
 class TaskCreateOrBindResult:
     """Structured result for board-first task creation."""
 
-    task: Task
+    task: Task | None
     outcome: str
     resolution: TaskResolution
 
@@ -77,8 +77,31 @@ def create_or_bind_task(
     audit_author_agent_id: str | None = None,
     audit_event_type: str = "assignment",
     audit_source_trigger_id: str | None = None,
+    bind_task_id: str | None = None,
 ) -> TaskCreateOrBindResult:
     """Create a task only when the board does not already contain the workstream."""
+    if bind_task_id:
+        existing = db.get_task(bind_task_id)
+        if existing is None:
+            raise ValueError("bind_task_id not found")
+        append_task_event(
+            task_id=existing.id,
+            author_type="system",
+            author_name="BossMod",
+            event_type="system",
+            content="Reused the existing open task chosen by the operator.",
+            source_trigger_id=audit_source_trigger_id,
+        )
+        return TaskCreateOrBindResult(
+            task=existing,
+            outcome="bind_existing_task",
+            resolution=TaskResolution(
+                outcome="bind_existing_task",
+                task=existing,
+                candidates=(existing,),
+                reason="Operator selected an existing task.",
+            ),
+        )
     requested_owner_id = owner_id or default_task_owner_id(
         assignee_id=assigned_to,
         requester_id=requester_id,
@@ -105,6 +128,9 @@ def create_or_bind_task(
             source_trigger_id=audit_source_trigger_id,
         )
         return TaskCreateOrBindResult(task=resolution.task, outcome=resolution.outcome, resolution=resolution)
+
+    if resolution.outcome == "clarify_ambiguous_match":
+        return TaskCreateOrBindResult(task=None, outcome="clarify_ambiguous_match", resolution=resolution)
 
     task = db.create_task(
         title=title,

@@ -1,8 +1,10 @@
 """Critical-path agent runtime tests — no live LLM.
 
 Covers HA-TEST-P1-01 (smoke-suite module), HA-CORR-P0-01 (reused tasks
-wake the assignee), HA-CORR-P0-02 (CLI approval resume), and
-HA-CORR-P0-03 (skip-turn must not exhaust the trigger).
+wake the assignee), HA-CORR-P0-02 (CLI approval resume),
+HA-CORR-P0-03 (skip-turn must not exhaust the trigger),
+HA-CORR-P1-06 (ambiguous match must not create a duplicate), and
+HA-PROD-P1-01 (Assign Task API outcomes, including unassigned backlog).
 """
 
 from __future__ import annotations
@@ -403,3 +405,109 @@ def test_repost_same_task_coalesces_already_queued_assignment(monkeypatch: pytes
     queued = _queued_assignment_triggers(agent.id, task_id)
     assert len(queued) == 1
     assert queued[0]["id"] == first_id
+
+
+# ---------------------------------------------------------------------------
+# HA-CORR-P1-06 / HA-PROD-P1-01 — clarify + unassigned assign
+# ---------------------------------------------------------------------------
+
+
+def _open_tasks_with_title(title: str, *, assigned_to: str | None = None) -> list:
+    rows = db.list_tasks(assigned_to=assigned_to) if assigned_to else db.list_tasks()
+    return [task for task in rows if task.title == title]
+
+
+def test_create_or_bind_task_ambiguous_match_does_not_create_duplicate() -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    assert first.id != second.id
+
+    creation = create_or_bind_task(
+        title="Plan",
+        description="Which plan?",
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel=None,
+        notification_policy=None,
+        notification_channel_id=None,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+
+    assert creation.outcome == "clarify_ambiguous_match"
+    assert creation.task is None
+    assert {item.id for item in creation.resolution.candidates} == {first.id, second.id}
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+
+
+def test_create_task_api_ambiguous_match_returns_candidates_without_third_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": "Plan", "assigned_to": agent.id},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["outcome"] == "clarify_ambiguous_match"
+    assert body["task"] is None
+    candidate_ids = {item["id"] for item in body["candidates"]}
+    assert candidate_ids == {first.id, second.id}
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert not db.list_agent_triggers(agent.id)
+
+
+def test_create_task_api_bind_task_id_reuses_chosen_ambiguous_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    client = _task_api_client(monkeypatch)
+    headers = _task_api_headers()
+
+    clarified = client.post("/api/tasks", headers=headers, json={"title": "Plan", "assigned_to": agent.id})
+    assert clarified.status_code == 409
+
+    bound = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={"title": "Plan", "assigned_to": agent.id, "bind_task_id": first.id},
+    )
+
+    assert bound.status_code == 201
+    body = bound.json()
+    assert body["outcome"] == "bind_existing_task"
+    assert body["task"]["id"] == first.id
+    assert len(_open_tasks_with_title("Plan", assigned_to=agent.id)) == 2
+    assert _queued_assignment_triggers(agent.id, first.id)
+
+
+def test_create_task_api_unassigned_backlog_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": "Inbox later", "description": "No owner yet"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["outcome"] == "create_new_task"
+    assert body["task"]["title"] == "Inbox later"
+    assert body["task"]["assigned_to"] is None
+    assert db.get_task(body["task"]["id"]) is not None

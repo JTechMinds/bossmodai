@@ -561,6 +561,8 @@ def _materialize_work_execution_plan(
             audit_source_trigger_id=trigger.get("trigger_id"),
         )
         child = creation.task
+        if child is None:
+            continue
         delegated_children.append(child)
         if child.status == "pending":
             result["trigger_requests"].append(build_task_assigned_trigger(child))
@@ -1049,6 +1051,19 @@ def _attach_reply_artifacts(
     result["trigger_requests"].extend(reply_artifacts.get("trigger_requests", []))
 
 
+def _require_bound_task(creation):
+    """Return the bound task, or ask the decision path to clarify an ambiguous match."""
+    if creation.task is not None:
+        return creation.task
+    titles = ", ".join(
+        f"{item.title} ({item.id})" for item in creation.resolution.candidates
+    ) or "none"
+    raise ValueError(
+        "Multiple open tasks match this workstream; clarify which one to use: "
+        f"{titles}"
+    )
+
+
 def _resolve_or_create_work_task(
     agent: Agent,
     trigger: dict[str, Any],
@@ -1084,7 +1099,7 @@ def _resolve_or_create_work_task(
     )
 
     if parent_task is not None:
-        return create_or_bind_subtask(
+        return _require_bound_task(create_or_bind_subtask(
             parent_task=parent_task,
             title=(decision.taskTitle or "").strip(),
             description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
@@ -1101,8 +1116,8 @@ def _resolve_or_create_work_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
-        ).task
-    return create_or_bind_task(
+        ))
+    return _require_bound_task(create_or_bind_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         project=None,
@@ -1119,7 +1134,7 @@ def _resolve_or_create_work_task(
         audit_author_type="agent",
         audit_author_agent_id=agent.id,
         audit_source_trigger_id=trigger.get("trigger_id"),
-    ).task
+    ))
 
 
 def _ensure_deferred_task(
@@ -1149,7 +1164,7 @@ def _ensure_deferred_task(
         parent_task=parent_task,
     )
     if parent_task is not None:
-        return create_or_bind_subtask(
+        return _require_bound_task(create_or_bind_subtask(
             parent_task=parent_task,
             title=(decision.taskTitle or "").strip(),
             description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
@@ -1166,8 +1181,8 @@ def _ensure_deferred_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
-        ).task
-    return create_or_bind_task(
+        ))
+    return _require_bound_task(create_or_bind_task(
         title=(decision.taskTitle or "").strip(),
         description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
         project=None,
@@ -1184,7 +1199,7 @@ def _ensure_deferred_task(
         audit_author_type="agent",
         audit_author_agent_id=agent.id,
         audit_source_trigger_id=trigger.get("trigger_id"),
-    ).task
+    ))
 
 
 def _persist_work_contract(task, agent: Agent, decision: ConversationDecision):

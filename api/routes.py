@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import FileResponse
 
@@ -57,6 +57,7 @@ from core.models import (
     AIPersonalityCreate,
     AIPersonalityUpdate,
     Task,
+    TaskCandidateSummary,
     TaskCreate,
     TaskCreateResponse,
 )
@@ -1449,8 +1450,29 @@ async def list_tasks(
     ]
 
 
+def _task_candidate_summaries(tasks: tuple | list) -> list[TaskCandidateSummary]:
+    """Serialize ambiguous-match candidates for the Assign Task UI."""
+    agent_ids = {task.assigned_to for task in tasks if getattr(task, "assigned_to", None)}
+    names: dict[str, str] = {}
+    for agent_id in agent_ids:
+        agent = db.get_agent(agent_id)
+        if agent:
+            names[agent_id] = agent.name
+    return [
+        TaskCandidateSummary(
+            id=task.id,
+            title=task.title,
+            status=task.status,
+            assigned_to=task.assigned_to,
+            assigned_to_name=names.get(task.assigned_to) if task.assigned_to else None,
+            last_activity=task.last_activity,
+        )
+        for task in tasks
+    ]
+
+
 @router.post("/tasks", status_code=201)
-async def create_task(body: TaskCreate) -> TaskCreateResponse:
+async def create_task(body: TaskCreate, response: Response) -> TaskCreateResponse:
     work_contract = body.work_contract
     source_channel = body.source_channel or "api"
     notification_policy = body.notification_policy or "completion_blocked"
@@ -1482,6 +1504,8 @@ async def create_task(body: TaskCreate) -> TaskCreateResponse:
                 400,
                 "Task work_contract file deliverables must use absolute BossMod CLI paths when assigned_to is omitted.",
             )
+    if body.bind_task_id and not db.get_task(body.bind_task_id):
+        raise HTTPException(404, "Task not found")
     owner_id = body.owner_id or default_task_owner_id(
         assignee_id=body.assigned_to,
         requester_id=requester_id,
@@ -1489,24 +1513,45 @@ async def create_task(body: TaskCreate) -> TaskCreateResponse:
         parent_task=parent_task,
     )
 
-    creation = create_or_bind_task(
-        title=body.title,
-        description=body.description,
-        project=body.project,
-        assigned_to=body.assigned_to,
-        requester_id=requester_id,
-        owner_id=owner_id,
-        created_by=HUMAN_SENDER_ID,
-        parent_task_id=body.parent_task_id,
-        work_contract=work_contract,
-        source_channel=source_channel,
-        notification_policy=notification_policy,
-        notification_channel_id=body.notification_channel_id,
-        audit_author_name="Human Operator",
-        audit_author_type="human",
-        audit_author_agent_id=None,
-    )
+    try:
+        creation = create_or_bind_task(
+            title=body.title,
+            description=body.description,
+            project=body.project,
+            assigned_to=body.assigned_to,
+            requester_id=requester_id,
+            owner_id=owner_id,
+            created_by=HUMAN_SENDER_ID,
+            parent_task_id=body.parent_task_id,
+            work_contract=work_contract,
+            source_channel=source_channel,
+            notification_policy=notification_policy,
+            notification_channel_id=body.notification_channel_id,
+            audit_author_name="Human Operator",
+            audit_author_type="human",
+            audit_author_agent_id=None,
+            bind_task_id=body.bind_task_id,
+        )
+    except ValueError as exc:
+        if "bind_task_id not found" in str(exc):
+            raise HTTPException(404, "Task not found") from exc
+        raise
+    if creation.outcome == "clarify_ambiguous_match":
+        candidates = _task_candidate_summaries(creation.resolution.candidates)
+        await manager.broadcast_activity(
+            event="task_clarify",
+            detail=f'Multiple open tasks match "{body.title}"',
+        )
+        response.status_code = 409
+        return TaskCreateResponse(
+            task=None,
+            outcome="clarify_ambiguous_match",
+            candidates=candidates,
+            reason=creation.resolution.reason,
+        )
     task = creation.task
+    if task is None:
+        raise HTTPException(500, "Task create/bind returned no task")
     wake = assignment_wake_trigger(task)
     if wake is not None:
         await runtime_services.enqueue_trigger(**wake)
