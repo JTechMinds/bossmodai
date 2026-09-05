@@ -473,9 +473,13 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] `wc -l` each new module < ~400.
-- [ ] Existing pytest + a manual route list (or `app.routes`) unchanged.
-- [ ] No logic rewrites in the same PR.
+- [x] `wc -l` each new module < ~400. *(named routers except `agents.py` — 808; see Shipped)*
+- [x] Existing pytest + a manual route list (or `app.routes`) unchanged.
+- [x] No logic rewrites in the same PR.
+
+**Shipped.** `api/routes.py` is now the `api/routes/` package. Thin aggregator in `__init__.py` (`from api.routes import router` unchanged). Named routers: `ws`, `agents`, `tasks`, `company_files`, `settings`, `cli_policy`, `runtime`. Shared helpers in `_shared.py`; Desk FS helpers in `_desk.py`. Route table (79 endpoints, path + methods + name) locked in `tests/test_route_split.py`.
+
+Honest size: `ws` 40, `tasks` 204, `runtime` 264, `settings` 278, `cli_policy` 288, `company_files` 399 all meet ~400. **`agents.py` is 808** — desk/chat/meetings/channels stay on that HTTP surface so the PR did not invent an eighth router. `_desk.py` (192) is the extracted helper, not a behavior rewrite.
 
 ---
 
@@ -564,8 +568,10 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] `grep` in `core/` has no `from api.`.
-- [ ] World/chat/diagnostic WS events still arrive.
+- [x] `grep` in `core/` has no `from api.`.
+- [x] World/chat/diagnostic WS events still arrive.
+
+**Shipped (same PR as HA-STRUCT-P1-01).** `RuntimeServices` no longer imports `api.websocket.manager`. `main.py` lifespan calls `set_event_sink(manager)` before `start()`. Worker events dispatch through that `EventSink` protocol. Tests in `tests/test_runtime_event_sink.py` cover the core-import lint, injected-sink dispatch, and no-sink no-raise. Live WS still uses the same `ConnectionManager` methods; route handlers still import `manager` directly.
 
 ---
 

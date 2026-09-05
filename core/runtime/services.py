@@ -11,9 +11,8 @@ import sys
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from api.websocket import manager
 from core import config
 import db
 import db.connection as db_connection
@@ -27,6 +26,34 @@ _COMMAND_POLL_INTERVAL_SECONDS = 0.05
 _HEARTBEAT_STALE_SECONDS = 5.0
 _WORKER_NAME = "primary"
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
+
+
+class EventSink(Protocol):
+    """App-process broadcast surface. Wired in ``main.py`` lifespan."""
+
+    async def broadcast_world_state(self) -> None: ...
+
+    async def broadcast_runtime_state(self, payload: dict[str, Any]) -> None: ...
+
+    async def broadcast_chat_message(self, **data: Any) -> None: ...
+
+    async def broadcast_meeting_message(self, **data: Any) -> None: ...
+
+    async def broadcast_channel_message(self, **data: Any) -> None: ...
+
+    async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
+
+    async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None: ...
+
+    async def broadcast_activity(
+        self,
+        event: str,
+        detail: str,
+        agent_name: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
 
 
 class RuntimeServices:
@@ -45,10 +72,15 @@ class RuntimeServices:
         self._ready_future: asyncio.Future[None] | None = None
         self._expecting_shutdown = False
         self._telegram_bridge: Any | None = None
+        self._event_sink: EventSink | None = None
 
     def set_telegram_bridge(self, bridge: Any) -> None:
         """Attach the Telegram event bridge for forwarding runtime events."""
         self._telegram_bridge = bridge
+
+    def set_event_sink(self, sink: EventSink) -> None:
+        """Attach the WebSocket (or test) broadcast sink. ``core`` must not import ``api``."""
+        self._event_sink = sink
 
     async def start(self) -> None:
         """Start the dedicated runtime worker process."""
@@ -369,33 +401,37 @@ class RuntimeServices:
             except Exception:
                 logger.warning("Telegram bridge dispatch failed for %s", kind, exc_info=True)
 
+        sink = self._event_sink
+        if sink is None:
+            return
+
         if kind == "world_state":
-            await manager.broadcast_world_state()
+            await sink.broadcast_world_state()
             return
         if kind == "runtime_state":
-            await manager.broadcast_runtime_state(data["payload"])
+            await sink.broadcast_runtime_state(data["payload"])
             return
         if kind == "chat_message":
-            await manager.broadcast_chat_message(**data)
+            await sink.broadcast_chat_message(**data)
             return
         if kind == "meeting_message":
-            await manager.broadcast_meeting_message(**data)
+            await sink.broadcast_meeting_message(**data)
             return
         if kind == "channel_message":
-            await manager.broadcast_channel_message(**data)
+            await sink.broadcast_channel_message(**data)
             return
         if kind == "diagnostic":
-            await manager.broadcast_diagnostic(data["summary"])
+            await sink.broadcast_diagnostic(data["summary"])
             return
         if kind == "thought":
-            await manager.broadcast_thought(
+            await sink.broadcast_thought(
                 data["agent_id"],
                 data["thought"],
                 data["action_name"],
             )
             return
         if kind == "activity":
-            await manager.broadcast_activity(
+            await sink.broadcast_activity(
                 event=data["event"],
                 detail=data["detail"],
                 agent_name=data.get("agent_name"),
@@ -403,7 +439,7 @@ class RuntimeServices:
             )
             return
         if kind == "feed_update":
-            await manager.broadcast_feed_update(data["entry"])
+            await sink.broadcast_feed_update(data["entry"])
             return
         logger.warning("Unknown runtime event kind received: %s", kind)
 
