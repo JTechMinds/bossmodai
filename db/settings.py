@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from datetime import datetime, timezone
 
 from core.default_prompts import (
@@ -19,6 +20,7 @@ from db.crud import execute, fetch_all, query_one
 
 logger = logging.getLogger(__name__)
 RUNTIME_CONTROL_STATE = "running"
+LOCAL_API_TOKEN_KEY = "local_api_token"
 
 _OBSOLETE_SETTING_KEYS = {
     "action_contract_template",
@@ -132,7 +134,29 @@ def seed_defaults() -> None:
                 "VALUES ($1, $2, $3, $4)",
                 [key, value, category, now],
             )
+    ensure_local_api_token()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
+
+
+def ensure_local_api_token() -> str:
+    """Return the persisted local API token, generating one if missing.
+
+    Not part of ``_SEED_SETTINGS`` so Settings reseed does not rotate it.
+    Application-level DB reset recreates it via ``seed_defaults``.
+    """
+    existing = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        [LOCAL_API_TOKEN_KEY],
+    )
+    value = ""
+    if existing is not None and existing.get("value") is not None:
+        value = str(existing["value"]).strip()
+    if value:
+        return value
+    token = secrets.token_urlsafe(32)
+    set_setting(LOCAL_API_TOKEN_KEY, token, "security")
+    logger.info("Generated local API token")
+    return token
 
 
 def prune_obsolete_settings() -> None:

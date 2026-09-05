@@ -100,6 +100,7 @@ class AgentCreate(BaseModel):
     api_base_url: str | None = None
     api_key: str | None = None
     extra_body: str | None = None
+    connection_id: str | None = None
 
 
 class AgentUpdate(BaseModel):
@@ -122,6 +123,7 @@ class AgentUpdate(BaseModel):
     api_base_url: str | None = None
     api_key: str | None = None
     extra_body: str | None = None
+    connection_id: str | None = None
 
     desk_x: int | None = None
     desk_y: int | None = None

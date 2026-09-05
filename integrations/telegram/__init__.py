@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from core import config
+from integrations.telegram.auth import telegram_start_block_reason
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,11 @@ async def start(
 ) -> Any | None:
     """Launch the Telegram bot.  Returns the event bridge or ``None``."""
     if not is_enabled():
+        return None
+
+    blocked = telegram_start_block_reason()
+    if blocked:
+        logger.error(blocked)
         return None
 
     from integrations.telegram.bot import create_application
