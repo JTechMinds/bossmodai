@@ -13,6 +13,7 @@ from core import config
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.policy_engine import (
     argv0_basename_after_resolve,
+    argv0_policy_names,
     policy_command_subjects,
     policy_engine,
     _match_prefix,
@@ -292,6 +293,14 @@ def test_argv0_basename_after_resolve_strips_path() -> None:
     assert argv0_basename_after_resolve("/usr/bin/python3") == "python3"
     assert argv0_basename_after_resolve("./xargs") == "xargs"
     assert argv0_basename_after_resolve("bash") == "bash"
+    # Do not follow the python3 → python3.12 symlink for the primary name.
+    assert argv0_basename_after_resolve("/usr/bin/python3") != "python3.12"
+
+
+def test_argv0_policy_names_include_version_strip() -> None:
+    names = argv0_policy_names("/usr/bin/python3.12")
+    assert "python3.12" in names
+    assert "python3" in names
 
 
 def test_policy_subjects_include_basename_rewrite() -> None:
@@ -308,6 +317,7 @@ def test_policy_engine_denies_path_qualified_shells_and_xargs() -> None:
         "/usr/bin/bash -c id",
         "/bin/sh -c id",
         "/usr/bin/python3 -c 'print(1)'",
+        "/usr/bin/python3.12 -c 'print(1)'",
         "/usr/bin/python -c 'print(1)'",
         "/usr/bin/node -e 'console.log(1)'",
         "/bin/xargs rm",

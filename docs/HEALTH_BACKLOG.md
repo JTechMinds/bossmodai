@@ -282,7 +282,7 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [x] `bash -c …` denied by argv[0] even if not in the raw prefix table. *(prefix `bash` is `never_allowed`; `/bin/bash` / `./bash` match via resolved argv[0] basename)*
 - [x] Tests for argv[0] vs raw-string mismatch.
 
-**Shipped.** `policy_engine` evaluates the raw command **and** a rewrite where argv[0] is replaced by its basename after `Path.expanduser().resolve()`. `/bin/bash -c id`, `/usr/bin/python3`, `/bin/xargs rm`, and `./bash` are `never_allowed`. Raw prefix still does not match `/bin/bash` (regression-locked); basename subjects close that hole.
+**Shipped.** `policy_engine` evaluates the raw command **and** rewrites that replace argv[0] with its path basename (not the symlink target — `/usr/bin/python3` stays `python3`, not `python3.12`), a version-stripped form (`python3.12` → `python3`), and the symlink-target basename when it differs (`/bin/sh` → `dash`). `/bin/bash -c id`, `/usr/bin/python3`, `/bin/xargs rm`, and `./bash` are `never_allowed`. Raw prefix still does not match `/bin/bash` (regression-locked); basename subjects close that hole.
 
 ---
 
