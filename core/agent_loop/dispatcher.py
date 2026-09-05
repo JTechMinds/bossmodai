@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 _REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
 _WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
+LEASE_HEARTBEAT_SECONDS = 10.0
 
 
 class TurnDispatcher:
@@ -45,7 +46,9 @@ class TurnDispatcher:
         if self._running:
             return
         claim_timeout = config.get_int("trigger_claim_timeout_seconds") or 300
-        recovered = db.requeue_stale_triggers(claim_timeout)
+        # New process: every claimed row is an orphan. force=True does not
+        # touch completed triggers (HA-SEC-P1-02).
+        recovered = db.requeue_stale_triggers(claim_timeout, force=True)
         if recovered:
             logger.warning("Requeued %d stale claimed triggers", recovered)
         self._running = True
@@ -393,6 +396,7 @@ class TurnDispatcher:
                 "trigger_id": candidate.id,
                 "task_id": candidate.task_id,
                 "source_channel": candidate.source_channel,
+                "claim_generation": candidate.claim_generation,
             })
 
             agent = db.get_agent(candidate.agent_id)
@@ -435,8 +439,32 @@ class TurnDispatcher:
                 return claimed
         return None
 
+    async def _heartbeat_claim_lease(self, trigger_id: str, claim_generation: int) -> None:
+        """Keep ``claimed_at`` fresh for the duration of a long LLM/shell turn."""
+        while True:
+            await asyncio.sleep(LEASE_HEARTBEAT_SECONDS)
+            refreshed = db.heartbeat_trigger_lease(trigger_id, claim_generation)
+            if refreshed is None:
+                return
+
+    def _claim_generation_for(self, trigger: dict[str, Any]) -> int | None:
+        raw = trigger.get("claim_generation")
+        if isinstance(raw, int):
+            return raw
+        trigger_id = trigger.get("trigger_id")
+        if not isinstance(trigger_id, str) or not trigger_id:
+            return None
+        row = db.get_agent_trigger(trigger_id)
+        return row.claim_generation if row is not None else None
+
     async def _run_trigger(self, agent: Any, state: Any, trigger: dict[str, Any]) -> None:
         trigger_id = trigger["trigger_id"]
+        claim_generation = self._claim_generation_for(trigger)
+        heartbeat_task: asyncio.Task[None] | None = None
+        if claim_generation is not None:
+            heartbeat_task = asyncio.create_task(
+                self._heartbeat_claim_lease(trigger_id, claim_generation)
+            )
 
         try:
             outcome = await run_turn(agent, state, trigger)
@@ -445,7 +473,7 @@ class TurnDispatcher:
             if outcome.trigger_status == "completed":
                 if self._should_replan_backlog(trigger, outcome.action):
                     self._rebuild_backlog_queue(agent.id)
-                db.complete_agent_trigger(trigger_id)
+                db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
                 self._enqueue_result_triggers(result)
 
                 if result.get("path") and result.get("agent_id"):
@@ -456,7 +484,7 @@ class TurnDispatcher:
                 # No-model (and other) skips are not failures. Completing the
                 # trigger avoids _exhaust_failed_trigger, which would mark the
                 # row failed and can stall the bound task (HA-CORR-P0-03).
-                db.complete_agent_trigger(trigger_id)
+                db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
             else:
                 await self._supervise_failed_turn(
                     agent=agent,
@@ -478,6 +506,10 @@ class TurnDispatcher:
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
         finally:
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
             self._active_turns.pop(agent.id, None)
             final_state = db.get_agent_state(agent.id)
             if final_state and final_state.status == "idle":

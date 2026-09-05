@@ -455,6 +455,8 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     retry_count    INTEGER NOT NULL DEFAULT 0,
     failure_reason TEXT,
     claimed_at     TIMESTAMP,
+    claim_generation INTEGER NOT NULL DEFAULT 0,
+    claim_lease    VARCHAR,
     completed_at   TIMESTAMP,
     failed_at      TIMESTAMP,
     created_at     TIMESTAMP DEFAULT current_timestamp

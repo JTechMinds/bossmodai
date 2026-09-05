@@ -89,7 +89,7 @@ BossMod runs 100% on your machine. That's not a feature we bolted on — it's ho
 
 - Your API keys, agent data, and conversation history never leave your computer
 - Diagnostics and prompt traces are stored locally
-- Connect a local model and the entire workflow is completely offline
+- Connect a local model and the entire workflow is completely offline (UI chrome is vendored — no CDN)
 
 The only time data leaves your machine is if you connect to a cloud AI provider — and that's your choice.
 

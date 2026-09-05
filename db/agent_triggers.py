@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from core.models import AgentTrigger
 from db.crud import execute, fetch_one, insert_returning, query, query_one
 from db.connection import get_connection
+from db.runtime_control import is_runtime_worker_live
 
 _TRIGGER_COLUMNS = (
     "id, agent_id, trigger_type, source_channel, payload, task_id, status, "
-    "retry_count, failure_reason, claimed_at, completed_at, failed_at, created_at"
+    "retry_count, failure_reason, claimed_at, claim_generation, claim_lease, "
+    "completed_at, failed_at, created_at"
 )
 
 _TRIGGER_PRIORITY_CASE = """
@@ -145,17 +148,21 @@ def delete_queued_triggers(
 
 
 def claim_trigger(trigger_id: str) -> AgentTrigger | None:
-    """Claim a specific queued trigger."""
+    """Claim a specific queued trigger and issue a new lease generation."""
     con = get_connection()
     now = datetime.now(timezone.utc)
+    lease = secrets.token_hex(16)
     result = con.execute(
         f"""
         UPDATE agent_triggers
-        SET status = 'claimed', claimed_at = $1
-        WHERE id = $2 AND status = 'queued'
+        SET status = 'claimed',
+            claimed_at = $1,
+            claim_generation = claim_generation + 1,
+            claim_lease = $2
+        WHERE id = $3 AND status = 'queued'
         RETURNING {_TRIGGER_COLUMNS}
         """,
-        [now, trigger_id],
+        [now, lease, trigger_id],
     )
     claimed = result.fetchone()
     if claimed is None:
@@ -163,12 +170,28 @@ def claim_trigger(trigger_id: str) -> AgentTrigger | None:
     return AgentTrigger.model_validate({col[0]: val for col, val in zip(result.description, claimed)})
 
 
+def heartbeat_trigger_lease(trigger_id: str, claim_generation: int) -> AgentTrigger | None:
+    """Refresh ``claimed_at`` for a live lease. No-op if generation mismatch."""
+    return fetch_one(
+        f"""
+        UPDATE agent_triggers
+        SET claimed_at = $1
+        WHERE id = $2
+          AND status = 'claimed'
+          AND claim_generation = $3
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [datetime.now(timezone.utc), trigger_id, claim_generation],
+        AgentTrigger,
+    )
+
+
 def release_trigger(trigger_id: str) -> AgentTrigger | None:
     """Return a claimed trigger back to queued state."""
     return fetch_one(
         f"""
         UPDATE agent_triggers
-        SET status = 'queued', claimed_at = NULL
+        SET status = 'queued', claimed_at = NULL, claim_lease = NULL
         WHERE id = $1 AND status = 'claimed'
         RETURNING {_TRIGGER_COLUMNS}
         """,
@@ -186,6 +209,7 @@ def retry_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
             retry_count = retry_count + 1,
             failure_reason = $1,
             claimed_at = NULL,
+            claim_lease = NULL,
             failed_at = NULL
         WHERE id = $2 AND status IN ('claimed', 'queued')
         RETURNING {_TRIGGER_COLUMNS}
@@ -195,14 +219,48 @@ def retry_agent_trigger(trigger_id: str, reason: str) -> AgentTrigger | None:
     )
 
 
-def requeue_stale_triggers(claim_timeout_seconds: int) -> int:
-    """Return stale claimed triggers to the queue."""
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=claim_timeout_seconds)
+def requeue_stale_triggers(
+    claim_timeout_seconds: int,
+    *,
+    force: bool = False,
+    worker_stale_after_seconds: int = 15,
+) -> int:
+    """Return orphaned claimed triggers to the queue.
+
+    A healthy worker (``lifecycle_state=running`` + fresh heartbeat) never
+    loses in-flight claims, even when ``claimed_at`` is older than the
+    timeout. ``force=True`` is for dispatcher start in a new process: every
+    ``claimed`` row is an orphan of the previous worker. Completed rows are
+    never touched.
+    """
+    if not force and is_runtime_worker_live(stale_after_seconds=worker_stale_after_seconds):
+        return 0
+
+    if force:
+        row = query_one(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM agent_triggers
+            WHERE status = 'claimed'
+            """,
+        )
+        count = int(row["cnt"]) if row else 0
+        if count:
+            execute(
+                """
+                UPDATE agent_triggers
+                SET status = 'queued', claimed_at = NULL, claim_lease = NULL
+                WHERE status = 'claimed'
+                """,
+            )
+        return count
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(0, claim_timeout_seconds))
     row = query_one(
         """
         SELECT COUNT(*) AS cnt
         FROM agent_triggers
-        WHERE status = 'claimed' AND claimed_at < $1
+        WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
         """,
         [cutoff],
     )
@@ -211,24 +269,43 @@ def requeue_stale_triggers(claim_timeout_seconds: int) -> int:
         execute(
             """
             UPDATE agent_triggers
-            SET status = 'queued', claimed_at = NULL
-            WHERE status = 'claimed' AND claimed_at < $1
+            SET status = 'queued', claimed_at = NULL, claim_lease = NULL
+            WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
             """,
             [cutoff],
         )
     return count
 
 
-def complete_agent_trigger(trigger_id: str) -> AgentTrigger | None:
-    """Mark a claimed trigger completed."""
+def complete_agent_trigger(
+    trigger_id: str,
+    *,
+    claim_generation: int | None = None,
+) -> AgentTrigger | None:
+    """Mark a claimed trigger completed.
+
+    When ``claim_generation`` is set, an older in-flight turn cannot complete
+    a row that was requeued and reclaimed.
+    """
+    if claim_generation is None:
+        return fetch_one(
+            f"""
+            UPDATE agent_triggers
+            SET status = 'completed', completed_at = $1
+            WHERE id = $2 AND status = 'claimed'
+            RETURNING {_TRIGGER_COLUMNS}
+            """,
+            [datetime.now(timezone.utc), trigger_id],
+            AgentTrigger,
+        )
     return fetch_one(
         f"""
         UPDATE agent_triggers
         SET status = 'completed', completed_at = $1
-        WHERE id = $2
+        WHERE id = $2 AND status = 'claimed' AND claim_generation = $3
         RETURNING {_TRIGGER_COLUMNS}
         """,
-        [datetime.now(timezone.utc), trigger_id],
+        [datetime.now(timezone.utc), trigger_id, claim_generation],
         AgentTrigger,
     )
 

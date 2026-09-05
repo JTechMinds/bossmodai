@@ -18,6 +18,7 @@ from db.crud import (
     query,
 )
 from db.agent_storage_identities import delete_agent_storage_identity, ensure_agent_storage_identity
+from db.secret_store import decrypt_secret, encrypt_secret
 
 _AGENT_COLUMNS = (
     "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
@@ -41,6 +42,15 @@ _AGENT_VALID_COLUMNS = {
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
 
 _STATE_VALID_COLUMNS = {"x", "y", "status", "last_active_at", "idle_since"}
+
+
+def _decrypt_agent(agent: Agent | None) -> Agent | None:
+    if agent is None or not agent.api_key:
+        return agent
+    plain = decrypt_secret(agent.api_key)
+    if plain == agent.api_key:
+        return agent
+    return agent.model_copy(update={"api_key": plain})
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +93,7 @@ def create_agent(
             [
                 name, role, prompt_template, color,
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
-                api_base_url, api_key, extra_body, desk_x, desk_y,
+                api_base_url, encrypt_secret(api_key), extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
             ],
@@ -120,33 +130,41 @@ def create_agent(
 
 def get_agent(agent_id: str) -> Agent | None:
     """Fetch a single agent by ID."""
-    return fetch_one(
-        f"""
-        SELECT {_AGENT_COLUMNS}
-        FROM agents
-        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-        WHERE agents.id = $1
-        """,
-        [agent_id],
-        Agent,
+    return _decrypt_agent(
+        fetch_one(
+            f"""
+            SELECT {_AGENT_COLUMNS}
+            FROM agents
+            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+            WHERE agents.id = $1
+            """,
+            [agent_id],
+            Agent,
+        )
     )
 
 
 def list_agents() -> list[Agent]:
     """Return all agents ordered by creation time."""
-    return fetch_all(
-        f"""
-        SELECT {_AGENT_COLUMNS}
-        FROM agents
-        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-        ORDER BY agents.created_at
-        """,
-        model_cls=Agent,
-    )
+    return [
+        decrypted
+        for agent in fetch_all(
+            f"""
+            SELECT {_AGENT_COLUMNS}
+            FROM agents
+            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+            ORDER BY agents.created_at
+            """,
+            model_cls=Agent,
+        )
+        if (decrypted := _decrypt_agent(agent)) is not None
+    ]
 
 
 def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     """Update an agent's fields. Returns the updated Agent or None."""
+    if "api_key" in fields:
+        fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
     build_update("agents", "id", agent_id, fields, _AGENT_VALID_COLUMNS)
     return get_agent(agent_id)
 
@@ -216,7 +234,11 @@ def get_agents_by_ids(agent_ids: list[str]) -> dict[str, Agent]:
         agent_ids,
         Agent,
     )
-    return {a.id: a for a in agents}
+    return {
+        agent.id: decrypted
+        for agent in agents
+        if (decrypted := _decrypt_agent(agent)) is not None
+    }
 
 
 # ---------------------------------------------------------------------------

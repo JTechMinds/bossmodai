@@ -435,7 +435,7 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] No model + human_chat → activity message, task not `blocked`.
+- [x] No model + human_chat → activity message, task not `blocked`. *(skip-turn half shipped with HA-CORR-P0-03)*
 - [ ] Banner or send-disabled in UI when no connections/models.
 
 ---
@@ -453,8 +453,10 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] App chrome renders with network disabled **or** README no longer claims fully offline UI.
-- [ ] Tauri CSP matches the choice.
+- [x] App chrome renders with network disabled **or** README no longer claims fully offline UI.
+- [x] Tauri CSP matches the choice.
+
+**Shipped.** Vendored Tailwind Play (`tailwindcss.js`), Lucide 0.469.0, and Split.js 1.6.5 next to `highlight.min.js`. `index.html` no longer hits `cdn.tailwindcss.com` / `unpkg.com`. Tauri CSP is `'self'` plus `'unsafe-inline'` styles and `'unsafe-eval'` (Play compiler). README keeps the offline claim and notes that UI chrome is vendored. Tests in `tests/test_offline_ui.py`.
 
 ---
 
@@ -599,10 +601,10 @@ Prefer A unless product insists on spatial meetings from Telegram.
 
 **Acceptance**
 
-- [ ] Written decision in `docs/` (or this file updated).
-- [ ] If encrypting: keys never written plaintext on `GET` (PR #2) **and** not plaintext in a new DB dump of those columns.
+- [x] Written decision in `docs/` (or this file updated).
+- [x] If encrypting: keys never written plaintext on `GET` (PR #2) **and** not plaintext in a new DB dump of those columns.
 
-Label hunches: keychain UX on Linux is messy; file-based key may be enough for desktop.
+**Shipped (scoped).** Decision: [`docs/SECRETS_AT_REST.md`](SECRETS_AT_REST.md). File key `{db_dir}/.bossmod_data_key` (`chmod 600`), not OS keychain. Wraps `ai_connections.api_key`, `agents.api_key`, and secret settings (`telegram_bot_token`, `local_api_token`) as `bm1:` blobs. CRUD decrypts for the app; `GET` redaction is unchanged. Existing plaintext rows are rewritten on `init_db`. Disk encryption remains the control against theft of the whole data dir. Tests in `tests/test_secrets_at_rest.py`.
 
 ---
 
@@ -620,9 +622,11 @@ Label hunches: keychain UX on Linux is messy; file-based key may be enough for d
 
 **Acceptance**
 
-- [ ] Worker restart after a completed trigger does not replay it.
-- [ ] Worker kill mid-claim eventually requeues once.
-- [ ] Test with a fake long turn (monkeypatch).
+- [x] Worker restart after a completed trigger does not replay it.
+- [x] Worker kill mid-claim eventually requeues once.
+- [x] Test with a fake long turn (monkeypatch).
+
+**Shipped.** `claim_trigger` issues `claim_generation` + `claim_lease` and heartbeats `claimed_at` during `_run_trigger`. `complete_agent_trigger(..., claim_generation=)` refuses a stale generation. `requeue_stale_triggers(force=True)` on dispatcher start recovers orphaned `claimed` rows only (completed stays completed). A live worker (`runtime_worker_state` running + fresh heartbeat) is not stolen by a timeout-only requeue. Tests in `tests/test_trigger_leases.py`.
 
 ---
 
@@ -794,7 +798,7 @@ Replace `pkill -f <main.py path>` with the Child PID Tauri already stores.
 | **Severity** | P2 |
 | **Area** | product |
 
-Stack table still says SQLITE (correct) while `pyproject.toml` unused-depends on DuckDB — mention SQLite only, or drop the dep (HA-OPS-P2-01). After PR #2, document `X-BossMod-Token`. Don’t claim a fully offline UI until HA-OPS-P1-02. Personality count (9 seeded) is already accurate.
+Stack table still says SQLITE (correct) while `pyproject.toml` unused-depends on DuckDB — mention SQLite only, or drop the dep (HA-OPS-P2-01). After PR #2, document `X-BossMod-Token`. UI chrome CDN claim is closed by HA-OPS-P1-02 (vendored). Personality count (9 seeded) is already accurate.
 
 **Acceptance.** README stack/auth/offline sentences match the tree; no false “10 personalities” nit.
 

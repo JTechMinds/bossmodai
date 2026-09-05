@@ -6,15 +6,15 @@
     <title>BossMod AI</title>
     <meta name="bossmod-api-token" content="{{ local_api_token }}">
 
-    <!-- Tailwind CSS (CDN, no build step) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS (vendored Play CDN compiler — HA-OPS-P1-02) -->
+    <script src="{{ static_url('js/vendor/tailwindcss.js') }}"></script>
     <script src="{{ static_url('js/tailwind-config.js') }}"></script>
 
-    <!-- Lucide Icons (CDN) -->
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <!-- Lucide Icons (vendored UMD 0.469.0) -->
+    <script src="{{ static_url('js/vendor/lucide.min.js') }}"></script>
 
-    <!-- Split.js (CDN, 2KB) -->
-    <script src="https://unpkg.com/split.js@1.6.5/dist/split.min.js"></script>
+    <!-- Split.js (vendored 1.6.5) -->
+    <script src="{{ static_url('js/vendor/split.min.js') }}"></script>
 
     <!-- Marked.js (local, markdown renderer) -->
     <script src="{{ static_url('js/vendor/marked.min.js') }}"></script>

@@ -10,11 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import AIConnection, Setting
-
-SECRET_SETTING_KEYS = frozenset({
-    "telegram_bot_token",
-    "local_api_token",
-})
+from db.secret_store import SECRET_SETTING_KEYS
 
 # Never listed on GET /api/settings — injected into the desktop page instead.
 HIDDEN_SETTING_KEYS = frozenset({
