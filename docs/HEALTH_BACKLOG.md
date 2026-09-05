@@ -244,7 +244,7 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 - [x] Accept/defer on an ambiguous title returns `world_feedback` (does not raise / fail the turn).
 - [x] Ambiguous delegated children fail the plan; parent is not accepted and the child is not dropped silently.
 
-**Status.** API + `create_or_bind_task` short-circuit are in (`409` + candidates + `bind_task_id`). Decision path matches the delegate handler: accept/defer and `_materialize_work_execution_plan` return `world_feedback` (`expected_action=clarify`). There is no `_require_bound_task` raise and no `continue` on a missing child.
+**Status.** API + `create_or_bind_task` short-circuit are in (`409` + candidates + `bind_task_id`). Decision path matches the delegate handler: accept/defer and `_materialize_work_execution_plan` return `world_feedback` (`expected_action=clarify`). There is no `_require_bound_task` raise and no `continue` on a missing child. Multi-delegation materialization runs in one SQLite transaction: if a later child hits clarify, earlier new child rows roll back (PR #9 non-blocking follow-up).
 
 ---
 
@@ -345,9 +345,11 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Illegal jump raises / returns error; DB unchanged.
-- [ ] Existing happy paths (`pending→accepted→active→complete`) still work.
-- [ ] Table-driven pytest.
+- [x] Illegal jump raises / returns error; DB unchanged.
+- [x] Existing happy paths (`pending→accepted→active→complete`) still work.
+- [x] Table-driven pytest.
+
+**Shipped.** `transition_task(task_id, to, *, reason, actor)` in `core/tasking/transitions.py` is the shared graph. Identity is allowed; `pending → complete` and other terminal reopen jumps raise `IllegalTaskTransition` and leave the row unchanged. `db.update_task(..., status=...)` uses the same allow-map (no bypass). Status-changing callers (actions, decision_runtime, activity_runtime, watchdog, dispatcher, reset-runtime) go through `transition_task` and write a `task_events` `status_update` row.
 
 ---
 
@@ -364,8 +366,10 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Fixture: accepted task, quiet past threshold → `watchdog_status_ping` queued.
-- [ ] Active task behavior unchanged.
+- [x] Fixture: accepted task, quiet past threshold → `watchdog_status_ping` queued.
+- [x] Active task behavior unchanged.
+
+**Shipped.** `TaskWatchdog` scans `active`, `accepted`, and `waiting` (still skips `pending`, including assigned pending). Waiting tasks can be pinged; they are not escalated to `stalled` after an existing ping (human clarify / dependency). Active still pings and still escalates after an ignored ping.
 
 ---
 

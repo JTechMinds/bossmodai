@@ -36,6 +36,7 @@ from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
 from core.tasking import create_or_bind_task
+from core.tasking.transitions import transition_task
 
 
 def setup_function() -> None:
@@ -344,7 +345,10 @@ def test_assignment_wake_trigger_requires_open_assignee() -> None:
     assert unassigned is not None
     assert assignment_wake_trigger(unassigned) is None
 
-    db.update_task(creation.task.id, assigned_to=agent.id, status="complete")
+    db.update_task(creation.task.id, assigned_to=agent.id)
+    transition_task(creation.task.id, "accepted", reason="test accept", actor="pytest")
+    transition_task(creation.task.id, "active", reason="test start", actor="pytest")
+    transition_task(creation.task.id, "complete", reason="test complete", actor="pytest")
     completed = db.get_task(creation.task.id)
     assert completed is not None
     assert assignment_wake_trigger(completed) is None
@@ -635,3 +639,188 @@ def test_apply_decision_plan_materialize_ambiguous_child_fails_honestly() -> Non
     assert refreshed.status != "accepted"
     assert activity_runtime.get_active_work_activity(lead.id) is None
     assert not any(row["trigger_type"] == "task_assigned" and row["task_id"] != parent.id for row in db.list_agent_triggers(helper.id))
+
+
+def test_apply_decision_multi_delegation_rolls_back_earlier_children_on_clarify() -> None:
+    """PR #9 follow-up: a later clarify must not leave earlier new child rows."""
+    lead = _create_agent("Ada")
+    helper = _create_agent("Bea")
+    writer = _create_agent("Cara")
+    state = db.get_agent_state(lead.id)
+    assert state is not None
+    parent = db.create_task(title="Ship release", assigned_to=lead.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+    db.create_task(
+        title="Notes",
+        assigned_to=helper.id,
+        requester_id=lead.id,
+        owner_id=lead.id,
+        created_by=lead.id,
+        parent_task_id=parent.id,
+    )
+
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Ship release",
+            "reply": "Cara writes the changelog; Bea takes notes.",
+            "executionPlan": {
+                "mode": "delegate",
+                "delegations": [
+                    {"agentId": writer.id, "taskTitle": "Write changelog"},
+                    {"agentId": helper.id, "taskTitle": "Notes"},
+                ],
+            },
+        },
+        lead,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": parent.id,
+            "content": "Ship the release",
+            "from_name": "Human",
+        },
+    )
+
+    assert result["event"] == "world_feedback"
+    assert result.get("expected_action") == "clarify"
+    assert _open_tasks_with_title("Write changelog", assigned_to=writer.id) == []
+    assert len(_open_tasks_with_title("Notes", assigned_to=helper.id)) == 2
+    refreshed = db.get_task(parent.id)
+    assert refreshed is not None
+    assert refreshed.status != "accepted"
+    assert not any(
+        row["trigger_type"] == "task_assigned" and row["task_id"] != parent.id
+        for row in db.list_agent_triggers(writer.id)
+    )
+
+
+# ---------------------------------------------------------------------------
+# HA-CORR-P1-03 — watchdog covers accepted / waiting
+# ---------------------------------------------------------------------------
+
+
+def _quiet_assigned_task(*, agent_id: str, title: str, status: str):
+    creation = _create_task(agent_id=agent_id, title=title)
+    if status != "pending":
+        path = {
+            "accepted": ("accepted",),
+            "active": ("accepted", "active"),
+            "waiting": ("accepted", "active", "waiting"),
+        }[status]
+        for step in path:
+            transition_task(creation.task.id, step, reason=f"setup {step}", actor="pytest")
+    past = datetime.now(timezone.utc) - timedelta(hours=2)
+    db.update_task(
+        creation.task.id,
+        last_progress_at=past,
+        last_heartbeat_at=past,
+        last_activity=past,
+        watchdog_pinged_at=None,
+    )
+    return db.get_task(creation.task.id)
+
+
+def _watchdog_pings(agent_id: str, task_id: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in db.list_agent_triggers(agent_id)
+        if row["trigger_type"] == "watchdog_status_ping"
+        and row["task_id"] == task_id
+        and row["status"] == "queued"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_pings_quiet_accepted_task() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Accepted draft", status="accepted")
+    assert task is not None
+
+    await TaskWatchdog()._check_tasks()
+
+    assert _watchdog_pings(agent.id, task.id)
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "accepted"
+    assert refreshed.watchdog_pinged_at is not None
+
+
+@pytest.mark.asyncio
+async def test_watchdog_still_pings_quiet_active_task() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Active draft", status="active")
+    assert task is not None
+
+    await TaskWatchdog()._check_tasks()
+
+    assert _watchdog_pings(agent.id, task.id)
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_pings_quiet_waiting_task_but_does_not_stall() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Waiting on human", status="waiting")
+    assert task is not None
+
+    await TaskWatchdog()._check_tasks()
+    pings = _watchdog_pings(agent.id, task.id)
+    assert pings
+
+    db.complete_agent_trigger(pings[0]["id"])
+    past_ping = datetime.now(timezone.utc) - timedelta(hours=2)
+    db.update_task(task.id, watchdog_pinged_at=past_ping)
+
+    await TaskWatchdog()._check_tasks()
+
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "waiting"
+    assert refreshed.status != "stalled"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_active_still_escalates_after_ignored_ping() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Active ignored", status="active")
+    assert task is not None
+
+    await TaskWatchdog()._check_tasks()
+    pings = _watchdog_pings(agent.id, task.id)
+    assert pings
+    db.complete_agent_trigger(pings[0]["id"])
+    past_ping = datetime.now(timezone.utc) - timedelta(hours=2)
+    db.update_task(task.id, watchdog_pinged_at=past_ping)
+
+    await TaskWatchdog()._check_tasks()
+
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "stalled"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_skips_pending_assigned_task() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Still pending", status="pending")
+    assert task is not None
+
+    await TaskWatchdog()._check_tasks()
+
+    assert not _watchdog_pings(agent.id, task.id)
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "pending"
+    assert refreshed.watchdog_pinged_at is None

@@ -21,6 +21,7 @@ from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import runtime_events as manager
+from core.tasking.transitions import transition_task
 import db
 
 logger = logging.getLogger(__name__)
@@ -230,9 +231,11 @@ class TurnDispatcher:
 
         task = self._resolve_stuck_task(agent.id, trigger)
         if task is not None:
-            db.update_task(
+            transition_task(
                 task.id,
-                status="stalled",
+                "stalled",
+                reason=f"Runtime exhausted automatic retries: {failure_detail}",
+                actor="BossMod",
                 status_note=f"Runtime exhausted automatic retries: {failure_detail}",
                 watchdog_pinged_at=None,
             )

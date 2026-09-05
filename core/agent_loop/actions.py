@@ -49,6 +49,7 @@ from core.tasking.service import (
     create_or_bind_task,
     list_open_child_tasks,
 )
+from core.tasking.transitions import transition_task
 from core.world.pathfinding import find_path
 from core.world.tilemap import DEFAULT_DESKS, DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, get_room_at
 import db
@@ -782,7 +783,16 @@ async def _handle_work(
 
     task = db.get_task(task_id)
     if task and task.status == "accepted":
-        db.update_task(task.id, status="active", status_note=None, watchdog_pinged_at=None)
+        transition_task(
+            task.id,
+            "active",
+            reason="Started producing work.",
+            actor=agent.name,
+            actor_type="agent",
+            actor_agent_id=agent.id,
+            status_note=None,
+            watchdog_pinged_at=None,
+        )
         task = db.get_task(task.id)
 
     pending_deliverables = missing_deliverables(
@@ -1830,9 +1840,14 @@ async def _handle_complete(
             "missing_deliverables": [item.model_dump() for item in pending_deliverables],
         }
 
-    db.update_task(
+    transition_task(
         task_id,
-        status="complete",
+        "complete",
+        reason=summary or "Task completed.",
+        actor=agent.name,
+        actor_type="agent",
+        actor_agent_id=agent.id,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
         completion_summary=summary or None,
         status_note=None,
         watchdog_pinged_at=None,
@@ -1948,9 +1963,14 @@ async def _handle_blocked(
             "detail": 'This task needs a short requester-facing update. Include data.msg in your "block" action.',
             "agent_name": agent.name,
         }
-    db.update_task(
+    transition_task(
         task_id,
-        status="blocked",
+        "blocked",
+        reason=reason or "Blocked.",
+        actor=agent.name,
+        actor_type="agent",
+        actor_agent_id=agent.id,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
         status_note=reason or None,
         completion_summary=None,
         watchdog_pinged_at=None,
@@ -2068,9 +2088,14 @@ async def _handle_delegated(
             "agent_name": agent.name,
         }
 
-    db.update_task(
+    transition_task(
         task_id,
-        status="delegated",
+        "delegated",
+        reason=f"Delegated to {target.name}",
+        actor=agent.name,
+        actor_type="agent",
+        actor_agent_id=agent.id,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
         status_note=f"Delegated to {target.name}",
         watchdog_pinged_at=None,
     )
@@ -2183,9 +2208,14 @@ async def _handle_abandoned(
             "detail": 'This task needs a short requester-facing update. Include data.msg in your "drop" action.',
             "agent_name": agent.name,
         }
-    db.update_task(
+    transition_task(
         task_id,
-        status="abandoned",
+        "abandoned",
+        reason=reason or "Task abandoned.",
+        actor=agent.name,
+        actor_type="agent",
+        actor_agent_id=agent.id,
+        source_trigger_id=(trigger or {}).get("trigger_id"),
         status_note=reason or None,
         completion_summary=None,
         watchdog_pinged_at=None,
