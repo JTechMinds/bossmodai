@@ -8,6 +8,7 @@ import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
+from core.tasking.resolution import OPEN_TASK_STATUSES
 
 _INTERRUPT_TRIGGER_TYPES = {
     "human_chat",
@@ -68,6 +69,18 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
                 return active
             return activity_runtime.start_assignment_activity(agent_id, task)
     return active
+
+
+def assignment_wake_trigger(task: Task) -> dict[str, Any] | None:
+    """Return a task_assigned spec when an open assigned task should wake the assignee.
+
+    Used for both fresh creates and bind/reuse so a duplicate assign is not silent.
+    """
+    if not task.assigned_to:
+        return None
+    if task.status not in OPEN_TASK_STATUSES:
+        return None
+    return build_task_assigned_trigger(task)
 
 
 def build_task_assigned_trigger(task: Task) -> dict[str, Any]:

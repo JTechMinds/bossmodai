@@ -36,7 +36,7 @@ from core.agent_loop import activity_runtime
 from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.agent_loop.deliverables import build_work_contract
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.task_roles import default_task_owner_id
 from core.llm import context_builder
 from core.llm.template_engine import TemplateError, validate_template
@@ -58,6 +58,7 @@ from core.models import (
     AIPersonalityUpdate,
     Task,
     TaskCreate,
+    TaskCreateResponse,
 )
 from core.world.tilemap import get_map_data
 from core.world.tilemap import get_room_at
@@ -1449,7 +1450,7 @@ async def list_tasks(
 
 
 @router.post("/tasks", status_code=201)
-async def create_task(body: TaskCreate) -> Task:
+async def create_task(body: TaskCreate) -> TaskCreateResponse:
     work_contract = body.work_contract
     source_channel = body.source_channel or "api"
     notification_policy = body.notification_policy or "completion_blocked"
@@ -1506,8 +1507,9 @@ async def create_task(body: TaskCreate) -> Task:
         audit_author_agent_id=None,
     )
     task = creation.task
-    if body.assigned_to and creation.outcome == "create_new_task":
-        await runtime_services.enqueue_trigger(**build_task_assigned_trigger(task))
+    wake = assignment_wake_trigger(task)
+    if wake is not None:
+        await runtime_services.enqueue_trigger(**wake)
     await manager.broadcast_activity(
         event="task_created" if creation.outcome == "create_new_task" else "task_reused",
         detail=(
@@ -1516,7 +1518,7 @@ async def create_task(body: TaskCreate) -> Task:
             else f'Existing task "{task.title}" reused for the same workstream'
         ),
     )
-    return task
+    return TaskCreateResponse(task=task, outcome=creation.outcome)
 
 
 @router.get("/tasks/board")

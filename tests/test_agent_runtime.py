@@ -1,7 +1,8 @@
 """Critical-path agent runtime tests — no live LLM.
 
-Covers HA-TEST-P1-01 (smoke-suite module), HA-CORR-P0-02 (CLI approval
-resume), and HA-CORR-P0-03 (skip-turn must not exhaust the trigger).
+Covers HA-TEST-P1-01 (smoke-suite module), HA-CORR-P0-01 (reused tasks
+wake the assignee), HA-CORR-P0-02 (CLI approval resume), and
+HA-CORR-P0-03 (skip-turn must not exhaust the trigger).
 """
 
 from __future__ import annotations
@@ -13,12 +14,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 import db
+from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
+from api.routes import router
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.activity_scheduler import assignment_wake_trigger, build_task_assigned_trigger
 from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.watchdog import TaskWatchdog
@@ -26,6 +31,7 @@ from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.filesystem import resolve_relative_path
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
+from core.runtime import runtime_services
 from core.tasking import create_or_bind_task
 
 
@@ -281,3 +287,119 @@ async def test_dispatcher_skipped_outcome_does_not_exhaust_trigger() -> None:
         row["status"] == "skipped" and row["error"] and "no model configured" in row["error"].lower()
         for row in diagnostics
     )
+
+
+# ---------------------------------------------------------------------------
+# HA-CORR-P0-01 — reused tasks must wake the assignee
+# ---------------------------------------------------------------------------
+
+
+def _task_api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """HTTP client that persists triggers without starting the runtime worker."""
+
+    async def _persist_trigger(**kwargs: Any) -> None:
+        db.create_agent_trigger(
+            agent_id=kwargs["agent_id"],
+            trigger_type=kwargs["trigger_type"],
+            source_channel=kwargs["source_channel"],
+            payload=kwargs["payload"],
+            task_id=kwargs.get("task_id"),
+        )
+
+    monkeypatch.setattr(runtime_services, "enqueue_trigger", _persist_trigger)
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    return TestClient(app)
+
+
+def _task_api_headers() -> dict[str, str]:
+    return {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
+
+
+def _queued_assignment_triggers(agent_id: str, task_id: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in db.list_agent_triggers(agent_id)
+        if row["trigger_type"] == "task_assigned"
+        and row["task_id"] == task_id
+        and row["status"] == "queued"
+    ]
+
+
+def test_assignment_wake_trigger_requires_open_assignee() -> None:
+    agent = _create_agent()
+    creation = _create_task(agent_id=agent.id)
+    spec = assignment_wake_trigger(creation.task)
+    assert spec is not None
+    assert spec["trigger_type"] == "task_assigned"
+    assert spec["agent_id"] == agent.id
+    assert spec["task_id"] == creation.task.id
+
+    db.update_task(creation.task.id, assigned_to=None)
+    unassigned = db.get_task(creation.task.id)
+    assert unassigned is not None
+    assert assignment_wake_trigger(unassigned) is None
+
+    db.update_task(creation.task.id, assigned_to=agent.id, status="complete")
+    completed = db.get_task(creation.task.id)
+    assert completed is not None
+    assert assignment_wake_trigger(completed) is None
+
+
+def test_create_task_api_returns_outcome_and_queues_task_assigned(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _create_agent()
+    client = _task_api_client(monkeypatch)
+
+    response = client.post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": "Write report", "description": "Draft the weekly report", "assigned_to": agent.id},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["outcome"] == "create_new_task"
+    assert body["task"]["title"] == "Write report"
+    assert body["task"]["assigned_to"] == agent.id
+    assert _queued_assignment_triggers(agent.id, body["task"]["id"])
+
+
+def test_repost_same_task_wakes_assignee_after_trigger_consumed(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _create_agent()
+    client = _task_api_client(monkeypatch)
+    headers = _task_api_headers()
+    payload = {"title": "Write report", "description": "Draft the weekly report", "assigned_to": agent.id}
+
+    created = client.post("/api/tasks", headers=headers, json=payload)
+    assert created.status_code == 201
+    created_body = created.json()
+    task_id = created_body["task"]["id"]
+    first_triggers = _queued_assignment_triggers(agent.id, task_id)
+    assert len(first_triggers) == 1
+    db.complete_agent_trigger(first_triggers[0]["id"])
+    assert not _queued_assignment_triggers(agent.id, task_id)
+
+    reused = client.post("/api/tasks", headers=headers, json=payload)
+    assert reused.status_code == 201
+    reused_body = reused.json()
+    assert reused_body["outcome"] == "bind_existing_task"
+    assert reused_body["task"]["id"] == task_id
+    assert _queued_assignment_triggers(agent.id, task_id)
+
+
+def test_repost_same_task_coalesces_already_queued_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _create_agent()
+    client = _task_api_client(monkeypatch)
+    headers = _task_api_headers()
+    payload = {"title": "Write report", "assigned_to": agent.id}
+
+    created = client.post("/api/tasks", headers=headers, json=payload)
+    task_id = created.json()["task"]["id"]
+    first_id = _queued_assignment_triggers(agent.id, task_id)[0]["id"]
+
+    reused = client.post("/api/tasks", headers=headers, json=payload)
+    assert reused.json()["outcome"] == "bind_existing_task"
+    queued = _queued_assignment_triggers(agent.id, task_id)
+    assert len(queued) == 1
+    assert queued[0]["id"] == first_id

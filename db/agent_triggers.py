@@ -44,7 +44,7 @@ def create_agent_trigger(
     task_id: str | None = None,
 ) -> AgentTrigger:
     """Insert a queued trigger for an agent."""
-    if trigger_type in {"task_follow_up", "task_update"} and task_id:
+    if trigger_type in {"task_follow_up", "task_update", "task_assigned"} and task_id:
         existing = query_one(
             f"""
             SELECT id

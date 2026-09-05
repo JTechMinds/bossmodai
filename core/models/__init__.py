@@ -29,7 +29,7 @@ from core.models.settings import (
     AIPersonalityCreate,
     AIPersonalityUpdate,
 )
-from core.models.task import Task, TaskCreate
+from core.models.task import Task, TaskCreate, TaskCreateOutcome, TaskCreateResponse
 from core.models.task_event import TaskEvent
 from core.models.trigger import AgentTrigger
 from core.models.work_contract import DeliverableSpec, TaskWorkContract, WorkContract
@@ -58,6 +58,8 @@ __all__ = [
     # Task
     "Task",
     "TaskCreate",
+    "TaskCreateOutcome",
+    "TaskCreateResponse",
     "TaskEvent",
     "AgentTrigger",
     "DeliverableSpec",

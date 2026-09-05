@@ -89,3 +89,13 @@ class TaskCreate(BaseModel):
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
     notification_channel_id: str | None = None
+
+
+TaskCreateOutcome = Literal["create_new_task", "bind_existing_task", "clarify_ambiguous_match"]
+
+
+class TaskCreateResponse(BaseModel):
+    """POST /api/tasks result, including whether the workstream was reused."""
+
+    task: Task
+    outcome: TaskCreateOutcome

@@ -171,9 +171,11 @@ Do **not** try to replay all 11 historical names in one PR if fixtures are heavy
 
 **Acceptance**
 
-- [ ] Re-POST same title/assignee → trigger row queued or already-open trigger updated.
-- [ ] Response body includes `outcome` (`create_new_task` \| `bind_existing_task` \| `clarify_ambiguous_match`).
-- [ ] Pytest in the module from HA-TEST-P1-01.
+- [x] Re-POST same title/assignee → trigger row queued or already-open trigger updated.
+- [x] Response body includes `outcome` (`create_new_task` \| `bind_existing_task` \| `clarify_ambiguous_match`).
+- [x] Pytest in the module from HA-TEST-P1-01.
+
+**Shipped.** `POST /api/tasks` wakes an open assigned task on create **and** bind/reuse via `assignment_wake_trigger` (`task_assigned`). Response is `{ task, outcome }`. A second assign coalesces an already-queued `task_assigned` row (same helper as follow-up/update). Ambiguous-match short-circuit remains HA-CORR-P1-06.
 
 ---
 
