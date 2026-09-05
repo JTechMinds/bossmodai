@@ -45,7 +45,7 @@ Ordered work list from [`HEALTH_AUDIT.md`](HEALTH_AUDIT.md). Each item is meant 
 | 29 | HA-SEC-NEW-01 | Connection-test URL allowlist | P2 | security |
 | 30 | HA-OPS-P2-01 | Drop unused `duckdb` / `twilio` | P2 | ops |
 | 31 | HA-OPS-P2-02 | Desktop `pkill` → recorded PID | P2 | ops |
-| 32 | HA-OPS-P2-03 | README personality count + stack table | P2 | product |
+| 32 | HA-OPS-P2-03 | README stack / token / offline copy | P2 | product |
 | 33 | HA-CORR-P2-01 | Safe `config.get_int` | P2 | correctness |
 | 34 | HA-STRUCT-P2-01 | Stop growing `db/__init__.py` | P2 | DI |
 | 35 | HA-PROD-P2-01 | Chat empty-reply UX | P2 | product |
@@ -663,9 +663,9 @@ Replace `pkill -f <main.py path>` with the Child PID Tauri already stores.
 | **Severity** | P2 |
 | **Area** | product |
 
-Fix “9 personalities” → actual count; stack table (SQLite, no DuckDB); mention local API token after PR #2; don’t claim offline UI until HA-OPS-P1-02.
+Stack table still says SQLITE (correct) while `pyproject.toml` unused-depends on DuckDB — mention SQLite only, or drop the dep (HA-OPS-P2-01). After PR #2, document `X-BossMod-Token`. Don’t claim a fully offline UI until HA-OPS-P1-02. Personality count (9 seeded) is already accurate.
 
-**Acceptance.** README matches `prompts/personalities/` and `pyproject.toml`.
+**Acceptance.** README stack/auth/offline sentences match the tree; no false “10 personalities” nit.
 
 ---
 

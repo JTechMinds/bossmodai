@@ -190,7 +190,7 @@ Sources: `README.md`, `prompts/system_prompt.md`, Settings/Company UI, `strategy
 | Intended | Actual |
 | --- | --- |
 | “Assign real work” / First 5 minutes: hire + assign a task | **No Assign Task control.** Chat → decision runtime *may* create a task. Company Tasks is GET-only. Agent Tasks subview is GET `/tasks/board` only. |
-| “9 ready-made personalities” | **10** files under `prompts/personalities/` (includes `default_role.md`). |
+| “9 ready-made personalities” | **Correct.** Nine names are seeded from `core/default_prompts.py`. `personalities/default_role.md` is the fallback for agents with no personality, not a tenth catalog entry. |
 | “Works with any model” / connect a brain first | True if the user follows the README. If they hire first, turns skip (`No model configured`) and may **block** a task. No modal blocks chat. |
 | “Use a local model and the entire workflow is completely offline” | UI loads Tailwind, Lucide, Split.js from **CDN**. Tauri CSP explicitly allows `cdn.tailwindcss.com` and `unpkg.com`. Offline first-run = broken chrome. |
 | “Your API keys never leave your computer” | Keys live in plaintext SQLite; company-files can expose backups; `GET /api/settings` and connections leak them on `main`. |
@@ -198,7 +198,7 @@ Sources: `README.md`, `prompts/system_prompt.md`, Settings/Company UI, `strategy
 | Telegram `/meeting` = all-agent group | Implemented as a **channel**, not a spatial meeting with invites/arrival timeouts. |
 | System prompt: task board is authoritative; don’t invent new work | Runtime tries (`resolve_existing_task`) but reuse doesn’t re-notify; board UI can’t create/edit. |
 | Scenario matrix (`strategy-docs/scenario_matrix_evals.md`) | Spec only. Smoke script names the tests; files are gone. |
-| README stack table: SQLITE; user brief mentioned DuckDB | Runtime is SQLite. `duckdb` is an unused dependency; `connection.py` still rewrites DuckDB-ish SQL. |
+| README stack table: SQLITE | Runtime is SQLite. `duckdb` is an unused dependency; `connection.py` still rewrites DuckDB-ish SQL (`$1`, `ILIKE`). |
 
 ---
 
