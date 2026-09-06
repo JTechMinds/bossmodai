@@ -6,7 +6,12 @@ from typing import Any
 
 import db
 from core.agent_loop.activity_scheduler import build_task_follow_up_trigger
-from core.agent_loop.channel_rounds import begin_channel_response, finalize_channel_response, observe_channel_message
+from core.agent_loop.channel_rounds import (
+    begin_channel_response,
+    finalize_channel_response,
+    observe_channel_message,
+    post_agent_channel_share,
+)
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.meeting_rounds import begin_session_response, finalize_session_response, observe_session_message
 from core.agent_loop.message_delivery import (
@@ -410,23 +415,14 @@ def _persist_task_follow_up_reply(
             }
 
     if task.notification_channel_id and task.source_channel == "channel":
-        message = db.create_channel_message(
+        channel_message, peer_wakes = post_agent_channel_share(
             channel_id=task.notification_channel_id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
+            agent=agent,
             content=reply,
-            source_channel="channel",
         )
         return {
-            "channel_message": {
-                "channel_id": task.notification_channel_id,
-                "content": message.content,
-                "author_type": "agent",
-                "author_name": agent.name,
-                "message_id": message.id,
-                "created_at": message.created_at,
-            }
+            "channel_message": channel_message,
+            "trigger_requests": peer_wakes,
         }
 
     reply_target = task_assignment_reply_target(task, assignee_id=agent.id)

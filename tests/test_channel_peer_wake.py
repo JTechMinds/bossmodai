@@ -1,13 +1,17 @@
-"""Channel peers must wake after a member shares a channel deliverable.
+"""Human ingress opens a channel round; agent shares must open a new one.
 
-The first human-message round can complete with everyone having spoken.
-A later findings post / task complete must open a new channel_message round
-for the other members — not leave the channel silent after the done card.
-No LLM.
+Cause on main: operator posts wake every member. Agent Task→channel shares
+and system completion cards only broadcast, so peers burn the first round
+and the findings stay transcript-only.
+
+Bar: agent-authored shares that need peer attention open a new response
+round for other members (exclude author). Pure system completion cards
+do not wake anyone. No LLM.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -19,8 +23,9 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_scheduler import persist_result_triggers
-from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.agent_loop.channel_rounds import begin_channel_response, start_channel_peer_round
 from core.agent_loop.decision_runtime import apply_decision
+from core.agent_loop.notifications import ChatNotification, persist_channel_notification
 from core.messaging import route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
@@ -110,6 +115,31 @@ def _queued_channel_messages(agent_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _trigger_payload(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("payload")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return {}
+
+
+def _queued_for_round(agent_id: str, round_id: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in _queued_channel_messages(agent_id)
+        if _trigger_payload(row).get("round_id") == round_id
+    ]
+
+
+def _round_count(channel_id: str) -> int:
+    rows = db.query(
+        "SELECT COUNT(*) AS n FROM channel_response_rounds WHERE channel_id = $1",
+        [channel_id],
+    )
+    return int(rows[0]["n"]) if rows else 0
+
+
 class _SilentBroadcast:
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
         return None
@@ -178,9 +208,25 @@ async def test_human_channel_message_still_wakes_every_member() -> None:
 
 
 @pytest.mark.asyncio
-async def test_channel_task_complete_opens_new_round_for_peers_not_author() -> None:
+async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
     jim, laura, jimothy, channel = _three_members()
-    first_round = _complete_human_round(channel.id, [jim.id, laura.id, jimothy.id])
+    services = _RecordingServices()
+    asked = await route_human_channel_message(
+        channel_id=channel.id,
+        channel_name=channel.name,
+        content="Jimothy share the review findings, then I want feedback on how to proceed.",
+        from_name="Human Operator",
+        broadcast_manager=_SilentBroadcast(),
+        services=services,
+    )
+    first_round_id = asked["round_id"]
+    assert {call["agent_id"] for call in services.calls} == {jim.id, laura.id, jimothy.id}
+    for agent_id in (jim.id, laura.id, jimothy.id):
+        db.mark_channel_candidate_responded(round_id=first_round_id, agent_id=agent_id)
+    db.maybe_complete_channel_response_round(first_round_id)
+    first_round = db.get_channel_response_round(first_round_id)
+    assert first_round is not None
+    assert first_round.status == "completed"
 
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
     assert creation.task is not None
@@ -203,6 +249,7 @@ async def test_channel_task_complete_opens_new_round_for_peers_not_author() -> N
     )
     assert completed["event"] == "status_changed"
     assert completed.get("channel_message")
+    assert completed["channel_message"]["author_type"] == "agent"
     assert "/me/jtech-cli-review-summary.md" in completed["channel_message"]["content"]
 
     peer_wakes = _channel_message_requests(completed)
@@ -210,17 +257,25 @@ async def test_channel_task_complete_opens_new_round_for_peers_not_author() -> N
     new_round_ids = {item["payload"]["round_id"] for item in peer_wakes}
     assert len(new_round_ids) == 1
     new_round_id = next(iter(new_round_ids))
-    assert new_round_id != first_round.id
-
-    new_round = db.get_channel_response_round(new_round_id)
-    assert new_round is not None
-    assert new_round.status == "active"
-    assert new_round.source_message_id == completed["channel_message"]["message_id"]
+    assert new_round_id != first_round_id
+    assert all(item["payload"]["author_type"] == "agent" for item in peer_wakes)
+    assert all(item["payload"]["from_agent"] == jimothy.id for item in peer_wakes)
 
     persist_result_triggers(completed)
-    assert _queued_channel_messages(jim.id)
-    assert _queued_channel_messages(laura.id)
-    assert not _queued_channel_messages(jimothy.id)
+    assert _queued_for_round(jim.id, new_round_id)
+    assert _queued_for_round(laura.id, new_round_id)
+    assert not _queued_for_round(jimothy.id, new_round_id)
+
+    queued, active = begin_channel_response(
+        jim,
+        {
+            "round_id": new_round_id,
+            "channel_id": channel.id,
+            "content": completed["channel_message"]["content"],
+        },
+    )
+    assert queued["event"] == "decision_applied"
+    assert active is True
 
 
 @pytest.mark.asyncio
@@ -315,3 +370,63 @@ def test_channel_response_reply_does_not_open_nested_peer_round() -> None:
     refreshed = db.get_channel_response_round(round_record.id)
     assert refreshed is not None
     assert refreshed.status == "completed"
+
+
+def test_task_channel_share_via_decision_reply_opens_peer_round() -> None:
+    jim, laura, jimothy, channel = _three_members()
+    first_round = _complete_human_round(channel.id, [jim.id, laura.id, jimothy.id])
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+
+    result = apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "status_request",
+            "reply": "Jtech-CLI review summary is ready at /me/jtech-cli-review-summary.md",
+        },
+        jimothy,
+        state,
+        {
+            "type": "task_follow_up",
+            "task_id": creation.task.id,
+            "content": "Share the review findings with the team.",
+            "from_name": "Human Operator",
+        },
+    )
+
+    assert result["event"] == "decision_applied"
+    assert result.get("channel_message")
+    assert result["channel_message"]["author_type"] == "agent"
+    peer_wakes = _channel_message_requests(result)
+    assert {item["agent_id"] for item in peer_wakes} == {jim.id, laura.id}
+    new_round_id = peer_wakes[0]["payload"]["round_id"]
+    assert new_round_id != first_round.id
+    persist_result_triggers(result)
+    assert _queued_channel_messages(jim.id)
+    assert _queued_channel_messages(laura.id)
+    assert not _queued_channel_messages(jimothy.id)
+
+
+def test_system_completion_card_does_not_open_peer_round() -> None:
+    jim, laura, jimothy, channel = _three_members()
+    before = _round_count(channel.id)
+    persist_channel_notification(
+        jimothy,
+        ChatNotification(
+            kind="completion",
+            content=(
+                'Jimothy finished "Share review findings" and saved it to '
+                "/me/jtech-cli-review-summary.md. Claim: artifact "
+                "/me/jtech-cli-review-summary.md."
+            ),
+            source_channel="channel",
+            policy="completion_blocked",
+            channel_id=channel.id,
+        ),
+    )
+    assert _round_count(channel.id) == before
+    assert not _queued_channel_messages(jim.id)
+    assert not _queued_channel_messages(laura.id)
+    assert not _queued_channel_messages(jimothy.id)

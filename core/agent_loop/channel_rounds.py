@@ -97,6 +97,45 @@ def start_channel_peer_round(
     return triggers
 
 
+def post_agent_channel_share(
+    *,
+    channel_id: str,
+    agent: Agent,
+    content: str,
+    source_channel: str = "channel",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Persist an agent-authored channel share and open a peer response round.
+
+    System completion cards must not call this — they stay transcript-only.
+    In-round ``channel_response`` replies must not call this either.
+    """
+    message = db.create_channel_message(
+        channel_id=channel_id,
+        author_type="agent",
+        author_agent_id=agent.id,
+        author_name=agent.name,
+        content=content,
+        source_channel=source_channel,
+    )
+    channel_message = {
+        "channel_id": channel_id,
+        "content": message.content,
+        "author_type": message.author_type,
+        "author_name": agent.name,
+        "message_id": message.id,
+        "created_at": message.created_at,
+    }
+    return channel_message, start_channel_peer_round(
+        channel_id=channel_id,
+        message_id=message.id,
+        content=message.content,
+        from_name=agent.name,
+        author_type="agent",
+        exclude_agent_ids={agent.id},
+        from_agent=agent.id,
+    )
+
+
 def observe_channel_message(
     agent: Agent,
     trigger: dict[str, Any],
