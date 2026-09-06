@@ -14,7 +14,10 @@ BINARY="desktop/target/release/bossmod-desktop"
 if [ ! -f "$BINARY" ] || \
    [ "desktop/src/main.rs" -nt "$BINARY" ] || \
    [ "desktop/Cargo.toml" -nt "$BINARY" ] || \
-   [ "desktop/tauri.conf.json" -nt "$BINARY" ]; then
+   [ "desktop/tauri.conf.json" -nt "$BINARY" ] || \
+   [ "desktop/icons/icon.png" -nt "$BINARY" ] || \
+   [ "desktop/icons/icon.ico" -nt "$BINARY" ] || \
+   [ "desktop/icons/icon.icns" -nt "$BINARY" ]; then
     echo "[BossMod] Rebuilding desktop shell — this may take a minute..."
     cd desktop
     cargo build --release
