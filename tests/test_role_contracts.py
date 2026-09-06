@@ -187,10 +187,17 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert 'name="description"' in panel
     assert "What this agent does" in panel
     assert 'name="done_fail_bar"' in panel
-    assert "Finish line" in panel
+    assert "What “done” looks like" in panel
+    assert "Optional. We’ll suggest one from the specialty; edit anytime." in panel
     assert "Suggest" in panel
-    assert "done/fail bar" in panel.lower() or "Done/fail bar" in panel
+    assert "Done/fail bar" not in panel
+    assert "done/fail bar" not in panel.lower()
+    assert "KPI" not in panel
+    assert "SLA" not in panel
     assert "done_fail_bar: formData.get('done_fail_bar')" in panel
+    assert "first_unoccupied_chair" not in panel
+    assert "No empty desk is free" in panel
+    assert "An empty desk is selected when one is free." in panel
     assert "description: formData.get('description')" in panel
     assert "bindFinishLineSuggestion" in panel
     assert "lastSuggested" in panel
@@ -223,6 +230,9 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "Blocked — checkable claim missing" in detail_js
     assert "Done claim" in detail_js
     assert "allow/deny proof" in detail_js
+    assert "What done looks like:" in detail_js
+    assert "Done/fail bar" not in detail_js
+    assert "What done looks like for this agent:" in utils_js
     activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
     assert "world_feedback" in activity_js
     context_js = Path("ui/static/js/agent-context.js").read_text(encoding="utf-8")
@@ -239,6 +249,79 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
 # ---------------------------------------------------------------------------
 # Assign / routing
 # ---------------------------------------------------------------------------
+
+
+def test_create_agent_api_auto_assigns_an_unoccupied_desk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    first = client.post("/api/agents", headers=_headers(), json={"name": "Desk One"})
+    second = client.post("/api/agents", headers=_headers(), json={"name": "Desk Two"})
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["desk_x"] is not None
+    assert first.json()["desk_y"] is not None
+    assert (second.json()["desk_x"], second.json()["desk_y"]) != (
+        first.json()["desk_x"],
+        first.json()["desk_y"],
+    )
+
+    explicit = client.post(
+        "/api/agents",
+        headers=_headers(),
+        json={"name": "Desk Pick", "desk_x": 11, "desk_y": 4},
+    )
+    assert explicit.status_code == 201
+    assert explicit.json()["desk_x"] == 11
+    assert explicit.json()["desk_y"] == 4
+
+    taken = {(first.json()["desk_x"], first.json()["desk_y"]), (11, 4)}
+    assert (second.json()["desk_x"], second.json()["desk_y"]) not in taken
+
+
+def test_update_agent_api_auto_assigns_desk_when_unassigned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    seated = db.create_agent("Seated", desk_x=3, desk_y=4)
+    open_seat = client.post("/api/agents", headers=_headers(), json={"name": "Needs Desk"})
+    assert open_seat.status_code == 201
+    # Recreate an unassigned agent through the DB, then PATCH via API.
+    wanderer = db.create_agent("Wanderer")
+    assert wanderer.desk_x is None
+    patched = client.patch(
+        f"/api/agents/{wanderer.id}",
+        headers=_headers(),
+        json={"name": "Wanderer Seated"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["desk_x"] is not None
+    assert patched.json()["desk_y"] is not None
+    assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (seated.desk_x, seated.desk_y)
+    assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (
+        open_seat.json()["desk_x"],
+        open_seat.json()["desk_y"],
+    )
+
+
+def test_create_agent_api_leaves_desk_unassigned_when_all_taken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.world.tilemap import DEFAULT_DESKS
+
+    client = _api_client(monkeypatch)
+    for index, desk in enumerate(DEFAULT_DESKS):
+        chair = desk["chair_xy"]
+        created = client.post(
+            "/api/agents",
+            headers=_headers(),
+            json={"name": f"Seated {index}", "desk_x": chair[0], "desk_y": chair[1]},
+        )
+        assert created.status_code == 201
+    extra = client.post("/api/agents", headers=_headers(), json={"name": "Standing"})
+    assert extra.status_code == 201
+    assert extra.json()["desk_x"] is None
+    assert extra.json()["desk_y"] is None
 
 
 def test_suggest_finish_line_uses_specialty_then_description() -> None:

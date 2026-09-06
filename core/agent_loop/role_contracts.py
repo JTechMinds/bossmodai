@@ -369,7 +369,7 @@ def operator_done_claim_guidance(
         )
     bar = (done_fail_bar or "").strip()
     if bar:
-        return f"{base} This agent's done/fail bar: {bar}"
+        return f"{base} What done looks like for this agent: {bar}"
     return base
 
 

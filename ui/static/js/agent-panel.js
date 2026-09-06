@@ -119,18 +119,21 @@ const AgentPanel = (() => {
         // Fetch connections and personalities for dropdowns
         let connections = [];
         let personalities = [];
+        let roster = [];
         let promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY };
         try {
             const requests = [
                 apiFetch('/api/connections'),
                 apiFetch('/api/personalities'),
+                apiFetch('/api/agents'),
             ];
             if (agent?.id) {
                 requests.push(fetchPromptHistoryPolicy(agent.id));
             }
-            const [connRes, persRes, policyRes] = await Promise.all(requests);
+            const [connRes, persRes, rosterRes, policyRes] = await Promise.all(requests);
             connections = await connRes.json();
             personalities = await persRes.json();
+            roster = await rosterRes.json();
             if (policyRes) {
                 promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY, ...policyRes };
             }
@@ -150,9 +153,21 @@ const AgentPanel = (() => {
             </label>`;
         }).join('');
 
+        const occupiedChairs = new Set(
+            (roster || [])
+                .filter((item) => item.id !== agent?.id && item.desk_x != null && item.desk_y != null)
+                .map((item) => `${item.desk_x},${item.desk_y}`)
+        );
+        const assignedDesk = agent?.desk_x != null && agent?.desk_y != null
+            ? DESK_OPTIONS.find((d) => d.x === agent.desk_x && d.y === agent.desk_y)
+            : null;
+        const freeDesk = DESK_OPTIONS.find((d) => !occupiedChairs.has(`${d.x},${d.y}`)) || null;
+        const selectedDesk = assignedDesk || freeDesk;
+        const noFreeDesk = !assignedDesk && !freeDesk;
         const deskOptions = DESK_OPTIONS.map(d => {
-            const selected = agent?.desk_x === d.x && agent?.desk_y === d.y;
-            return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}</option>`;
+            const selected = selectedDesk && selectedDesk.x === d.x && selectedDesk.y === d.y;
+            const taken = occupiedChairs.has(`${d.x},${d.y}`);
+            return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}${taken ? ' (taken)' : ''}</option>`;
         }).join('');
 
         // Personality dropdown — match by prompt_template since agents store
@@ -221,7 +236,7 @@ const AgentPanel = (() => {
                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                      focus:border-bm-accent">${BossModUtils.escapeHtml(agent?.description || '')}</textarea>
                     <p class="text-xs text-bm-muted mt-1">
-                        What this agent does. A finish line is suggested from specialty.
+                        What this agent does. We’ll suggest what done looks like from the specialty.
                     </p>
                 </div>
             </div>
@@ -263,7 +278,7 @@ const AgentPanel = (() => {
                     <div>
                         <h3 class="text-sm font-semibold">Advanced</h3>
                         <p class="text-xs text-bm-muted mt-1">
-                            Optional finish line, prompt template, color, and desk.
+                            Optional: what done looks like, prompt template, color, and desk.
                         </p>
                     </div>
                     <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
@@ -271,7 +286,7 @@ const AgentPanel = (() => {
                 <div id="advanced-content" class="hidden mt-3 space-y-3">
                     <div>
                         <div class="flex items-center justify-between gap-2 mb-1">
-                            <label class="block text-sm font-medium">Finish line</label>
+                            <label class="block text-sm font-medium">What “done” looks like</label>
                             <button type="button" id="btn-suggest-finish-line"
                                     class="text-xs text-bm-accent hover:underline shrink-0">
                                 Suggest
@@ -285,7 +300,7 @@ const AgentPanel = (() => {
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
                         <p class="text-xs text-bm-muted mt-1">
-                            Done/fail bar: what good and failure look like. Empty done is still blocked unless a checkable claim exists (tests, artifact, or allow/deny).
+                            Optional. We’ll suggest one from the specialty; edit anytime.
                         </p>
                     </div>
                     <div>
@@ -313,9 +328,12 @@ const AgentPanel = (() => {
                                 class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                        bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                        focus:border-bm-accent">
-                            <option value="">Unassigned</option>
+                            <option value="" ${selectedDesk ? '' : 'selected'}>Unassigned</option>
                             ${deskOptions}
                         </select>
+                        ${noFreeDesk
+                            ? `<p class="text-xs text-amber-800 mt-1">No empty desk is free. This agent will stay unassigned.</p>`
+                            : `<p class="text-xs text-bm-muted mt-1">An empty desk is selected when one is free.</p>`}
                     </div>
                     <div>
                         <h4 class="text-xs font-semibold text-bm-text">AI History</h4>

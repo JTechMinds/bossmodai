@@ -131,7 +131,7 @@ const BossModUtils = (() => {
         } else {
             base = 'Complete/deliver requires a checkable claim: tests evidence, an artifact path that exists, or an allow/deny proof summary. Empty done is rejected.';
         }
-        return bar ? `${base} This agent's done/fail bar: ${bar}` : base;
+        return bar ? `${base} What done looks like for this agent: ${bar}` : base;
     }
 
     function formatDoneClaim(claim) {
