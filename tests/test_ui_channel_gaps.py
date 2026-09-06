@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 PRESENCE_HARNESS = Path(__file__).resolve().parent / "js_channel_presence_harness.cjs"
 GATE_HARNESS = Path(__file__).resolve().parent / "js_inflight_gate_harness.cjs"
+THREAD_DOM_HARNESS = Path(__file__).resolve().parent / "js_channel_thread_dom_harness.cjs"
 
 
 def _read(name: str) -> str:
@@ -91,12 +92,46 @@ def test_live_channel_message_appends_without_loading_remount() -> None:
     )[0]
     assert "appendLiveChannelMessage(" in handler
     assert "isChannelDetailMounted(" in handler
+    assert "threadCache.append(" in handler
     assert handler.index("appendLiveChannelMessage(") < handler.index("void renderSelectedChannel(")
+    assert "Loading thread..." not in handler
     assert "Loading channel..." not in handler
+
+
+def test_thread_switch_keeps_shell_and_uses_cache() -> None:
+    source = _read("channels-view.js")
     render = source.split("async function renderSelectedChannel(detailEl) {", 1)[1].split(
-        "function renderChannelDetail(", 1
+        "async function refreshThreadDetail(", 1
     )[0]
-    assert "Loading channel..." in render
+    assert "threadCache.recall(" in render
+    assert "ChannelThreadDom.isMounted(" in render
+    assert "const keepShell = ChannelThreadDom.isMounted(detailEl)" in render
+    assert "if (keepShell || cached)" in render
+    assert "applyThreadDetail(" in render
+    assert render.index("if (keepShell || cached)") < render.index("Loading thread...")
+    assert "Loading channel..." not in source
+    assert "ChannelThreadDom.createCache()" in source
+    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    assert "js/channel-thread-dom.js" in html
+    assert html.index("js/channel-thread-dom.js") < html.index("js/channels-view.js")
+
+
+def test_channel_thread_dom_harness_caches_and_swaps_without_loading() -> None:
+    result = subprocess.run(
+        ["node", str(THREAD_DOM_HARNESS), str(JS / "channel-thread-dom.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "keepsShell": True,
+        "cachesTranscript": True,
+        "swapsChrome": True,
+        "noLoadingFlash": True,
+    }
 
 
 def test_channel_presence_helper_only_tracks_channel_turns() -> None:
