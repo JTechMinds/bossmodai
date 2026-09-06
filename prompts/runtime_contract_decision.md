@@ -275,7 +275,9 @@ Use the smallest valid shape for the act you choose.
 OPTIONAL LOOKUP ACT FOR ANY DECISION TURN
 
 Use CLI only when the snapshot and surrounding turn context still lack an internal fact you genuinely need before making the final conversation decision.
-You may use more than one CLI lookup in the same decision turn when each lookup is necessary to reach the final answer.
+You may use up to 10 CLI lookups in the same decision turn. Path tweaks of the same lookup still count as the same peek (`ls a` and `ls a/` are one fingerprint). Repeating the same peek three times in a row ends the turn — decide or accept work instead. Each lookup spends one of the 10, including a repeat of an earlier peek.
+request_host_access does not count against that peek budget.
+A multi-step host review is accepted work: accept, then inspect on the execution path. Do not turn this decision turn into a long dig.
 If a named host path is outside /me, /projects, and configured host roots, call request_host_access or attempt cli on that path. Do not ask the operator for a verbal yes/no.
 Once you have enough information, end the turn with a final conversation decision object.
 

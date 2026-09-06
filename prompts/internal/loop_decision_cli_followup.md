@@ -1,1 +1,1 @@
-Use the BossMod CLI result above for this turn. Respond next with a final JSON decision, or call {"act":"cli","data":{"cmd":"<command>"},"th":"brief note"} again if you still need more authoritative information.
+Use the BossMod CLI result above for this turn. Respond next with a final JSON decision, or one more CLI lookup if you still need a fact and have peek budget left. Do not repeat the same peek. request_host_access is free. If this needs a multi-step review, accept the work instead of more peeks.
