@@ -126,7 +126,48 @@ def _load_conversation_history(
             formatted = db.get_formatted_messages(thread, human_label="Human Operator")
             return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
+    if trigger_type in {"host_path_consent_resolved", "cli_approval_resolved"}:
+        return _load_consent_or_approval_history(
+            agent,
+            trigger,
+            policy,
+            token_model=token_model,
+        )
+
     return []
+
+
+def _load_consent_or_approval_history(
+    agent: Agent,
+    trigger: dict[str, Any],
+    policy: Any,
+    *,
+    token_model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load the conversation the consent/approval wake is resuming.
+
+    Always-allow / approval enqueue is fine; the wake used to fall through
+    to empty history, so the execution turn had no operator ask and idled.
+    Prefer the bound task thread when one exists, otherwise human chat.
+    """
+    fetch_limit = _history_fetch_limit(policy.last_n_histories)
+    task_id = trigger.get("task_id")
+    if task_id:
+        thread = load_task_thread_history(
+            task_id=str(task_id),
+            limit=fetch_limit,
+            earliest_ts=policy.earliest_ts_allowed,
+        )
+        if thread:
+            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
+    thread = db.get_human_chat_thread(
+        agent.id,
+        limit=fetch_limit,
+        earliest_ts=policy.earliest_ts_allowed,
+    )
+    formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+    return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
 
 
 def _exclude_source_message(messages: list[dict[str, Any]], source_message_id: Any) -> list[dict[str, Any]]:

@@ -18,10 +18,14 @@ from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.decision_contract import parse_direct_turn_response
 from core.agent_loop.decision_runtime import apply_decision
+from core.agent_loop.loop import run_turn
 from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
+from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.runtime_core import format_runtime_core_block, preview_runtime_core
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_path_consent import is_verbal_host_access_ask, request_host_path_access
+from core.llm import context_builder
+from core.llm.client import LLMResponse
 from core.bm_cli.host_roots import configured_host_roots, extra_host_roots
 from core.bm_cli.runtime import execute_bm_cli
 from core.default_prompts import load_default_prompt
@@ -512,9 +516,101 @@ def test_verbal_host_access_detector() -> None:
     assert is_verbal_host_access_ask("Please confirm I can read /tmp/app/main.py")
     assert is_verbal_host_access_ask("May I access the host path before I continue?")
     assert is_verbal_host_access_ask("Do you allow /home/you/notes.txt — yes/no?")
+    assert is_verbal_host_access_ask(
+        "confirm in chat that I may access /home/jordan/Desktop/Projects/Jtech-CLI"
+    )
+    assert is_verbal_host_access_ask(
+        "Happy to review it, but that path is outside my allowed roots (/me and /projects). "
+        "Could you either copy the code into /projects (e.g. /projects/jtech-cli) or "
+        "confirm in chat that I may access /home/jordan/Desktop/Projects/Jtech-CLI?"
+    )
     assert not is_verbal_host_access_ask("Got it. I'll take a look and report back soon.")
     assert not is_verbal_host_access_ask("Please confirm the meeting time.")
     assert not is_verbal_host_access_ask("I read /tmp/app/main.py and the tests passed.")
+
+
+@pytest.mark.asyncio
+async def test_verbal_confirm_in_chat_socialmsg_is_steered() -> None:
+    agent, state = _agent_and_state()
+    parsed = parse_action(
+        '{"act":"socialmsg","data":{"to":"human","msg":'
+        '"Could you confirm in chat that I may access /home/jordan/Desktop/Projects/Jtech-CLI?"},'
+        '"th":"ask"}'
+    )
+    result = await execute_action(parsed, agent, state)
+    assert result["event"] == "world_feedback"
+    assert "not negotiated in chat" in result["detail"]
+    assert result["expected_action"] == "request_host_access"
+    assert db.list_consent_requests(agent_id=agent.id) == []
+
+
+def test_consent_and_approval_resume_load_human_chat_history() -> None:
+    agent, state = _agent_and_state()
+    ask = "Hey jimothy can you review the code at /home/jordan/Desktop/Projects/Jtech-CLI/"
+    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="chat")
+    db.create_message(agent.id, HUMAN_SENDER_ID, "Access worked this time.", message_type="chat")
+
+    for trigger_type in ("host_path_consent_resolved", "cli_approval_resolved"):
+        trigger = {"type": trigger_type, "payload": {"status": "always_allowed"}}
+        history = build_prompt_history_view(agent, trigger)
+        contents = [str(item.get("content") or "") for item in history.conversation_history]
+        assert any(ask in content for content in contents), trigger_type
+        context = context_builder.build_context(
+            context_builder.TurnContext(
+                agent=agent,
+                state=state,
+                trigger=trigger,
+                conversation_history=history.conversation_history,
+                prompt_notifications=[],
+                reference_materials=[],
+                contract_kind="execution",
+            )
+        )
+        joined = "\n".join(str(message.get("content") or "") for message in context)
+        assert ask in joined, trigger_type
+
+
+@pytest.mark.asyncio
+async def test_consent_resolved_resume_continues_with_chat_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ask = "Hey jimothy can you review the code at /home/jordan/Desktop/Projects/Jtech-CLI/"
+    agent = db.create_agent("Jimothy", role="Engineer", model_work="test/mock")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="chat")
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        captured["messages"] = list(kwargs.get("messages") or [])
+        return LLMResponse(
+            content='{"act":"idle","data":{},"th":"history is present so the review can continue"}',
+            model="test/mock",
+            prompt_tokens=12,
+            completion_tokens=8,
+            total_tokens=20,
+        )
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "host_path_consent_resolved",
+            "payload": {
+                "status": "always_allowed",
+                "command": "request_host_access",
+                "path": "/home/jordan/Desktop/Projects/Jtech-CLI",
+            },
+        },
+    )
+    joined = "\n".join(
+        str(message.get("content") or "") for message in captured.get("messages") or []
+    )
+    assert ask in joined
+    assert outcome.result.get("event") != "agent_error"
+    assert captured.get("messages"), "consent resume must call the model with history"
 
 
 def test_contracts_forbid_verbal_host_access_asks() -> None:

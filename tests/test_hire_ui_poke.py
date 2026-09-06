@@ -15,7 +15,10 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
+from core.agent_loop import activity_runtime
 from core.runtime import runtime_services
+from core.world.seating import heal_desk_seats
+from core.world.simulation import simulation
 
 ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
@@ -184,3 +187,60 @@ def test_world_state_includes_created_agent_and_location(
     company_row = next(item for item in company.json() if item["id"] == agent_id)
     assert company_row["name"] == "Poke Nova"
     assert company_row["location"] == row["location"]
+
+
+def test_seat_heal_moves_hallway_desk_agent_to_chair() -> None:
+    spawn_x = config.get_int("default_spawn_x")
+    spawn_y = config.get_int("default_spawn_y")
+    drifted = db.create_agent("Hall Drift")
+    seated = db.update_agent(drifted.id, desk_x=11, desk_y=4)
+    assert seated is not None
+    state = db.get_agent_state(drifted.id)
+    assert state is not None
+    assert (state.x, state.y) == (spawn_x, spawn_y)
+    assert db.get_world_state()  # world build heals desk≠hallway body
+    healed = db.get_agent_state(drifted.id)
+    assert healed is not None
+    assert (healed.x, healed.y) == (11, 4)
+    row = next(item for item in db.get_world_state() if item["id"] == drifted.id)
+    assert (row["x"], row["y"]) == (11, 4)
+    assert row["location"] == "Main Workspace"
+
+
+@pytest.mark.asyncio
+async def test_simulation_start_heals_hallway_desk_agent_to_chair() -> None:
+    spawn_x = config.get_int("default_spawn_x")
+    spawn_y = config.get_int("default_spawn_y")
+    drifted = db.create_agent("Boot Drift")
+    db.update_agent(drifted.id, desk_x=3, desk_y=4)
+    state = db.get_agent_state(drifted.id)
+    assert state is not None
+    assert (state.x, state.y) == (spawn_x, spawn_y)
+
+    simulation.start()
+    try:
+        seated = db.get_agent_state(drifted.id)
+        assert seated is not None
+        assert (seated.x, seated.y) == (3, 4)
+    finally:
+        await simulation.stop()
+
+
+def test_seat_heal_skips_in_transit_hallway_and_other_rooms() -> None:
+    walker = db.create_agent("Walker", desk_x=3, desk_y=4)
+    db.update_agent_state(walker.id, x=14, y=9, status="in_transit")
+    activity_runtime.start_movement_activity(
+        walker.id,
+        destination="meetingRoom",
+        metadata={"destination_x": 18, "destination_y": 4},
+    )
+    meeting = db.create_agent("In Meeting", desk_x=7, desk_y=4)
+    db.update_agent_state(meeting.id, x=18, y=4)
+
+    assert heal_desk_seats() == 0
+    walker_state = db.get_agent_state(walker.id)
+    meeting_state = db.get_agent_state(meeting.id)
+    assert walker_state is not None
+    assert meeting_state is not None
+    assert (walker_state.x, walker_state.y) == (14, 9)
+    assert (meeting_state.x, meeting_state.y) == (18, 4)
