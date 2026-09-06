@@ -22,7 +22,8 @@ from db.secret_store import decrypt_secret, encrypt_secret
 
 _AGENT_COLUMNS = (
     "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
-    "agents.done_fail_bar, agents.prompt_template, agents.color, agents.model_social, agents.model_work, "
+    "agents.description, agents.done_fail_bar, agents.prompt_template, agents.color, "
+    "agents.model_social, agents.model_work, "
     "agents.model_reasoning, agents.model_extraction, agents.model_self_queue, "
     "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
@@ -31,7 +32,7 @@ _AGENT_COLUMNS = (
 )
 
 _AGENT_VALID_COLUMNS = {
-    "name", "role", "done_fail_bar", "prompt_template", "color",
+    "name", "role", "description", "done_fail_bar", "prompt_template", "color",
     "model_social", "model_work", "model_reasoning",
     "model_extraction", "model_self_queue",
     "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
@@ -60,6 +61,7 @@ def _decrypt_agent(agent: Agent | None) -> Agent | None:
 def create_agent(
     name: str,
     role: str | None = None,
+    description: str | None = None,
     done_fail_bar: str | None = None,
     prompt_template: str | None = None,
     color: str = "#3b82f6",
@@ -83,16 +85,16 @@ def create_agent(
         created = insert_returning_dict(
             """
             INSERT INTO agents (
-                name, role, done_fail_bar, prompt_template, color,
+                name, role, description, done_fail_bar, prompt_template, color,
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
                 api_base_url, api_key, extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
             RETURNING id
             """,
             [
-                name, role, done_fail_bar, prompt_template, color,
+                name, role, description, done_fail_bar, prompt_template, color,
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
                 api_base_url, encrypt_secret(api_key), extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,

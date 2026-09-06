@@ -154,6 +154,7 @@ def _build_preview_turn_context(contract_kind: str, trigger_type: str) -> TurnCo
         storage_key="preview-agent",
         name="Taylor",
         role="Operations Analyst",
+        description="Keeps operational answers short and checkable.",
         done_fail_bar="Good: a named artifact or tests evidence. Fail: empty done.",
         prompt_template="You are {{agent_name}}, keep answers concise and operational.",
         created_at=now,

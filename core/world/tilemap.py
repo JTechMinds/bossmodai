@@ -114,6 +114,30 @@ DEFAULT_MAP = [
 # fmt: on
 
 
+def first_unoccupied_chair(
+    agents: list,
+    *,
+    exclude_agent_id: str | None = None,
+) -> tuple[int, int] | None:
+    """Return the first map chair that no other agent already sits in.
+
+    Desk assignment stores ``chair_xy`` as ``Agent.desk_x`` / ``desk_y``.
+    Never returns a chair already claimed by another agent.
+    """
+    occupied = {
+        (agent.desk_x, agent.desk_y)
+        for agent in agents
+        if getattr(agent, "id", None) != exclude_agent_id
+        and getattr(agent, "desk_x", None) is not None
+        and getattr(agent, "desk_y", None) is not None
+    }
+    for desk in DEFAULT_DESKS:
+        chair = desk["chair_xy"]
+        if chair not in occupied:
+            return chair
+    return None
+
+
 def get_map_data() -> dict:
     """Return the full map data as a JSON-serializable dict for the frontend."""
     return {

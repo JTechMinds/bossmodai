@@ -300,7 +300,7 @@ const CompanyTaskDetail = (() => {
                 html += `<p><span class="font-medium text-bm-text">Specialty:</span> ${esc(specialty)}</p>`;
             }
             if (doneBar) {
-                html += `<p><span class="font-medium text-bm-text">Done/fail bar:</span> ${esc(doneBar)}</p>`;
+                html += `<p><span class="font-medium text-bm-text">What done looks like:</span> ${esc(doneBar)}</p>`;
             }
             html += `</div>`;
         }

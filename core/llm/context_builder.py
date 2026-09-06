@@ -39,8 +39,9 @@ _STATUS_LABELS = {
 _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("agent_name", "Agent display name"),
     ("role", "Agent role title"),
-    ("done_fail_bar", "Hire done/fail bar — what good and failure look like"),
-    ("role_contract", "Formatted role-contract block (specialty + done/fail bar + hard rules)"),
+    ("description", "Casual hire description of what this agent does"),
+    ("done_fail_bar", "Hire finish line / done/fail bar — what good and failure look like"),
+    ("role_contract", "Formatted role-contract block (specialty + description + done/fail bar + hard rules)"),
     ("personality", "Rendered personality prompt text"),
     ("current_date_time", "Current local date/time string for this turn"),
     ("current_time.iso_local", "Current local time in ISO-8601 format"),
@@ -242,6 +243,7 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     return {
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
+        "description": turn.agent.description or "",
         "done_fail_bar": turn.agent.done_fail_bar or "",
         "role_contract": format_role_contract_block(turn.agent),
         "personality": "",

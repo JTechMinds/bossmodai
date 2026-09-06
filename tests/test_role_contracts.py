@@ -24,6 +24,7 @@ from core.agent_loop.role_contracts import (
     operator_done_claim_guidance,
     prefer_specialty_match,
     specialty_family,
+    suggest_finish_line,
 )
 from core.llm import context_preview
 from db.unified_feed import classify_category
@@ -111,6 +112,7 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
         json={
             "name": "Cap Writer",
             "role": "Writer",
+            "description": "Writes first drafts and short status notes.",
             "done_fail_bar": "Good: draft path exists. Fail: empty done.",
         },
     )
@@ -118,18 +120,21 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
     body = created.json()
     assert body["name"] == "Cap Writer"
     assert body["role"] == "Writer"
+    assert body["description"] == "Writes first drafts and short status notes."
     assert body["done_fail_bar"] == "Good: draft path exists. Fail: empty done."
 
     listed = client.get("/api/agents", headers=_headers())
     assert listed.status_code == 200
     row = next(item for item in listed.json() if item["id"] == body["id"])
     assert row["role"] == "Writer"
+    assert row["description"] == "Writes first drafts and short status notes."
     assert "empty done" in row["done_fail_bar"]
 
     company = client.get("/api/company/agents", headers=_headers())
     assert company.status_code == 200
     company_row = next(item for item in company.json() if item["id"] == body["id"])
     assert company_row["role"] == "Writer"
+    assert company_row["description"] == body["description"]
     assert company_row["done_fail_bar"] == body["done_fail_bar"]
 
     patched = client.patch(
@@ -137,35 +142,80 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
         headers=_headers(),
         json={
             "role": "Auditor",
+            "description": "Reviews packages against a checkable claim.",
             "done_fail_bar": "CLEAR only against a checkable claim.",
         },
     )
     assert patched.status_code == 200
     assert patched.json()["role"] == "Auditor"
+    assert patched.json()["description"] == "Reviews packages against a checkable claim."
     assert patched.json()["done_fail_bar"] == "CLEAR only against a checkable claim."
 
     persisted = db.get_agent(body["id"])
     assert persisted is not None
     assert persisted.role == "Auditor"
+    assert persisted.description == "Reviews packages against a checkable claim."
     assert persisted.done_fail_bar == "CLEAR only against a checkable claim."
 
 
-def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
+def test_create_agent_api_allows_blank_done_fail_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    created = client.post(
+        "/api/agents",
+        headers=_headers(),
+        json={"name": "Cap Blank", "role": "Writer", "description": "Writes notes."},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["role"] == "Writer"
+    assert body["description"] == "Writes notes."
+    assert body["done_fail_bar"] is None
+    persisted = db.get_agent(body["id"])
+    assert persisted is not None
+    assert persisted.done_fail_bar is None
+
+
+def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> None:
     panel = Path("ui/static/js/agent-panel.js").read_text(encoding="utf-8")
+    utils_js = Path("ui/static/js/utils.js").read_text(encoding="utf-8")
     assert 'id="role-contract-card"' in panel
     assert 'name="role"' in panel
     assert "Specialty" in panel
     assert 'placeholder="e.g. Writer, Auditor, Engineer"' in panel
+    assert 'name="description"' in panel
+    assert "What this agent does" in panel
     assert 'name="done_fail_bar"' in panel
-    assert 'placeholder="Good: tests pass / artifact exists. Fail: empty done."' in panel
+    assert "What “done” looks like" in panel
+    assert "Optional. We’ll suggest one from the specialty; edit anytime." in panel
+    assert "Suggest" in panel
+    assert "Done/fail bar" not in panel
+    assert "done/fail bar" not in panel.lower()
+    assert "KPI" not in panel
+    assert "SLA" not in panel
     assert "done_fail_bar: formData.get('done_fail_bar')" in panel
+    assert "first_unoccupied_chair" not in panel
+    assert "No empty desk is free" in panel
+    assert "An empty desk is selected when one is free." in panel
+    assert "description: formData.get('description')" in panel
+    assert "bindFinishLineSuggestion" in panel
+    assert "lastSuggested" in panel
+    assert "applySuggestion({ force: true })" in panel
     assert 'id="advanced-toggle"' in panel
     assert "Advanced" in panel
     assert 'name="personality_id"' in panel
+    assert "suggestFinishLine" in utils_js
+    assert "A named draft or document exists. Empty done does not count." in utils_js
     assert panel.index('name="name"') < panel.index('name="role"')
-    assert panel.index('name="role"') < panel.index('name="done_fail_bar"')
-    assert panel.index('name="done_fail_bar"') < panel.index("Advanced")
-    assert panel.index("Advanced") < panel.index('name="personality_id"')
+    assert panel.index('name="role"') < panel.index('name="description"')
+    assert panel.index('name="description"') < panel.index("Advanced")
+    assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
+    assert panel.index('name="done_fail_bar"') < panel.index('name="personality_id"')
+    assert panel.index("Advanced") < panel.index("Desk Assignment")
+    assert panel.index("Advanced") < panel.index("Color")
+    assert panel.index('name="description"') < panel.index("Desk Assignment")
+    assert panel.index('name="description"') < panel.index("Color")
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
     assert "specialty_mismatch" in tasks_js
     assert "confirm_specialty_mismatch" in tasks_js
@@ -180,10 +230,14 @@ def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     assert "Blocked — checkable claim missing" in detail_js
     assert "Done claim" in detail_js
     assert "allow/deny proof" in detail_js
+    assert "What done looks like:" in detail_js
+    assert "Done/fail bar" not in detail_js
+    assert "What done looks like for this agent:" in utils_js
     activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
     assert "world_feedback" in activity_js
     context_js = Path("ui/static/js/agent-context.js").read_text(encoding="utf-8")
     assert "No specialty" in context_js
+    assert "selectedAgent.description" in context_js
     assert "done_fail_bar" in context_js
     assert "doneClaimGuidance" in context_js
     assert "Blocked — checkable claim missing" in context_js
@@ -195,6 +249,104 @@ def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
 # ---------------------------------------------------------------------------
 # Assign / routing
 # ---------------------------------------------------------------------------
+
+
+def test_create_agent_api_auto_assigns_an_unoccupied_desk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    first = client.post("/api/agents", headers=_headers(), json={"name": "Desk One"})
+    second = client.post("/api/agents", headers=_headers(), json={"name": "Desk Two"})
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["desk_x"] is not None
+    assert first.json()["desk_y"] is not None
+    assert (second.json()["desk_x"], second.json()["desk_y"]) != (
+        first.json()["desk_x"],
+        first.json()["desk_y"],
+    )
+
+    explicit = client.post(
+        "/api/agents",
+        headers=_headers(),
+        json={"name": "Desk Pick", "desk_x": 11, "desk_y": 4},
+    )
+    assert explicit.status_code == 201
+    assert explicit.json()["desk_x"] == 11
+    assert explicit.json()["desk_y"] == 4
+
+    taken = {(first.json()["desk_x"], first.json()["desk_y"]), (11, 4)}
+    assert (second.json()["desk_x"], second.json()["desk_y"]) not in taken
+
+
+def test_update_agent_api_auto_assigns_desk_when_unassigned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    seated = db.create_agent("Seated", desk_x=3, desk_y=4)
+    open_seat = client.post("/api/agents", headers=_headers(), json={"name": "Needs Desk"})
+    assert open_seat.status_code == 201
+    # Recreate an unassigned agent through the DB, then PATCH via API.
+    wanderer = db.create_agent("Wanderer")
+    assert wanderer.desk_x is None
+    patched = client.patch(
+        f"/api/agents/{wanderer.id}",
+        headers=_headers(),
+        json={"name": "Wanderer Seated"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["desk_x"] is not None
+    assert patched.json()["desk_y"] is not None
+    assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (seated.desk_x, seated.desk_y)
+    assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (
+        open_seat.json()["desk_x"],
+        open_seat.json()["desk_y"],
+    )
+
+
+def test_create_agent_api_leaves_desk_unassigned_when_all_taken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.world.tilemap import DEFAULT_DESKS
+
+    client = _api_client(monkeypatch)
+    for index, desk in enumerate(DEFAULT_DESKS):
+        chair = desk["chair_xy"]
+        created = client.post(
+            "/api/agents",
+            headers=_headers(),
+            json={"name": f"Seated {index}", "desk_x": chair[0], "desk_y": chair[1]},
+        )
+        assert created.status_code == 201
+    extra = client.post("/api/agents", headers=_headers(), json={"name": "Standing"})
+    assert extra.status_code == 201
+    assert extra.json()["desk_x"] is None
+    assert extra.json()["desk_y"] is None
+
+
+def test_suggest_finish_line_uses_specialty_then_description() -> None:
+    assert suggest_finish_line("Writer") == (
+        "A named draft or document exists. Empty done does not count."
+    )
+    assert suggest_finish_line("Auditor") == (
+        "A checkable allow/deny (or tests/artifact) exists. Empty done does not count."
+    )
+    assert suggest_finish_line("Engineer") == (
+        "Tests evidence or a named artifact exists. Empty done does not count."
+    )
+    assert suggest_finish_line("Lead") == (
+        "A named plan or status note exists. Empty done does not count."
+    )
+    assert suggest_finish_line(None, "Draft a short status note") == (
+        "A named draft or document exists. Empty done does not count."
+    )
+    assert suggest_finish_line("Custom role", None) == (
+        "A checkable claim exists (tests, artifact, or allow/deny). Empty done does not count."
+    )
+    # Specialty wins when it maps; description does not silently replace it.
+    assert suggest_finish_line("Writer", "Review the audit package") == (
+        "A named draft or document exists. Empty done does not count."
+    )
 
 
 def test_specialty_inference_is_conservative() -> None:
@@ -543,6 +695,7 @@ def test_role_contract_block_and_done_claim_guidance_are_operator_actionable() -
     agent = db.create_agent(
         "Cap Writer",
         role="Writer",
+        description="Writes first drafts and short status notes.",
         done_fail_bar="Good: draft path exists. Fail: empty done.",
         desk_x=1,
         desk_y=1,
@@ -550,6 +703,7 @@ def test_role_contract_block_and_done_claim_guidance_are_operator_actionable() -
     block = format_role_contract_block(agent)
     assert "# Role contract" in block
     assert "Specialty: Writer" in block
+    assert "Description: Writes first drafts and short status notes." in block
     assert "Good: draft path exists" in block
     assert "data.claim" in block
     assert "Empty done is rejected" in block

@@ -12,7 +12,7 @@ def get_world_state() -> list[dict[str, Any]]:
     return query(
         """
         SELECT
-            a.id, a.name, a.role, a.done_fail_bar, a.color,
+            a.id, a.name, a.role, a.description, a.done_fail_bar, a.color,
             a.desk_x, a.desk_y,
             s.x, s.y, s.status,
             s.last_active_at, s.idle_since,

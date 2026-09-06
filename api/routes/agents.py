@@ -30,8 +30,23 @@ from core.models import (
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking.transitions import transition_task
-from core.world.tilemap import get_room_at
+from core.world.tilemap import first_unoccupied_chair, get_room_at
 import db
+
+
+def _auto_assign_desk(
+    desk_x: int | None,
+    desk_y: int | None,
+    *,
+    exclude_agent_id: str | None = None,
+) -> tuple[int | None, int | None]:
+    """Fill an empty desk assignment with the next unoccupied map chair."""
+    if desk_x is not None and desk_y is not None:
+        return desk_x, desk_y
+    picked = first_unoccupied_chair(db.list_agents(), exclude_agent_id=exclude_agent_id)
+    if picked is None:
+        return None, None
+    return picked
 
 router = APIRouter()
 
@@ -297,14 +312,16 @@ async def create_agent(body: AgentCreate) -> Agent:
         "api_key": body.api_key,
         "extra_body": body.extra_body,
     })
+    desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
     agent = db.create_agent(
         name=body.name,
         role=body.role,
+        description=body.description,
         done_fail_bar=body.done_fail_bar,
         prompt_template=body.prompt_template,
         color=body.color,
-        desk_x=body.desk_x,
-        desk_y=body.desk_y,
+        desk_x=desk_x,
+        desk_y=desk_y,
         model_social=body.model_social,
         model_work=body.model_work,
         model_reasoning=body.model_reasoning,
@@ -329,6 +346,19 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     fields = _apply_connection_credentials(body.model_dump(exclude_none=True))
     if not fields:
         raise HTTPException(400, "No fields to update")
+    current = db.get_agent(agent_id)
+    if not current:
+        raise HTTPException(404, "Agent not found")
+    next_desk_x = fields["desk_x"] if "desk_x" in fields else current.desk_x
+    next_desk_y = fields["desk_y"] if "desk_y" in fields else current.desk_y
+    assigned_x, assigned_y = _auto_assign_desk(
+        next_desk_x,
+        next_desk_y,
+        exclude_agent_id=agent_id,
+    )
+    if assigned_x != next_desk_x or assigned_y != next_desk_y:
+        fields["desk_x"] = assigned_x
+        fields["desk_y"] = assigned_y
     prompt_template = fields.get("prompt_template")
     if isinstance(prompt_template, str):
         try:
@@ -606,6 +636,7 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
         "id": item.get("id"),
         "name": item.get("name"),
         "role": item.get("role"),
+        "description": item.get("description"),
         "done_fail_bar": item.get("done_fail_bar"),
         "color": item.get("color"),
         "status": item.get("status") or "idle",

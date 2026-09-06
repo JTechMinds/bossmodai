@@ -119,18 +119,21 @@ const AgentPanel = (() => {
         // Fetch connections and personalities for dropdowns
         let connections = [];
         let personalities = [];
+        let roster = [];
         let promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY };
         try {
             const requests = [
                 apiFetch('/api/connections'),
                 apiFetch('/api/personalities'),
+                apiFetch('/api/agents'),
             ];
             if (agent?.id) {
                 requests.push(fetchPromptHistoryPolicy(agent.id));
             }
-            const [connRes, persRes, policyRes] = await Promise.all(requests);
+            const [connRes, persRes, rosterRes, policyRes] = await Promise.all(requests);
             connections = await connRes.json();
             personalities = await persRes.json();
+            roster = await rosterRes.json();
             if (policyRes) {
                 promptHistoryPolicy = { ...DEFAULT_PROMPT_HISTORY_POLICY, ...policyRes };
             }
@@ -150,9 +153,21 @@ const AgentPanel = (() => {
             </label>`;
         }).join('');
 
+        const occupiedChairs = new Set(
+            (roster || [])
+                .filter((item) => item.id !== agent?.id && item.desk_x != null && item.desk_y != null)
+                .map((item) => `${item.desk_x},${item.desk_y}`)
+        );
+        const assignedDesk = agent?.desk_x != null && agent?.desk_y != null
+            ? DESK_OPTIONS.find((d) => d.x === agent.desk_x && d.y === agent.desk_y)
+            : null;
+        const freeDesk = DESK_OPTIONS.find((d) => !occupiedChairs.has(`${d.x},${d.y}`)) || null;
+        const selectedDesk = assignedDesk || freeDesk;
+        const noFreeDesk = !assignedDesk && !freeDesk;
         const deskOptions = DESK_OPTIONS.map(d => {
-            const selected = agent?.desk_x === d.x && agent?.desk_y === d.y;
-            return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}</option>`;
+            const selected = selectedDesk && selectedDesk.x === d.x && selectedDesk.y === d.y;
+            const taken = occupiedChairs.has(`${d.x},${d.y}`);
+            return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}${taken ? ' (taken)' : ''}</option>`;
         }).join('');
 
         // Personality dropdown — match by prompt_template since agents store
@@ -214,33 +229,16 @@ const AgentPanel = (() => {
                                   focus:border-bm-accent">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">Done / fail bar</label>
-                    <input type="text" name="done_fail_bar"
-                           value="${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}"
-                           placeholder="Good: tests pass / artifact exists. Fail: empty done."
-                           maxlength="500"
-                           class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                  focus:border-bm-accent">
+                    <label class="block text-sm font-medium mb-1">Description</label>
+                    <textarea name="description" rows="3" maxlength="1000"
+                              placeholder="e.g. Writes first drafts and short status notes."
+                              class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                     bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                     focus:border-bm-accent">${BossModUtils.escapeHtml(agent?.description || '')}</textarea>
+                    <p class="text-xs text-bm-muted mt-1">
+                        What this agent does. We’ll suggest what done looks like from the specialty.
+                    </p>
                 </div>
-            </div>
-
-            <!-- Color -->
-            <div>
-                <label class="block text-sm font-medium mb-1">Color</label>
-                <div class="flex flex-wrap gap-3 mt-1">${colorOptions}</div>
-            </div>
-
-            <!-- Desk -->
-            <div>
-                <label class="block text-sm font-medium mb-1">Desk Assignment</label>
-                <select name="desk"
-                        class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                               bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                               focus:border-bm-accent">
-                    <option value="">Unassigned</option>
-                    ${deskOptions}
-                </select>
             </div>
 
             <!-- AI Connections (Model Matrix) -->
@@ -280,12 +278,31 @@ const AgentPanel = (() => {
                     <div>
                         <h3 class="text-sm font-semibold">Advanced</h3>
                         <p class="text-xs text-bm-muted mt-1">
-                            Optional prompt template (personality) and model-visible history controls. Not part of the role contract.
+                            Optional: what done looks like, prompt template, color, and desk.
                         </p>
                     </div>
                     <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
                 </button>
                 <div id="advanced-content" class="hidden mt-3 space-y-3">
+                    <div>
+                        <div class="flex items-center justify-between gap-2 mb-1">
+                            <label class="block text-sm font-medium">What “done” looks like</label>
+                            <button type="button" id="btn-suggest-finish-line"
+                                    class="text-xs text-bm-accent hover:underline shrink-0">
+                                Suggest
+                            </button>
+                        </div>
+                        <input type="text" name="done_fail_bar"
+                               value="${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}"
+                               placeholder="Suggested from specialty. Editable."
+                               maxlength="500"
+                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                        <p class="text-xs text-bm-muted mt-1">
+                            Optional. We’ll suggest one from the specialty; edit anytime.
+                        </p>
+                    </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Personality</label>
                         ${noPersonalities
@@ -300,6 +317,23 @@ const AgentPanel = (() => {
                                    ${personalityOptions}
                                </select>`
                         }
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Color</label>
+                        <div class="flex flex-wrap gap-3 mt-1">${colorOptions}</div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Desk Assignment</label>
+                        <select name="desk"
+                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                       focus:border-bm-accent">
+                            <option value="" ${selectedDesk ? '' : 'selected'}>Unassigned</option>
+                            ${deskOptions}
+                        </select>
+                        ${noFreeDesk
+                            ? `<p class="text-xs text-amber-800 mt-1">No empty desk is free. This agent will stay unassigned.</p>`
+                            : `<p class="text-xs text-bm-muted mt-1">An empty desk is selected when one is free.</p>`}
                     </div>
                     <div>
                         <h4 class="text-xs font-semibold text-bm-text">AI History</h4>
@@ -440,6 +474,45 @@ const AgentPanel = (() => {
             });
             if (window.lucide) lucide.createIcons({ nodes: [advancedToggle] });
         }
+
+        bindFinishLineSuggestion(container, agent);
+    }
+
+    function bindFinishLineSuggestion(container, agent) {
+        const specialtyInput = container.querySelector('input[name="role"]');
+        const descriptionInput = container.querySelector('textarea[name="description"]');
+        const finishLineInput = container.querySelector('input[name="done_fail_bar"]');
+        const suggestBtn = container.querySelector('#btn-suggest-finish-line');
+        if (!specialtyInput || !descriptionInput || !finishLineInput) return;
+
+        let lastSuggested = agent
+            ? BossModUtils.suggestFinishLine(agent.role || '', agent.description || '')
+            : '';
+
+        function currentSuggestion() {
+            return BossModUtils.suggestFinishLine(specialtyInput.value, descriptionInput.value);
+        }
+
+        function applySuggestion({ force = false } = {}) {
+            const suggested = currentSuggestion();
+            const current = finishLineInput.value.trim();
+            const canReplace = force
+                || !current
+                || current === lastSuggested;
+            if (canReplace) {
+                finishLineInput.value = suggested;
+            }
+            lastSuggested = suggested;
+        }
+
+        specialtyInput.addEventListener('input', () => applySuggestion());
+        descriptionInput.addEventListener('input', () => applySuggestion());
+        if (suggestBtn) {
+            suggestBtn.addEventListener('click', () => applySuggestion({ force: true }));
+        }
+        if (agent && !(agent.done_fail_bar || '').trim() && (agent.role || agent.description)) {
+            applySuggestion();
+        }
     }
 
     // ─── Build submit data from form ───
@@ -456,6 +529,7 @@ const AgentPanel = (() => {
         const agentData = {
             name: formData.get('name'),
             role: formData.get('role') || null,
+            description: formData.get('description') || null,
             done_fail_bar: formData.get('done_fail_bar') || null,
             color: formData.get('agent-color') || '#3b82f6',
             desk_x,
@@ -527,6 +601,12 @@ const AgentPanel = (() => {
     async function renderInline(container, agent, onSave, onDelete) {
         isCreating = !agent;
         currentAgentId = agent?.id || null;
+        if (agent?.id) {
+            const full = await fetchAgent(agent.id);
+            if (full) {
+                agent = { ...agent, ...full };
+            }
+        }
 
         await buildFormHTML(container, agent);
 
