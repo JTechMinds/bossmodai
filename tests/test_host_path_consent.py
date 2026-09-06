@@ -547,8 +547,8 @@ async def test_verbal_confirm_in_chat_socialmsg_is_steered() -> None:
 def test_consent_and_approval_resume_load_human_chat_history() -> None:
     agent, state = _agent_and_state()
     ask = "Hey jimothy can you review the code at /home/jordan/Desktop/Projects/Jtech-CLI/"
-    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="chat")
-    db.create_message(agent.id, HUMAN_SENDER_ID, "Access worked this time.", message_type="chat")
+    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="human")
+    db.create_message(agent.id, HUMAN_SENDER_ID, "Access worked this time.", message_type="work")
 
     for trigger_type in ("host_path_consent_resolved", "cli_approval_resolved"):
         trigger = {"type": trigger_type, "payload": {"status": "always_allowed"}}
@@ -578,7 +578,7 @@ async def test_consent_resolved_resume_continues_with_chat_history(
     agent = db.create_agent("Jimothy", role="Engineer", model_work="test/mock")
     state = db.get_agent_state(agent.id)
     assert state is not None
-    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="chat")
+    db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="human")
 
     captured: dict[str, Any] = {}
 
