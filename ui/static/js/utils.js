@@ -612,7 +612,10 @@ const BossModUtils = (() => {
     async function decideHostPathConsent(container, card, action, actions) {
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
         try {
-            const res = await apiFetchOk(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
+            const res = await apiFetch(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
+            if (!res.ok) {
+                throw new Error((await res.text()) || 'Consent update failed.');
+            }
             const updated = await res.json();
             container.replaceChildren();
             renderHostPathConsentCard(container, updated);

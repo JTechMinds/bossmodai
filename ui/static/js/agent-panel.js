@@ -723,9 +723,9 @@ const AgentPanel = (() => {
                 feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
                 feedbackEl.textContent = 'Saving...';
 
+                let savedAgent = null;
                 try {
                     const { agentData, promptHistoryPolicy } = await buildSubmitData(form, connections);
-                    let savedAgent = null;
                     if (isCreating) {
                         savedAgent = await apiCreateAgent(agentData);
                     } else {
@@ -753,7 +753,7 @@ const AgentPanel = (() => {
                     feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
                     feedbackEl.textContent = err?.message || 'Save failed — check console for details';
                 } finally {
-                    if (submitBtn) {
+                    if (submitBtn && (!isCreating || !savedAgent)) {
                         submitBtn.disabled = false;
                         submitBtn.textContent = isCreating ? 'Create Agent' : 'Save Changes';
                     }
