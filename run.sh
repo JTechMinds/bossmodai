@@ -49,7 +49,7 @@ stop_desktop() {
 }
 
 sweep_recorded_backend() {
-    # Backstop only: signal the PID the desktop recorded. Not pkill -f.
+    # Backstop only: signal the PID the desktop recorded.
     pidfile=".bossmod-backend.pid"
     [ -f "$pidfile" ] || return 0
     pid=$(tr -d '[:space:]' < "$pidfile" || true)
