@@ -45,6 +45,10 @@ async def _handle_waiting(
 
     task = db.get_task(task_id)
     follow_up_message = action.get("followUpMessage")
+    from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
+
+    if is_verbal_host_access_ask(reason) or is_verbal_host_access_ask(follow_up_message):
+        return verbal_host_access_steer(agent)
     if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()
     ):
@@ -257,6 +261,10 @@ async def _handle_blocked(
 
     task = db.get_task(task_id)
     follow_up_message = action.get("followUpMessage")
+    from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
+
+    if is_verbal_host_access_ask(reason) or is_verbal_host_access_ask(follow_up_message):
+        return verbal_host_access_steer(agent)
     if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()
     ):

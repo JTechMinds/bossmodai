@@ -36,6 +36,7 @@ def test_handler_modules_importable() -> None:
     )
 
     assert actions_cli._handle_bm_cli is _ACTION_HANDLERS["bm_cli"]
+    assert actions_cli._handle_request_host_access is _ACTION_HANDLERS["request_host_access"]
     assert actions_work._handle_work is _ACTION_HANDLERS["work"]
     assert actions_work._handle_message is _ACTION_HANDLERS["message"]
     assert actions_work._handle_walk_to is _ACTION_HANDLERS["walkTo"]

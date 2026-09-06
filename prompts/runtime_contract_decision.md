@@ -276,10 +276,12 @@ OPTIONAL LOOKUP ACT FOR ANY DECISION TURN
 
 Use CLI only when the snapshot and surrounding turn context still lack an internal fact you genuinely need before making the final conversation decision.
 You may use more than one CLI lookup in the same decision turn when each lookup is necessary to reach the final answer.
+If a named host path is outside /me, /projects, and configured host roots, call request_host_access or attempt cli on that path. Do not ask the operator for a verbal yes/no.
 Once you have enough information, end the turn with a final conversation decision object.
 
 ```json
 {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
+{"act":"request_host_access","data":{"path":"<absolute host path>","why":"<reason>"},"th":"brief note"}
 ```
 
 FIELD NOTES
@@ -345,7 +347,7 @@ CLI LOOKUP DETAILS
 {{if workspace.host_roots}}
 - configured host roots for named paths: `{{workspace.host_roots}}`
 {{end}}
-- a user-named absolute path works only when it stays inside those roots; otherwise stop and ask in chat
+- a user-named absolute path works only when it stays inside those roots; otherwise call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
 - current cwd is `{{cli.cwd}}`; relative paths resolve from it
 - default save root for this turn is `{{workspace.default_save_root}}`
 {{if workspace.project_root}}

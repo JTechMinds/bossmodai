@@ -774,7 +774,9 @@ def test_preview_bundle_injects_role_contract() -> None:
     ]
     assert core_msgs
     assert "Description:" not in core_msgs[0]
-    assert "stop and ask in chat" in core_msgs[0]
+    assert "request_host_access" in core_msgs[0]
+    assert "do not ask the operator for verbal yes/no" in core_msgs[0]
+    assert "stop and ask in chat" not in core_msgs[0]
 
 
 def test_world_feedback_is_a_task_feed_event() -> None:

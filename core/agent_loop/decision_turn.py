@@ -6,12 +6,14 @@ import time
 from typing import Any
 
 from core.agent_loop import activity_runtime
+from core.agent_loop.actions import execute_action
 from core.agent_loop.decision_contract import (
     ConversationDecision,
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
+from core.agent_loop.notifications import emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.turn_helpers import (
@@ -24,6 +26,7 @@ from core.agent_loop.turn_helpers import (
     _summarize_action_chain,
 )
 from core.bm_cli import BossModCliCall, execute_bm_cli
+from core.bm_cli.host_path_consent import HostAccessCall
 from core.bm_cli.managed_writer import (
     is_managed_batch_write_request,
     is_managed_section_rewrite_request,
@@ -303,26 +306,101 @@ async def _run_decision_turn(
                     action_name="bm_cli",
                 )
 
+            cli_turn_result = {
+                **_cli_result_to_turn_result(agent, cli_result),
+                "command": cli_result.command,
+            }
             step_traces.append(
                 _build_step_trace(
                     step_index=len(step_traces) + 1,
                     context_snapshot=next_context_snapshot,
                     raw_response=response.content,
                     action=cli_call.model_dump(),
-                    result={
-                        **_cli_result_to_turn_result(agent, cli_result),
-                        "command": cli_result.command,
-                    },
+                    result=cli_turn_result,
                     prompt_tokens=step_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
+            if cli_turn_result.get("consent_required"):
+                return await _finalize_host_path_consent_pause(
+                    agent=agent,
+                    state=state,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    executed_actions=executed_actions,
+                    last_response_content=response.content,
+                    total_prompt_tokens=total_prompt_tokens,
+                    total_completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    step_traces=step_traces,
+                    action=cli_call.model_dump(),
+                    result=cli_turn_result,
+                    start=start,
+                )
 
             continuation_messages = cli_continuation_messages(
                 assistant_content=response.content,
                 cli_prompt_content=cli_result.prompt_content,
+                followup_content=load_default_prompt("internal_loop_decision_cli_followup"),
+                followup_role="system",
+            )
+            current_context.extend(continuation_messages)
+            next_context_snapshot = _serialize_trace_value(continuation_messages)
+            continue
+
+        if parsed.get("action") == "request_host_access":
+            host_call = HostAccessCall.model_validate(parsed)
+            tool_steps += 1
+            executed_actions.append("request_host_access")
+            if host_call.thought:
+                await manager.broadcast_thought(
+                    agent_id=agent.id,
+                    thought=host_call.thought,
+                    action_name="request_host_access",
+                )
+            host_result = await execute_action(host_call.model_dump(), agent, state, trigger)
+            step_traces.append(
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=response.content,
+                    action=host_call.model_dump(),
+                    result=host_result,
+                    prompt_tokens=step_prompt_tokens,
+                    completion_tokens=step_completion_tokens,
+                    total_tokens=step_total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            )
+            if host_result.get("consent_required"):
+                return await _finalize_host_path_consent_pause(
+                    agent=agent,
+                    state=state,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    executed_actions=executed_actions,
+                    last_response_content=response.content,
+                    total_prompt_tokens=total_prompt_tokens,
+                    total_completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    step_traces=step_traces,
+                    action=host_call.model_dump(),
+                    result=host_result,
+                    start=start,
+                )
+            continuation_messages = cli_continuation_messages(
+                assistant_content=response.content,
+                cli_prompt_content=str(host_result.get("cli_prompt_content") or host_result.get("detail") or ""),
                 followup_content=load_default_prompt("internal_loop_decision_cli_followup"),
                 followup_role="system",
             )
@@ -465,3 +543,59 @@ async def _run_decision_turn(
             ),
             start=start,
         )
+
+
+async def _finalize_host_path_consent_pause(
+    *,
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+    trigger_type: str,
+    mode: str,
+    model: str,
+    model_source: str,
+    initial_context_json: str,
+    executed_actions: list[str],
+    last_response_content: str,
+    total_prompt_tokens: int,
+    total_completion_tokens: int,
+    total_tokens: int,
+    step_traces: list[dict[str, Any]],
+    action: dict[str, Any],
+    result: dict[str, Any],
+    start: float,
+) -> TurnOutcome:
+    """Project the consent card and end the decision turn for the operator."""
+    del state
+    await emit_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=activity_runtime.get_active_activity(agent.id),
+        action=action,
+        result=result,
+    )
+    await manager.broadcast_activity(
+        event=result.get("event", "host_path_consent_required"),
+        detail=result.get("detail", ""),
+        agent_name=result.get("agent_name"),
+    )
+    return await _finalize_turn(
+        agent=agent,
+        trigger=trigger,
+        trigger_type=trigger_type,
+        mode=mode,
+        model=model,
+        model_source=model_source,
+        initial_context_json=initial_context_json,
+        outcome=TurnOutcome.success(
+            result=result,
+            action=action,
+            action_summary=_summarize_action_chain(executed_actions, "request_host_access"),
+            raw_response=last_response_content,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            total_tokens=total_tokens,
+            steps=step_traces,
+        ),
+        start=start,
+    )

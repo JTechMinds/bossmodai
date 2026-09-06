@@ -265,6 +265,21 @@ def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
             "file_count": int(cli_data.get("batch_file_count") or 0),
             "files": cli_data.get("batch_files") or [],
         }
+    if getattr(cli_result, "approval_required", False):
+        result["approval_required"] = True
+        result["approval_request_id"] = getattr(cli_result, "approval_request_id", None)
+        result["event"] = "cli_approval_required"
+        result["suppress_activity_broadcast"] = False
+    if getattr(cli_result, "consent_required", False):
+        card = cli_data.get("host_path_consent") if isinstance(cli_data.get("host_path_consent"), dict) else {}
+        path = card.get("path") or "host path"
+        result["consent_required"] = True
+        result["consent_request_id"] = getattr(cli_result, "consent_request_id", None)
+        result["consent_reused"] = bool(cli_data.get("consent_reused"))
+        result["host_path_consent"] = card
+        result["event"] = "host_path_consent_required"
+        result["detail"] = f"{agent.name} requests host-path access: {path}"
+        result["suppress_activity_broadcast"] = False
     return result
 
 def _build_managed_writer_progress_reporter(

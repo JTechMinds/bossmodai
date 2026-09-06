@@ -152,6 +152,6 @@ Every turn injects a Role contract system message (specialty + what done looks l
 
 ## Runtime core and host-path consent
 
-A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, ask-before out-of-root host access, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
+A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
 
-When a virtual CLI named path is outside `/me`, `/projects`, and `workspace_host_roots`, the agent stops and asks in chat. The consent card offers Allow once (this turn or task), Always allow (writes the same host-roots allowlist Settings uses), or Deny (fail-closed). Denied system trees such as `/etc` stay hard-denied with no card. Allow-once grants do not apply to operator Company Files.
+Out-of-root host access is not negotiated in prose. The agent must call `request_host_access` (path + reason) or attempt the named-path CLI; either opens the in-chat Allow once / Always allow / Deny card. Verbal yes/no asks are rejected. Always allow writes the same `workspace_host_roots` allowlist Settings uses. Deny is fail-closed. Denied system trees such as `/etc` stay hard-denied with no card. Allow-once grants do not apply to operator Company Files.
