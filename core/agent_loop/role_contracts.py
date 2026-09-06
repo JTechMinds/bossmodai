@@ -284,6 +284,85 @@ def suggested_assignees(agents: list[Agent]) -> list[AssigneeSuggestion]:
     ]
 
 
+def format_role_contract_block(agent: Agent) -> str:
+    """Render the hire contract the model must follow on every turn."""
+    specialty = (agent.role or "").strip() or "unspecified"
+    bar = (agent.done_fail_bar or "").strip() or (
+        "Good: a checkable claim exists. Fail: empty done with no evidence."
+    )
+    auditor = is_auditor_specialty(agent.role)
+    clear_line = (
+        "Auditor CLEAR only against a checkable claim; empty done is not a CLEAR."
+        if auditor
+        else "Empty done is rejected."
+    )
+    return (
+        "# Role contract\n"
+        f"Specialty: {specialty}\n"
+        f"Done/fail bar: {bar}\n"
+        "- Prefer teammates whose specialty matches the work. "
+        "Do not assign review/audit work to a writer, or writing to an auditor, "
+        "unless the mismatch was confirmed.\n"
+        "- Complete/deliver requires a checkable claim: a satisfied file deliverable, "
+        "or data.claim {type: artifact|tests|proof, path?, ev?}. "
+        f"{clear_line}"
+    )
+
+
+def operator_done_claim_guidance(
+    *,
+    auditor: bool = False,
+    done_fail_bar: str | None = None,
+    has_file_deliverables: bool = False,
+) -> str:
+    """Operator-facing copy for what a checkable done claim looks like."""
+    if has_file_deliverables:
+        base = (
+            "Complete requires the work-contract file path to exist "
+            "(that file is the checkable claim)."
+        )
+    elif auditor:
+        base = (
+            "Auditor CLEAR requires a checkable claim: tests evidence, "
+            "an artifact path that exists, or an allow/deny proof summary."
+        )
+    else:
+        base = (
+            "Complete/deliver requires a checkable claim: tests evidence, "
+            "an artifact path that exists, or an allow/deny proof summary. "
+            "Empty done is rejected."
+        )
+    bar = (done_fail_bar or "").strip()
+    if bar:
+        return f"{base} This agent's done/fail bar: {bar}"
+    return base
+
+
+def parse_done_claim_from_text(content: str | None) -> dict[str, str] | None:
+    """Parse a structured claim from a completion event or summary line."""
+    if not content:
+        return None
+    marker = " Claim: "
+    if marker not in content:
+        return None
+    tail = content.split(marker, 1)[1].strip()
+    if not tail:
+        return None
+    parts = [part.strip() for part in tail.split("—")]
+    claim_type = parts[0].lower() if parts else ""
+    if claim_type not in _DONE_CLAIM_TYPES:
+        return {"type": "proof", "evidence": tail}
+    payload: dict[str, str] = {"type": claim_type}
+    if len(parts) > 1 and parts[1]:
+        if claim_type == "artifact" or parts[1].startswith("/"):
+            payload["path"] = parts[1]
+        else:
+            payload["evidence"] = parts[1]
+    if len(parts) > 2 and parts[2]:
+        payload["evidence"] = parts[2]
+    return payload
+
+
 def empty_done_claim_message(*, auditor: bool) -> str:
     """Operator/model-facing rejection for complete/deliver with no checkable claim."""
     if auditor:

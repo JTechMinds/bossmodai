@@ -212,10 +212,24 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
     ]
 
     if kind == "completion":
+        claim = payload.get("done_claim") if isinstance(payload.get("done_claim"), dict) else None
+        claim_note = ""
+        if claim:
+            claim_type = str(claim.get("type") or "").strip()
+            claim_path = str(claim.get("path") or "").strip()
+            claim_evidence = str(claim.get("evidence") or "").strip()
+            if claim_type == "artifact" and claim_path:
+                claim_note = f" Claim: artifact {claim_path}."
+            elif claim_type == "tests" and claim_evidence:
+                claim_note = f" Claim: tests — {claim_evidence}."
+            elif claim_type == "proof" and claim_evidence:
+                claim_note = f" Claim: proof — {claim_evidence}."
+            elif claim_type:
+                claim_note = f" Claim: {claim_type}."
         if len(deliverable_paths) == 1:
             return ChatNotification(
                 kind="completion",
-                content=f'{agent.name} finished "{task_title}" and saved it to {deliverable_paths[0]}.',
+                content=f'{agent.name} finished "{task_title}" and saved it to {deliverable_paths[0]}.{claim_note}',
                 source_channel=str(payload.get("source_channel") or "chat"),
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
@@ -226,7 +240,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
         if len(deliverable_paths) > 1:
             return ChatNotification(
                 kind="completion",
-                content=f'{agent.name} finished "{task_title}" and saved {len(deliverable_paths)} deliverables.',
+                content=f'{agent.name} finished "{task_title}" and saved {len(deliverable_paths)} deliverables.{claim_note}',
                 source_channel=str(payload.get("source_channel") or "chat"),
                 policy=str(payload.get("policy") or "completion_blocked"),
                 prompt_visibility=True,
@@ -235,7 +249,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             )
         return ChatNotification(
             kind="completion",
-            content=f'{agent.name} finished "{task_title}".',
+            content=f'{agent.name} finished "{task_title}".{claim_note}',
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,

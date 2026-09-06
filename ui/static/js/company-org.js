@@ -107,7 +107,7 @@ const CompanyOrg = (() => {
     function renderCard(agent) {
         const id        = BossModUtils.escapeHtml(agent.id || '');
         const name      = BossModUtils.escapeHtml(agent.name || 'Unknown');
-        const role      = BossModUtils.escapeHtml(agent.role || 'Agent');
+        const role      = BossModUtils.escapeHtml(agent.role || 'No specialty');
         const doneBar   = agent.done_fail_bar ? BossModUtils.escapeHtml(agent.done_fail_bar) : '';
         const color     = BossModUtils.escapeHtml(agent.color || '#3b82f6');
         const initial   = (agent.name || '?')[0].toUpperCase();

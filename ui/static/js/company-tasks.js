@@ -543,38 +543,64 @@ const CompanyTasks = (() => {
         }
     }
 
-    function specialtyRank(agent, title) {
-        const work = (title || '').toLowerCase();
-        const role = (agent.role || '').toLowerCase();
-        if (!work || !role) return 1;
-        const pairs = [
-            [['write', 'draft', 'document', 'docs', 'copy', 'edit'], ['writer', 'writing', 'editor', 'docs', 'author']],
-            [['review', 'audit', 'test', 'qa', 'inspect'], ['reviewer', 'auditor', 'qa', 'tester', 'review']],
-            [['implement', 'code', 'build', 'fix', 'debug'], ['engineer', 'developer', 'coder', 'eng']],
-            [['research', 'analyze', 'analysis'], ['researcher', 'analyst']],
-            [['design', 'mockup', 'ux'], ['designer', 'design', 'ux']],
-        ];
-        for (const [workWords, roleWords] of pairs) {
-            const workHit = workWords.some(word => work.includes(word));
-            const roleHit = roleWords.some(word => role.includes(word));
-            if (workHit && roleHit) return 0;
-            if (workHit && !roleHit) return 2;
+    function rankedRoster() {
+        return rosterAgents.slice().sort((a, b) => {
+            const rankDelta = BossModUtils.specialtyRank(a, assignTitle, assignDescription)
+                - BossModUtils.specialtyRank(b, assignTitle, assignDescription);
+            if (rankDelta !== 0) return rankDelta;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    }
+
+    function assigneeOptionLabel(agent) {
+        const status = BossModUtils.specialtyMatch(agent.role, assignTitle, assignDescription);
+        let label = agent.name || 'Teammate';
+        if (agent.role) label += ` — ${agent.role}`;
+        if (status === 'match') label += ' (matches)';
+        if (status === 'mismatch') label += ' (mismatch)';
+        return label;
+    }
+
+    function renderAssignMismatchHint() {
+        const escape = BossModUtils.escapeHtml;
+        if (!assignAgentId) return '';
+        const agent = rosterAgents.find(item => item.id === assignAgentId);
+        const warning = BossModUtils.specialtyWarningMessage(agent, assignTitle, assignDescription);
+        if (!warning) return '';
+        return `
+            <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p class="text-xs font-medium text-amber-950 mb-0.5">Specialty mismatch</p>
+                <p class="text-[11px] text-amber-800">${escape(warning)}</p>
+            </div>`;
+    }
+
+    function refreshAssignSpecialtyHints() {
+        if (!container) return;
+        const escape = BossModUtils.escapeHtml;
+        const select = container.querySelector('#ct-assign-agent');
+        if (select) {
+            const options = rankedRoster().map(agent => (
+                `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(assigneeOptionLabel(agent))}</option>`
+            )).join('');
+            select.innerHTML = `<option value="">Unassigned backlog</option>${options}`;
+            select.value = assignAgentId;
         }
-        return 1;
+        const hint = container.querySelector('#ct-assign-mismatch');
+        if (hint) {
+            const html = renderAssignMismatchHint();
+            hint.innerHTML = html;
+            hint.classList.toggle('hidden', !html);
+        }
     }
 
     function renderAssignPanel() {
         const escape = BossModUtils.escapeHtml;
         if (!assignFormOpen) return '';
 
-        const rankedRoster = rosterAgents.slice().sort((a, b) => {
-            const rankDelta = specialtyRank(a, assignTitle) - specialtyRank(b, assignTitle);
-            if (rankDelta !== 0) return rankDelta;
-            return (a.name || '').localeCompare(b.name || '');
-        });
-        const agentOptions = rankedRoster.map(agent => (
-            `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(agent.name)}${agent.role ? ` — ${escape(agent.role)}` : ''}</option>`
+        const agentOptions = rankedRoster().map(agent => (
+            `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(assigneeOptionLabel(agent))}</option>`
         )).join('');
+        const mismatchHint = renderAssignMismatchHint();
 
         return `
             <div id="ct-assign-panel" class="px-4 py-3 border-b border-bm-border bg-white shrink-0">
@@ -602,8 +628,9 @@ const CompanyTasks = (() => {
                                   placeholder="Context, constraints, or the expected deliverable"
                                   class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-y">${escape(assignDescription)}</textarea>
                     </label>
+                    <div id="ct-assign-mismatch" class="${mismatchHint ? '' : 'hidden'}">${mismatchHint}</div>
                     <div class="flex items-center justify-between gap-2">
-                        <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate.</p>
+                        <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate. Matching specialties are listed first.</p>
                         <div class="flex items-center gap-2 shrink-0">
                             <button type="button" id="ct-assign-cancel"
                                     class="px-2.5 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">Cancel</button>
@@ -725,9 +752,18 @@ const CompanyTasks = (() => {
         const titleInput = container.querySelector('#ct-assign-title');
         const descInput = container.querySelector('#ct-assign-description');
         const agentSelect = container.querySelector('#ct-assign-agent');
-        titleInput?.addEventListener('input', (e) => { assignTitle = e.target.value; });
-        descInput?.addEventListener('input', (e) => { assignDescription = e.target.value; });
-        agentSelect?.addEventListener('change', (e) => { assignAgentId = e.target.value; });
+        titleInput?.addEventListener('input', (e) => {
+            assignTitle = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
+        descInput?.addEventListener('input', (e) => {
+            assignDescription = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
+        agentSelect?.addEventListener('change', (e) => {
+            assignAgentId = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
 
         container.querySelector('#ct-assign-cancel')?.addEventListener('click', () => {
             assignFormOpen = false;

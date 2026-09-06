@@ -18,11 +18,15 @@ from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.role_contracts import (
+    format_role_contract_block,
     infer_work_kind,
     match_specialty,
+    operator_done_claim_guidance,
     prefer_specialty_match,
     specialty_family,
 )
+from core.llm import context_preview
+from db.unified_feed import classify_category
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
@@ -148,13 +152,34 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
 
 def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     panel = Path("ui/static/js/agent-panel.js").read_text(encoding="utf-8")
+    assert 'id="role-contract-card"' in panel
+    assert "Role contract" in panel
     assert 'name="role"' in panel
     assert "Specialty" in panel
     assert 'name="done_fail_bar"' in panel
     assert "done_fail_bar: formData.get('done_fail_bar')" in panel
+    assert 'id="advanced-toggle"' in panel
+    assert "Advanced" in panel
+    assert 'name="personality_id"' in panel
+    assert panel.index("Role contract") < panel.index("Advanced")
+    assert panel.index("Advanced") < panel.index('name="personality_id"')
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
     assert "specialty_mismatch" in tasks_js
     assert "confirm_specialty_mismatch" in tasks_js
+    assert "ct-assign-mismatch" in tasks_js
+    assert "specialtyWarningMessage" in tasks_js
+    assert "(matches)" in tasks_js
+    assert "(mismatch)" in tasks_js
+    detail_js = Path("ui/static/js/company-task-detail.js").read_text(encoding="utf-8")
+    assert "doneClaimGuidance" in detail_js
+    assert "Checkable done claim" in detail_js
+    assert "Done claim" in detail_js
+    assert "allow/deny proof" in detail_js
+    activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
+    assert "world_feedback" in activity_js
+    context_js = Path("ui/static/js/agent-context.js").read_text(encoding="utf-8")
+    assert "No specialty" in context_js
+    assert "done_fail_bar" in context_js
 
 
 # ---------------------------------------------------------------------------
@@ -502,3 +527,63 @@ def test_parse_done_action_keeps_claim() -> None:
     assert parsed["action"] == "complete"
     assert parsed["doneClaim"]["type"] == "tests"
     assert parsed["doneClaim"]["ev"] == "12 passed"
+
+
+def test_role_contract_block_and_done_claim_guidance_are_operator_actionable() -> None:
+    agent = db.create_agent(
+        "Cap Writer",
+        role="Writer",
+        done_fail_bar="Good: draft path exists. Fail: empty done.",
+        desk_x=1,
+        desk_y=1,
+    )
+    block = format_role_contract_block(agent)
+    assert "# Role contract" in block
+    assert "Specialty: Writer" in block
+    assert "Good: draft path exists" in block
+    assert "data.claim" in block
+    assert "Empty done is rejected" in block
+    guidance = operator_done_claim_guidance(
+        auditor=False,
+        done_fail_bar=agent.done_fail_bar,
+        has_file_deliverables=False,
+    )
+    assert "tests evidence" in guidance
+    assert "artifact path" in guidance
+    assert "allow/deny proof" in guidance
+    assert "Good: draft path exists" in guidance
+
+
+def test_task_list_includes_assignee_contract_and_done_claim_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    writer = db.create_agent(
+        "Cap Writer",
+        role="Writer",
+        done_fail_bar="Good: draft path exists. Fail: empty done.",
+        desk_x=1,
+        desk_y=1,
+    )
+    _bind_task(writer.id, title="Write a note")
+    listed = client.get("/api/tasks", headers=_headers())
+    assert listed.status_code == 200
+    row = next(item for item in listed.json() if item["assigned_to"] == writer.id)
+    assert row["assigned_to_role"] == "Writer"
+    assert row["assigned_to_done_fail_bar"] == "Good: draft path exists. Fail: empty done."
+    assert "checkable claim" in row["done_claim_guidance"]
+    assert "Good: draft path exists" in row["done_claim_guidance"]
+    assert row["done_claim"] is None
+
+
+def test_preview_bundle_injects_role_contract() -> None:
+    preview = context_preview.preview_prompt_bundle("execution", "activity_resumed")
+    contents = "\n".join(str(message.get("content") or "") for message in preview["messages"])
+    assert "# Role contract" in contents
+    assert "Specialty:" in contents
+    assert "data.claim" in contents
+    assert "Empty done" in contents
+
+
+def test_world_feedback_is_a_task_feed_event() -> None:
+    assert classify_category("activity_log", "world_feedback") == "task"

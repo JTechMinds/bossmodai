@@ -474,14 +474,17 @@ const AgentContext = (() => {
         const esc = BossModUtils.escapeHtml;
         const status = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
         const dotCls = BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
-        const role = selectedAgent.role || 'No role assigned';
+        const specialty = selectedAgent.role || 'No specialty';
+        const doneBar = (selectedAgent.done_fail_bar || '').trim();
+        const doneBarShort = doneBar.length > 72 ? `${doneBar.slice(0, 71)}…` : doneBar;
         const taskId = selectedAgent.boundTaskId;
 
         bar.innerHTML = `
             <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-4 min-w-0 text-[11px]">
                     <span class="font-semibold text-xs text-bm-text truncate" style="color: ${esc(selectedAgent.color || '#3b82f6')}">${esc(selectedAgent.name)}</span>
-                    <span class="text-bm-muted truncate" title="Role">${esc(role)}</span>
+                    <span class="text-bm-muted truncate" title="Specialty">${esc(specialty)}</span>
+                    ${doneBarShort ? `<span class="text-bm-muted truncate" title="${esc(doneBar)}">${esc(doneBarShort)}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-3 shrink-0 text-[11px]">
                     ${taskId ? `<span class="text-bm-muted">Task: <span class="font-medium text-bm-text">${esc(taskId.slice(0, 8))}</span></span>` : '<span class="text-bm-muted">No active task</span>'}

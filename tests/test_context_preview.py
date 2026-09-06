@@ -53,6 +53,8 @@ def test_preview_prompt_bundle_includes_roles() -> None:
     assert "system" in roles
     assert "user" in roles
     assert "[SYSTEM" in preview["rendered"]
+    contents = "\n".join(str(message.get("content") or "") for message in preview["messages"])
+    assert "# Role contract" in contents
 
 
 def test_live_builder_stays_larger_than_preview_but_preview_is_focused() -> None:

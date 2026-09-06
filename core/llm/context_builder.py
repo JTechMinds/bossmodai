@@ -14,6 +14,7 @@ import db
 from core import config
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
+from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
@@ -38,6 +39,8 @@ _STATUS_LABELS = {
 _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("agent_name", "Agent display name"),
     ("role", "Agent role title"),
+    ("done_fail_bar", "Hire done/fail bar — what good and failure look like"),
+    ("role_contract", "Formatted role-contract block (specialty + done/fail bar + hard rules)"),
     ("personality", "Rendered personality prompt text"),
     ("current_date_time", "Current local date/time string for this turn"),
     ("current_time.iso_local", "Current local time in ISO-8601 format"),
@@ -147,6 +150,7 @@ def build_context(
     system_prompt = _render_system_prompt(turn, render_context, template_overrides)
 
     messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "system", "content": format_role_contract_block(turn.agent)})
     messages.append(
         {
             "role": "system",
@@ -238,6 +242,8 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     return {
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
+        "done_fail_bar": turn.agent.done_fail_bar or "",
+        "role_contract": format_role_contract_block(turn.agent),
         "personality": "",
         "current_date_time": current_time["value"],
         "current_time": current_time,
@@ -483,6 +489,13 @@ def _format_task(task: dict[str, Any]) -> str:
     if deliverable_lines:
         details.append("deliverables:")
         details.extend(deliverable_lines)
+    details.append(
+        "done_claim: "
+        + operator_done_claim_guidance(
+            auditor=False,
+            has_file_deliverables=bool(deliverable_lines),
+        )
+    )
     return "\n".join(details)
 
 

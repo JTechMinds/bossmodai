@@ -21,6 +21,8 @@ const BossModUtils = (() => {
         return {
             id: w.id,
             name: w.name,
+            role: w.role || null,
+            done_fail_bar: w.done_fail_bar || null,
             x: w.x ?? 0,
             y: w.y ?? 0,
             color: w.color || '#3b82f6',
@@ -29,6 +31,103 @@ const BossModUtils = (() => {
             boundTaskId: w.boundTaskId || null,
             idle_since: w.idle_since || null,
         };
+    }
+
+    const SPECIALTY_PAIRS = [
+        { work: ['write', 'draft', 'document', 'docs', 'copy', 'author', 'edit'], roles: ['writer', 'writing', 'editor', 'docs', 'author'], family: 'write' },
+        { work: ['review', 'audit', 'test', 'qa', 'inspect'], roles: ['reviewer', 'auditor', 'qa', 'tester', 'review'], family: 'review' },
+        { work: ['implement', 'code', 'build', 'fix', 'debug'], roles: ['engineer', 'developer', 'coder', 'eng'], family: 'implement' },
+        { work: ['research', 'analyze', 'analysis'], roles: ['researcher', 'analyst'], family: 'research' },
+        { work: ['design', 'mockup', 'ux'], roles: ['designer', 'design', 'ux'], family: 'design' },
+    ];
+    const SPECIALTY_CONFLICTS = {
+        write: ['review'],
+        review: ['write', 'design'],
+        design: ['review', 'implement'],
+        implement: ['design'],
+    };
+
+    function inferWorkFamily(title, description) {
+        const text = `${title || ''} ${description || ''}`.toLowerCase();
+        if (!text.trim()) return null;
+        const hits = [];
+        for (const pair of SPECIALTY_PAIRS) {
+            if (pair.work.some(word => text.includes(word))) hits.push(pair.family);
+        }
+        const unique = [...new Set(hits)];
+        return unique.length === 1 ? unique[0] : null;
+    }
+
+    function specialtyFamily(role) {
+        const text = (role || '').toLowerCase();
+        if (!text) return null;
+        if (['lead', 'pm', 'manager', 'coordinator', 'owner', 'director'].some(word => text.includes(word))) {
+            return 'coordinate';
+        }
+        const hits = [];
+        for (const pair of SPECIALTY_PAIRS) {
+            if (pair.roles.some(word => text.includes(word))) hits.push(pair.family);
+        }
+        const unique = [...new Set(hits)];
+        return unique.length === 1 ? unique[0] : null;
+    }
+
+    function specialtyMatch(role, title, description) {
+        const work = inferWorkFamily(title, description);
+        const family = specialtyFamily(role);
+        if (!work || !family || family === 'coordinate') return 'unknown';
+        if (family === work) return 'match';
+        if ((SPECIALTY_CONFLICTS[family] || []).includes(work)) return 'mismatch';
+        return 'unknown';
+    }
+
+    function specialtyRank(agent, title, description) {
+        const status = specialtyMatch(agent?.role, title, description);
+        if (status === 'match') return 0;
+        if (status === 'mismatch') return 2;
+        return 1;
+    }
+
+    const WORK_FAMILY_LABELS = {
+        write: 'writing',
+        review: 'review/audit',
+        implement: 'implementation',
+        research: 'research',
+        design: 'design',
+    };
+
+    function specialtyWarningMessage(agent, title, description) {
+        const status = specialtyMatch(agent?.role, title, description);
+        if (status !== 'mismatch') return '';
+        const name = agent?.name || 'This assignee';
+        const role = agent?.role || 'unspecified specialty';
+        const work = inferWorkFamily(title, description);
+        const workLabel = WORK_FAMILY_LABELS[work] || 'this work';
+        return `${name} is "${role}"; this work looks like ${workLabel}. Prefer a matching teammate, or assign anyway (you will be asked to confirm).`;
+    }
+
+    function doneClaimGuidance(task) {
+        if (task?.done_claim_guidance) return task.done_claim_guidance;
+        const bar = (task?.assigned_to_done_fail_bar || '').trim();
+        const hasFiles = Boolean(task?.work_contract?.deliverables?.length);
+        let base;
+        if (hasFiles) {
+            base = 'Complete requires the work-contract file path to exist (that file is the checkable claim).';
+        } else {
+            base = 'Complete/deliver requires a checkable claim: tests evidence, an artifact path that exists, or an allow/deny proof summary. Empty done is rejected.';
+        }
+        return bar ? `${base} This agent's done/fail bar: ${bar}` : base;
+    }
+
+    function formatDoneClaim(claim) {
+        if (!claim || typeof claim !== 'object') return '';
+        const type = String(claim.type || 'proof').trim() || 'proof';
+        const path = String(claim.path || '').trim();
+        const evidence = String(claim.evidence || '').trim();
+        if (path && evidence) return `${type} — ${path} — ${evidence}`;
+        if (path) return `${type} — ${path}`;
+        if (evidence) return `${type} — ${evidence}`;
+        return type;
     }
 
     // ─── Status color mappings ───
@@ -316,6 +415,13 @@ const BossModUtils = (() => {
     return {
         escapeHtml,
         normalizeAgent,
+        inferWorkFamily,
+        specialtyFamily,
+        specialtyMatch,
+        specialtyRank,
+        specialtyWarningMessage,
+        doneClaimGuidance,
+        formatDoneClaim,
         getStatusColor,
         getStatusClasses,
         getStatusDot,
