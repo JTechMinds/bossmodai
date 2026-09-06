@@ -302,4 +302,4 @@ async def test_decision_cli_forwards_origin_channel_id(
     outcome = await run_turn(agent, state, trigger)
     assert outcome.trigger_status == "completed"
     assert captured.get("channel_id") == channel.id
-    assert captured.get("trigger_type") == "channel_response"
+    assert captured.get("trigger_type") == "human_chat"
