@@ -1,5 +1,5 @@
 /**
- * Node harness: slot assign + maximize→tabs.
+ * Node harness: slot assign, pane independence, close/re-add, persist, resize.
  * Invoked by tests/test_ui_docks.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -11,17 +11,31 @@ const documentStub = {
     addEventListener() {},
 };
 
+const dispatched = [];
+
 global.document = documentStub;
 global.window = {
     document: documentStub,
     addEventListener() {},
-    dispatchEvent() { return true; },
+    dispatchEvent(event) {
+        dispatched.push(event && event.type ? event.type : "event");
+        return true;
+    },
 };
 global.CustomEvent = class CustomEvent {
     constructor(type, init) {
         this.type = type;
         this.detail = init && init.detail;
     }
+};
+global.Event = class Event {
+    constructor(type) {
+        this.type = type;
+    }
+};
+global.requestAnimationFrame = (cb) => {
+    cb();
+    return 1;
 };
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.DockManager = DockManager;\n`);
@@ -37,7 +51,11 @@ const opened = DockManager.openPane(defaults, "files");
 const maximized = DockManager.maximizePane(opened, "tasks");
 const closed = DockManager.closePane(maximized, "files");
 const office = DockManager.closeAllPanes(closed);
-const coreCloseIgnored = DockManager.closePane(defaults, "focus");
+const focusClosed = DockManager.closePane(defaults, "focus");
+const focusReopened = DockManager.openPane(focusClosed, "focus");
+const directoryOpened = DockManager.openPane(defaults, "directory");
+const channelsMoved = DockManager.assignPane(directoryOpened, "channels", "right");
+const independent = DockManager.closePane(channelsMoved, "focus");
 const junk = DockManager.normalizeLayout({
     version: 2,
     slots: {
@@ -53,6 +71,33 @@ const migrated = DockManager.normalizeLayout({
     junk: { open: true },
 });
 const empty = DockManager.normalizeLayout(null);
+const restoredClosed = DockManager.normalizeLayout(independent);
+const restoredTabs = DockManager.normalizeLayout({
+    version: 2,
+    slots: {
+        left: { panes: ["directory", "channels"], active: "channels" },
+        center: { panes: ["map", "files"], active: "files" },
+        right: { panes: ["activity"], active: "activity" },
+    },
+});
+const toggledClosed = DockManager.togglePane(defaults, "activity");
+const toggledOpen = DockManager.togglePane(toggledClosed, "activity");
+
+dispatched.length = 0;
+DockManager.scheduleShownResize();
+const resizeEvents = dispatched.filter((type) => type === "panel-resize");
+
+const ALL_PANES = [
+    "focus", "map", "activity", "directory", "channels", "files", "tasks", "metrics", "org",
+];
+const closeReadd = {};
+ALL_PANES.forEach((id) => {
+    const afterClose = DockManager.closePane(defaults, id);
+    const afterOpen = DockManager.openPane(afterClose, id);
+    closeReadd[id] = DockManager.slotOf(afterClose, id) === null
+        && Boolean(DockManager.slotOf(afterOpen, id))
+        && afterOpen.slots[DockManager.slotOf(afterOpen, id)].active === id;
+});
 
 const payload = {
     ok: true,
@@ -61,6 +106,8 @@ const payload = {
     defaultLeft: defaults.slots.left,
     defaultCenter: defaults.slots.center,
     defaultRight: defaults.slots.right,
+    directoryDefaultClosed: DockManager.slotOf(defaults, "directory") === null,
+    channelsDefaultClosed: DockManager.slotOf(defaults, "channels") === null,
     activityMovedLeft: DockManager.slotOf(assigned, "activity") === "left"
         && assigned.slots.left.active === "activity"
         && assigned.slots.left.panes.indexOf("focus") !== -1
@@ -80,7 +127,30 @@ const payload = {
         && closed.slots.center.panes.indexOf("tasks") !== -1,
     companyClosed: DockManager.companyOpenIds(office).length === 0
         && office.slots.center.panes.indexOf("map") !== -1,
-    coreStaysOpen: coreCloseIgnored.slots.left.panes.indexOf("focus") !== -1,
+    coreCanClose: DockManager.slotOf(focusClosed, "focus") === null
+        && focusClosed.slots.left.panes.length === 0
+        && DockManager.slotOf(focusReopened, "focus") === "left",
+    directoryIndependent: DockManager.slotOf(directoryOpened, "directory") === "left"
+        && directoryOpened.slots.left.panes.indexOf("focus") !== -1
+        && directoryOpened.slots.left.panes.indexOf("directory") !== -1
+        && directoryOpened.slots.left.active === "directory",
+    channelsOwnPane: DockManager.slotOf(channelsMoved, "channels") === "right"
+        && DockManager.slotOf(channelsMoved, "focus") === "left"
+        && DockManager.slotOf(independent, "focus") === null
+        && DockManager.slotOf(independent, "directory") === "left"
+        && DockManager.slotOf(independent, "channels") === "right",
+    closeReadd,
+    allPanesCloseable: ALL_PANES.every((id) => closeReadd[id]),
+    persistRoundTrip: DockManager.slotOf(restoredClosed, "focus") === null
+        && DockManager.slotOf(restoredClosed, "directory") === "left"
+        && DockManager.slotOf(restoredClosed, "channels") === "right"
+        && restoredClosed.slots.left.active === "directory"
+        && restoredTabs.slots.left.panes.join(",") === "directory,channels"
+        && restoredTabs.slots.left.active === "channels"
+        && restoredTabs.slots.center.active === "files"
+        && DockManager.slotOf(restoredTabs, "focus") === null,
+    toggleWorks: DockManager.slotOf(toggledClosed, "activity") === null
+        && DockManager.slotOf(toggledOpen, "activity") === "right",
     junkIgnored: junk.slots.left.panes.indexOf("nope") === -1
         && junk.slots.left.active === "focus"
         && junk.slots.center.panes.filter((id) => id === "map").length === 1
@@ -93,6 +163,7 @@ const payload = {
     emptyDefaults: empty.slots.left.active === "focus"
         && empty.slots.center.active === "map"
         && empty.slots.right.active === "activity",
+    mapResizeTrigger: resizeEvents.length >= 2,
 };
 
 process.stdout.write(`${JSON.stringify(payload)}\n`);

@@ -9,12 +9,26 @@
 const DockManager = (() => {
     const SLOT_IDS = ['left', 'center', 'right'];
     const CORE_PANE_IDS = ['focus', 'map', 'activity'];
+    const SHELL_PANE_IDS = ['directory', 'channels'];
     const COMPANY_PANE_IDS = ['files', 'tasks', 'metrics', 'org'];
-    const PANE_IDS = CORE_PANE_IDS.concat(COMPANY_PANE_IDS);
+    const PANE_IDS = CORE_PANE_IDS.concat(SHELL_PANE_IDS, COMPANY_PANE_IDS);
     const DOCK_IDS = COMPANY_PANE_IDS;
-    const HOME_SLOT = { focus: 'left', map: 'center', activity: 'right' };
+    const MOUNT_PANE_IDS = SHELL_PANE_IDS.concat(COMPANY_PANE_IDS);
+    const HOME_SLOT = {
+        focus: 'left',
+        directory: 'left',
+        channels: 'left',
+        map: 'center',
+        activity: 'right',
+        files: 'center',
+        tasks: 'center',
+        metrics: 'center',
+        org: 'center',
+    };
     const PANE_META = {
         focus: { label: 'Focus', icon: 'message-circle' },
+        directory: { label: 'Directory', icon: 'book-user' },
+        channels: { label: 'Channels', icon: 'messages-square' },
         map: { label: 'Office', icon: 'building' },
         activity: { label: 'Activity', icon: 'activity' },
         files: { label: 'Files', icon: 'folder' },
@@ -105,11 +119,15 @@ const DockManager = (() => {
     }
 
     function closePane(layout, paneId) {
-        if (CORE_PANE_IDS.indexOf(paneId) !== -1) return cloneLayout(layout);
-        if (COMPANY_PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
+        if (PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
         const next = cloneLayout(layout);
         removePane(next, paneId);
         return next;
+    }
+
+    function togglePane(layout, paneId) {
+        if (slotOf(layout, paneId)) return closePane(layout, paneId);
+        return openPane(layout, paneId);
     }
 
     function closeAllPanes(layout) {
@@ -183,12 +201,8 @@ const DockManager = (() => {
             ensureActive(next.slots[slotId]);
         });
 
-        CORE_PANE_IDS.forEach((id) => {
-            if (seen[id]) return;
-            const home = HOME_SLOT[id];
-            next.slots[home].panes.push(id);
-            if (!next.slots[home].active) next.slots[home].active = id;
-        });
+        const hasAny = SLOT_IDS.some((slotId) => next.slots[slotId].panes.length > 0);
+        if (!hasAny) return defaultLayout();
 
         return next;
     }
@@ -219,7 +233,21 @@ const DockManager = (() => {
         return slot ? slot.querySelector('[data-slot-body]') : null;
     }
 
+    function mountableIds(layout) {
+        return MOUNT_PANE_IDS.filter((id) => slotOf(layout, id));
+    }
+
     function renderDock(id) {
+        if (id === 'directory' && typeof CompanyView !== 'undefined' && typeof CompanyView.render === 'function') {
+            const body = document.getElementById('dock-directory-body');
+            if (body) void CompanyView.render(body);
+            return;
+        }
+        if (id === 'channels' && typeof ChannelsView !== 'undefined' && typeof ChannelsView.render === 'function') {
+            const body = document.getElementById('dock-channels-body');
+            if (body) void ChannelsView.render(body);
+            return;
+        }
         if (COMPANY_PANE_IDS.indexOf(id) === -1) return;
         if (typeof CompanyDashboard !== 'undefined' && typeof CompanyDashboard.switchTab === 'function') {
             CompanyDashboard.switchTab(id);
@@ -227,36 +255,51 @@ const DockManager = (() => {
     }
 
     function unmountDock(id) {
+        if (id === 'directory' || id === 'channels') {
+            const body = document.getElementById(`dock-${id}-body`);
+            if (body) body.innerHTML = '';
+            return;
+        }
         if (COMPANY_PANE_IDS.indexOf(id) === -1) return;
         if (typeof CompanyDashboard !== 'undefined' && typeof CompanyDashboard.unmount === 'function') {
             CompanyDashboard.unmount(id);
         }
     }
 
+    function scheduleShownResize() {
+        const fire = () => window.dispatchEvent(new Event('panel-resize'));
+        if (typeof requestAnimationFrame !== 'function') {
+            fire();
+            return;
+        }
+        requestAnimationFrame(() => {
+            fire();
+            requestAnimationFrame(fire);
+        });
+    }
+
     function commit(next, options) {
         const opts = options || {};
-        const prevOpen = companyOpenIds(state);
+        const prevOpen = mountableIds(state);
         state = next;
         applyAll();
         if (!opts.silentPersist) persist(snapshot());
         window.dispatchEvent(new CustomEvent('dock-change', {
             detail: { focused: getFocused(), layout: snapshot() },
         }));
-        const nowOpen = companyOpenIds(state);
+        const nowOpen = mountableIds(state);
         prevOpen.forEach((id) => {
             if (nowOpen.indexOf(id) === -1) unmountDock(id);
         });
         nowOpen.forEach((id) => {
             if (prevOpen.indexOf(id) === -1) renderDock(id);
         });
-        requestAnimationFrame(() => {
-            window.dispatchEvent(new Event('panel-resize'));
-        });
+        scheduleShownResize();
     }
 
     function renderTab(paneId, active) {
         const meta = PANE_META[paneId] || { label: paneId, icon: 'square' };
-        const closable = COMPANY_PANE_IDS.indexOf(paneId) !== -1;
+        const closable = true;
         const tab = document.createElement('div');
         tab.className = `dock-tab${active ? ' is-active' : ''}`;
         tab.setAttribute('role', 'tab');
@@ -402,6 +445,10 @@ const DockManager = (() => {
         });
     }
 
+    function isOpen(id) {
+        return Boolean(slotOf(state, id));
+    }
+
     function open(id) {
         if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
         commit(openPane(state, id));
@@ -409,6 +456,11 @@ const DockManager = (() => {
 
     function close(id) {
         commit(closePane(state, id));
+    }
+
+    function toggle(id) {
+        if (COMPANY_PANE_IDS.indexOf(id) !== -1 && !isOpen(id)) lastCompany = id;
+        commit(togglePane(state, id));
     }
 
     function closeAll() {
@@ -455,14 +507,16 @@ const DockManager = (() => {
         lastCompany = getFocused();
         bindSlots();
         applyAll();
-        companyOpenIds(state).forEach(renderDock);
+        mountableIds(state).forEach(renderDock);
         persist(snapshot());
+        scheduleShownResize();
     }
 
     return {
         init,
         open,
         close,
+        toggle,
         closeAll,
         assign,
         activate,
@@ -470,6 +524,7 @@ const DockManager = (() => {
         maximize,
         fill: maximize,
         hasOpen,
+        isOpen,
         getFocused,
         snapshot,
         defaultLayout,
@@ -477,16 +532,20 @@ const DockManager = (() => {
         assignPane,
         openPane,
         closePane,
+        togglePane,
         closeAllPanes,
         maximizePane,
         activatePane,
         slotOf,
         companyOpenIds,
+        scheduleShownResize,
         SLOT_IDS,
         PANE_IDS,
         CORE_PANE_IDS,
+        SHELL_PANE_IDS,
         COMPANY_PANE_IDS,
         DOCK_IDS,
+        HOME_SLOT,
     };
 })();
 

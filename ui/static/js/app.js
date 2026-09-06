@@ -141,7 +141,7 @@ const BossModApp = (() => {
         if (mode === 'office') {
             if (typeof DockManager !== 'undefined') {
                 DockManager.closeAll();
-                DockManager.activate('map');
+                DockManager.open('map');
             }
             if (canvasContainer) canvasContainer.classList.remove('hidden');
             if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
@@ -159,11 +159,15 @@ const BossModApp = (() => {
     }
 
     function switchCompanyTab(tab) {
-        activeCompanyTab = tab;
         const diagnosticPanel = document.getElementById('diagnostic-detail-panel');
         if (diagnosticPanel) diagnosticPanel.classList.add('hidden');
         if (typeof DockManager !== 'undefined') {
-            DockManager.open(tab);
+            DockManager.toggle(tab);
+            if (DockManager.COMPANY_PANE_IDS.indexOf(tab) !== -1 && DockManager.isOpen(tab)) {
+                activeCompanyTab = tab;
+            }
+        } else {
+            activeCompanyTab = tab;
         }
         closeCompanyDropdown();
         syncCenterModeFromDocks();
@@ -177,7 +181,17 @@ const BossModApp = (() => {
         updateCompanySubtabHighlight();
     }
 
-    const TAB_DISPLAY_NAMES = { files: 'Files', tasks: 'Tasks', metrics: 'Metrics', org: 'Org Chart' };
+    const TAB_DISPLAY_NAMES = {
+        focus: 'Focus',
+        directory: 'Directory',
+        channels: 'Channels',
+        map: 'Office',
+        activity: 'Activity',
+        files: 'Files',
+        tasks: 'Tasks',
+        metrics: 'Metrics',
+        org: 'Org Chart',
+    };
 
     function updateCompanyToggleLabel() {
         const label = document.getElementById('company-toggle-label');
@@ -193,7 +207,10 @@ const BossModApp = (() => {
 
     function updateCompanySubtabHighlight() {
         document.querySelectorAll('.company-subtab-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.subtab === activeCompanyTab);
+            const id = item.dataset.subtab;
+            const open = typeof DockManager !== 'undefined' && DockManager.isOpen(id);
+            item.classList.toggle('active', open);
+            item.setAttribute('aria-pressed', open ? 'true' : 'false');
         });
     }
 
