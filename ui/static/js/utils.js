@@ -17,6 +17,17 @@ const BossModUtils = (() => {
 
     // ─── Agent data normalization ───
 
+    const AGENT_COLOR_PALETTE = [
+        '#3b82f6',
+        '#f59e0b',
+        '#10b981',
+        '#f43f5e',
+        '#8b5cf6',
+        '#06b6d4',
+        '#f97316',
+        '#ec4899',
+    ];
+
     function normalizeAgent(w) {
         return {
             id: w.id,
@@ -31,7 +42,51 @@ const BossModUtils = (() => {
             currentActivityKind: w.currentActivityKind || null,
             boundTaskId: w.boundTaskId || null,
             idle_since: w.idle_since || null,
+            location: w.location || null,
         };
+    }
+
+    function nextUnusedAgentColor(roster, options) {
+        const opts = options || {};
+        const palette = Array.isArray(opts.palette) && opts.palette.length
+            ? opts.palette
+            : AGENT_COLOR_PALETTE;
+        const excludeId = opts.excludeId || null;
+        const peers = (roster || []).filter(item => item && item.id !== excludeId);
+        const used = new Set(
+            peers
+                .map(item => String(item.color || '').trim().toLowerCase())
+                .filter(Boolean)
+        );
+        const unused = palette.find(color => !used.has(String(color).toLowerCase()));
+        if (unused) return unused;
+        return palette[peers.length % palette.length];
+    }
+
+    function mergeRosterFromWorld(roster, incoming) {
+        if (!Array.isArray(incoming)) {
+            return Array.isArray(roster) ? roster.slice() : [];
+        }
+        const prior = new Map((roster || []).filter(item => item && item.id).map(item => [item.id, item]));
+        return incoming.filter(item => item && item.id).map(runtime => {
+            const prev = prior.get(runtime.id) || {};
+            return {
+                ...prev,
+                ...runtime,
+                id: runtime.id,
+                name: runtime.name || prev.name,
+                role: runtime.role ?? prev.role ?? null,
+                description: runtime.description ?? prev.description ?? null,
+                done_fail_bar: runtime.done_fail_bar ?? prev.done_fail_bar ?? null,
+                color: runtime.color || prev.color || '#3b82f6',
+                status: runtime.status || prev.status || 'idle',
+                currentActivityKind: runtime.currentActivityKind ?? prev.currentActivityKind ?? null,
+                idle_since: runtime.idle_since ?? prev.idle_since ?? null,
+                x: runtime.x ?? prev.x ?? 0,
+                y: runtime.y ?? prev.y ?? 0,
+                location: runtime.location || prev.location || 'Unknown',
+            };
+        });
     }
 
     const SPECIALTY_PAIRS = [
@@ -430,6 +485,9 @@ const BossModUtils = (() => {
     return {
         escapeHtml,
         normalizeAgent,
+        AGENT_COLOR_PALETTE,
+        nextUnusedAgentColor,
+        mergeRosterFromWorld,
         inferWorkFamily,
         specialtyFamily,
         suggestFinishLine,

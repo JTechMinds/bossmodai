@@ -209,13 +209,17 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "A named draft or document exists. Empty done does not count." in utils_js
     assert panel.index('name="name"') < panel.index('name="role"')
     assert panel.index('name="role"') < panel.index('name="description"')
-    assert panel.index('name="description"') < panel.index("Advanced")
+    assert panel.index('name="description"') < panel.index("Color")
+    assert panel.index("Color") < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
     assert panel.index('name="done_fail_bar"') < panel.index('name="personality_id"')
     assert panel.index("Advanced") < panel.index("Desk Assignment")
-    assert panel.index("Advanced") < panel.index("Color")
     assert panel.index('name="description"') < panel.index("Desk Assignment")
-    assert panel.index('name="description"') < panel.index("Color")
+    assert "nextUnusedAgentColor" in panel
+    assert "prompt template, and desk" in panel
+    assert "prompt template, color, and desk" not in panel
+    assert "nextUnusedAgentColor" in utils_js
+    assert "mergeRosterFromWorld" in utils_js
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
     assert "specialty_mismatch" in tasks_js
     assert "confirm_specialty_mismatch" in tasks_js

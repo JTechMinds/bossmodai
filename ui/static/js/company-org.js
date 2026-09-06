@@ -201,37 +201,46 @@ const CompanyOrg = (() => {
 
     function handleWorldUpdate(incomingAgents) {
         if (!container) return;
-        if (!Array.isArray(incomingAgents) || incomingAgents.length === 0) return;
+        if (!Array.isArray(incomingAgents)) return;
 
-        // Build lookup from incoming world_update data
-        const lookup = {};
-        for (const wa of incomingAgents) {
-            lookup[wa.id] = wa;
+        const previousIds = agents.map(agent => agent.id).join('\0');
+        const next = BossModUtils.mergeRosterFromWorld(agents, incomingAgents);
+        const nextIds = next.map(agent => agent.id).join('\0');
+        const membershipChanged = previousIds !== nextIds;
+
+        if (membershipChanged) {
+            agents = next;
+            if (agents.length === 0) {
+                renderEmpty();
+            } else {
+                renderGrid();
+            }
+            return;
         }
 
+        const previousById = new Map(
+            agents.map(agent => [agent.id, {
+                status: agent.status,
+                kind: agent.currentActivityKind,
+            }])
+        );
         let needsFullRerender = false;
+        agents = next;
 
         for (const agent of agents) {
-            const live = lookup[agent.id];
-            if (!live) continue;
-
-            const oldStatus = agent.status;
-            const oldKind   = agent.currentActivityKind;
-
-            // Merge runtime fields
-            agent.status = live.status || agent.status;
-            agent.currentActivityKind = live.currentActivityKind ?? agent.currentActivityKind;
-            agent.x = live.x ?? agent.x;
-            agent.y = live.y ?? agent.y;
-
-            // Only do incremental DOM update if the status actually changed
-            if (agent.status !== oldStatus || agent.currentActivityKind !== oldKind) {
-                const updated = updateCardStatus(agent);
-                if (!updated) needsFullRerender = true;
+            const previous = previousById.get(agent.id);
+            if (
+                previous
+                && agent.status === previous.status
+                && agent.currentActivityKind === previous.kind
+            ) {
+                continue;
             }
+            const updated = updateCardStatus(agent);
+            if (!updated) needsFullRerender = true;
         }
 
-        if (needsFullRerender) {
+        if (needsFullRerender && agents.length) {
             renderGrid();
         }
     }

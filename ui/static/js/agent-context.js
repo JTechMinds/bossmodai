@@ -1160,9 +1160,14 @@ const AgentContext = (() => {
         // Reuse AgentPanel's renderForm logic but target the inline container
         if (typeof AgentPanel !== 'undefined') {
             await AgentPanel.renderInline(container, selectedAgent, async (savedAgent) => {
+                const wasCreating = creatingAgent;
                 creatingAgent = false;
 
                 if (savedAgent) {
+                    if (wasCreating) {
+                        await selectAgent(savedAgent);
+                        return;
+                    }
                     selectedAgent = mergeAgentSnapshot(savedAgent, selectedAgent);
                     updateTabs();
                     showToolbar();

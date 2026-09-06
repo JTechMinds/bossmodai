@@ -12,16 +12,20 @@ const AgentPanel = (() => {
     let isCreating = false;
 
     // ─── Available colors for agents ───
-    const AGENT_COLORS = [
-        { name: 'Blue',    value: '#3b82f6' },
-        { name: 'Amber',   value: '#f59e0b' },
-        { name: 'Emerald', value: '#10b981' },
-        { name: 'Rose',    value: '#f43f5e' },
-        { name: 'Purple',  value: '#8b5cf6' },
-        { name: 'Cyan',    value: '#06b6d4' },
-        { name: 'Orange',  value: '#f97316' },
-        { name: 'Pink',    value: '#ec4899' },
-    ];
+    const AGENT_COLOR_NAMES = {
+        '#3b82f6': 'Blue',
+        '#f59e0b': 'Amber',
+        '#10b981': 'Emerald',
+        '#f43f5e': 'Rose',
+        '#8b5cf6': 'Purple',
+        '#06b6d4': 'Cyan',
+        '#f97316': 'Orange',
+        '#ec4899': 'Pink',
+    };
+    const AGENT_COLORS = (BossModUtils.AGENT_COLOR_PALETTE || []).map(value => ({
+        name: AGENT_COLOR_NAMES[value] || value,
+        value,
+    }));
 
     // ─── Desk assignment options (from tilemap) ───
     const DESK_OPTIONS = [
@@ -141,8 +145,11 @@ const AgentPanel = (() => {
             console.error('[AgentPanel] Failed to load agent editor dependencies:', err);
         }
 
+        const defaultColor = agent?.color
+            || BossModUtils.nextUnusedAgentColor(roster, { excludeId: agent?.id })
+            || '#3b82f6';
         const colorOptions = AGENT_COLORS.map(c => {
-            const selected = (agent?.color || '#3b82f6') === c.value;
+            const selected = defaultColor === c.value;
             return `<label class="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="agent-color" value="${c.value}"
                        ${selected ? 'checked' : ''}
@@ -239,6 +246,10 @@ const AgentPanel = (() => {
                         What this agent does. We’ll suggest what done looks like from the specialty.
                     </p>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Color</label>
+                    <div class="flex flex-wrap gap-3 mt-1">${colorOptions}</div>
+                </div>
             </div>
 
             <!-- AI Connections (Model Matrix) -->
@@ -278,7 +289,7 @@ const AgentPanel = (() => {
                     <div>
                         <h3 class="text-sm font-semibold">Advanced</h3>
                         <p class="text-xs text-bm-muted mt-1">
-                            Optional: what done looks like, prompt template, color, and desk.
+                            Optional: what done looks like, prompt template, and desk.
                         </p>
                     </div>
                     <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
@@ -317,10 +328,6 @@ const AgentPanel = (() => {
                                    ${personalityOptions}
                                </select>`
                         }
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-1">Color</label>
-                        <div class="flex flex-wrap gap-3 mt-1">${colorOptions}</div>
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Desk Assignment</label>
