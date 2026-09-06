@@ -2,9 +2,7 @@
  * BossMod AI — Modular slot shell (v1).
  *
  * Three named slots (left / center / right). Any pane can be assigned to
- * any slot. Multiple panes in a slot become tabs. Maximize solos a pane in
- * its slot (sibling tabs collapse; click again restores). A single-pane
- * slot already fills, so the control is omitted. Tab drag inserts at an
+ * any slot. Multiple panes in a slot become tabs. Tab drag inserts at an
  * index in the target tab bar — never a floating window over the map.
  */
 
@@ -363,12 +361,8 @@ const DockManager = (() => {
     function renderTab(paneId, slot) {
         const meta = PANE_META[paneId] || { label: paneId, icon: 'square' };
         const active = slot.active === paneId;
-        const soloed = soloId(slot) === paneId;
-        const canMax = slot.panes.length > 1;
-        const maxTitle = soloed ? 'Restore sibling tabs' : 'Maximize in slot';
-        const maxIcon = soloed ? 'minimize-2' : 'maximize-2';
         const tab = document.createElement('div');
-        tab.className = `dock-tab${active ? ' is-active' : ''}${soloed ? ' is-solo' : ''}`;
+        tab.className = `dock-tab${active ? ' is-active' : ''}`;
         tab.setAttribute('role', 'tab');
         tab.setAttribute('tabindex', '0');
         tab.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -380,9 +374,6 @@ const DockManager = (() => {
                 <span>${meta.label}</span>
             </span>
             <span class="dock-tab-actions">
-                ${canMax ? `<button type="button" class="dock-tab-btn" data-dock-action="maximize" title="${maxTitle}" aria-label="${maxTitle}" aria-pressed="${soloed ? 'true' : 'false'}">
-                    <i data-lucide="${maxIcon}" class="w-3 h-3"></i>
-                </button>` : ''}
                 <button type="button" class="dock-tab-btn" data-dock-action="close" title="Close" aria-label="Close ${meta.label}">
                     <i data-lucide="x" class="w-3 h-3"></i>
                 </button>
@@ -422,7 +413,6 @@ const DockManager = (() => {
                 event.stopPropagation();
                 const action = btn.getAttribute('data-dock-action');
                 if (action === 'close') close(paneId);
-                if (action === 'maximize') maximize(paneId);
             });
         });
     }
@@ -443,12 +433,10 @@ const DockManager = (() => {
         const body = bodyEl(slotId);
         if (!host || !tabbar || !body) return;
 
-        const solo = soloId(slot);
         host.classList.toggle('is-empty', slot.panes.length === 0);
-        host.classList.toggle('is-solo', Boolean(solo));
+        host.classList.remove('is-solo');
         tabbar.innerHTML = '';
-        const visibleTabs = solo ? [solo] : slot.panes;
-        visibleTabs.forEach((paneId) => {
+        slot.panes.forEach((paneId) => {
             const tab = renderTab(paneId, slot);
             bindTab(tab, paneId);
             tabbar.appendChild(tab);
@@ -458,7 +446,7 @@ const DockManager = (() => {
         const emptyHint = body.querySelector('[data-slot-empty]');
         if (emptyHint) emptyHint.remove();
 
-        const shown = solo || slot.active;
+        const shown = slot.active;
         slot.panes.forEach((paneId) => {
             const el = paneEl(paneId);
             if (!el) return;

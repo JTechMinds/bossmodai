@@ -150,12 +150,16 @@ def test_dock_css_is_slot_shell_not_absolute_windows() -> None:
     hidden = css.split(".dock-pane.hidden", 1)[1].split("}", 1)[0]
     assert "display: none !important" in hidden
     assert ".dock-insert-caret" in css
-    assert ".dock-slot.is-solo" in css
+    assert ".dock-slot.is-solo" not in css
     dock = _dock_js()
     assert "placePane" in dock
     assert "dropIndexFromRects" in dock
     assert "canMaximizePane" in dock
-    assert "Restore sibling tabs" in dock
+    assert 'data-dock-action="close"' in dock
+    assert 'data-dock-action="maximize"' not in dock
+    assert "maximize-2" not in dock
+    assert "minimize-2" not in dock
+    assert "Restore sibling tabs" not in dock
 
 
 def test_app_uses_slot_shell_and_keeps_map_mounted() -> None:
@@ -173,6 +177,16 @@ def test_app_uses_slot_shell_and_keeps_map_mounted() -> None:
     assert "prefs.splitSizes" in source
     assert "DockManager.closeAll()" in switch
     assert "DockManager.snapshot()" in source
+
+
+def test_channels_empty_state_points_at_directory() -> None:
+    source = (JS / "channels-view.js").read_text(encoding="utf-8")
+    assert "Company tab" not in source
+    assert "Tick agents in Directory" in source
+    assert "Create Channel" in source
+    assert 'id="channels-create-channel-btn"' in source
+    assert "Create channel" in source
+    assert "DockManager.open('directory')" in source
 
 
 def test_index_loads_dock_manager_before_app() -> None:
