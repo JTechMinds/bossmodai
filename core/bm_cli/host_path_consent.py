@@ -30,7 +30,7 @@ _ABS_PATH_TOKEN = re.compile(r"(?<![\w])/[A-Za-z0-9._~+-]+(?:/[A-Za-z0-9._~+-]+)
 _VERBAL_ACCESS_ASK = re.compile(
     r"(?i)(?:"
     r"please confirm|"
-    r"confirm (?:that )?(?:i |you )?(?:can |may )|"
+    r"confirm(?:\s+\w+){0,6}\s+(?:that\s+)?(?:i |you )?(?:can |may )|"
     r"(?:may|can) i (?:please )?(?:access|read|open|write|use|cat|touch)|"
     r"(?:need|request(?:ing)?|asking for) (?:your )?(?:permission|consent|access)|"
     r"allow (?:me |access|once)|"
@@ -43,7 +43,11 @@ _VERBAL_ACCESS_ASK = re.compile(
     r")"
 )
 _HOST_PATH_TOPIC = re.compile(
-    r"(?i)(?:host[- ]path|host[- ]file|outside (?:the )?(?:allowed )?(?:workspace )?roots?)"
+    r"(?i)(?:"
+    r"host[- ]path|host[- ]file|"
+    r"outside (?:the |my |your )?(?:allowed )?(?:workspace )?roots?|"
+    r"allowed roots"
+    r")"
 )
 _REQUEST_HOST_ACCESS_COMMAND = "request_host_access"
 

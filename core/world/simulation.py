@@ -41,6 +41,9 @@ class WorldSimulation:
         if self._running:
             return
         self._running = True
+        from core.world.seating import heal_desk_seats
+
+        heal_desk_seats()
         self._recover_active_movements()
         self._task = asyncio.create_task(self._loop())
         logger.info("World simulation started")

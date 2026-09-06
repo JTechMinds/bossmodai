@@ -10,6 +10,9 @@ from db.crud import query
 
 def get_world_state() -> list[dict[str, Any]]:
     """Return all agents joined with their state for WebSocket broadcast."""
+    from core.world.seating import heal_desk_seats
+
+    heal_desk_seats()
     rows = query(
         """
         SELECT
