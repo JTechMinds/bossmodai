@@ -301,4 +301,9 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
             delete_task_notification_target(task_id)
         else:
             set_task_notification_target_channel_id(task_id, notification_channel_id)
-    return get_task(task_id)
+    updated = get_task(task_id)
+    if fields.get("status") in {"complete", "abandoned"}:
+        from db.host_path_consent import clear_once_grants_for_task
+
+        clear_once_grants_for_task(task_id)
+    return updated

@@ -22,6 +22,7 @@ _TRIGGER_PRIORITY_CASE = """
 CASE trigger_type
     WHEN 'human_chat' THEN 0
     WHEN 'cli_approval_resolved' THEN 1
+    WHEN 'host_path_consent_resolved' THEN 1
     WHEN 'peer_message' THEN 2
     WHEN 'meeting_invite' THEN 2
     WHEN 'task_follow_up' THEN 3

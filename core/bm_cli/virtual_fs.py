@@ -15,6 +15,7 @@ from core.bm_cli.host_roots import (
     PathOutsideRootsError,
     configured_host_roots,
     denial_message,
+    extra_host_roots,
     is_within_roots,
     looks_like_named_absolute_path,
     resolve_absolute_under_roots,
@@ -96,11 +97,12 @@ def resolve_cli_path(agent_storage_key: str, cwd: str, raw_path: str | None = No
     if looks_like_named_absolute_path(virtual_path):
         return _resolve_named_absolute(agent_storage_key, virtual_path)
 
-    extras = configured_host_roots()
+    extras = extra_host_roots()
     raise PathOutsideRootsError(
         denial_message(virtual_path, extra_roots=extras)
         if extras
-        else 'BossMod CLI paths must stay under "/", "/me", "/projects", or a configured host root.'
+        else 'BossMod CLI paths must stay under "/", "/me", "/projects", or a configured host root.',
+        raw_path=virtual_path,
     )
 
 
@@ -118,7 +120,7 @@ def _resolve_named_absolute(agent_storage_key: str, virtual_path: str) -> Resolv
     """Map a user-named absolute path onto /me, /projects, or a host root."""
     agent_root = agent_artifact_dir(agent_storage_key).resolve()
     projects_root = projects_artifact_root().resolve()
-    extra_roots = configured_host_roots()
+    extra_roots = extra_host_roots()
     roots = (agent_root, projects_root, *extra_roots)
     candidate = resolve_absolute_under_roots(virtual_path, roots)
     if is_within_roots(candidate, (agent_root,)):

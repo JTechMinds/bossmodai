@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from core.models.cli import AgentCliState
 from core.models.cli_policy import CliApprovalRequest, CliPolicyRule, CliPolicyRuleCreate
+from core.models.host_path_consent import HostPathConsentRequest
 from core.models.activity import Activity
 from core.models.agent import Agent, AgentCreate, AgentState, AgentUpdate
 from core.models.artifact import Artifact
@@ -51,6 +52,7 @@ __all__ = [
     "CliApprovalRequest",
     "CliPolicyRule",
     "CliPolicyRuleCreate",
+    "HostPathConsentRequest",
     "Activity",
     "Artifact",
     "Channel",

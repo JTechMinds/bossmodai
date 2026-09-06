@@ -355,11 +355,18 @@ const AgentContext = (() => {
             && msg?.notification_kind === 'receipt';
     }
 
+    function isHostPathConsent(msg) {
+        return (msg?.message_type === 'system' || msg?.from === 'system')
+            && (msg?.notification_kind === 'host_path_consent' || Boolean(msg?.host_path_consent));
+    }
+
     function getVisibleChatMessages(messages) {
         if (shouldShowSystemReceipts()) return messages || [];
         // HA-PROD-P2-01: walk/idle receipts stay visible on the default operator path
         // even when the system-notification toggle is off.
-        return (messages || []).filter(msg => msg.message_type !== 'system' || isWalkReceipt(msg));
+        return (messages || []).filter(msg =>
+            msg.message_type !== 'system' || isWalkReceipt(msg) || isHostPathConsent(msg)
+        );
     }
 
     function revealFocusPane() {
@@ -827,7 +834,8 @@ const AgentContext = (() => {
 
     function appendChatMessage(text, fromType, messageType = null, message = null) {
         const receipt = message?.notification_kind === 'receipt';
-        if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts() && !receipt) {
+        const consent = isHostPathConsent(message);
+        if ((fromType === 'system' || messageType === 'system') && !shouldShowSystemReceipts() && !receipt && !consent) {
             return;
         }
         const messagesEl = document.getElementById('chat-messages');
@@ -836,29 +844,95 @@ const AgentContext = (() => {
         if (emptyHint) emptyHint.remove();
 
         const msgDiv = document.createElement('div');
-        let bubbleClass = 'from-agent';
-        if (fromType === 'human') {
-            bubbleClass = 'from-human';
-        } else if (fromType === 'system' || messageType === 'system') {
-            bubbleClass = 'from-system';
-        }
-        msgDiv.className = `chat-msg ${bubbleClass} mb-2`;
-        const textEl = document.createElement('div');
-        textEl.innerText = text;
-        msgDiv.appendChild(textEl);
+        if (consent && message?.host_path_consent) {
+            msgDiv.className = 'chat-msg host-path-consent-card mb-2';
+            msgDiv.id = `host-path-consent-${message.host_path_consent.id}`;
+            renderHostPathConsentCard(msgDiv, message.host_path_consent);
+        } else {
+            let bubbleClass = 'from-agent';
+            if (fromType === 'human') {
+                bubbleClass = 'from-human';
+            } else if (fromType === 'system' || messageType === 'system') {
+                bubbleClass = 'from-system';
+            }
+            msgDiv.className = `chat-msg ${bubbleClass} mb-2`;
+            const textEl = document.createElement('div');
+            textEl.innerText = text;
+            msgDiv.appendChild(textEl);
 
-        const openPath = message?.desk_path || null;
-        if (openPath && (fromType === 'system' || messageType === 'system')) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded border border-bm-border bg-white/70 hover:bg-white text-xs font-medium transition-colors';
-            btn.innerHTML = '<i data-lucide="folder-open" class="w-3 h-3"></i><span>Open in Desk</span>';
-            btn.addEventListener('click', () => openDeskPath(openPath));
-            msgDiv.appendChild(btn);
+            const openPath = message?.desk_path || null;
+            if (openPath && (fromType === 'system' || messageType === 'system')) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded border border-bm-border bg-white/70 hover:bg-white text-xs font-medium transition-colors';
+                btn.innerHTML = '<i data-lucide="folder-open" class="w-3 h-3"></i><span>Open in Desk</span>';
+                btn.addEventListener('click', () => openDeskPath(openPath));
+                msgDiv.appendChild(btn);
+            }
         }
         messagesEl.appendChild(msgDiv);
         if (window.lucide) lucide.createIcons({ nodes: [msgDiv] });
         messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function renderHostPathConsentCard(container, card) {
+        const title = document.createElement('div');
+        title.className = 'hpc-title';
+        title.textContent = 'Host path consent';
+        const pathEl = document.createElement('div');
+        pathEl.className = 'hpc-path';
+        pathEl.textContent = card.path || '';
+        const reasonEl = document.createElement('div');
+        reasonEl.className = 'hpc-reason';
+        reasonEl.textContent = card.reason || '';
+        container.appendChild(title);
+        container.appendChild(pathEl);
+        if (card.reason) container.appendChild(reasonEl);
+
+        const status = card.status || 'pending';
+        if (status !== 'pending') {
+            const resolved = document.createElement('div');
+            resolved.className = 'hpc-status';
+            resolved.textContent = status === 'denied'
+                ? 'Denied'
+                : (status === 'always_allowed' ? 'Always allowed' : 'Allowed once');
+            container.appendChild(resolved);
+            return;
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'host-path-consent-actions';
+        const buttons = [
+            { label: 'Allow once', path: 'allow-once' },
+            { label: 'Always allow', path: 'always-allow' },
+            { label: 'Deny', path: 'deny' },
+        ];
+        buttons.forEach((item) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'hpc-action';
+            btn.textContent = item.label;
+            btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, btn, actions));
+            actions.appendChild(btn);
+        });
+        container.appendChild(actions);
+    }
+
+    async function decideHostPathConsent(container, card, action, clicked, actions) {
+        Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
+        try {
+            const res = await apiFetchOk(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
+            const updated = await res.json();
+            container.replaceChildren();
+            renderHostPathConsentCard(container, updated);
+            if (window.lucide) lucide.createIcons({ nodes: [container] });
+        } catch (err) {
+            Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
+            const note = document.createElement('div');
+            note.className = 'hpc-status';
+            note.textContent = err?.message || 'Consent update failed.';
+            container.appendChild(note);
+        }
     }
 
     function handleChatMessage(data) {
@@ -887,6 +961,7 @@ const AgentContext = (() => {
             message_type: data.message_type,
             notification_kind: data.notification_kind,
             desk_path: data.desk_path,
+            host_path_consent: data.host_path_consent,
             message_id: data.message_id,
             created_at: data.created_at,
         });

@@ -203,6 +203,10 @@ def delete_agent(agent_id: str) -> bool:
     execute("UPDATE task_events SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
     execute("UPDATE tasks SET owner_id = NULL WHERE owner_id = $1", [agent_id])
     execute("UPDATE tasks SET requester_id = NULL WHERE requester_id = $1", [agent_id])
+    # host-path consent (grants first — FK to requests)
+    from db.host_path_consent import delete_agent_consent
+
+    delete_agent_consent(agent_id)
     # CLI approval requests
     execute("DELETE FROM cli_approval_requests WHERE agent_id = $1", [agent_id])
     # CLI policy rules (nullable agent_id)

@@ -20,10 +20,12 @@ class BossModCliResult:
     data: dict[str, Any] | None = None
     cwd: str | None = None
     approval_required: bool = False
+    consent_required: bool = False
     executor: str = "virtual"
     exit_code: int = 0
     matched_rule_id: str | None = None
     approval_request_id: str | None = None
+    consent_request_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

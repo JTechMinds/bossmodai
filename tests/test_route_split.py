@@ -64,8 +64,12 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/cli-policy/approvals/{request_id}/reject", "reject_cli_request"),
     (("POST",), "/api/cli-policy/simulate", "simulate_cli_policy"),
     (("POST",), "/api/cli-policy/simulator/execute", "simulator_execute"),
+    (("POST",), "/api/host-path-consent/{request_id}/allow-once", "allow_once_host_path"),
+    (("POST",), "/api/host-path-consent/{request_id}/always-allow", "always_allow_host_path"),
+    (("POST",), "/api/host-path-consent/{request_id}/deny", "deny_host_path"),
     (("GET",), "/api/settings", "get_settings"),
     (("GET",), "/api/settings/desktop-open-folder-options", "get_desktop_open_folder_options"),
+    (("GET",), "/api/runtime/core", "get_runtime_core"),
     (("GET",), "/api/runtime/contracts", "get_runtime_contracts"),
     (("GET",), "/api/runtime/state", "get_runtime_state"),
     (("PUT",), "/api/runtime/state", "set_runtime_state"),
@@ -101,7 +105,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 80
+    assert len(got) == 84
 
 
 def test_from_api_routes_import_router_still_works() -> None:

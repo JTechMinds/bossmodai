@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update"]
+NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update", "host_path_consent"]
 NotificationSourceChannel = Literal["chat", "channel", "api", "slack", "telegram", "peer", "task", "work", "meeting", "system"]
 TaskNotificationPolicy = Literal["none", "completion_blocked", "all"]
 
@@ -37,7 +37,7 @@ class NotificationLink(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     notification_id: str
-    target_kind: Literal["desk"] = "desk"
+    target_kind: Literal["desk", "host_path_consent"] = "desk"
     target_path: str
     label: str = "Open in Desk"
     created_at: datetime

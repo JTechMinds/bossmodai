@@ -370,6 +370,34 @@ CREATE TABLE IF NOT EXISTS cli_policy_rules (
 -- CLI approval requests — human-in-the-loop command gating
 -- ───────────────────────────────────────────────────────────────────────────
 
+CREATE TABLE IF NOT EXISTS host_path_consent_requests (
+    id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id        VARCHAR NOT NULL REFERENCES agents(id),
+    path            VARCHAR NOT NULL,
+    grant_root      VARCHAR NOT NULL,
+    reason          TEXT NOT NULL,
+    command         TEXT,
+    content         TEXT,
+    cwd             VARCHAR,
+    task_id         VARCHAR REFERENCES tasks(id),
+    status          VARCHAR NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
+    decision_by     VARCHAR,
+    decision_note   TEXT,
+    decided_at      TIMESTAMP,
+    expires_at      TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE IF NOT EXISTS host_path_once_grants (
+    id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id    VARCHAR NOT NULL REFERENCES agents(id),
+    root        VARCHAR NOT NULL,
+    consent_id  VARCHAR NOT NULL REFERENCES host_path_consent_requests(id),
+    task_id     VARCHAR REFERENCES tasks(id),
+    created_at  TIMESTAMP DEFAULT current_timestamp
+);
+
 CREATE TABLE IF NOT EXISTS cli_approval_requests (
     id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     agent_id        VARCHAR NOT NULL REFERENCES agents(id),
@@ -524,7 +552,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     task_id           VARCHAR REFERENCES tasks(id),
     activity_id       VARCHAR REFERENCES activities(id),
     kind              VARCHAR NOT NULL
-                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update')),
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent')),
     content           TEXT NOT NULL,
     source_channel    VARCHAR NOT NULL,
     policy            VARCHAR NOT NULL
@@ -537,7 +565,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE TABLE IF NOT EXISTS notification_links (
     notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
     target_kind     VARCHAR NOT NULL
-                       CHECK (target_kind IN ('desk')),
+                       CHECK (target_kind IN ('desk', 'host_path_consent')),
     target_path     VARCHAR NOT NULL,
     label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
     created_at      TIMESTAMP DEFAULT current_timestamp
@@ -650,6 +678,15 @@ CREATE INDEX IF NOT EXISTS idx_diagnostics_agent_created
 
 CREATE INDEX IF NOT EXISTS idx_cli_policy_rules_tier_enabled
     ON cli_policy_rules (tier, enabled);
+
+CREATE INDEX IF NOT EXISTS idx_host_path_consent_agent_status
+    ON host_path_consent_requests (agent_id, status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_host_path_consent_path
+    ON host_path_consent_requests (agent_id, path, status);
+
+CREATE INDEX IF NOT EXISTS idx_host_path_once_grants_agent
+    ON host_path_once_grants (agent_id, task_id);
 
 CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_status
     ON cli_approval_requests (status, created_at);

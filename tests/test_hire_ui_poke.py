@@ -71,7 +71,7 @@ def test_casual_hire_shows_color_under_description() -> None:
     assert panel.index(">Color</label>") < panel.index('name="done_fail_bar"')
     assert panel.index('id="advanced-toggle"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
-    assert "prompt template, and desk" in panel
+    assert "runtime core, prompt template, and desk" in panel
     assert "prompt template, color, and desk" not in panel
 
 
