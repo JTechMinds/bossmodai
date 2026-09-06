@@ -382,6 +382,7 @@ CREATE TABLE IF NOT EXISTS host_path_consent_requests (
     content         TEXT,
     cwd             VARCHAR,
     task_id         VARCHAR REFERENCES tasks(id),
+    channel_id      VARCHAR,
     status          VARCHAR NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
     decision_by     VARCHAR,

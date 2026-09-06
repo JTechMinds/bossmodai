@@ -152,6 +152,7 @@ def request_host_path_access(
     content: str | None = None,
     cwd: str | None = None,
     task_id: str | None = None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Open the existing in-chat consent card, or fail closed.
 
@@ -218,6 +219,8 @@ def request_host_path_access(
 
     pending = db.find_pending_for_path(agent.id, path)
     if pending is not None:
+        if _clean_channel_id(channel_id) and not pending.channel_id:
+            pending = db.bind_consent_channel(pending.id, channel_id) or pending
         return consent_required_result(
             label,
             _consent_message(pending),
@@ -236,6 +239,7 @@ def request_host_path_access(
         content=content,
         cwd=cwd,
         task_id=task_id,
+        channel_id=_clean_channel_id(channel_id),
     )
     return consent_required_result(
         label,
@@ -254,6 +258,7 @@ def handle_named_path_consent(
     content: str | None,
     cwd: str,
     task_id: str | None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Pause for in-chat consent after a named-path CLI miss, or fail closed."""
     return request_host_path_access(
@@ -264,6 +269,7 @@ def handle_named_path_consent(
         content=content,
         cwd=cwd,
         task_id=task_id,
+        channel_id=channel_id,
     )
 
 
@@ -344,6 +350,23 @@ async def resume_host_path_consent(
     if updated is None:
         return None
     await _enqueue_resume(updated, status="always_allowed", services=services)
+    for sibling in db.list_pending_for_grant_root(updated.grant_root):
+        if sibling.id == updated.id:
+            continue
+        other = db.resolve_consent_request(
+            sibling.id,
+            status="always_allowed",
+            decision_by=decision_by,
+            decision_note=note,
+        )
+        if other is None:
+            continue
+        await _enqueue_resume(
+            other,
+            status="always_allowed",
+            services=services,
+            follow_through=False,
+        )
     return updated
 
 
@@ -369,6 +392,7 @@ async def _enqueue_resume(
     *,
     status: str,
     services: Any,
+    follow_through: bool = True,
 ) -> None:
     payload: dict[str, Any] = {
         "consent_request_id": request.id,
@@ -377,13 +401,77 @@ async def _enqueue_resume(
         "path": request.path,
         "task_id": request.task_id,
     }
+    channel_id = _clean_channel_id(request.channel_id)
+    if channel_id:
+        payload["channel_id"] = channel_id
     if status != "denied":
         payload["content"] = request.content
         payload["cwd"] = request.cwd
     await services.enqueue_trigger(
         agent_id=request.agent_id,
         trigger_type="host_path_consent_resolved",
-        source_channel="system",
+        source_channel="channel" if channel_id else "system",
         payload=payload,
         task_id=request.task_id,
     )
+    if follow_through and status in {"allowed_once", "always_allowed"} and channel_id:
+        await _post_channel_follow_through(
+            request,
+            status=status,
+            channel_id=channel_id,
+            services=services,
+        )
+
+
+def _clean_channel_id(channel_id: str | None) -> str | None:
+    """Return a non-empty channel id, or None."""
+    token = (channel_id or "").strip()
+    return token or None
+
+
+async def _post_channel_follow_through(
+    request: HostPathConsentRequest,
+    *,
+    status: str,
+    channel_id: str,
+    services: Any,
+) -> None:
+    """Post the grant back into the originating channel so the thread is not silent."""
+    agent = db.get_agent(request.agent_id)
+    if agent is None:
+        return
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        return
+
+    from core.agent_loop.channel_rounds import post_agent_channel_share
+    from core.runtime.events import runtime_events as manager
+
+    grant_label = (
+        "Always allow (for all agents)"
+        if status == "always_allowed"
+        else "Allow once"
+    )
+    content = f"{agent.name} can access {request.path}. {grant_label}."
+    channel_message, peer_wakes = post_agent_channel_share(
+        channel_id=channel_id,
+        agent=agent,
+        content=content,
+        source_channel="channel",
+    )
+    await manager.broadcast_channel_message(
+        channel_id=channel_message["channel_id"],
+        content=channel_message["content"],
+        author_type=channel_message["author_type"],
+        author_name=channel_message["author_name"],
+        author_agent_id=channel_message.get("author_agent_id"),
+        message_id=channel_message.get("message_id"),
+        created_at=channel_message.get("created_at"),
+    )
+    for wake in peer_wakes:
+        await services.enqueue_trigger(
+            agent_id=wake["agent_id"],
+            trigger_type=wake["trigger_type"],
+            source_channel=wake["source_channel"],
+            payload=wake["payload"],
+        )

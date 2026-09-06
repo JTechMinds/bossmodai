@@ -244,6 +244,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "channel_messages", "consent_id", "VARCHAR",
     )
+    _add_column_if_missing(
+        con, "host_path_consent_requests", "channel_id", "VARCHAR",
+    )
 
 
 def _add_column_if_missing(
@@ -271,6 +274,7 @@ def _create_host_path_consent_tables_if_missing(con: SQLiteCompatConnection) -> 
             content         TEXT,
             cwd             VARCHAR,
             task_id         VARCHAR REFERENCES tasks(id),
+            channel_id      VARCHAR,
             status          VARCHAR NOT NULL DEFAULT 'pending'
                                 CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
             decision_by     VARCHAR,

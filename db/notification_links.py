@@ -47,12 +47,21 @@ def list_notification_links(notification_ids: list[str]) -> dict[str, Notificati
 
 
 def has_consent_notification(consent_id: str) -> bool:
-    """Return True when a chat card already exists for this consent request."""
+    """Return True when a Focus or channel card already exists for this request."""
+    token = (consent_id or "").strip()
+    if not token:
+        return False
     row = query_one(
         """
         SELECT notification_id FROM notification_links
         WHERE target_kind = 'host_path_consent' AND target_path = $1
         """,
-        [consent_id],
+        [token],
     )
-    return row is not None
+    if row is not None:
+        return True
+    channel_row = query_one(
+        "SELECT id FROM channel_messages WHERE consent_id = $1 LIMIT 1",
+        [token],
+    )
+    return channel_row is not None

@@ -58,6 +58,7 @@ from db.cli_policy_rules import (
     update_rule as update_cli_policy_rule,
 )
 from db.host_path_consent import (
+    bind_consent_channel,
     clear_once_grants_for_task,
     consume_turn_once_grants,
     create_consent_request,
@@ -68,6 +69,7 @@ from db.host_path_consent import (
     get_consent_request,
     list_consent_requests,
     list_once_grant_roots,
+    list_pending_for_grant_root,
     resolve_consent_request,
 )
 from db.cli_approval_requests import (
@@ -477,6 +479,7 @@ __all__ = [
     "seed_default_cli_policy_rules",
     "update_cli_policy_rule",
     # Host-path consent
+    "bind_consent_channel",
     "clear_once_grants_for_task",
     "consume_turn_once_grants",
     "create_consent_request",
@@ -487,6 +490,7 @@ __all__ = [
     "get_consent_request",
     "list_consent_requests",
     "list_once_grant_roots",
+    "list_pending_for_grant_root",
     "resolve_consent_request",
     # CLI Approval Requests
     "approve_cli_approval_request",

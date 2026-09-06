@@ -28,7 +28,11 @@ from core.agent_loop.notifications import (
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.runtime_core import format_runtime_core_block, preview_runtime_core
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
-from core.bm_cli.host_path_consent import is_verbal_host_access_ask, request_host_path_access
+from core.bm_cli.host_path_consent import (
+    is_verbal_host_access_ask,
+    request_host_path_access,
+    resume_host_path_consent,
+)
 from core.llm import context_builder
 from core.llm.client import LLMResponse
 from core.bm_cli.host_roots import configured_host_roots, extra_host_roots
@@ -300,7 +304,7 @@ def test_etc_stays_hard_denied_without_a_card() -> None:
     assert "root:" not in payload
 
 
-def test_consent_card_is_projected_once_and_attached_to_messages(
+async def test_consent_card_is_projected_once_and_attached_to_messages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,7 +332,19 @@ def test_consent_card_is_projected_once_and_attached_to_messages(
     )
     assert len(notes) == 1
     assert notes[0].kind == "host_path_consent"
-    persist_chat_notification(agent, notes[0])
+    unused = db.create_channel(
+        name="Unused",
+        member_agent_ids=[agent.id],
+        created_by=agent.id,
+    )
+    await emit_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action=action,
+        result=result,
+    )
+    assert db.list_channel_messages(unused.id) == []
     reused = dict(result)
     reused["consent_reused"] = True
     assert project_chat_notifications(
@@ -346,6 +362,7 @@ def test_consent_card_is_projected_once_and_attached_to_messages(
     assert len(cards) == 1
     assert cards[0]["host_path_consent"]["id"] == first.consent_request_id
     assert cards[0]["host_path_consent"]["path"]
+    assert db.list_channel_messages(unused.id) == []
 
 
 def test_once_grants_require_consent_scope(tmp_path: Path) -> None:
@@ -452,7 +469,7 @@ async def test_channel_origin_consent_projects_interactive_card_in_channel(
         result=result,
     )
     stored = db.list_notifications(agent_id=agent.id, chat_visible=True)
-    assert any(item.kind == "host_path_consent" for item in stored)
+    assert not any(item.kind == "host_path_consent" for item in stored)
     messages = db.list_channel_messages(channel.id)
     cards = [item for item in messages if item.consent_id == notes[0].consent_id]
     assert len(cards) == 1
@@ -471,6 +488,24 @@ async def test_channel_origin_consent_projects_interactive_card_in_channel(
     assert serialized[0]["host_path_consent"]["id"] == notes[0].consent_id
     assert serialized[0]["host_path_consent"]["path"]
     assert serialized[0]["host_path_consent"]["status"] == "pending"
+    stored_request = db.get_consent_request(notes[0].consent_id)
+    assert stored_request is not None
+    assert stored_request.channel_id == channel.id
+    focus = client.get(f"/api/agents/{agent.id}/messages", headers=_headers())
+    assert focus.status_code == 200
+    assert not [
+        item
+        for item in focus.json()
+        if item.get("notification_kind") == "host_path_consent"
+    ]
+    assert db.has_consent_notification(notes[0].consent_id) is True
+    assert project_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action=parsed,
+        result=result,
+    ) == []
 
 
 def test_channel_consent_deny_keeps_workspace_host_roots_unchanged(
@@ -742,6 +777,243 @@ async def test_consent_resolved_resume_continues_with_chat_history(
     assert ask in joined
     assert outcome.result.get("event") != "agent_error"
     assert captured.get("messages"), "consent resume must call the model with history"
+
+
+class _ResumeServices:
+    def __init__(self) -> None:
+        self.triggers: list[dict[str, Any]] = []
+
+    async def enqueue_trigger(self, **kwargs: Any) -> None:
+        self.triggers.append(kwargs)
+
+
+def test_consent_resolved_loads_origin_channel_thread(tmp_path: Path) -> None:
+    host = tmp_path / "resume-channel"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("resume\n", encoding="utf-8")
+    agent, _state = _agent_and_state()
+    peer = db.create_agent("Laura")
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[agent.id, peer.id],
+        created_by=agent.id,
+    )
+    ask = f"Please read {fixture} and report back here."
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content=ask,
+        source_channel="channel",
+    )
+    db.create_message(HUMAN_SENDER_ID, agent.id, "Unrelated Focus chat", message_type="human")
+    first = request_host_path_access(
+        agent=agent,
+        raw_path=str(fixture),
+        reason="Need the shared file",
+        channel_id=channel.id,
+    )
+    assert first.consent_required is True
+    stored = db.get_consent_request(first.consent_request_id)
+    assert stored is not None
+    assert stored.channel_id == channel.id
+
+    history = build_prompt_history_view(
+        agent,
+        {
+            "type": "host_path_consent_resolved",
+            "channel_id": channel.id,
+            "payload": {"status": "always_allowed"},
+        },
+    )
+    contents = [str(item.get("content") or "") for item in history.conversation_history]
+    assert any(ask in content for content in contents)
+    assert all("Unrelated Focus chat" not in content for content in contents)
+
+
+def test_consent_resolved_prefers_bound_task_thread(tmp_path: Path) -> None:
+    host = tmp_path / "resume-task"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("task\n", encoding="utf-8")
+    agent, _state = _agent_and_state()
+    channel = db.create_channel(
+        name="Task Channel",
+        member_agent_ids=[agent.id],
+        created_by=agent.id,
+    )
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Channel-only ask should lose to the task thread.",
+        source_channel="channel",
+    )
+    task = _bind_task(agent.id)
+    db.create_task_event(
+        task_id=task.id,
+        author_type="human",
+        author_name="Human Operator",
+        event_type="human_message",
+        content=f"Task ask: read {fixture}",
+    )
+    history = build_prompt_history_view(
+        agent,
+        {
+            "type": "host_path_consent_resolved",
+            "task_id": task.id,
+            "channel_id": channel.id,
+            "payload": {"status": "always_allowed"},
+        },
+    )
+    contents = [str(item.get("content") or "") for item in history.conversation_history]
+    assert any("Task ask:" in content for content in contents)
+    assert all("Channel-only ask" not in content for content in contents)
+
+
+async def test_always_follow_through_posts_to_origin_channel(
+    tmp_path: Path,
+) -> None:
+    host = tmp_path / "follow-through"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("go\n", encoding="utf-8")
+    asker, _state = _agent_and_state()
+    peer = db.create_agent("Laura")
+    channel = db.create_channel(
+        name="Ops",
+        member_agent_ids=[asker.id, peer.id],
+        created_by=asker.id,
+    )
+    first = request_host_path_access(
+        agent=asker,
+        raw_path=str(fixture),
+        reason="Need the shared file",
+        channel_id=channel.id,
+    )
+    services = _ResumeServices()
+    updated = await resume_host_path_consent(
+        first.consent_request_id,
+        decision="always_allow",
+        services=services,
+    )
+    assert updated is not None
+    assert updated.status == "always_allowed"
+    assert updated.channel_id == channel.id
+
+    resumes = [
+        item
+        for item in services.triggers
+        if item.get("trigger_type") == "host_path_consent_resolved"
+    ]
+    assert resumes
+    assert resumes[0]["payload"]["channel_id"] == channel.id
+    assert resumes[0]["source_channel"] == "channel"
+
+    messages = db.list_channel_messages(channel.id)
+    follow = [
+        item
+        for item in messages
+        if item.author_type == "agent" and "Always allow (for all agents)" in item.content
+    ]
+    assert follow
+    assert str(fixture.resolve()) in follow[0].content or first.data["host_path_consent"]["path"] in follow[0].content
+    peer_wakes = [
+        item
+        for item in services.triggers
+        if item.get("trigger_type") == "channel_message" and item.get("agent_id") == peer.id
+    ]
+    assert peer_wakes
+
+
+async def test_allow_once_follow_through_posts_to_origin_channel(
+    tmp_path: Path,
+) -> None:
+    host = tmp_path / "once-follow"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("once\n", encoding="utf-8")
+    asker, _state = _agent_and_state()
+    peer = db.create_agent("Once Peer")
+    channel = db.create_channel(
+        name="Once Ops",
+        member_agent_ids=[asker.id, peer.id],
+        created_by=asker.id,
+    )
+    first = request_host_path_access(
+        agent=asker,
+        raw_path=str(fixture),
+        reason="Need the shared file once",
+        channel_id=channel.id,
+    )
+    services = _ResumeServices()
+    updated = await resume_host_path_consent(
+        first.consent_request_id,
+        decision="allow_once",
+        services=services,
+    )
+    assert updated is not None
+    assert updated.status == "allowed_once"
+    messages = db.list_channel_messages(channel.id)
+    follow = [
+        item
+        for item in messages
+        if item.author_type == "agent" and "Allow once" in item.content
+    ]
+    assert follow
+    assert "Always allow" not in follow[0].content
+
+
+async def test_always_resolves_sibling_pending_without_second_follow_through(
+    tmp_path: Path,
+) -> None:
+    host = tmp_path / "sibling-always"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("share\n", encoding="utf-8")
+    asker, _state = _agent_and_state()
+    sibling = db.create_agent("Sibling Clerk")
+    channel = db.create_channel(
+        name="Shared Ask",
+        member_agent_ids=[asker.id, sibling.id],
+        created_by=asker.id,
+    )
+    first = request_host_path_access(
+        agent=asker,
+        raw_path=str(fixture),
+        reason="Need the shared file",
+        channel_id=channel.id,
+    )
+    second = request_host_path_access(
+        agent=sibling,
+        raw_path=str(fixture),
+        reason="Need the same file",
+        channel_id=channel.id,
+    )
+    assert first.consent_request_id != second.consent_request_id
+    services = _ResumeServices()
+    updated = await resume_host_path_consent(
+        first.consent_request_id,
+        decision="always_allow",
+        services=services,
+    )
+    assert updated is not None
+    sibling_row = db.get_consent_request(second.consent_request_id)
+    assert sibling_row is not None
+    assert sibling_row.status == "always_allowed"
+    resumes = [
+        item
+        for item in services.triggers
+        if item.get("trigger_type") == "host_path_consent_resolved"
+    ]
+    assert {item["agent_id"] for item in resumes} == {asker.id, sibling.id}
+    follow = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.author_type == "agent" and "Always allow (for all agents)" in item.content
+    ]
+    assert len(follow) == 1
 
 
 def test_contracts_forbid_verbal_host_access_asks() -> None:

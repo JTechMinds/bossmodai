@@ -194,6 +194,7 @@ def execute_bm_cli(
     content: str | None = None,
     *,
     trigger_type: str | None = None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Execute a bounded shell-like BossMod CLI command for the given agent."""
     from core.agent_loop.activity_runtime import get_active_task_id
@@ -210,6 +211,7 @@ def execute_bm_cli(
             content,
             trigger_type=trigger_type,
             cwd_before=cwd_before,
+            channel_id=channel_id,
         )
     finally:
         host_path_consent_scope.reset(token)
@@ -223,6 +225,7 @@ def _execute_bm_cli_inner(
     *,
     trigger_type: str | None = None,
     cwd_before: str,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Parse, authorize, and execute one CLI command inside the consent scope."""
     try:
@@ -514,6 +517,7 @@ def _execute_virtual(
                 content=content,
                 cwd=cwd_before,
                 task_id=get_active_task_id(agent.id),
+                channel_id=channel_id,
             )
         else:
             result = error_result(parsed.raw, str(exc), cwd=cwd_before, executor=policy.executor)
