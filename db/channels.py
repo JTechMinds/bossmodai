@@ -59,6 +59,46 @@ def get_channel(channel_id: str) -> Channel | None:
     )
 
 
+def find_active_channel_for_members(member_agent_ids: list[str]) -> Channel | None:
+    """Return the newest active thread whose roster matches these agents exactly."""
+    unique_members = list(dict.fromkeys(agent_id for agent_id in member_agent_ids if agent_id))
+    if not unique_members:
+        return None
+    placeholders = ", ".join(f"${index + 2}" for index in range(len(unique_members)))
+    return fetch_one(
+        f"""
+        SELECT {_CHANNEL_COLUMNS}
+        FROM channels
+        WHERE status = 'active'
+          AND id IN (
+            SELECT cm.channel_id
+            FROM channel_members cm
+            GROUP BY cm.channel_id
+            HAVING COUNT(*) = $1
+               AND SUM(CASE WHEN cm.agent_id IN ({placeholders}) THEN 1 ELSE 0 END) = $1
+          )
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        [len(unique_members), *unique_members],
+        Channel,
+    )
+
+
+def archive_channel(channel_id: str) -> Channel | None:
+    """Soft-delete one thread so it leaves the active Threads list."""
+    existing = get_channel(channel_id)
+    if existing is None:
+        return None
+    if existing.status == "archived":
+        return existing
+    return update_channel(
+        channel_id,
+        status="archived",
+        archived_at=datetime.now(timezone.utc),
+    )
+
+
 def update_channel(
     channel_id: str,
     *,

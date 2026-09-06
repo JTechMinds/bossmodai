@@ -227,6 +227,11 @@
     max-width: 92%;
     white-space: normal;
 }
+.chat-msg.host-path-consent-card.is-resolved {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #475569;
+}
 .host-path-consent-card .hpc-title {
     font-weight: 600;
     font-size: 0.8125rem;

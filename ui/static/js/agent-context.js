@@ -375,7 +375,7 @@ const AgentContext = (() => {
         }
     }
 
-    // ─── Focus pane chrome (chips). Directory / Channels are their own dock panes. ───
+    // ─── Focus pane chrome (chips). Directory / Threads are their own dock panes. ───
 
     function updateTabs() {
         renderAgentChips();

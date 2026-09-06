@@ -28,7 +28,7 @@ const DockManager = (() => {
     const PANE_META = {
         focus: { label: 'Focus', icon: 'message-circle' },
         directory: { label: 'Directory', icon: 'book-user' },
-        channels: { label: 'Channels', icon: 'messages-square' },
+        channels: { label: 'Threads', icon: 'messages-square' },
         map: { label: 'Office', icon: 'building' },
         activity: { label: 'Activity', icon: 'activity' },
         files: { label: 'Files', icon: 'folder' },

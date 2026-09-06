@@ -42,7 +42,7 @@ const ChannelsView = (() => {
                 <div class="p-4 border-b border-bm-border shrink-0">
                     <div class="flex items-start justify-between gap-3">
                         <div>
-                            <p class="text-xs uppercase tracking-wide text-bm-muted">Channels</p>
+                            <p class="text-xs uppercase tracking-wide text-bm-muted">Threads</p>
                             <h3 class="text-sm font-semibold mt-1">Shared Threads</h3>
                             <p class="text-xs text-bm-muted mt-1">Broadcast to selected agents and let them reply in order.</p>
                         </div>
@@ -87,10 +87,10 @@ const ChannelsView = (() => {
         if (!channels.length) {
             listEl.innerHTML = `
                 <div class="text-sm text-bm-muted text-center py-6">
-                    <p>Tick agents in Directory, then Create Channel to start broadcasting.</p>
+                    <p>Tick agents in Directory, then Create Thread to start broadcasting.</p>
                     <button type="button" id="channels-create-channel-btn"
                             class="mt-3 px-3 py-2 rounded-lg bg-bm-accent text-white text-xs font-medium hover:bg-bm-accent-hover transition-colors">
-                        Create channel
+                        Create thread
                     </button>
                 </div>`;
             listEl.querySelector('#channels-create-channel-btn')?.addEventListener('click', () => {
@@ -110,7 +110,7 @@ const ChannelsView = (() => {
                         class="channels-list-item w-full text-left rounded-xl border ${active ? 'border-bm-accent bg-blue-50/50' : 'border-bm-border bg-white'} p-3 mb-2 hover:bg-slate-50 transition-colors"
                         data-channel-id="${BossModUtils.escapeHtml(channel.id)}">
                     <div class="flex items-center justify-between gap-2">
-                        <span class="font-medium truncate">${BossModUtils.escapeHtml(channel.name || 'Channel')}</span>
+                        <span class="font-medium truncate">${BossModUtils.escapeHtml(channel.name || 'Thread')}</span>
                         <span class="text-[11px] text-bm-muted shrink-0">${channel.member_count || 0} agents</span>
                     </div>
                     <p class="text-xs text-bm-muted mt-1 line-clamp-2">${BossModUtils.escapeHtml(latest || 'No messages yet')}</p>
@@ -134,11 +134,12 @@ const ChannelsView = (() => {
         if (!selectedChannelId) {
             detailEl.innerHTML = `
                 <div class="p-4 text-sm text-bm-muted text-center mt-8">
-                    No shared channel selected.
+                    No shared thread selected.
                 </div>`;
             return;
         }
 
+        delete detailEl.dataset.channelId;
         detailEl.innerHTML = `
             <div class="p-4 text-sm text-bm-muted text-center mt-8">
                 Loading channel...
@@ -160,14 +161,19 @@ const ChannelsView = (() => {
 
     function renderChannelDetail(detailEl, channel, messages) {
         const members = Array.isArray(channel.members) ? channel.members : [];
+        detailEl.dataset.channelId = channel.id || '';
         detailEl.innerHTML = `
-            <div class="h-full flex flex-col">
+            <div class="h-full flex flex-col" data-channel-id="${BossModUtils.escapeHtml(channel.id || '')}">
                 <div class="p-4 border-b border-bm-border shrink-0">
                     <div class="flex items-start justify-between gap-3">
                         <div>
-                            <h3 class="text-sm font-semibold">${BossModUtils.escapeHtml(channel.name || 'Channel')}</h3>
+                            <h3 class="text-sm font-semibold">${BossModUtils.escapeHtml(channel.name || 'Thread')}</h3>
                             <p class="text-xs text-bm-muted mt-1">${members.length} participants</p>
                         </div>
+                        <button type="button" id="channel-archive-btn"
+                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                            Archive
+                        </button>
                     </div>
                     <div class="mt-3 flex flex-wrap gap-2">
                         ${members.map(member => {
@@ -208,7 +214,38 @@ const ChannelsView = (() => {
         }
 
         bindSend(channel.id);
+        bindArchive(channel.id);
         if (window.lucide) lucide.createIcons({ nodes: [detailEl] });
+    }
+
+    function channelMessageKey(message) {
+        return String(message?.id || message?.message_id || '').trim();
+    }
+
+    function isChannelDetailMounted(detailEl, channelId) {
+        if (!detailEl || !channelId) return false;
+        const mountedId = detailEl.dataset.channelId || detailEl.querySelector('[data-channel-id]')?.dataset.channelId;
+        return mountedId === channelId && Boolean(detailEl.querySelector('#channel-messages'));
+    }
+
+    function appendLiveChannelMessage(messagesEl, data) {
+        if (!messagesEl || !data) return false;
+        const key = channelMessageKey(data);
+        if (key && messagesEl.querySelector(`[data-message-id="${CSS.escape(key)}"]`)) {
+            return false;
+        }
+        const empty = messagesEl.querySelector('.text-center');
+        if (empty) empty.remove();
+        appendChannelMessage(messagesEl, {
+            id: data.message_id || data.id,
+            author_type: data.author_type,
+            author_name: data.author_name,
+            content: data.content,
+            notification_kind: data.notification_kind,
+            host_path_consent: data.host_path_consent,
+        });
+        renderChannelThinking(messagesEl, data.channel_id);
+        return true;
     }
 
     function appendChannelMessage(messagesEl, message) {
@@ -224,6 +261,8 @@ const ChannelsView = (() => {
         wrapper.className = consent
             ? 'chat-msg host-path-consent-card mb-2'
             : `chat-msg ${bubbleClass} mb-2`;
+        const key = channelMessageKey(message);
+        if (key) wrapper.dataset.messageId = key;
         if (consent) {
             wrapper.id = `host-path-consent-${message.host_path_consent.id}`;
         }
@@ -314,6 +353,26 @@ const ChannelsView = (() => {
         };
     }
 
+    function bindArchive(channelId) {
+        const archiveBtn = document.getElementById('channel-archive-btn');
+        if (!archiveBtn || !channelId) return;
+        archiveBtn.onclick = async () => {
+            if (!window.confirm('Archive this thread? It will leave the active list.')) return;
+            archiveBtn.disabled = true;
+            try {
+                const res = await apiFetch(`/api/channels/${channelId}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    throw new Error(await res.text());
+                }
+                const summary = await res.json();
+                handleChannelUpdated(summary);
+            } catch (err) {
+                console.error('[ChannelsView] Failed to archive thread:', err);
+                archiveBtn.disabled = false;
+            }
+        };
+    }
+
     function handleChannelMessage(data) {
         if (!data?.channel_id) return;
         const channel = channels.find(item => item.id === data.channel_id);
@@ -332,7 +391,12 @@ const ChannelsView = (() => {
             presence.stop(data.channel_id, data.author_agent_id);
         }
         if (selectedChannelId === data.channel_id && activeContainer) {
-            void renderSelectedChannel(activeContainer.querySelector('#channel-detail'));
+            const detailEl = activeContainer.querySelector('#channel-detail');
+            if (isChannelDetailMounted(detailEl, data.channel_id)) {
+                appendLiveChannelMessage(detailEl.querySelector('#channel-messages'), data);
+                return;
+            }
+            void renderSelectedChannel(detailEl);
         }
     }
 
@@ -371,13 +435,24 @@ const ChannelsView = (() => {
 
     function handleChannelUpdated(channelSummary) {
         if (!channelSummary?.id) return;
+        const archived = channelSummary.status === 'archived';
         const existingIndex = channels.findIndex(item => item.id === channelSummary.id);
-        if (existingIndex >= 0) {
+        if (archived) {
+            if (existingIndex >= 0) channels.splice(existingIndex, 1);
+        } else if (existingIndex >= 0) {
             channels.splice(existingIndex, 1, channelSummary);
         } else {
             channels.unshift(channelSummary);
         }
-        if (!selectedChannelId) {
+        if (archived && selectedChannelId === channelSummary.id) {
+            selectedChannelId = channels[0]?.id || null;
+            if (activeContainer) {
+                renderChannelList(activeContainer.querySelector('#channels-list'));
+                void renderSelectedChannel(activeContainer.querySelector('#channel-detail'));
+            }
+            return;
+        }
+        if (!selectedChannelId && !archived) {
             selectedChannelId = channelSummary.id;
         }
         if (activeContainer) {
