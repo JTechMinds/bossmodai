@@ -185,7 +185,11 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
 
 
 def persist_channel_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
-    """Persist one shared-channel notification as a system transcript message."""
+    """Persist one shared-channel notification as a system transcript message.
+
+    Completion / blocked / handoff cards stay transcript-only. They must not
+    open a response round or enqueue peer ``channel_message`` wakes.
+    """
     if not notification.channel_id:
         raise ValueError("channel notifications require a channel_id")
     message = db.create_channel_message(

@@ -12,6 +12,7 @@ from core.agent_loop.activity_scheduler import (
     build_task_follow_up_trigger,
     build_task_update_trigger,
 )
+from core.agent_loop.channel_rounds import post_agent_channel_share
 from core.agent_loop.task_roles import (
     task_assignment_reply_target,
     task_report_recipient_ids,
@@ -106,22 +107,13 @@ def _append_task_follow_up_message(
         return set()
 
     if task.notification_channel_id and task.source_channel == "channel":
-        message = db.create_channel_message(
+        channel_message, peer_wakes = post_agent_channel_share(
             channel_id=task.notification_channel_id,
-            author_type="agent",
-            author_agent_id=actor.id,
-            author_name=actor.name,
+            agent=actor,
             content=content.strip(),
-            source_channel="channel",
         )
-        result["channel_message"] = {
-            "channel_id": task.notification_channel_id,
-            "content": message.content,
-            "author_type": message.author_type,
-            "author_name": actor.name,
-            "message_id": message.id,
-            "created_at": message.created_at,
-        }
+        result["channel_message"] = channel_message
+        result.setdefault("trigger_requests", []).extend(peer_wakes)
         return set()
 
     target = task_assignment_reply_target(task, assignee_id=actor.id)
