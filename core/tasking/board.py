@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
+from core.agent_loop.role_contracts import is_auditor_specialty, operator_done_claim_guidance
 from core.bm_cli.filesystem import slugify_name
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
@@ -231,12 +232,10 @@ def _assignee_rollup(tasks: list[Task]) -> list[dict[str, Any]]:
 def _serialize_task(task: Task | None) -> dict[str, Any] | None:
     if task is None:
         return None
-    assigned_name = None
+    assigned = db.get_agent(task.assigned_to) if task.assigned_to else None
+    assigned_name = assigned.name if assigned is not None else None
     owner_name = None
     requester_name = None
-    if task.assigned_to:
-        assigned = db.get_agent(task.assigned_to)
-        assigned_name = assigned.name if assigned is not None else None
     if task.owner_id:
         owner = db.get_agent(task.owner_id)
         owner_name = owner.name if owner is not None else None
@@ -248,9 +247,17 @@ def _serialize_task(task: Task | None) -> dict[str, Any] | None:
 
     events = db.list_task_events(task.id, limit=5)
     latest_event = events[-1] if events else None
+    has_files = bool(task.work_contract and task.work_contract.deliverables)
     return {
         **task.model_dump(mode="json"),
         "assigned_to_name": assigned_name,
+        "assigned_to_role": assigned.role if assigned is not None else None,
+        "assigned_to_done_fail_bar": assigned.done_fail_bar if assigned is not None else None,
+        "done_claim_guidance": operator_done_claim_guidance(
+            auditor=is_auditor_specialty(assigned.role if assigned is not None else None),
+            done_fail_bar=assigned.done_fail_bar if assigned is not None else None,
+            has_file_deliverables=has_files,
+        ),
         "owner_name": owner_name,
         "requester_name": requester_name,
         "latest_event": (

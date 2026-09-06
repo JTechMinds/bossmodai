@@ -180,6 +180,10 @@ def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     context_js = Path("ui/static/js/agent-context.js").read_text(encoding="utf-8")
     assert "No specialty" in context_js
     assert "done_fail_bar" in context_js
+    assert "doneClaimGuidance" in context_js
+    board = Path("core/tasking/board.py").read_text(encoding="utf-8")
+    assert "done_claim_guidance" in board
+    assert "operator_done_claim_guidance" in board
 
 
 # ---------------------------------------------------------------------------

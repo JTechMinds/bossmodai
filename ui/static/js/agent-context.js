@@ -1245,8 +1245,10 @@ const AgentContext = (() => {
                                 ${task.description ? `<p class="text-xs text-bm-muted mt-0.5">${BossModUtils.escapeHtml(task.description.slice(0, 120))}</p>` : ''}
                                 <div class="text-[11px] text-bm-muted mt-1">
                                     ${task.assigned_to_name ? BossModUtils.escapeHtml(task.assigned_to_name) : ''}
+                                    ${task.assigned_to_role ? ` • ${BossModUtils.escapeHtml(task.assigned_to_role)}` : ''}
                                     ${task.owner_name && task.owner_name !== task.assigned_to_name ? ` • owner: ${BossModUtils.escapeHtml(task.owner_name)}` : ''}
                                 </div>
+                                ${task.status !== 'complete' ? `<p class="text-[11px] text-amber-800 mt-1">${BossModUtils.escapeHtml(BossModUtils.doneClaimGuidance(task))}</p>` : ''}
                                 ${task.latest_event?.content ? `<p class="text-[11px] text-bm-muted mt-1">Latest: ${BossModUtils.escapeHtml(task.latest_event.content.slice(0, 140))}</p>` : ''}
                             </div>
                             <span class="text-xs font-medium shrink-0 ${statusColor}">${task.status}</span>
