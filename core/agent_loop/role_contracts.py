@@ -64,6 +64,14 @@ _FAMILY_LABELS: dict[SpecialtyFamily, str] = {
 
 _DONE_CLAIM_TYPES = frozenset({"artifact", "tests", "proof"})
 
+# Soft-deny only when work is clearly outside the hire specialty.
+# Engineers writing a report is unknown, not a mismatch.
+_CLEAR_CONFLICTS = frozenset({
+    frozenset({"write", "review"}),
+    frozenset({"design", "review"}),
+    frozenset({"design", "implement"}),
+})
+
 
 @dataclass(frozen=True)
 class SpecialtyAssignment:
@@ -166,7 +174,9 @@ def match_specialty(
         return "unknown"
     if family == work_kind:
         return "match"
-    return "mismatch"
+    if frozenset({family, work_kind}) in _CLEAR_CONFLICTS:
+        return "mismatch"
+    return "unknown"
 
 
 def rank_agents_for_work(

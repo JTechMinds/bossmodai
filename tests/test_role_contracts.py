@@ -171,6 +171,7 @@ def test_specialty_inference_is_conservative() -> None:
     assert match_specialty(assignee_role="Writer", work_kind="write") == "match"
     assert match_specialty(assignee_role="Writer", work_kind="review") == "mismatch"
     assert match_specialty(assignee_role="Lead", work_kind="write") == "unknown"
+    assert match_specialty(assignee_role="Eng", work_kind="write") == "unknown"
 
 
 def test_assign_api_soft_denies_specialty_mismatch_until_confirmed(
