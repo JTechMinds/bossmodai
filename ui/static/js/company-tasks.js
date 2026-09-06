@@ -548,7 +548,7 @@ const CompanyTasks = (() => {
         const role = (agent.role || '').toLowerCase();
         if (!work || !role) return 1;
         const pairs = [
-            [['write', 'draft', 'document', 'docs', 'copy'], ['writer', 'writing', 'editor', 'docs', 'author']],
+            [['write', 'draft', 'document', 'docs', 'copy', 'edit'], ['writer', 'writing', 'editor', 'docs', 'author']],
             [['review', 'audit', 'test', 'qa', 'inspect'], ['reviewer', 'auditor', 'qa', 'tester', 'review']],
             [['implement', 'code', 'build', 'fix', 'debug'], ['engineer', 'developer', 'coder', 'eng']],
             [['research', 'analyze', 'analysis'], ['researcher', 'analyst']],
