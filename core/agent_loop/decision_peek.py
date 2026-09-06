@@ -1,12 +1,13 @@
-"""Decision-turn CLI peek budget: fingerprints, soft cap, identical-loop stop.
+"""Decision-turn CLI peek budget: total-peek cap, fingerprints, identical-loop stop.
 
-Decision may look around a little. Deep multi-step host review is accept →
-execution, not an unbounded decision digathon.
+The soft cap is 10 CLI peeks on the decision path. Fingerprints collapse
+path tweaks and detect a triple repeat; they do not recycle quota.
+``request_host_access`` is not a peek. Deep host review is accept → execution.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from core.bm_cli.parser import parse_cli_command
 
@@ -28,34 +29,37 @@ class PeekBudgetVerdict:
 
 @dataclass
 class DecisionPeekBudget:
-    """Track distinct normalized peeks and identical-in-a-row streaks."""
+    """Track total CLI peeks and identical-in-a-row streaks.
 
-    seen: set[str] = field(default_factory=set)
+    Fingerprints collapse path tweaks and detect a triple repeat. They do
+    not recycle quota: every allowed ``bm_cli`` peek spends one of the 10.
+    """
+
+    peek_count: int = 0
     last_fingerprint: str | None = None
     identical_streak: int = 0
 
     def consider(self, command: str, content: str | None = None) -> PeekBudgetVerdict:
         """Record one CLI peek and return whether it may execute."""
         fingerprint = normalize_peek_fingerprint(command, content)
-        if fingerprint == self.last_fingerprint:
-            self.identical_streak += 1
-        else:
-            self.last_fingerprint = fingerprint
-            self.identical_streak = 1
+        next_streak = self.identical_streak + 1 if fingerprint == self.last_fingerprint else 1
 
-        if self.identical_streak >= IDENTICAL_PEEK_STREAK_LIMIT:
+        if next_streak >= IDENTICAL_PEEK_STREAK_LIMIT:
             return PeekBudgetVerdict(
                 allowed=False,
                 reason="identical_loop",
                 steer=IDENTICAL_PEEK_STEER,
             )
-        if fingerprint not in self.seen and len(self.seen) >= SOFT_PEEK_BUDGET:
+        if self.peek_count >= SOFT_PEEK_BUDGET:
             return PeekBudgetVerdict(
                 allowed=False,
                 reason="soft_budget",
                 steer=SOFT_PEEK_STEER,
             )
-        self.seen.add(fingerprint)
+
+        self.last_fingerprint = fingerprint
+        self.identical_streak = next_streak
+        self.peek_count += 1
         return PeekBudgetVerdict(allowed=True)
 
 

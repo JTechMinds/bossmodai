@@ -135,12 +135,23 @@ def test_peek_budget_soft_ten_and_identical_triple() -> None:
     assert third.steer == IDENTICAL_PEEK_STEER
 
 
-def test_peek_budget_repeat_of_known_fingerprint_is_not_a_new_slot() -> None:
+def test_peek_budget_counts_total_peeks_not_recyclable_identities() -> None:
     budget = DecisionPeekBudget()
     for index in range(SOFT_PEEK_BUDGET):
-        assert budget.consider(f"ls /me/p{index}").allowed is True
-    assert budget.consider("ls /me/p0").allowed is True
-    assert budget.consider("ls /me/new").allowed is False
+        command = "ls a" if index % 2 == 0 else "ls b"
+        assert budget.consider(command).allowed is True
+    assert budget.peek_count == SOFT_PEEK_BUDGET
+
+    reused = budget.consider("ls a")
+    assert reused.allowed is False
+    assert reused.reason == "soft_budget"
+    assert reused.steer == SOFT_PEEK_STEER
+
+    other = DecisionPeekBudget()
+    for index in range(SOFT_PEEK_BUDGET):
+        assert other.consider(f"ls /me/p{index}").allowed is True
+    assert other.consider("ls /me/p0").allowed is False
+    assert other.consider("ls /me/p0").reason == "soft_budget"
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +160,7 @@ def test_peek_budget_repeat_of_known_fingerprint_is_not_a_new_slot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_four_distinct_peeks_then_decide_is_allowed(
+async def test_four_peeks_then_decide_is_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
@@ -165,7 +176,7 @@ async def test_four_distinct_peeks_then_decide_is_allowed(
 
 
 @pytest.mark.asyncio
-async def test_ten_distinct_peeks_then_decide_is_allowed(
+async def test_ten_total_peeks_then_decide_is_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
@@ -180,7 +191,7 @@ async def test_ten_distinct_peeks_then_decide_is_allowed(
 
 
 @pytest.mark.asyncio
-async def test_eleventh_distinct_peek_fails_soft_budget(
+async def test_eleventh_peek_fails_soft_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
@@ -203,6 +214,32 @@ async def test_eleventh_distinct_peek_fails_soft_budget(
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
     assert SOFT_PEEK_STEER in str(outcome.result.get("detail") or "")
+    errors = [item for item in broadcasts if item.get("event") == "agent_error"]
+    assert len(errors) == 1
+
+
+@pytest.mark.asyncio
+async def test_alternating_known_peeks_still_hit_soft_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    broadcasts: list[dict[str, Any]] = []
+
+    async def _capture_activity(**kwargs: Any) -> None:
+        broadcasts.append(kwargs)
+
+    monkeypatch.setattr(
+        "core.agent_loop.decision_turn.manager.broadcast_activity",
+        _capture_activity,
+    )
+    peeks = [_cli("ls a" if index % 2 == 0 else "ls b") for index in range(SOFT_PEEK_BUDGET + 1)]
+    _script_completions(monkeypatch, peeks)
+    outcome = await run_turn(agent, state, _human_chat_trigger())
+    assert outcome.trigger_status == "failed"
+    assert outcome.result.get("event") == "agent_error"
+    assert outcome.result.get("peek_budget") == "soft_budget"
+    assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
+    assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET
     errors = [item for item in broadcasts if item.get("event") == "agent_error"]
     assert len(errors) == 1
 
