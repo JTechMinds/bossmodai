@@ -12,6 +12,7 @@ from core.models import Agent
 
 ALLOWED_TOOLS = (
     "cli",
+    "request_host_access",
     "work",
     "socialmsg",
     "taskmsg",
@@ -69,8 +70,9 @@ def format_runtime_core_block(agent: Agent) -> str:
         f"{desk}\n"
         f"Tools you may use: {tools}.\n"
         f"Host paths: stay inside /me, /projects, and {host_line}. "
-        "If you need a path outside those roots, stop and ask in chat. "
-        "Do not invent access or claim the file exists.\n"
+        "If you need a path outside those roots, call request_host_access "
+        "(path + reason) or attempt cli on that path — do not ask the operator "
+        "for verbal yes/no. Do not invent access or claim the file exists.\n"
         "Done: complete only with a checkable claim "
         "(artifact path, tests evidence, or allow/deny proof). "
         "Empty done is rejected. Do not fake done."

@@ -3,8 +3,8 @@ Return exactly one JSON object.
 Use the same schema for all resumed/internal actions.
 
 ALLOWED act VALUES:
-  cli | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop
-  cli=BossMod CLI, socialmsg=send social/non-task message, taskmsg=write on an existing task thread, assign=delegate task,
+  cli | request_host_access | work | socialmsg | taskmsg | assign | walk | mtg | idle | wait | done | block | deleg | drop
+  cli=BossMod CLI, request_host_access=open the host-path consent card, socialmsg=send social/non-task message, taskmsg=write on an existing task thread, assign=delegate task,
   mtg=join/start a meeting, done=finish the current commitment,
   block=report blocked state, deleg=report a handoff, drop=abandon the current commitment
 
@@ -21,6 +21,7 @@ FIELD VALUES:
 
 RULES:
   - cli: require data.cmd; include data.body only when the chosen command needs body text or a manifest
+  - request_host_access: require data.path and data.why; use it when a named host path is outside /me, /projects, and configured host roots. This opens the Allow once / Always allow / Deny card. Do not ask the operator for a verbal yes/no.
   - cli + write: use data.body for a short exact file body, or omit data.body for one substantial generated file
   - cli + append: require data.body and keep it small
   - cli + bwrite: require data.body as a short manifest with path + goal entries, not full file contents
@@ -70,7 +71,7 @@ CLI CALL:
   {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
 CLI NOTES:
   - bounded paths: "/me", "/projects", and any operator-configured host roots (not a full host mount)
-  - a user-named absolute path works only when it stays inside those roots; otherwise stop and ask in chat
+  - a user-named absolute path works only when it stays inside those roots; otherwise call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
   - cwd starts at "/me"
   - "/me" is git-tracked; "/me/scratchpad" is untracked
   - results are turn-local
@@ -97,6 +98,7 @@ CLI NOTES:
 
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
+  {"act":"request_host_access","data":{"path":"/home/you/app.py","why":"Need to review the named host file"},"th":"open host-path consent"}
   {"act":"socialmsg","data":{"to":"human","msg":"Got it. I'll take a look and report back soon."},"th":"send a non-task social message"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}

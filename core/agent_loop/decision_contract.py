@@ -7,6 +7,7 @@ import logging
 from typing import Any, Literal
 
 from core.bm_cli.contract import maybe_parse_bm_cli_call
+from core.bm_cli.host_path_consent import maybe_parse_host_access_call
 from core.models.work_contract import DeliverableSpec
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -206,6 +207,17 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
             }
         if cli_call is not None:
             return cli_call.model_dump()
+        try:
+            host_call = maybe_parse_host_access_call(parsed)
+        except (ValidationError, ValueError) as exc:
+            return {
+                "decision": "_parse_failed",
+                "thought": _candidate_thought(parsed),
+                "_raw_snippet": _validation_message(exc)[:200],
+                "_candidate_payload": parsed,
+            }
+        if host_call is not None:
+            return host_call.model_dump()
 
     try:
         normalized = _normalize_conversation_payload(parsed)

@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Any
 
-from core.agent_loop.actions_cli import _handle_bm_cli
+from core.agent_loop.actions_cli import _handle_bm_cli, _handle_request_host_access
 from core.agent_loop.actions_lifecycle import (
     _handle_abandoned,
     _handle_blocked,
@@ -45,6 +45,7 @@ _VALID_TASK_MESSAGE_KINDS = {"note", "status", "question", "review"}
 _TASK_LIFECYCLE_ACTIONS = {"waiting", "complete", "blocked", "delegated", "abandoned"}
 _SUPPORTED_ACTIONS = {
     "bm_cli",
+    "request_host_access",
     "work",
     "message",
     "taskMessage",
@@ -61,6 +62,7 @@ _SUPPORTED_ACTIONS = {
 }
 _MODEL_ACTION_TO_NAME = {
     "cli": "bm_cli",
+    "request_host_access": "request_host_access",
     "work": "work",
     "socialmsg": "message",
     "taskmsg": "taskMessage",
@@ -164,7 +166,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('"data" must be an object when provided')
     extra_data = set(extra) - {
         "cmd", "body", "out", "to", "aid", "aids", "msg", "tid", "kind",
-        "dst", "mode", "topic", "sum", "why", "task", "claim", "confirm",
+        "dst", "mode", "topic", "sum", "why", "task", "claim", "confirm", "path",
     }
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
@@ -190,6 +192,9 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "cli":
             normalized["command"] = extra.get("cmd")
             normalized["content"] = extra.get("body")
+        case "request_host_access":
+            normalized["path"] = extra.get("path")
+            normalized["reason"] = extra.get("why")
         case "work":
             normalized["output"] = extra.get("out")
         case "socialmsg":
@@ -309,6 +314,14 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         if action.get("content") is not None and not isinstance(action.get("content"), str):
             return '"bm_cli" "content" must be a string when provided'
 
+    if action_name == "request_host_access":
+        path = action.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return '"request_host_access" requires a non-empty "path"'
+        reason = action.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            return '"request_host_access" requires a non-empty "why"'
+
     if action_name == "message":
         recipient_type = action.get("recipientType")
         if not isinstance(recipient_type, str) or recipient_type.strip().lower() not in _VALID_MESSAGE_RECIPIENT_TYPES:
@@ -427,6 +440,7 @@ async def execute_action(
 
 _ACTION_HANDLERS = {
     "bm_cli": _handle_bm_cli,
+    "request_host_access": _handle_request_host_access,
     "work": _handle_work,
     "message": _handle_message,
     "taskMessage": _handle_task_message,

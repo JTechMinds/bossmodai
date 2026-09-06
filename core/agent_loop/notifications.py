@@ -72,6 +72,52 @@ def project_chat_notifications(
     return notifications
 
 
+async def emit_chat_notifications(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    active_activity: Activity | None,
+    action: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Persist projected chat/channel notifications and broadcast them."""
+    from core.runtime.events import runtime_events as manager
+
+    for notification in project_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=active_activity,
+        action=action,
+        result=result,
+    ):
+        if notification.channel_id:
+            channel_notification = persist_channel_notification(agent, notification)
+            await manager.broadcast_channel_message(
+                channel_id=channel_notification["channel_id"],
+                content=channel_notification["content"],
+                author_type=channel_notification["author_type"],
+                author_name=channel_notification["author_name"],
+                message_id=channel_notification.get("message_id"),
+                created_at=channel_notification.get("created_at"),
+            )
+            continue
+        chat_notification = persist_chat_notification(agent, notification)
+        await manager.broadcast_chat_message(
+            agent_id=chat_notification["agent_id"],
+            content=chat_notification["content"],
+            from_type=chat_notification["from_type"],
+            from_name=chat_notification["from_name"],
+            message_type=chat_notification.get("message_type"),
+            message_id=chat_notification.get("message_id"),
+            created_at=chat_notification.get("created_at"),
+            notification_kind=chat_notification.get("notification_kind"),
+            desk_path=chat_notification.get("desk_path"),
+            host_path_consent=chat_notification.get("host_path_consent"),
+        )
+        if chat_notification.get("feed_entry"):
+            await manager.broadcast_feed_update(chat_notification["feed_entry"])
+
+
 def persist_chat_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
     """Persist one chat notification and return broadcast data.
 

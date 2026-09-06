@@ -138,6 +138,12 @@ async def _handle_message(
     if not content:
         return {"event": "status_changed", "detail": "Empty message content", "agent_name": agent.name}
 
+    if recipient_type == "human":
+        from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
+
+        if is_verbal_host_access_ask(content):
+            return verbal_host_access_steer(agent)
+
     target = None
     if recipient_type == "human":
         to_agent_id = HUMAN_SENDER_ID

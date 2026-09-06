@@ -52,6 +52,12 @@ def apply_decision(
     decision = ConversationDecision.model_validate(decision_payload)
     active_work = activity_runtime.get_active_work_activity(agent.id)
 
+    if decision.decision in {"answer", "clarify"}:
+        from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
+
+        if is_verbal_host_access_ask(decision.reply):
+            return verbal_host_access_steer(agent)
+
     result = {
         "event": "decision_applied",
         "detail": f"{agent.name} handled the direct request",

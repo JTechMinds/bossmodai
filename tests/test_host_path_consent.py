@@ -14,12 +14,17 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
+from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
+from core.agent_loop.decision_contract import parse_direct_turn_response
+from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
 from core.agent_loop.runtime_core import format_runtime_core_block, preview_runtime_core
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
+from core.bm_cli.host_path_consent import is_verbal_host_access_ask, request_host_path_access
 from core.bm_cli.host_roots import configured_host_roots, extra_host_roots
 from core.bm_cli.runtime import execute_bm_cli
+from core.default_prompts import load_default_prompt
 from core.llm import context_preview
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
@@ -101,7 +106,9 @@ def test_runtime_core_is_compact_and_skips_description() -> None:
     assert "You are Core Writer (Writer)." in block
     assert "Desk: assigned at (1,2)." in block
     assert "Tools you may use:" in block
-    assert "stop and ask in chat" in block
+    assert "request_host_access" in block
+    assert "do not ask the operator for verbal yes/no" in block
+    assert "stop and ask in chat" not in block
     assert "Empty done is rejected" in block
     assert "Never put this quality bar" not in block
     assert "DRY" not in block
@@ -113,7 +120,9 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     preview = context_preview.preview_prompt_bundle("execution", "activity_resumed")
     contents = "\n".join(str(message.get("content") or "") for message in preview["messages"])
     assert "# Runtime core" in contents
-    assert "stop and ask in chat" in contents
+    assert "request_host_access" in contents
+    assert "do not ask the operator for verbal yes/no" in contents
+    assert "stop and ask in chat" not in contents
     client = _api_client(monkeypatch)
     response = client.get(
         "/api/runtime/core",
@@ -351,3 +360,168 @@ def test_once_grants_require_consent_scope(tmp_path: Path) -> None:
         assert host.resolve() in extra_host_roots()
     finally:
         host_path_consent_scope.reset(token)
+
+
+async def test_request_host_access_opens_card_without_cli(tmp_path: Path) -> None:
+    host = tmp_path / "request-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("hello\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+
+    parsed = parse_action(
+        '{"act":"request_host_access","data":{"path":"%s","why":"Need to review the file"},"th":"ask"}'
+        % fixture
+    )
+    assert parsed["action"] == "request_host_access"
+    assert parsed["path"] == str(fixture)
+    assert parsed["reason"] == "Need to review the file"
+
+    result = await execute_action(parsed, agent, state)
+    assert result["event"] == "host_path_consent_required"
+    assert result["consent_required"] is True
+    assert result["host_path_consent"]["path"] == str(fixture.resolve())
+    assert result["host_path_consent"]["reason"] == "Need to review the file"
+    pending = db.list_consent_requests(agent_id=agent.id, status="pending")
+    assert len(pending) == 1
+    assert pending[0].command is None
+    notes = project_chat_notifications(
+        agent=agent,
+        trigger={"type": "human_chat", "source_channel": "chat"},
+        active_activity=None,
+        action=parsed,
+        result=result,
+    )
+    assert len(notes) == 1
+    assert notes[0].kind == "host_path_consent"
+
+
+def test_request_host_access_etc_is_hard_denied_without_a_card() -> None:
+    agent, state = _agent_and_state()
+    denied = request_host_path_access(
+        agent=agent,
+        raw_path="/etc/passwd",
+        reason="Need the password file",
+    )
+    assert denied.ok is False
+    assert denied.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    payload = (denied.detail or "") + denied.prompt_content
+    assert "outside the allowed workspace roots" in payload
+    assert "root:" not in payload
+
+
+def test_request_host_access_already_allowed_skips_card(tmp_path: Path) -> None:
+    host = tmp_path / "allowed-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("ok\n", encoding="utf-8")
+    db.set_setting("workspace_host_roots", str(host.resolve()), "cli_policy")
+    config.reload()
+    agent, _state = _agent_and_state()
+    result = request_host_path_access(
+        agent=agent,
+        raw_path=str(fixture),
+        reason="Already on the allowlist",
+    )
+    assert result.ok is True
+    assert result.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+
+
+def test_request_host_access_always_allow_writes_workspace_host_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "always-request"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("always\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+
+    first = request_host_path_access(
+        agent=agent,
+        raw_path=str(fixture),
+        reason="Need durable access",
+        cwd="/me",
+    )
+    assert first.consent_required is True
+    request_id = first.consent_request_id
+    assert request_id
+
+    response = client.post(f"/api/host-path-consent/{request_id}/always-allow", headers=_headers())
+    assert response.status_code == 200
+    setting = next(item for item in db.get_settings() if item.key == "workspace_host_roots")
+    assert str(host.resolve()) in setting.value.splitlines()
+    assert execute_bm_cli(agent, state, f"cat {fixture}").ok is True
+
+
+async def test_verbal_socialmsg_does_not_open_a_card(tmp_path: Path) -> None:
+    host = tmp_path / "verbal-root"
+    host.mkdir()
+    fixture = host / "secret.txt"
+    fixture.write_text("nope\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+
+    parsed = parse_action(
+        '{"act":"socialmsg","data":{"to":"human","msg":"Please confirm I can read %s"},"th":"ask"}'
+        % fixture
+    )
+    result = await execute_action(parsed, agent, state)
+    assert result["event"] == "world_feedback"
+    assert "not negotiated in chat" in result["detail"]
+    assert result["expected_action"] == "request_host_access"
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    assert all("Please confirm" not in (item.content or "") for item in db.get_human_chat_thread(agent.id))
+
+
+def test_verbal_decision_reply_does_not_open_a_card(tmp_path: Path) -> None:
+    host = tmp_path / "reply-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("ask\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+    result = apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "work_request",
+            "commitmentKind": "none",
+            "reply": f"Please confirm I can access {fixture} before I continue.",
+        },
+        agent,
+        state,
+        {"type": "human_chat", "content": f"Read {fixture}", "from_name": "Human"},
+    )
+    assert result["event"] == "world_feedback"
+    assert "not negotiated in chat" in result["detail"]
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    assert all("Please confirm" not in (item.content or "") for item in db.get_human_chat_thread(agent.id))
+
+
+def test_parse_direct_turn_request_host_access() -> None:
+    parsed = parse_direct_turn_response(
+        '{"act":"request_host_access","data":{"path":"/tmp/app/main.py","why":"Need the source"},"th":"ask"}'
+    )
+    assert parsed.get("action") == "request_host_access"
+    assert parsed.get("path") == "/tmp/app/main.py"
+    assert parsed.get("reason") == "Need the source"
+
+
+def test_verbal_host_access_detector() -> None:
+    assert is_verbal_host_access_ask("Please confirm I can read /tmp/app/main.py")
+    assert is_verbal_host_access_ask("May I access the host path before I continue?")
+    assert is_verbal_host_access_ask("Do you allow /home/you/notes.txt — yes/no?")
+    assert not is_verbal_host_access_ask("Got it. I'll take a look and report back soon.")
+    assert not is_verbal_host_access_ask("Please confirm the meeting time.")
+    assert not is_verbal_host_access_ask("I read /tmp/app/main.py and the tests passed.")
+
+
+def test_contracts_forbid_verbal_host_access_asks() -> None:
+    core = format_runtime_core_block(db.create_agent("Lint Clerk", role="Writer"))
+    execution = load_default_prompt("runtime_contract_execution")
+    decision = load_default_prompt("runtime_contract_decision")
+    for text in (core, execution, decision):
+        assert "stop and ask in chat" not in text
+        assert "request_host_access" in text
+        assert "verbal yes/no" in text

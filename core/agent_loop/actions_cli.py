@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.agent_loop.activity_runtime import get_active_task_id
 from core.bm_cli import execute_bm_cli
+from core.bm_cli.host_path_consent import request_host_path_access
+from core.bm_cli.session import get_cli_cwd
+from core.bm_cli.types import BossModCliResult
 from core.models import Agent, AgentState
 
 
@@ -27,6 +31,39 @@ async def _handle_bm_cli(
         content if isinstance(content, str) else None,
         trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
     )
+    return _cli_action_result(agent, cli_result, command=command)
+
+
+async def _handle_request_host_access(
+    agent: Agent,
+    state: AgentState,
+    action: dict[str, Any],
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Open the host-path consent card before any CLI attempt."""
+    del state, trigger
+    path = str(action.get("path") or "").strip()
+    reason = str(action.get("reason") or "").strip()
+    cli_result = request_host_path_access(
+        agent=agent,
+        raw_path=path,
+        reason=reason,
+        cwd=get_cli_cwd(agent.id),
+        task_id=get_active_task_id(agent.id),
+    )
+    result = _cli_action_result(agent, cli_result, command="request_host_access")
+    if cli_result.ok and not cli_result.consent_required:
+        result["event"] = "host_path_already_allowed"
+    return result
+
+
+def _cli_action_result(
+    agent: Agent,
+    cli_result: BossModCliResult,
+    *,
+    command: str,
+) -> dict[str, Any]:
+    """Map a CLI / host-access result onto the execution-turn payload."""
     result = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
         "detail": cli_result.detail,

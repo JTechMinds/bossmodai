@@ -13,11 +13,7 @@ from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_acti
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.liveness import record_action_liveness
-from core.agent_loop.notifications import (
-    persist_channel_notification,
-    persist_chat_notification,
-    project_chat_notifications,
-)
+from core.agent_loop.notifications import emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_helpers import (
     _build_continuation_instruction,
@@ -116,16 +112,24 @@ async def _run_execution_turn(
                 consent_payload = {}
         consent_status = consent_payload.get("status", "denied")
         if consent_status in {"allowed_once", "always_allowed"}:
+            from core.bm_cli.host_path_consent import is_request_host_access_command
             from core.bm_cli.runtime import execute_bm_cli
 
-            cli_result = execute_bm_cli(
-                agent,
-                state,
-                consent_payload.get("command", ""),
-                consent_payload.get("content"),
-                trigger_type=trigger_type,
-            )
-            approval_context_msg = cli_result.prompt_content
+            command = consent_payload.get("command", "")
+            if is_request_host_access_command(command):
+                path = consent_payload.get("path") or "the requested host path"
+                approval_context_msg = (
+                    f"Host-path access granted for {path}. Use cli on that path now."
+                )
+            else:
+                cli_result = execute_bm_cli(
+                    agent,
+                    state,
+                    command,
+                    consent_payload.get("content"),
+                    trigger_type=trigger_type,
+                )
+                approval_context_msg = cli_result.prompt_content
         else:
             note = consent_payload.get("decision_note") or "Host-path access denied."
             cmd = consent_payload.get("command", "unknown")
@@ -474,39 +478,13 @@ async def _run_execution_turn(
                 created_at=channel_message.get("created_at"),
             )
 
-        for notification in project_chat_notifications(
+        await emit_chat_notifications(
             agent=agent,
             trigger=trigger,
             active_activity=active_activity_before_action,
             action=action,
             result=result,
-        ):
-            if notification.channel_id:
-                channel_notification = persist_channel_notification(agent, notification)
-                await manager.broadcast_channel_message(
-                    channel_id=channel_notification["channel_id"],
-                    content=channel_notification["content"],
-                    author_type=channel_notification["author_type"],
-                    author_name=channel_notification["author_name"],
-                    message_id=channel_notification.get("message_id"),
-                    created_at=channel_notification.get("created_at"),
-                )
-            else:
-                chat_notification = persist_chat_notification(agent, notification)
-                await manager.broadcast_chat_message(
-                    agent_id=chat_notification["agent_id"],
-                    content=chat_notification["content"],
-                    from_type=chat_notification["from_type"],
-                    from_name=chat_notification["from_name"],
-                    message_type=chat_notification.get("message_type"),
-                    message_id=chat_notification.get("message_id"),
-                    created_at=chat_notification.get("created_at"),
-                    notification_kind=chat_notification.get("notification_kind"),
-                    desk_path=chat_notification.get("desk_path"),
-                    host_path_consent=chat_notification.get("host_path_consent"),
-                )
-                if chat_notification.get("feed_entry"):
-                    await manager.broadcast_feed_update(chat_notification["feed_entry"])
+        )
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
 
@@ -625,7 +603,7 @@ async def _run_execution_turn(
             break
 
         # Approval-required or host-path consent — turn ends, human decides
-        if action_name == "bm_cli" and (
+        if action_name in {"bm_cli", "request_host_access"} and (
             result.get("approval_required") or result.get("consent_required")
         ):
             break
