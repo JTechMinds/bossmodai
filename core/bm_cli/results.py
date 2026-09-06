@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from core.bm_cli.types import BossModCliResult
+from core.models.host_path_consent import HostPathConsentRequest
 from core.default_prompts import load_default_prompt, render_default_prompt
 
 # Hard delimiters so CLI / tool stdout cannot be mistaken for system instructions.
@@ -102,6 +103,48 @@ def approval_required_result(
         exit_code=126,
         matched_rule_id=matched_rule_id,
         approval_request_id=approval_request_id,
+    )
+
+
+def consent_required_result(
+    command: str,
+    message: str,
+    *,
+    cwd: str | None = None,
+    executor: str = "virtual",
+    consent_request: HostPathConsentRequest | None = None,
+    reused: bool = False,
+) -> BossModCliResult:
+    """Build a host-path consent pause result for the in-chat card."""
+    card = consent_request.as_card() if consent_request is not None else {}
+    return BossModCliResult(
+        command=command,
+        ok=False,
+        detail=f"BossMod CLI host-path consent required: {message}",
+        prompt_content=render_sections(
+            command,
+            [
+                (
+                    "HOST PATH CONSENT REQUIRED",
+                    [
+                        message,
+                        "Stop and wait. The operator will Allow once, Always allow, or Deny in chat.",
+                    ],
+                )
+            ],
+        ),
+        kind="host_path_consent_required",
+        data={
+            "consent_required": True,
+            "message": message,
+            "host_path_consent": card,
+            "consent_reused": reused,
+        },
+        cwd=cwd,
+        consent_required=True,
+        executor=executor,
+        exit_code=126,
+        consent_request_id=consent_request.id if consent_request is not None else None,
     )
 
 

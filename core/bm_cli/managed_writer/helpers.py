@@ -62,10 +62,12 @@ def _clone_cli_result(
         data=data if data is not None else cli_result.data,
         cwd=cli_result.cwd,
         approval_required=cli_result.approval_required,
+        consent_required=cli_result.consent_required,
         executor=cli_result.executor,
         exit_code=cli_result.exit_code,
         matched_rule_id=cli_result.matched_rule_id,
         approval_request_id=cli_result.approval_request_id,
+        consent_request_id=cli_result.consent_request_id,
     )
 
 

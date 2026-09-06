@@ -86,6 +86,7 @@ class ConnectionManager:
         created_at: Any = None,
         notification_kind: str | None = None,
         desk_path: str | None = None,
+        host_path_consent: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
 
@@ -104,6 +105,7 @@ class ConnectionManager:
                 "created_at": created_at,
                 "notification_kind": notification_kind,
                 "desk_path": desk_path,
+                "host_path_consent": host_path_consent,
             },
         })
 

@@ -71,7 +71,7 @@ async def _run_execution_turn(
     start: float,
 ) -> TurnOutcome:
     """Handle CLI-approval resume and the multi-step execution action loop."""
-    # 3b. Handle cli_approval_resolved trigger — pre-execute approved command
+    # 3b. Handle cli_approval_resolved / host_path_consent_resolved resume
     if trigger_type == "cli_approval_resolved":
         approval_payload = trigger.get("payload") or {}
         if isinstance(approval_payload, str):
@@ -95,6 +95,40 @@ async def _run_execution_turn(
         else:
             note = approval_payload.get("decision_note") or "No reason given."
             cmd = approval_payload.get("command", "unknown")
+            approval_context_msg = _render_loop_prompt(
+                "internal_loop_approval_rejected_result",
+                command=cmd,
+                reason=note,
+            )
+        context.extend(
+            cli_approval_result_messages(
+                approval_context_msg=approval_context_msg,
+                followup_content=load_default_prompt("internal_loop_approval_review_followup"),
+            )
+        )
+
+    if trigger_type == "host_path_consent_resolved":
+        consent_payload = trigger.get("payload") or {}
+        if isinstance(consent_payload, str):
+            try:
+                consent_payload = json.loads(consent_payload)
+            except (json.JSONDecodeError, TypeError):
+                consent_payload = {}
+        consent_status = consent_payload.get("status", "denied")
+        if consent_status in {"allowed_once", "always_allowed"}:
+            from core.bm_cli.runtime import execute_bm_cli
+
+            cli_result = execute_bm_cli(
+                agent,
+                state,
+                consent_payload.get("command", ""),
+                consent_payload.get("content"),
+                trigger_type=trigger_type,
+            )
+            approval_context_msg = cli_result.prompt_content
+        else:
+            note = consent_payload.get("decision_note") or "Host-path access denied."
+            cmd = consent_payload.get("command", "unknown")
             approval_context_msg = _render_loop_prompt(
                 "internal_loop_approval_rejected_result",
                 command=cmd,
@@ -469,6 +503,7 @@ async def _run_execution_turn(
                     created_at=chat_notification.get("created_at"),
                     notification_kind=chat_notification.get("notification_kind"),
                     desk_path=chat_notification.get("desk_path"),
+                    host_path_consent=chat_notification.get("host_path_consent"),
                 )
                 if chat_notification.get("feed_entry"):
                     await manager.broadcast_feed_update(chat_notification["feed_entry"])
@@ -589,8 +624,10 @@ async def _run_execution_turn(
         if action_name == "walkTo" and result.get("path"):
             break
 
-        # Approval-required — turn ends, human decides
-        if action_name == "bm_cli" and result.get("approval_required"):
+        # Approval-required or host-path consent — turn ends, human decides
+        if action_name == "bm_cli" and (
+            result.get("approval_required") or result.get("consent_required")
+        ):
             break
 
         if should_end_turn_after_action(
@@ -627,6 +664,11 @@ async def _run_execution_turn(
         next_step_delta = _serialize_trace_value(continuation_messages)
 
     final_activity = activity_runtime.get_active_activity(agent.id)
+    if trigger_type == "host_path_consent_resolved":
+        import db
+
+        db.consume_turn_once_grants(agent.id)
+
     final_result = dict(result)
     final_result["trigger_requests"] = plan_post_turn_follow_up(
         agent_id=agent.id,

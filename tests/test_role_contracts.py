@@ -216,8 +216,14 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert panel.index("Advanced") < panel.index("Desk Assignment")
     assert panel.index('name="description"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
-    assert "prompt template, and desk" in panel
+    assert "prompt template, and desk" in panel or "runtime core, prompt template, and desk" in panel
+    assert "runtime core, prompt template, and desk" in panel
     assert "prompt template, color, and desk" not in panel
+    assert "Runtime core" in panel
+    assert 'id="runtime-core-preview"' in panel
+    assert 'name="runtime_core"' not in panel
+    assert panel.index('name="done_fail_bar"') < panel.index("Runtime core")
+    assert panel.index("Runtime core") < panel.index('name="personality_id"')
     assert "nextUnusedAgentColor" in utils_js
     assert "mergeRosterFromWorld" in utils_js
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
@@ -757,9 +763,18 @@ def test_preview_bundle_injects_role_contract() -> None:
     preview = context_preview.preview_prompt_bundle("execution", "activity_resumed")
     contents = "\n".join(str(message.get("content") or "") for message in preview["messages"])
     assert "# Role contract" in contents
+    assert "# Runtime core" in contents
     assert "Specialty:" in contents
     assert "data.claim" in contents
     assert "Empty done" in contents
+    core_msgs = [
+        message.get("content") or ""
+        for message in preview["messages"]
+        if str(message.get("content") or "").startswith("# Runtime core")
+    ]
+    assert core_msgs
+    assert "Description:" not in core_msgs[0]
+    assert "stop and ask in chat" in core_msgs[0]
 
 
 def test_world_feedback_is_a_task_feed_event() -> None:

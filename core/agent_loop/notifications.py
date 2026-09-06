@@ -8,7 +8,7 @@ from typing import Any, Literal
 import db
 from core.models import Activity, Agent
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned"]
+NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "host_path_consent"]
 
 _DESTINATION_LABELS = {
     "desk": "desk",
@@ -36,6 +36,7 @@ class ChatNotification:
     task_id: str | None = None
     activity_id: str | None = None
     desk_path: str | None = None
+    consent_id: str | None = None
     channel_id: str | None = None
 
 
@@ -64,6 +65,10 @@ def project_chat_notifications(
     if task_notification is not None:
         notifications.append(task_notification)
 
+    consent = _build_consent_notification(agent=agent, trigger=trigger, result=result)
+    if consent is not None:
+        notifications.append(consent)
+
     return notifications
 
 
@@ -89,6 +94,13 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             notification_id=stored.id,
             target_kind="desk",
             target_path=notification.desk_path,
+        )
+    if notification.consent_id:
+        db.create_notification_link(
+            notification_id=stored.id,
+            target_kind="host_path_consent",
+            target_path=notification.consent_id,
+            label="Host path consent",
         )
 
     feed_entry = db.normalize_notification_entry(
@@ -117,6 +129,11 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
         "created_at": stored.created_at,
         "notification_kind": notification.kind,
         "desk_path": notification.desk_path,
+        "host_path_consent": (
+            db.get_consent_request(notification.consent_id).as_card()
+            if notification.consent_id and db.get_consent_request(notification.consent_id)
+            else None
+        ),
         "feed_entry": feed_entry,
     }
 
@@ -140,6 +157,38 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "message_id": message.id,
         "created_at": message.created_at,
     }
+
+
+def _build_consent_notification(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    result: dict[str, Any],
+) -> ChatNotification | None:
+    """Return the in-chat host-path consent card when a new request is created."""
+    if result.get("event") != "host_path_consent_required":
+        return None
+    if result.get("consent_reused"):
+        return None
+    card = result.get("host_path_consent") if isinstance(result.get("host_path_consent"), dict) else {}
+    consent_id = str(card.get("id") or result.get("consent_request_id") or "").strip()
+    if not consent_id:
+        return None
+    if db.has_consent_notification(consent_id):
+        return None
+    path = str(card.get("path") or "host path")
+    reason = str(card.get("reason") or "").strip()
+    content = f"{agent.name} needs host-path access: {path}."
+    if reason:
+        content = f"{content} {reason}"
+    return ChatNotification(
+        kind="host_path_consent",
+        content=content,
+        source_channel=_notification_source_channel(trigger),
+        policy="all",
+        prompt_visibility=False,
+        consent_id=consent_id,
+    )
 
 
 def _build_receipt_notification(

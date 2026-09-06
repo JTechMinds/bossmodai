@@ -57,6 +57,19 @@ from db.cli_policy_rules import (
     seed_default_rules as seed_default_cli_policy_rules,
     update_rule as update_cli_policy_rule,
 )
+from db.host_path_consent import (
+    clear_once_grants_for_task,
+    consume_turn_once_grants,
+    create_consent_request,
+    create_once_grant,
+    delete_agent_consent,
+    find_denied_for_scope,
+    find_pending_for_path,
+    get_consent_request,
+    list_consent_requests,
+    list_once_grant_roots,
+    resolve_consent_request,
+)
 from db.cli_approval_requests import (
     approve_request as approve_cli_approval_request,
     count_pending_requests as count_pending_cli_approval_requests,
@@ -67,7 +80,11 @@ from db.cli_approval_requests import (
     reject_request as reject_cli_approval_request,
 )
 from db.notifications import create_notification, delete_agent_notifications, list_notifications
-from db.notification_links import create_notification_link, list_notification_links
+from db.notification_links import (
+    create_notification_link,
+    has_consent_notification,
+    list_notification_links,
+)
 from db.channels import (
     add_channel_members,
     create_channel,
@@ -299,6 +316,7 @@ __all__ = [
     "list_bm_cli_events",
     "create_notification",
     "create_notification_link",
+    "has_consent_notification",
     "delete_agent_notifications",
     "create_channel",
     "create_channel_message",
@@ -458,6 +476,18 @@ __all__ = [
     "reconcile_hardened_cli_policy_rules",
     "seed_default_cli_policy_rules",
     "update_cli_policy_rule",
+    # Host-path consent
+    "clear_once_grants_for_task",
+    "consume_turn_once_grants",
+    "create_consent_request",
+    "create_once_grant",
+    "delete_agent_consent",
+    "find_denied_for_scope",
+    "find_pending_for_path",
+    "get_consent_request",
+    "list_consent_requests",
+    "list_once_grant_roots",
+    "resolve_consent_request",
     # CLI Approval Requests
     "approve_cli_approval_request",
     "count_pending_cli_approval_requests",

@@ -149,3 +149,9 @@ Assign / peer-assign / work-plan routing (`POST /api/tasks`, `delegateTask`, acc
 Complete / deliver on the existing `done` path requires a checkable claim. A satisfied work-contract file deliverable counts. Otherwise the action must attach `data.claim` `{type: artifact|tests|proof, path?, ev?}`. Empty done is rejected. The task-detail panel surfaces the assignee specialty, what done looks like, and what claim is missing (or the attached claim when complete). Auditor-style specialties (review/audit/qa) CLEAR only through this same complete path; v1 does not add a separate CLEAR protocol.
 
 Every turn injects a Role contract system message (specialty + what done looks like + assign/complete hard rules) so live databases pick up the behavior without reseeding prompts. Refused empty-done and mismatch `world_feedback` is visible in the activity feed.
+
+## Runtime core and host-path consent
+
+A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, ask-before out-of-root host access, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
+
+When a virtual CLI named path is outside `/me`, `/projects`, and `workspace_host_roots`, the agent stops and asks in chat. The consent card offers Allow once (this turn or task), Always allow (writes the same host-roots allowlist Settings uses), or Deny (fail-closed). Denied system trees such as `/etc` stay hard-denied with no card. Allow-once grants do not apply to operator Company Files.

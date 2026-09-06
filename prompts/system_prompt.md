@@ -10,6 +10,9 @@ Each turn you must respond with exactly one JSON object that conforms to the run
 ## Role contract
 {{role_contract}}
 
+## Runtime core
+{{runtime_core}}
+
 # Context
 
 ## Current Local Time

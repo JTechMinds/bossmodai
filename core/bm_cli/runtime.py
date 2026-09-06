@@ -35,6 +35,9 @@ from core.bm_cli.help_commands import (
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
+from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
+from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
+from core.bm_cli.host_path_consent import handle_named_path_consent
 from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
@@ -193,7 +196,35 @@ def execute_bm_cli(
     trigger_type: str | None = None,
 ) -> BossModCliResult:
     """Execute a bounded shell-like BossMod CLI command for the given agent."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+
     cwd_before = get_cli_cwd(agent.id)
+    token = host_path_consent_scope.set(
+        ConsentScope(agent_id=agent.id, task_id=get_active_task_id(agent.id))
+    )
+    try:
+        return _execute_bm_cli_inner(
+            agent,
+            state,
+            command,
+            content,
+            trigger_type=trigger_type,
+            cwd_before=cwd_before,
+        )
+    finally:
+        host_path_consent_scope.reset(token)
+
+
+def _execute_bm_cli_inner(
+    agent: Agent,
+    state: AgentState,
+    command: str,
+    content: str | None = None,
+    *,
+    trigger_type: str | None = None,
+    cwd_before: str,
+) -> BossModCliResult:
+    """Parse, authorize, and execute one CLI command inside the consent scope."""
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
@@ -471,8 +502,38 @@ def _execute_virtual(
 
     try:
         result = handler(CliExecutionContext(agent=agent, state=state, cwd=cwd_before), parsed, content)
+    except PathOutsideRootsError as exc:
+        raw_path = exc.raw_path or _named_path_from_command(parsed)
+        if raw_path:
+            from core.agent_loop.activity_runtime import get_active_task_id
+
+            result = handle_named_path_consent(
+                agent=agent,
+                raw_path=raw_path,
+                command=parsed.raw,
+                content=content,
+                cwd=cwd_before,
+                task_id=get_active_task_id(agent.id),
+            )
+        else:
+            result = error_result(parsed.raw, str(exc), cwd=cwd_before, executor=policy.executor)
     except ValueError as exc:
         result = error_result(parsed.raw, str(exc), cwd=cwd_before, executor=policy.executor)
+
+    if result.consent_required:
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor=policy.executor,
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier=policy.tier,
+            decision="approval_required",
+            result=result,
+            trigger_type=trigger_type,
+        )
+        return result
 
     artifact_ids = register_cli_artifacts(agent, result)
     if artifact_ids:
@@ -487,8 +548,10 @@ def _execute_virtual(
             data=data,
             cwd=result.cwd,
             approval_required=result.approval_required,
+            consent_required=result.consent_required,
             executor=result.executor,
             exit_code=result.exit_code,
+            consent_request_id=result.consent_request_id,
         )
 
     record_bm_cli_event(
@@ -504,6 +567,19 @@ def _execute_virtual(
         trigger_type=trigger_type,
     )
     return result
+
+
+def _named_path_from_command(parsed: ParsedCliCommand) -> str | None:
+    """Return the first user-named absolute path in a parsed CLI command."""
+    for arg in parsed.args:
+        token = str(arg).strip()
+        if looks_like_named_absolute_path(token) or (
+            token.startswith("/")
+            and not token.startswith("/me")
+            and not token.startswith("/projects")
+        ):
+            return token
+    return None
 
 
 def _prepare_native_shell(

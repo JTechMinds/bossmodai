@@ -34,6 +34,10 @@ _DENIED_SYSTEM_ROOTS = frozenset({
 class PathOutsideRootsError(ValueError):
     """Raised when a user-named path is outside the allowlisted roots."""
 
+    def __init__(self, message: str, *, raw_path: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_path = raw_path
+
 
 def parse_host_root_setting(raw: str | None) -> list[str]:
     """Split a setting value into candidate root strings.
@@ -119,12 +123,12 @@ def configured_host_roots(raw: str | None = None) -> tuple[Path, ...]:
     """Return validated extra host roots from *raw* or the live setting.
 
     Invalid stored tokens are skipped (fail-closed per entry) so a bad
-    line cannot widen the jail.
+    line cannot widen the jail. When *raw* is omitted the setting is
+    read from the database so a worker process sees Always-allow writes
+    without sharing the API process config cache.
     """
     if raw is None:
-        from core import config
-
-        raw = config.get(SETTING_KEY)
+        raw = _live_host_root_setting()
     roots: list[Path] = []
     seen: set[Path] = set()
     for token in parse_host_root_setting(raw):
@@ -139,17 +143,42 @@ def configured_host_roots(raw: str | None = None) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def extra_host_roots() -> tuple[Path, ...]:
+    """Allowlisted host roots plus any in-scope allow-once grants."""
+    roots: list[Path] = list(configured_host_roots())
+    from core.bm_cli.consent_scope import current_consent_scope
+
+    scope = current_consent_scope()
+    if scope is not None:
+        import db
+
+        for raw_root in db.list_once_grant_roots(scope.agent_id, scope.task_id):
+            try:
+                path = validate_host_root(raw_root)
+            except ValueError:
+                continue
+            roots.append(path)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        unique.append(root)
+    return tuple(unique)
+
+
 def named_path_roots(agent_storage_key: str | None = None) -> tuple[Path, ...]:
     """Return the real directories a named absolute path may resolve into.
 
     Always includes the shared projects mount. Includes the agent's
     personal workspace when *agent_storage_key* is provided. Extra host
-    roots come from settings.
+    roots come from settings plus any in-scope allow-once grants.
     """
     roots: list[Path] = [projects_artifact_root().resolve()]
     if agent_storage_key:
         roots.append(agent_artifact_dir(agent_storage_key).resolve())
-    roots.extend(configured_host_roots())
+    roots.extend(extra_host_roots())
     # Preserve order, drop duplicates.
     seen: set[Path] = set()
     unique: list[Path] = []
@@ -210,16 +239,16 @@ def resolve_absolute_under_roots(
     """
     token = (raw_path or "").strip()
     if not token:
-        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots))
+        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots), raw_path=raw_path)
     path = Path(token).expanduser()
     if not path.is_absolute():
-        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots))
+        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots), raw_path=raw_path)
     try:
         resolved = path.resolve()
     except OSError as exc:
         raise ValueError(f"Cannot resolve path {raw_path!r}: {exc}") from exc
     if not is_within_roots(resolved, roots):
-        raise PathOutsideRootsError(denial_message(raw_path))
+        raise PathOutsideRootsError(denial_message(raw_path), raw_path=raw_path)
     if deny_company_backup_suffix and is_denied_company_file(resolved):
         raise ValueError("File type is not allowed in the company workspace")
     return resolved
@@ -239,3 +268,54 @@ def looks_like_named_absolute_path(raw_path: str) -> bool:
     if cleaned.startswith("/me/") or cleaned.startswith("/projects/"):
         return False
     return Path(cleaned).is_absolute()
+
+
+def grantable_host_root(raw_path: str) -> Path | None:
+    """Return the most specific existing directory that can be allowlisted.
+
+    Returns ``None`` for denied system trees, the filesystem root, or a
+    path that cannot walk up to a valid existing directory.
+    """
+    token = (raw_path or "").strip()
+    if not token:
+        return None
+    path = Path(token).expanduser()
+    if not path.is_absolute():
+        return None
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    current = resolved
+    if current.exists() and current.is_file():
+        current = current.parent
+    elif not current.exists():
+        while not current.exists() and current != current.parent:
+            current = current.parent
+    while True:
+        try:
+            return validate_host_root(str(current))
+        except ValueError:
+            for denied in _DENIED_SYSTEM_ROOTS:
+                denied_resolved = denied.resolve()
+                if current == denied_resolved or denied_resolved in current.parents:
+                    return None
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+
+
+def _live_host_root_setting() -> str | None:
+    """Read ``workspace_host_roots`` from the database, then the config cache."""
+    try:
+        from db.crud import query_one
+
+        row = query_one("SELECT value FROM settings WHERE key = $1", [SETTING_KEY])
+    except Exception:
+        row = None
+    if row and row.get("value") not in (None, ""):
+        return str(row["value"])
+    from core import config
+
+    return config.get(SETTING_KEY)

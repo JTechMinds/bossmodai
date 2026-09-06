@@ -160,6 +160,19 @@ async def get_diagnostic_detail(diagnostic_id: str):
     return entry
 
 
+@router.get("/runtime/core")
+async def get_runtime_core(
+    name: str = "",
+    role: str = "",
+    desk_x: int | None = None,
+    desk_y: int | None = None,
+):
+    """Return the shared runtime core preview for hire Advanced."""
+    from core.agent_loop.runtime_core import preview_runtime_core
+
+    return {"runtime_core": preview_runtime_core(name=name, role=role, desk_x=desk_x, desk_y=desk_y)}
+
+
 @router.get("/runtime/contracts")
 async def get_runtime_contracts():
     return _runtime_contracts_payload()

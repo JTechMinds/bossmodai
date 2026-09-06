@@ -198,6 +198,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _create_task_events_table_if_missing(con)
     _ensure_agent_state_status_values(con)
     _ensure_task_status_values(con)
+    _create_host_path_consent_tables_if_missing(con)
+    _ensure_notification_kind_values(con)
+    _ensure_notification_link_target_kinds(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
         "INTEGER NOT NULL DEFAULT 0",
@@ -246,6 +249,142 @@ def _add_column_if_missing(
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         logger.info("Migration: added column %s.%s", table, column)
+
+
+def _create_host_path_consent_tables_if_missing(con: SQLiteCompatConnection) -> None:
+    """Backfill in-chat host-path consent tables for existing databases."""
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS host_path_consent_requests (
+            id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+            agent_id        VARCHAR NOT NULL REFERENCES agents(id),
+            path            VARCHAR NOT NULL,
+            grant_root      VARCHAR NOT NULL,
+            reason          TEXT NOT NULL,
+            command         TEXT,
+            content         TEXT,
+            cwd             VARCHAR,
+            task_id         VARCHAR REFERENCES tasks(id),
+            status          VARCHAR NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
+            decision_by     VARCHAR,
+            decision_note   TEXT,
+            decided_at      TIMESTAMP,
+            expires_at      TIMESTAMP,
+            created_at      TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS host_path_once_grants (
+            id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+            agent_id    VARCHAR NOT NULL REFERENCES agents(id),
+            root        VARCHAR NOT NULL,
+            consent_id  VARCHAR NOT NULL REFERENCES host_path_consent_requests(id),
+            task_id     VARCHAR REFERENCES tasks(id),
+            created_at  TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_host_path_consent_agent_status
+            ON host_path_consent_requests (agent_id, status, created_at)
+        """
+    )
+    con.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_host_path_consent_path
+            ON host_path_consent_requests (agent_id, path, status)
+        """
+    )
+    con.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_host_path_once_grants_agent
+            ON host_path_once_grants (agent_id, task_id)
+        """
+    )
+
+
+def _ensure_notification_kind_values(con: SQLiteCompatConnection) -> None:
+    """Rebuild notifications if it is missing host_path_consent."""
+    sql = _table_sql(con, "notifications")
+    if "'host_path_consent'" in sql:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications__new (
+                id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                agent_id          VARCHAR NOT NULL REFERENCES agents(id),
+                task_id           VARCHAR REFERENCES tasks(id),
+                activity_id       VARCHAR REFERENCES activities(id),
+                kind              VARCHAR NOT NULL
+                                     CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent')),
+                content           TEXT NOT NULL,
+                source_channel    VARCHAR NOT NULL,
+                policy            VARCHAR NOT NULL
+                                     CHECK (policy IN ('none', 'completion_blocked', 'all')),
+                chat_visible      BOOLEAN DEFAULT TRUE,
+                prompt_visibility BOOLEAN DEFAULT FALSE,
+                created_at        TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO notifications__new (
+                id, agent_id, task_id, activity_id, kind, content,
+                source_channel, policy, chat_visible, prompt_visibility, created_at
+            )
+            SELECT
+                id, agent_id, task_id, activity_id, kind, content,
+                source_channel, policy, chat_visible, prompt_visibility, created_at
+            FROM notifications
+            """
+        )
+        con.execute("DROP TABLE notifications")
+        con.execute("ALTER TABLE notifications__new RENAME TO notifications")
+        logger.info("Migration: rebuilt notifications to add host_path_consent")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
+
+
+def _ensure_notification_link_target_kinds(con: SQLiteCompatConnection) -> None:
+    """Rebuild notification_links if it is missing host_path_consent."""
+    sql = _table_sql(con, "notification_links")
+    if "'host_path_consent'" in sql:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_links__new (
+                notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
+                target_kind     VARCHAR NOT NULL
+                                   CHECK (target_kind IN ('desk', 'host_path_consent')),
+                target_path     VARCHAR NOT NULL,
+                label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
+                created_at      TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO notification_links__new (
+                notification_id, target_kind, target_path, label, created_at
+            )
+            SELECT notification_id, target_kind, target_path, label, created_at
+            FROM notification_links
+            """
+        )
+        con.execute("DROP TABLE notification_links")
+        con.execute("ALTER TABLE notification_links__new RENAME TO notification_links")
+        logger.info("Migration: rebuilt notification_links to add host_path_consent")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:

@@ -345,7 +345,7 @@ CLI LOOKUP DETAILS
 {{if workspace.host_roots}}
 - configured host roots for named paths: `{{workspace.host_roots}}`
 {{end}}
-- a user-named absolute path works only when it stays inside those roots; otherwise the command is denied
+- a user-named absolute path works only when it stays inside those roots; otherwise stop and ask in chat
 - current cwd is `{{cli.cwd}}`; relative paths resolve from it
 - default save root for this turn is `{{workspace.default_save_root}}`
 {{if workspace.project_root}}

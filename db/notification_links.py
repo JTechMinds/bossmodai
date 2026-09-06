@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.models import NotificationLink
-from db.crud import execute, fetch_all
+from db.crud import execute, fetch_all, query_one
 
 _NOTIFICATION_LINK_COLUMNS = "notification_id, target_kind, target_path, label, created_at"
 
@@ -44,3 +44,15 @@ def list_notification_links(notification_ids: list[str]) -> dict[str, Notificati
         NotificationLink,
     )
     return {item.notification_id: item for item in rows}
+
+
+def has_consent_notification(consent_id: str) -> bool:
+    """Return True when a chat card already exists for this consent request."""
+    row = query_one(
+        """
+        SELECT notification_id FROM notification_links
+        WHERE target_kind = 'host_path_consent' AND target_path = $1
+        """,
+        [consent_id],
+    )
+    return row is not None

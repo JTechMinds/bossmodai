@@ -76,6 +76,7 @@ def test_trigger_classification_unchanged() -> None:
     assert "task_assigned" not in _COMMUNICATION_TRIGGER_TYPES
     assert _is_decision_turn({"type": "human_chat"}) is True
     assert _is_decision_turn({"type": "cli_approval_resolved"}) is False
+    assert _is_decision_turn({"type": "host_path_consent_resolved"}) is False
     assert _is_decision_turn({"type": "activity_resumed"}) is False
     assert _contract_kind_for_trigger("human_chat") == "decision"
     assert _contract_kind_for_trigger("activity_resumed") == "execution"

@@ -289,7 +289,7 @@ const AgentPanel = (() => {
                     <div>
                         <h3 class="text-sm font-semibold">Advanced</h3>
                         <p class="text-xs text-bm-muted mt-1">
-                            Optional: what done looks like, prompt template, and desk.
+                            Optional: what done looks like, runtime core, prompt template, and desk.
                         </p>
                     </div>
                     <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
@@ -312,6 +312,15 @@ const AgentPanel = (() => {
                                       focus:border-bm-accent">
                         <p class="text-xs text-bm-muted mt-1">
                             Optional. We’ll suggest one from the specialty; edit anytime.
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Runtime core</label>
+                        <pre id="runtime-core-preview"
+                             class="runtime-core-preview text-xs whitespace-pre-wrap font-mono
+                                    px-3 py-2 border border-bm-border rounded-lg bg-bm-bg text-bm-text"></pre>
+                        <p class="text-xs text-bm-muted mt-1">
+                            Shared every turn. Not a hire novel — specialty quality bars stay in Description.
                         </p>
                     </div>
                     <div>
@@ -483,6 +492,43 @@ const AgentPanel = (() => {
         }
 
         bindFinishLineSuggestion(container, agent);
+        bindRuntimeCorePreview(container, agent);
+    }
+
+    function bindRuntimeCorePreview(container, agent) {
+        const preview = container.querySelector('#runtime-core-preview');
+        if (!preview) return;
+        const nameInput = container.querySelector('input[name="name"]');
+        const roleInput = container.querySelector('input[name="role"]');
+        const deskSelect = container.querySelector('select[name="desk"]');
+
+        async function refresh() {
+            const params = new URLSearchParams();
+            if (nameInput?.value) params.set('name', nameInput.value);
+            if (roleInput?.value) params.set('role', roleInput.value);
+            const deskValue = deskSelect?.value || '';
+            if (deskValue) {
+                const [x, y] = deskValue.split(',');
+                if (x) params.set('desk_x', x);
+                if (y) params.set('desk_y', y);
+            } else if (agent?.desk_x != null && agent?.desk_y != null && !deskSelect) {
+                params.set('desk_x', String(agent.desk_x));
+                params.set('desk_y', String(agent.desk_y));
+            }
+            try {
+                const res = await apiFetch(`/api/runtime/core?${params.toString()}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data?.runtime_core) preview.textContent = data.runtime_core;
+            } catch {
+                // Keep the last preview if the request fails.
+            }
+        }
+
+        nameInput?.addEventListener('input', refresh);
+        roleInput?.addEventListener('input', refresh);
+        deskSelect?.addEventListener('change', refresh);
+        void refresh();
     }
 
     function bindFinishLineSuggestion(container, agent) {
