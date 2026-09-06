@@ -132,6 +132,35 @@ def test_hire_roster_harness_color_and_upsert() -> None:
     }
 
 
+def test_late_desk_assign_seats_agent_at_chair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    spawn_x = config.get_int("default_spawn_x")
+    spawn_y = config.get_int("default_spawn_y")
+    wanderer = db.create_agent("Hall Wanderer")
+    state = db.get_agent_state(wanderer.id)
+    assert wanderer.desk_x is None
+    assert state is not None
+    assert (state.x, state.y) == (spawn_x, spawn_y)
+
+    patched = client.patch(
+        f"/api/agents/{wanderer.id}",
+        headers=_headers(),
+        json={"desk_x": 11, "desk_y": 4},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["desk_x"] == 11
+    assert patched.json()["desk_y"] == 4
+    seated = db.get_agent_state(wanderer.id)
+    assert seated is not None
+    assert (seated.x, seated.y) == (11, 4)
+    world = db.get_world_state()
+    row = next(item for item in world if item["id"] == wanderer.id)
+    assert (row["x"], row["y"]) == (11, 4)
+    assert row["location"] == "Main Workspace"
+
+
 def test_world_state_includes_created_agent_and_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

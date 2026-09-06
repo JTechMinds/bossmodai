@@ -265,6 +265,9 @@ def test_create_agent_api_auto_assigns_an_unoccupied_desk(
     assert second.status_code == 201
     assert first.json()["desk_x"] is not None
     assert first.json()["desk_y"] is not None
+    first_state = db.get_agent_state(first.json()["id"])
+    assert first_state is not None
+    assert (first_state.x, first_state.y) == (first.json()["desk_x"], first.json()["desk_y"])
     assert (second.json()["desk_x"], second.json()["desk_y"]) != (
         first.json()["desk_x"],
         first.json()["desk_y"],
@@ -301,6 +304,12 @@ def test_update_agent_api_auto_assigns_desk_when_unassigned(
     assert patched.status_code == 200
     assert patched.json()["desk_x"] is not None
     assert patched.json()["desk_y"] is not None
+    seated_state = db.get_agent_state(wanderer.id)
+    assert seated_state is not None
+    assert (seated_state.x, seated_state.y) == (
+        patched.json()["desk_x"],
+        patched.json()["desk_y"],
+    )
     assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (seated.desk_x, seated.desk_y)
     assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (
         open_seat.json()["desk_x"],
