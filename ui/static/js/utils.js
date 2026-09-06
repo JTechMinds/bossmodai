@@ -587,7 +587,7 @@ const BossModUtils = (() => {
             resolved.className = 'hpc-status';
             resolved.textContent = status === 'denied'
                 ? 'Denied'
-                : (status === 'always_allowed' ? 'Always allowed' : 'Allowed once');
+                : (status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
             container.appendChild(resolved);
             return;
         }
@@ -596,7 +596,7 @@ const BossModUtils = (() => {
         actions.className = 'host-path-consent-actions';
         [
             { label: 'Allow once', path: 'allow-once' },
-            { label: 'Always allow', path: 'always-allow' },
+            { label: 'Always allow (for all agents)', path: 'always-allow' },
             { label: 'Deny', path: 'deny' },
         ].forEach((item) => {
             const btn = document.createElement('button');

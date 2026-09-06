@@ -25,8 +25,21 @@ def test_utils_exports_channel_presence_and_consent_card() -> None:
     assert "function createInFlightGate(" in source
     assert "function renderHostPathConsentCard(" in source
     assert "Allow once" in source
-    assert "Always allow" in source
+    assert "Always allow (for all agents)" in source
+    assert "Always allowed (for all agents)" in source
     assert "Deny" in source
+    assert "{ label: 'Always allow'," not in source
+
+
+def test_no_notifications_tab_and_consent_stays_in_thread() -> None:
+    dock = _read("dock-manager.js")
+    channels = _read("channels-view.js")
+    app = _read("app.js")
+    assert "CORE_PANE_IDS = ['focus', 'map', 'activity']" in dock
+    assert "notifications" not in dock.lower()
+    assert "Notifications" not in app
+    assert "BossModUtils.renderHostPathConsentCard(" in channels
+    assert "host-path-consent-card" in channels
 
 
 def test_channels_view_renders_consent_card_and_member_thinking() -> None:

@@ -49,7 +49,8 @@ def test_walk_receipts_stay_visible_when_system_toggle_off() -> None:
     assert "host-path-consent-card" in chat
     assert "function renderHostPathConsentCard(" in utils
     assert "Allow once" in utils
-    assert "Always allow" in utils
+    assert "Always allow (for all agents)" in utils
+    assert "Always allowed (for all agents)" in utils
     assert "Deny" in utils
 
 
