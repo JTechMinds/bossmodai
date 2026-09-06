@@ -850,12 +850,13 @@ def test_consent_resolved_prefers_bound_task_thread(tmp_path: Path) -> None:
         content="Channel-only ask should lose to the task thread.",
         source_channel="channel",
     )
-    task = _bind_task(agent.id)
+    task = _bind_task(agent.id).task
+    assert task is not None
     db.create_task_event(
         task_id=task.id,
         author_type="human",
         author_name="Human Operator",
-        event_type="human_message",
+        event_type="comment",
         content=f"Task ask: read {fixture}",
     )
     history = build_prompt_history_view(

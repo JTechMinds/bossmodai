@@ -292,6 +292,7 @@ def _execute_bm_cli_inner(
             cwd_before=cwd_before,
             policy=policy,
             trigger_type=trigger_type,
+            channel_id=channel_id,
         )
         # If virtual handler returned an "unsupported" error and shell is enabled,
         # fall through to the policy engine for shell execution.
@@ -479,6 +480,7 @@ def _execute_virtual(
     cwd_before: str,
     policy: object,
     trigger_type: str | None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Route to the virtual handler and record the audit event."""
     handler = _HANDLERS.get(parsed.name)
