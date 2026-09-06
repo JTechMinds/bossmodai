@@ -12,6 +12,7 @@ from core.agent_loop.decision_contract import (
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
+from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.notifications import emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
@@ -71,7 +72,7 @@ async def _run_decision_turn(
     total_tokens = 0
     current_context = list(context)
     next_context_snapshot: str | None = None
-    tool_steps = 0
+    peek_budget = DecisionPeekBudget()
     last_response_content = ""
     decision_repair_attempts = 0
 
@@ -209,13 +210,14 @@ async def _run_decision_turn(
 
         cli_call = BossModCliCall.model_validate(parsed) if parsed.get("action") == "bm_cli" else None
         if cli_call is not None:
-            tool_steps += 1
             executed_actions.append("bm_cli")
-            if tool_steps > 3:
+            peek_verdict = peek_budget.consider(cli_call.command, cli_call.content)
+            if not peek_verdict.allowed:
                 result = {
                     "event": "agent_error",
-                    "detail": f"{agent.name} exceeded BossMod CLI lookup limit for one direct request",
+                    "detail": f"{agent.name} {peek_verdict.steer}",
                     "agent_name": agent.name,
+                    "peek_budget": peek_verdict.reason,
                 }
                 await manager.broadcast_activity(**result)
                 return await _finalize_turn(
@@ -228,7 +230,7 @@ async def _run_decision_turn(
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
                         result=result,
-                        error="Too many BossMod CLI calls in one direct request turn",
+                        error=peek_verdict.steer,
                         action=cli_call.model_dump(),
                         action_summary=_summarize_action_chain(executed_actions, ""),
                         raw_response=response.content,
@@ -357,7 +359,6 @@ async def _run_decision_turn(
 
         if parsed.get("action") == "request_host_access":
             host_call = HostAccessCall.model_validate(parsed)
-            tool_steps += 1
             executed_actions.append("request_host_access")
             if host_call.thought:
                 await manager.broadcast_thought(
