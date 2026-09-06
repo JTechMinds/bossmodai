@@ -2,8 +2,10 @@
  * BossMod AI — Modular slot shell (v1).
  *
  * Three named slots (left / center / right). Any pane can be assigned to
- * any slot. Multiple panes in a slot become tabs. Maximize activates a
- * pane as a tab that fills its slot — never a floating window over the map.
+ * any slot. Multiple panes in a slot become tabs. Maximize solos a pane in
+ * its slot (sibling tabs collapse; click again restores). A single-pane
+ * slot already fills, so the control is omitted. Tab drag inserts at an
+ * index in the target tab bar — never a floating window over the map.
  */
 
 const DockManager = (() => {
@@ -46,12 +48,38 @@ const DockManager = (() => {
         const out = { version: 2, slots: {} };
         SLOT_IDS.forEach((slotId) => {
             const slot = layout.slots[slotId] || { panes: [], active: null };
+            const panes = slot.panes.slice();
             out.slots[slotId] = {
-                panes: slot.panes.slice(),
+                panes,
                 active: slot.active || null,
             };
+            const solo = soloId(slot);
+            if (solo) out.slots[slotId].solo = solo;
         });
         return out;
+    }
+
+    function soloId(slot) {
+        if (!slot || typeof slot.solo !== 'string') return null;
+        if (slot.panes.indexOf(slot.solo) === -1 || slot.panes.length < 2) return null;
+        return slot.solo;
+    }
+
+    function scrubSolo(slot) {
+        if (!slot) return slot;
+        const solo = soloId(slot);
+        if (solo) slot.solo = solo;
+        else delete slot.solo;
+        return slot;
+    }
+
+    function dropIndexFromRects(rects, clientX) {
+        if (!rects || !rects.length) return 0;
+        for (let i = 0; i < rects.length; i += 1) {
+            const rect = rects[i];
+            if (clientX < rect.left + (rect.width / 2)) return i;
+        }
+        return rects.length;
     }
 
     function defaultLayout() {
@@ -91,20 +119,34 @@ const DockManager = (() => {
             if (idx === -1) return;
             slot.panes.splice(idx, 1);
             ensureActive(slot);
+            scrubSolo(slot);
         });
         return layout;
     }
 
-    function assignPane(layout, paneId, slotId) {
+    function placePane(layout, paneId, slotId, index) {
         if (PANE_IDS.indexOf(paneId) === -1 || SLOT_IDS.indexOf(slotId) === -1) {
             return cloneLayout(layout);
         }
         const next = cloneLayout(layout);
+        const fromSlotId = slotOf(next, paneId);
+        const fromIdx = fromSlotId ? next.slots[fromSlotId].panes.indexOf(paneId) : -1;
+        const target = next.slots[slotId];
+        let dest = (typeof index === 'number' && index === index)
+            ? Math.max(0, Math.min(Math.floor(index), target.panes.length))
+            : target.panes.length;
+        if (fromSlotId === slotId && fromIdx !== -1 && fromIdx < dest) dest -= 1;
         removePane(next, paneId);
-        const slot = next.slots[slotId];
-        if (slot.panes.indexOf(paneId) === -1) slot.panes.push(paneId);
-        slot.active = paneId;
+        SLOT_IDS.forEach((id) => { scrubSolo(next.slots[id]); });
+        delete target.solo;
+        dest = Math.max(0, Math.min(dest, target.panes.length));
+        if (target.panes.indexOf(paneId) === -1) target.panes.splice(dest, 0, paneId);
+        target.active = paneId;
         return next;
+    }
+
+    function assignPane(layout, paneId, slotId) {
+        return placePane(layout, paneId, slotId, null);
     }
 
     function openPane(layout, paneId, slotId) {
@@ -138,12 +180,25 @@ const DockManager = (() => {
         return next;
     }
 
+    function canMaximizePane(layout, paneId) {
+        const current = slotOf(layout, paneId);
+        if (!current) return false;
+        return layout.slots[current].panes.length > 1;
+    }
+
     function maximizePane(layout, paneId) {
         if (PANE_IDS.indexOf(paneId) === -1) return cloneLayout(layout);
         const current = slotOf(layout, paneId);
         const target = current || HOME_SLOT[paneId] || 'center';
         const next = current ? cloneLayout(layout) : openPane(layout, paneId, target);
-        next.slots[target].active = paneId;
+        const slot = next.slots[target];
+        slot.active = paneId;
+        if (slot.panes.length < 2) {
+            delete slot.solo;
+            return next;
+        }
+        if (soloId(slot) === paneId) delete slot.solo;
+        else slot.solo = paneId;
         return next;
     }
 
@@ -152,6 +207,9 @@ const DockManager = (() => {
         if (!current) return cloneLayout(layout);
         const next = cloneLayout(layout);
         next.slots[current].active = paneId;
+        if (next.slots[current].solo && next.slots[current].solo !== paneId) {
+            delete next.slots[current].solo;
+        }
         return next;
     }
 
@@ -199,6 +257,11 @@ const DockManager = (() => {
                 next.slots[slotId].active = src.active;
             }
             ensureActive(next.slots[slotId]);
+            if (typeof src.solo === 'string') {
+                next.slots[slotId].solo = src.solo;
+                scrubSolo(next.slots[slotId]);
+                if (next.slots[slotId].solo) next.slots[slotId].active = next.slots[slotId].solo;
+            }
         });
 
         const hasAny = SLOT_IDS.some((slotId) => next.slots[slotId].panes.length > 0);
@@ -297,11 +360,15 @@ const DockManager = (() => {
         scheduleShownResize();
     }
 
-    function renderTab(paneId, active) {
+    function renderTab(paneId, slot) {
         const meta = PANE_META[paneId] || { label: paneId, icon: 'square' };
-        const closable = true;
+        const active = slot.active === paneId;
+        const soloed = soloId(slot) === paneId;
+        const canMax = slot.panes.length > 1;
+        const maxTitle = soloed ? 'Restore sibling tabs' : 'Maximize in slot';
+        const maxIcon = soloed ? 'minimize-2' : 'maximize-2';
         const tab = document.createElement('div');
-        tab.className = `dock-tab${active ? ' is-active' : ''}`;
+        tab.className = `dock-tab${active ? ' is-active' : ''}${soloed ? ' is-solo' : ''}`;
         tab.setAttribute('role', 'tab');
         tab.setAttribute('tabindex', '0');
         tab.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -313,12 +380,12 @@ const DockManager = (() => {
                 <span>${meta.label}</span>
             </span>
             <span class="dock-tab-actions">
-                <button type="button" class="dock-tab-btn" data-dock-action="maximize" title="Maximize in slot" aria-label="Maximize ${meta.label} in slot">
-                    <i data-lucide="maximize-2" class="w-3 h-3"></i>
-                </button>
-                ${closable ? `<button type="button" class="dock-tab-btn" data-dock-action="close" title="Close" aria-label="Close ${meta.label}">
-                    <i data-lucide="x" class="w-3 h-3"></i>
+                ${canMax ? `<button type="button" class="dock-tab-btn" data-dock-action="maximize" title="${maxTitle}" aria-label="${maxTitle}" aria-pressed="${soloed ? 'true' : 'false'}">
+                    <i data-lucide="${maxIcon}" class="w-3 h-3"></i>
                 </button>` : ''}
+                <button type="button" class="dock-tab-btn" data-dock-action="close" title="Close" aria-label="Close ${meta.label}">
+                    <i data-lucide="x" class="w-3 h-3"></i>
+                </button>
             </span>
         `;
         return tab;
@@ -336,7 +403,12 @@ const DockManager = (() => {
             }
         });
         tab.addEventListener('dragstart', (event) => {
+            if (event.target.closest('[data-dock-action]')) {
+                event.preventDefault();
+                return;
+            }
             event.dataTransfer.setData('text/plain', paneId);
+            event.dataTransfer.setData('application/x-bossmod-pane', paneId);
             event.dataTransfer.effectAllowed = 'move';
             tab.classList.add('is-dragging');
         });
@@ -345,6 +417,7 @@ const DockManager = (() => {
             clearDropTargets();
         });
         tab.querySelectorAll('[data-dock-action]').forEach((btn) => {
+            btn.setAttribute('draggable', 'false');
             btn.addEventListener('click', (event) => {
                 event.stopPropagation();
                 const action = btn.getAttribute('data-dock-action');
@@ -370,10 +443,13 @@ const DockManager = (() => {
         const body = bodyEl(slotId);
         if (!host || !tabbar || !body) return;
 
+        const solo = soloId(slot);
         host.classList.toggle('is-empty', slot.panes.length === 0);
+        host.classList.toggle('is-solo', Boolean(solo));
         tabbar.innerHTML = '';
-        slot.panes.forEach((paneId) => {
-            const tab = renderTab(paneId, slot.active === paneId);
+        const visibleTabs = solo ? [solo] : slot.panes;
+        visibleTabs.forEach((paneId) => {
+            const tab = renderTab(paneId, slot);
             bindTab(tab, paneId);
             tabbar.appendChild(tab);
         });
@@ -382,11 +458,12 @@ const DockManager = (() => {
         const emptyHint = body.querySelector('[data-slot-empty]');
         if (emptyHint) emptyHint.remove();
 
+        const shown = solo || slot.active;
         slot.panes.forEach((paneId) => {
             const el = paneEl(paneId);
             if (!el) return;
             if (el.parentElement !== body) body.appendChild(el);
-            const active = slot.active === paneId;
+            const active = shown === paneId;
             el.classList.toggle('hidden', !active);
             el.classList.toggle('is-active', active);
             el.setAttribute('aria-hidden', active ? 'false' : 'true');
@@ -416,8 +493,55 @@ const DockManager = (() => {
     function clearDropTargets() {
         SLOT_IDS.forEach((slotId) => {
             const el = slotEl(slotId);
-            if (el) el.classList.remove('is-drop-target');
+            if (el) {
+                el.classList.remove('is-drop-target');
+                el.removeAttribute('data-drop-index');
+            }
+            const tabbar = tabbarEl(slotId);
+            if (!tabbar) return;
+            const caret = tabbar.querySelector('[data-insert-caret]');
+            if (caret) caret.remove();
         });
+    }
+
+    function tabRects(tabbar) {
+        return Array.prototype.map.call(
+            tabbar.querySelectorAll('[data-pane-tab]'),
+            (node) => node.getBoundingClientRect()
+        );
+    }
+
+    function isOverTabbar(event, tabbar) {
+        if (!tabbar) return false;
+        const rect = tabbar.getBoundingClientRect();
+        return event.clientY >= rect.top && event.clientY <= rect.bottom
+            && event.clientX >= rect.left && event.clientX <= rect.right;
+    }
+
+    function showInsertCaret(tabbar, index) {
+        let caret = tabbar.querySelector('[data-insert-caret]');
+        if (!caret) {
+            caret = document.createElement('div');
+            caret.className = 'dock-insert-caret';
+            caret.setAttribute('data-insert-caret', 'true');
+            tabbar.appendChild(caret);
+        }
+        const tabs = tabbar.querySelectorAll('[data-pane-tab]');
+        const barRect = tabbar.getBoundingClientRect();
+        let x = 4;
+        if (tabs.length) {
+            if (index >= tabs.length) {
+                x = tabs[tabs.length - 1].getBoundingClientRect().right - barRect.left;
+            } else {
+                x = tabs[index].getBoundingClientRect().left - barRect.left;
+            }
+        }
+        caret.style.left = `${Math.max(0, x + tabbar.scrollLeft)}px`;
+    }
+
+    function paneIdFromTransfer(event) {
+        const typed = event.dataTransfer.getData('application/x-bossmod-pane');
+        return typed || event.dataTransfer.getData('text/plain');
     }
 
     function bindSlots() {
@@ -429,18 +553,30 @@ const DockManager = (() => {
             el.addEventListener('dragover', (event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
+                const tabbar = tabbarEl(slotId);
+                const overBar = isOverTabbar(event, tabbar);
+                const index = overBar ? dropIndexFromRects(tabRects(tabbar), event.clientX) : null;
                 clearDropTargets();
                 el.classList.add('is-drop-target');
+                if (overBar && tabbar) {
+                    el.setAttribute('data-drop-index', String(index));
+                    showInsertCaret(tabbar, index);
+                }
             });
             el.addEventListener('dragleave', (event) => {
                 if (el.contains(event.relatedTarget)) return;
                 el.classList.remove('is-drop-target');
+                clearDropTargets();
             });
             el.addEventListener('drop', (event) => {
                 event.preventDefault();
+                const paneId = paneIdFromTransfer(event);
+                const tabbar = tabbarEl(slotId);
+                const index = isOverTabbar(event, tabbar)
+                    ? dropIndexFromRects(tabRects(tabbar), event.clientX)
+                    : null;
                 clearDropTargets();
-                const paneId = event.dataTransfer.getData('text/plain');
-                if (paneId) assign(paneId, slotId);
+                if (paneId) place(paneId, slotId, index);
             });
         });
     }
@@ -472,8 +608,12 @@ const DockManager = (() => {
     }
 
     function assign(id, slotId) {
+        place(id, slotId, null);
+    }
+
+    function place(id, slotId, index) {
         if (COMPANY_PANE_IDS.indexOf(id) !== -1) lastCompany = id;
-        commit(assignPane(state, id, slotId));
+        commit(placePane(state, id, slotId, index));
     }
 
     function activate(id) {
@@ -519,6 +659,7 @@ const DockManager = (() => {
         toggle,
         closeAll,
         assign,
+        place,
         activate,
         focus: activate,
         maximize,
@@ -530,11 +671,14 @@ const DockManager = (() => {
         defaultLayout,
         normalizeLayout,
         assignPane,
+        placePane,
         openPane,
         closePane,
         togglePane,
         closeAllPanes,
         maximizePane,
+        canMaximizePane,
+        dropIndexFromRects,
         activatePane,
         slotOf,
         companyOpenIds,

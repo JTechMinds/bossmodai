@@ -83,6 +83,23 @@ const restoredTabs = DockManager.normalizeLayout({
 const toggledClosed = DockManager.togglePane(defaults, "activity");
 const toggledOpen = DockManager.togglePane(toggledClosed, "activity");
 
+const leftThree = DockManager.openPane(DockManager.openPane(defaults, "directory"), "channels");
+const soloed = DockManager.maximizePane(leftThree, "directory");
+const restored = DockManager.maximizePane(soloed, "directory");
+const singleMax = DockManager.maximizePane(defaults, "focus");
+const soloedPersist = DockManager.normalizeLayout(soloed);
+const reordered = DockManager.placePane(leftThree, "channels", "left", 0);
+const inserted = DockManager.placePane(defaults, "activity", "left", 0);
+const sameSlotAppend = DockManager.assignPane(leftThree, "focus", "left");
+const dropRects = [{ left: 0, width: 40 }, { left: 40, width: 40 }, { left: 80, width: 40 }];
+const dropIndexes = [
+    DockManager.dropIndexFromRects(dropRects, 10),
+    DockManager.dropIndexFromRects(dropRects, 50),
+    DockManager.dropIndexFromRects(dropRects, 90),
+    DockManager.dropIndexFromRects(dropRects, 120),
+    DockManager.dropIndexFromRects([], 0),
+];
+
 dispatched.length = 0;
 DockManager.scheduleShownResize();
 const resizeEvents = dispatched.filter((type) => type === "panel-resize");
@@ -164,6 +181,29 @@ const payload = {
         && empty.slots.center.active === "map"
         && empty.slots.right.active === "activity",
     mapResizeTrigger: resizeEvents.length >= 2,
+    maximizeSolos: soloed.slots.left.solo === "directory"
+        && soloed.slots.left.active === "directory"
+        && soloed.slots.left.panes.join(",") === "focus,directory,channels"
+        && DockManager.canMaximizePane(leftThree, "directory") === true
+        && DockManager.canMaximizePane(defaults, "focus") === false,
+    maximizeRestores: restored.slots.left.solo === undefined
+        && restored.slots.left.active === "directory"
+        && restored.slots.left.panes.join(",") === "focus,directory,channels",
+    maximizeSingleNoSolo: singleMax.slots.left.solo === undefined
+        && singleMax.slots.left.panes.join(",") === "focus"
+        && singleMax.slots.left.active === "focus",
+    soloPersists: soloedPersist.slots.left.solo === "directory"
+        && soloedPersist.slots.left.active === "directory",
+    reorderWithinSlot: reordered.slots.left.panes.join(",") === "channels,focus,directory"
+        && reordered.slots.left.active === "channels"
+        && reordered.slots.left.solo === undefined,
+    insertAtIndex: inserted.slots.left.panes.join(",") === "activity,focus"
+        && inserted.slots.left.active === "activity"
+        && DockManager.slotOf(inserted, "activity") === "left"
+        && inserted.slots.right.panes.length === 0,
+    assignStillAppends: sameSlotAppend.slots.left.panes.join(",") === "directory,channels,focus"
+        && sameSlotAppend.slots.left.active === "focus",
+    dropIndexFromRects: dropIndexes.join(",") === "0,1,2,3,0",
 };
 
 process.stdout.write(`${JSON.stringify(payload)}\n`);
