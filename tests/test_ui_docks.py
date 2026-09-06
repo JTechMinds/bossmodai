@@ -149,6 +149,13 @@ def test_dock_css_is_slot_shell_not_absolute_windows() -> None:
     assert ".dock-window" not in css
     hidden = css.split(".dock-pane.hidden", 1)[1].split("}", 1)[0]
     assert "display: none !important" in hidden
+    assert ".dock-insert-caret" in css
+    assert ".dock-slot.is-solo" in css
+    dock = _dock_js()
+    assert "placePane" in dock
+    assert "dropIndexFromRects" in dock
+    assert "canMaximizePane" in dock
+    assert "Restore sibling tabs" in dock
 
 
 def test_app_uses_slot_shell_and_keeps_map_mounted() -> None:
@@ -209,5 +216,13 @@ def test_dock_manager_harness_assigns_and_maximizes_to_tabs() -> None:
     assert payload["migratedToCenterTabs"] is True
     assert payload["emptyDefaults"] is True
     assert payload["mapResizeTrigger"] is True
+    assert payload["maximizeSolos"] is True
+    assert payload["maximizeRestores"] is True
+    assert payload["maximizeSingleNoSolo"] is True
+    assert payload["soloPersists"] is True
+    assert payload["reorderWithinSlot"] is True
+    assert payload["insertAtIndex"] is True
+    assert payload["assignStillAppends"] is True
+    assert payload["dropIndexFromRects"] is True
     for pane_id in PANE_IDS:
         assert payload["closeReadd"][pane_id] is True, pane_id
