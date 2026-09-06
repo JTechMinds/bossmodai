@@ -27,8 +27,8 @@ extern "C" fn handle_quit_signal(_: libc::c_int) {
 
 fn install_quit_signals() {
     unsafe {
-        libc::signal(libc::SIGINT, handle_quit_signal as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, handle_quit_signal as libc::sighandler_t);
+        libc::signal(libc::SIGINT, handle_quit_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, handle_quit_signal as *const () as libc::sighandler_t);
     }
 }
 
