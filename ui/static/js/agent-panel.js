@@ -202,15 +202,28 @@ const AgentPanel = (() => {
                               focus:border-bm-accent">
             </div>
 
-            <!-- Role -->
+            <!-- Specialty (stored on existing role field) -->
             <div>
-                <label class="block text-sm font-medium mb-1">Role</label>
+                <label class="block text-sm font-medium mb-1">Specialty</label>
+                <p class="text-xs text-bm-muted mb-1.5">One-line hire specialty used for assign routing. Example: Writer, Auditor, Engineer.</p>
                 <input type="text" name="role"
                        value="${BossModUtils.escapeHtml(agent?.role || '')}"
-                       placeholder="e.g. Product Manager"
+                       placeholder="e.g. Writer"
+                       maxlength="120"
                        class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                               bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                               focus:border-bm-accent">
+            </div>
+
+            <!-- Done / fail bar -->
+            <div>
+                <label class="block text-sm font-medium mb-1">Done / fail bar</label>
+                <p class="text-xs text-bm-muted mb-1.5">What good and failure look like for this agent. Complete/deliver must attach a checkable claim against this bar.</p>
+                <textarea name="done_fail_bar" rows="2" maxlength="500"
+                          placeholder="Good: tests pass and the artifact path exists. Fail: complete with no evidence."
+                          class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                 bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                 focus:border-bm-accent resize-y">${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}</textarea>
             </div>
 
             <!-- Personality -->
@@ -441,6 +454,7 @@ const AgentPanel = (() => {
         const agentData = {
             name: formData.get('name'),
             role: formData.get('role') || null,
+            done_fail_bar: formData.get('done_fail_bar') || null,
             color: formData.get('agent-color') || '#3b82f6',
             desk_x,
             desk_y,

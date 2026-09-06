@@ -229,6 +229,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "agent_triggers", "claim_lease", "VARCHAR",
     )
+    _add_column_if_missing(
+        con, "agents", "done_fail_bar", "TEXT",
+    )
 
 
 def _add_column_if_missing(

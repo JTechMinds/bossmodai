@@ -7,9 +7,16 @@ from fastapi import APIRouter, HTTPException, Response
 from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.deliverables import build_work_contract
+from core.agent_loop.role_contracts import (
+    evaluate_specialty_assignment,
+    infer_work_kind,
+    match_specialty,
+    rank_agents_for_work,
+    suggested_assignees,
+)
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
-from core.models import Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
+from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
@@ -125,6 +132,57 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             )
     if body.bind_task_id and not db.get_task(body.bind_task_id):
         raise HTTPException(404, "Task not found")
+
+    specialty_warning = None
+    ranked_suggestions: list[AssigneeSuggestion] = []
+    if body.assigned_to and not body.bind_task_id:
+        assignee = db.get_agent(body.assigned_to)
+        if assignee is None:
+            raise HTTPException(404, "Assigned agent not found")
+        teammates = db.list_agents()
+        evaluation = evaluate_specialty_assignment(
+            assignee=assignee,
+            title=body.title,
+            description=body.description,
+            requested_specialty=body.requested_specialty,
+            teammates=teammates,
+            confirm=body.confirm_specialty_mismatch,
+        )
+        ranked_suggestions = suggested_assignees(evaluation.suggested)
+        if evaluation.deny:
+            response.status_code = 409
+            return TaskCreateResponse(
+                task=None,
+                outcome="specialty_mismatch",
+                reason=evaluation.warning,
+                specialty_warning=evaluation.warning,
+                suggested_assignees=ranked_suggestions,
+            )
+        specialty_warning = evaluation.warning
+    elif not body.assigned_to:
+        work_kind = infer_work_kind(
+            body.title,
+            body.description,
+            requested_specialty=body.requested_specialty,
+        )
+        if work_kind is not None:
+            ranked = rank_agents_for_work(
+                db.list_agents(),
+                title=body.title,
+                description=body.description,
+                requested_specialty=body.requested_specialty,
+            )
+            ranked_suggestions = [
+                AssigneeSuggestion(
+                    id=agent.id,
+                    name=agent.name,
+                    role=agent.role,
+                    match=match_specialty(assignee_role=agent.role, work_kind=work_kind),
+                )
+                for agent in ranked
+                if match_specialty(assignee_role=agent.role, work_kind=work_kind) == "match"
+            ]
+
     owner_id = body.owner_id or default_task_owner_id(
         assignee_id=body.assigned_to,
         requester_id=requester_id,
@@ -182,7 +240,12 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             else f'Existing task "{task.title}" reused for the same workstream'
         ),
     )
-    return TaskCreateResponse(task=task, outcome=creation.outcome)
+    return TaskCreateResponse(
+        task=task,
+        outcome=creation.outcome,
+        specialty_warning=specialty_warning,
+        suggested_assignees=ranked_suggestions,
+    )
 
 
 @router.get("/tasks/board")

@@ -543,11 +543,36 @@ const CompanyTasks = (() => {
         }
     }
 
+    function specialtyRank(agent, title) {
+        const work = (title || '').toLowerCase();
+        const role = (agent.role || '').toLowerCase();
+        if (!work || !role) return 1;
+        const pairs = [
+            [['write', 'draft', 'document', 'docs', 'copy'], ['writer', 'writing', 'editor', 'docs', 'author']],
+            [['review', 'audit', 'test', 'qa', 'inspect'], ['reviewer', 'auditor', 'qa', 'tester', 'review']],
+            [['implement', 'code', 'build', 'fix', 'debug'], ['engineer', 'developer', 'coder', 'eng']],
+            [['research', 'analyze', 'analysis'], ['researcher', 'analyst']],
+            [['design', 'mockup', 'ux'], ['designer', 'design', 'ux']],
+        ];
+        for (const [workWords, roleWords] of pairs) {
+            const workHit = workWords.some(word => work.includes(word));
+            const roleHit = roleWords.some(word => role.includes(word));
+            if (workHit && roleHit) return 0;
+            if (workHit && !roleHit) return 2;
+        }
+        return 1;
+    }
+
     function renderAssignPanel() {
         const escape = BossModUtils.escapeHtml;
         if (!assignFormOpen) return '';
 
-        const agentOptions = rosterAgents.map(agent => (
+        const rankedRoster = rosterAgents.slice().sort((a, b) => {
+            const rankDelta = specialtyRank(a, assignTitle) - specialtyRank(b, assignTitle);
+            if (rankDelta !== 0) return rankDelta;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+        const agentOptions = rankedRoster.map(agent => (
             `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(agent.name)}${agent.role ? ` — ${escape(agent.role)}` : ''}</option>`
         )).join('');
 
@@ -632,6 +657,31 @@ const CompanyTasks = (() => {
                 </div>`;
         }
 
+        if (assignResult.outcome === 'specialty_mismatch') {
+            const reason = assignResult.reason || assignResult.specialty_warning || 'That assignee specialty does not match this work.';
+            const suggested = Array.isArray(assignResult.suggested_assignees) ? assignResult.suggested_assignees : [];
+            const rows = suggested.length === 0
+                ? `<p class="text-[11px] text-amber-800">No matching specialty is on the roster. Confirm only if this mismatch is intentional.</p>`
+                : suggested.map(agent => `
+                    <button type="button" class="ct-specialty-pick block w-full text-left py-1.5 border-t border-amber-200 first:border-t-0"
+                            data-agent-id="${escape(agent.id)}">
+                        <span class="block text-xs font-medium text-amber-950 truncate">${escape(agent.name || 'Teammate')}</span>
+                        <span class="block text-[11px] text-amber-800 truncate">${escape(agent.role || 'No specialty')}</span>
+                    </button>`).join('');
+            return `
+                <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p class="text-xs font-medium text-amber-950 mb-1">Specialty mismatch — no new task was created</p>
+                    <p class="text-[11px] text-amber-800 mb-1">${escape(reason)} Pick a matching teammate, or assign anyway.</p>
+                    ${rows}
+                    <div class="mt-2 flex justify-end">
+                        <button type="button" id="ct-specialty-confirm"
+                                class="px-2 py-1 rounded border border-amber-300 bg-white text-[11px] font-medium text-amber-900 hover:bg-amber-100">
+                            Assign anyway
+                        </button>
+                    </div>
+                </div>`;
+        }
+
         if (assignResult.outcome === 'clarify_ambiguous_match') {
             const candidates = Array.isArray(assignResult.candidates) ? assignResult.candidates : [];
             const reason = assignResult.reason || 'Multiple open tasks match this title.';
@@ -700,9 +750,19 @@ const CompanyTasks = (() => {
                 if (btn.dataset.taskId) submitAssignForm({ bindTaskId: btn.dataset.taskId });
             });
         });
+        container.querySelectorAll('.ct-specialty-pick').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (!btn.dataset.agentId) return;
+                assignAgentId = btn.dataset.agentId;
+                submitAssignForm();
+            });
+        });
+        container.querySelector('#ct-specialty-confirm')?.addEventListener('click', () => {
+            submitAssignForm({ confirmSpecialtyMismatch: true });
+        });
     }
 
-    async function submitAssignForm({ bindTaskId } = {}) {
+    async function submitAssignForm({ bindTaskId, confirmSpecialtyMismatch } = {}) {
         const title = (assignTitle || '').trim();
         if (!title) {
             assignResult = { error: 'Title is required.' };
@@ -721,6 +781,7 @@ const CompanyTasks = (() => {
         };
         if (assignAgentId) payload.assigned_to = assignAgentId;
         if (bindTaskId) payload.bind_task_id = bindTaskId;
+        if (confirmSpecialtyMismatch) payload.confirm_specialty_mismatch = true;
 
         try {
             const res = await apiFetch('/api/tasks', {
@@ -744,8 +805,10 @@ const CompanyTasks = (() => {
                 task: body.task,
                 candidates: body.candidates || [],
                 reason: body.reason || null,
+                specialty_warning: body.specialty_warning || null,
+                suggested_assignees: body.suggested_assignees || [],
             };
-            if (body.task && body.task.id && body.outcome !== 'clarify_ambiguous_match') {
+            if (body.task && body.task.id && body.outcome !== 'clarify_ambiguous_match' && body.outcome !== 'specialty_mismatch') {
                 selectedTaskId = body.task.id;
                 await refreshSilent();
                 return;

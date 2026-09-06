@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id                            VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     name                          VARCHAR NOT NULL,
     role                          VARCHAR,
+    done_fail_bar                 TEXT,
     prompt_template               TEXT,
     color                         VARCHAR DEFAULT '#3b82f6',
     model_social                  VARCHAR,
