@@ -114,6 +114,16 @@ const OfficeCanvas = (() => {
             render();
         });
 
+        // Hidden panes report 0×0; ResizeObserver fires once the map slot is shown again.
+        const container = document.getElementById('canvas-container');
+        if (container && typeof ResizeObserver !== 'undefined') {
+            const observer = new ResizeObserver(() => {
+                sizeCanvas();
+                render();
+            });
+            observer.observe(container);
+        }
+
         console.log('[OfficeCanvas] Initialized', mapData.width, 'x', mapData.height);
     }
 

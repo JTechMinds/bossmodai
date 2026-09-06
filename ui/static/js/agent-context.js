@@ -211,6 +211,7 @@ const AgentContext = (() => {
         activeMeetingSessionId = null;
         activeTopTab = 'focus';
         activeSubview = 'chat';
+        revealFocusPane();
         updateTabs();
         switchTopTab('focus');
     }
@@ -225,6 +226,7 @@ const AgentContext = (() => {
         activeDeskPath = '/me';
         activeMeetingSessionId = null;
         if (typeof DiagnosticsView !== 'undefined') DiagnosticsView.closeDetail();
+        revealFocusPane();
         updateTabs();
         switchTopTab('focus');
     }
@@ -238,6 +240,7 @@ const AgentContext = (() => {
         activeSubview = 'edit';
         activeDeskPath = '/me';
         activeMeetingSessionId = null;
+        revealFocusPane();
         updateTabs();
         switchTopTab('focus');
     }
@@ -359,40 +362,15 @@ const AgentContext = (() => {
         return (messages || []).filter(msg => msg.message_type !== 'system' || isWalkReceipt(msg));
     }
 
-    // ─── Tab header management ───
+    function revealFocusPane() {
+        if (typeof DockManager !== 'undefined' && typeof DockManager.open === 'function') {
+            DockManager.open('focus');
+        }
+    }
+
+    // ─── Focus pane chrome (chips). Directory / Channels are their own dock panes. ───
 
     function updateTabs() {
-        const tabsEl = document.getElementById('left-panel-tabs');
-        tabsEl.innerHTML = `
-            <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'focus' ? 'active' : ''}" data-tab="focus">
-                <span class="flex items-center justify-center gap-1.5">
-                    <i data-lucide="crosshair" class="w-4 h-4 shrink-0"></i>
-                    <span class="toolbar-label">Focus</span>
-                </span>
-            </button>
-            <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'directory' ? 'active' : ''}" data-tab="directory">
-                <span class="flex items-center justify-center gap-1.5">
-                    <i data-lucide="book-user" class="w-4 h-4 shrink-0"></i>
-                    <span class="toolbar-label">Directory</span>
-                </span>
-            </button>
-            <button class="tab-btn flex-1 px-3 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap overflow-hidden ${activeTopTab === 'channels' ? 'active' : ''}" data-tab="channels">
-                <span class="flex items-center justify-center gap-1.5">
-                    <i data-lucide="messages-square" class="w-4 h-4 shrink-0"></i>
-                    <span class="toolbar-label">Channels</span>
-                </span>
-            </button>`;
-
-        if (window.lucide) lucide.createIcons({ nodes: [tabsEl] });
-
-        // Bind tab clicks
-        tabsEl.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                switchTopTab(btn.dataset.tab);
-            });
-        });
-
-        // Render agent chips and manage their visibility
         renderAgentChips();
     }
 
@@ -402,10 +380,7 @@ const AgentContext = (() => {
         const chipsEl = document.getElementById('agent-chips');
         if (!chipsEl) return;
 
-        const isAgentContext = activeTopTab === 'focus';
-
-        // Hide chips when in Directory/Channels or no interacted agents
-        if (!isAgentContext || interactedAgents.size === 0) {
+        if (interactedAgents.size === 0) {
             chipsEl.classList.add('hidden');
             return;
         }
@@ -578,23 +553,6 @@ const AgentContext = (() => {
         document.getElementById('subview-tasks').classList.add('hidden');
         document.getElementById('subview-desk').classList.add('hidden');
         document.getElementById('subview-diagnostics')?.classList.add('hidden');
-        hideTopLevelPanel('tab-directory');
-        hideTopLevelPanel('tab-channels');
-    }
-
-    function showTopLevelPanel(panelId) {
-        const panel = document.getElementById(panelId);
-        if (!panel) return null;
-        panel.classList.remove('hidden');
-        panel.classList.add('active');
-        return panel;
-    }
-
-    function hideTopLevelPanel(panelId) {
-        const panel = document.getElementById(panelId);
-        if (!panel) return;
-        panel.classList.add('hidden');
-        panel.classList.remove('active');
     }
 
     function showEmptyState() {
@@ -605,33 +563,16 @@ const AgentContext = (() => {
     }
 
     function switchTopTab(tab) {
-        activeTopTab = tab || 'focus';
+        activeTopTab = 'focus';
+        if (tab && tab !== 'focus' && typeof DockManager !== 'undefined') {
+            DockManager.open(tab);
+            return;
+        }
+        revealFocusPane();
         updateTabs();
         hideAllSubviews();
 
-        const chipsEl = document.getElementById('agent-chips');
-
-        if (activeTopTab === 'directory') {
-            hideToolbar();
-            if (chipsEl) chipsEl.classList.add('hidden');
-            const container = showTopLevelPanel('tab-directory');
-            if (typeof CompanyView !== 'undefined' && container) {
-                void CompanyView.render(container);
-            }
-            return;
-        }
-
-        if (activeTopTab === 'channels') {
-            hideToolbar();
-            if (chipsEl) chipsEl.classList.add('hidden');
-            const container = showTopLevelPanel('tab-channels');
-            if (typeof ChannelsView !== 'undefined' && container) {
-                void ChannelsView.render(container);
-            }
-            return;
-        }
-
-        // Focus tab — show chips, toolbar if agent selected
+        // Focus pane — show chips, toolbar if agent selected
         renderAgentChips();
 
         if (selectedAgent || creatingAgent) {
@@ -1184,9 +1125,9 @@ const AgentContext = (() => {
     }
 
     function openChannel(channelId) {
-        activeTopTab = 'channels';
-        updateTabs();
-        switchTopTab('channels');
+        if (typeof DockManager !== 'undefined') {
+            DockManager.open('channels');
+        }
         if (typeof ChannelsView !== 'undefined' && channelId) {
             void ChannelsView.openChannel(channelId);
         }
