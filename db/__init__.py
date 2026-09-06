@@ -65,11 +65,13 @@ from db.host_path_consent import (
     create_once_grant,
     delete_agent_consent,
     find_denied_for_scope,
+    find_pending_for_grant_root_scope,
     find_pending_for_path,
     get_consent_request,
     list_consent_requests,
     list_once_grant_roots,
     list_pending_for_grant_root,
+    list_pending_for_grant_root_scope,
     resolve_consent_request,
 )
 from db.cli_approval_requests import (
@@ -89,8 +91,10 @@ from db.notification_links import (
 )
 from db.channels import (
     add_channel_members,
+    archive_channel,
     create_channel,
     create_channel_message,
+    find_active_channel_for_members,
     get_channel,
     get_formatted_channel_messages,
     get_latest_channel_message,
@@ -323,6 +327,8 @@ __all__ = [
     "create_channel",
     "create_channel_message",
     "add_channel_members",
+    "archive_channel",
+    "find_active_channel_for_members",
     "get_channel",
     "get_formatted_channel_messages",
     "get_latest_channel_message",
@@ -486,11 +492,13 @@ __all__ = [
     "create_once_grant",
     "delete_agent_consent",
     "find_denied_for_scope",
+    "find_pending_for_grant_root_scope",
     "find_pending_for_path",
     "get_consent_request",
     "list_consent_requests",
     "list_once_grant_roots",
     "list_pending_for_grant_root",
+    "list_pending_for_grant_root_scope",
     "resolve_consent_request",
     # CLI Approval Requests
     "approve_cli_approval_request",

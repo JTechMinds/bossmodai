@@ -125,6 +125,54 @@ def list_pending_for_grant_root(grant_root: str) -> list[HostPathConsentRequest]
     )
 
 
+def _clean_scope_channel_id(channel_id: str | None) -> str | None:
+    """Return a non-empty channel id, or None for company/Focus scope."""
+    token = (channel_id or "").strip()
+    return token or None
+
+
+def list_pending_for_grant_root_scope(
+    grant_root: str,
+    channel_id: str | None,
+) -> list[HostPathConsentRequest]:
+    """Return pending requests for one grant root in a channel or company scope."""
+    token = (grant_root or "").strip()
+    if not token:
+        return []
+    scoped = _clean_scope_channel_id(channel_id)
+    if scoped:
+        return fetch_all(
+            f"""
+            SELECT {_ALL_COLUMNS}
+            FROM host_path_consent_requests
+            WHERE status = 'pending' AND grant_root = $1 AND channel_id = $2
+            ORDER BY created_at ASC
+            """,
+            [token, scoped],
+            HostPathConsentRequest,
+        )
+    return fetch_all(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE status = 'pending' AND grant_root = $1
+          AND (channel_id IS NULL OR channel_id = '')
+        ORDER BY created_at ASC
+        """,
+        [token],
+        HostPathConsentRequest,
+    )
+
+
+def find_pending_for_grant_root_scope(
+    grant_root: str,
+    channel_id: str | None,
+) -> HostPathConsentRequest | None:
+    """Return the oldest pending request for this grant root in one scope."""
+    pending = list_pending_for_grant_root_scope(grant_root, channel_id)
+    return pending[0] if pending else None
+
+
 def find_pending_for_path(agent_id: str, path: str) -> HostPathConsentRequest | None:
     """Return the pending request for this agent + canonical path, if any."""
     return fetch_one(

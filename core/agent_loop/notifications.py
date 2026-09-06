@@ -245,6 +245,9 @@ def _build_consent_notification(
         bound = db.bind_consent_channel(consent_id, channel_id)
         if bound is not None:
             card = bound.as_card()
+    grant_root = str(card.get("grant_root") or "").strip()
+    if grant_root and _grant_root_already_has_card(grant_root, channel_id, consent_id):
+        return None
     path = str(card.get("path") or "host path")
     reason = str(card.get("reason") or "").strip()
     content = f"{agent.name} needs host-path access: {path}."
@@ -494,6 +497,20 @@ def _consent_channel_id(trigger: dict[str, Any]) -> str | None:
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
     return None
+
+
+def _grant_root_already_has_card(
+    grant_root: str,
+    channel_id: str | None,
+    consent_id: str,
+) -> bool:
+    """Return True when another waiter in this scope already opened the card."""
+    for sibling in db.list_pending_for_grant_root_scope(grant_root, channel_id):
+        if sibling.id == consent_id:
+            continue
+        if db.has_consent_notification(sibling.id):
+            return True
+    return False
 
 
 def _notification_source_channel(trigger: dict[str, Any]) -> str:

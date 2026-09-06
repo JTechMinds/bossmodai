@@ -183,9 +183,9 @@ def test_channels_empty_state_points_at_directory() -> None:
     source = (JS / "channels-view.js").read_text(encoding="utf-8")
     assert "Company tab" not in source
     assert "Tick agents in Directory" in source
-    assert "Create Channel" in source
+    assert "Create Thread" in source
     assert 'id="channels-create-channel-btn"' in source
-    assert "Create channel" in source
+    assert "Create thread" in source
     assert "DockManager.open('directory')" in source
 
 

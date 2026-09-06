@@ -568,6 +568,10 @@ const BossModUtils = (() => {
 
     function renderHostPathConsentCard(container, card) {
         if (!container || !card) return;
+        container.classList.add('host-path-consent-card');
+        if (card.grant_root) container.dataset.grantRoot = card.grant_root;
+        const status = card.status || 'pending';
+        container.classList.toggle('is-resolved', status !== 'pending');
         const title = document.createElement('div');
         title.className = 'hpc-title';
         title.textContent = 'Host path consent';
@@ -579,9 +583,8 @@ const BossModUtils = (() => {
         reasonEl.textContent = card.reason || '';
         container.appendChild(title);
         container.appendChild(pathEl);
-        if (card.reason) container.appendChild(reasonEl);
+        if (card.reason && status === 'pending') container.appendChild(reasonEl);
 
-        const status = card.status || 'pending';
         if (status !== 'pending') {
             const resolved = document.createElement('div');
             resolved.className = 'hpc-status';
@@ -619,6 +622,7 @@ const BossModUtils = (() => {
             const updated = await res.json();
             container.replaceChildren();
             renderHostPathConsentCard(container, updated);
+            collapseRelatedConsentCards(container, updated);
             if (window.lucide) lucide.createIcons({ nodes: [container] });
         } catch (err) {
             Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
@@ -627,6 +631,30 @@ const BossModUtils = (() => {
             note.textContent = err?.message || 'Consent update failed.';
             container.appendChild(note);
         }
+    }
+
+    function collapseRelatedConsentCards(container, card) {
+        if (!container || !card || (card.status || 'pending') === 'pending') return;
+        const scope = container.closest('#channel-messages, #chat-messages') || container.parentElement;
+        if (!scope) return;
+        const grantRoot = card.grant_root || '';
+        const companyWide = card.status === 'always_allowed';
+        scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
+            if (el === container || el.classList.contains('is-resolved')) return;
+            const sameRoot = grantRoot && el.dataset.grantRoot === grantRoot;
+            if (!companyWide && !sameRoot) return;
+            el.classList.add('is-resolved');
+            el.querySelector('.host-path-consent-actions')?.remove();
+            el.querySelector('.hpc-reason')?.remove();
+            if (!el.querySelector('.hpc-status')) {
+                const resolved = document.createElement('div');
+                resolved.className = 'hpc-status';
+                resolved.textContent = card.status === 'denied'
+                    ? 'Denied'
+                    : (card.status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
+                el.appendChild(resolved);
+            }
+        });
     }
 
     return {
@@ -661,5 +689,6 @@ const BossModUtils = (() => {
         isHostPathConsentMessage,
         renderHostPathConsentCard,
         decideHostPathConsent,
+        collapseRelatedConsentCards,
     };
 })();

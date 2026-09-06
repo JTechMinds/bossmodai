@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.redaction import serialize_secret_field
@@ -142,9 +143,9 @@ async def list_channels() -> list[dict[str, object]]:
     return items
 
 
-@router.post("/channels", status_code=201)
+@router.post("/channels")
 async def create_channel(body: ChannelCreateBody):
-    """Create one shared channel from the selected company roster members."""
+    """Create one shared thread, or reopen the active thread with this roster."""
     member_ids = list(dict.fromkeys(agent_id for agent_id in body.agent_ids if isinstance(agent_id, str) and agent_id.strip()))
     if not member_ids:
         raise HTTPException(400, "Select at least one agent")
@@ -153,6 +154,14 @@ async def create_channel(body: ChannelCreateBody):
     missing = [agent_id for agent_id in member_ids if agent_id not in agents]
     if missing:
         raise HTTPException(404, f"Agents not found: {', '.join(missing)}")
+
+    existing = db.find_active_channel_for_members(member_ids)
+    if existing is not None:
+        members = db.list_channel_member_details(existing.id)
+        latest = db.get_latest_channel_message(existing.id)
+        summary = _serialize_channel_summary(existing, members=members, latest_message=latest)
+        summary["reused"] = True
+        return JSONResponse(summary, status_code=200)
 
     if body.name and body.name.strip():
         name = body.name.strip()
@@ -170,10 +179,42 @@ async def create_channel(body: ChannelCreateBody):
     )
     members = db.list_channel_member_details(channel.id)
     summary = _serialize_channel_summary(channel, members=members, latest_message=None)
+    summary["reused"] = False
     await manager.broadcast_channel_updated(summary)
     await manager.broadcast_activity(
         event="channel_created",
-        detail=f'Created shared channel "{channel.name}"',
+        detail=f'Created shared thread "{channel.name}"',
+        agent_name=None,
+    )
+    return JSONResponse(summary, status_code=201)
+
+
+@router.post("/channels/{channel_id}/archive")
+async def archive_channel(channel_id: str):
+    """Archive one shared thread so it leaves the active Threads list."""
+    return await _archive_channel(channel_id)
+
+
+@router.delete("/channels/{channel_id}")
+async def delete_channel(channel_id: str):
+    """Archive one shared thread (soft delete)."""
+    return await _archive_channel(channel_id)
+
+
+async def _archive_channel(channel_id: str) -> dict[str, object]:
+    channel = db.get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(404, "Thread not found")
+    archived = db.archive_channel(channel.id)
+    if archived is None:
+        raise HTTPException(404, "Thread not found")
+    members = db.list_channel_member_details(archived.id)
+    latest = db.get_latest_channel_message(archived.id)
+    summary = _serialize_channel_summary(archived, members=members, latest_message=latest)
+    await manager.broadcast_channel_updated(summary)
+    await manager.broadcast_activity(
+        event="channel_archived",
+        detail=f'Archived thread "{archived.name}"',
         agent_name=None,
     )
     return summary
@@ -694,6 +735,7 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "status": channel.status,
         "created_at": channel.created_at.isoformat() if channel.created_at else None,
         "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
+        "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
         "member_count": len(members or []),
         "members": members or [],
         "latest_message": latest,

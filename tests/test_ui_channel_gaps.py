@@ -12,10 +12,25 @@ ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 PRESENCE_HARNESS = Path(__file__).resolve().parent / "js_channel_presence_harness.cjs"
 GATE_HARNESS = Path(__file__).resolve().parent / "js_inflight_gate_harness.cjs"
+THREAD_DOM_HARNESS = Path(__file__).resolve().parent / "js_channel_thread_dom_harness.cjs"
 
 
 def _read(name: str) -> str:
     return (JS / name).read_text(encoding="utf-8")
+
+
+def test_operator_chrome_labels_threads() -> None:
+    index = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    app = _read("app.js")
+    dock = _read("dock-manager.js")
+    company = _read("company-view.js")
+    css = (ROOT / "ui" / "static" / "css" / "style.css").read_text(encoding="utf-8")
+    assert "> Threads" in index
+    assert "channels: 'Threads'" in app
+    assert "channels: { label: 'Threads'" in dock
+    assert "Create Thread" in company
+    assert "start a shared thread" in company
+    assert ".host-path-consent-card.is-resolved" in css
 
 
 def test_utils_exports_channel_presence_and_consent_card() -> None:
@@ -29,6 +44,9 @@ def test_utils_exports_channel_presence_and_consent_card() -> None:
     assert "Always allowed (for all agents)" in source
     assert "Deny" in source
     assert "{ label: 'Always allow'," not in source
+    assert "function collapseRelatedConsentCards(" in source
+    assert "is-resolved" in source
+    assert "collapseRelatedConsentCards," in source
 
 
 def test_no_notifications_tab_and_consent_stays_in_thread() -> None:
@@ -53,12 +71,67 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "handleChannelPresence" in source
     assert "presence.start(" in source
     assert "presence.stop(" in source
+    assert "function appendLiveChannelMessage(" in source
+    assert "function isChannelDetailMounted(" in source
+    assert "id=\"channel-archive-btn\"" in source
+    assert "Archive this thread?" in source
+    assert "Threads" in source
+    assert "Create Thread" in source
     app = _read("app.js")
     assert "case 'channel_presence':" in app
     assert "AgentContext.handleChannelPresence(msg.data)" in app
     context = _read("agent-context.js")
     assert "handleChannelPresence," in context
     assert "ChannelsView.handleChannelPresence(data)" in context
+
+
+def test_live_channel_message_appends_without_loading_remount() -> None:
+    source = _read("channels-view.js")
+    handler = source.split("function handleChannelMessage(data) {", 1)[1].split(
+        "function handleChannelPresence(", 1
+    )[0]
+    assert "appendLiveChannelMessage(" in handler
+    assert "isChannelDetailMounted(" in handler
+    assert "threadCache.append(" in handler
+    assert handler.index("appendLiveChannelMessage(") < handler.index("void renderSelectedChannel(")
+    assert "Loading thread..." not in handler
+    assert "Loading channel..." not in handler
+
+
+def test_thread_switch_keeps_shell_and_uses_cache() -> None:
+    source = _read("channels-view.js")
+    render = source.split("async function renderSelectedChannel(detailEl) {", 1)[1].split(
+        "async function refreshThreadDetail(", 1
+    )[0]
+    assert "threadCache.recall(" in render
+    assert "ChannelThreadDom.isMounted(" in render
+    assert "const keepShell = ChannelThreadDom.isMounted(detailEl)" in render
+    assert "if (keepShell || cached)" in render
+    assert "applyThreadDetail(" in render
+    assert render.index("if (keepShell || cached)") < render.index("Loading thread...")
+    assert "Loading channel..." not in source
+    assert "ChannelThreadDom.createCache()" in source
+    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    assert "js/channel-thread-dom.js" in html
+    assert html.index("js/channel-thread-dom.js") < html.index("js/channels-view.js")
+
+
+def test_channel_thread_dom_harness_caches_and_swaps_without_loading() -> None:
+    result = subprocess.run(
+        ["node", str(THREAD_DOM_HARNESS), str(JS / "channel-thread-dom.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "keepsShell": True,
+        "cachesTranscript": True,
+        "swapsChrome": True,
+        "noLoadingFlash": True,
+    }
 
 
 def test_channel_presence_helper_only_tracks_channel_turns() -> None:

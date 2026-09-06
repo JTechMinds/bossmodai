@@ -87,7 +87,7 @@ const CompanyView = (() => {
                         <div>
                             <p class="text-xs uppercase tracking-wide text-bm-muted">Directory</p>
                             <h3 class="text-sm font-semibold mt-1">Agent Directory</h3>
-                            <p class="text-xs text-bm-muted mt-1">Select teammates and start a shared channel.</p>
+                            <p class="text-xs text-bm-muted mt-1">Select teammates and start a shared thread.</p>
                         </div>
                         <button id="company-refresh-btn"
                                 class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
@@ -108,7 +108,7 @@ const CompanyView = (() => {
                         <button id="company-create-channel-btn"
                                 class="px-3 py-2 rounded-lg bg-bm-accent text-white text-xs font-medium hover:bg-bm-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 ${selectedIds.size ? '' : 'disabled'}>
-                            Create Channel
+                            Create Thread
                         </button>
                     </div>
                 </div>

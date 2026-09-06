@@ -966,6 +966,180 @@ async def test_allow_once_follow_through_posts_to_origin_channel(
     assert "Always allow" not in follow[0].content
 
 
+async def test_channel_round_coalesces_one_card_per_grant_root(tmp_path: Path) -> None:
+    host = tmp_path / "coalesce-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("share\n", encoding="utf-8")
+    asker, _state = _agent_and_state()
+    sibling = db.create_agent("Coalesce Clerk")
+    channel = db.create_channel(
+        name="Shared Ask",
+        member_agent_ids=[asker.id, sibling.id],
+        created_by=asker.id,
+    )
+    first = request_host_path_access(
+        agent=asker,
+        raw_path=str(fixture),
+        reason="Need the shared file",
+        channel_id=channel.id,
+    )
+    second = request_host_path_access(
+        agent=sibling,
+        raw_path=str(fixture),
+        reason="Need the same file",
+        channel_id=channel.id,
+    )
+    assert first.consent_required is True
+    assert second.consent_required is True
+    assert first.consent_request_id != second.consent_request_id
+    assert (second.data or {}).get("consent_reused") is True
+
+    trigger = {
+        "type": "channel_message",
+        "source_channel": "channel",
+        "channel_id": channel.id,
+    }
+    first_notes = project_chat_notifications(
+        agent=asker,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "request_host_access"},
+        result={
+            "event": "host_path_consent_required",
+            "consent_required": True,
+            "consent_request_id": first.consent_request_id,
+            "consent_reused": False,
+            "host_path_consent": (first.data or {}).get("host_path_consent"),
+        },
+    )
+    assert len(first_notes) == 1
+    persist_channel_notification(asker, first_notes[0])
+    second_notes = project_chat_notifications(
+        agent=sibling,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "request_host_access"},
+        result={
+            "event": "host_path_consent_required",
+            "consent_required": True,
+            "consent_request_id": second.consent_request_id,
+            "consent_reused": True,
+            "host_path_consent": (second.data or {}).get("host_path_consent"),
+        },
+    )
+    assert second_notes == []
+    cards = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.notification_kind == "host_path_consent"
+    ]
+    assert len(cards) == 1
+    assert cards[0].consent_id == first.consent_request_id
+
+
+async def test_company_focus_coalesces_one_card_per_grant_root(tmp_path: Path) -> None:
+    host = tmp_path / "focus-coalesce"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("focus\n", encoding="utf-8")
+    first_agent, _state = _agent_and_state()
+    second_agent = db.create_agent("Focus Sibling")
+    first = request_host_path_access(
+        agent=first_agent,
+        raw_path=str(fixture),
+        reason="Need it in Focus",
+    )
+    second = request_host_path_access(
+        agent=second_agent,
+        raw_path=str(fixture),
+        reason="Need the same root",
+    )
+    assert (second.data or {}).get("consent_reused") is True
+    trigger = {"type": "human_chat", "source_channel": "chat"}
+    notes = project_chat_notifications(
+        agent=first_agent,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "request_host_access"},
+        result={
+            "event": "host_path_consent_required",
+            "consent_required": True,
+            "consent_request_id": first.consent_request_id,
+            "consent_reused": False,
+            "host_path_consent": (first.data or {}).get("host_path_consent"),
+        },
+    )
+    assert len(notes) == 1
+    persist_chat_notification(first_agent, notes[0])
+    skipped = project_chat_notifications(
+        agent=second_agent,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "request_host_access"},
+        result={
+            "event": "host_path_consent_required",
+            "consent_required": True,
+            "consent_request_id": second.consent_request_id,
+            "consent_reused": False,
+            "host_path_consent": (second.data or {}).get("host_path_consent"),
+        },
+    )
+    assert skipped == []
+
+
+async def test_allow_once_resolves_scoped_waiters(tmp_path: Path) -> None:
+    host = tmp_path / "once-waiters"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("once\n", encoding="utf-8")
+    asker, _state = _agent_and_state()
+    sibling = db.create_agent("Once Waiter")
+    outsider = db.create_agent("Focus Outsider")
+    channel = db.create_channel(
+        name="Once Scope",
+        member_agent_ids=[asker.id, sibling.id],
+        created_by=asker.id,
+    )
+    first = request_host_path_access(
+        agent=asker,
+        raw_path=str(fixture),
+        reason="Need the shared file",
+        channel_id=channel.id,
+    )
+    second = request_host_path_access(
+        agent=sibling,
+        raw_path=str(fixture),
+        reason="Need the same file",
+        channel_id=channel.id,
+    )
+    focus = request_host_path_access(
+        agent=outsider,
+        raw_path=str(fixture),
+        reason="Need it in Focus",
+    )
+    services = _ResumeServices()
+    updated = await resume_host_path_consent(
+        first.consent_request_id,
+        decision="allow_once",
+        services=services,
+    )
+    assert updated is not None
+    assert updated.status == "allowed_once"
+    sibling_row = db.get_consent_request(second.consent_request_id)
+    assert sibling_row is not None
+    assert sibling_row.status == "allowed_once"
+    focus_row = db.get_consent_request(focus.consent_request_id)
+    assert focus_row is not None
+    assert focus_row.status == "pending"
+    resumes = {
+        item["agent_id"]
+        for item in services.triggers
+        if item.get("trigger_type") == "host_path_consent_resolved"
+    }
+    assert resumes == {asker.id, sibling.id}
+
+
 async def test_always_resolves_sibling_pending_without_second_follow_through(
     tmp_path: Path,
 ) -> None:

@@ -27,6 +27,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels", "list_channels"),
     (("POST",), "/api/channels", "create_channel"),
     (("GET",), "/api/channels/{channel_id}", "get_channel"),
+    (("POST",), "/api/channels/{channel_id}/archive", "archive_channel"),
+    (("DELETE",), "/api/channels/{channel_id}", "delete_channel"),
     (("POST",), "/api/channels/{channel_id}/messages", "create_channel_message"),
     (("GET",), "/api/agents/{agent_id}/api-key", "get_agent_api_key"),
     (("GET",), "/api/agents/{agent_id}/prompt-history-policy", "get_agent_prompt_history_policy"),
@@ -105,7 +107,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 84
+    assert len(got) == 86
 
 
 def test_from_api_routes_import_router_still_works() -> None:

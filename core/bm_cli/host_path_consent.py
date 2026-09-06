@@ -217,15 +217,28 @@ def request_host_path_access(
             executor="virtual",
         )
 
+    origin_channel = _clean_channel_id(channel_id)
     pending = db.find_pending_for_path(agent.id, path)
     if pending is not None:
-        if _clean_channel_id(channel_id) and not pending.channel_id:
-            pending = db.bind_consent_channel(pending.id, channel_id) or pending
+        if origin_channel and not pending.channel_id:
+            pending = db.bind_consent_channel(pending.id, origin_channel) or pending
         return consent_required_result(
             label,
             _consent_message(pending),
             cwd=cwd,
             consent_request=pending,
+            reused=True,
+        )
+
+    scoped = db.find_pending_for_grant_root_scope(str(grant_root), origin_channel)
+    if scoped is not None and scoped.agent_id == agent.id:
+        if origin_channel and not scoped.channel_id:
+            scoped = db.bind_consent_channel(scoped.id, origin_channel) or scoped
+        return consent_required_result(
+            label,
+            _consent_message(scoped),
+            cwd=cwd,
+            consent_request=scoped,
             reused=True,
         )
 
@@ -239,14 +252,15 @@ def request_host_path_access(
         content=content,
         cwd=cwd,
         task_id=task_id,
-        channel_id=_clean_channel_id(channel_id),
+        channel_id=origin_channel,
     )
+    attached = scoped is not None
     return consent_required_result(
         label,
         _consent_message(request),
         cwd=cwd,
         consent_request=request,
-        reused=False,
+        reused=attached,
     )
 
 
@@ -310,6 +324,13 @@ async def resume_host_path_consent(
         if updated is None:
             return None
         await _enqueue_resume(updated, status="denied", services=services)
+        await _resolve_scope_waiters(
+            updated,
+            status="denied",
+            decision_by=decision_by,
+            note=note,
+            services=services,
+        )
         return updated
 
     if decision == "allow_once":
@@ -328,6 +349,14 @@ async def resume_host_path_consent(
             task_id=updated.task_id,
         )
         await _enqueue_resume(updated, status="allowed_once", services=services)
+        await _resolve_scope_waiters(
+            updated,
+            status="allowed_once",
+            decision_by=decision_by,
+            note=note,
+            services=services,
+            once_grant=True,
+        )
         return updated
 
     if decision != "always_allow":
@@ -427,6 +456,42 @@ def _clean_channel_id(channel_id: str | None) -> str | None:
     """Return a non-empty channel id, or None."""
     token = (channel_id or "").strip()
     return token or None
+
+
+async def _resolve_scope_waiters(
+    primary: HostPathConsentRequest,
+    *,
+    status: str,
+    decision_by: str,
+    note: str | None,
+    services: Any,
+    once_grant: bool = False,
+) -> None:
+    """Apply Allow once / Deny to later agents waiting on the same scoped card."""
+    for sibling in db.list_pending_for_grant_root_scope(primary.grant_root, primary.channel_id):
+        if sibling.id == primary.id:
+            continue
+        other = db.resolve_consent_request(
+            sibling.id,
+            status=status,
+            decision_by=decision_by,
+            decision_note=note,
+        )
+        if other is None:
+            continue
+        if once_grant:
+            db.create_once_grant(
+                agent_id=other.agent_id,
+                root=other.grant_root,
+                consent_id=other.id,
+                task_id=other.task_id,
+            )
+        await _enqueue_resume(
+            other,
+            status=status,
+            services=services,
+            follow_through=False,
+        )
 
 
 async def _post_channel_follow_through(

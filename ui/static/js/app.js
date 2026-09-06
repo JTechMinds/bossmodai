@@ -184,7 +184,7 @@ const BossModApp = (() => {
     const TAB_DISPLAY_NAMES = {
         focus: 'Focus',
         directory: 'Directory',
-        channels: 'Channels',
+        channels: 'Threads',
         map: 'Office',
         activity: 'Activity',
         files: 'Files',
