@@ -61,7 +61,7 @@ def format_runtime_core_block(agent: Agent) -> str:
     host_line = (
         "operator-allowed host roots: " + ", ".join(host_roots)
         if host_roots
-        else "no extra host roots until the operator consents in chat"
+        else "no extra host roots until the operator consents on the in-chat card"
     )
     tools = ", ".join(ALLOWED_TOOLS)
     return (
