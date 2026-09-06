@@ -1,7 +1,8 @@
 """Role-contract v1 helpers: specialty matching and checkable done claims.
 
-Hire stores a one-line specialty on ``Agent.role`` plus a short done/fail bar.
-Assign/routing and complete/deliver use those fields on the existing task paths.
+Hire stores a one-line specialty on ``Agent.role``, an optional casual
+description, and a short done/fail bar (finish line). Assign/routing and
+complete/deliver use those fields on the existing task paths.
 """
 
 from __future__ import annotations
@@ -63,6 +64,20 @@ _FAMILY_LABELS: dict[SpecialtyFamily, str] = {
 }
 
 _DONE_CLAIM_TYPES = frozenset({"artifact", "tests", "proof"})
+
+# Operator-facing finish-line defaults. Empty done stays blocked by the
+# checkable-claim rules even when the stored bar is blank.
+_DEFAULT_FINISH_LINES: dict[SpecialtyFamily, str] = {
+    "write": "A named draft or document exists. Empty done does not count.",
+    "review": "A checkable allow/deny (or tests/artifact) exists. Empty done does not count.",
+    "implement": "Tests evidence or a named artifact exists. Empty done does not count.",
+    "research": "A named findings note exists. Empty done does not count.",
+    "design": "A named mockup or design file exists. Empty done does not count.",
+    "coordinate": "A named plan or status note exists. Empty done does not count.",
+}
+_FALLBACK_FINISH_LINE = (
+    "A checkable claim exists (tests, artifact, or allow/deny). Empty done does not count."
+)
 
 # Soft-deny only when work is clearly outside the hire specialty.
 # Engineers writing a report is unknown, not a mismatch.
@@ -284,9 +299,27 @@ def suggested_assignees(agents: list[Agent]) -> list[AssigneeSuggestion]:
     ]
 
 
+def suggest_finish_line(
+    specialty: str | None,
+    description: str | None = None,
+) -> str:
+    """Suggest a default finish line from specialty, using description when useful.
+
+    Does not persist or rewrite stored text. Blank ``done_fail_bar`` stays valid;
+    empty done is still rejected by the checkable-claim rules.
+    """
+    family = specialty_family(specialty)
+    if family is None:
+        family = infer_work_kind(None, description)
+    if family is None:
+        return _FALLBACK_FINISH_LINE
+    return _DEFAULT_FINISH_LINES[family]
+
+
 def format_role_contract_block(agent: Agent) -> str:
     """Render the hire contract the model must follow on every turn."""
     specialty = (agent.role or "").strip() or "unspecified"
+    description = (getattr(agent, "description", None) or "").strip()
     bar = (agent.done_fail_bar or "").strip() or (
         "Good: a checkable claim exists. Fail: empty done with no evidence."
     )
@@ -296,9 +329,11 @@ def format_role_contract_block(agent: Agent) -> str:
         if auditor
         else "Empty done is rejected."
     )
+    description_line = f"Description: {description}\n" if description else ""
     return (
         "# Role contract\n"
         f"Specialty: {specialty}\n"
+        f"{description_line}"
         f"Done/fail bar: {bar}\n"
         "- Prefer teammates whose specialty matches the work. "
         "Do not assign review/audit work to a writer, or writing to an auditor, "

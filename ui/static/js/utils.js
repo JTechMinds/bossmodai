@@ -22,6 +22,7 @@ const BossModUtils = (() => {
             id: w.id,
             name: w.name,
             role: w.role || null,
+            description: w.description || null,
             done_fail_bar: w.done_fail_bar || null,
             x: w.x ?? 0,
             y: w.y ?? 0,
@@ -46,6 +47,15 @@ const BossModUtils = (() => {
         design: ['review', 'implement'],
         implement: ['design'],
     };
+    const FINISH_LINE_DEFAULTS = {
+        write: 'A named draft or document exists. Empty done does not count.',
+        review: 'A checkable allow/deny (or tests/artifact) exists. Empty done does not count.',
+        implement: 'Tests evidence or a named artifact exists. Empty done does not count.',
+        research: 'A named findings note exists. Empty done does not count.',
+        design: 'A named mockup or design file exists. Empty done does not count.',
+        coordinate: 'A named plan or status note exists. Empty done does not count.',
+    };
+    const FALLBACK_FINISH_LINE = 'A checkable claim exists (tests, artifact, or allow/deny). Empty done does not count.';
 
     function inferWorkFamily(title, description) {
         const text = `${title || ''} ${description || ''}`.toLowerCase();
@@ -70,6 +80,11 @@ const BossModUtils = (() => {
         }
         const unique = [...new Set(hits)];
         return unique.length === 1 ? unique[0] : null;
+    }
+
+    function suggestFinishLine(specialty, description) {
+        const family = specialtyFamily(specialty) || inferWorkFamily(null, description);
+        return FINISH_LINE_DEFAULTS[family] || FALLBACK_FINISH_LINE;
     }
 
     function specialtyMatch(role, title, description) {
@@ -417,6 +432,7 @@ const BossModUtils = (() => {
         normalizeAgent,
         inferWorkFamily,
         specialtyFamily,
+        suggestFinishLine,
         specialtyMatch,
         specialtyRank,
         specialtyWarningMessage,

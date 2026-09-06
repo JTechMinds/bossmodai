@@ -26,6 +26,7 @@ class Agent(BaseModel):
     storage_key: str
     name: str
     role: str | None = None
+    description: str | None = None
     done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
@@ -97,6 +98,7 @@ class AgentCreate(BaseModel):
 
     name: str
     role: str | None = None
+    description: str | None = None
     done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
@@ -119,6 +121,11 @@ class AgentCreate(BaseModel):
     def _normalize_role(cls, value: str | None) -> str | None:
         return _normalize_optional_text(value, max_len=120)
 
+    @field_validator("description")
+    @classmethod
+    def _normalize_description(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=1000)
+
     @field_validator("done_fail_bar")
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
@@ -133,6 +140,7 @@ class AgentUpdate(BaseModel):
 
     name: str | None = None
     role: str | None = None
+    description: str | None = None
     done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str | None = None
@@ -160,6 +168,11 @@ class AgentUpdate(BaseModel):
     @classmethod
     def _normalize_role(cls, value: str | None) -> str | None:
         return _normalize_optional_text(value, max_len=120)
+
+    @field_validator("description")
+    @classmethod
+    def _normalize_description(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=1000)
 
     @field_validator("done_fail_bar")
     @classmethod

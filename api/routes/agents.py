@@ -300,6 +300,7 @@ async def create_agent(body: AgentCreate) -> Agent:
     agent = db.create_agent(
         name=body.name,
         role=body.role,
+        description=body.description,
         done_fail_bar=body.done_fail_bar,
         prompt_template=body.prompt_template,
         color=body.color,
@@ -606,6 +607,7 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
         "id": item.get("id"),
         "name": item.get("name"),
         "role": item.get("role"),
+        "description": item.get("description"),
         "done_fail_bar": item.get("done_fail_bar"),
         "color": item.get("color"),
         "status": item.get("status") or "idle",

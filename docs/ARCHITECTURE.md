@@ -140,7 +140,7 @@ Residual (not “auth is missing”): `/health` and the HTML/static UI stay unau
 
 ## Role contracts v1
 
-Hire captures a short contract, not a megaprompt. `Agent.role` is the one-line specialty. `done_fail_bar` is the done/fail bar (what good and failure look like). `prompt_template` stays optional advanced text. Hire/create and edit place Specialty and Done/fail bar as first-class fields directly under Name; personality/prompt template stays collapsed under Advanced.
+Hire captures a short contract, not a megaprompt. Casual hire fields are Name, Specialty (`Agent.role`), and Description. `done_fail_bar` is the optional finish line (what good and failure look like); it is not required up front. The hire form suggests a default finish line from specialty (and description when useful) and never silently rewrites operator edits. Sharper done/fail copy, the long prompt/`prompt_template`, color, and desk sit under Advanced. Blank `done_fail_bar` is valid; empty done is still rejected by the checkable-claim rules.
 
 Assign / peer-assign / work-plan routing (`POST /api/tasks`, `delegateTask`, accepted work plans) prefer a matching specialty when title/description (or `requested_specialty`) infers a work kind. A clear mismatch is a soft-deny: 409 `specialty_mismatch` on the operator Assign Task path, or `world_feedback` on peer actions, with suggested teammates. The Assign Task form shows an inline mismatch warning as title/assignee change, ranks matching specialties first, and keeps the confirm (`confirm_specialty_mismatch` / `confirmSpecialtyMismatch`) override. Coordinate specialties (lead/PM) and uninferable work stay unknown — no silent “every agent can do everything,” and no false deny.
 

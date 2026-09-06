@@ -475,6 +475,8 @@ const AgentContext = (() => {
         const status = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
         const dotCls = BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
         const specialty = selectedAgent.role || 'No specialty';
+        const description = (selectedAgent.description || '').trim();
+        const descriptionShort = description.length > 72 ? `${description.slice(0, 71)}…` : description;
         const doneBar = (selectedAgent.done_fail_bar || '').trim();
         const doneBarShort = doneBar.length > 72 ? `${doneBar.slice(0, 71)}…` : doneBar;
         const taskId = selectedAgent.boundTaskId;
@@ -484,6 +486,7 @@ const AgentContext = (() => {
                 <div class="flex items-center gap-4 min-w-0 text-[11px]">
                     <span class="font-semibold text-xs text-bm-text truncate" style="color: ${esc(selectedAgent.color || '#3b82f6')}">${esc(selectedAgent.name)}</span>
                     <span class="text-bm-muted truncate" title="Specialty">${esc(specialty)}</span>
+                    ${descriptionShort ? `<span class="text-bm-muted truncate" title="${esc(description)}">${esc(descriptionShort)}</span>` : ''}
                     ${doneBarShort ? `<span class="text-bm-muted truncate" title="${esc(doneBar)}">${esc(doneBarShort)}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-3 shrink-0 text-[11px]">
