@@ -770,7 +770,7 @@ def test_preview_bundle_injects_role_contract() -> None:
     core_msgs = [
         message.get("content") or ""
         for message in preview["messages"]
-        if "# Runtime core" in str(message.get("content") or "")
+        if str(message.get("content") or "").startswith("# Runtime core")
     ]
     assert core_msgs
     assert "Description:" not in core_msgs[0]
