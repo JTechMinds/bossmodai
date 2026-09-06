@@ -1248,7 +1248,7 @@ const AgentContext = (() => {
                                     ${task.assigned_to_role ? ` • ${BossModUtils.escapeHtml(task.assigned_to_role)}` : ''}
                                     ${task.owner_name && task.owner_name !== task.assigned_to_name ? ` • owner: ${BossModUtils.escapeHtml(task.owner_name)}` : ''}
                                 </div>
-                                ${task.status !== 'complete' ? `<p class="text-[11px] text-amber-800 mt-1">${BossModUtils.escapeHtml(BossModUtils.doneClaimGuidance(task))}</p>` : ''}
+                                ${task.status !== 'complete' ? `<div class="mt-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1.5"><p class="text-[11px] font-semibold text-amber-950">Blocked — checkable claim missing</p><p class="text-[11px] text-amber-800 mt-0.5">${BossModUtils.escapeHtml(BossModUtils.doneClaimGuidance(task))}</p><p class="text-[11px] text-amber-800">What’s needed: tests evidence, an artifact path, or an allow/deny proof.</p></div>` : ''}
                                 ${task.latest_event?.content ? `<p class="text-[11px] text-bm-muted mt-1">Latest: ${BossModUtils.escapeHtml(task.latest_event.content.slice(0, 140))}</p>` : ''}
                             </div>
                             <span class="text-xs font-medium shrink-0 ${statusColor}">${task.status}</span>

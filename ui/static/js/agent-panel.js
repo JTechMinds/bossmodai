@@ -202,20 +202,12 @@ const AgentPanel = (() => {
                               focus:border-bm-accent">
             </div>
 
-            <div id="role-contract-card" class="border border-sky-200 bg-sky-50/70 rounded-lg p-3 space-y-3">
-                <div>
-                    <h3 class="text-sm font-semibold">Role contract</h3>
-                    <p class="text-xs text-bm-muted mt-1">
-                        Hire specialty plus what “good” and failure look like.
-                        Assign routing prefers this specialty; complete/deliver must meet the done/fail bar with a checkable claim.
-                    </p>
-                </div>
+            <div id="role-contract-card" class="space-y-3">
                 <div>
                     <label class="block text-sm font-medium mb-1">Specialty</label>
-                    <p class="text-xs text-bm-muted mb-1.5">One-line specialty (Writer, Auditor, Engineer). Prefer matching this when assigning work.</p>
                     <input type="text" name="role"
                            value="${BossModUtils.escapeHtml(agent?.role || '')}"
-                           placeholder="e.g. Writer"
+                           placeholder="e.g. Writer, Auditor, Engineer"
                            maxlength="120"
                            class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -223,12 +215,13 @@ const AgentPanel = (() => {
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1">Done / fail bar</label>
-                    <p class="text-xs text-bm-muted mb-1.5">What good looks like (tests evidence, artifact path, or allow/deny proof) and what empty done means as failure.</p>
-                    <textarea name="done_fail_bar" rows="2" maxlength="500"
-                              placeholder="Good: tests pass and the artifact path exists. Fail: complete with no evidence."
-                              class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                     bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                     focus:border-bm-accent resize-y">${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}</textarea>
+                    <input type="text" name="done_fail_bar"
+                           value="${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}"
+                           placeholder="Good: tests pass / artifact exists. Fail: empty done."
+                           maxlength="500"
+                           class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                  focus:border-bm-accent">
                 </div>
             </div>
 

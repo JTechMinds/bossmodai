@@ -307,11 +307,11 @@ const CompanyTaskDetail = (() => {
         if (showOpenGuidance) {
             html += `
                 <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                    <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-900 mb-1">
-                        <i data-lucide="clipboard-check" class="w-3.5 h-3.5"></i> Checkable done claim
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-950 mb-1">
+                        <i data-lucide="ban" class="w-3.5 h-3.5"></i> Blocked — checkable claim missing
                     </div>
                     <p class="text-[11px] text-amber-800 leading-relaxed">${esc(guidance)}</p>
-                    <p class="text-[11px] text-amber-800 mt-1">Attach tests evidence, an artifact path that exists, or an allow/deny proof. Empty done is rejected.</p>
+                    <p class="text-[11px] text-amber-800 mt-1">What’s needed: tests evidence, an artifact path that exists, or an allow/deny proof. Empty done is rejected.</p>
                 </div>`;
         } else if (showCompleteClaim) {
             html += `

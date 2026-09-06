@@ -620,6 +620,7 @@ const CompanyTasks = (() => {
                                 <option value="">Unassigned backlog</option>
                                 ${agentOptions}
                             </select>
+                            <div id="ct-assign-mismatch" class="mt-1.5 ${mismatchHint ? '' : 'hidden'}">${mismatchHint}</div>
                         </label>
                     </div>
                     <label class="block">
@@ -628,7 +629,6 @@ const CompanyTasks = (() => {
                                   placeholder="Context, constraints, or the expected deliverable"
                                   class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-y">${escape(assignDescription)}</textarea>
                     </label>
-                    <div id="ct-assign-mismatch" class="${mismatchHint ? '' : 'hidden'}">${mismatchHint}</div>
                     <div class="flex items-center justify-between gap-2">
                         <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate. Matching specialties are listed first.</p>
                         <div class="flex items-center gap-2 shrink-0">

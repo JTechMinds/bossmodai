@@ -153,15 +153,18 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
 def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     panel = Path("ui/static/js/agent-panel.js").read_text(encoding="utf-8")
     assert 'id="role-contract-card"' in panel
-    assert "Role contract" in panel
     assert 'name="role"' in panel
     assert "Specialty" in panel
+    assert 'placeholder="e.g. Writer, Auditor, Engineer"' in panel
     assert 'name="done_fail_bar"' in panel
+    assert 'placeholder="Good: tests pass / artifact exists. Fail: empty done."' in panel
     assert "done_fail_bar: formData.get('done_fail_bar')" in panel
     assert 'id="advanced-toggle"' in panel
     assert "Advanced" in panel
     assert 'name="personality_id"' in panel
-    assert panel.index("Role contract") < panel.index("Advanced")
+    assert panel.index('name="name"') < panel.index('name="role"')
+    assert panel.index('name="role"') < panel.index('name="done_fail_bar"')
+    assert panel.index('name="done_fail_bar"') < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="personality_id"')
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
     assert "specialty_mismatch" in tasks_js
@@ -170,9 +173,11 @@ def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     assert "specialtyWarningMessage" in tasks_js
     assert "(matches)" in tasks_js
     assert "(mismatch)" in tasks_js
+    assert tasks_js.index('id="ct-assign-agent"') < tasks_js.index('id="ct-assign-mismatch"')
+    assert tasks_js.index('id="ct-assign-mismatch"') < tasks_js.index('id="ct-assign-description"')
     detail_js = Path("ui/static/js/company-task-detail.js").read_text(encoding="utf-8")
     assert "doneClaimGuidance" in detail_js
-    assert "Checkable done claim" in detail_js
+    assert "Blocked — checkable claim missing" in detail_js
     assert "Done claim" in detail_js
     assert "allow/deny proof" in detail_js
     activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
@@ -181,6 +186,7 @@ def test_hire_form_keeps_role_field_and_adds_done_fail_bar() -> None:
     assert "No specialty" in context_js
     assert "done_fail_bar" in context_js
     assert "doneClaimGuidance" in context_js
+    assert "Blocked — checkable claim missing" in context_js
     board = Path("core/tasking/board.py").read_text(encoding="utf-8")
     assert "done_claim_guidance" in board
     assert "operator_done_claim_guidance" in board
