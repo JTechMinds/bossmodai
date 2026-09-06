@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import db
+from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.models.message import HUMAN_SENDER_ID
 
 
@@ -94,33 +95,29 @@ async def route_human_channel_message(
     if not members:
         raise ValueError("Channel has no members")
 
-    round_record = db.create_channel_response_round(
+    trigger_requests = start_channel_peer_round(
         channel_id=channel_id,
-        source_message_id=message.id,
+        message_id=message.id,
+        content=message.content,
+        from_name=from_name,
+        author_type="human",
+        channel_name=channel_name,
     )
-    for member in members:
-        agent_id = member.get("id")
-        if not isinstance(agent_id, str) or not agent_id.strip():
-            continue
-        db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
+    for request in trigger_requests:
         await services.enqueue_trigger(
-            agent_id=agent_id,
-            trigger_type="channel_message",
-            source_channel="channel",
-            payload={
-                "content": message.content,
-                "channel_id": channel_id,
-                "round_id": round_record.id,
-                "from_name": from_name,
-                "author_type": "human",
-                "source_message_id": message.id,
-                "channel_name": channel_name,
-            },
+            agent_id=request["agent_id"],
+            trigger_type=request["trigger_type"],
+            source_channel=request["source_channel"],
+            payload=request["payload"],
         )
+
+    round_id = ""
+    if trigger_requests:
+        round_id = str(trigger_requests[0].get("payload", {}).get("round_id") or "")
 
     return {
         "message_id": message.id,
         "message": message,
-        "round_id": round_record.id,
+        "round_id": round_id,
         "members": members,
     }

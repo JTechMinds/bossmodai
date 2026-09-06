@@ -12,6 +12,7 @@ from core.agent_loop.activity_scheduler import (
     build_task_follow_up_trigger,
     build_task_update_trigger,
 )
+from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.task_roles import (
     task_assignment_reply_target,
     task_report_recipient_ids,
@@ -122,6 +123,17 @@ def _append_task_follow_up_message(
             "message_id": message.id,
             "created_at": message.created_at,
         }
+        result.setdefault("trigger_requests", []).extend(
+            start_channel_peer_round(
+                channel_id=task.notification_channel_id,
+                message_id=message.id,
+                content=message.content,
+                from_name=actor.name,
+                author_type="agent",
+                exclude_agent_ids={actor.id},
+                from_agent=actor.id,
+            )
+        )
         return set()
 
     target = task_assignment_reply_target(task, assignee_id=actor.id)
