@@ -474,6 +474,7 @@ async def _run_execution_turn(
                 content=channel_message["content"],
                 author_type=channel_message["author_type"],
                 author_name=channel_message["author_name"],
+                author_agent_id=channel_message.get("author_agent_id"),
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )

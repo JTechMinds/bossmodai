@@ -9,7 +9,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 
 _ALL_COLUMNS = (
     "id, agent_id, path, grant_root, reason, command, content, cwd, task_id, "
-    "status, decision_by, decision_note, decided_at, expires_at, created_at"
+    "channel_id, status, decision_by, decision_note, decided_at, expires_at, created_at"
 )
 
 
@@ -23,6 +23,7 @@ def create_consent_request(
     content: str | None = None,
     cwd: str | None = None,
     task_id: str | None = None,
+    channel_id: str | None = None,
     expires_at: datetime | None = None,
 ) -> HostPathConsentRequest:
     """Insert a pending host-path consent request."""
@@ -30,12 +31,23 @@ def create_consent_request(
         f"""
         INSERT INTO host_path_consent_requests (
             agent_id, path, grant_root, reason, command, content, cwd,
-            task_id, expires_at
+            task_id, channel_id, expires_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING {_ALL_COLUMNS}
         """,
-        [agent_id, path, grant_root, reason, command, content, cwd, task_id, expires_at],
+        [
+            agent_id,
+            path,
+            grant_root,
+            reason,
+            command,
+            content,
+            cwd,
+            task_id,
+            channel_id,
+            expires_at,
+        ],
         HostPathConsentRequest,
     )
 
@@ -75,6 +87,40 @@ def list_consent_requests(
         LIMIT ${len(params)}
         """,
         params,
+        HostPathConsentRequest,
+    )
+
+
+def bind_consent_channel(request_id: str, channel_id: str) -> HostPathConsentRequest | None:
+    """Attach the originating shared channel to one consent request."""
+    token = (channel_id or "").strip()
+    if not token:
+        return get_consent_request(request_id)
+    return fetch_one(
+        f"""
+        UPDATE host_path_consent_requests
+        SET channel_id = $1
+        WHERE id = $2 AND (channel_id IS NULL OR channel_id = '')
+        RETURNING {_ALL_COLUMNS}
+        """,
+        [token, request_id],
+        HostPathConsentRequest,
+    ) or get_consent_request(request_id)
+
+
+def list_pending_for_grant_root(grant_root: str) -> list[HostPathConsentRequest]:
+    """Return pending consent cards that share one company-wide grant root."""
+    token = (grant_root or "").strip()
+    if not token:
+        return []
+    return fetch_all(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE status = 'pending' AND grant_root = $1
+        ORDER BY created_at ASC
+        """,
+        [token],
         HostPathConsentRequest,
     )
 

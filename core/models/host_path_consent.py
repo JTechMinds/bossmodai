@@ -21,6 +21,7 @@ class HostPathConsentRequest(BaseModel):
     content: str | None = None
     cwd: str | None = None
     task_id: str | None = None
+    channel_id: str | None = None
     status: str = "pending"
     decision_by: str | None = None
     decision_note: str | None = None
@@ -30,7 +31,7 @@ class HostPathConsentRequest(BaseModel):
 
     def as_card(self) -> dict[str, str]:
         """Operator-facing card payload for chat / WebSocket."""
-        return {
+        card = {
             "id": self.id,
             "agent_id": self.agent_id,
             "path": self.path,
@@ -38,3 +39,6 @@ class HostPathConsentRequest(BaseModel):
             "reason": self.reason,
             "status": self.status,
         }
+        if self.channel_id:
+            card["channel_id"] = self.channel_id
+        return card

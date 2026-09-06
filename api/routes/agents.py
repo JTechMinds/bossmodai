@@ -632,6 +632,12 @@ def _serialize_meeting_session_message(item) -> dict[str, object]:
 
 def _serialize_channel_message(item) -> dict[str, object]:
     """Serialize one shared channel transcript message."""
+    consent_card = None
+    consent_id = getattr(item, "consent_id", None)
+    if consent_id:
+        request = db.get_consent_request(consent_id)
+        if request is not None:
+            consent_card = request.as_card()
     return {
         "id": item.id,
         "channel_id": item.channel_id,
@@ -640,6 +646,8 @@ def _serialize_channel_message(item) -> dict[str, object]:
         "author_name": item.author_name,
         "content": item.content,
         "source_channel": item.source_channel,
+        "notification_kind": getattr(item, "notification_kind", None),
+        "host_path_consent": consent_card,
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 

@@ -8,6 +8,7 @@ const ChannelsView = (() => {
     let channels = [];
     let selectedChannelId = null;
     let activeContainer = null;
+    const presence = BossModUtils.createChannelPresenceController();
 
     async function loadChannels() {
         const res = await apiFetch('/api/channels', { cache: 'no-store' });
@@ -169,12 +170,16 @@ const ChannelsView = (() => {
                         </div>
                     </div>
                     <div class="mt-3 flex flex-wrap gap-2">
-                        ${members.map(member => `
-                            <span class="inline-flex items-center gap-1.5 rounded-full border border-bm-border bg-white px-2 py-1 text-xs text-bm-text">
-                                <span class="w-2 h-2 rounded-full ${BossModUtils.getStatusDot(member.status || 'idle', member.currentActivityKind)}"></span>
+                        ${members.map(member => {
+                            const thinking = presence.has(channel.id, member.id);
+                            return `
+                            <span class="inline-flex items-center gap-1.5 rounded-full border ${thinking ? 'border-amber-300 bg-amber-50' : 'border-bm-border bg-white'} px-2 py-1 text-xs text-bm-text"
+                                  data-member-id="${BossModUtils.escapeHtml(member.id || '')}">
+                                <span class="w-2 h-2 rounded-full ${thinking ? 'bg-amber-500' : BossModUtils.getStatusDot(member.status || 'idle', member.currentActivityKind)}"></span>
                                 ${BossModUtils.escapeHtml(member.name || 'Unknown')}
-                            </span>
-                        `).join('') || '<span class="text-xs text-bm-muted">No members</span>'}
+                                ${thinking ? '<span class="text-[11px] text-amber-800 italic">thinking</span>' : ''}
+                            </span>`;
+                        }).join('') || '<span class="text-xs text-bm-muted">No members</span>'}
                     </div>
                 </div>
                 <div id="channel-messages" class="flex-1 min-h-0 overflow-y-auto p-4">
@@ -198,6 +203,7 @@ const ChannelsView = (() => {
             for (const message of messages) {
                 appendChannelMessage(messagesEl, message);
             }
+            renderChannelThinking(messagesEl, channel.id);
             messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
@@ -207,6 +213,7 @@ const ChannelsView = (() => {
 
     function appendChannelMessage(messagesEl, message) {
         if (!messagesEl || !message) return;
+        const consent = BossModUtils.isHostPathConsentMessage(message) && message.host_path_consent;
         const authorType = message.author_type || 'agent';
         const bubbleClass =
             authorType === 'human'
@@ -214,18 +221,47 @@ const ChannelsView = (() => {
                 : (authorType === 'system' ? 'from-system' : 'from-agent');
 
         const wrapper = document.createElement('div');
-        wrapper.className = `chat-msg ${bubbleClass} mb-2`;
+        wrapper.className = consent
+            ? 'chat-msg host-path-consent-card mb-2'
+            : `chat-msg ${bubbleClass} mb-2`;
+        if (consent) {
+            wrapper.id = `host-path-consent-${message.host_path_consent.id}`;
+        }
 
         const label = document.createElement('div');
         label.className = 'text-[11px] font-medium opacity-70 mb-1';
         label.textContent = message.author_name || 'Unknown';
         wrapper.appendChild(label);
 
-        const body = document.createElement('div');
-        body.innerText = message.content || '';
-        wrapper.appendChild(body);
+        if (consent) {
+            BossModUtils.renderHostPathConsentCard(wrapper, message.host_path_consent);
+        } else {
+            const body = document.createElement('div');
+            body.innerText = message.content || '';
+            wrapper.appendChild(body);
+        }
 
         messagesEl.appendChild(wrapper);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function renderChannelThinking(messagesEl, channelId) {
+        if (!messagesEl) return;
+        const existing = messagesEl.querySelector('#channel-thinking-indicators');
+        if (existing) existing.remove();
+        const working = presence.list(channelId);
+        if (!working.length) return;
+        const wrap = document.createElement('div');
+        wrap.id = 'channel-thinking-indicators';
+        wrap.className = 'space-y-1 mt-2';
+        for (const member of working) {
+            const row = document.createElement('div');
+            row.className = 'chat-msg from-agent mb-1 text-bm-muted italic';
+            row.dataset.agentId = member.agentId;
+            row.textContent = `${member.name} is thinking...`;
+            wrap.appendChild(row);
+        }
+        messagesEl.appendChild(wrap);
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -240,6 +276,13 @@ const ChannelsView = (() => {
             input.value = '';
             input.style.height = 'auto';
 
+            const channel = channels.find(item => item.id === channelId);
+            const members = Array.isArray(channel?.members) ? channel.members : [];
+            for (const member of members) {
+                if (member?.id) presence.start(channelId, member.id, member.name);
+            }
+            paintPresence(channelId);
+
             try {
                 const res = await apiFetch(`/api/channels/${channelId}/messages`, {
                     method: 'POST',
@@ -251,6 +294,10 @@ const ChannelsView = (() => {
                 }
             } catch (err) {
                 console.error('[ChannelsView] Failed to send channel message:', err);
+                for (const member of members) {
+                    if (member?.id) presence.stop(channelId, member.id);
+                }
+                paintPresence(channelId);
             }
         }
 
@@ -281,9 +328,45 @@ const ChannelsView = (() => {
         if (activeContainer) {
             renderChannelList(activeContainer.querySelector('#channels-list'));
         }
+        if (data.author_type === 'agent' && data.author_agent_id) {
+            presence.stop(data.channel_id, data.author_agent_id);
+        }
         if (selectedChannelId === data.channel_id && activeContainer) {
             void renderSelectedChannel(activeContainer.querySelector('#channel-detail'));
         }
+    }
+
+    function handleChannelPresence(data) {
+        if (!data?.channel_id || !data?.agent_id) return;
+        if (data.phase === 'thinking') {
+            presence.start(data.channel_id, data.agent_id, data.agent_name);
+        } else {
+            presence.stop(data.channel_id, data.agent_id);
+        }
+        paintPresence(data.channel_id);
+    }
+
+    function paintPresence(channelId) {
+        if (!channelId || selectedChannelId !== channelId || !activeContainer) return;
+        const detailEl = activeContainer.querySelector('#channel-detail');
+        if (!detailEl) return;
+        detailEl.querySelectorAll('[data-member-id]').forEach((chip) => {
+            const thinking = presence.has(channelId, chip.dataset.memberId);
+            chip.classList.toggle('border-amber-300', thinking);
+            chip.classList.toggle('bg-amber-50', thinking);
+            chip.classList.toggle('border-bm-border', !thinking);
+            chip.classList.toggle('bg-white', !thinking);
+            let label = chip.querySelector('.channel-member-thinking');
+            if (thinking && !label) {
+                label = document.createElement('span');
+                label.className = 'channel-member-thinking text-[11px] text-amber-800 italic';
+                label.textContent = 'thinking';
+                chip.appendChild(label);
+            } else if (!thinking && label) {
+                label.remove();
+            }
+        });
+        renderChannelThinking(detailEl.querySelector('#channel-messages'), channelId);
     }
 
     function handleChannelUpdated(channelSummary) {
@@ -323,5 +406,6 @@ const ChannelsView = (() => {
         openChannel,
         handleChannelMessage,
         handleChannelUpdated,
+        handleChannelPresence,
     };
 })();

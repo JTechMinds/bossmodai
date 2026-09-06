@@ -298,6 +298,7 @@ async def _run_decision_turn(
                     cli_call.command,
                     cli_call.content,
                     trigger_type=trigger_type,
+                    channel_id=trigger.get("channel_id") if isinstance(trigger.get("channel_id"), str) else None,
                 )
             if cli_call.thought:
                 await manager.broadcast_thought(
@@ -505,6 +506,7 @@ async def _run_decision_turn(
                 content=channel_message["content"],
                 author_type=channel_message["author_type"],
                 author_name=channel_message["author_name"],
+                author_agent_id=channel_message.get("author_agent_id"),
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )

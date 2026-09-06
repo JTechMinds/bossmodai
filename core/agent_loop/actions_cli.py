@@ -24,12 +24,18 @@ async def _handle_bm_cli(
     """Run a bounded BossMod CLI query and return a turn-local result."""
     command = str(action.get("command") or "").strip()
     content = action.get("content")
+    channel_id = None
+    if isinstance(trigger, dict):
+        raw = trigger.get("channel_id")
+        if isinstance(raw, str) and raw.strip():
+            channel_id = raw.strip()
     cli_result = execute_bm_cli(
         agent,
         state,
         command,
         content if isinstance(content, str) else None,
         trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
+        channel_id=channel_id,
     )
     return _cli_action_result(agent, cli_result, command=command)
 
@@ -41,15 +47,21 @@ async def _handle_request_host_access(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Open the host-path consent card before any CLI attempt."""
-    del state, trigger
+    del state
     path = str(action.get("path") or "").strip()
     reason = str(action.get("reason") or "").strip()
+    channel_id = None
+    if isinstance(trigger, dict):
+        raw = trigger.get("channel_id")
+        if isinstance(raw, str) and raw.strip():
+            channel_id = raw.strip()
     cli_result = request_host_path_access(
         agent=agent,
         raw_path=path,
         reason=reason,
         cwd=get_cli_cwd(agent.id),
         task_id=get_active_task_id(agent.id),
+        channel_id=channel_id,
     )
     result = _cli_action_result(agent, cli_result, command="request_host_access")
     if cli_result.ok and not cli_result.consent_required:

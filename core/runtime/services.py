@@ -41,6 +41,8 @@ class EventSink(Protocol):
 
     async def broadcast_channel_message(self, **data: Any) -> None: ...
 
+    async def broadcast_channel_presence(self, **data: Any) -> None: ...
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
 
     async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None: ...
@@ -419,6 +421,9 @@ class RuntimeServices:
             return
         if kind == "channel_message":
             await sink.broadcast_channel_message(**data)
+            return
+        if kind == "channel_presence":
+            await sink.broadcast_channel_presence(**data)
             return
         if kind == "diagnostic":
             await sink.broadcast_diagnostic(data["summary"])

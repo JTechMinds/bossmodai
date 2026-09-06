@@ -148,7 +148,8 @@ def _load_consent_or_approval_history(
 
     Always-allow / approval enqueue is fine; the wake used to fall through
     to empty history, so the execution turn had no operator ask and idled.
-    Prefer the bound task thread when one exists, otherwise human chat.
+    Prefer the bound task thread when one exists, then the originating
+    channel thread, otherwise human chat.
     """
     fetch_limit = _history_fetch_limit(policy.last_n_histories)
     task_id = trigger.get("task_id")
@@ -157,6 +158,15 @@ def _load_consent_or_approval_history(
             task_id=str(task_id),
             limit=fetch_limit,
             earliest_ts=policy.earliest_ts_allowed,
+        )
+        if thread:
+            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+
+    channel_id = trigger.get("channel_id")
+    if isinstance(channel_id, str) and channel_id.strip():
+        thread = db.get_formatted_channel_messages(
+            channel_id.strip(),
+            limit=fetch_limit,
         )
         if thread:
             return _apply_policy_window(thread, agent.id, policy, token_model=token_model)

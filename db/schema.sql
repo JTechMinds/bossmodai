@@ -205,6 +205,8 @@ CREATE TABLE IF NOT EXISTS channel_messages (
     author_name      VARCHAR NOT NULL,
     content          TEXT NOT NULL,
     source_channel   VARCHAR NOT NULL,
+    notification_kind VARCHAR,
+    consent_id       VARCHAR,
     created_at       TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -380,6 +382,7 @@ CREATE TABLE IF NOT EXISTS host_path_consent_requests (
     content         TEXT,
     cwd             VARCHAR,
     task_id         VARCHAR REFERENCES tasks(id),
+    channel_id      VARCHAR,
     status          VARCHAR NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
     decision_by     VARCHAR,

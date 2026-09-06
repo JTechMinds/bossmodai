@@ -142,6 +142,7 @@ def _persist_reply(
                 "content": message.content,
                 "author_type": "agent",
                 "author_name": agent.name,
+                "author_agent_id": agent.id,
                 "message_id": message.id,
                 "created_at": message.created_at,
             }

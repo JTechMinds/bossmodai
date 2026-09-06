@@ -80,7 +80,11 @@ async def emit_chat_notifications(
     action: dict[str, Any],
     result: dict[str, Any],
 ) -> None:
-    """Persist projected chat/channel notifications and broadcast them."""
+    """Persist projected chat/channel notifications and broadcast them.
+
+    Host-path consent cards stay on one origin: the shared channel when
+    ``channel_id`` is set, otherwise Focus/DM. Never both surfaces.
+    """
     from core.runtime.events import runtime_events as manager
 
     for notification in project_chat_notifications(
@@ -99,6 +103,8 @@ async def emit_chat_notifications(
                 author_name=channel_notification["author_name"],
                 message_id=channel_notification.get("message_id"),
                 created_at=channel_notification.get("created_at"),
+                notification_kind=channel_notification.get("notification_kind"),
+                host_path_consent=channel_notification.get("host_path_consent"),
             )
             continue
         chat_notification = persist_chat_notification(agent, notification)
@@ -198,6 +204,8 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         author_name=agent.name,
         content=notification.content,
         source_channel=notification.source_channel,
+        notification_kind=notification.kind,
+        consent_id=notification.consent_id,
     )
     return {
         "channel_id": notification.channel_id,
@@ -206,6 +214,12 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "author_name": message.author_name,
         "message_id": message.id,
         "created_at": message.created_at,
+        "notification_kind": notification.kind,
+        "host_path_consent": (
+            db.get_consent_request(notification.consent_id).as_card()
+            if notification.consent_id and db.get_consent_request(notification.consent_id)
+            else None
+        ),
     }
 
 
@@ -226,6 +240,11 @@ def _build_consent_notification(
         return None
     if db.has_consent_notification(consent_id):
         return None
+    channel_id = _consent_channel_id(trigger)
+    if channel_id:
+        bound = db.bind_consent_channel(consent_id, channel_id)
+        if bound is not None:
+            card = bound.as_card()
     path = str(card.get("path") or "host path")
     reason = str(card.get("reason") or "").strip()
     content = f"{agent.name} needs host-path access: {path}."
@@ -238,6 +257,7 @@ def _build_consent_notification(
         policy="all",
         prompt_visibility=False,
         consent_id=consent_id,
+        channel_id=channel_id,
     )
 
 
@@ -466,6 +486,14 @@ def _resolve_target_name(detail: str) -> str | None:
         tail = tail.split(":", 1)[0]
     name = tail.strip()
     return name or None
+
+
+def _consent_channel_id(trigger: dict[str, Any]) -> str | None:
+    """Return the originating shared channel when consent was asked there."""
+    raw = trigger.get("channel_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 def _notification_source_channel(trigger: dict[str, Any]) -> str:

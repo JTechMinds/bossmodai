@@ -458,6 +458,12 @@ const BossModApp = (() => {
                 }
                 break;
 
+            case 'channel_presence':
+                if (typeof AgentContext !== 'undefined') {
+                    AgentContext.handleChannelPresence(msg.data);
+                }
+                break;
+
             case 'diagnostic':
                 if (typeof DiagnosticsView !== 'undefined') {
                     DiagnosticsView.addEntry(msg.data);
