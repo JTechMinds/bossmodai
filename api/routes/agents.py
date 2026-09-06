@@ -48,6 +48,23 @@ def _auto_assign_desk(
         return None, None
     return picked
 
+
+def _place_agent_at_desk(agent_id: str, desk_x: int | None, desk_y: int | None) -> None:
+    """Seat the live body at an assigned chair so office presence matches the desk."""
+    if desk_x is None or desk_y is None:
+        return
+    from core.agent_loop import activity_runtime
+    from core.world.simulation import simulation
+
+    simulation.clear_agent_path(agent_id)
+    state = db.get_agent_state(agent_id)
+    if state is None or (state.x, state.y) != (desk_x, desk_y):
+        db.update_agent_state(agent_id, x=desk_x, y=desk_y)
+    active = activity_runtime.get_active_activity(agent_id)
+    if active and active.kind == "movement":
+        activity_runtime.resolve_arrival(agent_id)
+
+
 router = APIRouter()
 
 
@@ -331,6 +348,7 @@ async def create_agent(body: AgentCreate) -> Agent:
         api_key=creds.get("api_key"),
         extra_body=creds.get("extra_body"),
     )
+    _place_agent_at_desk(agent.id, agent.desk_x, agent.desk_y)
     # Broadcast to all connected clients
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
@@ -368,6 +386,10 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     agent = db.update_agent(agent_id, **fields)
     if not agent:
         raise HTTPException(404, "Agent not found")
+    previous_desk = (current.desk_x, current.desk_y)
+    next_desk = (agent.desk_x, agent.desk_y)
+    if next_desk != previous_desk:
+        _place_agent_at_desk(agent.id, agent.desk_x, agent.desk_y)
 
     await manager.broadcast_world_state()
     await manager.broadcast_activity(

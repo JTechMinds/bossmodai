@@ -209,13 +209,17 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "A named draft or document exists. Empty done does not count." in utils_js
     assert panel.index('name="name"') < panel.index('name="role"')
     assert panel.index('name="role"') < panel.index('name="description"')
-    assert panel.index('name="description"') < panel.index("Advanced")
+    assert panel.index('name="description"') < panel.index(">Color</label>")
+    assert panel.index(">Color</label>") < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
     assert panel.index('name="done_fail_bar"') < panel.index('name="personality_id"')
     assert panel.index("Advanced") < panel.index("Desk Assignment")
-    assert panel.index("Advanced") < panel.index("Color")
     assert panel.index('name="description"') < panel.index("Desk Assignment")
-    assert panel.index('name="description"') < panel.index("Color")
+    assert "nextUnusedAgentColor" in panel
+    assert "prompt template, and desk" in panel
+    assert "prompt template, color, and desk" not in panel
+    assert "nextUnusedAgentColor" in utils_js
+    assert "mergeRosterFromWorld" in utils_js
     tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
     assert "specialty_mismatch" in tasks_js
     assert "confirm_specialty_mismatch" in tasks_js
@@ -261,6 +265,9 @@ def test_create_agent_api_auto_assigns_an_unoccupied_desk(
     assert second.status_code == 201
     assert first.json()["desk_x"] is not None
     assert first.json()["desk_y"] is not None
+    first_state = db.get_agent_state(first.json()["id"])
+    assert first_state is not None
+    assert (first_state.x, first_state.y) == (first.json()["desk_x"], first.json()["desk_y"])
     assert (second.json()["desk_x"], second.json()["desk_y"]) != (
         first.json()["desk_x"],
         first.json()["desk_y"],
@@ -297,6 +304,12 @@ def test_update_agent_api_auto_assigns_desk_when_unassigned(
     assert patched.status_code == 200
     assert patched.json()["desk_x"] is not None
     assert patched.json()["desk_y"] is not None
+    seated_state = db.get_agent_state(wanderer.id)
+    assert seated_state is not None
+    assert (seated_state.x, seated_state.y) == (
+        patched.json()["desk_x"],
+        patched.json()["desk_y"],
+    )
     assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (seated.desk_x, seated.desk_y)
     assert (patched.json()["desk_x"], patched.json()["desk_y"]) != (
         open_seat.json()["desk_x"],

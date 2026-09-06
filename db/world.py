@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.world.tilemap import get_room_at
 from db.crud import query
 
 
 def get_world_state() -> list[dict[str, Any]]:
     """Return all agents joined with their state for WebSocket broadcast."""
-    return query(
+    rows = query(
         """
         SELECT
             a.id, a.name, a.role, a.description, a.done_fail_bar, a.color,
@@ -25,6 +26,10 @@ def get_world_state() -> list[dict[str, Any]]:
         ORDER BY a.created_at
         """,
     )
+    for row in rows:
+        room = get_room_at(int(row.get("x") or 0), int(row.get("y") or 0))
+        row["location"] = room["name"] if room else "Unknown"
+    return rows
 
 
 def get_nearby_agents(

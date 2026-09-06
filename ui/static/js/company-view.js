@@ -32,20 +32,9 @@ const CompanyView = (() => {
     }
 
     function handleWorldUpdate(agents) {
-        if (!Array.isArray(agents) || !roster.length) return;
-        const byId = new Map(agents.map(agent => [agent.id, agent]));
-        roster = roster.map(item => {
-            const runtime = byId.get(item.id);
-            if (!runtime) return item;
-            return {
-                ...item,
-                status: runtime.status || item.status,
-                currentActivityKind: runtime.currentActivityKind ?? item.currentActivityKind,
-                idle_since: runtime.idle_since ?? item.idle_since,
-                x: runtime.x ?? item.x,
-                y: runtime.y ?? item.y,
-            };
-        });
+        if (!Array.isArray(agents)) return;
+        roster = BossModUtils.mergeRosterFromWorld(roster, agents);
+        pruneSelection();
         if (activeContainer) {
             renderRosterList(activeContainer.querySelector('#company-roster-list'));
             updateSelectionUi(activeContainer);
