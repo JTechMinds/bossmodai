@@ -65,10 +65,10 @@ def _api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def test_casual_hire_shows_color_under_description() -> None:
     panel = _read("agent-panel.js")
     assert 'name="description"' in panel
-    assert "Color" in panel
-    assert panel.index('name="description"') < panel.index("Color")
-    assert panel.index("Color") < panel.index('id="advanced-toggle"')
-    assert panel.index("Color") < panel.index('name="done_fail_bar"')
+    assert ">Color</label>" in panel
+    assert panel.index('name="description"') < panel.index(">Color</label>")
+    assert panel.index(">Color</label>") < panel.index('id="advanced-toggle"')
+    assert panel.index(">Color</label>") < panel.index('name="done_fail_bar"')
     assert panel.index('id="advanced-toggle"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
     assert "prompt template, and desk" in panel
