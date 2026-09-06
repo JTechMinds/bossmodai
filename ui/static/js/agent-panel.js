@@ -222,6 +222,9 @@ const AgentPanel = (() => {
                        class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                               bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                               focus:border-bm-accent">
+                <p id="agent-name-duplicate-warn" class="hidden text-xs text-amber-800 mt-1">
+                    An agent with this name already exists. You can still create another.
+                </p>
             </div>
 
             <div id="role-contract-card" class="space-y-3">
@@ -441,9 +444,10 @@ const AgentPanel = (() => {
 
             <!-- Actions -->
             <div class="flex gap-2 pt-2">
-                <button type="submit"
+                <button type="submit" id="agent-form-submit"
                         class="flex-1 px-4 py-2 bg-bm-accent text-white rounded-lg
-                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                               hover:bg-bm-accent-hover transition-colors text-sm font-medium
+                               disabled:opacity-50 disabled:pointer-events-none">
                     ${agent ? 'Save Changes' : 'Create Agent'}
                 </button>
                 ${agent ? `
@@ -493,6 +497,29 @@ const AgentPanel = (() => {
 
         bindFinishLineSuggestion(container, agent);
         bindRuntimeCorePreview(container, agent);
+        bindDuplicateNameWarning(container, roster, agent);
+    }
+
+    function bindDuplicateNameWarning(container, roster, agent) {
+        const nameInput = container.querySelector('input[name="name"]');
+        const warnEl = container.querySelector('#agent-name-duplicate-warn');
+        if (!nameInput || !warnEl) return;
+
+        function refresh() {
+            const typed = String(nameInput.value || '').trim().toLowerCase();
+            const clash = Boolean(
+                typed
+                && (roster || []).some((item) => (
+                    item
+                    && item.id !== agent?.id
+                    && String(item.name || '').trim().toLowerCase() === typed
+                ))
+            );
+            warnEl.classList.toggle('hidden', !clash);
+        }
+
+        nameInput.addEventListener('input', refresh);
+        refresh();
     }
 
     function bindRuntimeCorePreview(container, agent) {
@@ -681,13 +708,23 @@ const AgentPanel = (() => {
         feedbackEl.className = 'hidden mt-3 p-3 rounded-lg text-sm';
         form.appendChild(feedbackEl);
 
+        const submitBtn = form.querySelector('#agent-form-submit');
+        const hireSubmit = BossModUtils.createInFlightGate();
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
-            feedbackEl.textContent = 'Saving...';
+            if (hireSubmit.busy()) return;
 
-                const { agentData, promptHistoryPolicy } = await buildSubmitData(form, connections);
+            await hireSubmit.run(async () => {
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = isCreating ? 'Creating…' : 'Saving…';
+                }
+                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
+                feedbackEl.textContent = 'Saving...';
+
                 try {
+                    const { agentData, promptHistoryPolicy } = await buildSubmitData(form, connections);
                     let savedAgent = null;
                     if (isCreating) {
                         savedAgent = await apiCreateAgent(agentData);
@@ -709,13 +746,19 @@ const AgentPanel = (() => {
                     await refreshCanvas();
                     feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-emerald-50 border border-emerald-200 text-emerald-700';
                     feedbackEl.textContent = 'Saved successfully';
-                setTimeout(() => { feedbackEl.className = 'hidden'; }, 3000);
-                if (onSave) onSave(savedAgent);
-            } catch (err) {
-                console.error('[AgentPanel] Save failed:', err);
-                feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
-                feedbackEl.textContent = err?.message || 'Save failed — check console for details';
-            }
+                    setTimeout(() => { feedbackEl.className = 'hidden'; }, 3000);
+                    if (onSave) onSave(savedAgent);
+                } catch (err) {
+                    console.error('[AgentPanel] Save failed:', err);
+                    feedbackEl.className = 'mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                    feedbackEl.textContent = err?.message || 'Save failed — check console for details';
+                } finally {
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = isCreating ? 'Create Agent' : 'Save Changes';
+                    }
+                }
+            });
         });
 
         if (deleteBtn) {

@@ -19,7 +19,12 @@ from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.decision_contract import parse_direct_turn_response
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.loop import run_turn
-from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
+from core.agent_loop.notifications import (
+    emit_chat_notifications,
+    persist_channel_notification,
+    persist_chat_notification,
+    project_chat_notifications,
+)
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.runtime_core import format_runtime_core_block, preview_runtime_core
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
@@ -398,6 +403,132 @@ async def test_request_host_access_opens_card_without_cli(tmp_path: Path) -> Non
     )
     assert len(notes) == 1
     assert notes[0].kind == "host_path_consent"
+    assert notes[0].channel_id is None
+
+
+async def test_channel_origin_consent_projects_interactive_card_in_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "channel-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("channel\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+    peer = db.create_agent("Channel Peer")
+    channel = db.create_channel(
+        name="Ops",
+        member_agent_ids=[agent.id, peer.id],
+        created_by=agent.id,
+    )
+    parsed = parse_action(
+        '{"act":"request_host_access","data":{"path":"%s","why":"Need the shared file"},"th":"ask"}'
+        % fixture
+    )
+    result = await execute_action(parsed, agent, state)
+    trigger = {
+        "type": "channel_message",
+        "source_channel": "channel",
+        "channel_id": channel.id,
+        "content": f"Please read {fixture}",
+    }
+    notes = project_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action=parsed,
+        result=result,
+    )
+    assert len(notes) == 1
+    assert notes[0].kind == "host_path_consent"
+    assert notes[0].channel_id == channel.id
+    assert notes[0].consent_id
+
+    await emit_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action=parsed,
+        result=result,
+    )
+    stored = db.list_notifications(agent_id=agent.id, chat_visible=True)
+    assert any(item.kind == "host_path_consent" for item in stored)
+    messages = db.list_channel_messages(channel.id)
+    cards = [item for item in messages if item.consent_id == notes[0].consent_id]
+    assert len(cards) == 1
+    assert cards[0].notification_kind == "host_path_consent"
+    assert cards[0].author_type == "system"
+
+    client = _api_client(monkeypatch)
+    payload = client.get(f"/api/channels/{channel.id}", headers=_headers())
+    assert payload.status_code == 200
+    serialized = [
+        item
+        for item in payload.json()["messages"]
+        if item.get("notification_kind") == "host_path_consent"
+    ]
+    assert len(serialized) == 1
+    assert serialized[0]["host_path_consent"]["id"] == notes[0].consent_id
+    assert serialized[0]["host_path_consent"]["path"]
+    assert serialized[0]["host_path_consent"]["status"] == "pending"
+
+
+def test_channel_consent_deny_keeps_workspace_host_roots_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "channel-deny"
+    host.mkdir()
+    fixture = host / "secret.txt"
+    fixture.write_text("nope\n", encoding="utf-8")
+    agent, _state = _agent_and_state()
+    channel = db.create_channel(
+        name="Deny Thread",
+        member_agent_ids=[agent.id],
+        created_by=agent.id,
+    )
+    first = request_host_path_access(
+        agent=agent,
+        raw_path=str(fixture),
+        reason="Need the secret",
+        cwd="/me",
+    )
+    assert first.consent_required is True
+    request_id = first.consent_request_id
+    note = persist_channel_notification(
+        agent,
+        project_chat_notifications(
+            agent=agent,
+            trigger={"type": "channel_message", "source_channel": "channel", "channel_id": channel.id},
+            active_activity=None,
+            action={"action": "request_host_access"},
+            result={
+                "event": "host_path_consent_required",
+                "consent_required": True,
+                "consent_request_id": request_id,
+                "consent_reused": False,
+                "host_path_consent": (first.data or {}).get("host_path_consent"),
+            },
+        )[0],
+    )
+    assert note["host_path_consent"]["id"] == request_id
+
+    before = next((item.value for item in db.get_settings() if item.key == "workspace_host_roots"), "")
+    client = _api_client(monkeypatch)
+    denied = client.post(f"/api/host-path-consent/{request_id}/deny", headers=_headers())
+    assert denied.status_code == 200
+    assert denied.json()["status"] == "denied"
+    after = next((item.value for item in db.get_settings() if item.key == "workspace_host_roots"), "")
+    assert after == before
+    assert str(host.resolve()) not in (after or "").splitlines()
+
+    refreshed = client.get(f"/api/channels/{channel.id}", headers=_headers())
+    cards = [
+        item
+        for item in refreshed.json()["messages"]
+        if item.get("host_path_consent")
+    ]
+    assert cards[0]["host_path_consent"]["status"] == "denied"
 
 
 def test_request_host_access_etc_is_hard_denied_without_a_card() -> None:

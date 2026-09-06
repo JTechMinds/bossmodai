@@ -482,6 +482,150 @@ const BossModUtils = (() => {
         return { show, hide, sync, ownerId };
     }
 
+    // ─── One-at-a-time submit / action gate ───
+
+    function createInFlightGate() {
+        let inFlight = false;
+
+        function busy() {
+            return inFlight;
+        }
+
+        async function run(fn) {
+            if (inFlight) return { started: false, reason: 'in-flight' };
+            if (typeof fn !== 'function') return { started: false, reason: 'blocked' };
+            inFlight = true;
+            try {
+                const value = await fn();
+                return { started: true, value };
+            } finally {
+                inFlight = false;
+            }
+        }
+
+        return { busy, run };
+    }
+
+    // ─── Per-member channel thinking / working presence ───
+
+    function createChannelPresenceController() {
+        const members = new Map();
+
+        function key(channelId, agentId) {
+            return `${channelId}::${agentId}`;
+        }
+
+        function start(channelId, agentId, agentName) {
+            if (!channelId || !agentId) return false;
+            members.set(key(channelId, agentId), {
+                channelId: String(channelId),
+                agentId: String(agentId),
+                name: agentName || 'Agent',
+            });
+            return true;
+        }
+
+        function stop(channelId, agentId) {
+            if (!channelId || !agentId) return false;
+            return members.delete(key(channelId, agentId));
+        }
+
+        function stopAll(channelId) {
+            if (!channelId) return 0;
+            const prefix = `${channelId}::`;
+            let removed = 0;
+            for (const itemKey of Array.from(members.keys())) {
+                if (itemKey.startsWith(prefix)) {
+                    members.delete(itemKey);
+                    removed += 1;
+                }
+            }
+            return removed;
+        }
+
+        function list(channelId) {
+            if (!channelId) return [];
+            return Array.from(members.values()).filter((item) => item.channelId === String(channelId));
+        }
+
+        function has(channelId, agentId) {
+            if (!channelId || !agentId) return false;
+            return members.has(key(channelId, agentId));
+        }
+
+        return { start, stop, stopAll, list, has };
+    }
+
+    function isHostPathConsentMessage(message) {
+        return Boolean(
+            message
+            && (
+                message.notification_kind === 'host_path_consent'
+                || message.host_path_consent
+            )
+        );
+    }
+
+    function renderHostPathConsentCard(container, card) {
+        if (!container || !card) return;
+        const title = document.createElement('div');
+        title.className = 'hpc-title';
+        title.textContent = 'Host path consent';
+        const pathEl = document.createElement('div');
+        pathEl.className = 'hpc-path';
+        pathEl.textContent = card.path || '';
+        const reasonEl = document.createElement('div');
+        reasonEl.className = 'hpc-reason';
+        reasonEl.textContent = card.reason || '';
+        container.appendChild(title);
+        container.appendChild(pathEl);
+        if (card.reason) container.appendChild(reasonEl);
+
+        const status = card.status || 'pending';
+        if (status !== 'pending') {
+            const resolved = document.createElement('div');
+            resolved.className = 'hpc-status';
+            resolved.textContent = status === 'denied'
+                ? 'Denied'
+                : (status === 'always_allowed' ? 'Always allowed' : 'Allowed once');
+            container.appendChild(resolved);
+            return;
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'host-path-consent-actions';
+        [
+            { label: 'Allow once', path: 'allow-once' },
+            { label: 'Always allow', path: 'always-allow' },
+            { label: 'Deny', path: 'deny' },
+        ].forEach((item) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'hpc-action';
+            btn.textContent = item.label;
+            btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, actions));
+            actions.appendChild(btn);
+        });
+        container.appendChild(actions);
+    }
+
+    async function decideHostPathConsent(container, card, action, actions) {
+        Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
+        try {
+            const res = await apiFetchOk(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
+            const updated = await res.json();
+            container.replaceChildren();
+            renderHostPathConsentCard(container, updated);
+            if (window.lucide) lucide.createIcons({ nodes: [container] });
+        } catch (err) {
+            Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
+            const note = document.createElement('div');
+            note.className = 'hpc-status';
+            note.textContent = err?.message || 'Consent update failed.';
+            container.appendChild(note);
+        }
+    }
+
     return {
         escapeHtml,
         normalizeAgent,
@@ -508,6 +652,11 @@ const BossModUtils = (() => {
         createLoadGeneration,
         setComposerError,
         createComposerSendGate,
+        createInFlightGate,
         createChatTypingController,
+        createChannelPresenceController,
+        isHostPathConsentMessage,
+        renderHostPathConsentCard,
+        decideHostPathConsent,
     };
 })();

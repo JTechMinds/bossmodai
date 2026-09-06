@@ -357,7 +357,7 @@ const AgentContext = (() => {
 
     function isHostPathConsent(msg) {
         return (msg?.message_type === 'system' || msg?.from === 'system')
-            && (msg?.notification_kind === 'host_path_consent' || Boolean(msg?.host_path_consent));
+            && BossModUtils.isHostPathConsentMessage(msg);
     }
 
     function getVisibleChatMessages(messages) {
@@ -847,7 +847,7 @@ const AgentContext = (() => {
         if (consent && message?.host_path_consent) {
             msgDiv.className = 'chat-msg host-path-consent-card mb-2';
             msgDiv.id = `host-path-consent-${message.host_path_consent.id}`;
-            renderHostPathConsentCard(msgDiv, message.host_path_consent);
+            BossModUtils.renderHostPathConsentCard(msgDiv, message.host_path_consent);
         } else {
             let bubbleClass = 'from-agent';
             if (fromType === 'human') {
@@ -873,66 +873,6 @@ const AgentContext = (() => {
         messagesEl.appendChild(msgDiv);
         if (window.lucide) lucide.createIcons({ nodes: [msgDiv] });
         messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function renderHostPathConsentCard(container, card) {
-        const title = document.createElement('div');
-        title.className = 'hpc-title';
-        title.textContent = 'Host path consent';
-        const pathEl = document.createElement('div');
-        pathEl.className = 'hpc-path';
-        pathEl.textContent = card.path || '';
-        const reasonEl = document.createElement('div');
-        reasonEl.className = 'hpc-reason';
-        reasonEl.textContent = card.reason || '';
-        container.appendChild(title);
-        container.appendChild(pathEl);
-        if (card.reason) container.appendChild(reasonEl);
-
-        const status = card.status || 'pending';
-        if (status !== 'pending') {
-            const resolved = document.createElement('div');
-            resolved.className = 'hpc-status';
-            resolved.textContent = status === 'denied'
-                ? 'Denied'
-                : (status === 'always_allowed' ? 'Always allowed' : 'Allowed once');
-            container.appendChild(resolved);
-            return;
-        }
-
-        const actions = document.createElement('div');
-        actions.className = 'host-path-consent-actions';
-        const buttons = [
-            { label: 'Allow once', path: 'allow-once' },
-            { label: 'Always allow', path: 'always-allow' },
-            { label: 'Deny', path: 'deny' },
-        ];
-        buttons.forEach((item) => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'hpc-action';
-            btn.textContent = item.label;
-            btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, btn, actions));
-            actions.appendChild(btn);
-        });
-        container.appendChild(actions);
-    }
-
-    async function decideHostPathConsent(container, card, action, clicked, actions) {
-        Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
-        try {
-            const res = await apiFetchOk(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
-            const updated = await res.json();
-            container.replaceChildren();
-            renderHostPathConsentCard(container, updated);
-            if (window.lucide) lucide.createIcons({ nodes: [container] });
-        } catch (err) {
-            Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
-            const note = document.createElement('div');
-            note.className = 'hpc-status';
-            note.textContent = err?.message || 'Consent update failed.';
-            container.appendChild(note);
-        }
     }
 
     function handleChatMessage(data) {
@@ -1202,6 +1142,12 @@ const AgentContext = (() => {
     function handleChannelUpdated(data) {
         if (typeof ChannelsView !== 'undefined') {
             ChannelsView.handleChannelUpdated(data);
+        }
+    }
+
+    function handleChannelPresence(data) {
+        if (typeof ChannelsView !== 'undefined') {
+            ChannelsView.handleChannelPresence(data);
         }
     }
 
@@ -1778,6 +1724,7 @@ const AgentContext = (() => {
         handleMeetingMessage,
         handleChannelMessage,
         handleChannelUpdated,
+        handleChannelPresence,
         handleWorldUpdate,
         openChannel,
         applyChatSendState,

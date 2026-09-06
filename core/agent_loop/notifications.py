@@ -90,6 +90,35 @@ async def emit_chat_notifications(
         action=action,
         result=result,
     ):
+        if notification.kind == "host_path_consent":
+            chat_notification = persist_chat_notification(agent, notification)
+            await manager.broadcast_chat_message(
+                agent_id=chat_notification["agent_id"],
+                content=chat_notification["content"],
+                from_type=chat_notification["from_type"],
+                from_name=chat_notification["from_name"],
+                message_type=chat_notification.get("message_type"),
+                message_id=chat_notification.get("message_id"),
+                created_at=chat_notification.get("created_at"),
+                notification_kind=chat_notification.get("notification_kind"),
+                desk_path=chat_notification.get("desk_path"),
+                host_path_consent=chat_notification.get("host_path_consent"),
+            )
+            if chat_notification.get("feed_entry"):
+                await manager.broadcast_feed_update(chat_notification["feed_entry"])
+            if notification.channel_id:
+                channel_notification = persist_channel_notification(agent, notification)
+                await manager.broadcast_channel_message(
+                    channel_id=channel_notification["channel_id"],
+                    content=channel_notification["content"],
+                    author_type=channel_notification["author_type"],
+                    author_name=channel_notification["author_name"],
+                    message_id=channel_notification.get("message_id"),
+                    created_at=channel_notification.get("created_at"),
+                    notification_kind=channel_notification.get("notification_kind"),
+                    host_path_consent=channel_notification.get("host_path_consent"),
+                )
+            continue
         if notification.channel_id:
             channel_notification = persist_channel_notification(agent, notification)
             await manager.broadcast_channel_message(
@@ -99,6 +128,8 @@ async def emit_chat_notifications(
                 author_name=channel_notification["author_name"],
                 message_id=channel_notification.get("message_id"),
                 created_at=channel_notification.get("created_at"),
+                notification_kind=channel_notification.get("notification_kind"),
+                host_path_consent=channel_notification.get("host_path_consent"),
             )
             continue
         chat_notification = persist_chat_notification(agent, notification)
@@ -198,6 +229,8 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         author_name=agent.name,
         content=notification.content,
         source_channel=notification.source_channel,
+        notification_kind=notification.kind,
+        consent_id=notification.consent_id,
     )
     return {
         "channel_id": notification.channel_id,
@@ -206,6 +239,12 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "author_name": message.author_name,
         "message_id": message.id,
         "created_at": message.created_at,
+        "notification_kind": notification.kind,
+        "host_path_consent": (
+            db.get_consent_request(notification.consent_id).as_card()
+            if notification.consent_id and db.get_consent_request(notification.consent_id)
+            else None
+        ),
     }
 
 
@@ -238,6 +277,7 @@ def _build_consent_notification(
         policy="all",
         prompt_visibility=False,
         consent_id=consent_id,
+        channel_id=_consent_channel_id(trigger),
     )
 
 
@@ -466,6 +506,14 @@ def _resolve_target_name(detail: str) -> str | None:
         tail = tail.split(":", 1)[0]
     name = tail.strip()
     return name or None
+
+
+def _consent_channel_id(trigger: dict[str, Any]) -> str | None:
+    """Return the originating shared channel when consent was asked there."""
+    raw = trigger.get("channel_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 def _notification_source_channel(trigger: dict[str, Any]) -> str:

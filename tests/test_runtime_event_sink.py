@@ -43,6 +43,9 @@ class _RecordingSink:
     async def broadcast_channel_message(self, **data: Any) -> None:
         self.calls.append(("channel_message", data))
 
+    async def broadcast_channel_presence(self, **data: Any) -> None:
+        self.calls.append(("channel_presence", data))
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         self.calls.append(("diagnostic", summary))
 

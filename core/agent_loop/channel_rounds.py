@@ -122,6 +122,7 @@ def post_agent_channel_share(
         "content": message.content,
         "author_type": message.author_type,
         "author_name": agent.name,
+        "author_agent_id": agent.id,
         "message_id": message.id,
         "created_at": message.created_at,
     }

@@ -150,6 +150,9 @@ class ConnectionManager:
         author_name: str,
         message_id: str | None = None,
         created_at: Any = None,
+        notification_kind: str | None = None,
+        host_path_consent: dict[str, Any] | None = None,
+        author_agent_id: str | None = None,
     ) -> None:
         """Broadcast one shared channel transcript message."""
         await self.broadcast({
@@ -159,8 +162,30 @@ class ConnectionManager:
                 "content": content,
                 "author_type": author_type,
                 "author_name": author_name,
+                "author_agent_id": author_agent_id,
                 "message_id": message_id,
                 "created_at": created_at,
+                "notification_kind": notification_kind,
+                "host_path_consent": host_path_consent,
+            },
+        })
+
+    async def broadcast_channel_presence(
+        self,
+        *,
+        channel_id: str,
+        agent_id: str,
+        agent_name: str,
+        phase: str,
+    ) -> None:
+        """Broadcast one member's in-flight thinking/working presence."""
+        await self.broadcast({
+            "type": "channel_presence",
+            "data": {
+                "channel_id": channel_id,
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "phase": phase,
             },
         })
 

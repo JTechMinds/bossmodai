@@ -497,6 +497,15 @@ class TurnDispatcher:
                 self._heartbeat_claim_lease(trigger_id, claim_generation)
             )
 
+        channel_id = _channel_id_for_presence(trigger)
+        if channel_id:
+            await manager.broadcast_channel_presence(
+                channel_id=channel_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                phase="thinking",
+            )
+
         try:
             outcome = await run_turn(agent, state, trigger)
             result = outcome.result
@@ -537,6 +546,13 @@ class TurnDispatcher:
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
         finally:
+            if channel_id:
+                await manager.broadcast_channel_presence(
+                    channel_id=channel_id,
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                    phase="idle",
+                )
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -651,6 +667,16 @@ class TurnDispatcher:
                 "nearby_names": [eligible_peer["name"]],
             },
         )
+
+
+def _channel_id_for_presence(trigger: dict[str, Any]) -> str | None:
+    """Return the shared channel for an in-flight channel turn, if any."""
+    if trigger.get("type") not in {"channel_message", "channel_response"}:
+        return None
+    raw = trigger.get("channel_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 dispatcher = TurnDispatcher()

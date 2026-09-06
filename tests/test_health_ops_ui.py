@@ -40,15 +40,17 @@ def test_company_image_preview_uses_authenticated_blob_url() -> None:
 
 def test_walk_receipts_stay_visible_when_system_toggle_off() -> None:
     chat = (JS / "agent-context.js").read_text(encoding="utf-8")
+    utils = (JS / "utils.js").read_text(encoding="utf-8")
     assert "function isWalkReceipt(" in chat
     assert "notification_kind === 'receipt'" in chat
     assert "function isHostPathConsent(" in chat
-    assert "notification_kind === 'host_path_consent'" in chat
+    assert "BossModUtils.isHostPathConsentMessage(msg)" in chat
     assert "|| isWalkReceipt(msg) || isHostPathConsent(msg)" in chat
     assert "host-path-consent-card" in chat
-    assert "Allow once" in chat
-    assert "Always allow" in chat
-    assert "Deny" in chat
+    assert "function renderHostPathConsentCard(" in utils
+    assert "Allow once" in utils
+    assert "Always allow" in utils
+    assert "Deny" in utils
 
 
 def test_pyproject_drops_unused_duckdb_and_twilio() -> None:

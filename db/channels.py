@@ -11,7 +11,10 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 
 _CHANNEL_COLUMNS = "id, name, kind, status, created_by, created_at, updated_at, archived_at"
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
-_MESSAGE_COLUMNS = "id, channel_id, author_type, author_agent_id, author_name, content, source_channel, created_at"
+_MESSAGE_COLUMNS = (
+    "id, channel_id, author_type, author_agent_id, author_name, content, "
+    "source_channel, notification_kind, consent_id, created_at"
+)
 
 
 def create_channel(
@@ -189,14 +192,17 @@ def create_channel_message(
     content: str,
     source_channel: str,
     author_agent_id: str | None = None,
+    notification_kind: str | None = None,
+    consent_id: str | None = None,
 ) -> ChannelMessage:
     """Append one message to the shared channel transcript."""
     message = insert_returning(
         f"""
         INSERT INTO channel_messages (
-            channel_id, author_type, author_agent_id, author_name, content, source_channel, created_at
+            channel_id, author_type, author_agent_id, author_name, content,
+            source_channel, notification_kind, consent_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING {_MESSAGE_COLUMNS}
         """,
         [
@@ -206,6 +212,8 @@ def create_channel_message(
             author_name,
             content,
             source_channel,
+            notification_kind,
+            consent_id,
             datetime.now(timezone.utc),
         ],
         ChannelMessage,

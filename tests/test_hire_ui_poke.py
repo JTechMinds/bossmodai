@@ -78,6 +78,25 @@ def test_casual_hire_shows_color_under_description() -> None:
     assert "prompt template, color, and desk" not in panel
 
 
+def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
+    panel = _read("agent-panel.js")
+    utils = _read("utils.js")
+    assert "createInFlightGate()" in utils
+    assert "const hireSubmit = BossModUtils.createInFlightGate()" in panel
+    assert "if (hireSubmit.busy()) return;" in panel
+    assert "id=\"agent-form-submit\"" in panel
+    assert "disabled:pointer-events-none" in panel
+    assert "Creating…" in panel
+    assert "id=\"agent-name-duplicate-warn\"" in panel
+    assert "bindDuplicateNameWarning" in panel
+    submit = panel.split("form.addEventListener('submit', async (e) => {", 1)[1].split(
+        "if (deleteBtn)", 1
+    )[0]
+    assert "hireSubmit.run(" in submit
+    assert submit.index("if (hireSubmit.busy()) return;") < submit.index("hireSubmit.run(")
+    assert submit.index("submitBtn.disabled = true") < submit.index("apiCreateAgent")
+
+
 def test_successful_create_dismisses_hire_form() -> None:
     source = _read("agent-context.js")
     on_save = source.split("await AgentPanel.renderInline(container, selectedAgent, async (savedAgent) => {", 1)[1]

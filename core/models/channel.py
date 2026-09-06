@@ -50,4 +50,6 @@ class ChannelMessage(BaseModel):
     author_name: str
     content: str
     source_channel: str
+    notification_kind: str | None = None
+    consent_id: str | None = None
     created_at: datetime
