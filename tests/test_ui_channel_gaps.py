@@ -13,6 +13,7 @@ JS = ROOT / "ui" / "static" / "js"
 PRESENCE_HARNESS = Path(__file__).resolve().parent / "js_channel_presence_harness.cjs"
 GATE_HARNESS = Path(__file__).resolve().parent / "js_inflight_gate_harness.cjs"
 THREAD_DOM_HARNESS = Path(__file__).resolve().parent / "js_channel_thread_dom_harness.cjs"
+ARCHIVE_HARNESS = Path(__file__).resolve().parent / "js_channel_archive_harness.cjs"
 
 
 def _read(name: str) -> str:
@@ -114,6 +115,29 @@ def test_thread_switch_keeps_shell_and_uses_cache() -> None:
     html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
     assert "js/channel-thread-dom.js" in html
     assert html.index("js/channel-thread-dom.js") < html.index("js/channels-view.js")
+
+
+def test_channel_archive_harness_stays_clickable_after_keep_shell_switch() -> None:
+    result = subprocess.run(
+        [
+            "node",
+            str(ARCHIVE_HARNESS),
+            str(JS / "utils.js"),
+            str(JS / "channel-thread-dom.js"),
+            str(JS / "channels-view.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "archiveHandoffEnabled": True,
+        "keepShellSwitchEnabled": True,
+        "sameButton": True,
+    }
 
 
 def test_channel_thread_dom_harness_caches_and_swaps_without_loading() -> None:

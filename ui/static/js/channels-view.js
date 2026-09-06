@@ -469,6 +469,7 @@ const ChannelsView = (() => {
     function bindArchive(channelId) {
         const archiveBtn = document.getElementById('channel-archive-btn');
         if (!archiveBtn || !channelId) return;
+        archiveBtn.disabled = false;
         archiveBtn.onclick = async () => {
             if (!window.confirm('Archive this thread? It will leave the active list.')) return;
             archiveBtn.disabled = true;
