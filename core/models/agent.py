@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,7 @@ class Agent(BaseModel):
     storage_key: str
     name: str
     role: str | None = None
+    done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
 
@@ -79,6 +80,16 @@ class AgentState(BaseModel):
 # API input models
 # ---------------------------------------------------------------------------
 
+def _normalize_optional_text(value: str | None, *, max_len: int) -> str | None:
+    """Strip optional hire-contract text and drop empty strings."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text[:max_len]
+
+
 class AgentCreate(BaseModel):
     """Payload accepted by POST /api/agents to create a new agent."""
 
@@ -86,6 +97,7 @@ class AgentCreate(BaseModel):
 
     name: str
     role: str | None = None
+    done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
     desk_x: int | None = None
@@ -102,6 +114,16 @@ class AgentCreate(BaseModel):
     extra_body: str | None = None
     connection_id: str | None = None
 
+    @field_validator("role")
+    @classmethod
+    def _normalize_role(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=120)
+
+    @field_validator("done_fail_bar")
+    @classmethod
+    def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=500)
+
 
 class AgentUpdate(BaseModel):
     """Partial update payload for PATCH /api/agents/{id}.
@@ -111,6 +133,7 @@ class AgentUpdate(BaseModel):
 
     name: str | None = None
     role: str | None = None
+    done_fail_bar: str | None = None
     prompt_template: str | None = None
     color: str | None = None
 
@@ -132,3 +155,13 @@ class AgentUpdate(BaseModel):
     guardian_velocity_limit: int | None = None
     guardian_repetition_threshold: float | None = None
     guardian_no_progress_threshold: int | None = None
+
+    @field_validator("role")
+    @classmethod
+    def _normalize_role(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=120)
+
+    @field_validator("done_fail_bar")
+    @classmethod
+    def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, max_len=500)

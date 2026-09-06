@@ -7,9 +7,19 @@ from fastapi import APIRouter, HTTPException, Response
 from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.deliverables import build_work_contract
+from core.agent_loop.role_contracts import (
+    evaluate_specialty_assignment,
+    infer_work_kind,
+    is_auditor_specialty,
+    match_specialty,
+    operator_done_claim_guidance,
+    parse_done_claim_from_text,
+    rank_agents_for_work,
+    suggested_assignees,
+)
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
-from core.models import Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
+from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
@@ -39,29 +49,50 @@ async def list_tasks(
     agent_ids = {t.assigned_to for t in tasks if t.assigned_to}
     agent_ids |= {t.requester_id for t in tasks if t.requester_id}
     agent_ids |= {t.owner_id for t in tasks if t.owner_id}
-    agent_names: dict[str, str] = {}
-    agent_storage_keys: dict[str, str] = {}
+    agents_by_id: dict[str, object] = {}
     for aid in agent_ids:
         agent = db.get_agent(aid)
         if agent:
-            agent_names[aid] = agent.name
-            agent_storage_keys[aid] = agent.storage_key
+            agents_by_id[aid] = agent
     recent_events = db.list_recent_task_events([task.id for task in tasks], limit_per_task=1)
     return [
-        {
-            **t.model_dump(mode="json"),
-            "assigned_to_name": agent_names.get(t.assigned_to) if t.assigned_to else None,
-            "assigned_to_storage_key": agent_storage_keys.get(t.assigned_to) if t.assigned_to else None,
-            "requester_name": agent_names.get(t.requester_id) if t.requester_id else None,
-            "owner_name": agent_names.get(t.owner_id) if t.owner_id else None,
-            "latest_event": (
-                recent_events[t.id][-1].model_dump(mode="json")
-                if recent_events.get(t.id)
-                else None
-            ),
-        }
+        _serialize_listed_task(t, agents_by_id, recent_events.get(t.id))
         for t in tasks
     ]
+
+
+def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None) -> dict:
+    """Serialize one task row with assignee contract and done-claim status."""
+    assignee = agents_by_id.get(task.assigned_to) if task.assigned_to else None
+    latest = recent_events[-1] if recent_events else None
+    has_files = bool(task.work_contract and task.work_contract.deliverables)
+    done_claim = None
+    if task.status == "complete" and latest is not None and latest.event_type == "completion":
+        done_claim = parse_done_claim_from_text(latest.content)
+    return {
+        **task.model_dump(mode="json"),
+        "assigned_to_name": assignee.name if assignee is not None else None,
+        "assigned_to_role": assignee.role if assignee is not None else None,
+        "assigned_to_done_fail_bar": assignee.done_fail_bar if assignee is not None else None,
+        "assigned_to_storage_key": assignee.storage_key if assignee is not None else None,
+        "requester_name": (
+            agents_by_id[task.requester_id].name
+            if task.requester_id and task.requester_id in agents_by_id
+            else None
+        ),
+        "owner_name": (
+            agents_by_id[task.owner_id].name
+            if task.owner_id and task.owner_id in agents_by_id
+            else None
+        ),
+        "latest_event": latest.model_dump(mode="json") if latest is not None else None,
+        "done_claim": done_claim,
+        "done_claim_guidance": operator_done_claim_guidance(
+            auditor=is_auditor_specialty(assignee.role if assignee is not None else None),
+            done_fail_bar=assignee.done_fail_bar if assignee is not None else None,
+            has_file_deliverables=has_files,
+        ),
+    }
 
 
 def _task_candidate_summaries(tasks: tuple | list) -> list[TaskCandidateSummary]:
@@ -125,6 +156,57 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             )
     if body.bind_task_id and not db.get_task(body.bind_task_id):
         raise HTTPException(404, "Task not found")
+
+    specialty_warning = None
+    ranked_suggestions: list[AssigneeSuggestion] = []
+    if body.assigned_to and not body.bind_task_id:
+        assignee = db.get_agent(body.assigned_to)
+        if assignee is None:
+            raise HTTPException(404, "Assigned agent not found")
+        teammates = db.list_agents()
+        evaluation = evaluate_specialty_assignment(
+            assignee=assignee,
+            title=body.title,
+            description=body.description,
+            requested_specialty=body.requested_specialty,
+            teammates=teammates,
+            confirm=body.confirm_specialty_mismatch,
+        )
+        ranked_suggestions = suggested_assignees(evaluation.suggested)
+        if evaluation.deny:
+            response.status_code = 409
+            return TaskCreateResponse(
+                task=None,
+                outcome="specialty_mismatch",
+                reason=evaluation.warning,
+                specialty_warning=evaluation.warning,
+                suggested_assignees=ranked_suggestions,
+            )
+        specialty_warning = evaluation.warning
+    elif not body.assigned_to:
+        work_kind = infer_work_kind(
+            body.title,
+            body.description,
+            requested_specialty=body.requested_specialty,
+        )
+        if work_kind is not None:
+            ranked = rank_agents_for_work(
+                db.list_agents(),
+                title=body.title,
+                description=body.description,
+                requested_specialty=body.requested_specialty,
+            )
+            ranked_suggestions = [
+                AssigneeSuggestion(
+                    id=agent.id,
+                    name=agent.name,
+                    role=agent.role,
+                    match=match_specialty(assignee_role=agent.role, work_kind=work_kind),
+                )
+                for agent in ranked
+                if match_specialty(assignee_role=agent.role, work_kind=work_kind) == "match"
+            ]
+
     owner_id = body.owner_id or default_task_owner_id(
         assignee_id=body.assigned_to,
         requester_id=requester_id,
@@ -182,7 +264,12 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             else f'Existing task "{task.title}" reused for the same workstream'
         ),
     )
-    return TaskCreateResponse(task=task, outcome=creation.outcome)
+    return TaskCreateResponse(
+        task=task,
+        outcome=creation.outcome,
+        specialty_warning=specialty_warning,
+        suggested_assignees=ranked_suggestions,
+    )
 
 
 @router.get("/tasks/board")

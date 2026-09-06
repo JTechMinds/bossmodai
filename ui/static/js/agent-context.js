@@ -474,14 +474,17 @@ const AgentContext = (() => {
         const esc = BossModUtils.escapeHtml;
         const status = BossModUtils.getStatusLabel(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
         const dotCls = BossModUtils.getStatusDot(selectedAgent.status || 'idle', selectedAgent.currentActivityKind);
-        const role = selectedAgent.role || 'No role assigned';
+        const specialty = selectedAgent.role || 'No specialty';
+        const doneBar = (selectedAgent.done_fail_bar || '').trim();
+        const doneBarShort = doneBar.length > 72 ? `${doneBar.slice(0, 71)}…` : doneBar;
         const taskId = selectedAgent.boundTaskId;
 
         bar.innerHTML = `
             <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-4 min-w-0 text-[11px]">
                     <span class="font-semibold text-xs text-bm-text truncate" style="color: ${esc(selectedAgent.color || '#3b82f6')}">${esc(selectedAgent.name)}</span>
-                    <span class="text-bm-muted truncate" title="Role">${esc(role)}</span>
+                    <span class="text-bm-muted truncate" title="Specialty">${esc(specialty)}</span>
+                    ${doneBarShort ? `<span class="text-bm-muted truncate" title="${esc(doneBar)}">${esc(doneBarShort)}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-3 shrink-0 text-[11px]">
                     ${taskId ? `<span class="text-bm-muted">Task: <span class="font-medium text-bm-text">${esc(taskId.slice(0, 8))}</span></span>` : '<span class="text-bm-muted">No active task</span>'}
@@ -1242,8 +1245,10 @@ const AgentContext = (() => {
                                 ${task.description ? `<p class="text-xs text-bm-muted mt-0.5">${BossModUtils.escapeHtml(task.description.slice(0, 120))}</p>` : ''}
                                 <div class="text-[11px] text-bm-muted mt-1">
                                     ${task.assigned_to_name ? BossModUtils.escapeHtml(task.assigned_to_name) : ''}
+                                    ${task.assigned_to_role ? ` • ${BossModUtils.escapeHtml(task.assigned_to_role)}` : ''}
                                     ${task.owner_name && task.owner_name !== task.assigned_to_name ? ` • owner: ${BossModUtils.escapeHtml(task.owner_name)}` : ''}
                                 </div>
+                                ${task.status !== 'complete' ? `<div class="mt-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1.5"><p class="text-[11px] font-semibold text-amber-950">Blocked — checkable claim missing</p><p class="text-[11px] text-amber-800 mt-0.5">${BossModUtils.escapeHtml(BossModUtils.doneClaimGuidance(task))}</p><p class="text-[11px] text-amber-800">What’s needed: tests evidence, an artifact path, or an allow/deny proof.</p></div>` : ''}
                                 ${task.latest_event?.content ? `<p class="text-[11px] text-bm-muted mt-1">Latest: ${BossModUtils.escapeHtml(task.latest_event.content.slice(0, 140))}</p>` : ''}
                             </div>
                             <span class="text-xs font-medium shrink-0 ${statusColor}">${task.status}</span>

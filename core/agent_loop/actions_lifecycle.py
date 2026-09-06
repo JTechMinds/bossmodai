@@ -17,7 +17,7 @@ from core.agent_loop.activity_scheduler import (
     build_task_assigned_trigger,
     build_task_update_trigger,
 )
-from core.agent_loop.deliverables import missing_deliverables, summarize_deliverable
+from core.agent_loop.role_contracts import evaluate_specialty_assignment, resolve_done_claim
 from core.agent_loop.task_followups import (
     _CHILD_UPDATES_TO_PARENT_EVENT_TYPES,
     _append_task_follow_up_message,
@@ -126,19 +126,9 @@ async def _handle_complete(
             "detail": 'This task needs a short requester-facing update. Include data.msg in your "done" action.',
             "agent_name": agent.name,
         }
-    pending_deliverables = missing_deliverables(
-        agent_id=agent.id,
-        agent_storage_key=agent.storage_key,
-        task=task,
-    )
-    if pending_deliverables:
-        first = summarize_deliverable(pending_deliverables[0])
-        return {
-            "event": "world_feedback",
-            "detail": f'Required deliverable missing: {first}. Satisfy all declared deliverables before complete.',
-            "agent_name": agent.name,
-            "missing_deliverables": [item.model_dump() for item in pending_deliverables],
-        }
+    done_claim, claim_error = resolve_done_claim(agent=agent, task=task, action=action)
+    if claim_error:
+        return claim_error
 
     transition_task(
         task_id,
@@ -174,14 +164,25 @@ async def _handle_complete(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    if done_claim is not None:
+        result["done_claim"] = done_claim.as_dict()
+        result["chat_notification"]["done_claim"] = done_claim.as_dict()
     if task is not None:
+        claim_note = ""
+        if done_claim is not None:
+            claim_bits = [done_claim.type]
+            if done_claim.path:
+                claim_bits.append(done_claim.path)
+            if done_claim.evidence:
+                claim_bits.append(done_claim.evidence)
+            claim_note = f" Claim: {' — '.join(claim_bits)}."
         completion_event = append_task_event(
             task_id=task.id,
             author_type="agent",
             author_agent_id=agent.id,
             author_name=agent.name,
             event_type="completion",
-            content=summary or f'Completed "{task.title}".',
+            content=(summary or f'Completed "{task.title}".') + claim_note,
             source_trigger_id=(trigger or {}).get("trigger_id"),
         )
         parent = db.get_task(task.parent_task_id) if task.parent_task_id else None
@@ -379,6 +380,26 @@ async def _handle_delegated(
     if target is None:
         return {"event": "status_changed", "detail": "No valid delegate target specified", "agent_name": agent.name}
     original_task = db.get_task(task_id)
+    if original_task is not None:
+        evaluation = evaluate_specialty_assignment(
+            assignee=target,
+            title=original_task.title,
+            description=original_task.description,
+            teammates=db.list_agents(),
+            confirm=bool(action.get("confirmSpecialtyMismatch")),
+        )
+        if evaluation.deny:
+            return {
+                "event": "world_feedback",
+                "detail": evaluation.warning,
+                "agent_name": agent.name,
+                "specialty_warning": evaluation.warning,
+                "suggested_assignees": [
+                    {"id": item.id, "name": item.name, "role": item.role}
+                    for item in evaluation.suggested
+                ],
+                "expected_action": "delegated",
+            }
     follow_up_message = action.get("followUpMessage")
     if _task_requires_conversational_follow_up(original_task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()

@@ -59,11 +59,12 @@ def test_parse_action_compact_idle_and_done() -> None:
     assert idle["thought"] == "nothing to do"
 
     done = parse_action(
-        '{"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft."},"th":"complete"}'
+        '{"act":"done","data":{"sum":"Draft saved.","msg":"Finished the draft.","claim":{"type":"proof","ev":"allow: /me/draft.md"}},"th":"complete"}'
     )
     assert done["action"] == "complete"
     assert done["summary"] == "Draft saved."
     assert done["followUpMessage"] == "Finished the draft."
+    assert done["doneClaim"]["type"] == "proof"
 
 
 def test_parse_action_garbage_returns_parse_failed() -> None:

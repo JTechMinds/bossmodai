@@ -112,6 +112,8 @@ const CompanyTaskDetail = (() => {
         html += `</div>`;
         html += `</div>`;
 
+        html += renderRoleContractSection(task);
+
         // ── Timestamps ──
         html += `<div class="ct-detail-section py-2">`;
         html += `<div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-bm-muted">`;
@@ -256,6 +258,73 @@ const CompanyTaskDetail = (() => {
     }
 
     // ─── Internal ───
+
+    function resolveDoneClaim(task) {
+        if (task.done_claim && typeof task.done_claim === 'object') return task.done_claim;
+        const latest = task.latest_event;
+        if (!latest || latest.event_type !== 'completion') return null;
+        const content = latest.content || '';
+        const marker = ' Claim: ';
+        const markerAt = content.indexOf(marker);
+        if (markerAt < 0) return null;
+        const tail = content.slice(markerAt + marker.length).trim();
+        if (!tail) return null;
+        const parts = tail.split('—').map(part => part.trim()).filter(Boolean);
+        const type = (parts[0] || '').toLowerCase();
+        const claim = { type: ['artifact', 'tests', 'proof'].includes(type) ? type : 'proof' };
+        if (parts[1] && (claim.type === 'artifact' || parts[1].startsWith('/'))) claim.path = parts[1];
+        else if (parts[1]) claim.evidence = parts[1];
+        if (parts[2]) claim.evidence = parts[2];
+        return claim;
+    }
+
+    function renderRoleContractSection(task) {
+        const esc = config.escapeHtml;
+        const specialty = task.assigned_to_role || '';
+        const doneBar = task.assigned_to_done_fail_bar || '';
+        const guidance = BossModUtils.doneClaimGuidance(task);
+        const claim = resolveDoneClaim(task);
+        const claimLabel = BossModUtils.formatDoneClaim(claim);
+        const showOpenGuidance = task.status !== 'complete' && Boolean(task.assigned_to);
+        const showCompleteClaim = task.status === 'complete' && Boolean(claimLabel);
+        if (!specialty && !doneBar && !showOpenGuidance && !showCompleteClaim) return '';
+
+        let html = `<div class="ct-detail-section">`;
+        html += `<div class="flex items-center gap-1.5 mb-2">`;
+        html += `<i data-lucide="shield-check" class="w-3.5 h-3.5 text-bm-muted"></i>`;
+        html += `<span class="text-xs font-semibold text-bm-text">Role contract</span>`;
+        html += `</div>`;
+        if (specialty || doneBar) {
+            html += `<div class="text-xs text-bm-muted space-y-0.5 mb-2">`;
+            if (specialty) {
+                html += `<p><span class="font-medium text-bm-text">Specialty:</span> ${esc(specialty)}</p>`;
+            }
+            if (doneBar) {
+                html += `<p><span class="font-medium text-bm-text">Done/fail bar:</span> ${esc(doneBar)}</p>`;
+            }
+            html += `</div>`;
+        }
+        if (showOpenGuidance) {
+            html += `
+                <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-950 mb-1">
+                        <i data-lucide="ban" class="w-3.5 h-3.5"></i> Blocked — checkable claim missing
+                    </div>
+                    <p class="text-[11px] text-amber-800 leading-relaxed">${esc(guidance)}</p>
+                    <p class="text-[11px] text-amber-800 mt-1">What’s needed: tests evidence, an artifact path that exists, or an allow/deny proof. Empty done is rejected.</p>
+                </div>`;
+        } else if (showCompleteClaim) {
+            html += `
+                <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 mb-1">
+                        <i data-lucide="badge-check" class="w-3.5 h-3.5"></i> Done claim
+                    </div>
+                    <p class="text-sm text-emerald-800">${esc(claimLabel || 'Completed with a checkable claim.')}</p>
+                </div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
 
     function bindNavLinks(el) {
         el.querySelectorAll('.ct-nav-link').forEach(link => {

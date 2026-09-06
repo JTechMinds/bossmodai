@@ -127,6 +127,10 @@ def _get_reference_materials(agent_id: str) -> list[str]:
     teammates = [agent for agent in db.list_agents() if agent.id != agent_id]
     for teammate in teammates:
         role = f" ({teammate.role})" if teammate.role else ""
-        materials.append(f"- {teammate.name}{role} — agentId: {teammate.id}")
+        bar = teammate.done_fail_bar.strip() if teammate.done_fail_bar else ""
+        if len(bar) > 120:
+            bar = f"{bar[:117]}..."
+        suffix = f" — done/fail: {bar}" if bar else ""
+        materials.append(f"- {teammate.name}{role} — agentId: {teammate.id}{suffix}")
 
     return materials

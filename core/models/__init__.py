@@ -30,6 +30,7 @@ from core.models.settings import (
     AIPersonalityUpdate,
 )
 from core.models.task import (
+    AssigneeSuggestion,
     Task,
     TaskCandidateSummary,
     TaskCreate,
@@ -62,6 +63,7 @@ __all__ = [
     "MeetingSession",
     "MeetingSessionMessage",
     # Task
+    "AssigneeSuggestion",
     "Task",
     "TaskCandidateSummary",
     "TaskCreate",

@@ -229,7 +229,8 @@ const CompanyView = (() => {
                                 <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${BossModUtils.escapeHtml(agent.color || '#3b82f6')}"></span>
                                 <span class="font-medium truncate">${BossModUtils.escapeHtml(agent.name || 'Unknown')}</span>
                             </div>
-                            <p class="text-xs text-bm-muted mt-1 truncate">${BossModUtils.escapeHtml(agent.role || 'No role')}</p>
+                            <p class="text-xs text-bm-muted mt-1 truncate">${BossModUtils.escapeHtml(agent.role || 'No specialty')}</p>
+                            ${agent.done_fail_bar ? `<p class="text-[11px] text-bm-muted mt-1 truncate" title="${BossModUtils.escapeHtml(agent.done_fail_bar)}">${BossModUtils.escapeHtml(agent.done_fail_bar)}</p>` : ''}
                             <div class="mt-2 flex items-center flex-wrap gap-2">
                                 <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${statusClasses}">
                                     <span class="w-1.5 h-1.5 rounded-full ${statusDot}"></span>

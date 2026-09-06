@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.models.notification import NotificationSourceChannel, TaskNotificationPolicy
 from core.models.work_contract import WorkContract
@@ -90,9 +90,16 @@ class TaskCreate(BaseModel):
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
     notification_channel_id: str | None = None
+    requested_specialty: str | None = None
+    confirm_specialty_mismatch: bool = False
 
 
-TaskCreateOutcome = Literal["create_new_task", "bind_existing_task", "clarify_ambiguous_match"]
+TaskCreateOutcome = Literal[
+    "create_new_task",
+    "bind_existing_task",
+    "clarify_ambiguous_match",
+    "specialty_mismatch",
+]
 
 
 class TaskCandidateSummary(BaseModel):
@@ -106,6 +113,15 @@ class TaskCandidateSummary(BaseModel):
     last_activity: datetime | None = None
 
 
+class AssigneeSuggestion(BaseModel):
+    """One teammate suggested when assign routing prefers a specialty match."""
+
+    id: str
+    name: str
+    role: str | None = None
+    match: Literal["match", "unknown", "mismatch"] = "unknown"
+
+
 class TaskCreateResponse(BaseModel):
     """POST /api/tasks result, including whether the workstream was reused."""
 
@@ -113,3 +129,5 @@ class TaskCreateResponse(BaseModel):
     outcome: TaskCreateOutcome
     candidates: list[TaskCandidateSummary] = []
     reason: str | None = None
+    specialty_warning: str | None = None
+    suggested_assignees: list[AssigneeSuggestion] = Field(default_factory=list)

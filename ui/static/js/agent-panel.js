@@ -202,32 +202,27 @@ const AgentPanel = (() => {
                               focus:border-bm-accent">
             </div>
 
-            <!-- Role -->
-            <div>
-                <label class="block text-sm font-medium mb-1">Role</label>
-                <input type="text" name="role"
-                       value="${BossModUtils.escapeHtml(agent?.role || '')}"
-                       placeholder="e.g. Product Manager"
-                       class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                              focus:border-bm-accent">
-            </div>
-
-            <!-- Personality -->
-            <div>
-                <label class="block text-sm font-medium mb-1">Personality</label>
-                ${noPersonalities
-                    ? `<p class="text-xs text-bm-muted mb-1.5">No personalities configured.
-                         <button type="button" id="btn-goto-personalities" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
-                    : `<p class="text-xs text-bm-muted mb-1.5">Copies the prompt template into this agent.</p>
-                       <select name="personality_id"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
-                           <option value="">No personality</option>
-                           ${personalityOptions}
-                       </select>`
-                }
+            <div id="role-contract-card" class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Specialty</label>
+                    <input type="text" name="role"
+                           value="${BossModUtils.escapeHtml(agent?.role || '')}"
+                           placeholder="e.g. Writer, Auditor, Engineer"
+                           maxlength="120"
+                           class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                  focus:border-bm-accent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Done / fail bar</label>
+                    <input type="text" name="done_fail_bar"
+                           value="${BossModUtils.escapeHtml(agent?.done_fail_bar || '')}"
+                           placeholder="Good: tests pass / artifact exists. Fail: empty done."
+                           maxlength="500"
+                           class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                  focus:border-bm-accent">
+                </div>
             </div>
 
             <!-- Color -->
@@ -280,17 +275,38 @@ const AgentPanel = (() => {
             </div>
 
             <div class="border border-bm-border rounded-lg p-3 bg-white">
-                <button type="button" id="ai-history-toggle"
+                <button type="button" id="advanced-toggle"
                         class="w-full flex items-center justify-between text-left">
                     <div>
-                        <h3 class="text-sm font-semibold">AI History</h3>
+                        <h3 class="text-sm font-semibold">Advanced</h3>
                         <p class="text-xs text-bm-muted mt-1">
+                            Optional prompt template (personality) and model-visible history controls. Not part of the role contract.
+                        </p>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
+                </button>
+                <div id="advanced-content" class="hidden mt-3 space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Personality</label>
+                        ${noPersonalities
+                            ? `<p class="text-xs text-bm-muted mb-1.5">No personalities configured.
+                                 <button type="button" id="btn-goto-personalities" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
+                            : `<p class="text-xs text-bm-muted mb-1.5">Optional. Copies a prompt template into this agent; leave empty to keep the default.</p>
+                               <select name="personality_id"
+                                       class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                              focus:border-bm-accent">
+                                   <option value="">No personality</option>
+                                   ${personalityOptions}
+                               </select>`
+                        }
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-semibold text-bm-text">AI History</h4>
+                        <p class="text-xs text-bm-muted mt-1 mb-2">
                             Controls the backend view used for model-visible conversation history.
                         </p>
                     </div>
-                    <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="ai-history-chevron"></i>
-                </button>
-                <div id="ai-history-content" class="hidden mt-3 space-y-3">
                     <div class="grid grid-cols-1 gap-3">
                         <div>
                             <label class="block text-xs font-medium mb-1">Last N History Items</label>
@@ -414,16 +430,15 @@ const AgentPanel = (() => {
             });
         }
 
-        // AI History collapsible accordion
-        const historyToggle = container.querySelector('#ai-history-toggle');
-        const historyContent = container.querySelector('#ai-history-content');
-        const historyChevron = container.querySelector('#ai-history-chevron');
-        if (historyToggle && historyContent && historyChevron) {
-            historyToggle.addEventListener('click', () => {
-                historyContent.classList.toggle('hidden');
-                historyChevron.style.transform = historyContent.classList.contains('hidden') ? '' : 'rotate(90deg)';
+        const advancedToggle = container.querySelector('#advanced-toggle');
+        const advancedContent = container.querySelector('#advanced-content');
+        const advancedChevron = container.querySelector('#advanced-chevron');
+        if (advancedToggle && advancedContent && advancedChevron) {
+            advancedToggle.addEventListener('click', () => {
+                advancedContent.classList.toggle('hidden');
+                advancedChevron.style.transform = advancedContent.classList.contains('hidden') ? '' : 'rotate(90deg)';
             });
-            if (window.lucide) lucide.createIcons({ nodes: [historyToggle] });
+            if (window.lucide) lucide.createIcons({ nodes: [advancedToggle] });
         }
     }
 
@@ -441,6 +456,7 @@ const AgentPanel = (() => {
         const agentData = {
             name: formData.get('name'),
             role: formData.get('role') || null,
+            done_fail_bar: formData.get('done_fail_bar') || null,
             color: formData.get('agent-color') || '#3b82f6',
             desk_x,
             desk_y,

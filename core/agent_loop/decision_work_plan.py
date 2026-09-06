@@ -9,6 +9,7 @@ from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.decision_task_bind import _ambiguous_match_feedback
 from core.agent_loop.deliverables import build_work_contract
+from core.agent_loop.role_contracts import evaluate_specialty_assignment, prefer_specialty_match
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models import Agent, AgentState
 from core.tasking.service import create_or_bind_subtask
@@ -95,16 +96,24 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
             if len(matches) == 1:
                 target = matches[0]
             elif len(matches) > 1:
-                return {
-                    "error_result": {
-                        "event": "world_feedback",
-                        "detail": (
-                            f'More than one teammate is named "{delegation.agentName}". '
-                            "Use the exact teammate from the roster or task board."
-                        ),
-                        "agent_name": agent.name,
+                preferred = prefer_specialty_match(
+                    matches,
+                    title=delegation.taskTitle,
+                    description=delegation.taskDescription,
+                )
+                if preferred is not None:
+                    target = preferred
+                else:
+                    return {
+                        "error_result": {
+                            "event": "world_feedback",
+                            "detail": (
+                                f'More than one teammate is named "{delegation.agentName}". '
+                                "Use the exact teammate from the roster or task board."
+                            ),
+                            "agent_name": agent.name,
+                        }
                     }
-                }
             elif not matches:
                 prefix_matches = [
                     item
@@ -115,17 +124,25 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
                 if len(prefix_matches) == 1:
                     target = prefix_matches[0]
                 elif len(prefix_matches) > 1:
-                    options = ", ".join(sorted({item.name for item in prefix_matches}))
-                    return {
-                        "error_result": {
-                            "event": "world_feedback",
-                            "detail": (
-                                f'More than one teammate matches "{delegation.agentName}". '
-                                f"Be specific. Matching teammates: {options}."
-                            ),
-                            "agent_name": agent.name,
+                    preferred = prefer_specialty_match(
+                        prefix_matches,
+                        title=delegation.taskTitle,
+                        description=delegation.taskDescription,
+                    )
+                    if preferred is not None:
+                        target = preferred
+                    else:
+                        options = ", ".join(sorted({item.name for item in prefix_matches}))
+                        return {
+                            "error_result": {
+                                "event": "world_feedback",
+                                "detail": (
+                                    f'More than one teammate matches "{delegation.agentName}". '
+                                    f"Be specific. Matching teammates: {options}."
+                                ),
+                                "agent_name": agent.name,
+                            }
                         }
-                    }
         if target is None:
             requested = delegation.agentName or delegation.agentId or "that teammate"
             available = ", ".join(sorted(item.name for item in agents if item.id != agent.id))
@@ -145,6 +162,25 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
                     "event": "world_feedback",
                     "detail": "Delegated child tasks must target another teammate, not yourself.",
                     "agent_name": agent.name,
+                }
+            }
+        evaluation = evaluate_specialty_assignment(
+            assignee=target,
+            title=delegation.taskTitle,
+            description=delegation.taskDescription,
+            teammates=agents,
+        )
+        if evaluation.deny:
+            return {
+                "error_result": {
+                    "event": "world_feedback",
+                    "detail": evaluation.warning,
+                    "agent_name": agent.name,
+                    "specialty_warning": evaluation.warning,
+                    "suggested_assignees": [
+                        {"id": item.id, "name": item.name, "role": item.role}
+                        for item in evaluation.suggested
+                    ],
                 }
             }
         resolved.append(

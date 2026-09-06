@@ -36,7 +36,8 @@ RULES:
   - mtg + mode="room": if the goal is to run a meeting with teammates, include data.aids (list, even for one); NEVER use data.aid
   - idle: use when there is no active work and there is no useful next execution step in this turn
   - wait: require data.why; use it when the current task stays open but is waiting on another person, review, or external dependency
-  - done: require data.sum; include data.msg when you should report completion back to the requester/owner now
+  - done: require data.sum and a checkable claim; include data.claim {type: artifact|tests|proof, path?, ev?} unless a file deliverable is already satisfied; include data.msg when you should report completion back to the requester/owner now
+  - assign: prefer a teammate whose specialty matches the work; if it is a clear mismatch, pick a better teammate or set data.confirm=true only after stating why
   - block / drop: require data.why; include data.msg when you should report the problem back now
   - deleg: require data.aid; include data.msg when you should report the handoff back now
   - use socialmsg for ordinary coworker chat that does not create or continue task work

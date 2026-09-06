@@ -294,6 +294,7 @@ FIELD NOTES
 - `mode="delegate"` means another teammate owns the deliverable and the parent task is coordination/reporting work.
 - `mode="mixed"` means you will both own parent work and create child delegated tasks.
 - Use `who` when you know the teammate by name; use `aid` when you know the exact agent id.
+- Prefer a teammate whose specialty matches the child work. A clear mismatch (writer vs review/audit) is rejected unless a matching teammate is chosen.
 - If another teammate will do the deliverable you are promising, include that child task in `data.plan.children` on the same accept decision.
 - For a pure coordination handoff, keep the parent task focused on coordination and put the file deliverable on the delegated child task instead of the parent task.
 - `status` belongs in `intent`, never in `act`.

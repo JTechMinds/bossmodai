@@ -543,13 +543,64 @@ const CompanyTasks = (() => {
         }
     }
 
+    function rankedRoster() {
+        return rosterAgents.slice().sort((a, b) => {
+            const rankDelta = BossModUtils.specialtyRank(a, assignTitle, assignDescription)
+                - BossModUtils.specialtyRank(b, assignTitle, assignDescription);
+            if (rankDelta !== 0) return rankDelta;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    }
+
+    function assigneeOptionLabel(agent) {
+        const status = BossModUtils.specialtyMatch(agent.role, assignTitle, assignDescription);
+        let label = agent.name || 'Teammate';
+        if (agent.role) label += ` — ${agent.role}`;
+        if (status === 'match') label += ' (matches)';
+        if (status === 'mismatch') label += ' (mismatch)';
+        return label;
+    }
+
+    function renderAssignMismatchHint() {
+        const escape = BossModUtils.escapeHtml;
+        if (!assignAgentId) return '';
+        const agent = rosterAgents.find(item => item.id === assignAgentId);
+        const warning = BossModUtils.specialtyWarningMessage(agent, assignTitle, assignDescription);
+        if (!warning) return '';
+        return `
+            <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p class="text-xs font-medium text-amber-950 mb-0.5">Specialty mismatch</p>
+                <p class="text-[11px] text-amber-800">${escape(warning)}</p>
+            </div>`;
+    }
+
+    function refreshAssignSpecialtyHints() {
+        if (!container) return;
+        const escape = BossModUtils.escapeHtml;
+        const select = container.querySelector('#ct-assign-agent');
+        if (select) {
+            const options = rankedRoster().map(agent => (
+                `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(assigneeOptionLabel(agent))}</option>`
+            )).join('');
+            select.innerHTML = `<option value="">Unassigned backlog</option>${options}`;
+            select.value = assignAgentId;
+        }
+        const hint = container.querySelector('#ct-assign-mismatch');
+        if (hint) {
+            const html = renderAssignMismatchHint();
+            hint.innerHTML = html;
+            hint.classList.toggle('hidden', !html);
+        }
+    }
+
     function renderAssignPanel() {
         const escape = BossModUtils.escapeHtml;
         if (!assignFormOpen) return '';
 
-        const agentOptions = rosterAgents.map(agent => (
-            `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(agent.name)}${agent.role ? ` — ${escape(agent.role)}` : ''}</option>`
+        const agentOptions = rankedRoster().map(agent => (
+            `<option value="${escape(agent.id)}" ${assignAgentId === agent.id ? 'selected' : ''}>${escape(assigneeOptionLabel(agent))}</option>`
         )).join('');
+        const mismatchHint = renderAssignMismatchHint();
 
         return `
             <div id="ct-assign-panel" class="px-4 py-3 border-b border-bm-border bg-white shrink-0">
@@ -569,6 +620,7 @@ const CompanyTasks = (() => {
                                 <option value="">Unassigned backlog</option>
                                 ${agentOptions}
                             </select>
+                            <div id="ct-assign-mismatch" class="mt-1.5 ${mismatchHint ? '' : 'hidden'}">${mismatchHint}</div>
                         </label>
                     </div>
                     <label class="block">
@@ -578,7 +630,7 @@ const CompanyTasks = (() => {
                                   class="w-full px-2.5 py-1.5 text-sm border border-bm-border rounded-lg bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent resize-y">${escape(assignDescription)}</textarea>
                     </label>
                     <div class="flex items-center justify-between gap-2">
-                        <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate.</p>
+                        <p class="text-[11px] text-bm-muted">Same title + assignee reuses an open workstream instead of creating a duplicate. Matching specialties are listed first.</p>
                         <div class="flex items-center gap-2 shrink-0">
                             <button type="button" id="ct-assign-cancel"
                                     class="px-2.5 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">Cancel</button>
@@ -632,6 +684,31 @@ const CompanyTasks = (() => {
                 </div>`;
         }
 
+        if (assignResult.outcome === 'specialty_mismatch') {
+            const reason = assignResult.reason || assignResult.specialty_warning || 'That assignee specialty does not match this work.';
+            const suggested = Array.isArray(assignResult.suggested_assignees) ? assignResult.suggested_assignees : [];
+            const rows = suggested.length === 0
+                ? `<p class="text-[11px] text-amber-800">No matching specialty is on the roster. Confirm only if this mismatch is intentional.</p>`
+                : suggested.map(agent => `
+                    <button type="button" class="ct-specialty-pick block w-full text-left py-1.5 border-t border-amber-200 first:border-t-0"
+                            data-agent-id="${escape(agent.id)}">
+                        <span class="block text-xs font-medium text-amber-950 truncate">${escape(agent.name || 'Teammate')}</span>
+                        <span class="block text-[11px] text-amber-800 truncate">${escape(agent.role || 'No specialty')}</span>
+                    </button>`).join('');
+            return `
+                <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p class="text-xs font-medium text-amber-950 mb-1">Specialty mismatch — no new task was created</p>
+                    <p class="text-[11px] text-amber-800 mb-1">${escape(reason)} Pick a matching teammate, or assign anyway.</p>
+                    ${rows}
+                    <div class="mt-2 flex justify-end">
+                        <button type="button" id="ct-specialty-confirm"
+                                class="px-2 py-1 rounded border border-amber-300 bg-white text-[11px] font-medium text-amber-900 hover:bg-amber-100">
+                            Assign anyway
+                        </button>
+                    </div>
+                </div>`;
+        }
+
         if (assignResult.outcome === 'clarify_ambiguous_match') {
             const candidates = Array.isArray(assignResult.candidates) ? assignResult.candidates : [];
             const reason = assignResult.reason || 'Multiple open tasks match this title.';
@@ -675,9 +752,18 @@ const CompanyTasks = (() => {
         const titleInput = container.querySelector('#ct-assign-title');
         const descInput = container.querySelector('#ct-assign-description');
         const agentSelect = container.querySelector('#ct-assign-agent');
-        titleInput?.addEventListener('input', (e) => { assignTitle = e.target.value; });
-        descInput?.addEventListener('input', (e) => { assignDescription = e.target.value; });
-        agentSelect?.addEventListener('change', (e) => { assignAgentId = e.target.value; });
+        titleInput?.addEventListener('input', (e) => {
+            assignTitle = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
+        descInput?.addEventListener('input', (e) => {
+            assignDescription = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
+        agentSelect?.addEventListener('change', (e) => {
+            assignAgentId = e.target.value;
+            refreshAssignSpecialtyHints();
+        });
 
         container.querySelector('#ct-assign-cancel')?.addEventListener('click', () => {
             assignFormOpen = false;
@@ -700,9 +786,19 @@ const CompanyTasks = (() => {
                 if (btn.dataset.taskId) submitAssignForm({ bindTaskId: btn.dataset.taskId });
             });
         });
+        container.querySelectorAll('.ct-specialty-pick').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (!btn.dataset.agentId) return;
+                assignAgentId = btn.dataset.agentId;
+                submitAssignForm();
+            });
+        });
+        container.querySelector('#ct-specialty-confirm')?.addEventListener('click', () => {
+            submitAssignForm({ confirmSpecialtyMismatch: true });
+        });
     }
 
-    async function submitAssignForm({ bindTaskId } = {}) {
+    async function submitAssignForm({ bindTaskId, confirmSpecialtyMismatch } = {}) {
         const title = (assignTitle || '').trim();
         if (!title) {
             assignResult = { error: 'Title is required.' };
@@ -721,6 +817,7 @@ const CompanyTasks = (() => {
         };
         if (assignAgentId) payload.assigned_to = assignAgentId;
         if (bindTaskId) payload.bind_task_id = bindTaskId;
+        if (confirmSpecialtyMismatch) payload.confirm_specialty_mismatch = true;
 
         try {
             const res = await apiFetch('/api/tasks', {
@@ -744,8 +841,10 @@ const CompanyTasks = (() => {
                 task: body.task,
                 candidates: body.candidates || [],
                 reason: body.reason || null,
+                specialty_warning: body.specialty_warning || null,
+                suggested_assignees: body.suggested_assignees || [],
             };
-            if (body.task && body.task.id && body.outcome !== 'clarify_ambiguous_match') {
+            if (body.task && body.task.id && body.outcome !== 'clarify_ambiguous_match' && body.outcome !== 'specialty_mismatch') {
                 selectedTaskId = body.task.id;
                 await refreshSilent();
                 return;

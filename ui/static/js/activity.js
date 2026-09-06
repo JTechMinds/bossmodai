@@ -60,6 +60,7 @@ const ActivityLog = (() => {
         abandoned:      { icon: 'trash-2',         color: 'text-red-500' },
         receipt:        { icon: 'inbox',           color: 'text-bm-muted' },
         application_reseeded: { icon: 'database',  color: 'text-purple-500' },
+        world_feedback: { icon: 'alert-triangle', color: 'text-amber-500' },
     };
 
     // ─── Initialization ───
