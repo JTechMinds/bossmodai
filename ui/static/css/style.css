@@ -606,9 +606,6 @@
     outline-offset: -2px;
     background: #eff6ff;
 }
-.dock-slot.is-solo .dock-slot-tabbar {
-    background: #eff6ff;
-}
 .dock-slot-tabbar {
     position: relative;
     display: flex;
@@ -658,9 +655,6 @@
 }
 .dock-tab.is-dragging {
     opacity: 0.55;
-}
-.dock-tab.is-solo.is-active {
-    box-shadow: inset 0 2px 0 #1d4ed8;
 }
 .dock-tab-btn:disabled {
     opacity: 0.35;

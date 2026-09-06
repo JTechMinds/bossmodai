@@ -86,8 +86,17 @@ const ChannelsView = (() => {
         if (!channels.length) {
             listEl.innerHTML = `
                 <div class="text-sm text-bm-muted text-center py-6">
-                    Create a channel from the Company tab to start broadcasting.
+                    <p>Tick agents in Directory, then Create Channel to start broadcasting.</p>
+                    <button type="button" id="channels-create-channel-btn"
+                            class="mt-3 px-3 py-2 rounded-lg bg-bm-accent text-white text-xs font-medium hover:bg-bm-accent-hover transition-colors">
+                        Create channel
+                    </button>
                 </div>`;
+            listEl.querySelector('#channels-create-channel-btn')?.addEventListener('click', () => {
+                if (typeof DockManager !== 'undefined' && typeof DockManager.open === 'function') {
+                    DockManager.open('directory');
+                }
+            });
             return;
         }
 
