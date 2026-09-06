@@ -44,6 +44,8 @@ flowchart LR
 
 Two Python processes share one SQLite file. The app process owns HTTP, WebSocket, Telegram, and settings. The worker owns the agent loop, world tick, and watchdogs. They coordinate through `runtime_commands` / `runtime_worker_state` plus a JSONL event pipe on the worker's stdout.
 
+**Quit.** Window close or one Ctrl+C on `./run.sh` returns to the shell once. `run.sh` stays in the foreground and SIGTERMs the desktop (its own process group). The desktop SIGTERMs the backend only — uvicorn runs FastAPI lifespan → `runtime_services.stop()` → `shutdown_runtime` — waits a short grace, then signals leftover PIDs that still match this repo’s `main.py` or `core.runtime.worker`. The worker also handles SIGTERM/SIGINT by setting its stop event, so it should not print “lost its parent process” after the prompt. Process-tree smoke: `uv run pytest -q tests/test_clean_exit.py`.
+
 ## Boot → first agent turn
 
 ```mermaid
@@ -96,7 +98,7 @@ sequenceDiagram
 | `db/` | SQLite access; `db/__init__.py` re-exports ~200 symbols |
 | `integrations/telegram/` | Bot commands, in-memory chat sessions, approval buttons |
 | `ui/` | Vanilla JS IIFEs + vendored Tailwind/Lucide/Split + Jinja `index.html` |
-| `desktop/` | Tauri 2 wrapper; records backend PID and signals that process on relaunch |
+| `desktop/` | Tauri 2 wrapper; records backend PID; ordered SIGTERM → lifespan → leftover kill on quit |
 | `prompts/` | Authored contracts, personalities, internal repair/continue text |
 | `plugins/` | Empty directory (no plugin loader) |
 

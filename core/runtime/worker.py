@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 from contextlib import suppress
 from typing import Any
@@ -89,8 +90,19 @@ class RuntimeWorker:
         self._failed = False
         self._parent_pid = _read_parent_pid()
 
+    def _install_stop_signals(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        def _request_stop() -> None:
+            self._stopping.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with suppress(NotImplementedError):
+                loop.add_signal_handler(sig, _request_stop)
+
     async def run(self) -> int:
         runtime_events.set_sink(TransportRuntimeEventSink(self._transport))
+        self._install_stop_signals()
         try:
             db.init_db()
             await self._controller.boot(paused=self._is_paused())

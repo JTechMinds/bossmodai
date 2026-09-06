@@ -59,6 +59,13 @@ def test_desktop_uses_recorded_pid_not_pkill() -> None:
     assert "fn stop_recorded_backend(" in rust
     assert ".bossmod-backend.pid" in rust
     assert "is_recorded_backend" in rust
+    assert "fn stop_backend_tree(" in rust
+    assert "fn take_and_stop_backend(" in rust
+    assert "libc::SIGTERM" in rust
+    assert "process_group(0)" in rust
+    assert "shutdown_runtime" in rust
+    assert "handle_quit_signal" in rust
+    assert "RunEvent::Exit" in rust
 
 
 def test_living_docs_do_not_claim_pr2_is_open() -> None:
