@@ -114,6 +114,7 @@ const CompanyFileViewer = (() => {
             renderModal(payload);
         } catch (err) {
             console.error('[CompanyFileViewer] Failed to load file:', err);
+            throw err;
         }
     }
 

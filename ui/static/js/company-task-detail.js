@@ -26,26 +26,18 @@ const CompanyTaskDetail = (() => {
 
     const DEFAULT_EVENT_STYLE = { badge: 'bg-gray-100 text-gray-600', icon: 'info' };
 
-    /**
-     * Resolve agent-relative virtual paths (/me/...) to company file browser paths
-     * (/agents/{storage_key}/...). Paths starting with /projects/ pass through unchanged.
-     */
-    function resolveDeliverablePath(virtualPath, storageKey) {
-        if (!virtualPath) return virtualPath;
-        if (virtualPath.startsWith('/me/') || virtualPath === '/me') {
-            if (!storageKey) return virtualPath;
-            return '/agents/' + storageKey + virtualPath.slice(3);
-        }
-        return virtualPath;
+    function isAgentDeskPath(virtualPath) {
+        return virtualPath === '/me' || String(virtualPath || '').startsWith('/me/');
     }
 
-    function renderDeliverableCard(d, storageKey) {
+    function renderDeliverableCard(d, task) {
         const esc = config.escapeHtml;
-        const viewerPath = resolveDeliverablePath(d.path, storageKey);
-        const fileName = d.path.split('/').pop() || d.path;
+        const fileName = (d.path || '').split('/').pop() || d.path;
+        const agentId = task && task.assigned_to ? task.assigned_to : '';
         return `
             <div class="ct-file-open flex items-center gap-2 px-2 py-1.5 rounded border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer transition-colors text-xs"
-                 data-path="${esc(viewerPath)}">
+                 data-path="${esc(d.path || '')}"
+                 data-agent-id="${esc(agentId)}">
                 <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-500 shrink-0"></i>
                 <div class="flex-1 min-w-0">
                     <span class="font-medium text-blue-600 truncate block">${esc(fileName)}</span>
@@ -54,6 +46,33 @@ const CompanyTaskDetail = (() => {
                 </div>
                 <i data-lucide="external-link" class="w-3 h-3 text-blue-400 shrink-0"></i>
             </div>`;
+    }
+
+    async function openDeliverablePath(path, agentId) {
+        const target = String(path || '').trim();
+        if (!target) return;
+        if (isAgentDeskPath(target) && agentId && typeof CompanyFileViewer !== 'undefined') {
+            await CompanyFileViewer.open(target, {
+                apiUrl: `/api/agents/${encodeURIComponent(agentId)}/desk?path=${encodeURIComponent(target)}`,
+            });
+            return;
+        }
+        const res = await apiFetch(`/api/company/files?path=${encodeURIComponent(target)}`, { cache: 'no-store' });
+        if (!res.ok) {
+            throw new Error(await (res.text() || Promise.resolve('Could not open that path')));
+        }
+        const payload = await res.json();
+        if (payload.kind === 'file') {
+            if (typeof CompanyFileViewer !== 'undefined') {
+                await CompanyFileViewer.open(payload.path || target);
+            }
+            return;
+        }
+        await apiFetch('/api/company/files/open-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: payload.path || target }),
+        });
     }
 
     // ─── Public API ───
@@ -165,14 +184,14 @@ const CompanyTaskDetail = (() => {
                 html += `<div class="text-[11px] font-semibold text-bm-muted mb-1">This task</div>`;
             }
             for (const d of deliverables) {
-                html += renderDeliverableCard(d, task.assigned_to_storage_key);
+                html += renderDeliverableCard(d, task);
             }
             for (const child of children) {
                 const cDeliverables = child.work_contract?.deliverables || [];
                 if (cDeliverables.length === 0) continue;
                 html += `<div class="text-[11px] font-semibold text-bm-muted mt-3 mb-1">${esc(child.title)}</div>`;
                 for (const d of cDeliverables) {
-                    html += renderDeliverableCard(d, child.assigned_to_storage_key);
+                    html += renderDeliverableCard(d, child);
                 }
             }
             html += `</div></div>`;
@@ -335,9 +354,15 @@ const CompanyTaskDetail = (() => {
             });
         });
         el.querySelectorAll('.ct-file-open').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                if (typeof CompanyFileViewer !== 'undefined') CompanyFileViewer.open(btn.dataset.path);
+                btn.classList.remove('border-red-300');
+                try {
+                    await openDeliverablePath(btn.dataset.path, btn.dataset.agentId);
+                } catch (err) {
+                    btn.classList.add('border-red-300');
+                    btn.title = (err && err.message) || 'Could not open that path';
+                }
             });
         });
     }

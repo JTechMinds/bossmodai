@@ -38,7 +38,7 @@ from core.agent_loop.decision_work_plan import (
     _resolve_work_execution_plan,
     _should_queue_initial_work_resume,
 )
-from core.agent_loop.task_origin_mirrors import attach_origin_status_line_if_silent, format_origin_status_line
+from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
 
@@ -136,6 +136,14 @@ def apply_decision(
             else f"{agent.name} cancelled the active task"
         )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
+        if task is not None:
+            attach_operator_status_line(
+                result,
+                task=task,
+                agent=agent,
+                kind="cancelled",
+                reason=decision.reply or decision.detail or "Cancelled by human request.",
+            )
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
@@ -203,6 +211,15 @@ def apply_decision(
         else:
             _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
+        declined_task = db.get_task(trigger["task_id"]) if trigger.get("task_id") else None
+        if declined_task is not None:
+            attach_operator_status_line(
+                result,
+                task=declined_task,
+                agent=agent,
+                kind="declined",
+                reason=decision.reply or decision.detail or "Assignment declined.",
+            )
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
@@ -283,13 +300,7 @@ def apply_decision(
             )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        attach_origin_status_line_if_silent(
-            result,
-            task=task,
-            agent=agent,
-            content=format_origin_status_line(kind="accepted", agent=agent, task=task),
-            kind="accepted",
-        )
+        attach_operator_status_line(result, task=task, agent=agent, kind="accepted")
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 

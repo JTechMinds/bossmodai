@@ -511,6 +511,19 @@ async def _run_decision_turn(
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )
+        for extra in result.get("origin_status_messages") or []:
+            if extra is result.get("channel_message") or extra is result.get("chat_message"):
+                continue
+            if extra.get("channel_id"):
+                await manager.broadcast_channel_message(
+                    channel_id=extra["channel_id"],
+                    content=extra["content"],
+                    author_type=extra.get("author_type") or "system",
+                    author_name=extra.get("author_name") or agent.name,
+                    message_id=extra.get("message_id"),
+                    created_at=extra.get("created_at"),
+                    notification_kind=extra.get("notification_kind"),
+                )
 
         step_traces.append(
             _build_step_trace(

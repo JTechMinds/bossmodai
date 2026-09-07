@@ -1,9 +1,8 @@
 """Event-driven origin-thread mirrors for task status changes.
 
-When work moves (accept, Writing path, waiting, stalled, complete/claim),
-the originating channel or Focus thread must get a short system one-liner.
-Profile activity alone does not count. Heartbeats and section-by-section
-writer updates must not post here.
+When work moves, the originating channel or Focus thread must get Debra's
+locked one-liner. Profile activity alone does not count. Heartbeats and
+section-by-section writer updates must not post here.
 """
 
 from __future__ import annotations
@@ -16,6 +15,8 @@ from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
 
 OriginThread = Literal["channel", "chat"]
+
+_BLOCKED_CLAIM_LINE = "Blocked — checkable claim missing"
 
 
 def origin_thread_target(task: Any | None) -> OriginThread | None:
@@ -35,6 +36,38 @@ def origin_thread_target(task: Any | None) -> OriginThread | None:
     return "chat"
 
 
+def short_reason(text: str | None, *, fallback: str = "") -> str:
+    """Collapse a reason to a single short operator phrase."""
+    note = " ".join((text or "").strip().split())
+    if not note:
+        return fallback
+    if len(note) > 80:
+        return note[:77] + "..."
+    return note
+
+
+def format_done_claim_label(
+    *,
+    claim: dict[str, Any] | None = None,
+    path: str | None = None,
+    evidence: str | None = None,
+) -> str:
+    """Return the Done one-liner tail: claim path or tests evidence."""
+    payload = claim if isinstance(claim, dict) else {}
+    claim_type = str(payload.get("type") or "").strip().lower()
+    claim_path = str(payload.get("path") or path or "").strip()
+    claim_evidence = str(payload.get("evidence") or evidence or "").strip()
+    if claim_type == "tests":
+        return short_reason(claim_evidence, fallback="tests") or "tests"
+    if claim_path:
+        return claim_path
+    if claim_evidence:
+        return short_reason(claim_evidence)
+    if claim_type:
+        return claim_type
+    return "done"
+
+
 def format_origin_status_line(
     *,
     kind: str,
@@ -42,32 +75,42 @@ def format_origin_status_line(
     task: Any,
     reason: str | None = None,
     path: str | None = None,
+    target_name: str | None = None,
+    claim: dict[str, Any] | None = None,
 ) -> str:
-    """Return the one-liner handed to the origin thread (outcome, not edits)."""
+    """Return Debra's locked operator one-liner for the origin thread."""
     title = str(getattr(task, "title", None) or "the task").strip() or "the task"
-    note = (reason or "").strip()
+    note = short_reason(reason)
     if kind == "accepted":
-        return f'{agent.name} accepted "{title}".'
+        return f"Accepted: {title}"
     if kind == "waiting":
-        if note:
-            return f'{agent.name} is waiting on "{title}": {note}'
-        return f'{agent.name} is waiting on "{title}".'
+        return f"Waiting — {note}" if note else "Waiting"
     if kind == "stalled":
-        if note:
-            return f'{agent.name} stalled on "{title}": {note}'
-        return f'{agent.name} stalled on "{title}".'
+        return f"Stalled — {note}" if note else "Stalled"
     if kind == "progress":
         target = (path or note or "").strip()
+        if target.lower().startswith("writing "):
+            return target
         if target:
-            return f"Writing {target}" if not target.lower().startswith("writing ") else target
-        return f'{agent.name} is writing "{title}".'
-    if kind == "completion":
+            return f"Writing {target}"
+        return "Writing"
+    if kind == "declined":
+        return f"Declined — {note}" if note else "Declined"
+    if kind == "rerouted":
+        name = (target_name or "").strip() or "another agent"
         if note:
-            return f'{agent.name} finished "{title}". {note}'.strip()
-        return f'{agent.name} finished "{title}".'
+            return f"Rerouted to {name} — {note}"
+        return f"Handed off to {name}"
+    if kind == "cancelled":
+        return f"Cancelled — {note}" if note else "Cancelled"
+    if kind == "blocked_claim":
+        return _BLOCKED_CLAIM_LINE
+    if kind == "completion":
+        label = format_done_claim_label(claim=claim, path=path, evidence=reason)
+        return f"Done — {label}"
     if note:
-        return f'{agent.name} updated "{title}": {note}'
-    return f'{agent.name} updated "{title}".'
+        return note
+    return f"Accepted: {title}"
 
 
 def persist_origin_status_line(
@@ -115,6 +158,39 @@ def persist_origin_status_line(
         ),
     )
     return {"chat_message": chat_message}
+
+
+def attach_operator_status_line(
+    result: dict[str, Any],
+    *,
+    task: Any,
+    agent: Agent,
+    kind: str,
+    reason: str | None = None,
+    path: str | None = None,
+    target_name: str | None = None,
+    claim: dict[str, Any] | None = None,
+) -> None:
+    """Always persist the locked operator line; do not clobber an agent reply."""
+    content = format_origin_status_line(
+        kind=kind,
+        agent=agent,
+        task=task,
+        reason=reason,
+        path=path,
+        target_name=target_name,
+        claim=claim,
+    )
+    posted = persist_origin_status_line(task=task, agent=agent, content=content, kind=kind)
+    extras = result.setdefault("origin_status_messages", [])
+    if posted.get("channel_message"):
+        extras.append(posted["channel_message"])
+        if not result.get("channel_message"):
+            result["channel_message"] = posted["channel_message"]
+    if posted.get("chat_message"):
+        extras.append(posted["chat_message"])
+        if not result.get("chat_message"):
+            result["chat_message"] = posted["chat_message"]
 
 
 def attach_origin_status_line_if_silent(

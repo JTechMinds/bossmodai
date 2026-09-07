@@ -24,6 +24,7 @@ from core.agent_loop.task_followups import (
     _append_task_stakeholder_reports,
     _task_requires_conversational_follow_up,
 )
+from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.agent_loop.task_roles import default_task_owner_id
 from core.models import Agent, AgentState
 from core.tasking.service import append_task_event, create_or_bind_subtask, list_open_child_tasks
@@ -142,6 +143,21 @@ async def _handle_complete(
         }
     done_claim, claim_error = resolve_done_claim(agent=agent, task=task, action=action)
     if claim_error:
+        if task is not None:
+            attach_operator_status_line(
+                claim_error,
+                task=task,
+                agent=agent,
+                kind="blocked_claim",
+            )
+            append_task_event(
+                task_id=task.id,
+                author_type="system",
+                author_name="BossMod",
+                event_type="blocker",
+                content="Blocked — checkable claim missing",
+                source_trigger_id=(trigger or {}).get("trigger_id"),
+            )
         return claim_error
 
     transition_task(
@@ -483,6 +499,7 @@ async def _handle_delegated(
             "kind": "handoff",
             "task_title": original_task.title if original_task else "task",
             "target_name": target.name,
+            "reason": (follow_up_message or "").strip() or f"Delegated to {target.name}",
             "task_id": original_task.id if original_task else None,
             "source_channel": original_task.source_channel if original_task else "chat",
             "channel_id": original_task.notification_channel_id if original_task else None,
