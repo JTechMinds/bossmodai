@@ -104,6 +104,8 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
             continue
         if not isinstance(payload, dict):
             payload = {}
+        if db.payload_targets_archived_channel(payload):
+            continue
         persisted.append(
             db.create_agent_trigger(
                 agent_id=agent_id,

@@ -13,7 +13,14 @@ from core.models.host_path_consent import HostPathConsentRequest
 from core.models.activity import Activity
 from core.models.agent import Agent, AgentCreate, AgentState, AgentUpdate
 from core.models.artifact import Artifact
-from core.models.channel import Channel, ChannelMember, ChannelMessage
+from core.models.channel import (
+    Channel,
+    ChannelArchivedError,
+    ChannelMember,
+    ChannelMessage,
+    THREAD_ARCHIVED_CANCEL_LINE,
+    THREAD_ARCHIVED_CONSENT_DENY,
+)
 from core.models.channel_response import ChannelResponseCandidate, ChannelResponseRound
 from core.models.meeting_response import MeetingResponseCandidate, MeetingResponseRound
 from core.models.meeting_session import MeetingSession, MeetingSessionMessage
@@ -57,8 +64,11 @@ __all__ = [
     "Activity",
     "Artifact",
     "Channel",
+    "ChannelArchivedError",
     "ChannelMember",
     "ChannelMessage",
+    "THREAD_ARCHIVED_CANCEL_LINE",
+    "THREAD_ARCHIVED_CONSENT_DENY",
     "ChannelResponseCandidate",
     "ChannelResponseRound",
     "MeetingResponseCandidate",

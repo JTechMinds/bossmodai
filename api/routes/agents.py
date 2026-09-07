@@ -29,7 +29,9 @@ from core.models import (
     AgentUpdate,
 )
 from core.models.message import HUMAN_SENDER_ID
+from core.channel_archive import archive_thread_as_operator
 from core.tasking.service import list_open_origin_tasks_for_channel
+from core.tasking.transitions import IllegalTaskTransition
 from core.runtime import runtime_services
 from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.transitions import transition_task
@@ -192,9 +194,9 @@ async def create_channel(body: ChannelCreateBody):
 
 
 @router.post("/channels/{channel_id}/archive")
-async def archive_channel(channel_id: str):
+async def archive_channel(channel_id: str, cancel_open_tasks: bool = False):
     """Archive one shared thread so it leaves the active Threads list."""
-    return await _archive_channel(channel_id)
+    return await _archive_channel(channel_id, cancel_open_tasks=cancel_open_tasks)
 
 
 @router.get("/channels/{channel_id}/open-tasks")
@@ -212,17 +214,27 @@ async def list_channel_open_tasks(channel_id: str):
 
 @router.delete("/channels/{channel_id}")
 async def delete_channel(channel_id: str):
-    """Archive one shared thread (soft delete)."""
-    return await _archive_channel(channel_id)
+    """Archive one shared thread (soft delete). Does not cancel origin tasks."""
+    return await _archive_channel(channel_id, cancel_open_tasks=False)
 
 
-async def _archive_channel(channel_id: str) -> dict[str, object]:
-    channel = db.get_channel(channel_id)
-    if channel is None:
-        raise HTTPException(404, "Thread not found")
-    archived = db.archive_channel(channel.id)
-    if archived is None:
-        raise HTTPException(404, "Thread not found")
+async def _archive_channel(channel_id: str, *, cancel_open_tasks: bool = False) -> dict[str, object]:
+    try:
+        archived, _posted_lines = await archive_thread_as_operator(
+            channel_id,
+            cancel_open_tasks=cancel_open_tasks,
+            services=runtime_services,
+            on_before_seal=_broadcast_archive_side_effects,
+        )
+    except IllegalTaskTransition as exc:
+        raise HTTPException(
+            409,
+            f"Illegal task status transition: {exc.from_status} → {exc.to_status}",
+        ) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, "Thread not found") from exc
+        raise
     members = db.list_channel_member_details(archived.id)
     latest = db.get_latest_channel_message(archived.id)
     summary = _serialize_channel_summary(archived, members=members, latest_message=latest)
@@ -232,7 +244,37 @@ async def _archive_channel(channel_id: str) -> dict[str, object]:
         detail=f'Archived thread "{archived.name}"',
         agent_name=None,
     )
+    if cancel_open_tasks:
+        await manager.broadcast_world_state()
     return summary
+
+
+async def _broadcast_archive_side_effects(posted_lines: list[dict[str, object]]) -> None:
+    """Paint cancel/archive transcript lines while the thread is still writable."""
+    for posted in posted_lines:
+        extra = posted.get("channel_message") if isinstance(posted, dict) else None
+        if extra:
+            await manager.broadcast_channel_message(
+                channel_id=extra["channel_id"],
+                content=extra["content"],
+                author_type=extra.get("author_type") or "system",
+                author_name=extra.get("author_name") or "BossMod",
+                message_id=extra.get("message_id"),
+                created_at=extra.get("created_at"),
+                notification_kind=extra.get("notification_kind"),
+            )
+        chat = posted.get("chat_message") if isinstance(posted, dict) else None
+        if chat:
+            await manager.broadcast_chat_message(
+                agent_id=chat["agent_id"],
+                content=chat["content"],
+                from_type=chat.get("from_type") or "system",
+                from_name=chat.get("from_name") or "BossMod",
+                message_type=chat.get("message_type"),
+                message_id=chat.get("message_id"),
+                created_at=chat.get("created_at"),
+                notification_kind=chat.get("notification_kind"),
+            )
 
 
 @router.get("/channels/{channel_id}")

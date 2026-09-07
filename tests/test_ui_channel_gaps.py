@@ -45,6 +45,7 @@ def test_utils_exports_channel_presence_and_consent_card() -> None:
     assert "Always allow (for all agents)" in source
     assert "Always allowed (for all agents)" in source
     assert "Deny" in source
+    assert "decision_note" in source
     assert "{ label: 'Always allow'," not in source
     assert "function collapseRelatedConsentCards(" in source
     assert "is-resolved" in source
@@ -81,6 +82,10 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "Cancel tasks &amp; archive" in source
     assert ">Archive only<" in source
     assert "id=\"channel-archive-back\"" in source
+    assert "function isLiveThread(" in source
+    assert "function sealArchivedThread(" in source
+    assert "presence.stopAll(" in source
+    assert "cancel_open_tasks=true" in source
     assert "Archive this thread?" not in source
     assert "Threads" in source
     assert "Create Thread" in source
@@ -100,6 +105,8 @@ def test_live_channel_message_appends_without_loading_remount() -> None:
     assert "appendLiveChannelMessage(" in handler
     assert "isChannelDetailMounted(" in handler
     assert "threadCache.append(" in handler
+    assert "isLiveThread(" in handler
+    assert handler.index("isLiveThread(") < handler.index("appendLiveChannelMessage(")
     assert handler.index("appendLiveChannelMessage(") < handler.index("void renderSelectedChannel(")
     assert "Loading thread..." not in handler
     assert "Loading channel..." not in handler
@@ -167,6 +174,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
         "archiveOnly": True,
         "zeroOpenNoPrompt": True,
         "backAborts": True,
+        "archivedNotLive": True,
     }
 
 

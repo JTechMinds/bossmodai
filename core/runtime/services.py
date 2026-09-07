@@ -170,6 +170,8 @@ class RuntimeServices:
         await self.start()
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
+        if db.payload_targets_archived_channel(payload):
+            return
         db.create_agent_trigger(
             agent_id=agent_id,
             trigger_type=trigger_type,

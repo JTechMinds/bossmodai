@@ -155,6 +155,8 @@ class ConnectionManager:
         author_agent_id: str | None = None,
     ) -> None:
         """Broadcast one shared channel transcript message."""
+        if db.is_channel_archived(channel_id):
+            return
         await self.broadcast({
             "type": "channel_message",
             "data": {
@@ -179,6 +181,8 @@ class ConnectionManager:
         phase: str,
     ) -> None:
         """Broadcast one member's in-flight thinking/working presence."""
+        if db.is_channel_archived(channel_id):
+            return
         await self.broadcast({
             "type": "channel_presence",
             "data": {

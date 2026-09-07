@@ -161,6 +161,8 @@ def persist_origin_status_line(
         return {}
     if target == "channel":
         channel_id = str(task.notification_channel_id).strip()
+        if db.is_channel_archived(channel_id):
+            return {}
         # Same-titled parent/child Created lines, and per-task Cancelled lines, must not collapse.
         if kind not in {"created", "cancelled"}:
             recent = db.list_channel_messages(channel_id, limit=8)
@@ -181,6 +183,8 @@ def persist_origin_status_line(
                 channel_id=channel_id,
             ),
         )
+        if not notification:
+            return {}
         return {"channel_message": notification}
 
     if kind != "created" and _chat_already_has_line(agent.id, getattr(task, "id", None), text):

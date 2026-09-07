@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from core.models import Channel, ChannelMember, ChannelMessage
+from core.models import Channel, ChannelArchivedError, ChannelMember, ChannelMessage
 from db.connection import transaction
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
@@ -83,6 +83,25 @@ def find_active_channel_for_members(member_agent_ids: list[str]) -> Channel | No
         [len(unique_members), *unique_members],
         Channel,
     )
+
+
+def is_channel_archived(channel_id: str | None) -> bool:
+    """Return True when this id points at a sealed archived thread."""
+    token = (channel_id or "").strip()
+    if not token:
+        return False
+    existing = get_channel(token)
+    return existing is not None and existing.status == "archived"
+
+
+def payload_targets_archived_channel(payload: Any) -> bool:
+    """Return True when a trigger payload is bound to a sealed archived thread."""
+    if not isinstance(payload, dict):
+        return False
+    raw = payload.get("channel_id")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    return is_channel_archived(raw.strip())
 
 
 def archive_channel(channel_id: str) -> Channel | None:
@@ -236,6 +255,8 @@ def create_channel_message(
     consent_id: str | None = None,
 ) -> ChannelMessage:
     """Append one message to the shared channel transcript."""
+    if is_channel_archived(channel_id):
+        raise ChannelArchivedError(channel_id)
     message = insert_returning(
         f"""
         INSERT INTO channel_messages (

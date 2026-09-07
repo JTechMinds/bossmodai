@@ -12,6 +12,7 @@ from core.agent_loop.response_rounds import (
     observe_shared_message,
 )
 from core.models import Agent
+from core.models.channel import ChannelArchivedError
 
 _CHANNEL_ROUNDS = SharedRoundBinding(
     parent_key="channel_id",
@@ -61,6 +62,9 @@ def start_channel_peer_round(
         peer_ids.append(agent_id)
     if not peer_ids:
         return []
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        return []
 
     resolved_name = (channel_name or "").strip()
     if not resolved_name:
@@ -109,14 +113,19 @@ def post_agent_channel_share(
     System completion cards must not call this — they stay transcript-only.
     In-round ``channel_response`` replies must not call this either.
     """
-    message = db.create_channel_message(
-        channel_id=channel_id,
-        author_type="agent",
-        author_agent_id=agent.id,
-        author_name=agent.name,
-        content=content,
-        source_channel=source_channel,
-    )
+    if db.is_channel_archived(channel_id):
+        return {}, []
+    try:
+        message = db.create_channel_message(
+            channel_id=channel_id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            content=content,
+            source_channel=source_channel,
+        )
+    except ChannelArchivedError:
+        return {}, []
     channel_message = {
         "channel_id": channel_id,
         "content": message.content,

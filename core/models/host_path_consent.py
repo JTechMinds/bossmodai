@@ -41,4 +41,6 @@ class HostPathConsentRequest(BaseModel):
         }
         if self.channel_id:
             card["channel_id"] = self.channel_id
+        if self.decision_note:
+            card["decision_note"] = self.decision_note
         return card

@@ -20,6 +20,7 @@ from core.agent_loop.message_delivery import (
 )
 from core.agent_loop.task_roles import task_assignment_reply_target
 from core.models import Agent, AgentState
+from core.models.channel import ChannelArchivedError
 from core.models.message import HUMAN_SENDER_ID
 from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.service import append_task_event
@@ -129,14 +130,19 @@ def _persist_reply(
         channel_id = trigger.get("channel_id")
         if not isinstance(channel_id, str) or not channel_id.strip():
             return {}
-        message = db.create_channel_message(
-            channel_id=channel_id,
-            author_type="agent",
-            author_agent_id=agent.id,
-            author_name=agent.name,
-            content=reply.strip(),
-            source_channel="channel",
-        )
+        if db.is_channel_archived(channel_id):
+            return {}
+        try:
+            message = db.create_channel_message(
+                channel_id=channel_id,
+                author_type="agent",
+                author_agent_id=agent.id,
+                author_name=agent.name,
+                content=reply.strip(),
+                source_channel="channel",
+            )
+        except ChannelArchivedError:
+            return {}
         return {
             "channel_message": {
                 "channel_id": channel_id,

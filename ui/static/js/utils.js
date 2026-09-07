@@ -589,7 +589,7 @@ const BossModUtils = (() => {
             const resolved = document.createElement('div');
             resolved.className = 'hpc-status';
             resolved.textContent = status === 'denied'
-                ? 'Denied'
+                ? (card.decision_note || 'Denied')
                 : (status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
             container.appendChild(resolved);
             return;
@@ -650,7 +650,7 @@ const BossModUtils = (() => {
                 const resolved = document.createElement('div');
                 resolved.className = 'hpc-status';
                 resolved.textContent = card.status === 'denied'
-                    ? 'Denied'
+                    ? (card.decision_note || 'Denied')
                     : (card.status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
                 el.appendChild(resolved);
             }

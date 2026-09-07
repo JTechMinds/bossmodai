@@ -218,6 +218,11 @@ def request_host_path_access(
         )
 
     origin_channel = _clean_channel_id(channel_id)
+    if origin_channel and db.is_channel_archived(origin_channel):
+        from core.models.channel import THREAD_ARCHIVED_CONSENT_DENY
+
+        return error_result(label, THREAD_ARCHIVED_CONSENT_DENY, cwd=cwd, executor="virtual")
+
     pending = db.find_pending_for_path(agent.id, path)
     if pending is not None:
         if origin_channel and not pending.channel_id:
@@ -308,6 +313,8 @@ async def resume_host_path_consent(
     services: Any,
     decision_by: str = "human",
     note: str | None = None,
+    enqueue_resume: bool = True,
+    omit_origin_channel: bool = False,
 ) -> HostPathConsentRequest | None:
     """Apply Allow once / Always allow / Deny and wake the waiting agent."""
     existing = db.get_consent_request(request_id)
@@ -323,13 +330,22 @@ async def resume_host_path_consent(
         )
         if updated is None:
             return None
-        await _enqueue_resume(updated, status="denied", services=services)
+        await _enqueue_resume(
+            updated,
+            status="denied",
+            services=services,
+            note=note,
+            enqueue_resume=enqueue_resume,
+            omit_origin_channel=omit_origin_channel,
+        )
         await _resolve_scope_waiters(
             updated,
             status="denied",
             decision_by=decision_by,
             note=note,
             services=services,
+            enqueue_resume=enqueue_resume,
+            omit_origin_channel=omit_origin_channel,
         )
         return updated
 
@@ -422,7 +438,12 @@ async def _enqueue_resume(
     status: str,
     services: Any,
     follow_through: bool = True,
+    note: str | None = None,
+    enqueue_resume: bool = True,
+    omit_origin_channel: bool = False,
 ) -> None:
+    if not enqueue_resume:
+        return
     payload: dict[str, Any] = {
         "consent_request_id": request.id,
         "command": request.command or "",
@@ -430,7 +451,9 @@ async def _enqueue_resume(
         "path": request.path,
         "task_id": request.task_id,
     }
-    channel_id = _clean_channel_id(request.channel_id)
+    if note:
+        payload["decision_note"] = note
+    channel_id = None if omit_origin_channel else _clean_channel_id(request.channel_id)
     if channel_id:
         payload["channel_id"] = channel_id
     if status != "denied":
@@ -466,6 +489,8 @@ async def _resolve_scope_waiters(
     note: str | None,
     services: Any,
     once_grant: bool = False,
+    enqueue_resume: bool = True,
+    omit_origin_channel: bool = False,
 ) -> None:
     """Apply Allow once / Deny to later agents waiting on the same scoped card."""
     for sibling in db.list_pending_for_grant_root_scope(primary.grant_root, primary.channel_id):
@@ -491,6 +516,9 @@ async def _resolve_scope_waiters(
             status=status,
             services=services,
             follow_through=False,
+            note=note,
+            enqueue_resume=enqueue_resume,
+            omit_origin_channel=omit_origin_channel,
         )
 
 

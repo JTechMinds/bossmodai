@@ -12,6 +12,17 @@ ChannelKind = Literal["manual"]
 ChannelStatus = Literal["active", "archived"]
 ChannelAuthorType = Literal["human", "agent", "system"]
 
+THREAD_ARCHIVED_CONSENT_DENY = "Access denied — thread archived"
+THREAD_ARCHIVED_CANCEL_LINE = "Thread archived — open work cancelled"
+
+
+class ChannelArchivedError(ValueError):
+    """Raised when a write targets a sealed archived thread."""
+
+    def __init__(self, channel_id: str):
+        self.channel_id = channel_id
+        super().__init__("Thread archived")
+
 
 class Channel(BaseModel):
     """One reusable shared communication channel."""

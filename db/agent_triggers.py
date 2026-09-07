@@ -148,6 +148,32 @@ def delete_queued_triggers(
     return deleted
 
 
+def delete_queued_triggers_for_channel(channel_id: str) -> int:
+    """Delete queued triggers bound to one origin thread so archived rooms stay quiet."""
+    token = (channel_id or "").strip()
+    if not token:
+        return 0
+    rows = query("SELECT id, payload FROM agent_triggers WHERE status = 'queued'")
+    deleted = 0
+    for row in rows:
+        raw = row.get("payload")
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            continue
+        bound = str(payload.get("channel_id") or "").strip()
+        if bound != token:
+            continue
+        execute(
+            "DELETE FROM agent_triggers WHERE id = $1 AND status = 'queued'",
+            [row["id"]],
+        )
+        deleted += 1
+    return deleted
+
+
 def delete_queued_triggers_for_task(task_id: str) -> int:
     """Delete queued triggers bound to one task so cancelled work does not resume."""
     row = query_one(
