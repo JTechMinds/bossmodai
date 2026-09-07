@@ -1,4 +1,11 @@
-"""UI A5 — chat typing indicator is scoped to the selected agent."""
+"""UI A5 — the thinking indicator is scoped to the selected conversation.
+
+Phase 2A retired createChatTypingController's `isActiveChat` predicate for a
+presence model keyed `conversationId::agentId`. Scoping is now structural:
+state cannot leak between conversations because it is partitioned, not
+guarded. Every property the old tests proved is re-proven here against the
+new pair.
+"""
 
 from __future__ import annotations
 
@@ -15,41 +22,52 @@ def _read(name: str) -> str:
     return (JS / name).read_text(encoding="utf-8")
 
 
-def test_utils_exports_chat_typing_controller() -> None:
-    source = _read("utils.js")
-    assert "function createChatTypingController(" in source
-    assert "createChatTypingController," in source
-    assert "isActiveChat(typingAgentId)" in source
+def test_gates_export_presence_controller() -> None:
+    source = _read("core/gates.js")
+    assert "function createChannelPresenceController(" in source
+    assert "createChannelPresenceController," in source
+    # The key IS the scoping: two conversations cannot collide.
+    assert "return `${channelId}::${agentId}`;" in source
 
 
-def test_chat_typing_is_agent_scoped() -> None:
-    source = _read("agent-context.js")
-    assert "const chatTyping = BossModUtils.createChatTypingController(" in source
-    assert "chatTyping.show(agentId)" in source
-    assert "chatTyping.hide(agentId)" in source
-    assert "chatTyping.hide(data.agent_id)" in source
+def test_presence_is_conversation_scoped() -> None:
+    source = _read("conversation/transcript.js")
+    assert "presence.list(conversationId)" in source
+    assert "is thinking..." in source
+    # Negative controls that keep the old global-indicator bug dead.
     assert "function showTypingIndicator(" not in source
     assert "function hideTypingIndicator(" not in source
 
-    bind = source.split("function bindChatSend() {", 1)[1].split(
-        "function appendChatMessage(", 1
-    )[0]
-    assert "chatTyping.show(agentId)" in bind
-    assert "chatTyping.hide(agentId)" in bind
-    assert "showTypingIndicator()" not in bind
-    assert "hideTypingIndicator()" not in bind
 
-    handle = source.split("function handleChatMessage(data) {", 1)[1].split(
-        "async function handleChatReset(", 1
+def test_a_reply_clears_its_own_agents_indicator_even_when_unwatched() -> None:
+    """The clear runs BEFORE the "is this my conversation" guard.
+
+    Re-points the ordering assertion that guarded
+    `chatTyping.hide(data.agent_id)` in agent-context.js. Phase 2A implemented
+    the behaviour and documented it in a comment, but nothing enforced it: move
+    the stop below the guard and a reply landing while the operator is looking
+    elsewhere leaves that agent thinking forever, with every test still green.
+    """
+    source = _read("conversation/sources/agent-source.js")
+    handler = source.split("bus.subscribe('chat_message', (data) => {", 1)[1].split(
+        "bus.subscribe('chat_reset'", 1
     )[0]
-    assert handle.index("chatTyping.hide(data.agent_id)") < handle.index(
-        "if (!selectedAgent || data.agent_id !== selectedAgent.id) return;"
+    assert "presence.stop(data.agent_id, data.agent_id)" in handler
+    assert "if (data.agent_id !== agentId) return;" in handler
+    assert handler.index("presence.stop(data.agent_id, data.agent_id)") < handler.index(
+        "if (data.agent_id !== agentId) return;"
     )
 
 
 def test_chat_typing_harness_scopes_indicator_to_selected_agent() -> None:
     result = subprocess.run(
-        ["node", str(HARNESS), str(JS / "utils.js")],
+        [
+            "node",
+            str(HARNESS),
+            str(JS / "core" / "dom.js"),
+            str(JS / "core" / "gates.js"),
+            str(JS / "conversation" / "transcript.js"),
+        ],
         check=False,
         capture_output=True,
         text=True,

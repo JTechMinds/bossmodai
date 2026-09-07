@@ -52,9 +52,10 @@ const SettingsView = (() => {
         mainLayout.classList.remove('hidden');
         if (mobileSheet) mobileSheet.classList.remove('hidden');
         isOpen = false;
-        if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
-            void BossModApp.refreshModelAvailability();
-        }
+        // Model availability moved from app.js to shell/banners.js; connecting
+        // or removing a model here is the one change the banner cannot learn
+        // about from the WebSocket.
+        void BossModBanners.refreshModelAvailability();
     }
 
     // ─── Nav rendering ───

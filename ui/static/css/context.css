@@ -1,0 +1,265 @@
+/* BossMod AI — the context column on Chat: the office summary and the agent
+   desk. Colour comes from tokens.css; no value is hardcoded here that a token
+   already names. Seat and avatar backgrounds are the agent's own colour, set
+   inline from the roster because it is data, not theme. */
+
+.app-context {
+  overflow-y: auto;
+  padding: 12px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.context-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The three shared states. Error belongs to whoever ran the request. */
+.context-skeleton { margin: 0; color: var(--hint); font-size: 12px; }
+.context-empty { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+.context-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+  color: var(--alert);
+  font-size: 12px;
+}
+
+.context-link {
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ─── Mini office ─── */
+
+.mini-office-rooms { display: flex; flex-direction: column; gap: 12px; }
+
+.mini-office-room-name {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.mini-office-seats { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.mini-office-seat {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--panel);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mini-office-initial { line-height: 1; }
+
+/* Ambient and silent: a need ping never moves (spec 5.5). */
+.mini-office-ping {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--panel);
+  border-radius: 50%;
+  background: var(--alert);
+}
+
+.mini-office-stat {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mini-office-links { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ─── Desk ─── */
+
+.desk-panel { display: flex; flex-direction: column; gap: 14px; }
+
+.desk-section { display: flex; flex-direction: column; gap: 6px; }
+
+.desk-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.desk-profile { display: flex; flex-direction: column; gap: 6px; }
+
+.desk-profile-head { display: flex; align-items: center; gap: 8px; }
+
+.desk-avatar {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--panel);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.desk-name { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.desk-role { margin: 0; font-size: 12px; color: var(--muted); }
+.desk-about { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.desk-state-pill {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.desk-bar {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--amber);
+  border-radius: var(--r);
+  background: var(--amber);
+  color: var(--amber-ink);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.desk-task {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+
+.desk-task-title { margin: 0; font-size: 12px; font-weight: 500; color: var(--ink); }
+.desk-task-status { margin: 2px 0 0; font-size: 11px; color: var(--hint); }
+
+.desk-task-blocked {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--alert);
+}
+
+.desk-notes { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.desk-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.desk-meta { margin: 0; font-size: 11px; color: var(--hint); word-break: break-word; }
+
+.desk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.desk-action {
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.desk-action.danger { border-color: var(--alert); color: var(--alert); }
+.desk-action:disabled { opacity: 0.55; pointer-events: none; }
+
+/* ─── Desk files ─── */
+
+.desk-files { display: flex; flex-direction: column; gap: 6px; }
+
+.desk-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; }
+
+.desk-crumb {
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.desk-crumb-sep { color: var(--hint); }
+
+.desk-files-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.desk-files-btn {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.desk-entries { display: flex; flex-direction: column; gap: 4px; }
+
+.desk-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  text-align: left;
+}
+
+.desk-entry-name { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-all; }
+.desk-entry-meta { font-size: 11px; color: var(--hint); word-break: break-all; }
+
+.desk-opener-options { display: flex; flex-direction: column; gap: 6px; }
+
+.desk-opener-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.desk-opener-custom {
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}

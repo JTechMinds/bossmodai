@@ -15,9 +15,9 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModGates = BossModGates;\n`);
 
-if (typeof BossModUtils !== "object" || typeof BossModUtils.createLoadGeneration !== "function") {
+if (typeof BossModGates !== "object" || typeof BossModGates.createLoadGeneration !== "function") {
     throw new Error("createLoadGeneration missing");
 }
 
@@ -34,7 +34,7 @@ async function applyIfCurrent(generation, value, waitMs, sink) {
 }
 
 async function main() {
-    const gen = BossModUtils.createLoadGeneration();
+    const gen = BossModGates.createLoadGeneration();
     const first = gen.next();
     const second = gen.next();
     if (first !== 1 || second !== 2) {
@@ -43,7 +43,7 @@ async function main() {
     if (gen.isCurrent(first)) throw new Error("first id must not stay current");
     if (!gen.isCurrent(second)) throw new Error("second id must be current");
 
-    const other = BossModUtils.createLoadGeneration();
+    const other = BossModGates.createLoadGeneration();
     if (!other.isCurrent(other.next())) {
         throw new Error("independent generations must not share counters");
     }
@@ -63,7 +63,7 @@ async function main() {
     }
 
     const desk = { value: null };
-    const deskGen = BossModUtils.createLoadGeneration();
+    const deskGen = BossModGates.createLoadGeneration();
     const deskApplied = await Promise.all([
         applyIfCurrent(deskGen, "/me", 20, desk),
         applyIfCurrent(deskGen, "/projects", 2, desk),
@@ -73,7 +73,7 @@ async function main() {
     }
 
     const files = { value: null };
-    const filesGen = BossModUtils.createLoadGeneration();
+    const filesGen = BossModGates.createLoadGeneration();
     const searchStarted = applyIfCurrent(filesGen, "search:alpha", 20, files);
     filesGen.next();
     const searchApplied = await searchStarted;

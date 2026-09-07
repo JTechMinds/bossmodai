@@ -22,9 +22,14 @@ CRITICAL_CALL_SITES = {
     "app.js": [
         "apiFetch('/api/runtime/state'",
     ],
-    "agent-context.js": [
-        "apiFetch(`/api/agents/${agentId}/activate`",
-        "apiFetch(`/api/agents/${agentId}/messages?limit=50`",
+    # The conversation sources take the helper through ctx.api, so their call
+    # sites are spelled api(...). The DI chain is asserted separately below.
+    "conversation/sources/agent-source.js": [
+        "api(`/api/agents/${agentId}/activate`",
+        "api(`/api/agents/${agentId}/messages?limit=50`",
+    ],
+    "conversation/sources/thread-source.js": [
+        "api(`/api/channels/${threadId}/messages`",
     ],
     "company-files.js": [
         "apiFetch(`/api/company/files?path=",
@@ -37,6 +42,31 @@ CRITICAL_CALL_SITES = {
     "cli-policy-simulator.js": [
         "apiFetch('/api/cli-policy/simulator/execute'",
     ],
+}
+
+# Modules that receive the authenticated helper by injection instead of
+# reaching for the global. They may name an /api/ path without naming
+# apiFetch; that they never name it is asserted positively by
+# test_conversation_sources_take_api_by_injection, and the DI chain that
+# binds it to apiFetch is asserted there too.
+API_BY_INJECTION = {
+    "core/consent-card.js",
+    # The rail's Threads half takes shell/roster.js's shared readJson helper,
+    # which is the only thing in the rail that touches apiFetch.
+    "shell/roster-threads.js",
+    # The needs modules take `api` from the shell's ctx.
+    "needs/needs-store.js",
+    "needs/need-shape.js",
+    # The context column takes `api` from the place ctx and hands it down.
+    "context/desk-files.js",
+    "context/desk-opener.js",
+    "context/desk-panel.js",
+    "context/desk-tasks.js",
+    "context/desk-actions.js",
+    "conversation/conversation.js",
+    "conversation/sources/agent-source.js",
+    "conversation/sources/thread-source.js",
+    "conversation/sources/thread-archive.js",
 }
 
 RAW_FETCH_API = re.compile(
@@ -87,11 +117,33 @@ def test_index_loads_api_client_after_auth_and_before_app() -> None:
     assert "js/api-client.js" in sources
     assert sources.index("js/api-auth.js") < sources.index("js/api-client.js")
     assert sources.index("js/api-client.js") < sources.index("js/utils.js")
-    assert sources.index("js/api-client.js") < sources.index("js/app.js")
-    assert sources.index("js/api-client.js") < sources.index("js/agent-context.js")
-    assert sources.index("js/api-client.js") < sources.index("js/company-files.js")
+    # app.js, agent-context.js and company-files.js left the manifest with the
+    # dock shell. The modules that call apiFetch in their place are asserted
+    # instead, so every loaded consumer is still covered.
+    assert sources.index("js/api-client.js") < sources.index("js/conversation/conversation.js")
+    assert sources.index("js/api-client.js") < sources.index("js/shell/shell.js")
+    assert sources.index("js/api-client.js") < sources.index("js/shell/header.js")
+    assert sources.index("js/api-client.js") < sources.index("js/shell/roster.js")
+    assert sources.index("js/api-client.js") < sources.index("js/shell/banners.js")
     assert sources.index("js/api-client.js") < sources.index("js/cli-policy-simulator.js")
     assert sources.index("js/api-client.js") < sources.index("js/settings-connections.js")
+
+
+def test_conversation_sources_take_api_by_injection() -> None:
+    """A spelling assertion is weaker than the property it stands for.
+
+    What actually guarantees the token wrap sits under every conversation call
+    is the DI chain: the shell injects apiFetch as ctx.api and no module below
+    it names the global at all.
+    """
+    shell = _read("shell/shell.js")
+    assert "api: apiFetch" in shell
+    for name in ("conversation/conversation.js",
+                 "conversation/sources/agent-source.js",
+                 "conversation/sources/thread-source.js",
+                 "conversation/sources/thread-archive.js"):
+        source = _read(name)
+        assert "apiFetch" not in source, f"{name} must take api from ctx"
 
 
 def test_no_raw_fetch_api_outside_helpers() -> None:
@@ -114,7 +166,8 @@ def test_app_js_has_no_raw_fetch_calls() -> None:
         if RAW_FETCH_CALL.search(text):
             leftovers.append(path.name)
         if "/api/" in text:
-            assert "apiFetch(" in text, path.name
+            relative = path.relative_to(JS).as_posix()
+            assert "apiFetch(" in text or relative in API_BY_INJECTION, path.name
     assert leftovers == []
 
 

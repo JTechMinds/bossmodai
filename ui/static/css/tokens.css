@@ -1,0 +1,39 @@
+/* BossMod AI — design tokens. Single source of truth for colour.
+   Every value used for text clears 4.5:1 on both #ffffff and #f6f7f9.
+   tailwind-config.js mirrors these; a divergence is a bug. */
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+
+  /* Three-step grey ramp, all AA on both surfaces. */
+  --ink: #1b1f24;    /* 15.45 on --bg */
+  --muted: #565e6b;  /*  6.10 on --bg */
+  --hint: #6b7280;   /*  4.51 on --bg  (was #9aa1ab at 2.43 — failed) */
+
+  /* Separators are decorative. --line-control is for interactive borders
+     that are the sole affordance of a control (SC 1.4.11, 3:1). */
+  --line: #e6e8ec;
+  --line-strong: #cfd3da;
+  --line-control: #8b939e;  /* 3.10 on white */
+
+  --accent: #2d6be5;        /* 4.51 on --bg  (was #2f6fed at 4.24 — failed) */
+  --accent-bg: #e8effd;
+
+  --alert: #d03737;         /* 4.57 on --bg  (was #d93a3a at 4.24 — failed) */
+  --alert-bg: #fdecec;
+  --alert-line: #f3b9b9;
+
+  --ok: #268057;            /* 4.55 on --bg  (was #2e9b6a at 3.26 — failed) */
+  --ok-mark: #2e9b6a;       /* 3.49 — dots and bar fills only, never text */
+  --ok-bg: #e6f5ee;
+
+  /* Avatar tints. Ink-on-tint pairs measure 6.20–6.41 — unchanged. */
+  --blue: #dbe8fb;  --blue-ink: #1d4f9c;
+  --amber: #fbe9c9; --amber-ink: #7a4b08;
+  --teal: #d6f1e7;  --teal-ink: #0c5f47;
+  --pink: #fadde7;  --pink-ink: #8b2d4e;
+
+  --r: 8px;
+  --rail: 220px;
+  --ctx: 280px;
+}

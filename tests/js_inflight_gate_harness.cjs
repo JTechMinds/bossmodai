@@ -15,13 +15,13 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModGates = BossModGates;\n`);
 
-if (typeof BossModUtils.createInFlightGate !== "function") {
+if (typeof BossModGates.createInFlightGate !== "function") {
     throw new Error("createInFlightGate missing");
 }
 
-const gate = BossModUtils.createInFlightGate();
+const gate = BossModGates.createInFlightGate();
 let firstEntered = false;
 let secondStarted = false;
 let firstValue = null;

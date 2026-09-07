@@ -1,201 +1,49 @@
 /**
  * Node harness: archive prompt branches for threads with open tasks.
  * Invoked by tests/test_ui_channel_gaps.py. Not a browser bundle.
+ *
+ * Phase 2A split the dock-era ChannelsView into three owners, so the same
+ * eleven properties are proven against three subjects: the copy and the two
+ * prompt branches against conversation/sources/thread-archive.js, the archive /
+ * reopen / seal behaviour against conversation/sources/thread-source.js, and
+ * the archived-list filter against shell/roster.js, which owns the thread list
+ * in the new shell. The emitted payload keys are byte-identical.
  */
 const fs = require("fs");
+const { installDom } = require("./js_fake_dom.cjs");
 
-const byId = new Map();
+const documentStub = installDom();
+global.lucide = { createIcons() {} };
+global.window.lucide = global.lucide;
+
+const [
+    utilsPath, domPath, storePath, busPath, gatesPath, consentPath,
+    overlaysPath, archivePath, threadSourcePath, rosterThreadsPath, rosterPath,
+] = process.argv.slice(2);
+const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
+load(utilsPath, "BossModUtils");
+load(domPath, "BossModDom");
+load(storePath, "BossModStore");
+load(busPath, "BossModBus");
+load(gatesPath, "BossModGates");
+load(consentPath, "BossModConsentCard");
+load(overlaysPath, "BossModOverlays");
+load(archivePath, "BossModThreadArchive");
+load(threadSourcePath, "BossModThreadSource");
+load(rosterThreadsPath, "BossModRosterThreads");
+load(rosterPath, "BossModRoster");
+
+const {
+    BossModThreadArchive, BossModThreadSource, BossModGates, BossModRoster,
+    BossModStore, BossModBus,
+} = global;
+
+const HONESTY =
+    "Not permanently deleted — leaves the active list and seals the room (no new posts).";
+
+// ─── Backing store and API ───
+
 const calls = [];
-
-class FakeEl {
-    constructor(tag = "div", attrs = {}) {
-        this.tagName = String(tag).toUpperCase();
-        this.attrs = { ...attrs };
-        this.children = [];
-        this.parent = null;
-        this.className = attrs.class || "";
-        this.id = attrs.id || "";
-        this.dataset = { ...(attrs.dataset || {}) };
-        this.disabled = false;
-        this.onclick = null;
-        this.listeners = {};
-        this.scrollTop = 0;
-        this.scrollHeight = 0;
-        this.clientHeight = 40;
-        this.value = attrs.value || "";
-        this.style = {};
-        this._text = "";
-        this._html = "";
-        if (this.id) byId.set(this.id, this);
-    }
-
-    getAttribute(name) {
-        if (name === "id") return this.id || null;
-        if (name === "class") return this.className || null;
-        if (name === "data-channel-id") return this.dataset.channelId || null;
-        return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null;
-    }
-
-    setAttribute(name, value) {
-        this.attrs[name] = String(value);
-        if (name === "id") {
-            this.id = String(value);
-            byId.set(this.id, this);
-        }
-        if (name === "class") this.className = String(value);
-        if (name === "data-channel-id") this.dataset.channelId = String(value);
-    }
-
-    get textContent() {
-        if (this.children.length) {
-            return this.children.map((child) => child.textContent).join("");
-        }
-        return this._text;
-    }
-
-    set textContent(value) {
-        this._text = String(value);
-        this._html = escapeText(value);
-        this.children = [];
-    }
-
-    get innerHTML() {
-        return this._html;
-    }
-
-    set innerHTML(value) {
-        this._html = String(value);
-        this._text = "";
-        for (const child of this.children) detach(child);
-        this.children = [];
-        hydrate(this, String(value));
-    }
-
-    appendChild(child) {
-        child.parent = this;
-        this.children.push(child);
-        if (child.id) byId.set(child.id, child);
-        this.scrollHeight = Math.max(this.scrollHeight, this.children.length * 20 + this.clientHeight);
-        return child;
-    }
-
-    querySelector(selector) {
-        return this.querySelectorAll(selector)[0] || null;
-    }
-
-    querySelectorAll(selector) {
-        const out = [];
-        const visit = (node) => {
-            if (matches(node, selector)) out.push(node);
-            for (const child of node.children) visit(child);
-        };
-        for (const child of this.children) visit(child);
-        return out;
-    }
-
-    addEventListener(type, fn) {
-        (this.listeners[type] ||= []).push(fn);
-    }
-
-    async click() {
-        const ev = { preventDefault() {}, key: "", shiftKey: false };
-        const fns = [...(this.listeners.click || [])];
-        if (typeof this.onclick === "function") fns.push(this.onclick);
-        await Promise.all(fns.map((fn) => fn(ev)));
-    }
-}
-
-function escapeText(value) {
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-}
-
-function detach(node) {
-    if (node.id && byId.get(node.id) === node) byId.delete(node.id);
-    node.parent = null;
-    for (const child of node.children) detach(child);
-}
-
-function parseAttrs(raw) {
-    const attrs = { dataset: {} };
-    const re = /([:@A-Za-z0-9_-]+)(?:=(?:"([^"]*)"|'([^']*)'))?/g;
-    let match;
-    while ((match = re.exec(raw || ""))) {
-        const key = match[1];
-        const value = match[2] != null ? match[2] : (match[3] != null ? match[3] : "");
-        if (key === "id") attrs.id = value;
-        else if (key === "class") attrs.class = value;
-        else if (key === "data-channel-id") attrs.dataset.channelId = value;
-        else attrs[key] = value;
-    }
-    return attrs;
-}
-
-function hydrate(parent, html) {
-    const re = /<([A-Za-z0-9]+)([^>]*)>/g;
-    let match;
-    while ((match = re.exec(html))) {
-        const attrs = parseAttrs(match[2]);
-        const classes = String(attrs.class || "").split(/\s+/);
-        const keep = attrs.id || attrs.dataset.channelId || classes.includes("channels-list-item");
-        if (!keep) continue;
-        parent.appendChild(new FakeEl(match[1], attrs));
-    }
-}
-
-function matches(el, selector) {
-    if (selector.startsWith("#")) return el.id === selector.slice(1);
-    if (selector.startsWith(".")) {
-        return String(el.className).split(/\s+/).includes(selector.slice(1));
-    }
-    if (selector.startsWith("[") && selector.endsWith("]")) {
-        const body = selector.slice(1, -1);
-        if (body.includes("=")) {
-            const eq = body.indexOf("=");
-            const key = body.slice(0, eq);
-            const want = body.slice(eq + 1).replace(/^['"]|['"]$/g, "");
-            return el.getAttribute(key) === want || el.dataset?.[key] === want;
-        }
-        return el.getAttribute(body) != null || el.dataset?.[body] != null;
-    }
-    return el.tagName === selector.toUpperCase();
-}
-
-const documentStub = {
-    body: new FakeEl("body"),
-    createElement(tag) {
-        return new FakeEl(tag);
-    },
-    getElementById(id) {
-        return byId.get(id) || null;
-    },
-    querySelector() {
-        return null;
-    },
-    querySelectorAll() {
-        return [];
-    },
-    addEventListener() {},
-    removeEventListener() {},
-};
-
-global.document = documentStub;
-global.window = {
-    document: documentStub,
-    confirm() {
-        throw new Error("window.confirm must not be used for open-task archive");
-    },
-};
-global.console = console;
-
-const store = [
-    thread("open-a", "Ann", 2),
-    thread("open-b", "Bea", 2),
-    thread("none-c", "Cal", 0),
-    thread("open-d", "Dee", 2),
-];
 
 function thread(id, name, openCount) {
     return {
@@ -210,16 +58,22 @@ function thread(id, name, openCount) {
     };
 }
 
+const threads = [
+    thread("open-a", "Ann", 2),
+    thread("open-b", "Bea", 2),
+    thread("none-c", "Cal", 0),
+    thread("open-d", "Dee", 2),
+];
+
 function threadsFor(url) {
     const query = String(url).split("?")[1] || "";
     const status = new URLSearchParams(query).get("status") || "active";
-    return store.filter((item) => (item.status || "active") === status).map((item) => ({
-        ...item,
-        members: item.members.map((member) => ({ ...member })),
-    }));
+    return threads
+        .filter((item) => (item.status || "active") === status)
+        .map((item) => ({ ...item, members: item.members.map((m) => ({ ...m })) }));
 }
 
-function openTasks(item) {
+function openTasksFor(item) {
     const tasks = [];
     for (let i = 0; i < item.openCount; i += 1) {
         tasks.push({ id: `${item.id}-task-${i + 1}`, status: "pending", title: `Task ${i + 1}` });
@@ -227,291 +81,328 @@ function openTasks(item) {
     return { count: tasks.length, tasks };
 }
 
-global.apiFetch = async (url, opts = {}) => {
+const api = async (url, opts = {}) => {
     const method = String(opts.method || "GET").toUpperCase();
-    calls.push({ method, url, body: opts.body || null });
-    if (String(url).split("?")[0] === "/api/channels" && method === "GET") {
-        return { ok: true, async json() { return threadsFor(url); } };
-    }
-    const openMatch = String(url).match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
-    if (openMatch && method === "GET") {
-        const item = store.find((row) => row.id === openMatch[1]);
-        if (!item) return { ok: false, async text() { return "missing"; } };
-        return { ok: true, async json() { return openTasks(item); } };
-    }
-    if (url === "/api/tasks/cancel" && method === "POST") {
+    calls.push({ method, url: String(url), body: opts.body || null });
+    const path = String(url).split("?")[0];
+
+    if (path === "/api/world" && method === "GET") {
         return { ok: true, async json() { return []; } };
     }
-    const archivePost = String(url).match(/^\/api\/channels\/([^/?]+)\/archive/);
+    if (path === "/api/channels" && method === "GET") {
+        return { ok: true, async json() { return threadsFor(url); } };
+    }
+    const open = path.match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
+    if (open && method === "GET") {
+        const item = threads.find((row) => row.id === open[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        return { ok: true, async json() { return openTasksFor(item); } };
+    }
+    const archivePost = path.match(/^\/api\/channels\/([^/]+)\/archive$/);
     if (archivePost && method === "POST") {
-        const item = store.find((row) => row.id === archivePost[1]);
+        const item = threads.find((row) => row.id === archivePost[1]);
         if (!item) return { ok: false, async text() { return "missing"; } };
         item.status = "archived";
-        item.archived_at = "2026-01-01T00:00:00Z";
         return { ok: true, async json() { return { ...item }; } };
     }
-    const reopenPost = String(url).match(/^\/api\/channels\/([^/?]+)\/reopen$/);
+    const reopenPost = path.match(/^\/api\/channels\/([^/]+)\/reopen$/);
     if (reopenPost && method === "POST") {
-        const item = store.find((row) => row.id === reopenPost[1]);
+        const item = threads.find((row) => row.id === reopenPost[1]);
         if (!item) return { ok: false, async text() { return "missing"; } };
         item.status = "active";
-        item.archived_at = null;
         return { ok: true, async json() { return { ...item }; } };
     }
-    const messagePost = String(url).match(/^\/api\/channels\/([^/?]+)\/messages$/);
+    const messagePost = path.match(/^\/api\/channels\/([^/]+)\/messages$/);
     if (messagePost && method === "POST") {
-        const item = store.find((row) => row.id === messagePost[1]);
+        const item = threads.find((row) => row.id === messagePost[1]);
         if (!item) return { ok: false, async text() { return "missing"; } };
         if (item.status === "archived") return { ok: false, async text() { return "sealed"; } };
         return { ok: true, async json() { return { status: "ok" }; } };
     }
-    const match = String(url).match(/^\/api\/channels\/([^/?]+)$/);
-    if (!match) throw new Error(`unhandled ${method} ${url}`);
-    const item = store.find((row) => row.id === match[1]);
-    if (!item) return { ok: false, async text() { return "missing"; } };
-    if (method === "DELETE") {
-        item.status = "archived";
-        item.archived_at = "2026-01-01T00:00:00Z";
-        return { ok: true, async json() { return { ...item }; } };
-    }
-    if (method === "GET") {
-        return {
-            ok: true,
-            async json() {
-                return { channel: { ...item, members: item.members.map((member) => ({ ...member })) }, messages: [] };
-            },
-        };
+    const one = path.match(/^\/api\/channels\/([^/]+)$/);
+    if (one) {
+        const item = threads.find((row) => row.id === one[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        if (method === "DELETE") {
+            item.status = "archived";
+            return { ok: true, async json() { return { ...item }; } };
+        }
+        if (method === "GET") {
+            return {
+                ok: true,
+                async json() {
+                    return {
+                        channel: { ...item, members: item.members.map((m) => ({ ...m })) },
+                        messages: [],
+                    };
+                },
+            };
+        }
     }
     throw new Error(`unhandled ${method} ${url}`);
 };
 
-const [utilsPath, threadDomPath, channelsViewPath] = process.argv.slice(2);
-eval(`${fs.readFileSync(utilsPath, "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
-eval(`${fs.readFileSync(threadDomPath, "utf8")}\n;global.ChannelThreadDom = ChannelThreadDom;\n`);
-eval(`${fs.readFileSync(channelsViewPath, "utf8")}\n;global.ChannelsView = ChannelsView;\n`);
+const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+const presence = BossModGates.createChannelPresenceController();
+const forgotten = [];
+const noop = () => {};
+const signals = { message: noop, reset: noop, presence: noop, chrome: noop };
 
-if (!global.ChannelsView || typeof ChannelsView.render !== "function") {
-    throw new Error("ChannelsView missing");
+function sourceFor(threadId, confirmChoice) {
+    return BossModThreadSource.createThreadSource(threadId, {
+        api,
+        bus,
+        presence,
+        archive: BossModThreadArchive.createThreadArchive({ api, confirm: () => confirmChoice }),
+        forgetCache: (id) => forgotten.push(id),
+    });
 }
 
-function archiveBtn() {
-    return document.getElementById("channel-archive-btn");
+function modal() {
+    return documentStub.body.querySelector(".modal");
 }
 
-function listItem(channelId) {
-    const root = byId.get("channels-list");
-    const items = root ? root.querySelectorAll(".channels-list-item") : [];
-    return items.find((el) => el.dataset.channelId === channelId) || null;
+function modalButton(id) {
+    return documentStub.body.querySelector(`#${id}`);
 }
 
-function methodsFor(urlPart) {
-    return calls.filter((item) => String(item.url).includes(urlPart)).map((item) => item.method);
-}
-
-function buttonLabels(spec) {
-    return spec.buttons.map((btn) => btn.label);
-}
-
-function countMarkupButtons(html) {
-    return (String(html).match(/<button\b/g) || []).length;
-}
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 async function main() {
-    const emptySpec = ChannelsView.archivePromptSpec(0);
-    const openSpec = ChannelsView.archivePromptSpec(2);
-    const emptyMarkup = ChannelsView.archivePromptMarkup(emptySpec);
-    const openMarkup = ChannelsView.archivePromptMarkup(openSpec);
+    // ─── 1. The copy and the two branches ───
 
-    const honesty = "Not permanently deleted — leaves the active list and seals the room (no new posts).";
+    if (BossModThreadArchive.HONESTY_COPY !== HONESTY) throw new Error("honesty constant mismatch");
+    const emptySpec = BossModThreadArchive.spec(0);
+    const openSpec = BossModThreadArchive.spec(2);
     if (emptySpec.title !== "Archive thread?" || openSpec.title !== "Archive thread?") {
         throw new Error("archive title mismatch");
     }
-    if (emptySpec.honesty !== honesty || openSpec.honesty !== honesty) {
+    if (emptySpec.honesty !== HONESTY || openSpec.honesty !== HONESTY) {
         throw new Error("modal honesty copy missing");
     }
-    if (ChannelsView.ARCHIVE_HONESTY_COPY !== honesty) {
-        throw new Error("honesty constant mismatch");
-    }
-    if (ChannelsView.openTaskArchiveCopy(0) !== `Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board. ${honesty}`) {
+    if (BossModThreadArchive.copy(0) !== `Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board. ${HONESTY}`) {
         throw new Error("N=0 archive copy mismatch");
     }
-    if (ChannelsView.openTaskArchiveCopy(2) !== `This thread has 2 open tasks. Sealing stops new posts and access cards. ${honesty}`) {
+    if (BossModThreadArchive.copy(2) !== `This thread has 2 open tasks. Sealing stops new posts and access cards. ${HONESTY}`) {
         throw new Error("N>0 archive copy mismatch");
     }
-    if (!emptyMarkup.includes(honesty) || !openMarkup.includes(honesty)) {
-        throw new Error("honesty copy must appear in both modal variants");
-    }
-    if (ChannelsView.shouldPromptOpenTasksOnArchive(0) !== false) {
+    if (BossModThreadArchive.shouldPrompt(0) !== false) {
         throw new Error("N=0 must use the two-button confirm, not the open-task choices");
     }
-    if (ChannelsView.shouldPromptOpenTasksOnArchive(2) !== true) {
+    if (BossModThreadArchive.shouldPrompt(2) !== true) {
         throw new Error("N>0 must show the open-task choices");
     }
-    if (emptySpec.buttons.length !== 2 || countMarkupButtons(emptyMarkup) !== 2) {
-        throw new Error("N=0 must show a two-button modal");
-    }
-    if (buttonLabels(emptySpec).join("|") !== "Cancel|Archive") {
+    if (emptySpec.buttons.map((b) => b.label).join("|") !== "Cancel|Archive") {
         throw new Error("N=0 buttons must be Cancel and Archive");
     }
-    if (!emptyMarkup.includes('id="channel-archive-confirm"') || !emptyMarkup.includes('id="channel-archive-back"')) {
-        throw new Error("N=0 markup must include Archive and Cancel");
-    }
-    if (emptyMarkup.includes("Cancel tasks") || emptyMarkup.includes("Archive only")) {
-        throw new Error("N=0 modal must not include open-task actions");
-    }
-    if (openSpec.buttons.length !== 3 || countMarkupButtons(openMarkup) !== 3) {
-        throw new Error("N>0 must show a three-button modal");
-    }
-    if (buttonLabels(openSpec).join("|") !== "Back|Archive only|Cancel tasks & archive") {
+    if (openSpec.buttons.map((b) => b.label).join("|") !== "Back|Archive only|Cancel tasks & archive") {
         throw new Error("N>0 buttons mismatch");
     }
-    if (!openMarkup.includes('id="channel-archive-cancel-tasks"') || !openMarkup.includes('id="channel-archive-only"')) {
-        throw new Error("N>0 markup must include cancel-and-archive and archive-only");
+    // Dismissing the dialog is never read as consent.
+    if (emptySpec.dismissChoice !== "back" || openSpec.dismissChoice !== "back") {
+        throw new Error("dismissing must mean back");
+    }
+    if (!BossModThreadArchive.isAbort(undefined) || !BossModThreadArchive.isAbort("cancel")) {
+        throw new Error("no choice at all must abort");
     }
 
-    const root = new FakeEl("div");
-    await ChannelsView.render(root);
+    // ─── 2. The real modal renders the right branch ───
 
-    window.chooseArchiveOpenTasks = () => "cancel_and_archive";
+    const flow = BossModThreadArchive.createThreadArchive({ api });
+
+    const openPending = flow.prompt(2);
+    const openDialog = modal();
+    if (!openDialog) throw new Error("prompt(2) rendered no dialog");
+    const openTasksThreeButtons = openDialog.querySelectorAll("button").length === 3
+        && Boolean(modalButton("channel-archive-cancel-tasks"))
+        && Boolean(modalButton("channel-archive-only"))
+        && Boolean(modalButton("channel-archive-back"));
+    if (!openTasksThreeButtons) throw new Error("N>0 must show a three-button modal");
+    if (!openDialog.textContent.includes(HONESTY)) {
+        throw new Error("honesty copy must appear in the open-task modal");
+    }
+    // The way out holds focus, so Enter and Esc agree (overlays contract).
+    if (documentStub.activeElement !== modalButton("channel-archive-back")) {
+        throw new Error("the abort choice must hold focus in the open-task modal");
+    }
+    await modalButton("channel-archive-back").dispatchClick();
+    const backAborts = BossModThreadArchive.isAbort(await openPending);
+    if (!backAborts) throw new Error("Back must abort archive");
+
+    const zeroPending = flow.prompt(0);
+    const zeroDialog = modal();
+    if (!zeroDialog) throw new Error("prompt(0) rendered no dialog");
+    const zeroOpenTwoButtons = zeroDialog.querySelectorAll("button").length === 2
+        && Boolean(modalButton("channel-archive-confirm"))
+        && Boolean(modalButton("channel-archive-back"))
+        && !zeroDialog.textContent.includes("Cancel tasks")
+        && !zeroDialog.textContent.includes("Archive only");
+    if (!zeroOpenTwoButtons) throw new Error("N=0 must show a two-button modal");
+    if (!zeroDialog.textContent.includes(HONESTY)) {
+        throw new Error("honesty copy must appear in the zero-open modal");
+    }
+    await modalButton("channel-archive-confirm").dispatchClick();
+    const zeroOpenConfirm = (await zeroPending) === "archive_only";
+    if (!zeroOpenConfirm) throw new Error("N=0 confirm must choose archive_only");
+
+    const zeroCancelPending = flow.prompt(0);
+    await modalButton("channel-archive-back").dispatchClick();
+    const zeroOpenCancelAborts = BossModThreadArchive.isAbort(await zeroCancelPending);
+    if (!zeroOpenCancelAborts) throw new Error("N=0 Cancel must abort archive");
+    if (modal()) throw new Error("choosing must close the dialog");
+
+    // ─── 3. Archiving through the source ───
+
+    const annSource = sourceFor("open-a", "cancel_and_archive");
+    const offAnn = annSource.subscribe(signals);
+    await annSource.load();
+    if (annSource.chrome().actions[0].id !== "channel-archive-btn") {
+        throw new Error("a live thread must offer Archive");
+    }
     calls.length = 0;
-    await archiveBtn().click();
+    await annSource.chrome().actions[0].onSelect();
     if (calls.some((item) => item.url === "/api/tasks/cancel")) {
         throw new Error("cancel-and-archive must not use a separate cancel POST");
     }
-    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/open-a/archive") && String(item.url).includes("cancel_open_tasks=true"))) {
+    const cancelAndArchive = calls.some((item) => item.method === "POST"
+        && item.url.includes("/api/channels/open-a/archive")
+        && item.url.includes("cancel_open_tasks=true"));
+    if (!cancelAndArchive) {
         throw new Error("primary must cancel tasks via archive?cancel_open_tasks=true");
     }
 
-    window.chooseArchiveOpenTasks = () => "archive_only";
+    const beaSource = sourceFor("open-b", "archive_only");
+    const offBea = beaSource.subscribe(signals);
+    await beaSource.load();
     calls.length = 0;
-    const bea = listItem("open-b");
-    if (!bea) throw new Error("thread B missing");
-    await bea.click();
-    await archiveBtn().click();
+    await beaSource.chrome().actions[0].onSelect();
     if (calls.some((item) => item.url === "/api/tasks/cancel")) {
         throw new Error("archive only must leave tasks open");
     }
-    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-b")) {
-        throw new Error("archive only must still archive the thread");
-    }
+    const archiveOnly = calls.some((item) => item.method === "DELETE"
+        && item.url === "/api/channels/open-b");
+    if (!archiveOnly) throw new Error("archive only must still archive the thread");
 
-    const cal = listItem("none-c");
-    if (!cal) throw new Error("thread C missing");
-    await cal.click();
-    window.chooseArchiveOpenTasks = () => "back";
+    // Aborting leaves the thread live and still archivable.
+    const deeSource = sourceFor("open-d", "back");
+    const offDee = deeSource.subscribe(signals);
+    await deeSource.load();
     calls.length = 0;
-    await archiveBtn().click();
-    if (calls.some((item) => item.url === "/api/tasks/cancel") || methodsFor("/api/channels/none-c").includes("DELETE")) {
-        throw new Error("N=0 Cancel must abort archive");
-    }
-    if (archiveBtn().disabled) {
-        throw new Error("N=0 Cancel must re-enable Archive");
-    }
-
-    window.chooseArchiveOpenTasks = () => "archive_only";
-    calls.length = 0;
-    await archiveBtn().click();
-    if (calls.some((item) => item.url === "/api/tasks/cancel")) {
-        throw new Error("N=0 archive must not cancel tasks");
-    }
-    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/none-c")) {
-        throw new Error("N=0 confirm must archive after the modal");
-    }
-
-    window.chooseArchiveOpenTasks = () => "back";
-    calls.length = 0;
-    const dee = listItem("open-d");
-    if (!dee) throw new Error("thread D missing");
-    await dee.click();
-    await archiveBtn().click();
-    if (calls.some((item) => item.url === "/api/tasks/cancel") || methodsFor("/api/channels/open-d").includes("DELETE")) {
+    await deeSource.chrome().actions[0].onSelect();
+    if (calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-d")) {
         throw new Error("Back must abort archive");
     }
-    if (archiveBtn().disabled) {
-        throw new Error("Back must re-enable Archive");
+    if (deeSource.canSend() !== true
+        || deeSource.chrome().actions[0].id !== "channel-archive-btn") {
+        throw new Error("an aborted archive must leave the thread archivable");
     }
 
-    if (ChannelsView.isLiveThread("open-a") !== false || ChannelsView.isLiveThread("open-b") !== false) {
-        throw new Error("archived threads must not be live");
+    // ─── 4. A sealed room stays sealed ───
+
+    if (annSource.canSend() !== false || beaSource.canSend() !== false) {
+        throw new Error("archived threads must not accept posts");
     }
-    if (ChannelsView.isLiveThread("open-d") !== true) {
-        throw new Error("open thread must stay live");
+    if (annSource.disabledReason() !== "Archived — reopen to post again.") {
+        throw new Error("the sealed composer must say why");
     }
-    ChannelsView.handleChannelMessage({
+    const sealedChrome = annSource.chrome();
+    if (sealedChrome.actions.length !== 1
+        || sealedChrome.actions[0].id !== "channel-reopen-btn"
+        || sealedChrome.actions[0].label !== "Reopen") {
+        throw new Error("an archived thread must offer Reopen and only Reopen");
+    }
+    offAnn();
+    let leaked = 0;
+    const offSpam = annSource.subscribe({ ...signals, message: () => { leaked += 1; } });
+    bus.publish("channel_message", {
         channel_id: "open-a",
         content: "spam after archive",
         author_type: "agent",
         author_name: "Ada",
         message_id: "spam-1",
     });
-    ChannelsView.handleChannelPresence({
+    bus.publish("channel_presence", {
         channel_id: "open-a",
         agent_id: "ada",
         agent_name: "Ada",
         phase: "thinking",
     });
-    if (ChannelsView.isLiveThread("open-a") !== false) {
-        throw new Error("live handlers must not revive an archived thread");
-    }
+    const archivedNotLive = leaked === 0
+        && presence.list("open-a").length === 0
+        && forgotten.includes("open-a")
+        && annSource.canSend() === false;
+    if (!archivedNotLive) throw new Error("live handlers must not revive an archived thread");
+    offSpam();
 
-    const archivedFilter = document.getElementById("channels-filter-archived");
-    if (!archivedFilter) throw new Error("Archived filter missing");
+    // ─── 5. Reopen unseals ───
+
+    const calSource = sourceFor("none-c", "archive_only");
+    const offCal = calSource.subscribe(signals);
+    await calSource.load();
+    await calSource.chrome().actions[0].onSelect();
+    if (calSource.canSend() !== false) throw new Error("none-c must archive");
     calls.length = 0;
-    await archivedFilter.click();
-    if (!calls.some((item) => item.method === "GET" && String(item.url).includes("status=archived"))) {
-        throw new Error("Archived filter must list archived threads");
-    }
-    if (!listItem("none-c") || !listItem("open-a") || listItem("open-d")) {
-        throw new Error("Archived filter must show sealed threads and hide active ones");
-    }
-
-    await listItem("none-c").click();
-    const reopenBtn = document.getElementById("channel-reopen-btn");
-    const archiveAfter = document.getElementById("channel-archive-btn");
-    if (!reopenBtn || reopenBtn.hidden) {
-        throw new Error("archived thread must show Reopen");
-    }
-    if (archiveAfter && !archiveAfter.hidden) {
-        throw new Error("archived thread must hide Archive");
-    }
-    const composer = document.getElementById("channel-input");
-    if (!composer || !composer.disabled) {
-        throw new Error("archived composer must stay sealed");
-    }
-
-    calls.length = 0;
-    await reopenBtn.click();
-    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/none-c/reopen"))) {
-        throw new Error("Reopen must POST /reopen");
-    }
-    if (ChannelsView.isLiveThread("none-c") !== true) {
+    await calSource.chrome().actions[0].onSelect();
+    const reopened = calls.some((item) => item.method === "POST"
+        && item.url.includes("/api/channels/none-c/reopen"));
+    if (!reopened) throw new Error("Reopen must POST /reopen");
+    if (calSource.canSend() !== true || calSource.disabledReason() !== "") {
         throw new Error("Reopen must unseal the thread");
     }
-    const liveComposer = document.getElementById("channel-input");
-    const sendBtn = document.getElementById("channel-send");
-    if (!liveComposer || liveComposer.disabled || !sendBtn || sendBtn.disabled) {
-        throw new Error("Reopen must enable new posts");
-    }
-    liveComposer.value = "hello again";
     calls.length = 0;
-    await sendBtn.click();
-    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/none-c/messages"))) {
-        throw new Error("unsealed thread must accept a new post");
+    await calSource.send("hello again");
+    const reopenUnseals = reopened && calls.some((item) => item.method === "POST"
+        && item.url.includes("/api/channels/none-c/messages"));
+    if (!reopenUnseals) throw new Error("an unsealed thread must accept a new post");
+
+    offBea();
+    offDee();
+    offCal();
+
+    // ─── 6. The archived list is still reachable, from the roster ───
+
+    const store = BossModStore.createStore({
+        roster: [], threads: [], rosterQuery: "", needs: [], runtimePaused: false,
+    });
+    const rail = documentStub.createElement("aside");
+    documentStub.body.append(rail);
+    const unmountRoster = BossModRoster.mount(rail, {
+        store, bus, apiFetch: api, navigate: noop, onHire: noop,
+    });
+    await tick();
+
+    const archivedFilter = rail.querySelector("#channels-filter-archived");
+    if (!archivedFilter) throw new Error("Archived filter missing from the roster");
+    calls.length = 0;
+    await archivedFilter.dispatchClick();
+    await tick();
+    if (!calls.some((item) => item.method === "GET" && item.url.includes("status=archived"))) {
+        throw new Error("Archived filter must list archived threads");
     }
+    const listed = rail.querySelectorAll(".roster-thread")
+        .map((el) => el.getAttribute("data-thread-id"));
+    const archivedFilterLists = listed.includes("open-a")
+        && listed.includes("open-b")
+        && !listed.includes("open-d")
+        && !listed.includes("none-c");
+    if (!archivedFilterLists) {
+        throw new Error(`Archived filter must show sealed threads only, got ${listed.join(",")}`);
+    }
+    unmountRoster();
 
     process.stdout.write(JSON.stringify({
         ok: true,
-        cancelAndArchive: true,
-        archiveOnly: true,
-        zeroOpenTwoButtons: true,
-        openTasksThreeButtons: true,
-        zeroOpenConfirm: true,
-        zeroOpenCancelAborts: true,
-        backAborts: true,
-        archivedNotLive: true,
+        cancelAndArchive,
+        archiveOnly,
+        zeroOpenTwoButtons,
+        openTasksThreeButtons,
+        zeroOpenConfirm,
+        zeroOpenCancelAborts,
+        backAborts,
+        archivedNotLive,
         honestyCopy: true,
-        archivedFilterLists: true,
-        reopenUnseals: true,
+        archivedFilterLists,
+        reopenUnseals,
     }));
 }
 

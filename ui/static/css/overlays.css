@@ -1,0 +1,242 @@
+/* BossMod AI — everything that floats above the frame: modals, the needs
+   popover, arrival toasts, and slide-overs. Moved out of shell.css rather than
+   duplicated, so there is one definition of each.
+
+   Colour comes from tokens.css; no value is hardcoded here that a token already
+   names. Shadows use a neutral rgba because a shadow is a depth cue, not a
+   palette colour — the same treatment conversation.css already uses. */
+
+/* ─── Modal ─── */
+
+.modal {
+  position: fixed;
+  z-index: 60;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.modal-title { margin: 0 0 8px; font-size: 16px; }
+.modal-body { margin-bottom: 16px; color: var(--muted); }
+
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.modal-action {
+  padding: 6px 14px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  font-weight: 500;
+}
+
+.modal-action.danger { border-color: var(--alert); background: var(--alert); color: var(--panel); }
+.modal-action.quiet { background: var(--panel); color: var(--ink); }
+
+/* ─── Popover ───
+   Anchored under the header, not centred: it belongs to the bell. */
+
+.popover {
+  position: fixed;
+  z-index: 70;
+  top: 52px;
+  right: 12px;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.popover-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Loading: the queue re-reads itself on open, so the bell is authoritative. */
+.popover-status {
+  margin: 0;
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--hint);
+}
+
+.popover-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--alert);
+}
+
+.popover-error:empty { display: none; }
+
+.popover-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+
+.popover-empty {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.popover-group + .popover-group { margin-top: 14px; }
+
+.popover-group-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.popover-need {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.popover-need-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink); }
+.popover-need-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: break-word; }
+.popover-need-time { margin: 2px 0 0; font-size: 11px; color: var(--hint); }
+
+.popover-need-error {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+  font-size: 12px;
+  color: var(--alert);
+}
+
+.popover-need-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.popover-action,
+.popover-show-me {
+  /* SC 2.5.8: every target clears 24x24. */
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  transition: background 120ms ease;
+}
+
+.popover-action.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); }
+.popover-action.quiet { color: var(--muted); }
+.popover-action:disabled { opacity: 0.55; pointer-events: none; }
+.popover-show-me { border-style: dashed; color: var(--accent); }
+
+.popover-footer {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.popover-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.popover-footer-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--hint);
+}
+
+/* ─── Toast ───
+   Arrival only, and only for a conversation that is not open (spec 5.5). */
+
+.toast-host {
+  position: fixed;
+  z-index: 80;
+  right: 12px;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, calc(100vw - 24px));
+}
+
+.toast {
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.toast-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink); }
+.toast-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: break-word; }
+
+.toast-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+.toast-action {
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.toast-action.primary { border-color: var(--accent); color: var(--accent); }
+
+/* ─── Slide-over ───
+   The desk and task detail panels ride this in Phase 3; the needs queue's
+   "Show me" uses it for nothing yet, so it stays minimal rather than invented. */
+
+.slide-over {
+  position: fixed;
+  z-index: 70;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 100vw);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line-strong);
+  background: var(--panel);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.16);
+  transition: transform 180ms ease;
+}
+
+.slide-over[hidden] { display: none !important; }
+
+/* Motion is decoration here; the information is the copy. */
+@media (prefers-reduced-motion: reduce) {
+  .popover,
+  .popover-action,
+  .popover-show-me,
+  .toast,
+  .slide-over {
+    transition: none;
+  }
+}

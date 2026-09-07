@@ -80,9 +80,9 @@ def test_casual_hire_shows_color_under_description() -> None:
 
 def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
     panel = _read("agent-panel.js")
-    utils = _read("utils.js")
-    assert "createInFlightGate()" in utils
-    assert "const hireSubmit = BossModUtils.createInFlightGate()" in panel
+    gates = _read("core/gates.js")
+    assert "createInFlightGate()" in gates
+    assert "const hireSubmit = BossModGates.createInFlightGate()" in panel
     assert "if (hireSubmit.busy()) return;" in panel
     assert "id=\"agent-form-submit\"" in panel
     assert "disabled:pointer-events-none" in panel
@@ -98,20 +98,28 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
 
 
 def test_successful_create_dismisses_hire_form() -> None:
-    source = _read("agent-context.js")
-    on_save = source.split("await AgentPanel.renderInline(container, selectedAgent, async (savedAgent) => {", 1)[1]
-    on_save = on_save.split("}, () => {", 1)[0]
-    assert "const wasCreating = creatingAgent" in on_save
-    assert "await selectAgent(savedAgent)" in on_save
-    assert on_save.index("const wasCreating = creatingAgent") < on_save.index(
-        "await selectAgent(savedAgent)"
-    )
-    assert on_save.index("if (wasCreating)") < on_save.index("await selectAgent(savedAgent)")
-    select = source.split("async function selectAgent(agentData) {", 1)[1].split(
-        "function deselectAgent()", 1
+    """Re-pointed to context/agent-edit.js, which hosts the form in Phase 2B.
+
+    Same property, same order: whether this was a CREATE is captured before the
+    save, and only a create closes the form and selects the new agent. Editing
+    must leave the operator where they were.
+    """
+    source = _read("context/agent-edit.js")
+    assert "AgentPanel.renderInline(formEl, agent || null, onSave, onDelete)" in source
+    # Captured at construction, before any save can land.
+    assert "const wasCreating = !agent;" in source
+    on_save = source.split("function onSave(savedAgent) {", 1)[1].split(
+        "function onDelete()", 1
     )[0]
-    assert "activeSubview = 'chat'" in select
-    assert "creatingAgent = false" in select
+    assert "savedAgent && wasCreating" in on_save
+    assert "conversationId: savedAgent.id" in on_save
+    assert "conversationKind: 'agent'" in on_save
+    # The form closes either way; only a create moves the conversation.
+    assert "onDone();" in on_save
+    assert on_save.index("savedAgent && wasCreating") < on_save.index("onDone();")
+    assert source.index("const wasCreating = !agent;") < source.index(
+        "function onSave(savedAgent) {"
+    )
 
 
 def test_directory_and_org_upsert_world_roster() -> None:

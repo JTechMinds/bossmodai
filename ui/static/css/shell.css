@@ -1,0 +1,342 @@
+/* BossMod AI — the persistent frame: header, banners, layout grid, roster,
+   footer, and place placeholders. Colour comes from tokens.css; no value is
+   hardcoded here that a token already names.
+
+   Modals, popovers, toasts, and slide-overs live in overlays.css — they float
+   above the frame rather than being part of it. */
+
+/* ─── Layout grid ───
+   The rail and context widths are tokens so the collapsed rail and the
+   context-free places are one declaration each rather than a second layout. */
+
+#main-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  background: var(--bg);
+}
+
+#main-layout[data-context="on"] {
+  grid-template-columns: var(--rail) minmax(0, 1fr) var(--ctx);
+}
+
+#main-layout[data-context="off"] .app-context {
+  display: none;
+}
+
+#main-layout[data-rail="collapsed"] {
+  --rail: 56px;
+}
+
+.app-place {
+  min-width: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.app-context {
+  min-width: 0;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* ─── Header ─── */
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brand-mark { color: var(--accent); }
+.brand-name { font-weight: 700; font-size: 15px; }
+.brand-company { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+.place-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline: auto;
+}
+
+.place-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.place-nav-item:hover { background: var(--bg); color: var(--ink); }
+
+.place-nav-item[aria-current="page"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-error {
+  color: var(--alert);
+  font-size: 12px;
+  max-width: 260px;
+}
+
+.header-bell,
+.header-gear {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r);
+  color: var(--muted);
+}
+
+.header-bell:hover,
+.header-gear:hover { background: var(--bg); color: var(--ink); }
+
+.bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--alert);
+  color: var(--panel);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.header-pause {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+  color: var(--alert);
+  font-weight: 500;
+}
+
+.header-pause:hover { border-color: var(--alert); }
+
+/* ─── Roster rail ─── */
+
+.app-roster {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.roster-search-row { padding: 10px; border-bottom: 1px solid var(--line); }
+
+.roster-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.roster-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+
+.roster-section { margin-bottom: 16px; }
+
+.roster-section-title {
+  margin: 4px 6px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.roster-people,
+.roster-threads { list-style: none; margin: 0; padding: 0; }
+
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--r);
+}
+
+.roster-row:hover { background: var(--bg); }
+
+.roster-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.roster-person,
+.roster-thread {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.roster-name {
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-status { color: var(--hint); font-size: 11px; }
+
+.roster-need-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alert);
+}
+
+.roster-empty,
+.roster-skeleton { padding: 8px 6px; color: var(--hint); font-size: 12px; }
+
+.roster-skeleton { background: var(--bg); border-radius: var(--r); }
+
+.roster-thread-filters {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 6px 6px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.roster-thread-filter {
+  padding: 3px 10px;
+  border-radius: var(--r);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.roster-thread-filter[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--panel);
+}
+
+.roster-thread-hint { margin: 0 6px 6px; color: var(--hint); font-size: 11px; }
+
+.roster-create-thread {
+  width: calc(100% - 12px);
+  margin: 0 6px 8px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 500;
+}
+
+.roster-create-thread:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.roster-error { margin: 8px 6px; color: var(--alert); font-size: 12px; }
+
+.roster-hire {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.roster-hire:hover { background: var(--accent-bg); }
+
+/* ─── Footer ─── */
+
+.app-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.footer-status-group { display: flex; align-items: center; gap: 12px; }
+.footer-runtime-status { display: inline-flex; align-items: center; gap: 6px; }
+
+.footer-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.footer-status-dot[data-state="connected"] { background: var(--ok-mark); }
+.footer-status-dot[data-state="resyncing"] { background: var(--amber-ink); }
+.footer-status-dot[data-state="paused"] { background: var(--amber-ink); }
+.footer-status-dot[data-state="disconnected"] { background: var(--alert); }
+
+/* ─── Place placeholders and errors ─── */
+
+.place-stub,
+.place-error {
+  max-width: 520px;
+  margin: 64px auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.place-stub h1,
+.place-error h1 { margin: 0 0 8px; font-size: 18px; }
+.place-stub-note { margin: 0; color: var(--muted); }
+.place-error { border-color: var(--alert-line); background: var(--alert-bg); }
+.place-error p { color: var(--alert); }
+
+.place-error .btn {
+  margin-top: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+}

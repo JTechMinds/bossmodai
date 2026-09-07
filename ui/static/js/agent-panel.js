@@ -461,11 +461,12 @@ const AgentPanel = (() => {
         `;
 
         // Settings navigation links
+        // Phase 2B: the dock-era app.js is no longer loaded, so the
+        // BossModApp nav call that used to follow this threw
+        // as soon as the form was hosted in the new shell. The shell's own gear
+        // opens the takeover with SettingsView.open() and nothing else.
         const gotoSettings = () => {
-            if (typeof SettingsView !== 'undefined') {
-                SettingsView.open();
-                BossModApp.updateNavForSettings(true);
-            }
+            SettingsView.open();
         };
         const gotoConn = container.querySelector('#btn-goto-connections');
         if (gotoConn) gotoConn.addEventListener('click', gotoSettings);
@@ -709,7 +710,7 @@ const AgentPanel = (() => {
         form.appendChild(feedbackEl);
 
         const submitBtn = form.querySelector('#agent-form-submit');
-        const hireSubmit = BossModUtils.createInFlightGate();
+        const hireSubmit = BossModGates.createInFlightGate();
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();

@@ -104,8 +104,10 @@ global.apiFetchOk = async (...args) => {
 };
 
 const utilsSrc = fs.readFileSync(process.argv[2], "utf8");
-const filesSrc = fs.readFileSync(process.argv[3], "utf8");
+const gatesSrc = fs.readFileSync(process.argv[3], "utf8");
+const filesSrc = fs.readFileSync(process.argv[4], "utf8");
 eval(`${utilsSrc}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${gatesSrc}\n;global.BossModGates = BossModGates;\n`);
 eval(`${filesSrc}\n;global.CompanyFiles = CompanyFiles;\n`);
 
 if (typeof global.CompanyFiles !== "object" || typeof global.CompanyFiles.openNamedPath !== "function") {

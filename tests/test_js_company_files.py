@@ -62,6 +62,7 @@ def test_company_files_named_path_harness() -> None:
             "node",
             str(harness),
             str(JS / "utils.js"),
+            str(JS / "core" / "gates.js"),
             str(JS / "company-files.js"),
         ],
         check=False,

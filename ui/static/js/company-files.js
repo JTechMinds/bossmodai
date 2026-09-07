@@ -17,7 +17,7 @@ const CompanyFiles = (() => {
     let folderOpenerModalEl = null;
     let hostRootsModalEl = null;
     let contextMenuEl = null;
-    const filesLoad = BossModUtils.createLoadGeneration();
+    const filesLoad = BossModGates.createLoadGeneration();
 
     function onDocumentClickCloseNewMenu(event) {
         if (!container) return;

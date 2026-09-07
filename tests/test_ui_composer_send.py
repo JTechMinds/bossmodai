@@ -15,8 +15,8 @@ def _read(name: str) -> str:
     return (JS / name).read_text(encoding="utf-8")
 
 
-def test_utils_exports_composer_send_gate() -> None:
-    source = _read("utils.js")
+def test_gates_export_composer_send_gate() -> None:
+    source = _read("core/gates.js")
     assert "function createComposerSendGate()" in source
     assert "function setComposerError(" in source
     assert "createComposerSendGate," in source
@@ -24,40 +24,54 @@ def test_utils_exports_composer_send_gate() -> None:
 
 
 def test_chat_send_waits_for_ack_and_blocks_inflight() -> None:
-    source = _read("agent-context.js")
-    assert "const chatSend = BossModUtils.createComposerSendGate()" in source
-    chat = source.split("function bindChatSend() {", 1)[1].split(
-        "function appendChatMessage(", 1
+    source = _read("conversation/composer.js")
+    assert "BossModGates.createComposerSendGate()" in source
+    submit = source.split("async function submit() {", 1)[1].split(
+        "disposers.push(", 1
     )[0]
-    assert "await chatSend.submit(" in chat
-    assert "el.value = ''" not in chat
-    assert "input.value = ''" not in chat
-    assert "appendChatMessage('Failed to reach agent.', 'agent')" in chat
-    apply_state = source.split("function applyChatSendState() {", 1)[1].split(
-        "function bindChatSend()", 1
+    assert "await sendGate.submit(" in submit
+    # The gate clears the input after the ack; the composer never may.
+    assert "el.value = ''" not in source
+    assert "input.value = ''" not in source
+    # A failed send has to reach the operator, not just the console.
+    assert "onError:" in submit
+    assert "setError(" in submit
+    assert "BossModGates.setComposerError(" in source
+    # The copy an unreachable agent produces, unchanged.
+    assert "Failed to reach agent." in _read("conversation/sources/agent-source.js")
+    apply_state = source.split("function applyState() {", 1)[1].split(
+        "function setError(", 1
     )[0]
-    assert "chatSend.busy()" in apply_state
-    assert "sendBtn.disabled = !allowed || chatSend.busy()" in apply_state
-    assert "input.disabled = !allowed || chatSend.busy()" in apply_state
+    assert "sendGate.busy()" in apply_state
+    assert "sendBtn.disabled = !enabled" in apply_state
+    assert "input.disabled = !enabled" in apply_state
+    # applyState runs in the gate's finally, so a failure cannot strand it.
+    assert "applyIdleState: applyState" in submit
 
 
-def test_meeting_send_surfaces_error_and_keeps_draft() -> None:
-    source = _read("agent-context.js")
-    assert "const meetingSend = BossModUtils.createComposerSendGate()" in source
-    assert 'id="meeting-send-error"' in source
-    bind = source.split("function bindMeetingSend(sessionId) {", 1)[1].split(
-        "function handleMeetingMessage(", 1
+def test_thread_send_surfaces_error_and_keeps_draft() -> None:
+    composer = _read("conversation/composer.js")
+    thread = _read("conversation/sources/thread-source.js")
+
+    assert "BossModGates.createComposerSendGate()" in composer
+    assert "'composer-error hidden'" in composer
+    assert "role: 'alert'" in composer
+    assert "BossModGates.setComposerError(" in composer
+    assert "input.value = ''" not in composer
+
+    send = thread.split("async function send(text) {", 1)[1].split(
+        "function subscribe(on) {", 1
     )[0]
-    assert "await meetingSend.submit(" in bind
-    assert "input.value = ''" not in bind
-    assert "BossModUtils.setComposerError(" in bind
-    assert "console.error('[AgentContext] Failed to send meeting message:" not in bind
-    assert "Failed to send meeting message." in bind
+    # A rejected post must reject, not resolve: the gate keeps the draft only
+    # when send() throws, and it must never be swallowed into a console.error.
+    assert "throw new Error((await res.text())" in send
+    assert "Could not post to this thread." in send
+    assert "console.error" not in send
 
 
 def test_composer_send_harness_keeps_draft_and_blocks_double_submit() -> None:
     result = subprocess.run(
-        ["node", str(HARNESS), str(JS / "utils.js")],
+        ["node", str(HARNESS), str(JS / "core" / "gates.js")],
         check=False,
         capture_output=True,
         text=True,

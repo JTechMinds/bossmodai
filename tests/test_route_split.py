@@ -51,6 +51,7 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/tasks/{task_id}/cancel", "cancel_task"),
     (("GET",), "/api/tasks/{task_id}/events", "get_task_events"),
     (("GET",), "/api/tasks/{task_id}", "get_task"),
+    (("GET",), "/api/needs", "list_needs"),
     (("GET",), "/api/activity/feed", "get_activity_feed"),
     (("POST",), "/api/agents/{agent_id}/activate", "activate_agent"),
     (("GET",), "/api/agents/{agent_id}/meeting-session", "get_agent_meeting_session"),
@@ -111,7 +112,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 90
+    assert len(got) == 91
 
 
 def test_from_api_routes_import_router_still_works() -> None:

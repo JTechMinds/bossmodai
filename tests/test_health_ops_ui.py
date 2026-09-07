@@ -11,19 +11,23 @@ HTML = ROOT / "ui" / "templates" / "index.html"
 
 
 def test_no_model_banner_and_send_disabled_in_ui() -> None:
+    """Re-pointed in Phase 2A: app.js is on disk but no longer loaded, so the
+    old assertions were a false green. The banner is owned by shell/banners.js
+    and Send disablement by conversation/composer.js."""
     html = HTML.read_text(encoding="utf-8")
-    app = (JS / "app.js").read_text(encoding="utf-8")
-    chat = (JS / "agent-context.js").read_text(encoding="utf-8")
+    banners = (JS / "shell" / "banners.js").read_text(encoding="utf-8")
+    composer = (JS / "conversation" / "composer.js").read_text(encoding="utf-8")
 
     assert 'id="no-model-banner"' in html
     assert "Connect a model in Settings" in html
-    assert "refreshModelAvailability" in app
-    assert "apiFetch('/api/connections'" in app
-    assert "applyNoModelBanner" in app
-    assert "function applyChatSendState(" in chat
-    assert "sendBtn.disabled = !allowed" in chat
-    assert "input.disabled = !allowed" in chat
-    assert "BossModApp.hasUsableModel()" in chat
+    assert "refreshModelAvailability" in banners
+    assert "apiFetch('/api/connections'" in banners
+    assert "hasUsableModel" in banners
+    assert "function applyModel(" in banners
+    assert "function applyState(" in composer
+    assert "sendBtn.disabled" in composer
+    assert "input.disabled" in composer
+    assert "hasUsableModel" in composer
 
 
 def test_company_image_preview_uses_authenticated_blob_url() -> None:
@@ -39,19 +43,37 @@ def test_company_image_preview_uses_authenticated_blob_url() -> None:
 
 
 def test_walk_receipts_stay_visible_when_system_toggle_off() -> None:
-    chat = (JS / "agent-context.js").read_text(encoding="utf-8")
-    utils = (JS / "utils.js").read_text(encoding="utf-8")
-    assert "function isWalkReceipt(" in chat
-    assert "notification_kind === 'receipt'" in chat
-    assert "function isHostPathConsent(" in chat
-    assert "BossModUtils.isHostPathConsentMessage(msg)" in chat
-    assert "|| isWalkReceipt(msg) || isHostPathConsent(msg)" in chat
-    assert "host-path-consent-card" in chat
-    assert "function renderHostPathConsentCard(" in utils
-    assert "Allow once" in utils
-    assert "Always allow (for all agents)" in utils
-    assert "Always allowed (for all agents)" in utils
-    assert "Deny" in utils
+    """The dock-era chat sub-view is gone; the property is the source's now.
+
+    Phase 2A added the agent-source half of this test while agent-context.js
+    was still on disk. Phase 2B deleted that file, so its half is finished here
+    rather than dropped: a walk receipt and a consent ask are system messages
+    that the system-notifications toggle can never hide.
+    """
+    consent = (JS / "core" / "consent-card.js").read_text(encoding="utf-8")
+    assert "function renderHostPathConsentCard(" in consent
+    assert "Allow once" in consent
+    assert "Always allow (for all agents)" in consent
+    assert "Always allowed (for all agents)" in consent
+    assert "Deny" in consent
+
+    cards = (JS / "conversation" / "event-cards.js").read_text(encoding="utf-8")
+    assert "host-path-consent-card" in cards
+
+    source = (JS / "conversation" / "sources" / "agent-source.js").read_text(encoding="utf-8")
+    assert "notification_kind === 'receipt'" in source
+    assert "BossModConsentCard.isHostPathConsentMessage(raw)" in source
+    assert "systemReceipt: isSystem && !isWalkReceipt && !consent" in source
+    conversation = (JS / "conversation" / "conversation.js").read_text(encoding="utf-8")
+    # Phase 2B split the persisted preference out of the controller; the key is
+    # unchanged, so an operator's existing choice still applies.
+    receipts = (JS / "conversation" / "system-receipts.js").read_text(encoding="utf-8")
+    assert "bossmod.chat.showSystemReceipts" in receipts
+    assert "message.systemReceipt" in conversation
+    assert "systemReceipts.isEnabled()" in conversation
+    # Only messages the source marked as a plain system receipt are filtered;
+    # nothing here can reach a walk receipt or a consent ask.
+    assert "messages.filter((message) => !message.systemReceipt)" in conversation
 
 
 def test_pyproject_drops_unused_duckdb_and_twilio() -> None:

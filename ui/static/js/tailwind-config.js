@@ -1,15 +1,18 @@
+/* Mirrors ui/static/css/tokens.css. tokens.css is the source of truth.
+   tests/test_ui_tokens.py fails if these drift apart. */
 tailwind.config = {
     theme: {
         extend: {
             colors: {
                 bm: {
-                    bg: '#f8fafc',
+                    bg: '#f6f7f9',
                     surface: '#ffffff',
-                    border: '#e2e8f0',
-                    text: '#1e293b',
-                    muted: '#64748b',
-                    accent: '#2563eb',
-                    'accent-hover': '#1d4ed8',
+                    border: '#e6e8ec',
+                    text: '#1b1f24',
+                    muted: '#565e6b',
+                    hint: '#6b7280',
+                    accent: '#2d6be5',
+                    'accent-hover': '#2456bd',
                 }
             }
         }

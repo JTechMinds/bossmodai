@@ -39,17 +39,17 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModGates = BossModGates;\n`);
 
-if (typeof BossModUtils !== "object" || typeof BossModUtils.createComposerSendGate !== "function") {
+if (typeof BossModGates !== "object" || typeof BossModGates.createComposerSendGate !== "function") {
     throw new Error("createComposerSendGate missing");
 }
-if (typeof BossModUtils.setComposerError !== "function") {
+if (typeof BossModGates.setComposerError !== "function") {
     throw new Error("setComposerError missing");
 }
 
 async function main() {
-    const gate = BossModUtils.createComposerSendGate();
+    const gate = BossModGates.createComposerSendGate();
     const input = new FakeEl({ value: "keep this draft" });
     const sendBtn = new FakeEl();
     let sends = 0;
@@ -133,14 +133,14 @@ async function main() {
     }
 
     const errorEl = new FakeEl({ class: "hidden" });
-    BossModUtils.setComposerError(errorEl, "Failed to send meeting message.");
+    BossModGates.setComposerError(errorEl, "Failed to send meeting message.");
     if (errorEl.textContent !== "Failed to send meeting message.") {
         throw new Error("error banner must show the message");
     }
     if (errorEl.classList.contains("hidden")) {
         throw new Error("error banner must unhide");
     }
-    BossModUtils.setComposerError(errorEl, "");
+    BossModGates.setComposerError(errorEl, "");
     if (errorEl.textContent !== "" || !errorEl.classList.contains("hidden")) {
         throw new Error("clearing the error must hide the banner");
     }

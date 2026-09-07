@@ -245,12 +245,16 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "What done looks like for this agent:" in utils_js
     activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
     assert "world_feedback" in activity_js
-    context_js = Path("ui/static/js/agent-context.js").read_text(encoding="utf-8")
-    assert "No specialty" in context_js
-    assert "selectedAgent.description" in context_js
-    assert "done_fail_bar" in context_js
-    assert "doneClaimGuidance" in context_js
-    assert "Blocked — checkable claim missing" in context_js
+    # Phase 2B replaced agent-context.js with the context column. The desk
+    # panel carries the agent's own contract copy; the desk's task cards carry
+    # the per-task claim copy, which is where doneClaimGuidance takes a task.
+    panel_js = Path("ui/static/js/context/desk-panel.js").read_text(encoding="utf-8")
+    assert "No specialty" in panel_js
+    assert "who.description" in panel_js
+    assert "done_fail_bar" in panel_js
+    desk_tasks_js = Path("ui/static/js/context/desk-tasks.js").read_text(encoding="utf-8")
+    assert "doneClaimGuidance" in desk_tasks_js
+    assert "Blocked — checkable claim missing" in desk_tasks_js
     board = Path("core/tasking/board.py").read_text(encoding="utf-8")
     assert "done_claim_guidance" in board
     assert "operator_done_claim_guidance" in board

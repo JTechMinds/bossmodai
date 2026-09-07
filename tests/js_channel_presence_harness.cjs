@@ -15,13 +15,13 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModGates = BossModGates;\n`);
 
-if (typeof BossModUtils.createChannelPresenceController !== "function") {
+if (typeof BossModGates.createChannelPresenceController !== "function") {
     throw new Error("createChannelPresenceController missing");
 }
 
-const presence = BossModUtils.createChannelPresenceController();
+const presence = BossModGates.createChannelPresenceController();
 if (presence.start("ch-1", "jim", "Jim") !== true) {
     throw new Error("start must accept a channel member");
 }

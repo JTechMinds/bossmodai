@@ -1,0 +1,195 @@
+/**
+ * Node harness: every button the shell renders has an accessible name.
+ *
+ * Mounts the header, roster, and footer into a fake DOM and walks the result,
+ * because "icon-only buttons carry aria-label" is a property of what renders,
+ * not of how the source is spelled.
+ *
+ * Invoked by tests/test_ui_a11y_contract.py. Not a browser bundle.
+ */
+const fs = require("fs");
+
+function makeEl(tag) {
+    const el = {
+        tagName: String(tag).toUpperCase(),
+        nodeType: 1,
+        attributes: {},
+        classes: new Set(),
+        children: [],
+        listeners: {},
+        parentNode: null,
+        value: "",
+        selectionStart: 0,
+        checked: false,
+        disabled: false,
+        setAttribute(k, v) { this.attributes[k] = v; },
+        getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; },
+        removeAttribute(k) { delete this.attributes[k]; },
+        append(...kids) {
+            kids.forEach((raw) => {
+                const k = (raw && raw.nodeType) ? raw : { nodeType: 3, textContent: String(raw) };
+                if (k.nodeType === 1) k.parentNode = this;
+                this.children.push(k);
+            });
+        },
+        remove() {},
+        replaceChildren() { this.children = []; },
+        addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); },
+        removeEventListener() {},
+        focus() {},
+    };
+    el.classList = {
+        add: (c) => el.classes.add(c),
+        remove: (c) => el.classes.delete(c),
+        contains: (c) => el.classes.has(c),
+        toggle: (c, on) => { if (on) el.classes.add(c); else el.classes.delete(c); },
+    };
+    return el;
+}
+
+global.document = {
+    createElement: makeEl,
+    createTextNode: (t) => ({ nodeType: 3, textContent: String(t) }),
+    body: makeEl("body"),
+    getElementById() { return null; },
+    addEventListener() {},
+    removeEventListener() {},
+    activeElement: null,
+};
+global.window = { document: global.document };
+global.lucide = { createIcons() {} };
+
+const [dom, store, bus, utils, overlays, places, header, rosterThreads, roster, footer] = process.argv.slice(2);
+const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
+load(dom, "BossModDom");
+load(store, "BossModStore");
+load(bus, "BossModBus");
+load(utils, "BossModUtils");
+load(overlays, "BossModOverlays");
+load(places, "BossModPlaces");
+load(header, "BossModHeader");
+load(rosterThreads, "BossModRosterThreads");
+load(roster, "BossModRoster");
+load(footer, "BossModFooter");
+
+/** Text a screen reader would announce: aria-hidden subtrees contribute nothing. */
+function accessibleText(node) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.textContent;
+    if (node.getAttribute && node.getAttribute("aria-hidden") === "true") return "";
+    return (node.children || []).map(accessibleText).join("");
+}
+
+/** ids named by a <label for="..."> somewhere in the subtree. */
+function labelledIds(node, out) {
+    (node.children || []).forEach((child) => {
+        if (child && child.nodeType === 1) {
+            if (child.tagName === "LABEL" && child.getAttribute("for")
+                && accessibleText(child).trim() !== "") {
+                out.add(child.getAttribute("for"));
+            }
+            labelledIds(child, out);
+        }
+    });
+    return out;
+}
+
+function controls(node, out) {
+    (node.children || []).forEach((child) => {
+        if (child && child.nodeType === 1) {
+            if (child.tagName === "BUTTON" || child.tagName === "INPUT") out.push(child);
+            controls(child, out);
+        }
+    });
+    return out;
+}
+
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+const drain = async () => { for (let i = 0; i < 6; i += 1) await settled(); };
+
+function apiFetch(url) {
+    if (url.startsWith("/api/settings")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([{ key: "company_name", value: "JTechMinds" }]) });
+    }
+    if (url.startsWith("/api/world")) {
+        return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+                { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "idle", x: 1, y: 1 },
+            ]),
+        });
+    }
+    if (url.startsWith("/api/channels")) {
+        return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([
+                { id: "c1", name: "Launch plan", kind: "shared", status: "active", member_count: 2, members: [] },
+            ]),
+        });
+    }
+    return Promise.reject(new Error(`unexpected request ${url}`));
+}
+
+(async () => {
+    const s = BossModStore.createStore({
+        place: "chat",
+        placeParams: {},
+        conversationId: null,
+        conversationKind: null,
+        rosterQuery: "",
+        roster: [],
+        threads: [],
+        needs: [{ id: "n1", kind: "consent", agentId: "a1", title: "Jim wants a folder", sub: "docs/" }],
+        runtimePaused: false,
+        hasUsableModel: true,
+        connection: "connected",
+    });
+    const b = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+
+    const headerEl = makeEl("header");
+    const rosterEl = makeEl("aside");
+    const footerEl = makeEl("footer");
+    const noop = () => {};
+
+    const disposers = [
+        BossModHeader.mount(headerEl, {
+            store: s, apiFetch, navigate: noop, openSettings: noop,
+            // Shaped stub: this harness names controls, it never opens the queue.
+            needs: {
+                refresh: () => Promise.resolve(),
+                resolve: () => Promise.resolve(),
+                getError: () => "",
+                subscribeError: () => () => {},
+                destroy: () => {},
+            },
+        }),
+        BossModRoster.mount(rosterEl, { store: s, bus: b, apiFetch, navigate: noop, onHire: noop }),
+        BossModFooter.mount(footerEl, { store: s, bus: b }),
+    ];
+    await drain();
+
+    const unnamed = [];
+    [headerEl, rosterEl, footerEl].forEach((root) => {
+        const labelled = labelledIds(root, new Set());
+        controls(root, []).forEach((control) => {
+            const named = accessibleText(control).trim() !== ""
+                || String(control.getAttribute("aria-label") || "").trim() !== ""
+                || String(control.getAttribute("aria-labelledby") || "").trim() !== ""
+                || labelled.has(control.getAttribute("id"));
+            if (!named) unnamed.push(`${control.tagName}.${control.getAttribute("class")}`);
+        });
+    });
+    if (unnamed.length !== 0) {
+        throw new Error(`controls with no accessible name: ${unnamed.join(", ")}`);
+    }
+
+    disposers.forEach((off) => off());
+
+    process.stdout.write(JSON.stringify({
+        ok: true,
+        everyShellControlIsNamed: true,
+    }));
+})().catch((err) => {
+    process.stderr.write(String((err && err.stack) || err));
+    process.exit(1);
+});

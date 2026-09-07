@@ -39,7 +39,7 @@ REQUIRED_SCRIPTS = [
     "js/settings-runtime-contracts.js",
     "js/settings-telegram.js",
     "js/settings-view.js",
-    "js/app.js",
+    "js/shell/shell.js",
 ]
 
 
@@ -110,7 +110,7 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
     for section_file in SECTION_FILES:
         assert index[f"js/{section_file}"] < index["js/settings-view.js"]
     assert index["js/cli-policy-section.js"] < index["js/settings-view.js"]
-    assert index["js/settings-view.js"] < index["js/app.js"]
+    assert index["js/settings-view.js"] < index["js/shell/shell.js"]
 
 
 def test_settings_and_cli_policy_use_shared_api_client() -> None:
