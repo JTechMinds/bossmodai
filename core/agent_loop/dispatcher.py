@@ -20,6 +20,11 @@ from core.agent_loop.activity_scheduler import (
 )
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
+from core.agent_loop.task_origin_mirrors import (
+    format_origin_status_line,
+    origin_thread_target,
+    persist_origin_status_line,
+)
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import runtime_events as manager
 from core.tasking.transitions import transition_task
@@ -194,15 +199,36 @@ class TurnDispatcher:
     ) -> None:
         """Persist and broadcast a requester-visible stuck notice."""
         if task is not None:
-            content = (
-                f'I hit repeated runtime failures while handling "{task.title}". '
-                f'The task is now stalled. Last error: {failure_detail}'
+            content = format_origin_status_line(
+                kind="stalled",
+                agent=agent,
+                task=task,
+                reason=f"Runtime exhausted automatic retries: {failure_detail}",
             )
         else:
             content = (
                 "I hit repeated runtime failures while handling the request and could not recover. "
                 f"Last error: {failure_detail}"
             )
+        if origin_thread_target(task) == "channel":
+            posted = persist_origin_status_line(
+                task=task,
+                agent=agent,
+                content=content,
+                kind="stalled",
+            )
+            channel_message = posted.get("channel_message")
+            if channel_message:
+                await manager.broadcast_channel_message(
+                    channel_id=channel_message["channel_id"],
+                    content=channel_message["content"],
+                    author_type=channel_message["author_type"],
+                    author_name=channel_message["author_name"],
+                    message_id=channel_message.get("message_id"),
+                    created_at=channel_message.get("created_at"),
+                    notification_kind=channel_message.get("notification_kind"),
+                )
+            return
         state = db.get_agent_state(agent.id)
         message = db.create_message(
             from_agent=agent.id,

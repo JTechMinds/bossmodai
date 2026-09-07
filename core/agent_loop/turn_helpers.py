@@ -10,11 +10,13 @@ from typing import Any
 
 from core.agent_loop import activity_runtime
 from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.task_origin_mirrors import format_origin_status_line, persist_origin_status_line
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
 from core.models import Agent
 from core.runtime.events import runtime_events as manager
+from core.tasking.service import append_task_event
 import db
 
 logger = logging.getLogger(__name__)
@@ -289,9 +291,10 @@ def _build_managed_writer_progress_reporter(
 ):
     """Return a runtime-owned reporter for managed-writer progress updates."""
     last_detail: str | None = None
+    last_mirrored_path: str | None = None
 
     async def _report(update: ManagedWriteProgress) -> None:
-        nonlocal last_detail
+        nonlocal last_detail, last_mirrored_path
 
         detail = (update.detail or "").strip()
         if not detail:
@@ -312,6 +315,54 @@ def _build_managed_writer_progress_reporter(
             if update.counts_as_progress:
                 fields["last_progress_at"] = now
             db.update_task(task_id, **fields)
+            path = str(update.path or "").strip()
+            if update.stage == "file_started" and path and path != last_mirrored_path:
+                last_mirrored_path = path
+                task = db.get_task(task_id)
+                line = format_origin_status_line(
+                    kind="progress",
+                    agent=agent,
+                    task=task,
+                    path=path,
+                )
+                if task is not None:
+                    append_task_event(
+                        task_id=task.id,
+                        author_type="agent",
+                        author_agent_id=agent.id,
+                        author_name=agent.name,
+                        event_type="status_update",
+                        content=line,
+                    )
+                    posted = persist_origin_status_line(
+                        task=task,
+                        agent=agent,
+                        content=line,
+                        kind="progress",
+                    )
+                    channel_message = posted.get("channel_message")
+                    if channel_message:
+                        await manager.broadcast_channel_message(
+                            channel_id=channel_message["channel_id"],
+                            content=channel_message["content"],
+                            author_type=channel_message["author_type"],
+                            author_name=channel_message["author_name"],
+                            message_id=channel_message.get("message_id"),
+                            created_at=channel_message.get("created_at"),
+                            notification_kind=channel_message.get("notification_kind"),
+                        )
+                    elif posted.get("chat_message"):
+                        chat_message = posted["chat_message"]
+                        await manager.broadcast_chat_message(
+                            agent_id=chat_message["agent_id"],
+                            content=chat_message["content"],
+                            from_type=chat_message["from_type"],
+                            from_name=chat_message["from_name"],
+                            message_type=chat_message.get("message_type"),
+                            message_id=chat_message.get("message_id"),
+                            created_at=chat_message.get("created_at"),
+                            notification_kind=chat_message.get("notification_kind"),
+                        )
 
         if detail == last_detail:
             return

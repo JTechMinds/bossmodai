@@ -359,6 +359,12 @@ const CompanyTaskDetail = (() => {
             if (!res.ok) throw new Error(res.statusText);
             events = await res.json();
             if (!Array.isArray(events)) events = [];
+            events.sort((a, b) => {
+                const aAt = Date.parse(a?.created_at || '') || 0;
+                const bAt = Date.parse(b?.created_at || '') || 0;
+                if (bAt !== aAt) return bAt - aAt;
+                return String(b?.id || '').localeCompare(String(a?.id || ''));
+            });
         } catch {
             if (currentTaskId !== taskId) return;
             events = [];

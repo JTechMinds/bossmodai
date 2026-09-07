@@ -8,7 +8,15 @@ from typing import Any, Literal
 import db
 from core.models import Activity, Agent
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "host_path_consent"]
+NotificationKind = Literal[
+    "receipt",
+    "completion",
+    "blocked",
+    "handoff",
+    "abandoned",
+    "task_update",
+    "host_path_consent",
+]
 
 _DESTINATION_LABELS = {
     "desk": "desk",
@@ -439,6 +447,27 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
+            task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
+        )
+
+    if kind == "waiting":
+        if reason:
+            return ChatNotification(
+                kind="task_update",
+                content=f'{agent.name} is waiting on "{task_title}": {reason}',
+                source_channel=str(payload.get("source_channel") or "chat"),
+                policy=str(payload.get("policy") or "completion_blocked"),
+                prompt_visibility=False,
+                task_id=payload.get("task_id"),
+                channel_id=payload.get("channel_id"),
+            )
+        return ChatNotification(
+            kind="task_update",
+            content=f'{agent.name} is waiting on "{task_title}".',
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=False,
             task_id=payload.get("task_id"),
             channel_id=payload.get("channel_id"),
         )

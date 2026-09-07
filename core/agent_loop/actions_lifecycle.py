@@ -67,6 +67,16 @@ async def _handle_waiting(
         "event": "status_changed",
         "detail": f'{agent.name} is waiting on "{task.title if task else "the current task"}"' + (f" — {reason}" if reason else ""),
         "agent_name": agent.name,
+        "chat_notification": {
+            "kind": "waiting",
+            "task_title": task.title if task else "task",
+            "reason": reason,
+            "task_id": task.id if task else None,
+            "source_channel": task.source_channel if task else "chat",
+            "channel_id": task.notification_channel_id if task else None,
+            "policy": task.notification_policy if task else "completion_blocked",
+            "human_visible": _task_is_human_visible(task),
+        },
     }
     skipped = _append_task_follow_up_message(
         result=result,

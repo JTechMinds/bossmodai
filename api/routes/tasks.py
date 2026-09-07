@@ -286,6 +286,7 @@ async def get_task_events(task_id: str, limit: int = 100):
     if not task:
         raise HTTPException(404, "Task not found")
     events = db.list_task_events(task_id, limit=limit)
+    events.reverse()  # profile/task activity is newest-first; list_task_events stays oldest-first for prompts
     return [event.model_dump(mode="json") for event in events]
 
 

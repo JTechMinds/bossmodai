@@ -38,6 +38,7 @@ from core.agent_loop.decision_work_plan import (
     _resolve_work_execution_plan,
     _should_queue_initial_work_resume,
 )
+from core.agent_loop.task_origin_mirrors import attach_origin_status_line_if_silent, format_origin_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
 
@@ -282,6 +283,13 @@ def apply_decision(
             )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
+        attach_origin_status_line_if_silent(
+            result,
+            task=task,
+            agent=agent,
+            content=format_origin_status_line(kind="accepted", agent=agent, task=task),
+            kind="accepted",
+        )
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
         return result
 
