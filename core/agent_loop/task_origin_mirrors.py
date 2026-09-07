@@ -98,6 +98,12 @@ def format_origin_status_line(
         return f"Declined — {note}" if note else "Declined"
     if kind == "rerouted":
         name = (target_name or "").strip() or "another agent"
+        if note and note.lower() in {
+            f"delegated to {name}".lower(),
+            f"handed off to {name}".lower(),
+            f"rerouted to {name}".lower(),
+        }:
+            note = ""
         if note:
             return f"Rerouted to {name} — {note}"
         return f"Handed off to {name}"
@@ -111,6 +117,29 @@ def format_origin_status_line(
     if note:
         return note
     return f"Accepted: {title}"
+
+
+def mirror_origin_status(
+    *,
+    task: Any,
+    agent: Agent,
+    kind: str,
+    reason: str | None = None,
+    path: str | None = None,
+    target_name: str | None = None,
+    claim: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Format and persist one locked origin-thread status line."""
+    content = format_origin_status_line(
+        kind=kind,
+        agent=agent,
+        task=task,
+        reason=reason,
+        path=path,
+        target_name=target_name,
+        claim=claim,
+    )
+    return persist_origin_status_line(task=task, agent=agent, content=content, kind=kind)
 
 
 def persist_origin_status_line(
@@ -127,8 +156,11 @@ def persist_origin_status_line(
         return {}
     if target == "channel":
         channel_id = str(task.notification_channel_id).strip()
-        latest = db.get_latest_channel_message(channel_id)
-        if latest is not None and (latest.content or "").strip() == text:
+        recent = db.list_channel_messages(channel_id, limit=8)
+        if any(
+            item.author_type == "system" and (item.content or "").strip() == text
+            for item in recent
+        ):
             return {}
         notification = persist_channel_notification(
             agent,
@@ -172,16 +204,15 @@ def attach_operator_status_line(
     claim: dict[str, Any] | None = None,
 ) -> None:
     """Always persist the locked operator line; do not clobber an agent reply."""
-    content = format_origin_status_line(
-        kind=kind,
-        agent=agent,
+    posted = mirror_origin_status(
         task=task,
+        agent=agent,
+        kind=kind,
         reason=reason,
         path=path,
         target_name=target_name,
         claim=claim,
     )
-    posted = persist_origin_status_line(task=task, agent=agent, content=content, kind=kind)
     extras = result.setdefault("origin_status_messages", [])
     if posted.get("channel_message"):
         extras.append(posted["channel_message"])

@@ -30,6 +30,7 @@ from core.models import (
 )
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
+from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.transitions import transition_task
 from core.world.seating import place_agent_at_desk
 from core.world.tilemap import first_unoccupied_chair, get_room_at
@@ -922,6 +923,23 @@ async def reset_agent_runtime(agent_id: str):
                 status_note=reset_note,
                 watchdog_pinged_at=None,
             )
+            posted = mirror_origin_status(
+                task=task,
+                agent=agent,
+                kind="waiting",
+                reason=reset_note,
+            )
+            if posted.get("channel_message"):
+                extra = posted["channel_message"]
+                await manager.broadcast_channel_message(
+                    channel_id=extra["channel_id"],
+                    content=extra["content"],
+                    author_type=extra.get("author_type") or "system",
+                    author_name=extra.get("author_name") or agent.name,
+                    message_id=extra.get("message_id"),
+                    created_at=extra.get("created_at"),
+                    notification_kind=extra.get("notification_kind"),
+                )
             seen_task_ids.add(task.id)
             blocked_task_ids.append(task.id)
 

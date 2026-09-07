@@ -282,6 +282,9 @@ async def test_waiting_and_complete_claim_project_origin_cards() -> None:
     assert waiting_notes[0].kind == "task_update"
     assert waiting_notes[0].content == "Waiting — Need the source transcript."
     assert waiting_notes[0].channel_id == channel.id
+    assert "Waiting — Need the source transcript." in [
+        item.content for item in db.list_channel_messages(channel.id)
+    ]
 
     activity_runtime.activate_work_activity(jimothy.id, db.get_task(creation.task.id))
     state = db.get_agent_state(jimothy.id)
@@ -309,6 +312,9 @@ async def test_waiting_and_complete_claim_project_origin_cards() -> None:
     assert complete_notes[0].kind == "completion"
     assert complete_notes[0].channel_id == channel.id
     assert complete_notes[0].content == "Done — summary posted to the shared channel"
+    assert "Done — summary posted to the shared channel" in [
+        item.content for item in db.list_channel_messages(channel.id)
+    ]
 
 
 @pytest.mark.asyncio
@@ -568,6 +574,9 @@ def test_locked_operator_copy() -> None:
     assert format_origin_status_line(
         kind="rerouted", agent=agent, task=task, target_name="Bea", reason="Needs a writer"
     ) == "Rerouted to Bea — Needs a writer"
+    assert format_origin_status_line(
+        kind="rerouted", agent=agent, task=task, target_name="Bea", reason="Delegated to Bea"
+    ) == "Handed off to Bea"
     assert format_origin_status_line(kind="cancelled", agent=agent, task=task, reason="Operator stopped it") == "Cancelled — Operator stopped it"
     assert format_origin_status_line(kind="blocked_claim", agent=agent, task=task) == "Blocked — checkable claim missing"
     assert format_origin_status_line(
@@ -692,3 +701,141 @@ async def test_delegate_projects_rerouted_line() -> None:
     )
     assert notes
     assert notes[0].content == "Rerouted to Bea — Needs a writer."
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Rerouted to Bea — Needs a writer.") == 1
+    await emit_chat_notifications(
+        agent=jimothy,
+        trigger={"type": "activity_resumed", "source_channel": "channel", "channel_id": channel.id},
+        active_activity=None,
+        action={"action": "delegated"},
+        result=result,
+    )
+    assert [item.content for item in db.list_channel_messages(channel.id)].count(
+        "Rerouted to Bea — Needs a writer."
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_abandon_posts_cancelled_origin_line() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "abandoned",
+            "reason": "Operator archived the review.",
+            "followUpMessage": "Stopping this review.",
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    assert db.get_task(creation.task.id).status == "abandoned"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Cancelled — Operator archived the review.") == 1
+    assert "Blocked — checkable claim missing" not in contents
+
+
+@pytest.mark.asyncio
+async def test_dependency_block_posts_waiting_not_claim_blocked() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "blocked",
+            "reason": "Need legal sign-off.",
+            "followUpMessage": "Parked until legal signs off.",
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    assert db.get_task(creation.task.id).status == "blocked"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Waiting — Need legal sign-off.") == 1
+    assert "Blocked — checkable claim missing" not in contents
+    notes = project_chat_notifications(
+        agent=jimothy,
+        trigger={"type": "activity_resumed", "source_channel": "channel", "channel_id": channel.id},
+        active_activity=None,
+        action={"action": "blocked"},
+        result=result,
+    )
+    assert notes
+    assert notes[0].content == "Waiting — Need legal sign-off."
+
+
+@pytest.mark.asyncio
+async def test_waiting_execute_persists_origin_line_without_emit() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    waiting = await execute_action(
+        {
+            "action": "waiting",
+            "reason": "Need the source transcript.",
+            "followUpMessage": "Need the source transcript before I can write.",
+        },
+        jimothy,
+        state,
+    )
+    assert waiting["event"] == "status_changed"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Waiting — Need the source transcript.") == 1
+
+
+def test_clarification_loop_block_posts_waiting_origin_line() -> None:
+    from core.agent_loop.decision_replies import _block_task_for_clarification_loop
+
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    _block_task_for_clarification_loop(
+        task=creation.task,
+        latest_question="Which transcript should I use?",
+        source_trigger_id=None,
+        streak_len=3,
+    )
+    assert db.get_task(creation.task.id).status == "blocked"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    waiting = [item for item in contents if (item or "").startswith("Waiting —")]
+    assert waiting
+    assert "Blocked — checkable claim missing" not in contents
+
+
+def test_handoff_without_reason_projects_handed_off() -> None:
+    agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+    notes = project_chat_notifications(
+        agent=agent,
+        trigger={"type": "activity_resumed", "source_channel": "chat"},
+        active_activity=None,
+        action={"action": "delegated"},
+        result={
+            "chat_notification": {
+                "kind": "handoff",
+                "task_title": "Write the status note",
+                "target_name": "Bea",
+                "reason": "",
+                "task_id": "task-1",
+                "source_channel": "chat",
+                "policy": "completion_blocked",
+                "human_visible": True,
+            }
+        },
+    )
+    assert notes
+    assert notes[0].content == "Handed off to Bea"

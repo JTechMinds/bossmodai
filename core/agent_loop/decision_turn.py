@@ -14,7 +14,7 @@ from core.agent_loop.decision_contract import (
 )
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
-from core.agent_loop.notifications import emit_chat_notifications
+from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.turn_helpers import (
@@ -511,19 +511,7 @@ async def _run_decision_turn(
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )
-        for extra in result.get("origin_status_messages") or []:
-            if extra is result.get("channel_message") or extra is result.get("chat_message"):
-                continue
-            if extra.get("channel_id"):
-                await manager.broadcast_channel_message(
-                    channel_id=extra["channel_id"],
-                    content=extra["content"],
-                    author_type=extra.get("author_type") or "system",
-                    author_name=extra.get("author_name") or agent.name,
-                    message_id=extra.get("message_id"),
-                    created_at=extra.get("created_at"),
-                    notification_kind=extra.get("notification_kind"),
-                )
+        await broadcast_origin_status_messages(result, agent=agent)
 
         step_traces.append(
             _build_step_trace(

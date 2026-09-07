@@ -97,6 +97,8 @@ async def _handle_waiting(
         skip_recipient_ids=skipped,
         attention_kind=None,
     )
+    if task is not None:
+        attach_operator_status_line(result, task=task, agent=agent, kind="waiting", reason=reason)
     return result
 
 
@@ -270,6 +272,15 @@ async def _handle_complete(
         attention_kind="completion_report" if parent is None else None,
         source_task_event_id=completion_event.id if completion_event is not None else None,
     )
+    if task is not None:
+        attach_operator_status_line(
+            result,
+            task=task,
+            agent=agent,
+            kind="completion",
+            reason=summary or None,
+            claim=done_claim.as_dict() if done_claim is not None else None,
+        )
     return result
 
 
@@ -397,6 +408,9 @@ async def _handle_blocked(
         attention_kind="blocker" if parent is None else None,
         source_task_event_id=blocker_event.id if blocker_event is not None else None,
     )
+    if task is not None:
+        # Profile shows blocked; origin thread uses Waiting so claim-Blocked stays exclusive.
+        attach_operator_status_line(result, task=task, agent=agent, kind="waiting", reason=reason)
     return result
 
 
@@ -499,7 +513,7 @@ async def _handle_delegated(
             "kind": "handoff",
             "task_title": original_task.title if original_task else "task",
             "target_name": target.name,
-            "reason": (follow_up_message or "").strip() or f"Delegated to {target.name}",
+            "reason": (follow_up_message or "").strip(),
             "task_id": original_task.id if original_task else None,
             "source_channel": original_task.source_channel if original_task else "chat",
             "channel_id": original_task.notification_channel_id if original_task else None,
@@ -530,6 +544,15 @@ async def _handle_delegated(
         ),
         skip_recipient_ids=skipped,
     )
+    if original_task is not None:
+        attach_operator_status_line(
+            result,
+            task=original_task,
+            agent=agent,
+            kind="rerouted",
+            reason=(follow_up_message or "").strip() or None,
+            target_name=target.name,
+        )
     return result
 
 
@@ -605,4 +628,6 @@ async def _handle_abandoned(
         content=(f'Abandoned "{task.title}": {reason}' if task and reason else f'Abandoned "{task.title}".' if task else ""),
         skip_recipient_ids=skipped,
     )
+    if task is not None:
+        attach_operator_status_line(result, task=task, agent=agent, kind="cancelled", reason=reason)
     return result

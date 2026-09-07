@@ -13,7 +13,7 @@ from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_acti
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.liveness import record_action_liveness
-from core.agent_loop.notifications import emit_chat_notifications
+from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_helpers import (
     _build_continuation_instruction,
@@ -478,6 +478,7 @@ async def _run_execution_turn(
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )
+        await broadcast_origin_status_messages(result, agent=agent)
 
         await emit_chat_notifications(
             agent=agent,

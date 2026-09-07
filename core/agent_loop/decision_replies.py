@@ -21,6 +21,7 @@ from core.agent_loop.message_delivery import (
 from core.agent_loop.task_roles import task_assignment_reply_target
 from core.models import Agent, AgentState
 from core.models.message import HUMAN_SENDER_ID
+from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.service import append_task_event
 from core.tasking.transitions import transition_task
 
@@ -300,6 +301,14 @@ def _block_task_for_clarification_loop(
         content=note,
         source_trigger_id=source_trigger_id,
     )
+    assignee = db.get_agent(task.assigned_to) if getattr(task, "assigned_to", None) else None
+    if assignee is not None:
+        mirror_origin_status(
+            task=task,
+            agent=assignee,
+            kind="waiting",
+            reason=note,
+        )
     for notify_target in (getattr(task, "owner_id", None), getattr(task, "requester_id", None)):
         if not isinstance(notify_target, str) or not notify_target:
             continue
