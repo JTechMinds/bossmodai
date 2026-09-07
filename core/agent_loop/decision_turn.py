@@ -14,7 +14,7 @@ from core.agent_loop.decision_contract import (
 )
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
-from core.agent_loop.notifications import emit_chat_notifications
+from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.turn_helpers import (
@@ -511,6 +511,7 @@ async def _run_decision_turn(
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
             )
+        await broadcast_origin_status_messages(result, agent=agent)
 
         step_traces.append(
             _build_step_trace(

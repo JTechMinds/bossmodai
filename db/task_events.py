@@ -54,7 +54,12 @@ def create_task_event(
 
 
 def list_task_events(task_id: str, *, limit: int = 100, earliest_ts: datetime | None = None) -> list[TaskEvent]:
-    """Return task-thread events oldest-first, bounded to the most recent `limit`."""
+    """Return task-thread events oldest-first, bounded to the most recent `limit`.
+
+    Prompt history and clarification streaks depend on chronological order.
+    The profile/task activity API reverses this list so the operator sees
+    newest-first.
+    """
     conditions = ["task_id = $1"]
     params: list[object] = [task_id]
     if earliest_ts is not None:

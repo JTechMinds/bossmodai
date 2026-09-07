@@ -8,7 +8,15 @@ from typing import Any, Literal
 import db
 from core.models import Activity, Agent
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "host_path_consent"]
+NotificationKind = Literal[
+    "receipt",
+    "completion",
+    "blocked",
+    "handoff",
+    "abandoned",
+    "task_update",
+    "host_path_consent",
+]
 
 _DESTINATION_LABELS = {
     "desk": "desk",
@@ -87,6 +95,11 @@ async def emit_chat_notifications(
     """
     from core.runtime.events import runtime_events as manager
 
+    already = {
+        (item.get("content") or "").strip()
+        for item in result.get("origin_status_messages") or []
+        if isinstance(item, dict)
+    }
     for notification in project_chat_notifications(
         agent=agent,
         trigger=trigger,
@@ -94,6 +107,8 @@ async def emit_chat_notifications(
         action=action,
         result=result,
     ):
+        if (notification.content or "").strip() in already:
+            continue
         if notification.channel_id:
             channel_notification = persist_channel_notification(agent, notification)
             await manager.broadcast_channel_message(
@@ -122,6 +137,40 @@ async def emit_chat_notifications(
         )
         if chat_notification.get("feed_entry"):
             await manager.broadcast_feed_update(chat_notification["feed_entry"])
+
+
+async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Agent) -> None:
+    """Broadcast extra origin-thread lines that did not become the primary reply."""
+    from core.runtime.events import runtime_events as manager
+
+    primary_channel = result.get("channel_message")
+    primary_chat = result.get("chat_message")
+    for extra in result.get("origin_status_messages") or []:
+        if extra is primary_channel or extra is primary_chat:
+            continue
+        if extra.get("channel_id"):
+            await manager.broadcast_channel_message(
+                channel_id=extra["channel_id"],
+                content=extra["content"],
+                author_type=extra.get("author_type") or "system",
+                author_name=extra.get("author_name") or agent.name,
+                message_id=extra.get("message_id"),
+                created_at=extra.get("created_at"),
+                notification_kind=extra.get("notification_kind"),
+            )
+            continue
+        if extra.get("agent_id"):
+            await manager.broadcast_chat_message(
+                agent_id=extra["agent_id"],
+                content=extra["content"],
+                from_type=extra.get("from_type") or "system",
+                from_name=extra.get("from_name") or agent.name,
+                message_type=extra.get("message_type") or "system",
+                message_id=extra.get("message_id"),
+                created_at=extra.get("created_at"),
+                notification_kind=extra.get("notification_kind"),
+                desk_path=extra.get("desk_path"),
+            )
 
 
 def persist_chat_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
@@ -334,87 +383,55 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
     ]
 
     if kind == "completion":
+        from core.agent_loop.task_origin_mirrors import format_done_claim_label
+
         claim = payload.get("done_claim") if isinstance(payload.get("done_claim"), dict) else None
-        claim_note = ""
-        if claim:
-            claim_type = str(claim.get("type") or "").strip()
-            claim_path = str(claim.get("path") or "").strip()
-            claim_evidence = str(claim.get("evidence") or "").strip()
-            if claim_type == "artifact" and claim_path:
-                claim_note = f" Claim: artifact {claim_path}."
-            elif claim_type == "tests" and claim_evidence:
-                claim_note = f" Claim: tests — {claim_evidence}."
-            elif claim_type == "proof" and claim_evidence:
-                claim_note = f" Claim: proof — {claim_evidence}."
-            elif claim_type:
-                claim_note = f" Claim: {claim_type}."
-        if len(deliverable_paths) == 1:
-            return ChatNotification(
-                kind="completion",
-                content=f'{agent.name} finished "{task_title}" and saved it to {deliverable_paths[0]}.{claim_note}',
-                source_channel=str(payload.get("source_channel") or "chat"),
-                policy=str(payload.get("policy") or "completion_blocked"),
-                prompt_visibility=True,
-                task_id=payload.get("task_id"),
-                desk_path=deliverable_paths[0],
-                channel_id=payload.get("channel_id"),
-            )
-        if len(deliverable_paths) > 1:
-            return ChatNotification(
-                kind="completion",
-                content=f'{agent.name} finished "{task_title}" and saved {len(deliverable_paths)} deliverables.{claim_note}',
-                source_channel=str(payload.get("source_channel") or "chat"),
-                policy=str(payload.get("policy") or "completion_blocked"),
-                prompt_visibility=True,
-                task_id=payload.get("task_id"),
-                channel_id=payload.get("channel_id"),
-            )
+        claim_label = format_done_claim_label(
+            claim=claim,
+            path=deliverable_paths[0] if len(deliverable_paths) == 1 else None,
+        )
         return ChatNotification(
             kind="completion",
-            content=f'{agent.name} finished "{task_title}".{claim_note}',
+            content=f"Done — {claim_label}",
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
+            desk_path=deliverable_paths[0] if len(deliverable_paths) == 1 else None,
             channel_id=payload.get("channel_id"),
         )
 
     if kind == "blocked":
-        if reason:
-            return ChatNotification(
-                kind="blocked",
-                content=f'{agent.name} is blocked on "{task_title}": {reason}',
-                source_channel=str(payload.get("source_channel") or "chat"),
-                policy=str(payload.get("policy") or "completion_blocked"),
-                prompt_visibility=True,
-                task_id=payload.get("task_id"),
-                channel_id=payload.get("channel_id"),
-            )
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line
+
         return ChatNotification(
-            kind="blocked",
-            content=f'{agent.name} is blocked on "{task_title}".',
+            kind="task_update",
+            content=format_origin_status_line(
+                kind="waiting",
+                agent=agent,
+                task={"title": task_title},
+                reason=reason,
+            ),
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
-            prompt_visibility=True,
+            prompt_visibility=False,
             task_id=payload.get("task_id"),
             channel_id=payload.get("channel_id"),
         )
 
     if kind == "handoff":
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line
+
         target_name = str(payload.get("target_name") or "").strip()
-        if target_name:
-            return ChatNotification(
-                kind="handoff",
-                content=f'{agent.name} delegated "{task_title}" to {target_name}.',
-                source_channel=str(payload.get("source_channel") or "chat"),
-                policy=str(payload.get("policy") or "completion_blocked"),
-                prompt_visibility=True,
-                task_id=payload.get("task_id"),
-                channel_id=payload.get("channel_id"),
-            )
         return ChatNotification(
             kind="handoff",
-            content=f'{agent.name} delegated "{task_title}".',
+            content=format_origin_status_line(
+                kind="rerouted",
+                agent=agent,
+                task={"title": task_title},
+                reason=reason,
+                target_name=target_name,
+            ),
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
@@ -423,22 +440,37 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
         )
 
     if kind == "abandoned":
-        if reason:
-            return ChatNotification(
-                kind="abandoned",
-                content=f'{agent.name} abandoned "{task_title}": {reason}',
-                source_channel=str(payload.get("source_channel") or "chat"),
-                policy=str(payload.get("policy") or "completion_blocked"),
-                prompt_visibility=True,
-                task_id=payload.get("task_id"),
-                channel_id=payload.get("channel_id"),
-            )
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line
+
         return ChatNotification(
             kind="abandoned",
-            content=f'{agent.name} abandoned "{task_title}".',
+            content=format_origin_status_line(
+                kind="cancelled",
+                agent=agent,
+                task={"title": task_title},
+                reason=reason,
+            ),
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
+            task_id=payload.get("task_id"),
+            channel_id=payload.get("channel_id"),
+        )
+
+    if kind == "waiting":
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line
+
+        return ChatNotification(
+            kind="task_update",
+            content=format_origin_status_line(
+                kind="waiting",
+                agent=agent,
+                task={"title": task_title},
+                reason=reason,
+            ),
+            source_channel=str(payload.get("source_channel") or "chat"),
+            policy=str(payload.get("policy") or "completion_blocked"),
+            prompt_visibility=False,
             task_id=payload.get("task_id"),
             channel_id=payload.get("channel_id"),
         )

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import dispatcher
+from core.agent_loop.task_origin_mirrors import format_origin_status_line, persist_origin_status_line
 from core.runtime.events import runtime_events as manager
 from core.tasking.transitions import transition_task
 from core.time import ensure_utc
@@ -108,6 +109,42 @@ class TaskWatchdog:
                         detail="Cancelled after watchdog escalation.",
                     )
                     activity_runtime.refresh_agent_status(task.assigned_to)
+                    agent = db.get_agent(task.assigned_to)
+                    if agent is not None:
+                        posted = persist_origin_status_line(
+                            task=task,
+                            agent=agent,
+                            content=format_origin_status_line(
+                                kind="stalled",
+                                agent=agent,
+                                task=task,
+                                reason="Watchdog escalated after no heartbeat from the agent.",
+                            ),
+                            kind="stalled",
+                        )
+                        channel_message = posted.get("channel_message")
+                        if channel_message:
+                            await manager.broadcast_channel_message(
+                                channel_id=channel_message["channel_id"],
+                                content=channel_message["content"],
+                                author_type=channel_message["author_type"],
+                                author_name=channel_message["author_name"],
+                                message_id=channel_message.get("message_id"),
+                                created_at=channel_message.get("created_at"),
+                                notification_kind=channel_message.get("notification_kind"),
+                            )
+                        elif posted.get("chat_message"):
+                            chat_message = posted["chat_message"]
+                            await manager.broadcast_chat_message(
+                                agent_id=chat_message["agent_id"],
+                                content=chat_message["content"],
+                                from_type=chat_message["from_type"],
+                                from_name=chat_message["from_name"],
+                                message_type=chat_message.get("message_type"),
+                                message_id=chat_message.get("message_id"),
+                                created_at=chat_message.get("created_at"),
+                                notification_kind=chat_message.get("notification_kind"),
+                            )
                     await manager.broadcast_activity(
                         event="task_stalled",
                         detail=f'Task "{task.title}" stalled after watchdog escalation',
