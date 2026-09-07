@@ -182,7 +182,10 @@ global.document = documentStub;
 global.window = {
     document: documentStub,
     confirm() {
-        return true;
+        throw new Error("window.confirm must not be used for archive");
+    },
+    chooseArchiveOpenTasks() {
+        return "archive_only";
     },
 };
 global.console = console;

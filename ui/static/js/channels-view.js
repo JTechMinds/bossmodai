@@ -466,12 +466,60 @@ const ChannelsView = (() => {
         };
     }
 
-    function openTaskArchiveCopy(count) {
-        return `This thread has ${count} open tasks. Cancel them?`;
-    }
-
     function shouldPromptOpenTasksOnArchive(count) {
         return Number(count) > 0;
+    }
+
+    function archivePromptSpec(count) {
+        if (shouldPromptOpenTasksOnArchive(count)) {
+            const n = Number(count);
+            return {
+                title: 'Archive thread?',
+                body: `This thread has ${n} open tasks. Sealing stops new posts and access cards.`,
+                dismissChoice: 'back',
+                buttons: [
+                    { id: 'channel-archive-back', label: 'Back', choice: 'back', primary: false },
+                    { id: 'channel-archive-only', label: 'Archive only', choice: 'archive_only', primary: false },
+                    { id: 'channel-archive-cancel-tasks', label: 'Cancel tasks & archive', choice: 'cancel_and_archive', primary: true },
+                ],
+            };
+        }
+        return {
+            title: 'Archive thread?',
+            body: 'Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board.',
+            dismissChoice: 'back',
+            buttons: [
+                { id: 'channel-archive-back', label: 'Cancel', choice: 'back', primary: false },
+                { id: 'channel-archive-confirm', label: 'Archive', choice: 'archive_only', primary: true },
+            ],
+        };
+    }
+
+    function openTaskArchiveCopy(count) {
+        return archivePromptSpec(count).body;
+    }
+
+    function archivePromptMarkup(spec) {
+        const buttonsHtml = spec.buttons.map((btn) => {
+            const cls = btn.primary
+                ? 'px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:opacity-90 transition-colors'
+                : 'px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors';
+            return `<button type="button" id="${BossModUtils.escapeHtml(btn.id)}" class="${cls}">${BossModUtils.escapeHtml(btn.label)}</button>`;
+        }).join('');
+        return `
+                <div class="px-5 py-4 border-b border-bm-border">
+                    <h3 class="text-sm font-semibold">${BossModUtils.escapeHtml(spec.title)}</h3>
+                </div>
+                <div class="p-5">
+                    <p class="text-sm text-bm-text">${BossModUtils.escapeHtml(spec.body)}</p>
+                </div>
+                <div class="px-5 py-4 border-t border-bm-border flex items-center justify-end gap-2">
+                    ${buttonsHtml}
+                </div>`;
+    }
+
+    function isArchiveAbortChoice(choice) {
+        return choice === 'back' || choice === 'cancel' || !choice;
     }
 
     async function fetchOpenOriginTasks(channelId) {
@@ -503,6 +551,7 @@ const ChannelsView = (() => {
     }
 
     function promptArchiveOpenTasks(count) {
+        const spec = archivePromptSpec(count);
         if (typeof window.chooseArchiveOpenTasks === 'function') {
             return Promise.resolve(window.chooseArchiveOpenTasks(count));
         }
@@ -515,25 +564,14 @@ const ChannelsView = (() => {
                 resolve(choice);
                 if (modal) modal.close();
             };
-            modal = BossModUtils.createModal({ maxWidth: 'max-w-md', onClose: () => finish('back') });
-            modal.panel.innerHTML = `
-                <div class="px-5 py-4 border-b border-bm-border">
-                    <h3 class="text-sm font-semibold">Archive thread</h3>
-                </div>
-                <div class="p-5">
-                    <p class="text-sm text-bm-text">${BossModUtils.escapeHtml(openTaskArchiveCopy(count))}</p>
-                </div>
-                <div class="px-5 py-4 border-t border-bm-border flex items-center justify-end gap-2">
-                    <button type="button" id="channel-archive-back"
-                            class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Back</button>
-                    <button type="button" id="channel-archive-only"
-                            class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Archive only</button>
-                    <button type="button" id="channel-archive-cancel-tasks"
-                            class="px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:opacity-90 transition-colors">Cancel tasks &amp; archive</button>
-                </div>`;
-            modal.panel.querySelector('#channel-archive-back')?.addEventListener('click', () => finish('back'));
-            modal.panel.querySelector('#channel-archive-only')?.addEventListener('click', () => finish('archive_only'));
-            modal.panel.querySelector('#channel-archive-cancel-tasks')?.addEventListener('click', () => finish('cancel_and_archive'));
+            modal = BossModUtils.createModal({
+                maxWidth: 'max-w-md',
+                onClose: () => finish(spec.dismissChoice),
+            });
+            modal.panel.innerHTML = archivePromptMarkup(spec);
+            for (const btn of spec.buttons) {
+                modal.panel.querySelector(`#${btn.id}`)?.addEventListener('click', () => finish(btn.choice));
+            }
         });
     }
 
@@ -545,19 +583,14 @@ const ChannelsView = (() => {
             archiveBtn.disabled = true;
             try {
                 const open = await fetchOpenOriginTasks(channelId);
-                if (shouldPromptOpenTasksOnArchive(open.count)) {
-                    const choice = await promptArchiveOpenTasks(open.count);
-                    if (choice === 'back' || !choice) {
-                        archiveBtn.disabled = false;
-                        return;
-                    }
-                    if (choice === 'cancel_and_archive') {
-                        const summary = await archiveChannelRequest(channelId, { cancel_open_tasks: true });
-                        handleChannelUpdated(summary);
-                        return;
-                    }
+                const choice = await promptArchiveOpenTasks(open.count);
+                if (isArchiveAbortChoice(choice)) {
+                    archiveBtn.disabled = false;
+                    return;
                 }
-                const summary = await archiveChannelRequest(channelId);
+                const summary = await archiveChannelRequest(channelId, {
+                    cancel_open_tasks: choice === 'cancel_and_archive',
+                });
                 handleChannelUpdated(summary);
             } catch (err) {
                 console.error('[ChannelsView] Failed to archive thread:', err);
@@ -705,5 +738,7 @@ const ChannelsView = (() => {
         isLiveThread,
         openTaskArchiveCopy,
         shouldPromptOpenTasksOnArchive,
+        archivePromptSpec,
+        archivePromptMarkup,
     };
 })();

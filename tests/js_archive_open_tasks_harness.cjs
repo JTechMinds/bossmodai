@@ -291,15 +291,55 @@ function methodsFor(urlPart) {
     return calls.filter((item) => String(item.url).includes(urlPart)).map((item) => item.method);
 }
 
+function buttonLabels(spec) {
+    return spec.buttons.map((btn) => btn.label);
+}
+
+function countMarkupButtons(html) {
+    return (String(html).match(/<button\b/g) || []).length;
+}
+
 async function main() {
-    if (ChannelsView.openTaskArchiveCopy(2) !== "This thread has 2 open tasks. Cancel them?") {
-        throw new Error("archive copy mismatch");
+    const emptySpec = ChannelsView.archivePromptSpec(0);
+    const openSpec = ChannelsView.archivePromptSpec(2);
+    const emptyMarkup = ChannelsView.archivePromptMarkup(emptySpec);
+    const openMarkup = ChannelsView.archivePromptMarkup(openSpec);
+
+    if (emptySpec.title !== "Archive thread?" || openSpec.title !== "Archive thread?") {
+        throw new Error("archive title mismatch");
+    }
+    if (ChannelsView.openTaskArchiveCopy(0) !== "Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board.") {
+        throw new Error("N=0 archive copy mismatch");
+    }
+    if (ChannelsView.openTaskArchiveCopy(2) !== "This thread has 2 open tasks. Sealing stops new posts and access cards.") {
+        throw new Error("N>0 archive copy mismatch");
     }
     if (ChannelsView.shouldPromptOpenTasksOnArchive(0) !== false) {
-        throw new Error("N=0 must skip the open-task prompt");
+        throw new Error("N=0 must use the two-button confirm, not the open-task choices");
     }
     if (ChannelsView.shouldPromptOpenTasksOnArchive(2) !== true) {
-        throw new Error("N>0 must show the open-task prompt");
+        throw new Error("N>0 must show the open-task choices");
+    }
+    if (emptySpec.buttons.length !== 2 || countMarkupButtons(emptyMarkup) !== 2) {
+        throw new Error("N=0 must show a two-button modal");
+    }
+    if (buttonLabels(emptySpec).join("|") !== "Cancel|Archive") {
+        throw new Error("N=0 buttons must be Cancel and Archive");
+    }
+    if (!emptyMarkup.includes('id="channel-archive-confirm"') || !emptyMarkup.includes('id="channel-archive-back"')) {
+        throw new Error("N=0 markup must include Archive and Cancel");
+    }
+    if (emptyMarkup.includes("Cancel tasks") || emptyMarkup.includes("Archive only")) {
+        throw new Error("N=0 modal must not include open-task actions");
+    }
+    if (openSpec.buttons.length !== 3 || countMarkupButtons(openMarkup) !== 3) {
+        throw new Error("N>0 must show a three-button modal");
+    }
+    if (buttonLabels(openSpec).join("|") !== "Back|Archive only|Cancel tasks & archive") {
+        throw new Error("N>0 buttons mismatch");
+    }
+    if (!openMarkup.includes('id="channel-archive-cancel-tasks"') || !openMarkup.includes('id="channel-archive-only"')) {
+        throw new Error("N>0 markup must include cancel-and-archive and archive-only");
     }
 
     const root = new FakeEl("div");
@@ -328,19 +368,27 @@ async function main() {
         throw new Error("archive only must still archive the thread");
     }
 
-    window.chooseArchiveOpenTasks = () => {
-        throw new Error("chooser must not run when N=0");
-    };
-    calls.length = 0;
     const cal = listItem("none-c");
     if (!cal) throw new Error("thread C missing");
     await cal.click();
+    window.chooseArchiveOpenTasks = () => "back";
+    calls.length = 0;
+    await archiveBtn().click();
+    if (calls.some((item) => item.url === "/api/tasks/cancel") || methodsFor("/api/channels/none-c").includes("DELETE")) {
+        throw new Error("N=0 Cancel must abort archive");
+    }
+    if (archiveBtn().disabled) {
+        throw new Error("N=0 Cancel must re-enable Archive");
+    }
+
+    window.chooseArchiveOpenTasks = () => "archive_only";
+    calls.length = 0;
     await archiveBtn().click();
     if (calls.some((item) => item.url === "/api/tasks/cancel")) {
         throw new Error("N=0 archive must not cancel tasks");
     }
     if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/none-c")) {
-        throw new Error("N=0 must archive with no prompt");
+        throw new Error("N=0 confirm must archive after the modal");
     }
 
     window.chooseArchiveOpenTasks = () => "back";
@@ -383,7 +431,10 @@ async function main() {
         ok: true,
         cancelAndArchive: true,
         archiveOnly: true,
-        zeroOpenNoPrompt: true,
+        zeroOpenTwoButtons: true,
+        openTasksThreeButtons: true,
+        zeroOpenConfirm: true,
+        zeroOpenCancelAborts: true,
         backAborts: true,
         archivedNotLive: true,
     }));
