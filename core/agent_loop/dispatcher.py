@@ -103,6 +103,8 @@ class TurnDispatcher:
         """Persist a trigger and wake the dispatcher."""
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
+        if db.payload_targets_archived_channel(payload):
+            return
         db.create_agent_trigger(
             agent_id=agent_id,
             trigger_type=trigger_type,
@@ -443,6 +445,12 @@ class TurnDispatcher:
                 "source_channel": candidate.source_channel,
                 "claim_generation": candidate.claim_generation,
             })
+            if db.payload_targets_archived_channel(payload):
+                db.complete_agent_trigger(
+                    candidate.id,
+                    claim_generation=candidate.claim_generation,
+                )
+                continue
 
             agent = db.get_agent(candidate.agent_id)
             if not agent:
@@ -524,7 +532,7 @@ class TurnDispatcher:
             )
 
         channel_id = _channel_id_for_presence(trigger)
-        if channel_id:
+        if channel_id and not db.is_channel_archived(channel_id):
             await manager.broadcast_channel_presence(
                 channel_id=channel_id,
                 agent_id=agent.id,
@@ -533,6 +541,11 @@ class TurnDispatcher:
             )
 
         try:
+            if db.payload_targets_archived_channel(trigger) or (
+                channel_id is not None and db.is_channel_archived(channel_id)
+            ):
+                db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
+                return
             outcome = await run_turn(agent, state, trigger)
             result = outcome.result
 
@@ -572,7 +585,7 @@ class TurnDispatcher:
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
         finally:
-            if channel_id:
+            if channel_id and not db.is_channel_archived(channel_id):
                 await manager.broadcast_channel_presence(
                     channel_id=channel_id,
                     agent_id=agent.id,

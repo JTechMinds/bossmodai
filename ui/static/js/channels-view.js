@@ -485,19 +485,16 @@ const ChannelsView = (() => {
         return { count, tasks };
     }
 
-    async function cancelTaskIds(taskIds) {
-        if (!taskIds.length) return;
-        const res = await apiFetch('/api/tasks/cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task_ids: taskIds }),
-        });
-        if (!res.ok) {
-            throw new Error(await res.text());
+    async function archiveChannelRequest(channelId, options = {}) {
+        if (options.cancel_open_tasks) {
+            const res = await apiFetch(`/api/channels/${channelId}/archive?cancel_open_tasks=true`, {
+                method: 'POST',
+            });
+            if (!res.ok) {
+                throw new Error(await res.text());
+            }
+            return res.json();
         }
-    }
-
-    async function archiveChannelRequest(channelId) {
         const res = await apiFetch(`/api/channels/${channelId}`, { method: 'DELETE' });
         if (!res.ok) {
             throw new Error(await res.text());
@@ -555,7 +552,9 @@ const ChannelsView = (() => {
                         return;
                     }
                     if (choice === 'cancel_and_archive') {
-                        await cancelTaskIds(open.tasks.map((task) => task.id).filter(Boolean));
+                        const summary = await archiveChannelRequest(channelId, { cancel_open_tasks: true });
+                        handleChannelUpdated(summary);
+                        return;
                     }
                 }
                 const summary = await archiveChannelRequest(channelId);
@@ -567,8 +566,25 @@ const ChannelsView = (() => {
         };
     }
 
+    function isLiveThread(channelId) {
+        if (!channelId) return false;
+        const channel = channels.find(item => item.id === channelId);
+        return Boolean(channel && channel.status !== 'archived');
+    }
+
+    function sealArchivedThread(channelId) {
+        if (!channelId) return;
+        presence.stopAll(channelId);
+        threadCache.forget(channelId);
+        drafts.delete(channelId);
+    }
+
     function handleChannelMessage(data) {
         if (!data?.channel_id) return;
+        if (!isLiveThread(data.channel_id)) {
+            sealArchivedThread(data.channel_id);
+            return;
+        }
         threadCache.append(data.channel_id, normalizeLiveMessage(data));
         const channel = channels.find(item => item.id === data.channel_id);
         if (channel) {
@@ -597,6 +613,10 @@ const ChannelsView = (() => {
 
     function handleChannelPresence(data) {
         if (!data?.channel_id || !data?.agent_id) return;
+        if (!isLiveThread(data.channel_id)) {
+            sealArchivedThread(data.channel_id);
+            return;
+        }
         if (data.phase === 'thinking') {
             presence.start(data.channel_id, data.agent_id, data.agent_name);
         } else {
@@ -607,6 +627,10 @@ const ChannelsView = (() => {
 
     function paintPresence(channelId) {
         if (!channelId || selectedChannelId !== channelId || !activeContainer) return;
+        if (!isLiveThread(channelId)) {
+            sealArchivedThread(channelId);
+            return;
+        }
         const detailEl = activeContainer.querySelector('#channel-detail');
         if (!detailEl) return;
         detailEl.querySelectorAll('[data-member-id]').forEach((chip) => {
@@ -633,8 +657,7 @@ const ChannelsView = (() => {
         const archived = channelSummary.status === 'archived';
         const existingIndex = channels.findIndex(item => item.id === channelSummary.id);
         if (archived) {
-            threadCache.forget(channelSummary.id);
-            drafts.delete(channelSummary.id);
+            sealArchivedThread(channelSummary.id);
             if (existingIndex >= 0) channels.splice(existingIndex, 1);
         } else if (existingIndex >= 0) {
             channels.splice(existingIndex, 1, channelSummary);
@@ -679,6 +702,7 @@ const ChannelsView = (() => {
         handleChannelMessage,
         handleChannelUpdated,
         handleChannelPresence,
+        isLiveThread,
         openTaskArchiveCopy,
         shouldPromptOpenTasksOnArchive,
     };

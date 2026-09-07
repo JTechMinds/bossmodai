@@ -240,7 +240,15 @@ global.apiFetch = async (url, opts = {}) => {
     if (url === "/api/tasks/cancel" && method === "POST") {
         return { ok: true, async json() { return []; } };
     }
-    const match = String(url).match(/^\/api\/channels\/([^/]+)$/);
+    const archivePost = String(url).match(/^\/api\/channels\/([^/?]+)\/archive/);
+    if (archivePost && method === "POST") {
+        const item = store.find((row) => row.id === archivePost[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        item.status = "archived";
+        item.archived_at = "2026-01-01T00:00:00Z";
+        return { ok: true, async json() { return { ...item }; } };
+    }
+    const match = String(url).match(/^\/api\/channels\/([^/?]+)$/);
     if (!match) throw new Error(`unhandled ${method} ${url}`);
     const item = store.find((row) => row.id === match[1]);
     if (!item) return { ok: false, async text() { return "missing"; } };
@@ -300,12 +308,11 @@ async function main() {
     window.chooseArchiveOpenTasks = () => "cancel_and_archive";
     calls.length = 0;
     await archiveBtn().click();
-    const cancelBody = JSON.parse(calls.find((item) => item.url === "/api/tasks/cancel").body);
-    if (!cancelBody.task_ids.includes("open-a-task-1") || !cancelBody.task_ids.includes("open-a-task-2")) {
-        throw new Error("primary must cancel each open task");
+    if (calls.some((item) => item.url === "/api/tasks/cancel")) {
+        throw new Error("cancel-and-archive must not use a separate cancel POST");
     }
-    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-a")) {
-        throw new Error("primary must archive after cancel");
+    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/open-a/archive") && String(item.url).includes("cancel_open_tasks=true"))) {
+        throw new Error("primary must cancel tasks via archive?cancel_open_tasks=true");
     }
 
     window.chooseArchiveOpenTasks = () => "archive_only";
@@ -349,12 +356,36 @@ async function main() {
         throw new Error("Back must re-enable Archive");
     }
 
+    if (ChannelsView.isLiveThread("open-a") !== false || ChannelsView.isLiveThread("open-b") !== false) {
+        throw new Error("archived threads must not be live");
+    }
+    if (ChannelsView.isLiveThread("open-d") !== true) {
+        throw new Error("open thread must stay live");
+    }
+    ChannelsView.handleChannelMessage({
+        channel_id: "open-a",
+        content: "spam after archive",
+        author_type: "agent",
+        author_name: "Ada",
+        message_id: "spam-1",
+    });
+    ChannelsView.handleChannelPresence({
+        channel_id: "open-a",
+        agent_id: "ada",
+        agent_name: "Ada",
+        phase: "thinking",
+    });
+    if (ChannelsView.isLiveThread("open-a") !== false) {
+        throw new Error("live handlers must not revive an archived thread");
+    }
+
     process.stdout.write(JSON.stringify({
         ok: true,
         cancelAndArchive: true,
         archiveOnly: true,
         zeroOpenNoPrompt: true,
         backAborts: true,
+        archivedNotLive: true,
     }));
 }
 

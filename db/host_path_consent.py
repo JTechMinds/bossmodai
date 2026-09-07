@@ -108,6 +108,23 @@ def bind_consent_channel(request_id: str, channel_id: str) -> HostPathConsentReq
     ) or get_consent_request(request_id)
 
 
+def list_pending_consent_for_channel(channel_id: str) -> list[HostPathConsentRequest]:
+    """Return pending host-path consent cards bound to one origin thread."""
+    token = (channel_id or "").strip()
+    if not token:
+        return []
+    return fetch_all(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE status = 'pending' AND channel_id = $1
+        ORDER BY created_at ASC
+        """,
+        [token],
+        HostPathConsentRequest,
+    )
+
+
 def list_pending_for_grant_root(grant_root: str) -> list[HostPathConsentRequest]:
     """Return pending consent cards that share one company-wide grant root."""
     token = (grant_root or "").strip()

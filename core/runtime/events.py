@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import db
+
 
 class RuntimeEventSink(Protocol):
     """Abstract sink for runtime-originated UI/realtime events."""
@@ -202,9 +204,13 @@ class RuntimeEventProxy:
         await self._sink.broadcast_meeting_message(**kwargs)
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
+        if db.is_channel_archived(kwargs.get("channel_id")):
+            return
         await self._sink.broadcast_channel_message(**kwargs)
 
     async def broadcast_channel_presence(self, **kwargs: Any) -> None:
+        if db.is_channel_archived(kwargs.get("channel_id")):
+            return
         await self._sink.broadcast_channel_presence(**kwargs)
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:

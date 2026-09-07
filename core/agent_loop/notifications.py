@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 import db
 from core.models import Activity, Agent
+from core.models.channel import ChannelArchivedError
 
 NotificationKind = Literal[
     "receipt",
@@ -111,6 +112,8 @@ async def emit_chat_notifications(
             continue
         if notification.channel_id:
             channel_notification = persist_channel_notification(agent, notification)
+            if not channel_notification:
+                continue
             await manager.broadcast_channel_message(
                 channel_id=channel_notification["channel_id"],
                 content=channel_notification["content"],
@@ -247,15 +250,20 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
     """
     if not notification.channel_id:
         raise ValueError("channel notifications require a channel_id")
-    message = db.create_channel_message(
-        channel_id=notification.channel_id,
-        author_type="system",
-        author_name=agent.name,
-        content=notification.content,
-        source_channel=notification.source_channel,
-        notification_kind=notification.kind,
-        consent_id=notification.consent_id,
-    )
+    if db.is_channel_archived(notification.channel_id):
+        return {}
+    try:
+        message = db.create_channel_message(
+            channel_id=notification.channel_id,
+            author_type="system",
+            author_name=agent.name,
+            content=notification.content,
+            source_channel=notification.source_channel,
+            notification_kind=notification.kind,
+            consent_id=notification.consent_id,
+        )
+    except ChannelArchivedError:
+        return {}
     return {
         "channel_id": notification.channel_id,
         "content": message.content,
@@ -290,6 +298,8 @@ def _build_consent_notification(
     if db.has_consent_notification(consent_id):
         return None
     channel_id = _consent_channel_id(trigger)
+    if channel_id and db.is_channel_archived(channel_id):
+        return None
     if channel_id:
         bound = db.bind_consent_channel(consent_id, channel_id)
         if bound is not None:
