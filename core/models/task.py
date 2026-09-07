@@ -30,6 +30,7 @@ TaskStatus = Literal[
     "abandoned",
     "delegated",
     "declined",
+    "cancelled",
 ]
 
 
@@ -92,6 +93,14 @@ class TaskCreate(BaseModel):
     notification_channel_id: str | None = None
     requested_specialty: str | None = None
     confirm_specialty_mismatch: bool = False
+
+
+class TaskCancelRequest(BaseModel):
+    """Payload accepted by POST /api/tasks/cancel to kill selected tasks."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    task_ids: list[str] = Field(min_length=1)
 
 
 TaskCreateOutcome = Literal[

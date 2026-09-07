@@ -19,10 +19,12 @@ from core.agent_loop.role_contracts import (
 )
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
-from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCreate, TaskCreateResponse
+from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCancelRequest, TaskCreate, TaskCreateResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
+from core.tasking.service import cancel_task_as_operator, cancel_tasks_as_operator
+from core.tasking.transitions import IllegalTaskTransition
 import db
 
 router = APIRouter()
@@ -280,6 +282,42 @@ async def get_task_board(agent_id: str, scope: Literal["self", "owned", "delegat
     return serialize_task_board(build_task_board(agent.id, scope=scope))
 
 
+@router.post("/tasks/cancel")
+async def cancel_tasks(body: TaskCancelRequest):
+    """Cancel selected tasks. Threads stay open unless the operator archives them."""
+    try:
+        tasks, posted_lines = cancel_tasks_as_operator(body.task_ids)
+    except IllegalTaskTransition as exc:
+        raise HTTPException(
+            409,
+            f"Illegal task status transition: {exc.from_status} → {exc.to_status}",
+        ) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, "Task not found") from exc
+        raise
+    await _broadcast_operator_cancels(tasks, posted_lines)
+    return [_serialize_cancelled_task(task) for task in tasks]
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """Cancel one task from the operator board."""
+    try:
+        task, posted = cancel_task_as_operator(task_id)
+    except IllegalTaskTransition as exc:
+        raise HTTPException(
+            409,
+            f"Illegal task status transition: {exc.from_status} → {exc.to_status}",
+        ) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, "Task not found") from exc
+        raise
+    await _broadcast_operator_cancels([task], [posted] if posted else [])
+    return _serialize_cancelled_task(task)
+
+
 @router.get("/tasks/{task_id}/events")
 async def get_task_events(task_id: str, limit: int = 100):
     task = db.get_task(task_id)
@@ -296,3 +334,44 @@ async def get_task(task_id: str) -> Task:
     if not task:
         raise HTTPException(404, "Task not found")
     return task
+
+
+def _serialize_cancelled_task(task: Task) -> dict:
+    return task.model_dump(mode="json")
+
+
+async def _broadcast_operator_cancels(tasks: list[Task], posted_lines: list[dict]) -> None:
+    """Tell the UI and origin threads that operator cancel landed."""
+    titles = [task.title for task in tasks if task is not None]
+    if len(titles) == 1:
+        detail = f'Cancelled task "{titles[0]}"'
+    elif titles:
+        detail = f"Cancelled {len(titles)} tasks"
+    else:
+        detail = "Cancelled tasks"
+    await manager.broadcast_activity(event="task_cancelled", detail=detail)
+    await manager.broadcast_world_state()
+    for posted in posted_lines:
+        extra = posted.get("channel_message") if isinstance(posted, dict) else None
+        if extra:
+            await manager.broadcast_channel_message(
+                channel_id=extra["channel_id"],
+                content=extra["content"],
+                author_type=extra.get("author_type") or "system",
+                author_name=extra.get("author_name") or "BossMod",
+                message_id=extra.get("message_id"),
+                created_at=extra.get("created_at"),
+                notification_kind=extra.get("notification_kind"),
+            )
+        chat = posted.get("chat_message") if isinstance(posted, dict) else None
+        if chat:
+            await manager.broadcast_chat_message(
+                agent_id=chat["agent_id"],
+                content=chat["content"],
+                from_type=chat.get("from_type") or "system",
+                from_name=chat.get("from_name") or "BossMod",
+                message_type=chat.get("message_type"),
+                message_id=chat.get("message_id"),
+                created_at=chat.get("created_at"),
+                notification_kind=chat.get("notification_kind"),
+            )

@@ -33,3 +33,20 @@ def test_deliverable_open_does_not_remap_host_paths_through_me() -> None:
 def test_file_viewer_open_surfaces_load_failures() -> None:
     source = _read("company-file-viewer.js")
     assert "throw err;" in source
+
+
+def test_cancel_task_button_and_confirm_copy() -> None:
+    source = _read("company-task-detail.js")
+    assert 'id="ct-cancel-task-btn"' in source
+    assert ">Cancel task<" in source
+    assert "setCancelCallback" in source
+    tasks = _read("company-tasks.js")
+    assert "Cancel this task?" in tasks
+    assert "Cancel selected" in tasks
+    assert "Cancel ${ids.length} tasks?" in tasks
+    assert "statusFilter = 'open'" in tasks
+    assert "{ key: 'open', label: 'Active' }" in tasks
+    assert "{ key: 'done', label: 'Done/Cancelled' }" in tasks
+    assert "TERMINAL_STATUSES" in tasks
+    assert "'cancelled'" in tasks
+    assert "matchesBoardFilter" in tasks

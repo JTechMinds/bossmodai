@@ -29,6 +29,7 @@ from core.models import (
     AgentUpdate,
 )
 from core.models.message import HUMAN_SENDER_ID
+from core.tasking.service import list_open_origin_tasks_for_channel
 from core.runtime import runtime_services
 from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.transitions import transition_task
@@ -194,6 +195,19 @@ async def create_channel(body: ChannelCreateBody):
 async def archive_channel(channel_id: str):
     """Archive one shared thread so it leaves the active Threads list."""
     return await _archive_channel(channel_id)
+
+
+@router.get("/channels/{channel_id}/open-tasks")
+async def list_channel_open_tasks(channel_id: str):
+    """Return non-terminal tasks whose origin is this thread. Archive never infers this."""
+    channel = db.get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(404, "Thread not found")
+    tasks = list_open_origin_tasks_for_channel(channel.id)
+    return {
+        "count": len(tasks),
+        "tasks": [task.model_dump(mode="json") for task in tasks],
+    }
 
 
 @router.delete("/channels/{channel_id}")

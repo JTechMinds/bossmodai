@@ -466,19 +466,99 @@ const ChannelsView = (() => {
         };
     }
 
+    function openTaskArchiveCopy(count) {
+        return `This thread has ${count} open tasks. Cancel them?`;
+    }
+
+    function shouldPromptOpenTasksOnArchive(count) {
+        return Number(count) > 0;
+    }
+
+    async function fetchOpenOriginTasks(channelId) {
+        const res = await apiFetch(`/api/channels/${channelId}/open-tasks`, { cache: 'no-store' });
+        if (!res.ok) {
+            throw new Error(await res.text());
+        }
+        const body = await res.json();
+        const tasks = Array.isArray(body?.tasks) ? body.tasks : [];
+        const count = Number.isFinite(body?.count) ? body.count : tasks.length;
+        return { count, tasks };
+    }
+
+    async function cancelTaskIds(taskIds) {
+        if (!taskIds.length) return;
+        const res = await apiFetch('/api/tasks/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_ids: taskIds }),
+        });
+        if (!res.ok) {
+            throw new Error(await res.text());
+        }
+    }
+
+    async function archiveChannelRequest(channelId) {
+        const res = await apiFetch(`/api/channels/${channelId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            throw new Error(await res.text());
+        }
+        return res.json();
+    }
+
+    function promptArchiveOpenTasks(count) {
+        if (typeof window.chooseArchiveOpenTasks === 'function') {
+            return Promise.resolve(window.chooseArchiveOpenTasks(count));
+        }
+        return new Promise((resolve) => {
+            let settled = false;
+            let modal = null;
+            const finish = (choice) => {
+                if (settled) return;
+                settled = true;
+                resolve(choice);
+                if (modal) modal.close();
+            };
+            modal = BossModUtils.createModal({ maxWidth: 'max-w-md', onClose: () => finish('back') });
+            modal.panel.innerHTML = `
+                <div class="px-5 py-4 border-b border-bm-border">
+                    <h3 class="text-sm font-semibold">Archive thread</h3>
+                </div>
+                <div class="p-5">
+                    <p class="text-sm text-bm-text">${BossModUtils.escapeHtml(openTaskArchiveCopy(count))}</p>
+                </div>
+                <div class="px-5 py-4 border-t border-bm-border flex items-center justify-end gap-2">
+                    <button type="button" id="channel-archive-back"
+                            class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Back</button>
+                    <button type="button" id="channel-archive-only"
+                            class="px-3 py-2 rounded-lg border border-bm-border text-sm font-medium hover:bg-slate-50 transition-colors">Archive only</button>
+                    <button type="button" id="channel-archive-cancel-tasks"
+                            class="px-3 py-2 rounded-lg bg-bm-accent text-white text-sm font-medium hover:opacity-90 transition-colors">Cancel tasks &amp; archive</button>
+                </div>`;
+            modal.panel.querySelector('#channel-archive-back')?.addEventListener('click', () => finish('back'));
+            modal.panel.querySelector('#channel-archive-only')?.addEventListener('click', () => finish('archive_only'));
+            modal.panel.querySelector('#channel-archive-cancel-tasks')?.addEventListener('click', () => finish('cancel_and_archive'));
+        });
+    }
+
     function bindArchive(channelId) {
         const archiveBtn = document.getElementById('channel-archive-btn');
         if (!archiveBtn || !channelId) return;
         archiveBtn.disabled = false;
         archiveBtn.onclick = async () => {
-            if (!window.confirm('Archive this thread? It will leave the active list.')) return;
             archiveBtn.disabled = true;
             try {
-                const res = await apiFetch(`/api/channels/${channelId}`, { method: 'DELETE' });
-                if (!res.ok) {
-                    throw new Error(await res.text());
+                const open = await fetchOpenOriginTasks(channelId);
+                if (shouldPromptOpenTasksOnArchive(open.count)) {
+                    const choice = await promptArchiveOpenTasks(open.count);
+                    if (choice === 'back' || !choice) {
+                        archiveBtn.disabled = false;
+                        return;
+                    }
+                    if (choice === 'cancel_and_archive') {
+                        await cancelTaskIds(open.tasks.map((task) => task.id).filter(Boolean));
+                    }
                 }
-                const summary = await res.json();
+                const summary = await archiveChannelRequest(channelId);
                 handleChannelUpdated(summary);
             } catch (err) {
                 console.error('[ChannelsView] Failed to archive thread:', err);
@@ -599,5 +679,7 @@ const ChannelsView = (() => {
         handleChannelMessage,
         handleChannelUpdated,
         handleChannelPresence,
+        openTaskArchiveCopy,
+        shouldPromptOpenTasksOnArchive,
     };
 })();
