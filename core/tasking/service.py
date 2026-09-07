@@ -166,6 +166,9 @@ def create_or_bind_task(
         content=_task_creation_event_content(task),
         source_trigger_id=audit_source_trigger_id,
     )
+    from core.agent_loop.task_origin_mirrors import mirror_task_created
+
+    mirror_task_created(task)
     return TaskCreateOrBindResult(task=task, outcome="create_new_task", resolution=resolution)
 
 

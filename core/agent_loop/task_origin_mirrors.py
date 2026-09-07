@@ -81,6 +81,8 @@ def format_origin_status_line(
     """Return Debra's locked operator one-liner for the origin thread."""
     title = str(getattr(task, "title", None) or "the task").strip() or "the task"
     note = short_reason(reason)
+    if kind == "created":
+        return f"Created: {title}"
     if kind == "accepted":
         return f"Accepted: {title}"
     if kind == "waiting":
@@ -156,12 +158,14 @@ def persist_origin_status_line(
         return {}
     if target == "channel":
         channel_id = str(task.notification_channel_id).strip()
-        recent = db.list_channel_messages(channel_id, limit=8)
-        if any(
-            item.author_type == "system" and (item.content or "").strip() == text
-            for item in recent
-        ):
-            return {}
+        # Same-titled parent and child both need a Created line on this thread.
+        if kind != "created":
+            recent = db.list_channel_messages(channel_id, limit=8)
+            if any(
+                item.author_type == "system" and (item.content or "").strip() == text
+                for item in recent
+            ):
+                return {}
         notification = persist_channel_notification(
             agent,
             ChatNotification(
@@ -176,7 +180,7 @@ def persist_origin_status_line(
         )
         return {"channel_message": notification}
 
-    if _chat_already_has_line(agent.id, getattr(task, "id", None), text):
+    if kind != "created" and _chat_already_has_line(agent.id, getattr(task, "id", None), text):
         return {}
     chat_message = persist_chat_notification(
         agent,
@@ -250,3 +254,24 @@ def _chat_already_has_line(agent_id: str, task_id: str | None, content: str) -> 
         if (note.content or "").strip() == content:
             return True
     return False
+
+
+def _origin_author_agent(task: Any) -> Agent | None:
+    """Return the agent used to persist a Created line, if any."""
+    for candidate in (getattr(task, "assigned_to", None), getattr(task, "created_by", None)):
+        if not candidate or candidate == HUMAN_SENDER_ID:
+            continue
+        agent = db.get_agent(candidate)
+        if agent is not None:
+            return agent
+    return None
+
+
+def mirror_task_created(task: Any) -> dict[str, Any]:
+    """Post Created: {task} on the origin thread when this thread spawned the work."""
+    if task is None or origin_thread_target(task) is None:
+        return {}
+    agent = _origin_author_agent(task)
+    if agent is None:
+        return {}
+    return mirror_origin_status(task=task, agent=agent, kind="created")

@@ -34,7 +34,7 @@ from core.agent_loop.watchdog import TaskWatchdog
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
-from core.tasking.service import create_or_bind_task
+from core.tasking.service import create_or_bind_subtask, create_or_bind_task
 from core.tasking.transitions import transition_task
 
 
@@ -126,6 +126,126 @@ def _queued_channel_messages(agent_id: str) -> list[dict[str, Any]]:
         for row in db.list_agent_triggers(agent_id)
         if row["trigger_type"] == "channel_message" and row["status"] == "queued"
     ]
+
+
+def test_channel_task_create_posts_created_line() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.outcome == "create_new_task"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Created: Share review findings") == 1
+    assert _round_count(channel.id) == 0
+    assert not _queued_channel_messages(jimothy.id)
+
+
+def test_chat_task_create_posts_created_line() -> None:
+    ada = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+    creation = _chat_task(assignee_id=ada.id)
+    assert creation.outcome == "create_new_task"
+    notes = db.list_notifications(agent_id=ada.id)
+    assert any(note.content == "Created: Write the weekly report" for note in notes)
+
+
+def test_bind_existing_task_does_not_repost_created() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    first = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert first.task is not None
+    bound = create_or_bind_task(
+        title=first.task.title,
+        description=first.task.description,
+        project=None,
+        assigned_to=jimothy.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel="channel",
+        notification_policy="completion_blocked",
+        notification_channel_id=channel.id,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+        bind_task_id=first.task.id,
+    )
+    assert bound.outcome == "bind_existing_task"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Created: Share review findings") == 1
+
+
+def test_subtask_create_posts_created_line_on_origin_thread() -> None:
+    jimothy = db.create_agent("Jimothy", role="Lead", desk_x=1, desk_y=1)
+    bea = db.create_agent("Bea", role="Writer", desk_x=2, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id, bea.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    parent = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert parent.task is not None
+    child = create_or_bind_subtask(
+        parent_task=parent.task,
+        title="Draft the findings note",
+        description="Write the child deliverable.",
+        project=None,
+        assigned_to=bea.id,
+        requester_id=jimothy.id,
+        owner_id=jimothy.id,
+        created_by=jimothy.id,
+        work_contract=None,
+        source_channel=parent.task.source_channel,
+        notification_policy=parent.task.notification_policy,
+        notification_channel_id=parent.task.notification_channel_id,
+        audit_author_name=jimothy.name,
+        audit_author_type="agent",
+        audit_author_agent_id=jimothy.id,
+    )
+    assert child.outcome == "create_new_task"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Created: Share review findings") == 1
+    assert contents.count("Created: Draft the findings note") == 1
+    assert _round_count(channel.id) == 0
+
+
+def test_same_title_subtask_still_posts_created() -> None:
+    jimothy = db.create_agent("Jimothy", role="Lead", desk_x=1, desk_y=1)
+    bea = db.create_agent("Bea", role="Writer", desk_x=2, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id, bea.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    parent = _channel_task(assignee_id=jimothy.id, channel_id=channel.id, title="Write the status note")
+    assert parent.task is not None
+    child = create_or_bind_subtask(
+        parent_task=parent.task,
+        title="Write the status note",
+        description=parent.task.description,
+        project=None,
+        assigned_to=bea.id,
+        requester_id=jimothy.id,
+        owner_id=jimothy.id,
+        created_by=jimothy.id,
+        work_contract=None,
+        source_channel=parent.task.source_channel,
+        notification_policy=parent.task.notification_policy,
+        notification_channel_id=parent.task.notification_channel_id,
+        audit_author_name=jimothy.name,
+        audit_author_type="agent",
+        audit_author_agent_id=jimothy.id,
+    )
+    assert child.outcome == "create_new_task"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Created: Write the status note") == 2
 
 
 def test_accept_without_reply_posts_origin_line_and_flips_accepted() -> None:
@@ -565,6 +685,7 @@ def test_task_events_api_is_newest_first(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_locked_operator_copy() -> None:
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     task = type("T", (), {"title": "Share review findings"})()
+    assert format_origin_status_line(kind="created", agent=agent, task=task) == "Created: Share review findings"
     assert format_origin_status_line(kind="accepted", agent=agent, task=task) == "Accepted: Share review findings"
     assert format_origin_status_line(kind="progress", agent=agent, task=task, path="/me/review.md") == "Writing /me/review.md"
     assert format_origin_status_line(kind="waiting", agent=agent, task=task, reason="Need the transcript") == "Waiting — Need the transcript"
