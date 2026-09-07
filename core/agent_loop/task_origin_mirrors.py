@@ -106,7 +106,7 @@ def format_origin_status_line(
             note = ""
         if note:
             return f"Rerouted to {name} — {note}"
-        return f"Handed off to {name}"
+        return f"Rerouted to {name}"
     if kind == "cancelled":
         return f"Cancelled — {note}" if note else "Cancelled"
     if kind == "blocked_claim":

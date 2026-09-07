@@ -570,13 +570,13 @@ def test_locked_operator_copy() -> None:
     assert format_origin_status_line(kind="waiting", agent=agent, task=task, reason="Need the transcript") == "Waiting — Need the transcript"
     assert format_origin_status_line(kind="stalled", agent=agent, task=task, reason="CLI timed out") == "Stalled — CLI timed out"
     assert format_origin_status_line(kind="declined", agent=agent, task=task, reason="Wrong specialty") == "Declined — Wrong specialty"
-    assert format_origin_status_line(kind="rerouted", agent=agent, task=task, target_name="Bea") == "Handed off to Bea"
+    assert format_origin_status_line(kind="rerouted", agent=agent, task=task, target_name="Bea") == "Rerouted to Bea"
     assert format_origin_status_line(
         kind="rerouted", agent=agent, task=task, target_name="Bea", reason="Needs a writer"
     ) == "Rerouted to Bea — Needs a writer"
     assert format_origin_status_line(
         kind="rerouted", agent=agent, task=task, target_name="Bea", reason="Delegated to Bea"
-    ) == "Handed off to Bea"
+    ) == "Rerouted to Bea"
     assert format_origin_status_line(kind="cancelled", agent=agent, task=task, reason="Operator stopped it") == "Cancelled — Operator stopped it"
     assert format_origin_status_line(kind="blocked_claim", agent=agent, task=task) == "Blocked — checkable claim missing"
     assert format_origin_status_line(
@@ -817,7 +817,7 @@ def test_clarification_loop_block_posts_waiting_origin_line() -> None:
     assert "Blocked — checkable claim missing" not in contents
 
 
-def test_handoff_without_reason_projects_handed_off() -> None:
+def test_handoff_without_reason_projects_rerouted() -> None:
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     notes = project_chat_notifications(
         agent=agent,
@@ -838,4 +838,4 @@ def test_handoff_without_reason_projects_handed_off() -> None:
         },
     )
     assert notes
-    assert notes[0].content == "Handed off to Bea"
+    assert notes[0].content == "Rerouted to Bea"
