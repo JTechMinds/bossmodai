@@ -210,8 +210,10 @@ function thread(id, name, openCount) {
     };
 }
 
-function activeThreads() {
-    return store.filter((item) => item.status === "active").map((item) => ({
+function threadsFor(url) {
+    const query = String(url).split("?")[1] || "";
+    const status = new URLSearchParams(query).get("status") || "active";
+    return store.filter((item) => (item.status || "active") === status).map((item) => ({
         ...item,
         members: item.members.map((member) => ({ ...member })),
     }));
@@ -228,8 +230,8 @@ function openTasks(item) {
 global.apiFetch = async (url, opts = {}) => {
     const method = String(opts.method || "GET").toUpperCase();
     calls.push({ method, url, body: opts.body || null });
-    if (url === "/api/channels" && method === "GET") {
-        return { ok: true, async json() { return activeThreads(); } };
+    if (String(url).split("?")[0] === "/api/channels" && method === "GET") {
+        return { ok: true, async json() { return threadsFor(url); } };
     }
     const openMatch = String(url).match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
     if (openMatch && method === "GET") {
@@ -247,6 +249,21 @@ global.apiFetch = async (url, opts = {}) => {
         item.status = "archived";
         item.archived_at = "2026-01-01T00:00:00Z";
         return { ok: true, async json() { return { ...item }; } };
+    }
+    const reopenPost = String(url).match(/^\/api\/channels\/([^/?]+)\/reopen$/);
+    if (reopenPost && method === "POST") {
+        const item = store.find((row) => row.id === reopenPost[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        item.status = "active";
+        item.archived_at = null;
+        return { ok: true, async json() { return { ...item }; } };
+    }
+    const messagePost = String(url).match(/^\/api\/channels\/([^/?]+)\/messages$/);
+    if (messagePost && method === "POST") {
+        const item = store.find((row) => row.id === messagePost[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        if (item.status === "archived") return { ok: false, async text() { return "sealed"; } };
+        return { ok: true, async json() { return { status: "ok" }; } };
     }
     const match = String(url).match(/^\/api\/channels\/([^/?]+)$/);
     if (!match) throw new Error(`unhandled ${method} ${url}`);
@@ -305,14 +322,24 @@ async function main() {
     const emptyMarkup = ChannelsView.archivePromptMarkup(emptySpec);
     const openMarkup = ChannelsView.archivePromptMarkup(openSpec);
 
+    const honesty = "Not permanently deleted — leaves the active list and seals the room (no new posts).";
     if (emptySpec.title !== "Archive thread?" || openSpec.title !== "Archive thread?") {
         throw new Error("archive title mismatch");
     }
-    if (ChannelsView.openTaskArchiveCopy(0) !== "Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board.") {
+    if (emptySpec.honesty !== honesty || openSpec.honesty !== honesty) {
+        throw new Error("modal honesty copy missing");
+    }
+    if (ChannelsView.ARCHIVE_HONESTY_COPY !== honesty) {
+        throw new Error("honesty constant mismatch");
+    }
+    if (ChannelsView.openTaskArchiveCopy(0) !== `Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board. ${honesty}`) {
         throw new Error("N=0 archive copy mismatch");
     }
-    if (ChannelsView.openTaskArchiveCopy(2) !== "This thread has 2 open tasks. Sealing stops new posts and access cards.") {
+    if (ChannelsView.openTaskArchiveCopy(2) !== `This thread has 2 open tasks. Sealing stops new posts and access cards. ${honesty}`) {
         throw new Error("N>0 archive copy mismatch");
+    }
+    if (!emptyMarkup.includes(honesty) || !openMarkup.includes(honesty)) {
+        throw new Error("honesty copy must appear in both modal variants");
     }
     if (ChannelsView.shouldPromptOpenTasksOnArchive(0) !== false) {
         throw new Error("N=0 must use the two-button confirm, not the open-task choices");
@@ -427,6 +454,51 @@ async function main() {
         throw new Error("live handlers must not revive an archived thread");
     }
 
+    const archivedFilter = document.getElementById("channels-filter-archived");
+    if (!archivedFilter) throw new Error("Archived filter missing");
+    calls.length = 0;
+    await archivedFilter.click();
+    if (!calls.some((item) => item.method === "GET" && String(item.url).includes("status=archived"))) {
+        throw new Error("Archived filter must list archived threads");
+    }
+    if (!listItem("none-c") || !listItem("open-a") || listItem("open-d")) {
+        throw new Error("Archived filter must show sealed threads and hide active ones");
+    }
+
+    await listItem("none-c").click();
+    const reopenBtn = document.getElementById("channel-reopen-btn");
+    const archiveAfter = document.getElementById("channel-archive-btn");
+    if (!reopenBtn || reopenBtn.hidden) {
+        throw new Error("archived thread must show Reopen");
+    }
+    if (archiveAfter && !archiveAfter.hidden) {
+        throw new Error("archived thread must hide Archive");
+    }
+    const composer = document.getElementById("channel-input");
+    if (!composer || !composer.disabled) {
+        throw new Error("archived composer must stay sealed");
+    }
+
+    calls.length = 0;
+    await reopenBtn.click();
+    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/none-c/reopen"))) {
+        throw new Error("Reopen must POST /reopen");
+    }
+    if (ChannelsView.isLiveThread("none-c") !== true) {
+        throw new Error("Reopen must unseal the thread");
+    }
+    const liveComposer = document.getElementById("channel-input");
+    const sendBtn = document.getElementById("channel-send");
+    if (!liveComposer || liveComposer.disabled || !sendBtn || sendBtn.disabled) {
+        throw new Error("Reopen must enable new posts");
+    }
+    liveComposer.value = "hello again";
+    calls.length = 0;
+    await sendBtn.click();
+    if (!calls.some((item) => item.method === "POST" && String(item.url).includes("/api/channels/none-c/messages"))) {
+        throw new Error("unsealed thread must accept a new post");
+    }
+
     process.stdout.write(JSON.stringify({
         ok: true,
         cancelAndArchive: true,
@@ -437,6 +509,9 @@ async function main() {
         zeroOpenCancelAborts: true,
         backAborts: true,
         archivedNotLive: true,
+        honestyCopy: true,
+        archivedFilterLists: true,
+        reopenUnseals: true,
     }));
 }
 

@@ -8,13 +8,14 @@ const ChannelsView = (() => {
     let channels = [];
     let selectedChannelId = null;
     let activeContainer = null;
+    let listFilter = 'active';
     const presence = BossModUtils.createChannelPresenceController();
     const threadCache = ChannelThreadDom.createCache();
     const drafts = new Map();
     const detailLoad = BossModUtils.createLoadGeneration();
 
     async function loadChannels() {
-        const res = await apiFetch('/api/channels', { cache: 'no-store' });
+        const res = await apiFetch(`/api/channels?status=${encodeURIComponent(listFilter)}`, { cache: 'no-store' });
         if (!res.ok) {
             throw new Error(await res.text());
         }
@@ -49,10 +50,22 @@ const ChannelsView = (() => {
                             <h3 class="text-sm font-semibold mt-1">Shared Threads</h3>
                             <p class="text-xs text-bm-muted mt-1">Broadcast to selected agents and let them reply in order.</p>
                         </div>
-                        <button id="channels-refresh-btn"
-                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
-                            Refresh
-                        </button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <div class="inline-flex rounded-lg border border-bm-border p-0.5">
+                                <button type="button" id="channels-filter-active"
+                                        class="px-2 py-1 rounded-md text-xs font-medium transition-colors ${listFilter === 'active' ? 'bg-bm-accent text-white' : 'text-bm-text hover:bg-slate-50'}">
+                                    Active
+                                </button>
+                                <button type="button" id="channels-filter-archived"
+                                        class="px-2 py-1 rounded-md text-xs font-medium transition-colors ${listFilter === 'archived' ? 'bg-bm-accent text-white' : 'text-bm-text hover:bg-slate-50'}">
+                                    Archived
+                                </button>
+                            </div>
+                            <button id="channels-refresh-btn"
+                                    class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                                Refresh
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="flex-1 min-h-0 flex flex-col">
@@ -63,6 +76,18 @@ const ChannelsView = (() => {
 
         container.querySelector('#channels-refresh-btn')?.addEventListener('click', () => {
             void render(container);
+        });
+        container.querySelector('#channels-filter-active')?.addEventListener('click', async () => {
+            if (listFilter === 'active') return;
+            listFilter = 'active';
+            selectedChannelId = null;
+            await render(container);
+        });
+        container.querySelector('#channels-filter-archived')?.addEventListener('click', async () => {
+            if (listFilter === 'archived') return;
+            listFilter = 'archived';
+            selectedChannelId = null;
+            await render(container);
         });
 
         try {
@@ -88,6 +113,13 @@ const ChannelsView = (() => {
     function renderChannelList(listEl) {
         if (!listEl) return;
         if (!channels.length) {
+            if (listFilter === 'archived') {
+                listEl.innerHTML = `
+                <div class="text-sm text-bm-muted text-center py-6">
+                    <p>No archived threads.</p>
+                </div>`;
+                return;
+            }
             listEl.innerHTML = `
                 <div class="text-sm text-bm-muted text-center py-6">
                     <p>Tick agents in Directory, then Create Thread to start broadcasting.</p>
@@ -204,6 +236,7 @@ const ChannelsView = (() => {
             renderChannelThinking(messagesEl, channel.id);
             bindSend(channel.id);
             bindArchive(channel.id);
+            bindReopen(channel.id);
             if (window.lucide) lucide.createIcons({ nodes: [detailEl] });
             return;
         }
@@ -283,10 +316,16 @@ const ChannelsView = (() => {
                             <h3 id="channel-title" class="text-sm font-semibold">${BossModUtils.escapeHtml(channel.name || 'Thread')}</h3>
                             <p id="channel-member-count" class="text-xs text-bm-muted mt-1">${members.length} participants</p>
                         </div>
-                        <button type="button" id="channel-archive-btn"
-                                class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
-                            Archive
-                        </button>
+                        <div class="flex items-start gap-2 shrink-0">
+                            <button type="button" id="channel-archive-btn"
+                                    class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors">
+                                Archive
+                            </button>
+                            <button type="button" id="channel-reopen-btn"
+                                    class="px-2 py-1 rounded border border-bm-border text-xs font-medium hover:bg-slate-50 transition-colors hidden">
+                                Reopen
+                            </button>
+                        </div>
                     </div>
                     <div id="channel-members" class="mt-3 flex flex-wrap gap-2">
                         ${renderMemberChips(channel)}
@@ -319,6 +358,8 @@ const ChannelsView = (() => {
 
         bindSend(channel.id);
         bindArchive(channel.id);
+        bindReopen(channel.id);
+        ChannelThreadDom.updateChrome(detailEl, channel);
         threadCache.remember(channel.id, { channel, messages: Array.isArray(messages) ? messages : [] });
         restoreDraft(detailEl, channel.id);
         if (window.lucide) lucide.createIcons({ nodes: [detailEl] });
@@ -423,6 +464,7 @@ const ChannelsView = (() => {
         if (!sendBtn || !input || !channelId) return;
 
         async function handleSend() {
+            if (!isLiveThread(channelId) || input.disabled) return;
             const text = String(input.value || '').trim();
             if (!text) return;
             input.value = '';
@@ -466,6 +508,8 @@ const ChannelsView = (() => {
         };
     }
 
+    const ARCHIVE_HONESTY_COPY = 'Not permanently deleted — leaves the active list and seals the room (no new posts).';
+
     function shouldPromptOpenTasksOnArchive(count) {
         return Number(count) > 0;
     }
@@ -476,6 +520,7 @@ const ChannelsView = (() => {
             return {
                 title: 'Archive thread?',
                 body: `This thread has ${n} open tasks. Sealing stops new posts and access cards.`,
+                honesty: ARCHIVE_HONESTY_COPY,
                 dismissChoice: 'back',
                 buttons: [
                     { id: 'channel-archive-back', label: 'Back', choice: 'back', primary: false },
@@ -487,6 +532,7 @@ const ChannelsView = (() => {
         return {
             title: 'Archive thread?',
             body: 'Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board.',
+            honesty: ARCHIVE_HONESTY_COPY,
             dismissChoice: 'back',
             buttons: [
                 { id: 'channel-archive-back', label: 'Cancel', choice: 'back', primary: false },
@@ -496,7 +542,8 @@ const ChannelsView = (() => {
     }
 
     function openTaskArchiveCopy(count) {
-        return archivePromptSpec(count).body;
+        const spec = archivePromptSpec(count);
+        return `${spec.body} ${spec.honesty}`;
     }
 
     function archivePromptMarkup(spec) {
@@ -510,8 +557,9 @@ const ChannelsView = (() => {
                 <div class="px-5 py-4 border-b border-bm-border">
                     <h3 class="text-sm font-semibold">${BossModUtils.escapeHtml(spec.title)}</h3>
                 </div>
-                <div class="p-5">
+                <div class="p-5 space-y-2">
                     <p class="text-sm text-bm-text">${BossModUtils.escapeHtml(spec.body)}</p>
+                    <p class="text-sm text-bm-muted">${BossModUtils.escapeHtml(spec.honesty || '')}</p>
                 </div>
                 <div class="px-5 py-4 border-t border-bm-border flex items-center justify-end gap-2">
                     ${buttonsHtml}
@@ -578,6 +626,12 @@ const ChannelsView = (() => {
     function bindArchive(channelId) {
         const archiveBtn = document.getElementById('channel-archive-btn');
         if (!archiveBtn || !channelId) return;
+        const channel = channels.find(item => item.id === channelId);
+        if (channel?.status === 'archived') {
+            archiveBtn.disabled = true;
+            archiveBtn.onclick = null;
+            return;
+        }
         archiveBtn.disabled = false;
         archiveBtn.onclick = async () => {
             archiveBtn.disabled = true;
@@ -591,10 +645,34 @@ const ChannelsView = (() => {
                 const summary = await archiveChannelRequest(channelId, {
                     cancel_open_tasks: choice === 'cancel_and_archive',
                 });
-                handleChannelUpdated(summary);
+                await handleChannelUpdated(summary);
             } catch (err) {
                 console.error('[ChannelsView] Failed to archive thread:', err);
                 archiveBtn.disabled = false;
+            }
+        };
+    }
+
+    function bindReopen(channelId) {
+        const reopenBtn = document.getElementById('channel-reopen-btn');
+        if (!reopenBtn || !channelId) return;
+        const channel = channels.find(item => item.id === channelId);
+        if (!channel || channel.status !== 'archived') {
+            reopenBtn.onclick = null;
+            return;
+        }
+        reopenBtn.disabled = false;
+        reopenBtn.onclick = async () => {
+            reopenBtn.disabled = true;
+            try {
+                const res = await apiFetch(`/api/channels/${channelId}/reopen`, { method: 'POST' });
+                if (!res.ok) {
+                    throw new Error(await res.text());
+                }
+                await handleChannelUpdated(await res.json());
+            } catch (err) {
+                console.error('[ChannelsView] Failed to reopen thread:', err);
+                reopenBtn.disabled = false;
             }
         };
     }
@@ -685,19 +763,34 @@ const ChannelsView = (() => {
         renderChannelThinking(detailEl.querySelector('#channel-messages'), channelId);
     }
 
-    function handleChannelUpdated(channelSummary) {
+    function channelMatchesListFilter(channelSummary) {
+        const archived = channelSummary?.status === 'archived';
+        return listFilter === 'archived' ? archived : !archived;
+    }
+
+    async function handleChannelUpdated(channelSummary) {
         if (!channelSummary?.id) return;
         const archived = channelSummary.status === 'archived';
-        const existingIndex = channels.findIndex(item => item.id === channelSummary.id);
         if (archived) {
             sealArchivedThread(channelSummary.id);
-            if (existingIndex >= 0) channels.splice(existingIndex, 1);
-        } else if (existingIndex >= 0) {
-            channels.splice(existingIndex, 1, channelSummary);
-        } else {
-            channels.unshift(channelSummary);
         }
-        if (archived && selectedChannelId === channelSummary.id) {
+        if (!archived && listFilter === 'archived') {
+            listFilter = 'active';
+            selectedChannelId = channelSummary.id;
+            if (activeContainer) {
+            await render(activeContainer);
+            }
+            return;
+        }
+        const existingIndex = channels.findIndex(item => item.id === channelSummary.id);
+        if (channelMatchesListFilter(channelSummary)) {
+            if (existingIndex >= 0) channels.splice(existingIndex, 1, channelSummary);
+            else channels.unshift(channelSummary);
+        } else if (existingIndex >= 0) {
+            channels.splice(existingIndex, 1);
+        }
+        const stillListed = channels.some(item => item.id === channelSummary.id);
+        if (selectedChannelId === channelSummary.id && !stillListed) {
             selectedChannelId = channels[0]?.id || null;
             if (activeContainer) {
                 renderChannelList(activeContainer.querySelector('#channels-list'));
@@ -705,11 +798,18 @@ const ChannelsView = (() => {
             }
             return;
         }
-        if (!selectedChannelId && !archived) {
+        if (!selectedChannelId && stillListed) {
             selectedChannelId = channelSummary.id;
         }
         if (activeContainer) {
             renderChannelList(activeContainer.querySelector('#channels-list'));
+            if (selectedChannelId === channelSummary.id) {
+                const detailEl = activeContainer.querySelector('#channel-detail');
+                const cached = threadCache.recall(channelSummary.id);
+                applyThreadDetail(detailEl, cached?.channel || channelSummary, cached?.messages || [], {
+                    keepShell: ChannelThreadDom.isMounted(detailEl),
+                });
+            }
         }
     }
 
@@ -740,5 +840,6 @@ const ChannelsView = (() => {
         shouldPromptOpenTasksOnArchive,
         archivePromptSpec,
         archivePromptMarkup,
+        ARCHIVE_HONESTY_COPY,
     };
 })();

@@ -73,7 +73,28 @@ const ChannelThreadDom = (() => {
         const members = Array.isArray(channel.members) ? channel.members : [];
         const count = container.querySelector('#channel-member-count');
         if (count) count.textContent = `${members.length} participants`;
+        const archived = channel.status === 'archived';
+        container.dataset.threadStatus = archived ? 'archived' : 'active';
+        setHidden(container.querySelector('#channel-archive-btn'), archived);
+        setHidden(container.querySelector('#channel-reopen-btn'), !archived);
+        const input = container.querySelector('#channel-input');
+        const sendBtn = container.querySelector('#channel-send');
+        if (input) {
+            input.disabled = archived;
+            input.placeholder = archived
+                ? 'Archived — reopen to post again.'
+                : 'Send a message to everyone in this thread...';
+        }
+        if (sendBtn) sendBtn.disabled = archived;
         return members;
+    }
+
+    function setHidden(el, hide) {
+        if (!el) return;
+        el.hidden = Boolean(hide);
+        const classes = String(el.className || '').split(/\s+/).filter(Boolean).filter((cls) => cls !== 'hidden');
+        if (hide) classes.push('hidden');
+        el.className = classes.join(' ');
     }
 
     function replaceTranscript(messagesEl) {

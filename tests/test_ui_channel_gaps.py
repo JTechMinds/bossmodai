@@ -89,6 +89,13 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "channel-archive-back" in source
     assert "channel-archive-confirm" in source
     assert "channel-archive-cancel-tasks" in source
+    assert "ARCHIVE_HONESTY_COPY" in source
+    assert "Not permanently deleted — leaves the active list and seals the room (no new posts)." in source
+    assert "channels-filter-active" in source
+    assert "channels-filter-archived" in source
+    assert "id=\"channel-reopen-btn\"" in source
+    assert "Reopen" in source
+    assert ">Close<" not in source
     assert "function isLiveThread(" in source
     assert "function sealArchivedThread(" in source
     assert "presence.stopAll(" in source
@@ -187,6 +194,9 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
         "zeroOpenCancelAborts": True,
         "backAborts": True,
         "archivedNotLive": True,
+        "honestyCopy": True,
+        "archivedFilterLists": True,
+        "reopenUnseals": True,
     }
 
 
