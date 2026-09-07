@@ -28,6 +28,7 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/channels", "create_channel"),
     (("GET",), "/api/channels/{channel_id}", "get_channel"),
     (("POST",), "/api/channels/{channel_id}/archive", "archive_channel"),
+    (("GET",), "/api/channels/{channel_id}/open-tasks", "list_channel_open_tasks"),
     (("DELETE",), "/api/channels/{channel_id}", "delete_channel"),
     (("POST",), "/api/channels/{channel_id}/messages", "create_channel_message"),
     (("GET",), "/api/agents/{agent_id}/api-key", "get_agent_api_key"),
@@ -45,6 +46,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/tasks", "list_tasks"),
     (("POST",), "/api/tasks", "create_task"),
     (("GET",), "/api/tasks/board", "get_task_board"),
+    (("POST",), "/api/tasks/cancel", "cancel_tasks"),
+    (("POST",), "/api/tasks/{task_id}/cancel", "cancel_task"),
     (("GET",), "/api/tasks/{task_id}/events", "get_task_events"),
     (("GET",), "/api/tasks/{task_id}", "get_task"),
     (("GET",), "/api/activity/feed", "get_activity_feed"),
@@ -107,7 +110,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 86
+    assert len(got) == 89
 
 
 def test_from_api_routes_import_router_still_works() -> None:

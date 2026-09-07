@@ -148,6 +148,28 @@ def delete_queued_triggers(
     return deleted
 
 
+def delete_queued_triggers_for_task(task_id: str) -> int:
+    """Delete queued triggers bound to one task so cancelled work does not resume."""
+    row = query_one(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE task_id = $1 AND status = 'queued'
+        """,
+        [task_id],
+    )
+    deleted = int(row["cnt"]) if row else 0
+    if deleted:
+        execute(
+            """
+            DELETE FROM agent_triggers
+            WHERE task_id = $1 AND status = 'queued'
+            """,
+            [task_id],
+        )
+    return deleted
+
+
 def claim_trigger(trigger_id: str) -> AgentTrigger | None:
     """Claim a specific queued trigger and issue a new lease generation."""
     con = get_connection()

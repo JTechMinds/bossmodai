@@ -29,6 +29,7 @@ ALL_STATUSES = (
     "abandoned",
     "delegated",
     "declined",
+    "cancelled",
 )
 
 # Shortest legal walk from the default ``pending`` insert.
@@ -43,6 +44,7 @@ _SETUP_PATHS: dict[str, tuple[str, ...]] = {
     "abandoned": ("accepted", "abandoned"),
     "delegated": ("accepted", "delegated"),
     "declined": ("declined",),
+    "cancelled": ("cancelled",),
 }
 
 _ALLOWED_PAIRS = [

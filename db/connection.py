@@ -478,9 +478,9 @@ def _ensure_agent_state_status_values(con: SQLiteCompatConnection) -> None:
 
 
 def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
-    """Rebuild tasks if it is missing the waiting status."""
+    """Rebuild tasks if it is missing waiting or cancelled."""
     sql = _table_sql(con, "tasks")
-    if "'waiting'" in sql:
+    if "'waiting'" in sql and "'cancelled'" in sql:
         return
 
     con.execute("PRAGMA foreign_keys = OFF")
@@ -498,7 +498,7 @@ def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
                 created_by     VARCHAR,
                 status         VARCHAR DEFAULT 'pending'
                                    CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
-                                                     'stalled', 'abandoned', 'delegated', 'declined')),
+                                                     'stalled', 'abandoned', 'delegated', 'declined', 'cancelled')),
                 parent_task_id VARCHAR,
                 cost_ceiling   DECIMAL,
                 completion_summary TEXT,
@@ -527,7 +527,7 @@ def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
         )
         con.execute("DROP TABLE tasks")
         con.execute("ALTER TABLE tasks__new RENAME TO tasks")
-        logger.info("Migration: rebuilt tasks to add waiting status")
+        logger.info("Migration: rebuilt tasks to add waiting/cancelled statuses")
     finally:
         con.execute("PRAGMA foreign_keys = ON")
 

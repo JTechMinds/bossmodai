@@ -162,9 +162,10 @@ def list_tasks(
     owner_id: str | None = None,
     requester_id: str | None = None,
     parent_task_id: str | None = None,
+    notification_channel_id: str | None = None,
     status: str | None = None,
 ) -> list[Task]:
-    """Return tasks, optionally filtered by assignee and/or status."""
+    """Return tasks, optionally filtered by assignee, origin thread, and/or status."""
     conditions: list[str] = []
     params: list[Any] = []
 
@@ -180,6 +181,9 @@ def list_tasks(
     if parent_task_id is not None:
         params.append(parent_task_id)
         conditions.append(f"t.parent_task_id = ${len(params)}")
+    if notification_channel_id is not None:
+        params.append(notification_channel_id)
+        conditions.append(f"tnt.channel_id = ${len(params)}")
     if status is not None:
         params.append(status)
         conditions.append(f"t.status = ${len(params)}")
@@ -281,7 +285,15 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
         fields.setdefault("last_activity", now)
         if fields.get("completion_summary"):
             fields.setdefault("last_progress_at", now)
-        elif fields.get("status") in {"complete", "waiting", "blocked", "delegated", "abandoned", "stalled"}:
+        elif fields.get("status") in {
+            "complete",
+            "waiting",
+            "blocked",
+            "delegated",
+            "abandoned",
+            "cancelled",
+            "stalled",
+        }:
             fields.setdefault("last_progress_at", now)
 
     build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)
@@ -302,7 +314,7 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
         else:
             set_task_notification_target_channel_id(task_id, notification_channel_id)
     updated = get_task(task_id)
-    if fields.get("status") in {"complete", "abandoned"}:
+    if fields.get("status") in {"complete", "abandoned", "cancelled"}:
         from db.host_path_consent import clear_once_grants_for_task
 
         clear_once_grants_for_task(task_id)

@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_by     VARCHAR,
     status         VARCHAR DEFAULT 'pending'
                        CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
-                                         'stalled', 'abandoned', 'delegated', 'declined')),
+                                         'stalled', 'abandoned', 'delegated', 'declined', 'cancelled')),
     parent_task_id VARCHAR,
     cost_ceiling   DECIMAL,
     completion_summary TEXT,

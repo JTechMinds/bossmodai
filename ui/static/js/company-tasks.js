@@ -8,10 +8,11 @@ const CompanyTasks = (() => {
     let tasks = [];
     let agents = [];
     let subtaskCountMap = new Map();
-    let statusFilter = 'all';
+    let statusFilter = 'open';
     let agentFilter = null;
     let searchQuery = '';
     let selectedTaskId = null;
+    let selectedIds = new Set();
     let sortColumn = 'last_active';
     let sortDirection = 'desc';
     let searchTimer = null;
@@ -38,15 +39,21 @@ const CompanyTasks = (() => {
         abandoned: { dot: 'bg-gray-400',    badge: 'bg-gray-100 text-gray-600' },
         delegated: { dot: 'bg-purple-400',  badge: 'bg-purple-100 text-purple-700' },
         declined:  { dot: 'bg-gray-400',    badge: 'bg-gray-100 text-gray-600' },
+        cancelled: { dot: 'bg-rose-400',    badge: 'bg-rose-100 text-rose-700' },
     };
 
     const STATUS_ORDER = {
         active: 0, pending: 1, accepted: 2, waiting: 3,
         blocked: 4, stalled: 5, delegated: 6,
-        complete: 7, abandoned: 8, declined: 9,
+        complete: 7, abandoned: 8, declined: 9, cancelled: 10,
     };
 
-    const STATUS_FILTERS = ['all', 'active', 'pending', 'waiting', 'complete', 'stalled', 'blocked'];
+    const TERMINAL_STATUSES = new Set(['complete', 'cancelled', 'declined', 'abandoned']);
+    const STATUS_FILTERS = [
+        { key: 'open', label: 'Active' },
+        { key: 'done', label: 'Done/Cancelled' },
+        { key: 'all', label: 'All' },
+    ];
     const DEFAULT_COLORS = { dot: 'bg-gray-400', badge: 'bg-gray-100 text-gray-600' };
     const TABLE_COLUMNS = [
         { key: 'title',       label: 'Task',     cls: 'flex-1 text-left' },
@@ -77,10 +84,21 @@ const CompanyTasks = (() => {
         return counts;
     }
 
+    function isTerminalStatus(status) {
+        return TERMINAL_STATUSES.has(status);
+    }
+
+    function matchesBoardFilter(task) {
+        if (statusFilter === 'open') return !isTerminalStatus(task.status);
+        if (statusFilter === 'done') return isTerminalStatus(task.status);
+        if (statusFilter === 'all') return true;
+        return task.status === statusFilter;
+    }
+
     function filteredTasks() {
         return tasks.filter(task => {
             if (!showChildren && task.parent_task_id) return false;
-            if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+            if (!matchesBoardFilter(task)) return false;
             if (agentFilter && task.assigned_to !== agentFilter) return false;
             if (searchQuery) {
                 const q = searchQuery.toLowerCase();
@@ -122,8 +140,20 @@ const CompanyTasks = (() => {
 
     function taskCounts() {
         const visible = showChildren ? tasks : tasks.filter(t => !t.parent_task_id);
-        const counts = { total: visible.length, active: 0, pending: 0, waiting: 0, complete: 0, stalled: 0, blocked: 0 };
+        const counts = {
+            total: visible.length,
+            open: 0,
+            done: 0,
+            active: 0,
+            pending: 0,
+            waiting: 0,
+            complete: 0,
+            stalled: 0,
+            blocked: 0,
+        };
         for (const task of visible) {
+            if (isTerminalStatus(task.status)) counts.done++;
+            else counts.open++;
             if (counts[task.status] !== undefined) counts[task.status]++;
         }
         return counts;
@@ -158,10 +188,12 @@ const CompanyTasks = (() => {
             CompanyTaskDetail.init({
                 statusColors: STATUS_COLORS,
                 statusOrder: STATUS_ORDER,
+                terminalStatuses: TERMINAL_STATUSES,
                 escapeHtml: BossModUtils.escapeHtml,
                 formatRelativeTime: BossModUtils.formatRelativeTime,
             });
             CompanyTaskDetail.setNavigateCallback(navigateToTask);
+            CompanyTaskDetail.setCancelCallback(cancelOneTask);
             initialized = true;
         }
         fetchAndRender();
@@ -204,7 +236,7 @@ const CompanyTasks = (() => {
                 <div class="flex items-center gap-2 min-w-0">
                     <i data-lucide="list-checks" class="w-4 h-4 text-bm-accent shrink-0"></i>
                     <h3 class="text-sm font-semibold truncate">Company Tasks</h3>
-                    ${counts.active > 0 ? `<span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-green-100 text-green-700">${counts.active}</span>` : ''}
+                    ${counts.open > 0 ? `<span class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-green-100 text-green-700">${counts.open}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                     <div class="relative">
@@ -213,6 +245,11 @@ const CompanyTasks = (() => {
                                class="w-40 pl-7 pr-2 py-1 text-xs border border-bm-border rounded-lg bg-white focus:outline-none focus:border-bm-accent">
                         <i data-lucide="search" class="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-bm-muted pointer-events-none"></i>
                     </div>
+                    <button type="button" id="ct-cancel-selected"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-300 bg-rose-50 text-xs font-medium text-rose-800 hover:bg-rose-100 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                            title="Cancel selected tasks" ${selectedIds.size ? '' : 'disabled'}>
+                        Cancel selected${selectedIds.size ? ` (${selectedIds.size})` : ''}
+                    </button>
                     <button type="button" id="ct-assign-toggle"
                             class="inline-flex items-center gap-1 px-2 py-1 rounded border border-bm-accent/40 bg-bm-accent/10 text-xs font-medium text-bm-accent hover:bg-bm-accent/15 transition-colors"
                             title="Assign a task">
@@ -232,11 +269,11 @@ const CompanyTasks = (() => {
             <div class="flex items-center gap-2 px-4 py-2 border-b border-bm-border bg-slate-50/50 overflow-x-auto shrink-0">
                 <div class="flex items-center gap-1 shrink-0">
                     ${STATUS_FILTERS.map(s => {
-                        const label = s.charAt(0).toUpperCase() + s.slice(1);
-                        const count = s === 'all' ? counts.total : (counts[s] || 0);
-                        const isActive = statusFilter === s;
+                        const label = s.label;
+                        const count = s.key === 'all' ? counts.total : (counts[s.key] || 0);
+                        const isActive = statusFilter === s.key;
                         return `<button type="button" class="activity-chip ct-status-chip ${isActive ? 'active' : ''}"
-                                    data-status="${escape(s)}">${escape(label)} <span class="ml-0.5 opacity-70">${count}</span></button>`;
+                                    data-status="${escape(s.key)}">${escape(label)} <span class="ml-0.5 opacity-70">${count}</span></button>`;
                     }).join('')}
                 </div>
                 <div class="ml-auto flex items-center gap-2 shrink-0">
@@ -263,7 +300,7 @@ const CompanyTasks = (() => {
 
         // Table header
         html += `<div class="flex items-center px-1 shrink-0 bg-slate-50/80 border-b border-bm-border">`;
-        html += `<div class="w-[32px] shrink-0"></div>`;
+        html += `<div class="w-[40px] shrink-0"></div>`;
         for (const col of TABLE_COLUMNS) {
             const isSorted = sortColumn === col.key;
             const arrow = isSorted ? (sortDirection === 'asc' ? '↑' : '↓') : '↕';
@@ -281,7 +318,7 @@ const CompanyTasks = (() => {
         // Footer summary
         html += `
             <div class="px-4 py-2 border-t border-bm-border text-[11px] text-bm-muted bg-slate-50/50 shrink-0">
-                ${counts.total} total &middot; ${counts.active} active &middot; ${counts.pending} pending &middot; ${counts.complete} complete
+                ${counts.open} active &middot; ${counts.done} done/cancelled &middot; ${counts.total} total
             </div>`;
 
         html += `</div>`;
@@ -319,7 +356,7 @@ const CompanyTasks = (() => {
         const sorted = buildDisplayOrder(sortedFilteredTasks());
 
         if (sorted.length === 0) {
-            const msg = (statusFilter !== 'all' || agentFilter || searchQuery)
+            const msg = (statusFilter !== 'open' || agentFilter || searchQuery)
                 ? 'No tasks match the current filters.' : 'No tasks found.';
             return `
                 <div class="text-center py-8 text-bm-muted">
@@ -336,11 +373,14 @@ const CompanyTasks = (() => {
             const subCount = subtaskCountMap.get(task.id) || 0;
             const timeText = relTime(task.last_activity);
 
+            const canCancel = !isTerminalStatus(task.status);
+            const isChecked = selectedIds.has(task.id);
+
             html += `
                 <div class="ct-task-row ${isSelected ? 'ct-selected' : ''} ${isChild ? 'ct-child-row' : ''}" data-task-id="${escape(task.id)}">
                     <div class="flex items-center px-1 py-2">
-                        <div class="w-[32px] flex justify-center shrink-0">
-                            ${isChild ? `<span class="text-[11px] text-bm-muted/50 leading-none">↳</span>` : `<span class="w-2 h-2 rounded-full ${colors.dot}"></span>`}
+                        <div class="w-[40px] flex justify-center shrink-0">
+                            ${canCancel ? `<input type="checkbox" class="ct-select-task rounded border-bm-border text-bm-accent focus:ring-bm-accent/30" data-task-id="${escape(task.id)}" ${isChecked ? 'checked' : ''} aria-label="Select task">` : (isChild ? `<span class="text-[11px] text-bm-muted/50 leading-none">↳</span>` : `<span class="w-2 h-2 rounded-full ${colors.dot}"></span>`)}
                         </div>
                         <div class="flex-1 min-w-0 flex items-center gap-2 pr-2">
                             <span class="text-sm font-medium truncate">${escape(task.title)}</span>
@@ -449,22 +489,85 @@ const CompanyTasks = (() => {
 
         // Row clicks
         bindRowClicks();
+        bindTaskSelection();
 
         // Refresh
         container.querySelector('#ct-refresh-btn')?.addEventListener('click', () => fetchAndRender());
+        container.querySelector('#ct-cancel-selected')?.addEventListener('click', () => cancelSelected());
         bindAssignForm();
     }
 
     function bindRowClicks() {
         if (!container) return;
         container.querySelectorAll('.ct-task-row').forEach(row => {
-            row.addEventListener('click', () => {
+            row.addEventListener('click', (event) => {
+                if (event.target && event.target.closest && event.target.closest('.ct-select-task')) return;
                 const taskId = row.dataset.taskId;
                 selectedTaskId = selectedTaskId === taskId ? null : taskId;
                 updateRowSelection();
                 renderDetailPanel();
             });
         });
+    }
+
+    function bindTaskSelection() {
+        if (!container) return;
+        container.querySelectorAll('.ct-select-task').forEach(box => {
+            box.addEventListener('click', (event) => event.stopPropagation());
+            box.addEventListener('change', (event) => {
+                event.stopPropagation();
+                const taskId = box.dataset.taskId;
+                if (!taskId) return;
+                if (box.checked) selectedIds.add(taskId);
+                else selectedIds.delete(taskId);
+                updateCancelSelectedButton();
+            });
+        });
+        updateCancelSelectedButton();
+    }
+
+    function updateCancelSelectedButton() {
+        const btn = container?.querySelector('#ct-cancel-selected');
+        if (!btn) return;
+        const n = selectedIds.size;
+        btn.disabled = n === 0;
+        btn.textContent = n ? `Cancel selected (${n})` : 'Cancel selected';
+    }
+
+    function cancellableSelectedIds() {
+        return [...selectedIds].filter((id) => {
+            const task = tasks.find(item => item.id === id);
+            return task && !isTerminalStatus(task.status);
+        });
+    }
+
+    async function cancelOneTask(task) {
+        if (!task || !task.id) return;
+        if (isTerminalStatus(task.status)) return;
+        if (!window.confirm('Cancel this task?')) return;
+        await postCancelTaskIds([task.id]);
+    }
+
+    async function cancelSelected() {
+        const ids = cancellableSelectedIds();
+        if (!ids.length) return;
+        if (!window.confirm(`Cancel ${ids.length} tasks?`)) return;
+        await postCancelTaskIds(ids);
+    }
+
+    async function postCancelTaskIds(ids) {
+        try {
+            const res = await apiFetch('/api/tasks/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_ids: ids }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            ids.forEach((id) => selectedIds.delete(id));
+            await refreshSilent();
+        } catch (err) {
+            console.error('[CompanyTasks] Cancel failed:', err);
+        }
     }
 
     function handleSort(col) {
@@ -503,6 +606,7 @@ const CompanyTasks = (() => {
         if (!bodyEl) return;
         bodyEl.innerHTML = renderTableRows();
         bindRowClicks();
+        bindTaskSelection();
         if (window.lucide) lucide.createIcons({ nodes: [bodyEl] });
     }
 
@@ -876,6 +980,10 @@ const CompanyTasks = (() => {
             await loadRosterAgents();
             agents = uniqueAgents();
             subtaskCountMap = buildSubtaskCounts();
+            for (const id of [...selectedIds]) {
+                const task = tasks.find(item => item.id === id);
+                if (!task || isTerminalStatus(task.status)) selectedIds.delete(id);
+            }
             if (selectedTaskId && !tasks.find(t => t.id === selectedTaskId)) {
                 selectedTaskId = null;
             }
@@ -896,10 +1004,11 @@ const CompanyTasks = (() => {
         tasks = [];
         agents = [];
         subtaskCountMap = new Map();
-        statusFilter = 'all';
+        statusFilter = 'open';
         agentFilter = null;
         searchQuery = '';
         selectedTaskId = null;
+        selectedIds = new Set();
         sortColumn = null;
         sortDirection = 'asc';
         showChildren = false;

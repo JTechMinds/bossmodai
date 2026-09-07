@@ -14,6 +14,7 @@ PRESENCE_HARNESS = Path(__file__).resolve().parent / "js_channel_presence_harnes
 GATE_HARNESS = Path(__file__).resolve().parent / "js_inflight_gate_harness.cjs"
 THREAD_DOM_HARNESS = Path(__file__).resolve().parent / "js_channel_thread_dom_harness.cjs"
 ARCHIVE_HARNESS = Path(__file__).resolve().parent / "js_channel_archive_harness.cjs"
+ARCHIVE_OPEN_TASKS_HARNESS = Path(__file__).resolve().parent / "js_archive_open_tasks_harness.cjs"
 
 
 def _read(name: str) -> str:
@@ -75,7 +76,12 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "function appendLiveChannelMessage(" in source
     assert "function isChannelDetailMounted(" in source
     assert "id=\"channel-archive-btn\"" in source
-    assert "Archive this thread?" in source
+    assert "openTaskArchiveCopy" in source
+    assert "This thread has ${count} open tasks. Cancel them?" in source
+    assert "Cancel tasks &amp; archive" in source
+    assert ">Archive only<" in source
+    assert "id=\"channel-archive-back\"" in source
+    assert "Archive this thread?" not in source
     assert "Threads" in source
     assert "Create Thread" in source
     app = _read("app.js")
@@ -137,6 +143,30 @@ def test_channel_archive_harness_stays_clickable_after_keep_shell_switch() -> No
         "archiveHandoffEnabled": True,
         "keepShellSwitchEnabled": True,
         "sameButton": True,
+    }
+
+
+def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
+    result = subprocess.run(
+        [
+            "node",
+            str(ARCHIVE_OPEN_TASKS_HARNESS),
+            str(JS / "utils.js"),
+            str(JS / "channel-thread-dom.js"),
+            str(JS / "channels-view.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "cancelAndArchive": True,
+        "archiveOnly": True,
+        "zeroOpenNoPrompt": True,
+        "backAborts": True,
     }
 
 

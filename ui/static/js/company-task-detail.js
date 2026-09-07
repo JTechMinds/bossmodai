@@ -11,6 +11,7 @@ const CompanyTaskDetail = (() => {
     let eventsLoading = false;
     let eventsFailed = false;
     let navigateCallback = null;
+    let cancelCallback = null;
 
     const EVENT_TYPE_STYLES = {
         comment:       { badge: 'bg-blue-100 text-blue-700',      icon: 'message-circle' },
@@ -85,6 +86,10 @@ const CompanyTaskDetail = (() => {
         navigateCallback = fn;
     }
 
+    function setCancelCallback(fn) {
+        cancelCallback = fn;
+    }
+
     function renderEmpty(el) {
         panelEl = el;
         currentTaskId = null;
@@ -115,6 +120,16 @@ const CompanyTaskDetail = (() => {
         html += `<h2 class="text-base font-semibold text-bm-text leading-snug">${esc(task.title)}</h2>`;
         html += `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${colors.badge}">${esc(task.status)}</span>`;
         html += `</div>`;
+
+        const terminal = config.terminalStatuses instanceof Set
+            ? config.terminalStatuses.has(task.status)
+            : ['complete', 'cancelled', 'declined', 'abandoned'].includes(task.status);
+        if (!terminal) {
+            html += `<div class="mt-2">`;
+            html += `<button type="button" id="ct-cancel-task-btn"
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded border border-rose-300 bg-rose-50 text-xs font-medium text-rose-800 hover:bg-rose-100 transition-colors">Cancel task</button>`;
+            html += `</div>`;
+        }
 
         // Metadata chips
         html += `<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-bm-muted">`;
@@ -256,6 +271,7 @@ const CompanyTaskDetail = (() => {
         html += `</div>`;
         el.innerHTML = html;
         bindNavLinks(el);
+        bindCancelTask(el, task);
         if (window.lucide) lucide.createIcons({ nodes: [el] });
 
         if (isNewTask) {
@@ -274,6 +290,7 @@ const CompanyTaskDetail = (() => {
         eventsLoading = false;
         eventsFailed = false;
         navigateCallback = null;
+        cancelCallback = null;
     }
 
     // ─── Internal ───
@@ -343,6 +360,13 @@ const CompanyTaskDetail = (() => {
         }
         html += `</div>`;
         return html;
+    }
+
+    function bindCancelTask(el, task) {
+        el.querySelector('#ct-cancel-task-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (cancelCallback) cancelCallback(task);
+        });
     }
 
     function bindNavLinks(el) {
@@ -450,5 +474,5 @@ const CompanyTaskDetail = (() => {
         if (window.lucide) lucide.createIcons({ nodes: [threadEl] });
     }
 
-    return { init, renderDetail, renderEmpty, setNavigateCallback, destroy };
+    return { init, renderDetail, renderEmpty, setNavigateCallback, setCancelCallback, destroy };
 })();

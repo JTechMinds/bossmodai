@@ -186,7 +186,7 @@ class TurnDispatcher:
         task = db.get_task(task_id)
         if task is None:
             return None
-        if task.status in {"complete", "abandoned", "delegated", "declined"}:
+        if task.status in {"complete", "abandoned", "delegated", "declined", "cancelled"}:
             return None
         return task
 

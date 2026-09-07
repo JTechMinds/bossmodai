@@ -13,6 +13,11 @@ from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import WorkContract, DeliverableSpec
 from core.tasking.resolution import OPEN_TASK_STATUSES, TaskResolution, resolve_existing_task
+from core.tasking.transitions import (
+    IllegalTaskTransition,
+    is_terminal_task_status,
+    transition_task,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +241,81 @@ def list_open_child_tasks(*, parent_task_id: str, assigned_to: str | None = None
             tasks.append(task)
     tasks.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
     return tasks
+
+
+def list_open_origin_tasks_for_channel(channel_id: str) -> list[Task]:
+    """Return non-terminal tasks whose origin thread is this channel."""
+    tasks = [
+        task
+        for task in db.list_tasks(notification_channel_id=channel_id)
+        if not is_terminal_task_status(task.status)
+    ]
+    tasks.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
+    return tasks
+
+
+def cancel_task_as_operator(task_id: str) -> tuple[Task, dict[str, Any]]:
+    """Kill one task from the operator board. Does not archive the origin thread."""
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.task_origin_mirrors import (
+        OPERATOR_CANCEL_REASON,
+        mirror_task_cancelled_by_operator,
+    )
+
+    task = db.get_task(task_id)
+    if task is None:
+        raise ValueError("Task not found")
+    if task.status == "cancelled":
+        return task, {}
+    if is_terminal_task_status(task.status):
+        raise IllegalTaskTransition(task.status, "cancelled")
+
+    updated = transition_task(
+        task.id,
+        "cancelled",
+        reason=OPERATOR_CANCEL_REASON,
+        actor="Human Operator",
+        actor_type="human",
+        status_note=OPERATOR_CANCEL_REASON,
+        completion_summary=None,
+        watchdog_pinged_at=None,
+    )
+    for activity in db.list_activities(task_id=updated.id, limit=200):
+        if activity.status in {"active", "paused"}:
+            activity_runtime.cancel_activity(activity.id, detail=OPERATOR_CANCEL_REASON)
+    db.delete_queued_triggers_for_task(updated.id)
+    posted = mirror_task_cancelled_by_operator(updated)
+    return db.get_task(updated.id) or updated, posted
+
+
+def cancel_tasks_as_operator(task_ids: list[str]) -> tuple[list[Task], list[dict[str, Any]]]:
+    """Kill each listed task. Missing IDs raise; other terminal statuses raise."""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw_id in task_ids:
+        task_id = str(raw_id or "").strip()
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        unique.append(task_id)
+
+    pending: list[Task] = []
+    for task_id in unique:
+        task = db.get_task(task_id)
+        if task is None:
+            raise ValueError("Task not found")
+        if task.status != "cancelled" and is_terminal_task_status(task.status):
+            raise IllegalTaskTransition(task.status, "cancelled")
+        pending.append(task)
+
+    cancelled: list[Task] = []
+    posted_lines: list[dict[str, Any]] = []
+    for task in pending:
+        updated, posted = cancel_task_as_operator(task.id)
+        cancelled.append(updated)
+        if posted:
+            posted_lines.append(posted)
+    return cancelled, posted_lines
 
 
 def _deliverable_paths_from_contract(work_contract: Any | None) -> tuple[str, ...]:

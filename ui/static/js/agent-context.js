@@ -1265,7 +1265,8 @@ const AgentContext = (() => {
                     task.status === 'waiting' ? 'text-sky-600' :
                     task.status === 'active' ? 'text-amber-600' :
                     task.status === 'blocked' || task.status === 'stalled' ? 'text-red-600' :
-                    task.status === 'declined' ? 'text-orange-600' : 'text-bm-muted';
+                    task.status === 'declined' ? 'text-orange-600' :
+                    task.status === 'cancelled' ? 'text-rose-600' : 'text-bm-muted';
                 return `
                     <div class="p-3 border border-bm-border rounded-lg bg-white">
                         <div class="flex items-start justify-between gap-3">

@@ -25,7 +25,7 @@ _ACTIVITY_LOG_AGENT_EVENTS = frozenset({
     "chat_history_cleared",
 })
 _ACTIVITY_LOG_TASK_EVENTS = frozenset({
-    "task_created", "task_updated", "task_stalled", "world_feedback",
+    "task_created", "task_updated", "task_stalled", "task_cancelled", "world_feedback",
 })
 _ACTIVITY_LOG_ERROR_PATTERNS = ("error", "invalid")
 

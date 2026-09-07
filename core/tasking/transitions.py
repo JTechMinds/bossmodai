@@ -23,6 +23,8 @@ class IllegalTaskTransition(ValueError):
 
 
 # Identity (from == to) is always allowed and is not listed here.
+TERMINAL_TASK_STATUSES = frozenset({"complete", "abandoned", "declined", "cancelled"})
+
 ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
     # New / deferred assignment. Must accept or otherwise resolve — not jump to complete.
     "pending": frozenset(
@@ -30,6 +32,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "accepted",
             "declined",
             "abandoned",
+            "cancelled",
             "blocked",
             "stalled",
             "active",
@@ -44,6 +47,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "blocked",
             "complete",
             "abandoned",
+            "cancelled",
             "delegated",
             "stalled",
             "pending",
@@ -56,6 +60,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "blocked",
             "complete",
             "abandoned",
+            "cancelled",
             "delegated",
             "stalled",
             "pending",
@@ -69,6 +74,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "blocked",
             "complete",
             "abandoned",
+            "cancelled",
             "delegated",
             "stalled",
             "pending",
@@ -81,6 +87,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "waiting",
             "pending",
             "abandoned",
+            "cancelled",
             "stalled",
             "delegated",
             "complete",
@@ -94,6 +101,7 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "waiting",
             "blocked",
             "abandoned",
+            "cancelled",
             "complete",
             "delegated",
         }
@@ -102,11 +110,13 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
     "complete": frozenset(),
     "abandoned": frozenset(),
     "declined": frozenset(),
+    "cancelled": frozenset(),
     # Parent handed off; may still coordinate or close.
     "delegated": frozenset(
         {
             "complete",
             "abandoned",
+            "cancelled",
             "waiting",
             "active",
             "accepted",
@@ -116,6 +126,11 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
         }
     ),
 }
+
+
+def is_terminal_task_status(status: str) -> bool:
+    """Return whether ``status`` is a closed task state."""
+    return str(status or "") in TERMINAL_TASK_STATUSES
 
 
 def is_allowed_task_transition(from_status: str, to_status: str) -> bool:

@@ -144,9 +144,10 @@ def list_activities(
     agent_id: str | None = None,
     kind: str | None = None,
     status: str | None = None,
+    task_id: str | None = None,
     limit: int = 50,
 ) -> list[Activity]:
-    """Return activities filtered by optional agent, kind, and status."""
+    """Return activities filtered by optional agent, kind, status, and task."""
     conditions: list[str] = []
     params: list[Any] = []
 
@@ -159,6 +160,9 @@ def list_activities(
     if status is not None:
         params.append(status)
         conditions.append(f"status = ${len(params)}")
+    if task_id is not None:
+        params.append(task_id)
+        conditions.append(f"task_id = ${len(params)}")
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)

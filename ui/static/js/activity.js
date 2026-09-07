@@ -44,6 +44,7 @@ const ActivityLog = (() => {
         task_created:   { icon: 'plus-circle',     color: 'text-emerald-500' },
         task_updated:   { icon: 'check-circle',    color: 'text-blue-500' },
         task_stalled:   { icon: 'alert-triangle',  color: 'text-amber-500' },
+        task_cancelled: { icon: 'x-circle',        color: 'text-red-500' },
         message_sent:   { icon: 'message-circle',  color: 'text-blue-500' },
         connected:      { icon: 'wifi',            color: 'text-emerald-500' },
         disconnected:   { icon: 'wifi-off',        color: 'text-red-500' },

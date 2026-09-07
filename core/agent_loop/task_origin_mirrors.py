@@ -19,6 +19,9 @@ OriginThread = Literal["channel", "chat"]
 _BLOCKED_CLAIM_LINE = "Blocked — checkable claim missing"
 
 
+OPERATOR_CANCEL_REASON = "Operator cancelled"
+
+
 def origin_thread_target(task: Any | None) -> OriginThread | None:
     """Return the operator-visible origin for one task, if any."""
     if task is None:
@@ -158,8 +161,8 @@ def persist_origin_status_line(
         return {}
     if target == "channel":
         channel_id = str(task.notification_channel_id).strip()
-        # Same-titled parent and child both need a Created line on this thread.
-        if kind != "created":
+        # Same-titled parent/child Created lines, and per-task Cancelled lines, must not collapse.
+        if kind not in {"created", "cancelled"}:
             recent = db.list_channel_messages(channel_id, limit=8)
             if any(
                 item.author_type == "system" and (item.content or "").strip() == text
@@ -275,3 +278,18 @@ def mirror_task_created(task: Any) -> dict[str, Any]:
     if agent is None:
         return {}
     return mirror_origin_status(task=task, agent=agent, kind="created")
+
+
+def mirror_task_cancelled_by_operator(task: Any) -> dict[str, Any]:
+    """Post Cancelled — Operator cancelled on the origin thread."""
+    if task is None or origin_thread_target(task) is None:
+        return {}
+    agent = _origin_author_agent(task)
+    if agent is None:
+        return {}
+    return mirror_origin_status(
+        task=task,
+        agent=agent,
+        kind="cancelled",
+        reason=OPERATOR_CANCEL_REASON,
+    )

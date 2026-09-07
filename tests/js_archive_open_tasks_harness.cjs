@@ -1,10 +1,11 @@
 /**
- * Node harness: Archive stays clickable after keep-shell thread switches.
+ * Node harness: archive prompt branches for threads with open tasks.
  * Invoked by tests/test_ui_channel_gaps.py. Not a browser bundle.
  */
 const fs = require("fs");
 
 const byId = new Map();
+const calls = [];
 
 class FakeEl {
     constructor(tag = "div", attrs = {}) {
@@ -163,6 +164,7 @@ function matches(el, selector) {
 }
 
 const documentStub = {
+    body: new FakeEl("body"),
     createElement(tag) {
         return new FakeEl(tag);
     },
@@ -176,29 +178,31 @@ const documentStub = {
         return [];
     },
     addEventListener() {},
+    removeEventListener() {},
 };
 
 global.document = documentStub;
 global.window = {
     document: documentStub,
     confirm() {
-        return true;
+        throw new Error("window.confirm must not be used for open-task archive");
     },
 };
 global.console = console;
 
 const store = [
-    thread("a", "Ann"),
-    thread("b", "Bea"),
-    thread("c", "Cal"),
-    thread("d", "Dee"),
+    thread("open-a", "Ann", 2),
+    thread("open-b", "Bea", 2),
+    thread("none-c", "Cal", 0),
+    thread("open-d", "Dee", 2),
 ];
 
-function thread(id, name) {
+function thread(id, name, openCount) {
     return {
         id,
         name,
         status: "active",
+        openCount,
         members: [{ id: `m-${id}`, name, status: "idle" }],
         member_count: 1,
         latest_message: null,
@@ -213,14 +217,28 @@ function activeThreads() {
     }));
 }
 
+function openTasks(item) {
+    const tasks = [];
+    for (let i = 0; i < item.openCount; i += 1) {
+        tasks.push({ id: `${item.id}-task-${i + 1}`, status: "pending", title: `Task ${i + 1}` });
+    }
+    return { count: tasks.length, tasks };
+}
+
 global.apiFetch = async (url, opts = {}) => {
     const method = String(opts.method || "GET").toUpperCase();
+    calls.push({ method, url, body: opts.body || null });
     if (url === "/api/channels" && method === "GET") {
         return { ok: true, async json() { return activeThreads(); } };
     }
     const openMatch = String(url).match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
     if (openMatch && method === "GET") {
-        return { ok: true, async json() { return { count: 0, tasks: [] }; } };
+        const item = store.find((row) => row.id === openMatch[1]);
+        if (!item) return { ok: false, async text() { return "missing"; } };
+        return { ok: true, async json() { return openTasks(item); } };
+    }
+    if (url === "/api/tasks/cancel" && method === "POST") {
+        return { ok: true, async json() { return []; } };
     }
     const match = String(url).match(/^\/api\/channels\/([^/]+)$/);
     if (!match) throw new Error(`unhandled ${method} ${url}`);
@@ -261,58 +279,82 @@ function listItem(channelId) {
     return items.find((el) => el.dataset.channelId === channelId) || null;
 }
 
-function assertEnabled(label) {
-    const btn = archiveBtn();
-    if (!btn) throw new Error(`${label}: archive button missing`);
-    if (btn.disabled) throw new Error(`${label}: archive button stayed disabled`);
+function methodsFor(urlPart) {
+    return calls.filter((item) => String(item.url).includes(urlPart)).map((item) => item.method);
 }
 
 async function main() {
+    if (ChannelsView.openTaskArchiveCopy(2) !== "This thread has 2 open tasks. Cancel them?") {
+        throw new Error("archive copy mismatch");
+    }
+    if (ChannelsView.shouldPromptOpenTasksOnArchive(0) !== false) {
+        throw new Error("N=0 must skip the open-task prompt");
+    }
+    if (ChannelsView.shouldPromptOpenTasksOnArchive(2) !== true) {
+        throw new Error("N>0 must show the open-task prompt");
+    }
+
     const root = new FakeEl("div");
     await ChannelsView.render(root);
 
-    const first = archiveBtn();
-    if (!first) throw new Error("initial thread must mount Archive");
-    assertEnabled("initial A");
-    if (!ChannelThreadDom.isMounted(byId.get("channel-detail"))) {
-        throw new Error("thread shell must be mounted");
+    window.chooseArchiveOpenTasks = () => "cancel_and_archive";
+    calls.length = 0;
+    await archiveBtn().click();
+    const cancelBody = JSON.parse(calls.find((item) => item.url === "/api/tasks/cancel").body);
+    if (!cancelBody.task_ids.includes("open-a-task-1") || !cancelBody.task_ids.includes("open-a-task-2")) {
+        throw new Error("primary must cancel each open task");
+    }
+    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-a")) {
+        throw new Error("primary must archive after cancel");
     }
 
-    await first.click();
-    if (archiveBtn() !== first) {
-        throw new Error("archive handoff must keep the same shell button");
+    window.chooseArchiveOpenTasks = () => "archive_only";
+    calls.length = 0;
+    const bea = listItem("open-b");
+    if (!bea) throw new Error("thread B missing");
+    await bea.click();
+    await archiveBtn().click();
+    if (calls.some((item) => item.url === "/api/tasks/cancel")) {
+        throw new Error("archive only must leave tasks open");
     }
-    assertEnabled("archive A → land on B");
-
-    await first.click();
-    if (archiveBtn() !== first) {
-        throw new Error("second archive must keep the same shell button");
+    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-b")) {
+        throw new Error("archive only must still archive the thread");
     }
-    assertEnabled("archive B → land on C");
 
-    first.disabled = true;
-    const dee = listItem("d");
-    if (!dee) throw new Error("thread D missing after archives");
-    await dee.click();
-    if (archiveBtn() !== first) {
-        throw new Error("C→D switch must keep the same shell button");
-    }
-    assertEnabled("switch C→D");
-
-    first.disabled = true;
-    const cal = listItem("c");
-    if (!cal) throw new Error("thread C missing after switch");
+    window.chooseArchiveOpenTasks = () => {
+        throw new Error("chooser must not run when N=0");
+    };
+    calls.length = 0;
+    const cal = listItem("none-c");
+    if (!cal) throw new Error("thread C missing");
     await cal.click();
-    if (archiveBtn() !== first) {
-        throw new Error("D→C switch must keep the same shell button");
+    await archiveBtn().click();
+    if (calls.some((item) => item.url === "/api/tasks/cancel")) {
+        throw new Error("N=0 archive must not cancel tasks");
     }
-    assertEnabled("switch D→C");
+    if (!calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/none-c")) {
+        throw new Error("N=0 must archive with no prompt");
+    }
+
+    window.chooseArchiveOpenTasks = () => "back";
+    calls.length = 0;
+    const dee = listItem("open-d");
+    if (!dee) throw new Error("thread D missing");
+    await dee.click();
+    await archiveBtn().click();
+    if (calls.some((item) => item.url === "/api/tasks/cancel") || methodsFor("/api/channels/open-d").includes("DELETE")) {
+        throw new Error("Back must abort archive");
+    }
+    if (archiveBtn().disabled) {
+        throw new Error("Back must re-enable Archive");
+    }
 
     process.stdout.write(JSON.stringify({
         ok: true,
-        archiveHandoffEnabled: true,
-        keepShellSwitchEnabled: true,
-        sameButton: true,
+        cancelAndArchive: true,
+        archiveOnly: true,
+        zeroOpenNoPrompt: true,
+        backAborts: true,
     }));
 }
 
