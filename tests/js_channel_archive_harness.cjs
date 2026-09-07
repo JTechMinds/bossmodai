@@ -182,7 +182,10 @@ global.document = documentStub;
 global.window = {
     document: documentStub,
     confirm() {
-        return true;
+        throw new Error("window.confirm must not be used for archive");
+    },
+    chooseArchiveOpenTasks() {
+        return "archive_only";
     },
 };
 global.console = console;
@@ -206,8 +209,10 @@ function thread(id, name) {
     };
 }
 
-function activeThreads() {
-    return store.filter((item) => item.status === "active").map((item) => ({
+function threadsFor(url) {
+    const query = String(url).split("?")[1] || "";
+    const status = new URLSearchParams(query).get("status") || "active";
+    return store.filter((item) => (item.status || "active") === status).map((item) => ({
         ...item,
         members: item.members.map((member) => ({ ...member })),
     }));
@@ -215,8 +220,8 @@ function activeThreads() {
 
 global.apiFetch = async (url, opts = {}) => {
     const method = String(opts.method || "GET").toUpperCase();
-    if (url === "/api/channels" && method === "GET") {
-        return { ok: true, async json() { return activeThreads(); } };
+    if (String(url).split("?")[0] === "/api/channels" && method === "GET") {
+        return { ok: true, async json() { return threadsFor(url); } };
     }
     const openMatch = String(url).match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
     if (openMatch && method === "GET") {

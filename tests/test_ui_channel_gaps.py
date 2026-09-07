@@ -78,14 +78,30 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "function isChannelDetailMounted(" in source
     assert "id=\"channel-archive-btn\"" in source
     assert "openTaskArchiveCopy" in source
-    assert "This thread has ${count} open tasks. Cancel them?" in source
-    assert "Cancel tasks &amp; archive" in source
-    assert ">Archive only<" in source
-    assert "id=\"channel-archive-back\"" in source
+    assert "archivePromptSpec" in source
+    assert "Archive thread?" in source
+    assert "This thread has ${n} open tasks. Sealing stops new posts and access cards." in source
+    assert "Hides it from the active list and seals the room" in source
+    assert "no new messages or access cards" in source
+    assert "Open tasks stay on the board." in source
+    assert "Cancel tasks & archive" in source
+    assert "Archive only" in source
+    assert "channel-archive-back" in source
+    assert "channel-archive-confirm" in source
+    assert "channel-archive-cancel-tasks" in source
+    assert "ARCHIVE_HONESTY_COPY" in source
+    assert "Not permanently deleted — leaves the active list and seals the room (no new posts)." in source
+    assert "channels-filter-active" in source
+    assert "channels-filter-archived" in source
+    assert "id=\"channel-reopen-btn\"" in source
+    assert "Reopen" in source
+    assert ">Close<" not in source
     assert "function isLiveThread(" in source
     assert "function sealArchivedThread(" in source
     assert "presence.stopAll(" in source
     assert "cancel_open_tasks=true" in source
+    assert "promptArchiveOpenTasks(open.count)" in source
+    assert "if (shouldPromptOpenTasksOnArchive(open.count))" not in source
     assert "Archive this thread?" not in source
     assert "Threads" in source
     assert "Create Thread" in source
@@ -172,9 +188,15 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
         "ok": True,
         "cancelAndArchive": True,
         "archiveOnly": True,
-        "zeroOpenNoPrompt": True,
+        "zeroOpenTwoButtons": True,
+        "openTasksThreeButtons": True,
+        "zeroOpenConfirm": True,
+        "zeroOpenCancelAborts": True,
         "backAborts": True,
         "archivedNotLive": True,
+        "honestyCopy": True,
+        "archivedFilterLists": True,
+        "reopenUnseals": True,
     }
 
 

@@ -59,6 +59,17 @@ async def archive_thread_as_operator(
     return archived, posted_lines
 
 
+def reopen_thread_as_operator(channel_id: str) -> Channel:
+    """Put one archived thread back on the active list and unseal the room."""
+    channel = db.get_channel(channel_id)
+    if channel is None:
+        raise ValueError("Thread not found")
+    opened = db.reopen_channel(channel.id)
+    if opened is None:
+        raise ValueError("Thread not found")
+    return opened
+
+
 async def deny_pending_consent_for_archived_channel(
     channel_id: str,
     *,

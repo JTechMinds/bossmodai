@@ -93,6 +93,7 @@ from db.notification_links import (
 from db.channels import (
     add_channel_members,
     archive_channel,
+    reopen_channel,
     create_channel,
     create_channel_message,
     find_active_channel_for_members,
@@ -333,6 +334,7 @@ __all__ = [
     "create_channel_message",
     "add_channel_members",
     "archive_channel",
+    "reopen_channel",
     "find_active_channel_for_members",
     "get_channel",
     "get_formatted_channel_messages",

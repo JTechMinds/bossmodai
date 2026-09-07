@@ -96,6 +96,12 @@ def test_archive_route_matches_delete() -> None:
     listed = client.get("/api/channels", headers=_headers())
     assert listed.status_code == 200
     assert listed.json() == []
+    hidden = client.get("/api/channels", headers=_headers(), params={"status": "archived"})
+    assert hidden.status_code == 200
+    rows = hidden.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == created["id"]
+    assert rows[0]["status"] == "archived"
 
 
 def test_find_active_channel_requires_exact_roster() -> None:
@@ -115,3 +121,49 @@ def test_find_active_channel_requires_exact_roster() -> None:
     assert db.find_active_channel_for_members([debrah, jim]).id == pair.id
     db.archive_channel(full.id)
     assert db.find_active_channel_for_members([debrah, jim, joey]) is None
+
+
+def test_archived_filter_lists_sealed_threads() -> None:
+    client = _api_client()
+    reviewer = db.create_agent("Reviewer", role="PM")
+    planner = db.create_agent("Planner", role="Eng")
+    created = client.post(
+        "/api/channels",
+        headers=_headers(),
+        json={"agent_ids": [reviewer.id, planner.id]},
+    ).json()
+    archived = client.delete(f"/api/channels/{created['id']}", headers=_headers())
+    assert archived.status_code == 200
+    active = client.get("/api/channels", headers=_headers())
+    assert active.status_code == 200
+    assert active.json() == []
+    hidden = client.get("/api/channels", headers=_headers(), params={"status": "archived"})
+    assert hidden.status_code == 200
+    rows = hidden.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == created["id"]
+    assert rows[0]["status"] == "archived"
+    assert rows[0]["name"] == "Reviewer, Planner"
+    bad = client.get("/api/channels", headers=_headers(), params={"status": "trashed"})
+    assert bad.status_code == 400
+
+
+def test_reopen_returns_archived_thread_to_active_list() -> None:
+    client = _api_client()
+    reviewer = db.create_agent("Reviewer", role="PM")
+    created = client.post(
+        "/api/channels",
+        headers=_headers(),
+        json={"agent_ids": [reviewer.id], "name": "Planning"},
+    ).json()
+    client.delete(f"/api/channels/{created['id']}", headers=_headers())
+    opened = client.post(f"/api/channels/{created['id']}/reopen", headers=_headers())
+    assert opened.status_code == 200
+    body = opened.json()
+    assert body["status"] == "active"
+    assert body["archived_at"] is None
+    listed = client.get("/api/channels", headers=_headers())
+    assert listed.status_code == 200
+    assert [row["id"] for row in listed.json()] == [created["id"]]
+    archived = client.get("/api/channels", headers=_headers(), params={"status": "archived"})
+    assert archived.json() == []

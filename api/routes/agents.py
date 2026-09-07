@@ -29,7 +29,7 @@ from core.models import (
     AgentUpdate,
 )
 from core.models.message import HUMAN_SENDER_ID
-from core.channel_archive import archive_thread_as_operator
+from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
 from core.tasking.service import list_open_origin_tasks_for_channel
 from core.tasking.transitions import IllegalTaskTransition
 from core.runtime import runtime_services
@@ -137,10 +137,13 @@ async def list_company_agents(include: str | None = None) -> list[dict[str, obje
 
 
 @router.get("/channels")
-async def list_channels() -> list[dict[str, object]]:
-    """Return active shared channels with roster and latest message previews."""
+async def list_channels(status: str = "active") -> list[dict[str, object]]:
+    """Return shared channels with roster and latest message previews."""
+    wanted = (status or "active").strip().lower()
+    if wanted not in {"active", "archived"}:
+        raise HTTPException(400, "status must be active or archived")
     items = []
-    for channel in db.list_channels():
+    for channel in db.list_channels(status=wanted):
         members = db.list_channel_member_details(channel.id)
         latest = db.get_latest_channel_message(channel.id)
         items.append(_serialize_channel_summary(channel, members=members, latest_message=latest))
@@ -197,6 +200,27 @@ async def create_channel(body: ChannelCreateBody):
 async def archive_channel(channel_id: str, cancel_open_tasks: bool = False):
     """Archive one shared thread so it leaves the active Threads list."""
     return await _archive_channel(channel_id, cancel_open_tasks=cancel_open_tasks)
+
+
+@router.post("/channels/{channel_id}/reopen")
+async def reopen_channel(channel_id: str):
+    """Restore one archived thread to the active list and unseal the room."""
+    try:
+        opened = reopen_thread_as_operator(channel_id)
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, "Thread not found") from exc
+        raise
+    members = db.list_channel_member_details(opened.id)
+    latest = db.get_latest_channel_message(opened.id)
+    summary = _serialize_channel_summary(opened, members=members, latest_message=latest)
+    await manager.broadcast_channel_updated(summary)
+    await manager.broadcast_activity(
+        event="channel_reopened",
+        detail=f'Reopened thread "{opened.name}"',
+        agent_name=None,
+    )
+    return summary
 
 
 @router.get("/channels/{channel_id}/open-tasks")

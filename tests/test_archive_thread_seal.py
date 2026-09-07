@@ -240,3 +240,35 @@ def test_archive_only_seals_thread_but_leaves_tasks(monkeypatch: pytest.MonkeyPa
     listed = client.get("/api/channels", headers=_headers())
     assert listed.status_code == 200
     assert listed.json() == []
+    hidden = client.get("/api/channels", headers=_headers(), params={"status": "archived"})
+    assert hidden.status_code == 200
+    assert hidden.json()[0]["id"] == channel.id
+
+
+def test_reopen_unseals_archived_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _api_client(monkeypatch)
+    agent = db.create_agent("Reviewer", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Planning", member_agent_ids=[agent.id], created_by=HUMAN_SENDER_ID)
+    archived = client.delete(f"/api/channels/{channel.id}", headers=_headers())
+    assert archived.status_code == 200
+    blocked = client.post(
+        f"/api/channels/{channel.id}/messages",
+        headers=_headers(),
+        json={"content": "still sealed"},
+    )
+    assert blocked.status_code == 404
+
+    opened = client.post(f"/api/channels/{channel.id}/reopen", headers=_headers())
+    assert opened.status_code == 200
+    assert opened.json()["status"] == "active"
+    assert opened.json()["archived_at"] is None
+    assert not db.is_channel_archived(channel.id)
+
+    posted = client.post(
+        f"/api/channels/{channel.id}/messages",
+        headers=_headers(),
+        json={"content": "room is live again"},
+    )
+    assert posted.status_code == 200
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert "room is live again" in contents

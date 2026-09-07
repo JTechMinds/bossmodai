@@ -118,6 +118,25 @@ def archive_channel(channel_id: str) -> Channel | None:
     )
 
 
+def reopen_channel(channel_id: str) -> Channel | None:
+    """Restore an archived thread to active and unseal writes."""
+    existing = get_channel(channel_id)
+    if existing is None:
+        return None
+    if existing.status != "archived":
+        return existing
+    return fetch_one(
+        f"""
+        UPDATE channels
+        SET status = 'active', archived_at = NULL, updated_at = $1
+        WHERE id = $2
+        RETURNING {_CHANNEL_COLUMNS}
+        """,
+        [datetime.now(timezone.utc), channel_id],
+        Channel,
+    )
+
+
 def update_channel(
     channel_id: str,
     *,
