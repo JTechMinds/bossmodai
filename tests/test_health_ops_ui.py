@@ -31,7 +31,15 @@ def test_no_model_banner_and_send_disabled_in_ui() -> None:
 
 
 def test_company_image_preview_uses_authenticated_blob_url() -> None:
-    viewer = (JS / "company-file-viewer.js").read_text(encoding="utf-8")
+    """Re-pointed in Phase 3B: the shared viewer is places/files/file-viewer.js.
+
+    The property is unchanged and is a security one, not a style one. An image
+    element pointed straight at an /api path cannot carry the X-BossMod-Token
+    header, so the preview is fetched with the authenticated helper and
+    rendered from an object URL; the token never lands in an attribute, and the
+    URL is revoked when the panel closes.
+    """
+    viewer = (JS / "places" / "files" / "file-viewer.js").read_text(encoding="utf-8")
     client = (JS / "api-client.js").read_text(encoding="utf-8")
 
     assert "function apiFetchBlobUrl(" in client

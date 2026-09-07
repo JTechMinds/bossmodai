@@ -151,6 +151,66 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "BossModContextColumn.openDeskFrom(" in place
 
 
+def test_composer_opens_the_one_assign_form() -> None:
+    """Spec 4.4's deferred clipboard button, finished in the phase that owns
+    the form.
+
+    Phase 2 deliberately did NOT build an assign form, because deduplicating a
+    second one against the Board's in Phase 3 would have been exactly the
+    transitional scaffolding this refactor exists to avoid. So the property
+    that matters is not "the composer has a button" — it is that the button
+    reaches the one form there is, and that the composer cannot name it.
+    """
+    composer = _read(CONVERSATION / "composer.js")
+    # Injected, and required: a clipboard that rendered and did nothing would
+    # be worse than one that is absent.
+    assert "deps.onAssign" in composer
+    assert "throw new Error('[composer] deps.onAssign is required');" in composer
+    assert "onclick: onAssignClick" in composer
+    assert "function onAssignClick()" in composer
+    # Icon-only, so it carries its own accessible name (spec 8.4).
+    assert "'aria-label': ASSIGN_TITLE" in composer
+    assert "const ASSIGN_TITLE = 'Assign a task';" in composer
+    # Disabled by the same gate as Send, in the same place, so the two can
+    # never disagree about whether this conversation can be acted on.
+    apply_state = composer.split("function applyState() {", 1)[1].split("\n        }", 1)[0]
+    assert "assignBtn.disabled = !enabled;" in apply_state
+    assert "sendBtn.disabled = !enabled;" in apply_state
+    # And it lets its listener go, like every other control here.
+    assert "assignBtn.removeEventListener('click', onAssignClick);" in composer
+    # The composer names no form module of its own.
+    assert "AssignForm" not in composer
+    assert "openAssignForm" not in composer
+
+    controller = _read(CONVERSATION / "conversation.js")
+    assert "onAssign: () => BossModAssignForm.openAssignForm({" in controller
+
+    # There is still exactly one assign form in the codebase.
+    definers = sorted(
+        path.relative_to(JS).as_posix()
+        for path in _app_js()
+        if "function openAssignForm(" in _read(path)
+    )
+    assert definers == ["places/board/assign-form.js"], definers
+    callers = sorted(
+        path.relative_to(JS).as_posix()
+        for path in _app_js()
+        if "openAssignForm(" in _read(path) and "function openAssignForm(" not in _read(path)
+    )
+    assert callers == ["conversation/conversation.js", "places/board/board-place.js"], callers
+
+    # It is defined before the two scripts that open it.
+    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    scripts = re.findall(r"static_url\('([^']+\.js)'\)", html)
+    assert scripts.index("js/places/board/assign-outcomes.js") < scripts.index(
+        "js/places/board/assign-form.js"
+    )
+    assert scripts.index("js/places/board/assign-form.js") < scripts.index(
+        "js/conversation/conversation.js"
+    )
+    assert scripts.count("js/places/board/assign-form.js") == 1
+
+
 def test_conversation_css_uses_tokens_only() -> None:
     css = _read(CSS / "conversation.css")
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), "colour comes from tokens.css"

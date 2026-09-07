@@ -19,6 +19,14 @@ const BossModNeedShape = (() => {
      */
 
     /**
+     * @typedef {object} NeedTarget  Where "Show me" takes the operator.
+     * @property {string} place            A place id from the registry.
+     * @property {object} params           placeParams for that place.
+     * @property {string|null} conversationId   Set for a chat target only.
+     * @property {'agent'|'thread'|null} conversationKind
+     */
+
+    /**
      * @typedef {object} Need
      * @property {string} id
      * @property {'consent'|'approval'|'blocked'|'error'} kind
@@ -29,8 +37,70 @@ const BossModNeedShape = (() => {
      * @property {string} createdAt
      * @property {string|null} conversationId
      * @property {NeedAction[]} actions
+     * @property {NeedTarget|null} target  Where to look. Null when a need has
+     *   nowhere to send the operator — a consent with no conversation.
      * @property {string} [error]  Set only by a failed resolution.
      */
+
+    /**
+     * Which conversation kind a need's conversation is.
+     *
+     * api/routes/needs.py sets a need's conversation to the originating thread
+     * when a consent came from one, and to the agent otherwise. So a
+     * conversationId that is not the agent's own id is a thread id. Verified
+     * against that file — the queue carries no conversation kind of its own.
+     *
+     * @param {string|null} conversationId
+     * @param {string|null} agentId
+     * @returns {'agent'|'thread'}
+     */
+    function conversationKind(conversationId, agentId) {
+        return conversationId === agentId ? 'agent' : 'thread';
+    }
+
+    function chatTarget(conversationId, agentId) {
+        if (!conversationId) return null;
+        return {
+            place: 'chat',
+            params: {},
+            conversationId,
+            conversationKind: conversationKind(conversationId, agentId),
+        };
+    }
+
+    /**
+     * ONE table, keyed by kind, and the only place a kind decides anything
+     * about where a need leads.
+     *
+     * Phase 2B performed the server-described GET for `blocked` and `error` and
+     * refreshed, because Board and Log did not exist yet. They do now, so those
+     * two inspections become navigations — without an `if (kind === …)` in the
+     * popover or the bar, which is how four surfaces end up with four opinions.
+     * The server-described `actions` are untouched: `target` is a client
+     * concern and lives client-side.
+     */
+    const KIND_TARGETS = Object.freeze({
+        blocked: (need) => ({ place: 'board', params: { taskId: need.id },
+            conversationId: null, conversationKind: null }),
+        error: (need) => ({ place: 'log', params: { diagnosticId: need.id },
+            conversationId: null, conversationKind: null }),
+        consent: (need) => chatTarget(need.conversationId, need.agentId),
+        approval: (need) => chatTarget(need.conversationId, need.agentId),
+    });
+
+    /**
+     * Where a need's "Show me" leads.
+     *
+     * @param {Need} need  Already camelCase.
+     * @returns {NeedTarget|null} null for a kind with no mapping, which is a
+     *   real answer — a fifth kind gets no navigation until it is given one,
+     *   rather than a button that goes nowhere.
+     */
+    function targetFor(need) {
+        const build = KIND_TARGETS[need.kind];
+        if (!build) return null;
+        return build(need);
+    }
 
     /**
      * Activity event names that change what is waiting on the operator.
@@ -103,7 +173,7 @@ const BossModNeedShape = (() => {
         if (!raw || !raw.id || !raw.kind) {
             throw new Error('[need-shape] a queue row carries no id or kind');
         }
-        return {
+        const need = {
             id: String(raw.id),
             kind: String(raw.kind),
             // A blocked task can legitimately be unassigned, so null is a real
@@ -116,6 +186,8 @@ const BossModNeedShape = (() => {
             conversationId: raw.conversation_id == null ? null : String(raw.conversation_id),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
+        need.target = targetFor(need);
+        return need;
     }
 
     /**
@@ -138,7 +210,7 @@ const BossModNeedShape = (() => {
         const id = String(data.id);
         const name = String(data.agent_name || 'An agent');
         const agentId = data.agent_id == null ? null : String(data.agent_id);
-        return {
+        const need = {
             id,
             kind: 'error',
             agentId,
@@ -158,7 +230,9 @@ const BossModNeedShape = (() => {
                 tone: 'primary',
             }],
         };
+        need.target = targetFor(need);
+        return need;
     }
 
-    return { ACTIVITY_TRIGGERS, normalise, normaliseDiagnostic };
+    return { ACTIVITY_TRIGGERS, KIND_TARGETS, normalise, normaliseDiagnostic, targetFor };
 })();

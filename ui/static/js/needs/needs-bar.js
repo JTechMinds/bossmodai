@@ -43,13 +43,17 @@ const BossModNeedsBar = (() => {
      * @param {object} deps
      * @param {object} deps.store  Application store.
      * @param {object} deps.needs  From createNeedsStore; owns resolve().
+     * @param {(placeId: string, params?: object) => void} deps.navigate  Where
+     *   a card's "Show me" goes. Injected, so the bar knows no place ids of
+     *   its own — the destination comes from the need's target.
      * @returns {{ element: HTMLElement, destroy: () => void }}
-     * @throws {Error} When store or needs is missing.
+     * @throws {Error} When store, needs, or navigate is missing.
      */
     function createNeedsBar(deps) {
-        const { store, needs } = deps || {};
+        const { store, needs, navigate } = deps || {};
         if (!store) throw new Error('[needs-bar] deps.store is required');
         if (!needs) throw new Error('[needs-bar] deps.needs is required');
+        if (typeof navigate !== 'function') throw new Error('[needs-bar] deps.navigate is required');
 
         const disposers = [];
         /** Need ids with a resolution in flight; their buttons stay disabled. */
@@ -84,18 +88,57 @@ const BossModNeedsBar = (() => {
                 && Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind));
         }
 
+        /**
+         * The "Show me" a card offers, or null when there is nowhere to go.
+         *
+         * The destination is need.target, from the ONE mapping table in
+         * need-shape.js — no kind is named here. A target that is the very
+         * conversation this bar is pinned to is dropped rather than rendered:
+         * "show me" pointing at the screen the operator is already looking at
+         * is the noise spec 5.5 exists to prevent, and dropping it needs no
+         * kind check because the target already says where it leads.
+         *
+         * @param {object} need
+         * @returns {object|null} An event-card action.
+         */
+        function showMeAction(need) {
+            const target = need.target;
+            if (!target) return null;
+            if (target.place === 'chat'
+                && target.conversationId === store.getState().conversationId) {
+                return null;
+            }
+            return {
+                label: 'Show me',
+                tone: 'quiet',
+                disabled: false,
+                onSelect: () => {
+                    if (target.conversationId) {
+                        store.setState({
+                            conversationId: target.conversationId,
+                            conversationKind: target.conversationKind,
+                        });
+                    }
+                    navigate(target.place, target.params);
+                },
+            };
+        }
+
         function toCard(need) {
+            const showMe = showMeAction(need);
+            const actions = need.actions.map((action) => ({
+                label: action.label,
+                tone: action.tone,
+                disabled: inFlight.has(need.id),
+                onSelect: () => { void run(need, action); },
+            }));
+            if (showMe) actions.push(showMe);
             return {
                 tone: BAR_CARDS[need.kind],
                 title: need.title,
                 sub: need.sub,
                 error: need.error || '',
-                actions: need.actions.map((action) => ({
-                    label: action.label,
-                    tone: action.tone,
-                    disabled: inFlight.has(need.id),
-                    onSelect: () => { void run(need, action); },
-                })),
+                actions,
             };
         }
 

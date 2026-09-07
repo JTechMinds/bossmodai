@@ -124,6 +124,12 @@
     <script src="{{ static_url('js/needs/needs-bar.js') }}"></script>
     <script src="{{ static_url('js/needs/needs-toast.js') }}"></script>
 
+    <!-- The one assign form. It ships with the Board, which owns it, but the
+         composer's clipboard button opens it too (spec 4.4), so it is defined
+         before conversation.js rather than beside the rest of the Board. -->
+    <script src="{{ static_url('js/places/board/assign-outcomes.js') }}"></script>
+    <script src="{{ static_url('js/places/board/assign-form.js') }}"></script>
+
     <script src="{{ static_url('js/conversation/sources/thread-archive.js') }}"></script>
     <script src="{{ static_url('js/conversation/sources/thread-source.js') }}"></script>
     <script src="{{ static_url('js/conversation/sources/agent-source.js') }}"></script>
@@ -151,15 +157,31 @@
     <script src="{{ static_url('js/settings-telegram.js') }}"></script>
     <script src="{{ static_url('js/settings-view.js') }}"></script>
 
+    <!-- Files: the shared viewer and the dialogs come first, because the desk
+         browser opens the viewer and the Board's deliverable cards do too.
+         desk-opener.js leads the block: it owns the "which file manager does
+         this machine use" prompt, and places/files/folder-opener.js delegates
+         to it rather than keeping a second copy. -->
+    <script src="{{ static_url('js/context/desk-opener.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-content.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-form.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-ops.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-viewer.js') }}"></script>
+    <script src="{{ static_url('js/places/files/files-data.js') }}"></script>
+    <script src="{{ static_url('js/places/files/host-roots.js') }}"></script>
+    <script src="{{ static_url('js/places/files/folder-opener.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-grid.js') }}"></script>
+    <script src="{{ static_url('js/places/files/file-actions.js') }}"></script>
+    <script src="{{ static_url('js/places/files/files-toolbar.js') }}"></script>
+    <script src="{{ static_url('js/places/files/files-place.js') }}"></script>
+
     <!-- The context column hosts the agent form, which reaches into
          SettingsView, and the desk browser, which opens the shared file
          viewer. Both must already be defined, so this block loads last before
          the shell boots. -->
-    <script src="{{ static_url('js/company-file-viewer.js') }}"></script>
     <script src="{{ static_url('js/agent-panel.js') }}"></script>
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-opener.js') }}"></script>
     <script src="{{ static_url('js/context/desk-files.js') }}"></script>
     <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
     <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
@@ -186,11 +208,23 @@
     <script src="{{ static_url('js/places/board/task-deliverables.js') }}"></script>
     <script src="{{ static_url('js/places/board/task-events.js') }}"></script>
     <script src="{{ static_url('js/places/board/task-detail.js') }}"></script>
-    <script src="{{ static_url('js/places/board/assign-outcomes.js') }}"></script>
-    <script src="{{ static_url('js/places/board/assign-form.js') }}"></script>
     <script src="{{ static_url('js/places/board/board-cancel.js') }}"></script>
     <script src="{{ static_url('js/places/board/board-toolbar.js') }}"></script>
     <script src="{{ static_url('js/places/board/board-place.js') }}"></script>
+
+    <!-- Metrics: the two renderers, then the place that fetches for them. -->
+    <script src="{{ static_url('js/places/metrics/metric-cards.js') }}"></script>
+    <script src="{{ static_url('js/places/metrics/metric-bars.js') }}"></script>
+    <script src="{{ static_url('js/places/metrics/metrics-place.js') }}"></script>
+
+    <!-- Log: the shape both feeds normalise into, then the source over them,
+         then the views, then the place that wires them together. -->
+    <script src="{{ static_url('js/places/log/log-shape.js') }}"></script>
+    <script src="{{ static_url('js/places/log/log-source.js') }}"></script>
+    <script src="{{ static_url('js/places/log/log-row.js') }}"></script>
+    <script src="{{ static_url('js/places/log/log-filters.js') }}"></script>
+    <script src="{{ static_url('js/places/log/diagnostic-detail.js') }}"></script>
+    <script src="{{ static_url('js/places/log/log-place.js') }}"></script>
 
 
     <!-- Boots last: every module it wires must already be defined. -->

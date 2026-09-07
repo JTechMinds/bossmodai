@@ -39,20 +39,6 @@ const BossModNeedsPopover = (() => {
         return `${count} things need you`;
     }
 
-    /**
-     * Which conversation a need belongs to.
-     *
-     * api/routes/needs.py sets a need's conversation to the originating thread
-     * when a consent came from one, and to the agent otherwise. So a
-     * conversationId that is not the agent's own id is a thread id. Verified
-     * against that file — the queue carries no conversation kind of its own.
-     *
-     * @param {object} need
-     * @returns {'agent'|'thread'}
-     */
-    function conversationKind(need) {
-        return need.conversationId === need.agentId ? 'agent' : 'thread';
-    }
 
     /**
      * Open the needs popover.
@@ -123,27 +109,43 @@ const BossModNeedsPopover = (() => {
             return button;
         }
 
+        /**
+         * Take the operator to where a need can be dealt with.
+         *
+         * The destination is `need.target`, built by the ONE mapping table in
+         * need-shape.js. Nothing here branches on kind, which is what stops the
+         * bell, the bar and the toast forming three opinions about where a
+         * blocked task lives.
+         *
+         * @param {object} target  A NeedTarget.
+         * @returns {void}
+         */
+        function goTo(target) {
+            if (target.conversationId) {
+                store.setState({
+                    conversationId: target.conversationId,
+                    conversationKind: target.conversationKind,
+                });
+            }
+            // Chat is the one destination with an unsent draft, a transcript
+            // cache and a caret to lose, and its target carries no params — so
+            // arriving there is a store change, and a navigation only when the
+            // operator is somewhere else. Board and Log carry the thing to show
+            // IN their params, so they are navigated to either way.
+            const alreadyThere = store.getState().place === target.place;
+            // Closed before navigating, so focus ends on the new place's
+            // heading rather than being pulled back here.
+            close();
+            if (alreadyThere && target.place === 'chat') return;
+            navigate(target.place, target.params);
+        }
+
         function renderNeed(need) {
-            const showMe = need.conversationId
+            const showMe = need.target
                 ? h('button', {
                     class: 'popover-show-me',
                     type: 'button',
-                    onclick: () => {
-                        store.setState({
-                            conversationId: need.conversationId,
-                            conversationKind: conversationKind(need),
-                        });
-                        // Navigation is only how the operator REACHES Chat; the
-                        // store is what switches the conversation. Navigating
-                        // while already there remounts the place and takes the
-                        // transcript cache and the composer draft with it —
-                        // the same rule shell/roster.js follows.
-                        const away = store.getState().place !== 'chat';
-                        // Closed before navigating, so focus ends on the new
-                        // place's heading rather than being pulled back here.
-                        close();
-                        if (away) navigate('chat');
-                    },
+                    onclick: () => goTo(need.target),
                 }, 'Show me')
                 : null;
 

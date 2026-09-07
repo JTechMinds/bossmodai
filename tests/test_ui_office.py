@@ -7,6 +7,8 @@ one: it opens the shared renderer or it opens nothing.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,6 +88,47 @@ def test_desk_click_reuses_the_one_conversation_renderer() -> None:
         )
     # The slide-over is the shared, focus-trapped one from core/overlays.js.
     assert "BossModOverlays.slideOver(" in source
+
+
+def test_canvas_motion_harness() -> None:
+    """Phase 3A's flagged gap, closed: the motion layer, driven by a clock.
+
+    canvas-motion.js is pure — it never reads the document — and Phase 3A
+    shipped it with source-level coverage only because that is all that phase
+    budgeted. Three behaviours nothing else can reach are proven here: a walk
+    advances over time and stops EXACTLY on its last point rather than
+    overshooting or stalling short; a second walk for the same agent replaces
+    the first instead of two interpolations fighting over one agent's
+    coordinates; and a thought bubble expires on the layer's own clock, with no
+    consumer having to remember to pump it.
+
+    Time is driven by hand — requestAnimationFrame, performance.now, Date.now
+    and setTimeout are all replaced — so the assertions are about the module's
+    arithmetic, not about how fast the machine running them happens to be.
+    """
+    harness = Path(__file__).resolve().parent / "js_canvas_motion_harness.cjs"
+    result = subprocess.run(
+        ["node", str(harness), str(OFFICE / "canvas-motion.js")],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "walkAdvancesAndStops": True,
+        "secondWalkReplacesFirst": True,
+        "bubbleExpiresOnItsOwnClock": True,
+        "rejectsBadInput": True,
+        "destroyStopsTheClock": True,
+    }
+
+    # The harness can drive it with a clock alone because the layer reads no
+    # DOM at all. If that changed, the harness would stop proving anything.
+    source = _read("canvas-motion.js")
+    for reach in ("document.getElementById", "document.querySelector",
+                  "document.createElement", "document.body", "document.add",
+                  "window.", "BossModDom"):
+        assert reach not in source, f"canvas-motion.js reaches for {reach}"
 
 
 def test_office_modules_stay_focused() -> None:

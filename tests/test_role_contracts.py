@@ -250,8 +250,20 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "What done looks like:" in detail_js
     assert "Done/fail bar" not in detail_js
     assert "What done looks like for this agent:" in utils_js
-    activity_js = Path("ui/static/js/activity.js").read_text(encoding="utf-8")
-    assert "world_feedback" in activity_js
+    # Re-pointed in Phase 3B: activity.js and diagnostics.js merged into the
+    # Log place. The old assertion was that `world_feedback` appeared in a
+    # twenty-five entry icon map, which is what made a role-contract breach
+    # visible in the feed. The Log enumerates no event names at all — it reads
+    # the category the server already classified — so the property is asserted
+    # where it actually lives now: every category classify_category can return
+    # has a row type, and an unrecognised one becomes `system` rather than
+    # being dropped off the feed.
+    log_shape_js = Path("ui/static/js/places/log/log-shape.js").read_text(encoding="utf-8")
+    for category in ("agent", "task", "error", "system"):
+        assert f"'{category}'" in log_shape_js
+    assert "const TYPES = Object.freeze(['agent', 'task', 'error', 'system']);" in log_shape_js
+    assert "type: TYPES.indexOf(category) === -1 ? 'system' : category," in log_shape_js
+    assert classify_category("activity_log", "world_feedback") == "task"
     # Phase 2B replaced agent-context.js with the context column. The desk
     # panel carries the agent's own contract copy; the desk's task cards carry
     # the per-task claim copy, which is where doneClaimGuidance takes a task.

@@ -276,6 +276,59 @@ const BossModUtils = (() => {
         return String(num);
     }
 
+    /**
+     * A duration in whole hours and minutes.
+     *
+     * Moved here verbatim from company-metrics.js in Phase 3B: Metrics'
+     * uptime cell and any later duration read the same rounding, rather than
+     * two files disagreeing about what "< 1m" means.
+     *
+     * @param {number|null} seconds
+     * @returns {string} '--' when the value is missing or not a number.
+     */
+    function formatDuration(seconds) {
+        if (seconds == null || isNaN(seconds) || seconds < 0) return '--';
+        const s = Math.floor(Number(seconds));
+        if (s < 60) return '< 1m';
+        const hours = Math.floor(s / 3600);
+        const minutes = Math.floor((s % 3600) / 60);
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        return `${minutes}m`;
+    }
+
+    /**
+     * A token count with its unit. Moved here verbatim from
+     * company-metrics.js; note that a missing count is '0' with no unit,
+     * which is the behaviour the Metrics bars have always shown.
+     *
+     * @param {number|null} n
+     * @returns {string}
+     */
+    function formatTokenCount(n) {
+        if (n == null || isNaN(n)) return '0';
+        return formatNumber(n) + ' tokens';
+    }
+
+    /**
+     * A byte count in the largest unit that keeps it readable.
+     *
+     * Moved here verbatim from company-files.js and company-file-viewer.js,
+     * which carried one copy each: the browser list and the viewer header
+     * showed the same file and had to agree about its size.
+     *
+     * @param {number|null} bytes
+     * @returns {string} '' when the size is unknown, which callers render as
+     *   no size column rather than as a zero.
+     */
+    function formatFileSize(bytes) {
+        if (bytes == null || bytes < 0) return '';
+        if (bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const val = bytes / Math.pow(1024, exp);
+        return `${exp === 0 ? val : val.toFixed(1)} ${units[exp]}`;
+    }
+
     // ─── Modal factory ───
 
     function createModal({ maxWidth = 'max-w-lg', onClose = null } = {}) {
@@ -355,6 +408,9 @@ const BossModUtils = (() => {
         getStatusLabel,
         formatRelativeTime,
         formatNumber,
+        formatDuration,
+        formatTokenCount,
+        formatFileSize,
         createModal,
         openOverlay,
         closeOverlay,

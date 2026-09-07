@@ -72,6 +72,24 @@ function approvalRow(id, conversationId) {
     };
 }
 
+/** One blocked task, exactly as api/routes/needs.py emits it. */
+function blockedRow(id, agentId) {
+    return {
+        id,
+        kind: "blocked",
+        agent_id: agentId,
+        agent_name: "Jim",
+        title: "Jim is blocked",
+        sub: "Ship the release notes",
+        created_at: "2026-09-07T13:00:00Z",
+        conversation_id: agentId,
+        actions: [
+            { label: "Open task", method: "GET", tone: "primary",
+              href: `/api/tasks/${id}` },
+        ],
+    };
+}
+
 /** One pending host-path consent, exactly as api/routes/needs.py emits it. */
 function consentRow(id, conversationId) {
     return {
@@ -430,6 +448,68 @@ async function main() {
     }
     const inspectionDoesNotResolve = true;
 
+    // ─── 9c. A blocked task and an error turn lead to their place ───
+    // Phase 2B performed the server-described GET and refreshed, because Board
+    // and Log did not exist. They do now. The destination comes from ONE
+    // mapping table in need-shape.js, so the bell cannot form one opinion about
+    // where a blocked task lives and the bar another.
+
+    queue = [blockedRow("t1", "a1")];
+    await needs.refresh();
+    await drain();
+    const blocked = store.getState().needs.find((item) => item.id === "t1");
+    if (!blocked) throw new Error("the blocked task must reach the queue");
+    if (!blocked.target || blocked.target.place !== "board") {
+        throw new Error(`a blocked need must lead to the board, got ${JSON.stringify(blocked.target)}`);
+    }
+    if (blocked.target.params.taskId !== "t1") {
+        throw new Error("a blocked need must carry its task id to the board");
+    }
+    // The server-described action is untouched: it is still an inspecting GET.
+    if (blocked.actions[0].method !== "GET" || blocked.actions[0].href !== "/api/tasks/t1") {
+        throw new Error("the server-described actions must not change");
+    }
+
+    bus.publish("diagnostic", {
+        id: "d9", agent_id: "a2", agent_name: "Laura", status: "success",
+        error: "Tool call rejected", created_at: "2026-09-07T13:30:00Z",
+    });
+    await drain();
+    const errored = store.getState().needs.find((item) => item.id === "d9");
+    if (!errored.target || errored.target.place !== "log") {
+        throw new Error(`an error need must lead to the log, got ${JSON.stringify(errored.target)}`);
+    }
+    if (errored.target.params.diagnosticId !== "d9") {
+        throw new Error("an error need must carry its diagnostic id to the log");
+    }
+
+    // ...and the popover's "Show me" actually goes there, with the params.
+    store.setState({ place: "chat" });
+    navigatedTo.length = 0;
+    const wentTo = [];
+    const popover3 = BossModNeedsPopover.openPopover({
+        store, needs, anchor: bell,
+        navigate: (placeId, params) => wentTo.push({ placeId, params }),
+        onClose: () => { closes += 1; },
+    });
+    await drain();
+    const blockedEntry = popover3.element.querySelector('[data-need-id="t1"]');
+    if (!blockedEntry) throw new Error("the popover must list the blocked need");
+    await blockedEntry.querySelector(".popover-show-me").dispatchClick();
+    if (wentTo.length !== 1 || wentTo[0].placeId !== "board") {
+        throw new Error(`Show me on a blocked need must open the board, got ${JSON.stringify(wentTo)}`);
+    }
+    if (wentTo[0].params.taskId !== "t1") {
+        throw new Error("Show me must carry the task id into placeParams");
+    }
+    const targetsNavigate = true;
+
+    queue = [];
+    await needs.refresh();
+    await drain();
+    await needs.resolve(errored, errored.actions[0]);
+    await drain();
+
     // ─── 10. Toast and bar are mutually exclusive, per need ───
     // Spec 5.5. Enforced here rather than left to judgement: if you are
     // looking at the conversation the bar tells you quietly, and if you are
@@ -457,7 +537,12 @@ async function main() {
     const toastHost = BossModNeedsToast.createToastHost({
         store: store2, needs: needs2, navigate: () => {},
     });
-    const bar = BossModNeedsBar.createNeedsBar({ store: store2, needs: needs2 });
+    const barNavigations = [];
+    const bar = BossModNeedsBar.createNeedsBar({
+        store: store2,
+        needs: needs2,
+        navigate: (placeId, params) => barNavigations.push({ placeId, params }),
+    });
     documentStub.body.append(bar.element);
     await drain();
 
@@ -574,6 +659,30 @@ async function main() {
     store2.setState({ needsBarEnabled: true });
     if (bar.element.hidden !== false) throw new Error("re-enabling must show it again");
 
+    // The bar reads the same targets. A blocked need in the open conversation
+    // still offers a way to the board; an approval whose target IS the
+    // conversation this bar is pinned to offers nothing, because "show me"
+    // pointing at the screen you are looking at is the noise spec 5.5 forbids.
+    barNavigations.length = 0;
+    queue2 = [approvalRow("s2", "a1"), blockedRow("s3", "a1")];
+    await needs2.refresh();
+    await drain();
+    const barButtons = () => bar.element.querySelectorAll("button")
+        .filter((node) => node.textContent === "Show me");
+    if (barButtons().length !== 1) {
+        throw new Error(`the bar must offer exactly one Show me, got ${barButtons().length}`);
+    }
+    await barButtons()[0].dispatchClick();
+    if (barNavigations.length !== 1 || barNavigations[0].placeId !== "board") {
+        throw new Error(`the bar's Show me must open the board, got ${JSON.stringify(barNavigations)}`);
+    }
+    if (barNavigations[0].params.taskId !== "s3") {
+        throw new Error("the bar's Show me must carry the task id");
+    }
+    queue2 = [approvalRow("s1", "a1")];
+    await needs2.refresh();
+    await drain();
+
     const bar2Store = store2.subscriberCount();
     bar.destroy();
     toastHost.destroy();
@@ -613,6 +722,7 @@ async function main() {
         unchangedBaselineStillEnds,
         inspectionDoesNotResolve,
         barLeavesConsentInline,
+        targetsNavigate,
     }));
 }
 

@@ -108,22 +108,37 @@ const BossModDeskOpener = (() => {
     /**
      * Ask the host to reveal a folder, answering the handler question once.
      *
+     * The request is injected because two surfaces open folders — an agent's
+     * desk and the company workspace (places/files/folder-opener.js) — through
+     * two different routes, and only the route differs. The 409 handling, the
+     * prompt, the settings write, and the single retry are the same policy for
+     * both, and a second copy of a settings-writing prompt is exactly the
+     * duplication this refactor exists to remove.
+     *
      * @param {object} deps
-     * @param {Function} deps.api      Authenticated fetch helper.
-     * @param {string}   deps.agentId
-     * @param {string}   deps.path     Virtual desk path.
+     * @param {Function} deps.api  Authenticated fetch helper; used for the
+     *   settings write.
+     * @param {() => Promise<Response>} deps.request  Issues the open-folder call.
+     * @param {(res: Response) => Promise<string>} deps.describeFailure  Turns a
+     *   non-handler failure into the message the operator reads. The two
+     *   surfaces word this differently, so it is theirs to decide.
      * @param {(message: string) => void} deps.onError  Surfaces a failure; the
      *   original logged to the console alone, which told the operator nothing.
      * @returns {Promise<boolean>} Whether the folder was opened.
+     * @throws {Error} When a dependency is missing.
      */
-    async function openFolder({ api, agentId, path, onError }) {
-        const target = path || '/me';
-        const url = `/api/agents/${agentId}/desk/open-folder?path=${encodeURIComponent(target)}`;
+    async function reveal({ api, request, describeFailure, onError }) {
+        if (typeof api !== 'function') throw new Error('[desk-opener] deps.api is required');
+        if (typeof request !== 'function') throw new Error('[desk-opener] deps.request is required');
+        if (typeof describeFailure !== 'function') {
+            throw new Error('[desk-opener] deps.describeFailure is required');
+        }
+        if (typeof onError !== 'function') throw new Error('[desk-opener] deps.onError is required');
 
         async function attempt(allowRetry) {
             let res;
             try {
-                res = await api(url, { method: 'POST' });
+                res = await request();
             } catch (err) {
                 console.error('[desk-opener] could not reach the host', err);
                 onError('Could not open the folder.');
@@ -152,14 +167,38 @@ const BossModDeskOpener = (() => {
                     return attempt(false);
                 }
             }
-            const text = await res.text();
-            console.error('[desk-opener] open-folder failed', text);
-            onError('Could not open the folder.');
+            onError(await describeFailure(res));
             return false;
         }
 
         return attempt(true);
     }
 
-    return { openFolder, prompt, HANDLER_CODES };
+    /**
+     * Reveal one agent's desk folder.
+     *
+     * @param {object} deps
+     * @param {Function} deps.api      Authenticated fetch helper.
+     * @param {string}   deps.agentId
+     * @param {string}   deps.path     Virtual desk path.
+     * @param {(message: string) => void} deps.onError
+     * @returns {Promise<boolean>} Whether the folder was opened.
+     */
+    function openFolder({ api, agentId, path, onError }) {
+        const target = path || '/me';
+        const url = `/api/agents/${agentId}/desk/open-folder?path=${encodeURIComponent(target)}`;
+        return reveal({
+            api,
+            request: () => api(url, { method: 'POST' }),
+            // Unchanged from the port: the host's own text is logged, and the
+            // desk shows one sentence rather than a raw handler error.
+            describeFailure: async (res) => {
+                console.error('[desk-opener] open-folder failed', await res.text());
+                return 'Could not open the folder.';
+            },
+            onError,
+        });
+    }
+
+    return { openFolder, reveal, prompt, HANDLER_CODES };
 })();

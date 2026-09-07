@@ -89,28 +89,65 @@ def test_meeting_tasks_desk_guard_before_dom_apply() -> None:
     )
 
 
-def test_company_files_guards_navigate_and_search() -> None:
-    source = _read("company-files.js")
-    assert "const filesLoad = BossModGates.createLoadGeneration()" in source
+def test_files_place_guards_navigate_and_search() -> None:
+    """Re-pointed in Phase 3B to places/files/, and stronger in two places.
 
-    fetch = source.split("async function fetchAndRender() {", 1)[1].split(
-        "function renderDirectory()", 1
-    )[0]
-    assert "const loadId = filesLoad.next()" in fetch
-    assert "if (!filesLoad.isCurrent(loadId) || currentPath !== requestedPath) return;" in fetch
+    The dock-era browser guarded navigate and search with one generation; so
+    does the place. What changed is the New menu's document listener: it used
+    to be bound at MODULE scope and never removed, so it outlived every render
+    and every teardown. It is now bound once when the menu is built — once per
+    mount — and removed by destroy(), which the toolbar calls and the place's
+    unmount calls in turn. The old test could only assert the listener was not
+    bound inside bindInteractions; this asserts it is actually let go.
+    """
+    place = _read("places/files/files-place.js")
+    assert "load = BossModGates.createLoadGeneration()" in place
 
-    search = source.split("async function performGlobalSearch(query) {", 1)[1].split(
-        "function restoreSearchFocus()", 1
+    fetch = place.split("async function refresh() {", 1)[1].split(
+        "async function navigateTo(", 1
     )[0]
-    assert "const loadId = filesLoad.next()" in search
-    assert "if (!filesLoad.isCurrent(loadId)) return;" in search
+    assert "const loadId = load.next()" in fetch
+    # Both halves of the guard, as before: the generation AND the path asked for.
+    assert "if (!load.isCurrent(loadId) || state.path !== requested) return;" in fetch
+    assert fetch.index("await DATA.loadPath(") < fetch.index(
+        "if (!load.isCurrent(loadId) || state.path !== requested) return;"
+    )
+    # Once on the failure path and once on the success path: a superseded read
+    # must not claim the error state either.
+    assert fetch.count("if (!load.isCurrent(loadId) || state.path !== requested) return;") == 2
 
-    bind = source.split("function bindInteractions() {", 1)[1].split(
-        "async function performGlobalSearch(", 1
+    search = place.split("async function searchAll(query) {", 1)[1].split(
+        "    /**", 1
     )[0]
-    assert "document.addEventListener('click'" not in bind
-    assert "function onDocumentClickCloseNewMenu(" in source
-    assert "document.addEventListener('click', onDocumentClickCloseNewMenu)" in source
+    assert "const loadId = load.next()" in search
+    assert "if (!load.isCurrent(loadId)) return;" in search
+    assert search.index("await DATA.search(") < search.index("if (!load.isCurrent(loadId)) return;")
+    assert search.count("if (!load.isCurrent(loadId)) return;") == 2
+
+    # Dropping back below the global-search threshold invalidates the search
+    # still in flight, so its rows cannot land on the folder listing.
+    filter_here = place.split("function filterHere(query) {", 1)[1].split("\n    }", 1)[0]
+    assert "load.next();" in filter_here
+    # ...and it re-reads the folder, because the rows on screen are hits from
+    # all over the workspace. Filtering those under this folder's breadcrumbs
+    # would be a listing that lies about where it is.
+    assert "const wasGlobal = state.mode === 'global';" in filter_here
+    assert "if (wasGlobal) {" in filter_here
+    assert "void refresh();" in filter_here
+
+    # The New menu's document listeners are bound once, with the menu, and let
+    # go on destroy. Nothing binds one per repaint.
+    actions = _read("places/files/file-actions.js")
+    new_menu = actions.split("function createNewMenu({ onCreate }) {", 1)[1]
+    assert "document.addEventListener('click', onDocumentClick);" in new_menu
+    destroy = new_menu.split("destroy() {", 1)[1]
+    assert "document.removeEventListener('click', onDocumentClick);" in destroy
+    assert "document.removeEventListener('keydown', onKeydown);" in destroy
+    toolbar = _read("places/files/files-toolbar.js")
+    assert "newMenu.destroy();" in toolbar
+    assert "if (toolbar) toolbar.destroy();" in place.split("unmount() {", 1)[1]
+    # Nothing in the Files place binds a document listener of its own.
+    assert "document.addEventListener" not in place
 
 
 def test_load_generation_harness_drops_stale_applies() -> None:

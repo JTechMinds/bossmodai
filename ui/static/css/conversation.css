@@ -353,6 +353,24 @@
 
 .composer-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* The assign sheet's trigger. Quiet next to Send: it is the second thing you
+   do here, not the first. Same 38px hit target (SC 2.5.8). */
+.composer-assign {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.composer-assign:hover:not(:disabled) { color: var(--ink); }
+.composer-assign:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .composer-error {
   margin: 8px 0 0;
   color: var(--alert);

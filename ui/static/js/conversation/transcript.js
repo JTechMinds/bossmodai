@@ -15,8 +15,12 @@
 const BossModTranscript = (() => {
     const { h, clear } = BossModDom;
 
-    /** How close to the bottom still counts as "reading the newest" (spec 4.2). */
-    const STICK_THRESHOLD_PX = 80;
+    /**
+     * How close to the bottom still counts as "reading the newest" (spec 4.2).
+     * The rule and its threshold live in core/dom.js so the Log, which watches
+     * the opposite edge, cannot end up with a second opinion about it.
+     */
+    const { isNearEdge } = BossModDom;
 
     /**
      * A message's dedupe key, normalised. `''` means the backend gave none.
@@ -84,8 +88,7 @@ const BossModTranscript = (() => {
 
         /** Is the operator already looking at the newest message? @returns {boolean} */
         function isNearBottom() {
-            return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-                <= STICK_THRESHOLD_PX;
+            return isNearEdge(scroller, 'bottom');
         }
 
         /** Pin the view to the newest message. @returns {void} */

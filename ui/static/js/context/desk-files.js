@@ -241,7 +241,7 @@ const BossModDeskFiles = (() => {
             if (!isLive(loadId, requestedPath)) return;
 
             if (payload.kind === 'file') {
-                CompanyFileViewer.open(requestedPath, { apiUrl: deskUrl(requestedPath) });
+                BossModFileViewer.open(requestedPath, { api, apiUrl: deskUrl(requestedPath) });
                 await open(parentDeskPath(requestedPath));
                 return;
             }

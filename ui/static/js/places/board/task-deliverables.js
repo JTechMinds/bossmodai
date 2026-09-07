@@ -30,7 +30,8 @@ const BossModTaskDeliverables = (() => {
         const target = String(path || '').trim();
         if (!target) throw new Error('That deliverable has no path.');
         if (isAgentDeskPath(target) && agentId) {
-            await CompanyFileViewer.open(target, {
+            await BossModFileViewer.open(target, {
+                api,
                 apiUrl: `/api/agents/${encodeURIComponent(agentId)}/desk?path=${encodeURIComponent(target)}`,
             });
             return;
@@ -39,7 +40,7 @@ const BossModTaskDeliverables = (() => {
         if (!res.ok) throw new Error(await res.text() || 'Could not open that path');
         const payload = await res.json();
         if (payload.kind === 'file') {
-            await CompanyFileViewer.open(payload.path || target);
+            await BossModFileViewer.open(payload.path || target, { api });
             return;
         }
         await api('/api/company/files/open-folder', {

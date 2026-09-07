@@ -84,6 +84,7 @@ def test_needs_harness() -> None:
         "unchangedBaselineStillEnds": True,
         "inspectionDoesNotResolve": True,
         "barLeavesConsentInline": True,
+        "targetsNavigate": True,
     }
 
 
@@ -284,6 +285,58 @@ def test_an_inspection_action_decides_nothing() -> None:
     assert "errorNeeds.delete(need.id);" in resolve
 
 
+def test_need_targets_come_from_one_mapping_table() -> None:
+    """Hard part 5: no per-kind branch at any call site.
+
+    Phase 2B's `blocked` and `error` needs performed the server-described GET
+    and refreshed, because Board and Log did not exist. They do now, so those
+    inspections become navigations — and the destination comes from ONE table
+    in need-shape.js. Scattered `if (kind === 'blocked')` branches are how four
+    surfaces end up with four opinions about where a blocked task lives.
+    """
+    shape = _read(NEEDS / "need-shape.js")
+    assert "const KIND_TARGETS = Object.freeze({" in shape
+    assert "place: 'board', params: { taskId: need.id }" in shape
+    assert "place: 'log', params: { diagnosticId: need.id }" in shape
+    assert "consent: (need) => chatTarget(need.conversationId, need.agentId)" in shape
+    assert "approval: (need) => chatTarget(need.conversationId, need.agentId)" in shape
+    assert "function targetFor(need)" in shape
+    # Both normalisers attach it, so no consumer has to ask for one.
+    assert shape.count("need.target = targetFor(need);") == 2
+
+    # No call site decides anything from a kind.
+    for name in ("needs-popover.js", "needs-bar.js", "needs-toast.js"):
+        source = _read(NEEDS / name)
+        for kind in ("'blocked'", "'error'", "'consent'", "'approval'"):
+            assert f"kind === {kind}" not in source, f"{name} branches on kind"
+            assert f"kind == {kind}" not in source, f"{name} branches on kind"
+        assert "place: 'board'" not in source, f"{name} names a place id of its own"
+        assert "place: 'log'" not in source, f"{name} names a place id of its own"
+    # The bar still groups by kind for the CARD TONE, which is presentation and
+    # is a frozen table of its own, not a branch.
+    bar = _read(NEEDS / "needs-bar.js")
+    assert "const BAR_CARDS = Object.freeze({" in bar
+    assert "need.target" in bar
+
+    # The server-described actions are untouched: `target` is a client concern.
+    store_source = _read(NEEDS / "needs-store.js")
+    assert "const decides = action.method !== 'GET';" in store_source
+    assert "target" not in store_source, "the queue store must not know about targets"
+
+
+def test_blocked_and_error_needs_navigate_to_their_place() -> None:
+    """Behavioural, through the harness: the target actually takes you there.
+
+    A source-level table proves the mapping exists; only this proves the button
+    uses it, carries the id into placeParams, and leaves the server-described
+    GET alone — `inspectionDoesNotResolve` still has to pass beside it.
+    """
+    payload = _harness()
+    assert payload["targetsNavigate"] is True
+    assert payload["inspectionDoesNotResolve"] is True
+    assert payload["showMeKeepsShell"] is True
+
+
 def test_reaching_a_conversation_never_remounts_chat() -> None:
     """Every route into a conversation obeys shell/roster.js's rule.
 
@@ -295,17 +348,25 @@ def test_reaching_a_conversation_never_remounts_chat() -> None:
     """
     assert _harness()["showMeKeepsShell"] is True
 
-    for name in ("needs-popover.js", "needs-toast.js"):
-        source = _read(NEEDS / name)
-        assert "store.getState().place !== 'chat'" in source, (
-            f"{name} navigates to Chat without checking whether it is already open"
-        )
-        assert "navigate('chat');\n" not in source.replace(
-            "if (away) navigate('chat');", ""
-        ).replace("if (store.getState().place !== 'chat') navigate('chat');", "")
+    toast = _read(NEEDS / "needs-toast.js")
+    assert "store.getState().place !== 'chat'" in toast, (
+        "needs-toast.js navigates to Chat without checking whether it is already open"
+    )
+    assert "navigate('chat');\n" not in toast.replace(
+        "if (store.getState().place !== 'chat') navigate('chat');", ""
+    )
 
-    # The popover closes before it navigates, so focus lands on the new place
-    # rather than being pulled back to the bell it just left.
+    # Phase 3B generalised the popover: a need now leads to its own place, so
+    # the check is no longer spelled against the literal 'chat'. The property is
+    # unchanged and now covers every destination — the ONE place with a draft,
+    # a transcript cache and a caret to lose is never re-navigated to, while
+    # Board and Log carry what to show in their params and so always are.
     popover = _read(NEEDS / "needs-popover.js")
-    show_me = popover.split("class: 'popover-show-me',", 1)[1]
-    assert show_me.index("close();") < show_me.index("if (away) navigate('chat');")
+    go_to = popover.split("function goTo(target) {", 1)[1].split("\n        }", 1)[0]
+    assert "const alreadyThere = store.getState().place === target.place;" in go_to
+    assert "if (alreadyThere && target.place === 'chat') return;" in go_to
+    assert "navigate(target.place, target.params);" in go_to
+    assert "navigate('chat')" not in popover
+    # It closes before it navigates, so focus lands on the new place rather
+    # than being pulled back to the bell it just left.
+    assert go_to.index("close();") < go_to.index("navigate(target.place, target.params);")

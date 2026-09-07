@@ -11,6 +11,27 @@ JS = ROOT / "ui" / "static" / "js"
 HARNESS = Path(__file__).resolve().parent / "js_overlays_harness.cjs"
 
 
+def test_both_overlays_share_one_focus_trap() -> None:
+    """One trap, or they drift — and one of them did.
+
+    createModal's trap used to cycle over its own action buttons and return
+    without preventing the default whenever focus sat anywhere else. Modals do
+    carry focusable bodies (context/desk-opener.js puts radios and a text input
+    in one), so Tab walked out of the dialog into the page behind it. slideOver
+    had the correct implementation five lines away. Two implementations of one
+    rule is how that happened; this test is why it cannot happen again.
+    """
+    source = (JS / "core" / "overlays.js").read_text(encoding="utf-8")
+    assert source.count("function trapKeydown(") == 1
+    assert source.count("const onKeydown = (event) => trapKeydown(event, element, close);") == 2
+    # The trap must consider everything focusable in the overlay, not one row.
+    assert "element.querySelectorAll(FOCUSABLE)" in source
+    # And it must recover focus that has already escaped, rather than shrugging.
+    assert "if (!element.contains(active)) {" in source
+    # The old button-only cycle must not come back in either overlay.
+    assert "buttons.indexOf(document.activeElement)" not in source
+
+
 def test_modal_accessibility_contract() -> None:
     result = subprocess.run(
         ["node", str(HARNESS), str(JS / "core" / "dom.js"), str(JS / "core" / "overlays.js")],

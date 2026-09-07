@@ -35,7 +35,7 @@ def test_deliverable_cards_keep_original_path_and_agent_id() -> None:
     assert "/api/company/files?path=" in source
     assert "/api/company/files/open-folder" in source
     assert "payload.kind === 'file'" in source
-    assert "CompanyFileViewer.open" in source
+    assert "BossModFileViewer.open" in source
 
 
 def test_deliverable_open_does_not_remap_host_paths_through_me() -> None:
@@ -45,8 +45,13 @@ def test_deliverable_open_does_not_remap_host_paths_through_me() -> None:
 
 
 def test_file_viewer_open_surfaces_load_failures() -> None:
-    """Still company-file-viewer.js: the shared viewer is Phase 3B's to move."""
-    source = _read("company-file-viewer.js")
+    """Re-pointed in Phase 3B: the shared viewer is places/files/file-viewer.js.
+
+    A deliverable card marks itself failed from this rejection, so a viewer
+    that swallowed the load error would leave a card that silently does
+    nothing when clicked.
+    """
+    source = (JS / "places" / "files" / "file-viewer.js").read_text(encoding="utf-8")
     assert "throw err;" in source
 
 

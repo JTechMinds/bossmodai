@@ -9,6 +9,54 @@
 const BossModOverlays = (() => {
     const { h } = BossModDom;
 
+    /** Everything the browser will place in the tab order by default. */
+    const FOCUSABLE = [
+        'button:not([disabled])', '[href]', 'input:not([disabled])',
+        'select:not([disabled])', 'textarea:not([disabled])',
+        'summary', '[tabindex]:not([tabindex="-1"])',
+    ].join(', ');
+
+    /**
+     * Keep Tab inside one overlay, and let Esc dismiss it.
+     *
+     * Shared by both overlays on purpose. They previously carried separate
+     * implementations and only one of them was a real trap: the modal's cycled
+     * over its own action buttons and bailed out when focus was anywhere else,
+     * so any focusable content in the body leaked Tab into the page behind.
+     *
+     * @param {KeyboardEvent} event
+     * @param {HTMLElement} element  The overlay root.
+     * @param {() => void} close
+     * @returns {void}
+     */
+    function trapKeydown(event, element, close) {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            close();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const stops = Array.from(element.querySelectorAll(FOCUSABLE));
+        if (stops.length === 0) return;
+        const first = stops[0];
+        const last = stops[stops.length - 1];
+        const active = document.activeElement;
+        // Focus outside the overlay means the trap was escaped — pull it back
+        // rather than letting Tab walk into the page behind.
+        if (!element.contains(active)) {
+            event.preventDefault();
+            first.focus();
+            return;
+        }
+        if (event.shiftKey && active === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+
     /**
      * Open a modal dialog.
      *
@@ -65,21 +113,12 @@ const BossModOverlays = (() => {
             h('div', { class: 'modal-body' }, body),
             actionRow);
 
-        function onKeydown(event) {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                close();
-                return;
-            }
-            if (event.key !== 'Tab' || buttons.length === 0) return;
-            // Trap: cycle focus within the action row.
-            const index = buttons.indexOf(document.activeElement);
-            if (index === -1) return;
-            event.preventDefault();
-            const step = event.shiftKey ? -1 : 1;
-            const next = (index + step + buttons.length) % buttons.length;
-            buttons[next].focus();
-        }
+        // Was a cycle over `buttons` alone, which returned without preventing
+        // the default whenever focus sat anywhere else — so Tab from a radio or
+        // a text field in `body` walked straight into the page behind. Modals
+        // do carry such bodies (context/desk-opener.js). One trap now serves
+        // both overlays; a second implementation is how the two drifted apart.
+        const onKeydown = (event) => trapKeydown(event, element, close);
 
         let closed = false;
         function close() {
@@ -98,13 +137,6 @@ const BossModOverlays = (() => {
 
         return { close, element };
     }
-
-    /** Everything the browser will place in the tab order by default. */
-    const FOCUSABLE = [
-        'button:not([disabled])', '[href]', 'input:not([disabled])',
-        'select:not([disabled])', 'textarea:not([disabled])',
-        'summary', '[tabindex]:not([tabindex="-1"])',
-    ].join(', ');
 
     /**
      * Open a slide-over panel.
@@ -144,37 +176,7 @@ const BossModOverlays = (() => {
                 closeButton),
             body);
 
-        function focusable() {
-            return Array.from(element.querySelectorAll(FOCUSABLE));
-        }
-
-        function onKeydown(event) {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                close();
-                return;
-            }
-            if (event.key !== 'Tab') return;
-            const stops = focusable();
-            if (stops.length === 0) return;
-            const first = stops[0];
-            const last = stops[stops.length - 1];
-            const active = document.activeElement;
-            // Focus outside the panel means the trap has been escaped — pull it
-            // back rather than letting Tab walk into the page behind.
-            if (!element.contains(active)) {
-                event.preventDefault();
-                first.focus();
-                return;
-            }
-            if (event.shiftKey && active === first) {
-                event.preventDefault();
-                last.focus();
-            } else if (!event.shiftKey && active === last) {
-                event.preventDefault();
-                first.focus();
-            }
-        }
+        const onKeydown = (event) => trapKeydown(event, element, close);
 
         let closed = false;
         function close() {

@@ -36,7 +36,12 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation.js",
     JS / "shell" / "places.js",
-    JS / "company-file-viewer.js",
+    # The shared viewer the desk browser opens, with the two modules it is
+    # built from. Re-pointed in Phase 3B: it is places/files/file-viewer.js now.
+    JS / "places" / "files" / "file-content.js",
+    JS / "places" / "files" / "file-form.js",
+    JS / "places" / "files" / "file-ops.js",
+    JS / "places" / "files" / "file-viewer.js",
     CONTEXT / "mini-office.js",
     CONTEXT / "desk-opener.js",
     CONTEXT / "desk-files.js",

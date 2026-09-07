@@ -48,6 +48,36 @@ const BossModDom = (() => {
     }
 
     /**
+     * How close to an edge still counts as "already there" (spec 4.2). One
+     * threshold, so the transcript and the Log agree about what reading the
+     * newest means.
+     */
+    const STICK_THRESHOLD_PX = 80;
+
+    /**
+     * Is this scroller already at the edge that new content arrives at?
+     *
+     * The transcript appends at the bottom and the Log prepends at the top, so
+     * they watch opposite edges — but the rule is one rule: never move the
+     * viewport of an operator who has scrolled away to read something.
+     *
+     * @param {HTMLElement} el
+     * @param {'top'|'bottom'} edge
+     * @param {number} [threshold=STICK_THRESHOLD_PX]
+     * @returns {boolean}
+     * @throws {Error} On an edge that is neither, rather than silently
+     *   answering "yes" and yanking the view.
+     */
+    function isNearEdge(el, edge, threshold) {
+        const slack = threshold === undefined ? STICK_THRESHOLD_PX : threshold;
+        if (edge === 'top') return el.scrollTop <= slack;
+        if (edge === 'bottom') {
+            return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
+        }
+        throw new Error(`[dom] isNearEdge: unknown edge "${edge}"`);
+    }
+
+    /**
      * Bind one delegated listener on a root element.
      *
      * Returns a disposer. Callers MUST keep it and call it on unmount —
@@ -68,5 +98,5 @@ const BossModDom = (() => {
         return () => root.removeEventListener(eventName, listener);
     }
 
-    return { h, clear, delegate };
+    return { h, clear, delegate, isNearEdge, STICK_THRESHOLD_PX };
 })();

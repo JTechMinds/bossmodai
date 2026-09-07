@@ -71,6 +71,14 @@ const BossModConversation = (() => {
             },
             canSend: () => Boolean(source) && source.canSend(),
             disabledReason: () => (source ? source.disabledReason() : NO_CONVERSATION_REASON),
+            // Spec 4.4: the clipboard opens the ONE assign form, the Board's.
+            // The composer never names it, so a second one cannot appear here
+            // without this line changing.
+            onAssign: () => BossModAssignForm.openAssignForm({
+                api,
+                store,
+                onCreated: () => navigate('board'),
+            }),
         });
 
         const chrome = BossModConversationChrome.createChrome({
@@ -79,7 +87,7 @@ const BossModConversation = (() => {
 
         // Directly above the composer: what needs the operator here, where
         // they are already looking. Everything else goes to the toast.
-        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs });
+        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({
             onChange: () => {

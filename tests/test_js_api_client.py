@@ -31,9 +31,15 @@ CRITICAL_CALL_SITES = {
     "conversation/sources/thread-source.js": [
         "api(`/api/channels/${threadId}/messages`",
     ],
-    "company-files.js": [
-        "apiFetch(`/api/company/files?path=",
-        "apiFetch('/api/company/files/open-folder'",
+    # Files left the manifest with the dock shell. Its reads and its
+    # open-folder call are now DI'd, so they are spelled api(...); the DI chain
+    # that binds that to apiFetch is asserted below.
+    "places/files/files-data.js": [
+        "api(directoryUrl(path), { cache: 'no-store' })",
+        "`/api/company/files?path=${encodeURIComponent(path)}`",
+    ],
+    "places/files/folder-opener.js": [
+        "api('/api/company/files/open-folder'",
     ],
     "settings-connections.js": [
         "apiFetch('/api/connections')",
@@ -78,6 +84,18 @@ API_BY_INJECTION = {
     "places/board/task-events.js",
     "places/board/assign-form.js",
     "places/board/board-cancel.js",
+    # The Files place and its dialogs take `api` from the shell's ctx and hand
+    # it down; none of them names the global.
+    "places/files/file-viewer.js",
+    "places/files/files-data.js",
+    # Metrics reads GET /api/metrics/dashboard through the injected helper.
+    "places/metrics/metrics-place.js",
+    # The Log reads both feeds through the injected helper.
+    "places/log/log-source.js",
+    "places/log/diagnostic-detail.js",
+    "places/files/file-ops.js",
+    "places/files/host-roots.js",
+    "places/files/folder-opener.js",
 }
 
 RAW_FETCH_API = re.compile(
@@ -265,12 +283,42 @@ _SAVE_OK_SITES = {
         "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
     ],
-    "company-files.js": [
-        "apiFetchOk(`/api/settings/workspace_host_roots?value=${encodeURIComponent(value)}&category=cli_policy`",
-        "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(chosen)}&category=advanced`",
-        "setActionError(err.message || 'Failed to open folder')",
+    # Re-pointed in Phase 3B. apiFetchOk is not injectable, so the guard it
+    # provided is written out at each site and asserted by
+    # test_injected_saves_check_the_response below — the property is unchanged:
+    # a save UI cannot flash success on a response nobody read.
+    "places/files/host-roots.js": [
+        "`/api/settings/workspace_host_roots?value=${encodeURIComponent(value)}&category=cli_policy`",
+        "if (!res.ok) throw new Error(await BossModFileOps.readApiError(res));",
+    ],
+    "context/desk-opener.js": [
+        "`?value=${encodeURIComponent(chosen)}&category=advanced`",
+        "if (!saved.ok) {",
+        "onError('Could not save that folder opener.');",
+    ],
+    "places/files/folder-opener.js": [
+        "FAILURE_COPY = 'Failed to open folder'",
+        "onError,",
     ],
 }
+
+# Files that take `api` by injection and still mutate. Every awaited mutating
+# call in one of these must have its response checked within a few lines, which
+# is what apiFetchOk did for the call sites that could reach the global.
+_INJECTED_MUTATORS = (
+    "places/files/file-ops.js",
+    "places/files/file-viewer.js",
+    "places/files/host-roots.js",
+    "context/desk-opener.js",
+)
+
+_INJECTED_MUTATING_CALL = re.compile(
+    r"await api\("
+    r"(?:[^;]|\n){0,400}?"
+    # `method,` is the shorthand file-ops.js's shared send() uses.
+    r"method\s*[,:]",
+    re.S,
+)
 
 _UNGUARDED_MUTATING_FETCH = re.compile(
     r"await apiFetch(?!Ok)\("
@@ -278,6 +326,27 @@ _UNGUARDED_MUTATING_FETCH = re.compile(
     r"method:\s*'(?:PUT|POST|PATCH|DELETE)'",
     re.S,
 )
+
+def test_injected_saves_check_the_response() -> None:
+    """apiFetchOk's guarantee, kept for the modules that cannot reach it.
+
+    ctx.api is apiFetch, which does not throw, so a module below the shell has
+    to read res.ok itself. company-files.js used apiFetchOk for its two setting
+    writes; the ported modules check the response explicitly instead, and this
+    asserts they all do — otherwise the exemption from apiFetchOk would quietly
+    become an exemption from checking at all.
+    """
+    for name in _INJECTED_MUTATORS:
+        source = _read(name)
+        calls = list(_INJECTED_MUTATING_CALL.finditer(source))
+        assert calls, f"{name} is listed as a mutator but makes no mutating call"
+        for match in calls:
+            window = source[match.end(): match.end() + 260]
+            assert ".ok" in window, (
+                f"{name} does not check the response of "
+                f"{' '.join(match.group(0).split())[:90]}"
+            )
+
 
 # These already inspect res.ok before success UI; leave the explicit check.
 _ALLOWED_UNGUARDED_MUTATING = {
@@ -288,10 +357,6 @@ _ALLOWED_UNGUARDED_MUTATING = {
     # Test-connection already branches on resp.ok / result.ok before any success UI.
     "settings-connections.js": {
         "await apiFetch('/api/connections/test'",
-    },
-    # open-folder must inspect 409 handler codes before a generic error banner.
-    "company-files.js": {
-        "await apiFetch('/api/company/files/open-folder'",
     },
 }
 

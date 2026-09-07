@@ -24,14 +24,21 @@ RETIRED_SCRIPTS = (
     "js/dock-manager.js", "js/app.js", "js/company-view.js", "js/company-dashboard.js",
     "js/agent-context.js", "js/channels-view.js", "js/channel-thread-dom.js",
     "js/activity.js", "js/canvas.js", "js/diagnostics.js",
-    # The dock-era company panes, named individually. This was the prefix
-    # "js/company-" until Phase 2B, when the desk browser began loading the real
-    # company-file-viewer.js — the shared viewer that spec 2 renames to
-    # files/file-viewer.js in Phase 3. Writing a second inline previewer to keep
-    # a prefix true would have been the scaffolding this refactor exists to
-    # avoid; naming the seven that are still retired keeps the assertion exact.
-    "js/company-files.js", "js/company-file-ops.js", "js/company-metrics.js",
-    "js/company-org.js", "js/company-task-detail.js", "js/company-tasks.js",
+    # The dock-era company panes. Phase 2B had to name these individually
+    # rather than use the prefix "js/company-", because the desk browser was
+    # still loading the real company-file-viewer.js. Phase 3B moved that file to
+    # places/files/file-viewer.js and DELETED all six dock-era modules, so the
+    # prefix is true again — and it is now the stronger assertion, because it
+    # also catches a company-* module nobody thought to name here.
+    "js/company-",
+)
+
+# Deleted outright in Phase 3B, not merely unloaded. A script tag is not the
+# only way one of these could come back: an unlisted file left on disk is how
+# `app.js` sat there for two phases looking like it still mattered.
+DELETED_MODULES = (
+    "company-files.js", "company-file-ops.js", "company-file-viewer.js",
+    "company-metrics.js", "activity.js", "diagnostics.js",
 )
 
 SETTINGS_SCRIPTS = [
@@ -63,6 +70,19 @@ def test_no_dock_markup_or_dock_scripts_remain() -> None:
         assert needle not in html, f"dock markup survived: {needle}"
     for needle in RETIRED_SCRIPTS:
         assert needle not in html, f"retired module still loaded: {needle}"
+
+
+def test_the_dock_era_panes_phase_3b_replaced_are_gone_from_disk() -> None:
+    """Files, Metrics, Activity and Diagnostics are places now.
+
+    Their dock-era modules are deleted, not just unloaded: ~2,850 lines of
+    markup-from-strings with private copies of shared helpers is exactly what
+    stays working, stays wrong, and gets copied from.
+    """
+    for name in DELETED_MODULES:
+        assert not (ROOT / "ui" / "static" / "js" / name).exists(), (
+            f"{name} is still on disk"
+        )
 
 
 def test_api_auth_is_the_first_script() -> None:
@@ -97,7 +117,9 @@ def test_settings_takeover_and_banners_survive() -> None:
 
 # Cross-module globals that are not named BossMod*. Each is a real module
 # object another loaded script calls into.
-NON_PREFIXED_GLOBALS = ("SettingsView", "AgentPanel", "CompanyFileViewer")
+# CompanyFileViewer left this list in Phase 3B: the shared viewer is
+# BossModFileViewer now, which the BossMod* pattern already covers.
+NON_PREFIXED_GLOBALS = ("SettingsView", "AgentPanel")
 
 MODULE_DEF = re.compile(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(", re.M)
 MODULE_USE = re.compile(
