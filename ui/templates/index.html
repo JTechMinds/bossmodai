@@ -48,6 +48,7 @@
     <link rel="stylesheet" href="{{ static_url('css/conversation.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/context.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/overlays.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
 </head>
 <body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden">
 
@@ -166,6 +167,30 @@
     <script src="{{ static_url('js/context/context-column.js') }}"></script>
 
     <script src="{{ static_url('js/places/chat/chat-place.js') }}"></script>
+
+    <!-- Office: sprites and the motion layer before the canvas that drives
+         them, the canvas before the place that mounts it. -->
+    <script src="{{ static_url('js/places/office/canvas-sprites.js') }}"></script>
+    <script src="{{ static_url('js/places/office/canvas-motion.js') }}"></script>
+    <script src="{{ static_url('js/places/office/office-canvas.js') }}"></script>
+    <script src="{{ static_url('js/places/office/org-view.js') }}"></script>
+    <script src="{{ static_url('js/places/office/ticker.js') }}"></script>
+    <script src="{{ static_url('js/places/office/office-place.js') }}"></script>
+
+    <!-- Board: the column map first, then the data layer over it, then the
+         views, then the place that wires them together. -->
+    <script src="{{ static_url('js/places/board/board-columns.js') }}"></script>
+    <script src="{{ static_url('js/places/board/board-data.js') }}"></script>
+    <script src="{{ static_url('js/places/board/board-grid.js') }}"></script>
+    <script src="{{ static_url('js/places/board/task-card.js') }}"></script>
+    <script src="{{ static_url('js/places/board/task-deliverables.js') }}"></script>
+    <script src="{{ static_url('js/places/board/task-events.js') }}"></script>
+    <script src="{{ static_url('js/places/board/task-detail.js') }}"></script>
+    <script src="{{ static_url('js/places/board/assign-outcomes.js') }}"></script>
+    <script src="{{ static_url('js/places/board/assign-form.js') }}"></script>
+    <script src="{{ static_url('js/places/board/board-cancel.js') }}"></script>
+    <script src="{{ static_url('js/places/board/board-toolbar.js') }}"></script>
+    <script src="{{ static_url('js/places/board/board-place.js') }}"></script>
 
 
     <!-- Boots last: every module it wires must already be defined. -->

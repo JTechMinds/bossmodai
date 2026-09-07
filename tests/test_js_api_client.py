@@ -67,6 +67,17 @@ API_BY_INJECTION = {
     "conversation/sources/agent-source.js",
     "conversation/sources/thread-source.js",
     "conversation/sources/thread-archive.js",
+    # The Office and Board places take `api` from the shell's ctx and hand it
+    # down; none of them names the global.
+    "places/office/office-canvas.js",
+    "places/office/org-view.js",
+    "places/office/office-place.js",
+    "places/board/board-data.js",
+    "places/board/board-place.js",
+    "places/board/task-deliverables.js",
+    "places/board/task-events.js",
+    "places/board/assign-form.js",
+    "places/board/board-cancel.js",
 }
 
 RAW_FETCH_API = re.compile(
@@ -129,19 +140,30 @@ def test_index_loads_api_client_after_auth_and_before_app() -> None:
     assert sources.index("js/api-client.js") < sources.index("js/settings-connections.js")
 
 
-def test_conversation_sources_take_api_by_injection() -> None:
+def test_modules_below_the_shell_take_api_by_injection() -> None:
     """A spelling assertion is weaker than the property it stands for.
 
-    What actually guarantees the token wrap sits under every conversation call
-    is the DI chain: the shell injects apiFetch as ctx.api and no module below
-    it names the global at all.
+    What actually guarantees the token wrap sits under every call is the DI
+    chain: the shell injects apiFetch as ctx.api and no module below it names
+    the global at all. Every entry API_BY_INJECTION excuses from naming
+    apiFetch is asserted here to have earned it, so the exemption list can
+    never become a way to opt out of the token wrap.
     """
     shell = _read("shell/shell.js")
     assert "api: apiFetch" in shell
     for name in ("conversation/conversation.js",
                  "conversation/sources/agent-source.js",
                  "conversation/sources/thread-source.js",
-                 "conversation/sources/thread-archive.js"):
+                 "conversation/sources/thread-archive.js",
+                 "places/office/office-canvas.js",
+                 "places/office/org-view.js",
+                 "places/office/office-place.js",
+                 "places/board/board-data.js",
+                 "places/board/board-place.js",
+                 "places/board/task-deliverables.js",
+                 "places/board/task-events.js",
+                 "places/board/assign-form.js",
+                 "places/board/board-cancel.js"):
         source = _read(name)
         assert "apiFetch" not in source, f"{name} must take api from ctx"
 

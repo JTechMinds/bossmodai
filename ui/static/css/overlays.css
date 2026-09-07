@@ -230,6 +230,29 @@
 
 .slide-over[hidden] { display: none !important; }
 
+.slide-over-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.slide-over-title { flex: 1 1 auto; margin: 0; font-size: 15px; }
+
+.slide-over-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.slide-over-close:hover { background: var(--line); color: var(--ink); }
+
 /* Motion is decoration here; the information is the copy. */
 @media (prefers-reduced-motion: reduce) {
   .popover,

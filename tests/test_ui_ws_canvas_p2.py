@@ -47,7 +47,13 @@ def test_websocket_reconnect_uses_exponential_backoff() -> None:
 
 
 def test_canvas_resize_uses_panel_resize_only() -> None:
-    canvas = _read("canvas.js")
+    """Re-pointed to places/office/office-canvas.js, which owns the canvas now.
+
+    Same property, same assertions: one resize path. A canvas in a hidden
+    container renders at zero size, and binding window.resize as a second path
+    is how that bug came back last time.
+    """
+    canvas = _read("places/office/office-canvas.js")
     app = _read("app.js")
     assert "addEventListener('panel-resize'" in canvas
     assert "addEventListener('resize'" not in canvas

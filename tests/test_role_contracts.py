@@ -226,16 +226,23 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert panel.index("Runtime core") < panel.index('name="personality_id"')
     assert "nextUnusedAgentColor" in utils_js
     assert "mergeRosterFromWorld" in utils_js
-    tasks_js = Path("ui/static/js/company-tasks.js").read_text(encoding="utf-8")
-    assert "specialty_mismatch" in tasks_js
-    assert "confirm_specialty_mismatch" in tasks_js
-    assert "ct-assign-mismatch" in tasks_js
-    assert "specialtyWarningMessage" in tasks_js
-    assert "(matches)" in tasks_js
-    assert "(mismatch)" in tasks_js
-    assert tasks_js.index('id="ct-assign-agent"') < tasks_js.index('id="ct-assign-mismatch"')
-    assert tasks_js.index('id="ct-assign-mismatch"') < tasks_js.index('id="ct-assign-description"')
-    detail_js = Path("ui/static/js/company-task-detail.js").read_text(encoding="utf-8")
+    # Re-pointed in Phase 3A: the assign sheet is places/board/assign-form.js and
+    # its result panels are places/board/assign-outcomes.js. The id literals are
+    # h() attributes now rather than markup, so `id="x"` reads `id: 'x'`; the
+    # three ids and their source order are unchanged, which is the property —
+    # the mismatch warning sits between the assignee and the description.
+    assign_js = Path("ui/static/js/places/board/assign-form.js").read_text(encoding="utf-8")
+    outcomes_js = Path("ui/static/js/places/board/assign-outcomes.js").read_text(encoding="utf-8")
+    assert "specialty_mismatch" in outcomes_js
+    assert "confirm_specialty_mismatch" in assign_js
+    assert "ct-assign-mismatch" in assign_js
+    assert "specialtyWarningMessage" in assign_js
+    assert "(matches)" in assign_js
+    assert "(mismatch)" in assign_js
+    assert assign_js.index("id: 'ct-assign-agent'") < assign_js.index("id: 'ct-assign-mismatch'")
+    assert assign_js.index("id: 'ct-assign-mismatch'") < assign_js.index("id: 'ct-assign-description'")
+    # Re-pointed in Phase 3A: the detail panel is places/board/task-detail.js.
+    detail_js = Path("ui/static/js/places/board/task-detail.js").read_text(encoding="utf-8")
     assert "doneClaimGuidance" in detail_js
     assert "Blocked — checkable claim missing" in detail_js
     assert "Done claim" in detail_js

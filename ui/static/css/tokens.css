@@ -33,6 +33,18 @@
   --teal: #d6f1e7;  --teal-ink: #0c5f47;
   --pink: #fadde7;  --pink-ink: #8b2d4e;
 
+  /* Office floor. A <canvas> cannot read CSS, so office-canvas.js resolves
+     these through getComputedStyle at construction — the values are still
+     authored here, and a missing one throws rather than painting nothing. */
+  --office-floor: #e5e7eb;
+  --office-wall: #9ca3af;
+  --office-desk: #d97706;
+  --office-transit: #f3f4f6;
+  --office-chair: #b45309;
+  --office-desk-ink: #78716c;
+  --office-grid: rgba(0, 0, 0, 0.04);
+  --office-shadow: rgba(0, 0, 0, 0.15);
+
   --r: 8px;
   --rail: 220px;
   --ctx: 280px;

@@ -99,5 +99,99 @@ const BossModOverlays = (() => {
         return { close, element };
     }
 
-    return { createModal };
+    /** Everything the browser will place in the tab order by default. */
+    const FOCUSABLE = [
+        'button:not([disabled])', '[href]', 'input:not([disabled])',
+        'select:not([disabled])', 'textarea:not([disabled])',
+        'summary', '[tabindex]:not([tabindex="-1"])',
+    ].join(', ');
+
+    /**
+     * Open a slide-over panel.
+     *
+     * Same accessibility contract as createModal — focus trapped inside, Esc
+     * dismisses, focus returns to whatever opened it — but for a panel of
+     * arbitrary content rather than a question with buttons. The Office's desk
+     * and the Board's task detail both ride this; building the trap twice is
+     * how one of them would end up without it.
+     *
+     * @param {object} options
+     * @param {string} options.title  The panel's accessible name.
+     * @param {HTMLElement} options.body  Content. Owned by the caller: this
+     *   does not destroy it on close.
+     * @param {() => void} [options.onClose]  Called once, after close, however
+     *   it closed.
+     * @returns {{ close: () => void, element: HTMLElement, body: HTMLElement }}
+     */
+    function slideOver({ title, body, onClose }) {
+        const previouslyFocused = document.activeElement;
+
+        const closeButton = h('button', {
+            class: 'slide-over-close',
+            type: 'button',
+            'aria-label': `Close ${title}`,
+            onclick: () => close(),
+        }, '\u00d7');
+
+        const element = h('div', {
+            class: 'slide-over',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': title,
+        },
+            h('div', { class: 'slide-over-head' },
+                h('h2', { class: 'slide-over-title' }, title),
+                closeButton),
+            body);
+
+        function focusable() {
+            return Array.from(element.querySelectorAll(FOCUSABLE));
+        }
+
+        function onKeydown(event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const stops = focusable();
+            if (stops.length === 0) return;
+            const first = stops[0];
+            const last = stops[stops.length - 1];
+            const active = document.activeElement;
+            // Focus outside the panel means the trap has been escaped — pull it
+            // back rather than letting Tab walk into the page behind.
+            if (!element.contains(active)) {
+                event.preventDefault();
+                first.focus();
+                return;
+            }
+            if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+
+        let closed = false;
+        function close() {
+            if (closed) return;
+            closed = true;
+            document.removeEventListener('keydown', onKeydown);
+            element.remove();
+            if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+            if (onClose) onClose();
+        }
+
+        document.addEventListener('keydown', onKeydown);
+        document.body.append(element);
+        closeButton.focus();
+
+        return { close, element, body };
+    }
+
+    return { createModal, slideOver };
 })();

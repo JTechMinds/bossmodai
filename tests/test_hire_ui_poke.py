@@ -131,7 +131,12 @@ def test_directory_and_org_upsert_world_roster() -> None:
     assert "!roster.length" not in handler
     assert "roster.map(item =>" not in handler
 
-    org = _read("company-org.js")
+    # Re-pointed to places/office/org-view.js, which hosts the chart in
+    # Phase 3A. Same assertions: the world snapshot is merged rather than
+    # replaced, a membership change rebuilds the grid, and an empty incoming
+    # roster is still applied — bailing on it would freeze the last agent on
+    # screen after they were removed.
+    org = _read("places/office/org-view.js")
     org_handler = org.split("function handleWorldUpdate(incomingAgents) {", 1)[1].split(
         "function updateCardStatus(agent) {", 1
     )[0]
