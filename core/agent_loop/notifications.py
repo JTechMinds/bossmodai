@@ -287,7 +287,7 @@ def _build_consent_notification(
     result: dict[str, Any],
 ) -> ChatNotification | None:
     """Return the in-chat host-path consent card when a new request is created."""
-    if result.get("event") != "host_path_consent_required":
+    if result.get("event") not in {"host_path_consent_required", "workspace_preference_required"}:
         return None
     if result.get("consent_reused"):
         return None
@@ -305,11 +305,21 @@ def _build_consent_notification(
         if bound is not None:
             card = bound.as_card()
     grant_root = str(card.get("grant_root") or "").strip()
-    if grant_root and _grant_root_already_has_card(grant_root, channel_id, consent_id):
+    # Host-path waiters coalesce per grant root. Workspace preference is a
+    # different question (clone / branch / edit-host / cancel) and must not
+    # be swallowed by an unrelated host-path card on the same root.
+    if (
+        card.get("kind") != "workspace_preference"
+        and grant_root
+        and _grant_root_already_has_card(grant_root, channel_id, consent_id)
+    ):
         return None
     path = str(card.get("path") or "host path")
     reason = str(card.get("reason") or "").strip()
-    content = f"{agent.name} needs host-path access: {path}."
+    if card.get("kind") == "workspace_preference":
+        content = f"{agent.name} needs a workspace preference for {path}."
+    else:
+        content = f"{agent.name} needs host-path access: {path}."
     if reason:
         content = f"{content} {reason}"
     return ChatNotification(

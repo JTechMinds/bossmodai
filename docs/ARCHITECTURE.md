@@ -156,6 +156,8 @@ Hire-contract templates live as YAML files in https://github.com/JTechMinds/Boss
 
 ## Runtime core and host-path consent
 
-A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
+A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, workspace preference, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
 
 Out-of-root host access is not negotiated in prose. The agent must call `request_host_access` (path + reason) or attempt the named-path CLI; either opens the in-chat Allow once / Always allow / Deny card. Verbal yes/no asks are rejected. Always allow writes the same `workspace_host_roots` allowlist Settings uses. Deny is fail-closed. Denied system trees such as `/etc` stay hard-denied with no card. Allow-once grants do not apply to operator Company Files.
+
+Named host-path **writes** do not edit the host folder silently. After the path is allowlisted, a mutating CLI command opens a workspace-preference card (Clone into workspace / Make a branch when git / Edit host directly / Cancel). Fail-closed until a choice. Desk `/me` stays the default workspace. Archive denies pending cards on that origin.

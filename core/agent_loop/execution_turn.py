@@ -111,7 +111,7 @@ async def _run_execution_turn(
             except (json.JSONDecodeError, TypeError):
                 consent_payload = {}
         consent_status = consent_payload.get("status", "denied")
-        if consent_status in {"allowed_once", "always_allowed"}:
+        if consent_status in {"allowed_once", "always_allowed", "edit_host"}:
             from core.bm_cli.host_path_consent import is_request_host_access_command
             from core.bm_cli.runtime import execute_bm_cli
 
@@ -130,6 +130,12 @@ async def _run_execution_turn(
                     trigger_type=trigger_type,
                 )
                 approval_context_msg = cli_result.prompt_content
+        elif consent_status in {"cloned", "branched"}:
+            dest = consent_payload.get("clone_dest") or "/me"
+            approval_context_msg = (
+                f"Workspace preference: work in the agent workspace at {dest}. "
+                "Desk / /me is the default. Host writes stay blocked."
+            )
         else:
             note = consent_payload.get("decision_note") or "Host-path access denied."
             cmd = consent_payload.get("command", "unknown")
