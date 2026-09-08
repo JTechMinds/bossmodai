@@ -19,7 +19,7 @@ global.window.lucide = global.lucide;
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
     overlaysPath, archivePath, threadSourcePath,
-    rosterPeoplePath, rosterThreadsPath, rosterPath,
+    rosterPeoplePath, threadCreatePath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(agentStatusPath, "BossModAgentStatus");
@@ -33,6 +33,7 @@ load(overlaysPath, "BossModOverlays");
 load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");
 load(rosterPeoplePath, "BossModRosterPeople");
+load(threadCreatePath, "BossModThreadCreate");
 load(rosterThreadsPath, "BossModRosterThreads");
 load(rosterPath, "BossModRoster");
 

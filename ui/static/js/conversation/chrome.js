@@ -16,12 +16,16 @@
  * rebinds the handler on the node the operator is already pointing at rather
  * than replacing it mid-click, which is the bug the dock-era Threads pane kept
  * reintroducing.
+ *
+ * VIEW OPTIONS are a different kind of thing from actions and sit behind a `⋯`
+ * rather than beside them. `Desk` is an action on the person; "show system
+ * notifications" is a preference about the transcript, and the two were at the
+ * same level with the preference's 25-character label crowding out the one
+ * real action. The menu is where later view options go, which is what makes it
+ * a place to put things rather than a place to hide one thing.
  */
 const BossModConversationChrome = (() => {
     const { h, clear } = BossModDom;
-
-    /** What a conversation with no single face shows instead of one. */
-    const GROUP_GLYPH = '\u22EF';
 
     /**
      * Build the header.
@@ -30,10 +34,13 @@ const BossModConversationChrome = (() => {
      * @param {(message: string) => void} deps.onError  Shown to the operator
      *   when an action rejects. An action that fails silently would leave them
      *   believing a thread was archived when it was not.
-     * @param {HTMLElement} [deps.trailing]  A node pinned after the actions for
-     *   the life of the view. The receipts preference lives here rather than in
-     *   the descriptor: it belongs to the surface, not to any one conversation,
-     *   and a descriptor field would rebuild it on every switch.
+     * @param {HTMLElement[]} [deps.viewOptions]  Controls for the `⋯` menu,
+     *   built once by the caller and moved into the panel each time it opens —
+     *   so a preference keeps what it holds across every open, and across every
+     *   conversation switch. They are the surface's, not any one
+     *   conversation's, which is why they are a mount-time slot rather than a
+     *   descriptor field that would be rebuilt on each switch. With none, no
+     *   `⋯` is rendered: a menu with nothing in it is not a menu.
      * @returns {{ element: HTMLElement,
      *             apply: (chrome: object) => void,
      *             destroy: () => void }}
@@ -42,7 +49,7 @@ const BossModConversationChrome = (() => {
     function createChrome(deps) {
         const onError = deps && deps.onError;
         if (typeof onError !== 'function') throw new Error('[chrome] deps.onError is required');
-        const trailing = (deps && deps.trailing) || null;
+        const viewOptions = (deps && deps.viewOptions) || [];
 
         const gate = BossModGates.createInFlightGate();
         const actionNodes = new Map();
@@ -55,6 +62,58 @@ const BossModConversationChrome = (() => {
             avatarEl,
             h('div', { class: 'conversation-identity' }, titleEl, subtitleEl),
             actionsEl);
+
+        /** The open menu, or null. One at a time, and the `⋯` toggles it. */
+        let menu = null;
+        const menuButton = viewOptions.length
+            ? h('button', {
+                class: 'btn btn-sm conversation-action conversation-view-options',
+                type: 'button',
+                id: 'conversation-view-options',
+                'aria-label': 'View options',
+                // dialog, not menu: the panel holds a role="switch", which is
+                // not a menuitem and must not be announced as one.
+                'aria-haspopup': 'dialog',
+                'aria-expanded': 'false',
+                onclick: () => toggleMenu(),
+            }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }))
+            : null;
+
+        /** @returns {void} */
+        function closeMenu() {
+            if (!menu) return;
+            const open = menu;
+            menu = null;
+            open.close();
+        }
+
+        /**
+         * Show the view options, or put them away again.
+         *
+         * The panel is core/overlays.js's — it already owns the focus trap, Esc,
+         * and returning focus to the control that opened it. A second popover
+         * implementation is exactly the duplication the primitives exist to
+         * remove.
+         *
+         * @returns {void}
+         */
+        function toggleMenu() {
+            if (menu) {
+                closeMenu();
+                return;
+            }
+            menu = BossModOverlays.createMenu({
+                anchor: menuButton,
+                label: 'View options',
+                items: viewOptions,
+                container: element,
+                onClose: () => {
+                    menu = null;
+                    menuButton.setAttribute('aria-expanded', 'false');
+                },
+            });
+            menuButton.setAttribute('aria-expanded', 'true');
+        }
 
         let latest = null;
         /** `name|color`, or 'group'. Compared so a presence repaint does not churn the node. */
@@ -76,10 +135,7 @@ const BossModConversationChrome = (() => {
             clear(avatarEl);
             avatarEl.append(avatar
                 ? BossModAvatar.create({ name: avatar.name, color: avatar.color, size: 'md' })
-                : h('span', {
-                    class: 'avatar avatar-md avatar-group',
-                    'aria-hidden': 'true',
-                }, GROUP_GLYPH));
+                : BossModAvatar.create({ group: true, size: 'md' }));
         }
 
         async function run(btn, action) {
@@ -133,9 +189,9 @@ const BossModConversationChrome = (() => {
                 btn.remove();
                 actionNodes.delete(id);
             }
-            // Appended last on every pass, so the preference stays at the end of
-            // the row however the actions around it churn.
-            if (trailing) actionsEl.append(trailing);
+            // Appended last on every pass, so the `⋯` stays at the end of the
+            // row however the actions before it churn.
+            if (menuButton) actionsEl.append(menuButton);
             lucide.createIcons();
         }
 
@@ -143,10 +199,12 @@ const BossModConversationChrome = (() => {
             element,
             apply,
             /**
-             * Drop every action node and its binding.
+             * Drop every action node and its binding, and put the menu away —
+             * a panel left open would outlive the header it hangs off.
              * @returns {void}
              */
             destroy() {
+                closeMenu();
                 for (const btn of actionNodes.values()) {
                     btn.onclick = null;
                     btn.remove();

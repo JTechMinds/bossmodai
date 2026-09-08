@@ -18,7 +18,7 @@ global.window.lucide = global.lucide;
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
-    "BossModConsentCard", "BossModEmptyState",
+    "BossModConsentCard", "BossModOverlays", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
@@ -278,23 +278,77 @@ async function main() {
         && avatarSlot().querySelectorAll(".avatar").length === 1;
     if (!chromeGroupGlyphForThreads) throw new Error("a thread must get the group glyph");
 
-    // The receipts preference moved into the action row. It is a preference,
-    // not a per-conversation action, so it is a mount-time slot rather than a
-    // field on a descriptor that changes with every conversation.
+    // The receipts preference moved BEHIND the `⋯`. It is a preference about
+    // the view, not an action on the person, and its 25-character label was
+    // crowding the header's one real action. It is still a mount-time slot
+    // rather than a field on a descriptor that changes with every
+    // conversation, which is what lets it outlive a switch.
     const actionRow = conversation.element.querySelector(".conversation-actions");
-    const receiptsLiveInTheActionRow =
-        actionRow.querySelectorAll(".switch-row").length === 1
+    const headerHasNoReceiptsSwitch = actionRow.querySelectorAll(".switch-row").length === 0
         && conversation.element.querySelectorAll(".conversation-controls").length === 0;
-    if (!receiptsLiveInTheActionRow) {
-        throw new Error("the receipts toggle belongs in the chrome's action row");
+    if (!headerHasNoReceiptsSwitch) {
+        throw new Error("the receipts switch must not sit in the header row");
     }
+
+    const dots = conversation.element.querySelector("#conversation-view-options");
+    if (!dots) throw new Error("the header must offer a view-options menu");
+    if (dots.getAttribute("aria-label") !== "View options") {
+        throw new Error(`icon-only needs its own name, got "${dots.getAttribute("aria-label")}"`);
+    }
+    if (dots.getAttribute("aria-expanded") !== "false") {
+        throw new Error("the `⋯` must report its panel as closed before it is opened");
+    }
+    await dots.dispatchClick();
+    const panel = conversation.element.querySelector(".menu");
+    const receiptsToggleReachableFromMenu = Boolean(panel)
+        && panel.getAttribute("role") === "dialog"
+        && panel.querySelectorAll(".switch-row").length === 1
+        && dots.getAttribute("aria-expanded") === "true";
+    if (!receiptsToggleReachableFromMenu) {
+        throw new Error(`the receipts toggle must be reachable from the menu: `
+            + `${panel && panel.getAttribute("role")}`);
+    }
+
+    // Toggling it from its new home writes the SAME storage key it always did.
+    const receiptsNode = panel.querySelector(".switch-row");
+    await receiptsNode.dispatchClick();
+    const receiptsPreferencePersists =
+        global.window.localStorage.getItem("bossmod.chat.showSystemReceipts") === "false"
+        && receiptsNode.getAttribute("aria-checked") === "false";
+    if (!receiptsPreferencePersists) {
+        throw new Error(`the preference must persist from its new home, got `
+            + `"${global.window.localStorage.getItem("bossmod.chat.showSystemReceipts")}"`);
+    }
+    await receiptsNode.dispatchClick();
+
+    // Closing returns focus to the control that opened it, rather than
+    // dropping it on the body behind.
+    await dots.dispatchClick();
+    const menuReturnsFocusToItsButton = conversation.element.querySelectorAll(".menu").length === 0
+        && documentStub.activeElement === dots
+        && dots.getAttribute("aria-expanded") === "false";
+    if (!menuReturnsFocusToItsButton) {
+        throw new Error("closing the menu must return focus to the `⋯`");
+    }
+
+    // Re-opening moves the SAME control back in rather than building a second
+    // one, which is what keeps the preference it holds.
+    await dots.dispatchClick();
+    const receiptsNodeSurvivesReopen =
+        conversation.element.querySelector(".menu").querySelector(".switch-row") === receiptsNode;
+    if (!receiptsNodeSurvivesReopen) {
+        throw new Error("re-opening the menu must reuse the preference control");
+    }
+    await dots.dispatchClick();
+
     // ...and it survives a conversation switch rather than being rebuilt with
     // the actions around it.
-    const receiptsNode = conversation.element.querySelector(".switch-row");
     await conversation.open("a", "agent");
-    if (conversation.element.querySelector(".switch-row") !== receiptsNode) {
+    await dots.dispatchClick();
+    if (conversation.element.querySelector(".menu").querySelector(".switch-row") !== receiptsNode) {
         throw new Error("the receipts toggle must outlive a conversation switch");
     }
+    await dots.dispatchClick();
 
     // ─── The empty conversation offers the two things you can do ───
     await conversation.open("d", "agent");
@@ -347,7 +401,11 @@ async function main() {
         chromeAvatarNodeIsStable,
         chromeActionCarriesItsIcon,
         chromeGroupGlyphForThreads,
-        receiptsLiveInTheActionRow,
+        headerHasNoReceiptsSwitch,
+        receiptsToggleReachableFromMenu,
+        receiptsPreferencePersists,
+        menuReturnsFocusToItsButton,
+        receiptsNodeSurvivesReopen,
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
     }));

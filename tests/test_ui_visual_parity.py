@@ -253,16 +253,20 @@ def test_one_toggle_control() -> None:
         p.relative_to(JS).as_posix() for p in _app_js()
         if not p.relative_to(JS).as_posix().startswith("settings/")
         and (
-            "'role': 'switch'" in _read(p)
-            or 'role="switch"' in _read(p)
+            "'role': 'switch'" in _code(_read(p))
+            or 'role="switch"' in _code(_read(p))
             # The two literal spellings above are only the two this tree happens
             # to use today; `setAttribute('role', 'switch')` slips past both, as
             # a mutation confirmed. aria-checked is the attribute a switch
             # cannot work without whatever spelling builds it, so it is the
             # honest thing to key on.
-            or "aria-checked" in _read(p)
+            or "aria-checked" in _code(_read(p))
         )
     )
+    # Read through _code(), for the reason _code() exists: core/overlays.js and
+    # conversation/chrome.js both explain IN PROSE that the view-options panel
+    # is a role="dialog" precisely BECAUSE it carries a role="switch", and a
+    # naive substring check read those two explanations as two new switches.
     assert definers == ["core/switch.js"], definers
 
     for caller in SWITCH_CALL_SITES:
@@ -325,6 +329,7 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "agent-status.js",
     JS / "shell" / "roster-people.js",
+    JS / "shell" / "thread-create.js",
     JS / "shell" / "roster-threads.js",
     JS / "shell" / "roster.js",
 ]
@@ -551,8 +556,11 @@ def test_people_rows_are_clean_until_select_mode() -> None:
     exit_body = roster.split("function exitSelectMode() {", 1)[1].split("\n        }", 1)[0]
     assert "selectMode = false" in exit_body
     assert "selected.clear()" in exit_body, exit_body
-    # Nothing hides the control instead of removing it.
-    assert "roster-select" not in _read(CSS / "shell.css")
+    # Nothing hides the CONTROL instead of removing it. Matched as a whole
+    # class name rather than as a substring: the polish round added
+    # `.roster-select-actions` for select mode's own hint-and-buttons block,
+    # and a substring ban would read that as the checkbox coming back.
+    assert re.search(r"\.roster-select(?![-\w])", _read(CSS / "shell.css")) is None
 
 
 def test_select_mode_is_proven_on_the_built_rail() -> None:
@@ -589,8 +597,13 @@ def test_the_need_dot_sits_beside_the_name_not_inside_it() -> None:
 
 
 def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
-    """`New thread` opens the mode; `Create with N` and `Cancel` close it."""
-    threads = _read(JS / "shell/roster-threads.js")
+    """`New thread` opens the mode; `Create with N` and `Cancel` close it.
+
+    Re-pointed at shell/thread-create.js, which the polish round split out of
+    the Threads half: reading the thread list and making a new one are two
+    jobs, and the second is the one this describes.
+    """
+    threads = _read(JS / "shell/thread-create.js")
     assert "'New thread'" in threads
     assert "Create with ${" in threads
     assert "'Cancel'" in threads
@@ -660,11 +673,16 @@ def test_the_receipts_band_is_gone_and_the_preference_is_not() -> None:
     # come back as dead styling.
     assert "conversation-controls" not in receipts
     assert "conversation-controls" not in _read(CSS / "conversation.css")
-    # It is mounted into the chrome's action row, as a slot rather than as a
-    # field of a descriptor that is rebuilt on every conversation switch.
+    # It is mounted into the chrome as a SLOT rather than as a field of a
+    # descriptor that is rebuilt on every conversation switch. The slot moved
+    # from the action row to the `⋯` menu in the polish round — the property
+    # this guards is the slot, not which row it lands in, and the behaviour
+    # behind it is proven on built nodes by the conversation harness.
     controller = _read(CONVERSATION / "conversation.js")
-    assert "trailing: systemReceipts.element," in controller
-    assert "deps.trailing" in _read(CONVERSATION / "chrome.js")
+    assert "viewOptions: [systemReceipts.element]," in controller
+    assert "deps.viewOptions" in _read(CONVERSATION / "chrome.js")
+    # ...and it is still not a descriptor field, which would rebuild it.
+    assert "avatar?, actions}" in _read(CONVERSATION / "chrome.js")
 
 
 def test_bubbles_are_tinted_and_timestamps_recede() -> None:

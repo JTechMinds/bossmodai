@@ -48,16 +48,22 @@
   font-size: 12px;
 }
 
+/* A live region that is built once and filled on demand must not paint a
+   bordered box around nothing while it is empty. Same rule
+   `.needs-bar-error:empty` carries in conversation.css. */
+.context-error:empty { display: none; }
+
 /* Composes .btn.btn-sm from controls.css; the accent ink is this column's. */
 .context-link { color: var(--accent); font-weight: 500; }
 
 /* ─── Mini office ───
  *
- * A map, not a list. Rooms are whatever `agent.location` says, so the layout
- * rule is positional rather than by name: two columns, and the FIRST room in
- * the (stable, alphabetical, Unknown-last) sort spans both. mini-office.js
- * stamps `data-tone` from the same sorted position, which is what keeps a room
- * from changing colour because somebody walked into another one.
+ * A map, not a list. The rooms come from GET /api/map — every room on the
+ * floor, occupied or not — plus an Unknown bucket for anyone the map cannot
+ * place, so the layout rule is positional rather than by name: two columns,
+ * and the FIRST room in map order spans both. mini-office.js stamps
+ * `data-tone` from that same position, and map order does not change when
+ * somebody walks, so a room does not change colour because an agent left it.
  */
 
 .mini-office-rooms {
@@ -94,13 +100,17 @@
    name is the only text on the tile, so it takes the ink rather than --hint,
    which measures 3.81-4.05:1 on these tints and would fail AA. */
 .mini-office-room[data-tone="blue"] { background: var(--blue); }
-.mini-office-room[data-tone="blue"] .mini-office-room-name { color: var(--blue-ink); }
+.mini-office-room[data-tone="blue"] .mini-office-room-name,
+.mini-office-room[data-tone="blue"] .mini-office-room-empty { color: var(--blue-ink); }
 .mini-office-room[data-tone="amber"] { background: var(--amber); }
-.mini-office-room[data-tone="amber"] .mini-office-room-name { color: var(--amber-ink); }
+.mini-office-room[data-tone="amber"] .mini-office-room-name,
+.mini-office-room[data-tone="amber"] .mini-office-room-empty { color: var(--amber-ink); }
 .mini-office-room[data-tone="teal"] { background: var(--teal); }
-.mini-office-room[data-tone="teal"] .mini-office-room-name { color: var(--teal-ink); }
+.mini-office-room[data-tone="teal"] .mini-office-room-name,
+.mini-office-room[data-tone="teal"] .mini-office-room-empty { color: var(--teal-ink); }
 .mini-office-room[data-tone="pink"] { background: var(--pink); }
-.mini-office-room[data-tone="pink"] .mini-office-room-name { color: var(--pink-ink); }
+.mini-office-room[data-tone="pink"] .mini-office-room-name,
+.mini-office-room[data-tone="pink"] .mini-office-room-empty { color: var(--pink-ink); }
 
 .mini-office-room-name {
   margin: 0;
@@ -112,6 +122,15 @@
 }
 
 .mini-office-seats { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* An empty room reads as an empty room, not as a box that failed to render.
+   It takes the tone's own ink above rather than --hint, which measures
+   3.81-4.05:1 on these tints and would fail AA. */
+.mini-office-room-empty {
+  margin: 0;
+  color: var(--hint);
+  font-size: 11px;
+}
 
 /* 24px, not the concept's 18px: this is a control, and 18px is under the
    SC 2.5.8 floor. The chip avatar inside it is 14px of paint — the same split
@@ -146,11 +165,34 @@
   font-size: 12px;
 }
 
-/* ─── Desk ─── */
+/* ─── Desk ───
+ *
+ * Three levels, not one. The desk stacked eight blocks at the same visual
+ * weight and the operator read the result as slapped together; what follows is
+ * the hierarchy that replaced it.
+ *
+ *   1. .desk-profile — who this is, closed by a rule.
+ *   2. .desk-section — the work, each under its own label with its action
+ *      right-aligned on the label's row.
+ *   3. .desk-footer  — pinned to the bottom: quiet facts and quiet actions.
+ *
+ * The panel fills the column so the footer has a bottom to be pinned to; a
+ * taller desk simply scrolls.
+ */
 
-.desk-panel { display: flex; flex-direction: column; gap: 14px; }
+.desk-panel { display: flex; flex-direction: column; min-height: 100%; }
+
+.desk-body { display: flex; flex-direction: column; flex: 1 1 auto; gap: 14px; }
 
 .desk-section { display: flex; flex-direction: column; gap: 6px; }
+
+/* The label and its action share one baseline; the action is pushed right
+   rather than the label padded, so a long label cannot shove it off. */
+.desk-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
 
 .desk-section-title {
   margin: 0;
@@ -161,7 +203,18 @@
   color: var(--hint);
 }
 
-.desk-profile { display: flex; flex-direction: column; gap: 6px; }
+/* Composes .btn-link from controls.css: accent ink, no border, no box. */
+.desk-section-action { margin-left: auto; font-size: 11px; }
+
+/* ONE block that answers "who is this", closed by a rule so everything below
+   reads as a separate question. */
+.desk-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
 
 .desk-profile-head { display: flex; align-items: center; gap: 8px; }
 
@@ -179,6 +232,20 @@
   color: var(--muted);
 }
 
+/* The done/fail contract, collapsed. It is reference material the operator
+   reads once; at full amber volume above the task list it outranked the task
+   it qualifies. The summary is quiet and the amber only appears once it has
+   been asked for. */
+.desk-contract { margin: -4px 0 0; }
+
+.desk-contract-summary {
+  color: var(--hint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.desk-contract[open] .desk-contract-summary { margin-bottom: 6px; }
+
 .desk-bar {
   margin: 0;
   padding: 8px 10px;
@@ -188,6 +255,14 @@
   color: var(--amber-ink);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* An empty section is a section. Dashed, so it reads as a placeholder rather
+   than as a gap where something failed to render. */
+.desk-empty {
+  padding: 9px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
 }
 
 .desk-task {
@@ -227,30 +302,39 @@
 .desk-note-title { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-word; }
 .desk-note-meta { font-size: 11px; color: var(--hint); }
 
+/* Pinned to the bottom of the column, under a rule: the desk's facts and the
+   actions on the agent, below everything that is about the agent's work. */
 .desk-footer {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
 
 .desk-meta { margin: 0; font-size: 11px; color: var(--hint); word-break: break-word; }
 
-.desk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.desk-action {
-  min-height: 24px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 500;
+/* Label left, value right. --hint on --panel measures 4.83:1. */
+.desk-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--hint);
 }
 
-.desk-action.danger { border-color: var(--alert); color: var(--alert); }
+.desk-kv-value { font-weight: 500; color: var(--ink); word-break: break-all; }
+
+.desk-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+
+/* Composes .btn-link: text, not four equal boxes competing with the content
+   above them. base.css keeps the 24px minimum target (SC 2.5.8) on every
+   button, so losing the border does not lose the target. */
+.desk-action { font-size: 12px; font-weight: 500; }
+
+.desk-action.danger { color: var(--alert); }
 .desk-action:disabled { opacity: 0.55; pointer-events: none; }
 
 /* ─── Desk files ─── */
@@ -270,7 +354,21 @@
 
 .desk-crumb-sep { color: var(--hint); }
 
-.desk-files-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+/* Where the folder on screen leads. Quiet links composing .btn-link, spaced
+   like a row of links rather than a row of boxes. */
+.desk-files-controls { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.desk-files-link { font-size: 11px; }
+
+/* The folder being shown. Not a section title: the panel already labels this
+   section, and two uppercase headings in a row was half of why the desk read
+   as unstructured. */
+.desk-files-path {
+  margin: 0;
+  font-size: 11px;
+  color: var(--hint);
+  word-break: break-all;
+}
 
 .desk-files-btn {
   min-height: 24px;

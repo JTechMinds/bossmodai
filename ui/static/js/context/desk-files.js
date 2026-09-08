@@ -97,6 +97,17 @@ const BossModDeskFiles = (() => {
             return !destroyed && load.isCurrent(loadId) && activePath === requestedPath;
         }
 
+        /**
+         * Where to go from the folder on screen.
+         *
+         * Quiet links, not bordered buttons: at the desk root these are
+         * `Projects`, `Open Folder` and `Refresh`, and three equal boxes
+         * outweighed the files they act on. They stay HERE beside the
+         * breadcrumbs because every one is scoped to the path on screen.
+         *
+         * @param {string} path
+         * @returns {HTMLElement}
+         */
         function controlsRow(path) {
             const goingToProjects = !String(path).startsWith('/projects');
             const rootTarget = goingToProjects ? '/projects' : ROOT_PATH;
@@ -104,7 +115,7 @@ const BossModDeskFiles = (() => {
             const row = h('div', { class: 'desk-files-controls' });
 
             row.append(h('button', {
-                class: 'desk-files-btn',
+                class: 'btn-link desk-files-link',
                 id: 'desk-root-switch-btn',
                 type: 'button',
                 'data-path': rootTarget,
@@ -113,7 +124,7 @@ const BossModDeskFiles = (() => {
 
             if (TOP_PATHS.indexOf(path) === -1) {
                 row.append(h('button', {
-                    class: 'desk-files-btn',
+                    class: 'btn-link desk-files-link',
                     id: 'desk-open-parent-btn',
                     type: 'button',
                     onclick: () => { void open(parentDeskPath(path)); },
@@ -121,7 +132,7 @@ const BossModDeskFiles = (() => {
             }
             if (path && path !== '/') {
                 row.append(h('button', {
-                    class: 'desk-files-btn',
+                    class: 'btn-link desk-files-link',
                     id: 'desk-open-folder-btn',
                     type: 'button',
                     onclick: () => {
@@ -135,7 +146,7 @@ const BossModDeskFiles = (() => {
                 }, 'Open Folder'));
             }
             row.append(h('button', {
-                class: 'desk-files-btn',
+                class: 'btn-link desk-files-link',
                 id: 'desk-refresh-btn',
                 type: 'button',
                 onclick: () => { void open(path); },
@@ -159,7 +170,9 @@ const BossModDeskFiles = (() => {
 
         function entryList(entries) {
             if (!Array.isArray(entries) || entries.length === 0) {
-                return h('p', { class: 'context-empty' }, EMPTY_COPY);
+                // Dashed, so an empty folder reads as an empty folder rather
+                // than as a section that failed to render.
+                return h('p', { class: 'context-empty desk-empty' }, EMPTY_COPY);
             }
             const list = h('div', { class: 'desk-entries' });
             entries.forEach((entry) => {
@@ -182,7 +195,9 @@ const BossModDeskFiles = (() => {
             const path = String(payload.path || ROOT_PATH);
             clear(element);
             element.append(
-                h('p', { class: 'desk-section-title' }, String(payload.name || 'Desk')),
+                // The folder being shown, not a second section header: the
+                // panel already labels this section "Files".
+                h('p', { class: 'desk-files-path' }, String(payload.name || 'Desk')),
                 breadcrumbs(payload.breadcrumbs),
                 controlsRow(path),
                 entryList(payload.entries));

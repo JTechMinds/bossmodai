@@ -3,7 +3,12 @@
  *
  * The top few items across both boards the agent appears on: what they are
  * carrying (`scope=self`) and what they own but handed out (`scope=owned`).
- * "See all" hands the rest to the Board, filtered to this agent.
+ *
+ * CONTENT ONLY. The section header and its right-aligned "See all" belong to
+ * desk-panel.js, which owns the desk's one section vocabulary — "where all of
+ * this agent's tasks live" is a panel-level fact, not something the list that
+ * loads three of them should know, and a header authored here is a header that
+ * drifts from the three beside it.
  *
  * Split out of desk-panel.js because the panel would otherwise pass the
  * ~300-line cap, and because this is the only part of the desk with a request
@@ -23,28 +28,19 @@ const BossModDeskTasks = (() => {
      * @param {object} deps
      * @param {Function} deps.api      Authenticated fetch helper.
      * @param {string}   deps.agentId
-     * @param {(placeId: string, params?: object) => void} deps.navigate
      * @returns {{ element: HTMLElement, destroy: () => void }}
-     * @throws {Error} When api, agentId, or navigate is missing.
+     * @throws {Error} When api or agentId is missing.
      */
     function createDeskTasks(deps) {
-        const { api, agentId, navigate } = deps || {};
+        const { api, agentId } = deps || {};
         if (typeof api !== 'function') throw new Error('[desk-tasks] deps.api is required');
         if (!agentId) throw new Error('[desk-tasks] deps.agentId is required');
-        if (typeof navigate !== 'function') throw new Error('[desk-tasks] deps.navigate is required');
 
         const load = BossModGates.createLoadGeneration();
         const listEl = h('div', { class: 'desk-tasks' });
         let destroyed = false;
 
-        const element = h('section', { class: 'desk-section' },
-            h('p', { class: 'desk-section-title' }, 'Tasks'),
-            listEl,
-            h('button', {
-                class: 'desk-action',
-                type: 'button',
-                onclick: () => navigate('board', { agentFilter: agentId }),
-            }, 'See all'));
+        const element = listEl;
 
         function boardUrl(scope) {
             return `/api/tasks/board?agent_id=${encodeURIComponent(agentId)}&scope=${scope}`;
@@ -128,7 +124,10 @@ const BossModDeskTasks = (() => {
 
             clear(listEl);
             if (tasks.length === 0) {
-                listEl.append(h('p', { class: 'context-empty' }, 'No board items for this agent.'));
+                // A dashed placeholder, so an empty section still reads as a
+                // section rather than as a gap that failed to render.
+                listEl.append(h('p', { class: 'context-empty desk-empty' },
+                    'No board items for this agent.'));
                 return;
             }
             tasks.slice(0, TOP_N).forEach((task) => listEl.append(card(task)));

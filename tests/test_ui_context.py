@@ -122,8 +122,16 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
     source = _read(CONTEXT / "mini-office.js")
     assert "UNPLACED_ROOM = 'Unknown'" in source
     assert "agent.location" in source
-    # A summary, not a second canvas: no tilemap, no coordinates, no map fetch.
-    for forbidden in ("getContext", "/api/map", "'canvas'", "agent.x", "agent.y"):
+    # A summary, not a second canvas. The ban used to include /api/map itself,
+    # which was the right property spelled through the wrong proxy: the room
+    # LIST has to come from the floor plan or the panel only ever draws the
+    # rooms somebody is standing in. What must stay out is the GEOMETRY — the
+    # tiles, the dimensions, the desks, and every coordinate — because that is
+    # what would make this a second renderer instead of a summary.
+    assert "mapData.rooms" in source
+    for forbidden in ("getContext", "'canvas'", "agent.x", "agent.y",
+                      "mapData.tiles", "mapData.width", "mapData.height",
+                      "mapData.desks", "bounds"):
         assert forbidden not in source, f"the mini office must not render a map ({forbidden})"
 
 
@@ -166,7 +174,14 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     panel = _read(CONTEXT / "desk-panel.js")
     assert "BossModDeskNotes.createDeskNotes(" in panel
     assert "What done looks like for this agent:" in panel
-    assert panel.index("const bar = who.done_fail_bar") < panel.index("desk-bar")
+    # The copy is read off the agent row and rendered into the .desk-bar node,
+    # which the polish round moved inside a <details> disclosure. Source order
+    # was the old proxy for that and stopped meaning anything once the node was
+    # built at construction rather than inside the render; the harness reads
+    # the rendered VALUE instead, which is what the proxy was standing in for.
+    assert "const bar = who.done_fail_bar" in panel
+    assert "contractEl.append(bar ?" in panel
+    assert _harness()["deskFields"]["contract"] is True
     # The section is drained with the rest of the panel.
     assert "notes.destroy();" in panel
 

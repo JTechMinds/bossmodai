@@ -37,6 +37,29 @@
 .modal-action.danger { border-color: var(--alert); background: var(--alert); color: var(--panel); }
 .modal-action.quiet { background: var(--panel); color: var(--ink); }
 
+/* ─── Menu ───
+   A small panel hanging off the control that opened it, positioned against its
+   container rather than by measuring the anchor in JavaScript. Non-modal: the
+   page behind is not blocked by a handful of view options, so there is no
+   backdrop and no aria-modal. */
+
+.menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 12px;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
 /* ─── Popover ───
    Anchored under the header, not centred: it belongs to the bell. */
 

@@ -16,6 +16,19 @@
  * — never hidden with CSS. A hidden checkbox is still a tab stop and still
  * holds a stale `checked`, which is exactly how a selection nobody can see
  * builds the wrong thread the next time.
+ *
+ * In select mode the ROW is what selects. A row already carries two controls
+ * with their own jobs — the avatar opens the desk, the name opens the
+ * conversation — and while the mode is on both of them toggle instead. They
+ * are RE-BOUND rather than wrapped: a button inside a button is invalid markup
+ * and unreachable by keyboard, so there is no row-sized control over the top
+ * of the two that are already there. What that costs is honest: the gaps and
+ * the padding between the two controls are not targets, so "the whole row" is
+ * really "the face and the name", which is what the operator was aiming at.
+ *
+ * The checkbox stays, and stops being the hit target: it is the mode's only
+ * visible state, and a 16px box is a poor thing to have to hit. The row
+ * carries the state too, through `data-selected`.
  */
 const BossModRosterPeople = (() => {
     const { h, clear } = BossModDom;
@@ -99,23 +112,87 @@ const BossModRosterPeople = (() => {
         }
 
         /**
-         * One row's inclusion checkbox. Built only while the mode is on.
+         * Build one person's row.
+         *
+         * Out of select mode the avatar opens the desk and the name opens the
+         * conversation. In it, both toggle this row's inclusion instead — the
+         * same three controls, re-bound, so nothing is nested and every target
+         * is still a real <button> that Enter and Space reach (SC 2.1.1).
+         *
          * @param {object} agent
+         * @param {boolean} paused
+         * @param {Set<string>} needy
          * @returns {HTMLElement}
          */
-        function selectBox(agent) {
-            const box = h('input', {
-                class: 'roster-select',
-                type: 'checkbox',
-                'aria-label': `Include ${agent.name} in a new thread`,
-                onchange: (event) => {
-                    if (event.target.checked) selected.add(agent.id);
-                    else selected.delete(agent.id);
-                    onSelectionChange();
+        function personRow(agent, paused, needy) {
+            const selecting = selectMode;
+            const includeLabel = `Include ${agent.name} in a new thread`;
+            const box = selecting
+                ? h('input', {
+                    class: 'roster-select',
+                    type: 'checkbox',
+                    'aria-label': includeLabel,
+                    onchange: (event) => setSelected(event.target.checked === true),
+                })
+                : null;
+            if (box) box.checked = selected.has(agent.id);
+
+            /**
+             * Record this row's inclusion, and reflect it everywhere it shows.
+             *
+             * In place rather than through render(): a repaint on every click
+             * would replace the node the operator is pointing at and take
+             * keyboard focus with it.
+             *
+             * @param {boolean} on
+             */
+            function setSelected(on) {
+                if (on) selected.add(agent.id);
+                else selected.delete(agent.id);
+                box.checked = on;
+                li.setAttribute('data-selected', String(on));
+                onSelectionChange();
+            }
+
+            const toggle = () => setSelected(!selected.has(agent.id));
+
+            const li = h('li', {
+                class: 'roster-row',
+                // Absent out of the mode rather than "false": the row has no
+                // selectable state to report when there is no selection.
+                'data-selecting': selecting ? 'true' : null,
+                'data-selected': selecting ? String(selected.has(agent.id)) : null,
+            },
+                box,
+                // The rail's circle carried no initial at all before the
+                // shared primitive: eight identically-shaped colour dots
+                // and no way to tell them apart on a monochrome display.
+                BossModAvatar.create({
+                    name: agent.name,
+                    color: agent.color,
+                    size: 'md',
+                    interactive: true,
+                    label: selecting ? includeLabel : `Open ${agent.name}'s desk`,
+                    onClick: selecting ? toggle : () => onOpenDesk(agent.id),
+                }),
+                h('button', {
+                    class: 'roster-person',
+                    type: 'button',
+                    'data-agent-id': agent.id,
+                    // The visible label is the name, and the accessible name
+                    // contains it, so the two agree (SC 2.5.3) while saying
+                    // what the click actually does in this mode.
+                    'aria-label': selecting ? includeLabel : null,
+                    onclick: selecting ? toggle : () => onOpenConversation(agent.id),
                 },
-            });
-            box.checked = selected.has(agent.id);
-            return box;
+                    h('span', { class: 'roster-name' }, agent.name),
+                    h('span', { class: 'roster-status' }, statusLine(agent, paused, needy))),
+                // A sibling of the name button: inside the text column the
+                // dot pushed the status line around.
+                needy.has(agent.id)
+                    ? h('span', { class: 'roster-need-dot', 'aria-hidden': 'true' })
+                    : null);
+            return li;
         }
 
         function render() {
@@ -143,34 +220,7 @@ const BossModRosterPeople = (() => {
 
             const paused = store.getState().runtimePaused === true;
             const needy = agentsWithNeeds();
-            visible.forEach((agent) => {
-                list.append(h('li', { class: 'roster-row' },
-                    selectMode ? selectBox(agent) : null,
-                    // The rail's circle carried no initial at all before the
-                    // shared primitive: eight identically-shaped colour dots
-                    // and no way to tell them apart on a monochrome display.
-                    BossModAvatar.create({
-                        name: agent.name,
-                        color: agent.color,
-                        size: 'md',
-                        interactive: true,
-                        label: `Open ${agent.name}'s desk`,
-                        onClick: () => onOpenDesk(agent.id),
-                    }),
-                    h('button', {
-                        class: 'roster-person',
-                        type: 'button',
-                        'data-agent-id': agent.id,
-                        onclick: () => onOpenConversation(agent.id),
-                    },
-                        h('span', { class: 'roster-name' }, agent.name),
-                        h('span', { class: 'roster-status' }, statusLine(agent, paused, needy))),
-                    // A sibling of the name button: inside the text column the
-                    // dot pushed the status line around.
-                    needy.has(agent.id)
-                        ? h('span', { class: 'roster-need-dot', 'aria-hidden': 'true' })
-                        : null));
-            });
+            visible.forEach((agent) => list.append(personRow(agent, paused, needy)));
             lucide.createIcons();
         }
 

@@ -19,6 +19,7 @@ HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 MODULES = [
     ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
     ("core", "agent-status.js"), ("shell", "roster-people.js"),
+    ("shell", "thread-create.js"),
     ("shell", "roster-threads.js"), ("shell", "roster.js"),
 ]
 
@@ -75,17 +76,22 @@ def test_creating_a_thread_clears_the_people_selection() -> None:
 def test_roster_owns_the_thread_creation_copy() -> None:
     """Moved from company-view.js; test_ui_channel_gaps.py points here from Task 14.
 
-    Phase 2B split the rail: the copy travelled with the Threads half, so the
-    subject is shell/roster-threads.js. The property — the roster rail, not a
-    dock-era pane, owns thread creation — is unchanged.
+    Phase 2B split the rail and the copy travelled with the Threads half; the
+    polish round split that half again, so the copy now lives in
+    shell/thread-create.js. The property — the roster rail, not a dock-era
+    pane, owns thread creation — is unchanged, and the chain from the rail to
+    the copy is asserted rather than assumed.
     """
-    source = _threads_source()
+    source = (JS / "shell" / "thread-create.js").read_text(encoding="utf-8")
     # Re-pointed in the visual-parity pass: the one permanent "Create Thread"
     # button became two states — `New thread` opens select mode, `Create with N`
-    # closes it. The property is the same: the rail owns thread creation.
+    # closes it. Re-pointed again in the polish round: `New thread` is the `+`
+    # on the section header, so the copy is its accessible name.
     assert "'New thread'" in source
     assert "Create with ${" in source
     assert "start a shared thread" in source
-    # People owns the selection a thread is created from; Threads only reads it.
+    # People owns the selection a thread is created from; this only reads it.
     assert "deps.getSelection" in source
+    # rail -> Threads -> creation. Each link named, so a broken one is loud.
     assert "BossModRosterThreads.createThreads(" in _source()
+    assert "BossModThreadCreate.createThreadControls(" in _threads_source()

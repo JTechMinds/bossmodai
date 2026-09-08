@@ -32,6 +32,16 @@ const BossModAvatar = (() => {
     /** The sizes controls.css defines. An unknown one is a typo, not a default. */
     const SIZES = Object.freeze(['chip', 'sm', 'md', 'lg']);
 
+    /**
+     * What a conversation with no single face shows instead of one.
+     *
+     * U+22EF, MIDLINE HORIZONTAL ELLIPSIS. It lived in conversation/chrome.js
+     * as a private constant beside a hand-built span; the rail's thread rows
+     * needed the same node, and a second copy of a shared shape is what this
+     * module exists to prevent.
+     */
+    const GROUP_GLYPH = '\u22EF';
+
     /** What an agent with no colour renders as. Measured 5.33:1. */
     const NEUTRAL = Object.freeze({ bg: 'var(--line)', ink: 'var(--muted)' });
 
@@ -191,6 +201,10 @@ const BossModAvatar = (() => {
      * @param {string|null} options.name          Drives the initial.
      * @param {string|null} options.color         The agent's stored hex.
      * @param {'chip'|'sm'|'md'|'lg'} [options.size='md']
+     * @param {boolean} [options.group=false]     A conversation with no one
+     *   face: the `⋯` glyph on the neutral `.avatar-group` pair rather than a
+     *   derived tint. `name` and `color` are ignored, because a thread has
+     *   neither.
      * @param {boolean} [options.interactive=false]  True builds a <button>
      *   carrying `label` as its accessible name — Enter and Space then work
      *   with no key handling of its own (SC 2.1.1). False builds a
@@ -199,15 +213,27 @@ const BossModAvatar = (() => {
      * @param {string} [options.label='']         Required when interactive.
      * @param {Function|null} [options.onClick=null]  Required when interactive.
      * @returns {HTMLElement}
-     * @throws {Error} On an unknown size, or an interactive avatar with no
-     *   accessible name or no handler — each of those renders a control that
-     *   looks live and is not.
+     * @throws {Error} On an unknown size, on an interactive group avatar, or
+     *   on an interactive avatar with no accessible name or no handler — each
+     *   of those renders a control that looks live and is not.
      */
     function create(options) {
         const opts = options || {};
         const size = opts.size || 'md';
         if (!SIZES.includes(size)) {
             throw new Error(`[avatar] unknown size "${size}"; expected one of ${SIZES.join(', ')}`);
+        }
+        // Always decorative: both callers put it beside text that already names
+        // the thread, so a second announcement would be noise, and there is no
+        // one person for a click on it to be about.
+        if (opts.group) {
+            if (opts.interactive) {
+                throw new Error('[avatar] a group avatar is decorative and cannot be interactive');
+            }
+            return h('span', {
+                class: `avatar avatar-${size} avatar-group`,
+                'aria-hidden': 'true',
+            }, GROUP_GLYPH);
         }
         const { bg, ink } = tintFor(opts.color === undefined ? null : opts.color);
         const attrs = {
@@ -232,6 +258,6 @@ const BossModAvatar = (() => {
 
     return {
         tintFor, create, initial, isSeedLegible,
-        TINT_WEIGHT, AA_RATIO, SEED_MAX_LUMINANCE,
+        TINT_WEIGHT, AA_RATIO, SEED_MAX_LUMINANCE, GROUP_GLYPH,
     };
 })();

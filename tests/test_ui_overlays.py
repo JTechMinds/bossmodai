@@ -23,7 +23,10 @@ def test_both_overlays_share_one_focus_trap() -> None:
     """
     source = (JS / "core" / "overlays.js").read_text(encoding="utf-8")
     assert source.count("function trapKeydown(") == 1
-    assert source.count("const onKeydown = (event) => trapKeydown(event, element, close);") == 2
+    # Three overlays share it now — the modal, the slide-over, and the anchored
+    # menu the chat header's `⋯` opens. The count is exact on purpose: a fourth
+    # overlay that quietly skipped the trap would otherwise pass.
+    assert source.count("const onKeydown = (event) => trapKeydown(event, element, close);") == 3
     # The trap must consider everything focusable in the overlay, not one row.
     assert "element.querySelectorAll(FOCUSABLE)" in source
     # And it must recover focus that has already escaped, rather than shrugging.
@@ -46,6 +49,13 @@ def test_modal_accessibility_contract() -> None:
         "escClosesWithoutConfirming": True,
         "restoresFocus": True,
         "unbindsOnClose": True,
+        # The third shape, added with the chat header's `⋯`: non-modal and
+        # anchored, and owing the same keyboard contract as the other two.
+        "menuFocusesFirstOption": True,
+        "menuTrapsTab": True,
+        "menuEscCloses": True,
+        "menuRestoresFocusToTheAnchor": True,
+        "menuNeedsAnAnchor": True,
     }
 
 

@@ -5,16 +5,24 @@
  * and who needs me", and hands off to the Office place for the map and to
  * Metrics for the numbers.
  *
- * Rooms come from `agent.location` on the world snapshot — a room NAME that
- * db.get_world_state() derives from coordinates, or nothing at all when the
- * agent is off-map. There is no room id on the wire, so this groups by that
- * name and renders the unplaced group as a real room: dropping those agents
- * would hide them from the operator entirely (spec 7).
+ * The room set is the FLOOR PLAN and the occupancy is the ROSTER. Those are
+ * two different questions and this used to answer both with one: it grouped by
+ * `agent.location` and rendered the groups, so with every agent in Main
+ * Workspace exactly one box drew and the panel read as broken. The rooms come
+ * from `GET /api/map` now — the same endpoint places/office/office-canvas.js
+ * already consumes, so no engine change was needed for this — and the roster
+ * only says who is standing in each one.
+ *
+ * `agent.location` is a room NAME that db.get_world_state() derives from
+ * coordinates (`get_room_at`), or the literal 'Unknown' when it could place
+ * nobody. There is no room id on the wire, so the join is by name, and anyone
+ * the map cannot account for keeps a real `Unknown` bucket rendered last:
+ * dropping them would hide people from the operator entirely (spec 7).
  *
  * States: loading until the roster's first publish, empty when nobody is
- * hired, ready otherwise. There is deliberately no error state — the roster is
- * fetched once, by the rail, which shows one error line for it. Two error lines
- * for one failed request is worse than one.
+ * hired, ready otherwise. The floor plan has a failure state of its own — this
+ * module owns that request, so it owns reporting it — and it degrades to the
+ * occupied-rooms view rather than to a blank panel.
  */
 const BossModMiniOffice = (() => {
     const { h, clear } = BossModDom;
@@ -22,14 +30,27 @@ const BossModMiniOffice = (() => {
     /** Where the agents db.get_world_state() could not place are shown. */
     const UNPLACED_ROOM = 'Unknown';
 
+    /** A room with nobody in it is still a room, and says which it is. */
+    const EMPTY_ROOM_COPY = 'Empty';
+
+    /**
+     * What the operator is told when the floor plan will not load.
+     *
+     * It names the consequence rather than the request: the panel is still
+     * useful, it is just back to showing only where people actually are.
+     */
+    const MAP_ERROR_COPY = 'Could not load the floor plan. '
+        + 'Showing only the rooms someone is standing in.';
+
     /**
      * The tint ramp the rooms after the first cycle through.
      *
-     * The concept hardcodes three rooms; ours are whatever `agent.location`
-     * says — any names, any count. So the rule is POSITIONAL: rooms keep their
-     * existing sort (alphabetical, Unknown last), the first one gets the panel
-     * treatment, and each one after takes the next tone. The sort is stable, so
-     * a room does not change colour because an agent walked into another one.
+     * The concept hardcodes three rooms; ours come from the map — five today,
+     * plus the Unknown bucket, and whatever a future floor plan carries. So
+     * the rule is POSITIONAL: rooms keep the map's own order, the first one
+     * gets the panel treatment, and each one after takes the next tone. Map
+     * order does not change when somebody walks, so a room does not change
+     * colour because an agent left it.
      *
      * Four tones with measured ink pairs in tokens.css (6.20-6.41:1). `ok` is
      * deliberately not among them: --ok on --ok-bg measures 4.33:1, which is
@@ -42,20 +63,29 @@ const BossModMiniOffice = (() => {
      *
      * @param {object} deps
      * @param {object} deps.store  Application store; `roster` and `needs`.
+     * @param {Function} deps.api  Authenticated fetch helper. Used once, for
+     *   the floor plan; who is on it comes from the store.
      * @param {(placeId: string, params?: object) => void} deps.navigate
      * @returns {{ element: HTMLElement, destroy: () => void }}
-     * @throws {Error} When store or navigate is missing.
+     * @throws {Error} When store, api, or navigate is missing.
      */
     function createMiniOffice(deps) {
-        const { store, navigate } = deps || {};
+        const { store, api, navigate } = deps || {};
         if (!store) throw new Error('[mini-office] deps.store is required');
+        if (typeof api !== 'function') throw new Error('[mini-office] deps.api is required');
         if (typeof navigate !== 'function') throw new Error('[mini-office] deps.navigate is required');
 
         const disposers = [];
         let loaded = store.getState().roster.length > 0;
+        let destroyed = false;
+        /** Room names from GET /api/map, in map order. Null until it answers. */
+        let floor = null;
 
         const roomsEl = h('div', { class: 'mini-office-rooms' });
         const statEl = h('p', { class: 'mini-office-stat' });
+        // Empty until there is something to say; `.context-error:empty` keeps
+        // an empty alert from painting a bordered box around nothing.
+        const mapErrorEl = h('p', { class: 'context-error', role: 'alert' });
 
         const element = h('section', { class: 'mini-office' },
             h('div', { class: 'context-head' },
@@ -70,6 +100,7 @@ const BossModMiniOffice = (() => {
                     type: 'button',
                     onclick: () => navigate('office'),
                 }, 'Open')),
+            mapErrorEl,
             roomsEl,
             statEl,
             h('button', {
@@ -80,6 +111,10 @@ const BossModMiniOffice = (() => {
 
         /**
          * Group the roster by room name, unplaced agents last.
+         *
+         * Occupancy only. This is also the degraded view when the floor plan
+         * is unreachable: it is less than the whole floor, but it is every
+         * person, which is the half the operator cannot do without.
          *
          * @param {object[]} roster
          * @returns {Array<{name: string, agents: object[]}>}
@@ -97,6 +132,28 @@ const BossModMiniOffice = (() => {
                 return a.localeCompare(b);
             });
             return names.map((name) => ({ name, agents: rooms.get(name) }));
+        }
+
+        /**
+         * Every room on the floor, in map order, with who is standing in it.
+         *
+         * @param {object[]} roster
+         * @returns {Array<{name: string, agents: object[]}>} One entry per
+         *   mapped room whether or not anyone is in it, then a single
+         *   `Unknown` bucket for everyone the map could not account for —
+         *   agents with no location, and the anomaly of a location the floor
+         *   plan does not name. Both are people, so neither is dropped.
+         */
+        function floorRooms(roster) {
+            const occupancy = byRoom(roster);
+            const seats = new Map(occupancy.map((room) => [room.name, room.agents]));
+            const rooms = floor.map((name) => ({ name, agents: seats.get(name) || [] }));
+            const mapped = new Set(floor);
+            const strays = occupancy
+                .filter((room) => !mapped.has(room.name))
+                .reduce((all, room) => all.concat(room.agents), []);
+            if (strays.length) rooms.push({ name: UNPLACED_ROOM, agents: strays });
+            return rooms;
         }
 
         function seat(agent, needy) {
@@ -141,7 +198,8 @@ const BossModMiniOffice = (() => {
             }
 
             const needy = new Set(state.needs.map((need) => need.agentId));
-            byRoom(roster).forEach((room, index) => {
+            const rooms = floor ? floorRooms(roster) : byRoom(roster);
+            rooms.forEach((room, index) => {
                 roomsEl.append(h('div', {
                     class: 'mini-office-room',
                     // The first room is the wide one and takes the panel
@@ -151,14 +209,52 @@ const BossModMiniOffice = (() => {
                     'data-tone': index === 0 ? 'main' : TONES[(index - 1) % TONES.length],
                 },
                     h('p', { class: 'mini-office-room-name' }, room.name),
-                    h('div', { class: 'mini-office-seats' },
-                        room.agents.map((agent) => seat(agent, needy)))));
+                    room.agents.length === 0
+                        ? h('p', { class: 'mini-office-room-empty' }, EMPTY_ROOM_COPY)
+                        : h('div', { class: 'mini-office-seats' },
+                            room.agents.map((agent) => seat(agent, needy)))));
             });
 
             const wanted = roster.filter((agent) => needy.has(agent.id)).length;
             statEl.textContent = wanted === 0
                 ? `${roster.length} on the floor · nobody needs you`
                 : `${roster.length} on the floor · ${wanted} need${wanted === 1 ? 's' : ''} you`;
+        }
+
+        /**
+         * Read the floor plan once, at construction.
+         *
+         * @returns {Promise<void>} Never rejects. A floor plan that will not
+         *   load is reported and the panel degrades to the occupied-rooms view
+         *   — blanking it would lose the people as well as the rooms.
+         */
+        async function loadFloor() {
+            let mapData;
+            try {
+                const res = await api('/api/map', { cache: 'no-store' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                mapData = await res.json();
+            } catch (err) {
+                if (destroyed) return;
+                console.error('[mini-office] could not load the floor plan', err);
+                mapErrorEl.textContent = MAP_ERROR_COPY;
+                return;
+            }
+            if (destroyed) return;
+            const rooms = mapData && Array.isArray(mapData.rooms) ? mapData.rooms : null;
+            if (!rooms) {
+                console.error(
+                    '[mini-office] could not load the floor plan: /api/map carried no rooms',
+                    mapData,
+                );
+                mapErrorEl.textContent = MAP_ERROR_COPY;
+                return;
+            }
+            floor = rooms
+                .map((room) => String((room && room.name) || '').trim())
+                .filter((name) => name !== '');
+            mapErrorEl.textContent = '';
+            render();
         }
 
         disposers.push(store.subscribe((s) => s.roster, () => {
@@ -170,15 +266,19 @@ const BossModMiniOffice = (() => {
         disposers.push(store.subscribe((s) => s.needs, render));
 
         render();
+        void loadFloor();
 
         return {
             element,
 
             /**
-             * Drain every subscription this view created.
+             * Drain every subscription this view created, and stop painting —
+             * an in-flight floor plan is dropped rather than landing in a
+             * detached node.
              * @returns {void}
              */
             destroy() {
+                destroyed = true;
                 disposers.splice(0).forEach((off) => off());
             },
         };

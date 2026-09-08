@@ -105,9 +105,9 @@ const BossModConversation = (() => {
 
         const chrome = BossModConversationChrome.createChrome({
             onError: (message) => composer.setError(message),
-            // A preference, not a per-conversation action, so a slot rather
-            // than a descriptor field that would rebuild it on every switch.
-            trailing: systemReceipts.element,
+            // A preference about the VIEW, not an action on the person, so it
+            // goes behind the header's `⋯`. See chrome.js's `viewOptions`.
+            viewOptions: [systemReceipts.element],
         });
 
         // Directly above the composer: what needs the operator where they are

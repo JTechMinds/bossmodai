@@ -97,6 +97,21 @@ class FakeEl {
         return new Set(String(this.attrs.class || "").split(/\s+/).filter(Boolean));
     }
 
+    /**
+     * Real DOM semantics: `disabled` REFLECTS to the attribute, which is what
+     * makes `button:not([disabled])` mean anything. Without this the overlay
+     * focus trap would happily hand focus to a disabled control in every
+     * harness that opens an overlay, and no test could see it.
+     */
+    get disabled() {
+        return this.hasAttribute("disabled");
+    }
+
+    set disabled(value) {
+        if (value) this.attrs.disabled = "";
+        else delete this.attrs.disabled;
+    }
+
     get id() {
         return this.attrs.id || "";
     }
@@ -287,12 +302,24 @@ const SIMPLE_NAME = /^[A-Za-z_-][A-Za-z0-9_-]*$/;
  * could not express read that null as "the node is absent". Every form the fake
  * cannot express now throws, which is what the docstring above always claimed.
  *
+ * One negation is understood on top of that — `button:not([disabled])` and
+ * `[tabindex]:not([tabindex="-1"])` are two thirds of core/overlays.js's
+ * focusable list, and a fake that threw on them could not run a harness that
+ * opens an overlay at all.
+ *
  * @param {FakeEl} el
  * @param {string} selector
  * @returns {boolean}
  * @throws {Error} When the selector is not one simple selector.
  */
 function matches(el, selector) {
+    const negated = /^([^\s>+~]*):not\(([^()]+)\)$/.exec(selector);
+    if (negated) {
+        const [, base, inner] = negated;
+        if (!inner.trim()) throw new Error(`[fake-dom] unsupported selector: ${selector}`);
+        if (base && !matches(el, base)) return false;
+        return !matches(el, inner.trim());
+    }
     if (/[\s>+~]/.test(selector)) {
         throw new Error(
             `[fake-dom] unsupported selector: ${selector} — this fake matches one `

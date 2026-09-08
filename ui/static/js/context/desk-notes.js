@@ -81,10 +81,10 @@ const BossModDeskNotes = (() => {
         }
 
         const load = BossModGates.createLoadGeneration();
+        // Content only: the section header is desk-panel.js's, which owns the
+        // desk's one section vocabulary.
         const listEl = h('div', { class: 'desk-notes' });
-        const element = h('section', { class: 'desk-section' },
-            h('p', { class: 'desk-section-title' }, 'Notes'),
-            listEl);
+        const element = listEl;
         let destroyed = false;
 
         function deskUrl(path) {
@@ -98,9 +98,9 @@ const BossModDeskNotes = (() => {
 
         function renderEmpty() {
             clear(listEl);
-            listEl.append(
+            listEl.append(h('div', { class: 'desk-empty' },
                 h('p', { class: 'context-empty' }, EMPTY_TITLE),
-                h('p', { class: 'context-hint' }, EMPTY_HINT));
+                h('p', { class: 'context-hint' }, EMPTY_HINT)));
         }
 
         function renderError(message) {

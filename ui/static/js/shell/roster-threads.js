@@ -6,19 +6,19 @@
  * that produces it and this module only reads it — and asks for the mode to
  * open or close, which is the one thing it drives rather than reads.
  *
- * Creation is two states, not one permanent button. `New thread` opens select
- * mode; `Create with N` and `Cancel` close it. The old always-on Create Thread
- * button was disabled most of the time, which made a permanent row of
- * checkboxes the only way to understand what it wanted.
+ * MAKING a thread is shell/thread-create.js — the `+` on the header row, the
+ * select-mode block under it, and the POST. This module reads the list; that
+ * one writes to it, and the only thing crossing between them is "a channel was
+ * created, show it". Both halves are mounted here because they share a
+ * section, which is the whole of what they have in common.
  *
  * Split out of shell/roster.js in Phase 2B, before the needs surfaces added
- * anything else to a file that had already passed the ~300-line guideline.
+ * anything else to a file that had already passed the ~300-line guideline; the
+ * creation half was split out of THIS file for the same reason.
  */
 const BossModRosterThreads = (() => {
     const { h, clear } = BossModDom;
 
-    const THREAD_HINT = 'Select teammates and start a shared thread.';
-    const NEW_THREAD_LABEL = 'New thread';
 
     /**
      * Build the Threads section.
@@ -96,34 +96,31 @@ const BossModRosterThreads = (() => {
             role: 'group',
             'aria-label': 'Thread list filter',
         }, filterActive, filterArchived);
-        // One button, one listener, two jobs — the state decides which. Rebinding
-        // a fresh handler on every repaint would stack listeners on a node the
-        // operator is already pointing at.
-        const createThread = h('button', {
-            class: 'btn btn-quiet roster-create-thread',
-            type: 'button',
-            onclick: () => {
-                if (isSelecting()) void createThreadFromSelection();
-                else onEnterSelect();
+        // The creation half. It owns the `+`, the select-mode block, and the
+        // POST; showing what came back is this half's job, which is what
+        // onCreated hands over.
+        const create = BossModThreadCreate.createThreadControls({
+            readJson,
+            getSelection,
+            isSelecting,
+            onEnterSelect,
+            onExitSelect,
+            onConsumed,
+            onCreated: async (channel) => {
+                // A new thread is active, so show the list it landed in.
+                threadFilter = 'active';
+                applyThreadFilter();
+                await loadThreads();
+                onOpen(channel.id, 'thread');
             },
-        }, NEW_THREAD_LABEL);
-        // Built once, attached only while the mode is on: a Cancel that is
-        // merely hidden is still a tab stop for a mode nobody is in.
-        const cancelSelect = h('button', {
-            class: 'btn btn-quiet roster-thread-cancel',
-            type: 'button',
-            onclick: () => onExitSelect(),
-        }, 'Cancel');
-        const threadActions = h('div', { class: 'roster-thread-actions' }, createThread);
-        // Tracked here rather than read back off the DOM: "is it attached" is
-        // this module's own bookkeeping, and asking the node makes the answer
-        // depend on which parent property the host happens to expose.
-        let cancelAttached = false;
+        });
+
         const element = h('section', { class: 'roster-section' },
-            h('h2', { class: 'roster-section-title' }, 'Threads'),
+            h('div', { class: 'roster-section-head' },
+                h('h2', { class: 'roster-section-title' }, 'Threads'),
+                create.action),
             threadFilters,
-            h('p', { class: 'roster-thread-hint' }, THREAD_HINT),
-            threadActions,
+            create.element,
             threadList);
 
         /** Threads live in the store too: boot validates a restored thread against them. */
@@ -156,6 +153,10 @@ const BossModRosterThreads = (() => {
             }
             visible.forEach((thread) => {
                 threadList.append(h('li', { class: 'roster-row' },
+                    // The same node and the same size a person row carries, so
+                    // the two lists share one left edge. Decorative: the name
+                    // beside it already says which thread this is.
+                    BossModAvatar.create({ group: true, size: 'md' }),
                     h('button', {
                         class: 'roster-thread',
                         type: 'button',
@@ -201,23 +202,6 @@ const BossModRosterThreads = (() => {
             store.setState({ threads: channels });
         }
 
-        async function createThreadFromSelection() {
-            const agentIds = getSelection();
-            if (agentIds.length === 0) return;
-            const channel = await readJson('/api/channels', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ agent_ids: agentIds }),
-            }, 'Could not create the thread.');
-            if (channel === null) return;
-            onConsumed();
-            // A new thread is active, so show the list it landed in.
-            threadFilter = 'active';
-            applyThreadFilter();
-            await loadThreads();
-            onOpen(channel.id, 'thread');
-        }
-
         disposers.push(store.subscribe((s) => s.threads, renderThreads));
         disposers.push(store.subscribe((s) => s.rosterQuery, renderThreads));
 
@@ -238,27 +222,12 @@ const BossModRosterThreads = (() => {
 
             /**
              * Re-read the People selection and repaint the creation controls.
-             *
-             * Out of select mode the button invites; in it, the button counts
-             * what is picked and Cancel appears beside it. The floor is one
-             * teammate, which is what POST /api/channels accepts — a thread of
-             * one is a real thing the operator can already make.
-             *
+             * Delegated whole: the selection belongs to People and the controls
+             * belong to thread-create.js, so this half only forwards the news.
              * @returns {void}
              */
             applySelection() {
-                const selecting = isSelecting();
-                const count = getSelection().length;
-                clear(createThread);
-                createThread.append(selecting ? `Create with ${count}` : NEW_THREAD_LABEL);
-                createThread.disabled = selecting && count === 0;
-                if (selecting && !cancelAttached) {
-                    threadActions.append(cancelSelect);
-                    cancelAttached = true;
-                } else if (!selecting && cancelAttached) {
-                    cancelSelect.remove();
-                    cancelAttached = false;
-                }
+                create.applySelection();
             },
 
             /**

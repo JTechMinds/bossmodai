@@ -76,8 +76,9 @@ eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModStore = BossMo
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModBus;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";
@@ -207,6 +208,20 @@ function rowFor(el, name) {
 
     // ── Threads and Hire ──
     if (!text(el).includes("Launch plan")) throw new Error("threads must render from GET /api/channels");
+
+    // A thread row carries the SHARED group avatar, at the size a person row
+    // takes. Without it the two lists had different left edges and the rail
+    // read as two unrelated lists rather than one rail.
+    const threadsList = find(el, hasClass("roster-threads"), [])[0];
+    const groupAvatars = find(threadsList, hasClass("avatar-group"), []);
+    const threadRowsCarryTheGroupAvatar = groupAvatars.length === 1
+        && String(groupAvatars[0].getAttribute("class")).split(/\s+/).includes("avatar-md")
+        && groupAvatars[0].getAttribute("aria-hidden") === "true";
+    if (!threadRowsCarryTheGroupAvatar) {
+        throw new Error(`a thread row needs the md group avatar, got ${groupAvatars.length}`
+            + ` "${groupAvatars[0] && groupAvatars[0].getAttribute("class")}"`);
+    }
+
     const hire = find(el, hasClass("roster-hire"), [])[0];
     if (!hire) throw new Error("roster must pin a Hire row to the bottom");
     (hire.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
@@ -219,29 +234,111 @@ function rowFor(el, name) {
     // exact way a "cleared" selection quietly builds the wrong thread.
     const boxesNow = () => find(el, hasClass("roster-select"), []);
     const click = (node) => (node.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
+    const createNow = () => find(el, hasClass("roster-create-thread"), [])[0];
+    const cancelNow = () => find(el, hasClass("roster-thread-cancel"), [])[0];
+    const hintsNow = () => find(el, hasClass("roster-thread-hint"), []);
 
     if (boxesNow().length !== 0) {
         throw new Error(`people rows must be clean until select mode, got ${boxesNow().length} boxes`);
     }
-    const createBtn = find(el, hasClass("roster-create-thread"), [])[0];
-    if (!createBtn) throw new Error("roster must render a thread creation button");
-    if (!text(createBtn).includes("New thread")) {
-        throw new Error(`out of select mode the button invites, got "${text(createBtn)}"`);
+    // `New thread` is the `+` on the THREADS header row: icon-only, so its
+    // whole accessible name is the label it carries.
+    const newThreadBtn = find(el, hasClass("roster-section-action"), [])[0];
+    if (!newThreadBtn) throw new Error("the THREADS header must carry a New thread action");
+    if (newThreadBtn.getAttribute("aria-label") !== "New thread") {
+        throw new Error(`an icon-only control needs its own name, got `
+            + `"${newThreadBtn.getAttribute("aria-label")}"`);
     }
-    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
-        throw new Error("Cancel must not exist outside select mode");
+    if (newThreadBtn.getAttribute("aria-expanded") !== "false") {
+        throw new Error("the New thread action must report the mode it opens as closed");
     }
+    if (createNow()) throw new Error("Create must not exist outside select mode");
+    if (cancelNow()) throw new Error("Cancel must not exist outside select mode");
     const rowsAreCleanUntilSelectMode = true;
 
+    // ── Out of select mode a row click still opens the conversation ──
+    click(rowFor(el, "Jim"));
+    const rowClickOpensConversationNormally = store.getState().conversationId === "a1"
+        && store.getState().conversationKind === "agent";
+    if (!rowClickOpensConversationNormally) {
+        throw new Error(`a row click must open the conversation when not selecting, got `
+            + `${store.getState().conversationId}`);
+    }
+    store.setState({ conversationId: null, conversationKind: null });
+
+    // The hint explains select mode, so out of select mode it explains a mode
+    // the operator is not in. It used to stand under the filters permanently.
+    if (hintsNow().length !== 0) {
+        throw new Error("the select hint must not stand outside select mode");
+    }
+
     // Entering is a click on a real <button>, so Enter and Space reach it too.
-    click(createBtn);
+    click(newThreadBtn);
     if (boxesNow().length !== 2) {
         throw new Error(`select mode must reveal one box per person, got ${boxesNow().length}`);
     }
-    const cancelBtn = find(el, hasClass("roster-thread-cancel"), [])[0];
+    if (newThreadBtn.getAttribute("aria-expanded") !== "true") {
+        throw new Error("the New thread action must report the mode it opened as open");
+    }
+    const createBtn = createNow();
+    const cancelBtn = cancelNow();
+    if (!createBtn) throw new Error("select mode must offer a way to create");
     if (!cancelBtn) throw new Error("select mode must offer a way out");
+    const hints = hintsNow();
+    const hintOnlyShowsInSelectMode = hints.length === 1
+        && text(hints[0]).includes("Select teammates");
+    if (!hintOnlyShowsInSelectMode) {
+        throw new Error(`select mode must carry its own hint, got ${hints.length}`);
+    }
     if (createBtn.disabled !== true) {
         throw new Error("with nobody selected there is nothing to create");
+    }
+
+    // ── In select mode the ROW selects ──
+    //
+    // The 16px checkbox was the only target; clicking the name opened the
+    // conversation, which is the opposite of what the mode is for. The box
+    // stays as the state indicator and stops being the thing you have to hit.
+    const checkboxStillRendersInSelectMode = boxesNow().length === 2;
+    if (!checkboxStillRendersInSelectMode) {
+        throw new Error("the checkbox is the mode's only visible state and must survive");
+    }
+
+    const jimName = rowFor(el, "Jim");
+    const jimRow = jimName.parentNode;
+    const jimBox = boxesNow()[0];
+    click(jimName);
+    const rowClickSelectsInSelectMode = jimBox.checked === true
+        && text(createBtn).includes("Create with 1")
+        && store.getState().conversationId === null
+        && jimRow.getAttribute("data-selected") === "true";
+    if (!rowClickSelectsInSelectMode) {
+        throw new Error(`the name must toggle while selecting: checked ${jimBox.checked}`
+            + ` button "${text(createBtn)}" conversation ${store.getState().conversationId}`
+            + ` row ${jimRow.getAttribute("data-selected")}`);
+    }
+
+    // The desk affordance is re-bound too, so it does not fire in this mode.
+    const personAvatars = find(el, hasClass("avatar-md"), []).filter((n) => n.tagName === "BUTTON");
+    if (personAvatars.length !== 2) {
+        throw new Error(`each person row owns one avatar button, got ${personAvatars.length}`);
+    }
+    click(personAvatars[0]);
+    const avatarDoesNotOpenDeskWhileSelecting = store.getState().contextMode === undefined
+        && store.getState().deskAgentId === undefined
+        && jimBox.checked === false
+        && jimRow.getAttribute("data-selected") === "false";
+    if (!avatarDoesNotOpenDeskWhileSelecting) {
+        throw new Error(`the avatar must toggle rather than open the desk: mode `
+            + `${store.getState().contextMode} checked ${jimBox.checked}`);
+    }
+
+    // A nested interactive control is invalid HTML and unreachable by
+    // keyboard, so re-binding is the only way to make the row the target.
+    const nested = (root) => find(root, (n) => n.tagName === "BUTTON", [])
+        .filter((btn) => find(btn, (n) => n.tagName === "BUTTON", []).length > 0);
+    if (nested(el).length !== 0) {
+        throw new Error(`${nested(el).length} nested buttons while selecting`);
     }
 
     // ── Leaving clears the selection ──
@@ -255,10 +352,9 @@ function rowFor(el, name) {
     }
     click(cancelBtn);
     if (boxesNow().length !== 0) throw new Error("Cancel must take the checkboxes away");
-    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
-        throw new Error("Cancel must remove itself with the mode it leaves");
-    }
-    click(createBtn);
+    if (cancelNow()) throw new Error("Cancel must remove itself with the mode it leaves");
+    if (hintsNow().length !== 0) throw new Error("the hint must leave with the mode");
+    click(newThreadBtn);
     if (boxesNow().some((box) => box.checked)) {
         throw new Error("re-entering select mode must start from an empty selection");
     }
@@ -278,19 +374,24 @@ function rowFor(el, name) {
     if (boxesNow().length !== 0) {
         throw new Error("creating a thread must leave select mode, not merely clear it");
     }
-    if (!text(createBtn).includes("New thread")) {
-        throw new Error(`after creating, the button invites again, got "${text(createBtn)}"`);
+    if (createNow() || cancelNow()) {
+        throw new Error("creating must take the mode's controls away with the mode");
     }
-    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
-        throw new Error("creating must take Cancel away with the mode");
+    if (newThreadBtn.getAttribute("aria-expanded") !== "false") {
+        throw new Error("after creating, the `+` must report the mode as closed again");
     }
     // ...and the selection really is empty, not merely out of sight.
-    click(createBtn);
-    if (createBtn.disabled !== true) {
+    click(newThreadBtn);
+    if (createNow().disabled !== true) {
         throw new Error("creating a thread must clear the People selection");
     }
-    click(find(el, hasClass("roster-thread-cancel"), [])[0]);
+    click(cancelNow());
     const selectionClearsAfterCreate = true;
+
+    // ...and out of the mode too, where the avatar and the name go back to
+    // being two separate controls with two separate jobs.
+    const noNestedButtons = nested(el).length === 0;
+    if (!noNestedButtons) throw new Error(`${nested(el).length} nested buttons in the rail`);
 
     // A live channel_updated re-fetches the thread list.
     const channelFetches = () => apiCalls.filter((c) => c.url.startsWith("/api/channels") && (!c.init || !c.init.method)).length;
@@ -317,6 +418,13 @@ function rowFor(el, name) {
         selectionClearsAfterCreate,
         rowsAreCleanUntilSelectMode,
         cancelClearsTheSelection,
+        threadRowsCarryTheGroupAvatar,
+        hintOnlyShowsInSelectMode,
+        rowClickSelectsInSelectMode,
+        rowClickOpensConversationNormally,
+        avatarDoesNotOpenDeskWhileSelecting,
+        checkboxStillRendersInSelectMode,
+        noNestedButtons,
         disposersDrain: true,
     }));
 })().catch((err) => {

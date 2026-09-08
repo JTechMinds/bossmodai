@@ -191,6 +191,16 @@
 
 .roster-section { margin-bottom: 16px; }
 
+/* The section's own title row. It exists so a section-level action has a place
+   to sit that costs no vertical space and does not scroll away with the list
+   under it — which is what happened to `New thread` when it was a row of its
+   own below the filters. */
+.roster-section-head {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 .roster-section-title {
   margin: 4px 6px 6px;
   font-size: 11px;
@@ -199,6 +209,22 @@
   text-transform: uppercase;
   color: var(--hint);
 }
+
+/* Icon-only, right-aligned, and quiet: it belongs to the label beside it, not
+   to the list below. base.css already gives every button the 24px minimum
+   target (SC 2.5.8), which is why this sets no height of its own. */
+.roster-section-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: 6px;
+  border-radius: var(--r);
+  color: var(--muted);
+}
+
+.roster-section-action:hover { background: var(--bg); color: var(--ink); }
+.roster-section-action svg { width: 14px; height: 14px; }
 
 .roster-people,
 .roster-threads { list-style: none; margin: 0; padding: 0; }
@@ -212,6 +238,19 @@
 }
 
 .roster-row:hover { background: var(--bg); }
+
+/* In select mode the ROW is the target: the avatar and the name both toggle
+   inclusion, so the pointer says the row will select rather than navigate. */
+.roster-row[data-selecting="true"] { cursor: pointer; }
+
+/* And the state is on the row, not only in the 16px box. A tinted row is
+   readable across the whole rail at a glance, which is what the checkbox
+   alone was not. */
+.roster-row[data-selected="true"] { background: var(--accent-bg); }
+
+/* --hint measures 4.19:1 on --accent-bg and fails AA there; --muted is
+   5.67:1. Same correction .msg-human .msg-time carries in conversation.css. */
+.roster-row[data-selected="true"] .roster-status { color: var(--muted); }
 
 .roster-person,
 .roster-thread {
@@ -275,17 +314,24 @@
   color: var(--ink);
 }
 
-.roster-thread-hint { margin: 0 6px 6px; color: var(--hint); font-size: 11px; }
+.roster-thread-hint { margin: 0 0 6px; color: var(--hint); font-size: 11px; }
 
-/* The creation row. Both buttons compose .btn.btn-quiet from controls.css;
-   what is left here is where they sit in the rail. Quiet on purpose: this is a
-   rail of quiet rows, and a filled button in the middle of it would outrank
-   every person in the list. */
-.roster-thread-actions {
+/* Select mode's own block: the hint that explains the mode, and the two ways
+   out of it. Present only while the mode is — roster-threads.js attaches and
+   detaches the whole thing, so out of the mode this is an empty div rather
+   than three controls hidden with CSS.
+
+   Both buttons compose .btn.btn-quiet from controls.css; what is left here is
+   where they sit in the rail. Quiet on purpose: this is a rail of quiet rows,
+   and a filled button in the middle of it would outrank every person in it. */
+.roster-select-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: 0 6px 8px;
 }
+
+.roster-select-actions .roster-thread-hint { flex: 1 0 100%; }
 
 .roster-create-thread {
   flex: 1 1 auto;
@@ -321,10 +367,10 @@
    only by expanding again. */
 
 #main-layout[data-rail="collapsed"] .roster-search-row,
+#main-layout[data-rail="collapsed"] .roster-section-head,
 #main-layout[data-rail="collapsed"] .roster-section-title,
 #main-layout[data-rail="collapsed"] .roster-thread-filters,
-#main-layout[data-rail="collapsed"] .roster-thread-hint,
-#main-layout[data-rail="collapsed"] .roster-thread-actions,
+#main-layout[data-rail="collapsed"] .roster-select-actions,
 #main-layout[data-rail="collapsed"] .roster-person,
 #main-layout[data-rail="collapsed"] .roster-thread,
 #main-layout[data-rail="collapsed"] .roster-hire span {

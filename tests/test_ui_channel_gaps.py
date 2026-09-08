@@ -80,11 +80,15 @@ def test_operator_chrome_labels_threads() -> None:
     css = (CSS / "conversation.css").read_text(encoding="utf-8")
     # Phase 2B split the rail; the Threads half took the chrome with it.
     assert "'Threads'" in threads
-    # The creation copy is two states since the visual-parity pass; the rail
-    # still owns it, which is what this line has always guarded.
-    assert "'New thread'" in threads
-    assert "Create with ${" in threads
-    assert "start a shared thread" in threads
+    # The creation copy is two states since the visual-parity pass, and it
+    # moved to shell/thread-create.js when the polish round split making a
+    # thread out of listing them. The rail still owns it, which is what these
+    # lines have always guarded, so the chain is asserted with them.
+    creation = _read("shell/thread-create.js")
+    assert "BossModThreadCreate.createThreadControls(" in threads
+    assert "'New thread'" in creation
+    assert "Create with ${" in creation
+    assert "start a shared thread" in creation
     # Threads are a roster section, not a seventh place.
     assert "channels" not in places.lower()
     assert ".host-path-consent-card.is-resolved" in css
@@ -191,10 +195,13 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "Archive this thread?" not in archive
 
     assert "Threads" in roster_threads
-    assert "'New thread'" in roster_threads
-    assert "Create with ${" in roster_threads
-    # The rail still assembles both halves, so neither is orphaned.
+    roster_create = _read("shell/thread-create.js")
+    assert "'New thread'" in roster_create
+    assert "Create with ${" in roster_create
+    # The rail still assembles both halves, and the Threads half assembles the
+    # creation controls, so nothing in the chain is orphaned.
     assert "BossModRosterThreads.createThreads(" in roster
+    assert "BossModThreadCreate.createThreadControls(" in roster_threads
 
     # channel_presence is routed to the thread that owns it. The dock-era
     # switch in app.js and the AgentContext delegation it called are gone; the
@@ -277,6 +284,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "conversation" / "sources" / "thread-archive.js"),
             str(JS / "conversation" / "sources" / "thread-source.js"),
             str(JS / "shell" / "roster-people.js"),
+            str(JS / "shell" / "thread-create.js"),
             str(JS / "shell" / "roster-threads.js"),
             str(JS / "shell" / "roster.js"),
         ],

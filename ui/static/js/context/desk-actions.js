@@ -7,6 +7,12 @@
  * so both confirm through core/overlays.js before the API is touched. A bare
  * click-through on either would be the kind of accident this codebase's rules
  * exist to prevent.
+ *
+ * It is the panel's foot: pinned to the bottom, quiet key/value facts, and
+ * four text-link actions. Four equal bordered buttons under the content read
+ * as the loudest thing on the desk, which is the opposite of what they are —
+ * the two that matter are already behind a confirmation, and the ink on the
+ * two destructive ones is what marks them, not a box.
  */
 const BossModDeskActions = (() => {
     const { h, clear } = BossModDom;
@@ -14,6 +20,19 @@ const BossModDeskActions = (() => {
     const REMOVE_TITLE = 'Remove this agent?';
     const REMOVE_BODY = 'Their open tasks stop, their desk is released, and this cannot be '
         + 'undone. Completed work, artifacts, and diagnostics are preserved.';
+    /**
+     * One footer fact: a label and its value, on one row.
+     *
+     * @param {string} label
+     * @param {string} value
+     * @returns {HTMLElement}
+     */
+    function kv(label, value) {
+        return h('p', { class: 'desk-kv' },
+            h('span', {}, label),
+            h('b', { class: 'desk-kv-value' }, String(value)));
+    }
+
     const RESET_TITLE = 'Reset this agent’s runtime?';
     const RESET_BODY = 'This cancels active work, clears queued triggers, resets the agent to '
         + 'idle, and may block the active task. Completed work history is preserved.';
@@ -60,9 +79,12 @@ const BossModDeskActions = (() => {
             // A null model override means the company default, which is a real
             // configuration rather than a missing value.
             const model = detail.model_work || detail.model_reasoning || 'Company default';
+            // Key on the left, value on the right: two quiet facts about the
+            // desk rather than two more sentences competing with the sections
+            // above them.
             metaEl.append(
-                h('p', { class: 'desk-meta' }, `Workspace · ${detail.storage_key || 'unassigned'}`),
-                h('p', { class: 'desk-meta' }, `Model · ${model}`));
+                kv('Workspace', detail.storage_key || 'unassigned'),
+                kv('Model', model));
         }
 
         /**
@@ -133,17 +155,17 @@ const BossModDeskActions = (() => {
             errorEl,
             h('div', { class: 'desk-actions' },
                 h('button', {
-                    class: 'desk-action',
+                    class: 'btn-link desk-action',
                     type: 'button',
                     onclick: () => onEdit(),
                 }, 'Edit role'),
                 h('button', {
-                    class: 'desk-action',
+                    class: 'btn-link desk-action',
                     type: 'button',
                     onclick: () => navigate('log', { agentFilter: agentId }),
                 }, 'Diagnostics'),
                 h('button', {
-                    class: 'desk-action danger',
+                    class: 'btn-link desk-action danger',
                     type: 'button',
                     onclick: () => confirmThen({
                         title: RESET_TITLE,
@@ -153,7 +175,7 @@ const BossModDeskActions = (() => {
                     }),
                 }, 'Reset runtime'),
                 h('button', {
-                    class: 'desk-action danger',
+                    class: 'btn-link desk-action danger',
                     type: 'button',
                     onclick: () => confirmThen({
                         title: REMOVE_TITLE,

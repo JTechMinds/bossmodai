@@ -63,13 +63,31 @@ global.window.DOMParser = global.DOMParser;
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
 
-// Ada is off-map: db.get_world_state() gives her no room name. She must still
-// get a seat, or the operator loses sight of her entirely.
+// The floor plan GET /api/map answers with, trimmed to what the summary reads.
+// The names are core/world/tilemap.py's DEFAULT_ROOMS, because the join between
+// the map and the roster is BY NAME — db.get_world_state() derives
+// `agent.location` from get_room_at(), which returns these same strings.
+const MAP_ROOMS = [
+    { id: "workspace_main", name: "Main Workspace", bounds: [1, 1, 12, 8] },
+    { id: "meeting_room", name: "Meeting Room", bounds: [16, 1, 23, 8] },
+    { id: "break_room", name: "Break Room", bounds: [16, 12, 23, 18] },
+    { id: "hallway_main", name: "Hallway", bounds: [13, 1, 15, 18] },
+    { id: "workspace_south", name: "South Workspace", bounds: [1, 12, 12, 18] },
+];
+// Flipped part-way through, so a later mini-office is built against a floor
+// plan that will not load and the degraded path is exercised for real.
+let mapFails = false;
+
+// Jim and Laura are in one real room, which is the shape that made the old
+// panel look broken: grouping by location drew ONE box for a five-room floor.
+// Ada is off-map — db.get_world_state() gives her no room name — and must
+// still get a seat, or the operator loses sight of her entirely.
 const ROSTER = [
     { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "idle",
-      currentActivityKind: null, location: "Main office" },
+      description: "Keeps the build green.", done_fail_bar: "Good: tests pass. Fail: no evidence.",
+      currentActivityKind: null, location: "Main Workspace" },
     { id: "a2", name: "Laura", role: "Writer", color: "#f59e0b", status: "idle",
-      currentActivityKind: null, location: "Main office" },
+      currentActivityKind: null, location: "Main Workspace" },
     { id: "a3", name: "Ada", role: "Analyst", color: "#10b981", status: "idle",
       currentActivityKind: null, location: null },
 ];
@@ -104,6 +122,13 @@ function jsonResponse(body, status = 200) {
 function api(url) {
     if (url.startsWith("/api/needs")) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+    }
+    if (url.startsWith("/api/map")) {
+        if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
+        return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: [] });
+    }
+    if (/^\/api\/agents\/[^/]+$/.test(url)) {
+        return jsonResponse({ id: "a1", storage_key: "jim-workspace", model_work: "gpt-test" });
     }
     const desk = String(url).match(/^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/);
     if (desk) {
@@ -196,9 +221,31 @@ async function main() {
     if (roomNames()[roomNames().length - 1] !== "Unknown") {
         throw new Error(`Unknown must sort last, got ${roomNames().join(", ")}`);
     }
-    const ada = seats().filter((seat) => seat.getAttribute("data-agent-id") === "a3")[0];
-    if (!ada) throw new Error("the off-map agent has no seat");
+    if (!seats().filter((seat) => seat.getAttribute("data-agent-id") === "a3")[0]) {
+        throw new Error("the off-map agent has no seat");
+    }
     const rendersUnknownRoom = true;
+
+    // ─── 1a. The WHOLE floor draws, not only the rooms with somebody in them ───
+    //
+    // Two of the three agents share one room and the third is off-map, so a
+    // panel that derived its rooms from occupancy would draw two boxes for a
+    // five-room floor. That is what the operator saw.
+
+    const MAPPED = MAP_ROOMS.map((room) => room.name);
+    const drawsEveryMappedRoom = roomNames().join("|") === MAPPED.concat(["Unknown"]).join("|");
+    if (!drawsEveryMappedRoom) {
+        throw new Error(`the floor plan draws every room, in map order: ${roomNames().join(", ")}`);
+    }
+    // Four of the five mapped rooms hold nobody, and each says so rather than
+    // rendering as a box that looks like it failed.
+    const emptyLabels = () => contextEl.querySelectorAll(".mini-office-room-empty")
+        .map((node) => node.textContent);
+    const emptyRoomsSaySo = emptyLabels().length === 4
+        && emptyLabels().every((text) => text === "Empty");
+    if (!emptyRoomsSaySo) {
+        throw new Error(`an empty room must say so, got ${JSON.stringify(emptyLabels())}`);
+    }
 
     // A need on an agent pings their seat, silently.
     store.setState({ needs: [{ id: "n1", kind: "blocked", agentId: "a1", conversationId: "a1" }] });
@@ -211,8 +258,36 @@ async function main() {
     }
     store.setState({ needs: [] });
 
+    // ─── 1b. A floor plan that will not load degrades, and says so ───
+    //
+    // The roster still answers "who is around", so the panel falls back to the
+    // occupied-rooms view it had before. Blanking it would lose the people
+    // along with the rooms, which is the worse of the two failures.
+
+    mapFails = true;
+    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    store.setState({ contextMode: "office" });
+    await drain();
+    const degraded = roomNames();
+    const degradedError = contextEl.querySelectorAll(".context-error")
+        .map((node) => node.textContent).join(" ");
+    const mapFailureDegradesRatherThanBlanks = degraded.join("|") === "Main Workspace|Unknown"
+        && seats().length === 3
+        && degradedError.includes("Could not load the floor plan");
+    if (!mapFailureDegradesRatherThanBlanks) {
+        throw new Error(`a failed map must degrade, not blank: rooms ${degraded.join(", ")}`
+            + ` seats ${seats().length} error "${degradedError}"`);
+    }
+    // Back to a working floor plan for everything below.
+    mapFails = false;
+    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    store.setState({ contextMode: "office" });
+    await drain();
+
     // ─── 2. A seat opens that agent's desk ───
 
+    const ada = seats().filter((seat) => seat.getAttribute("data-agent-id") === "a3")[0];
+    if (!ada) throw new Error("the off-map agent lost their seat on the rebuilt panel");
     await ada.dispatchClick();
     if (store.getState().contextMode !== "desk" || store.getState().deskAgentId !== "a3") {
         throw new Error("clicking a seat must open that agent's desk");
@@ -265,6 +340,61 @@ async function main() {
 
     store.setState({ contextMode: "desk", deskAgentId: "a1" });
     await drain();
+
+    // ─── 3a. The reorganised desk lost nothing ───
+    //
+    // Task 7 moved eight blocks: identity into one group closed by a rule, the
+    // sections under labelled headers with their actions on those headers, the
+    // amber contract into a disclosure, and the folder buttons and the footer
+    // actions down to quiet links. "Nothing was deleted" is a claim about what
+    // RENDERS, so it is read off the built panel — a source check would pass
+    // while a block sat in a branch that never runs.
+    const deskText = (selector) => contextEl.querySelectorAll(selector)
+        .map((node) => node.textContent).join(" ");
+    const sectionLabels = contextEl.querySelectorAll(".desk-section-title")
+        .map((node) => node.textContent);
+    const deskFields = {
+        name: deskText(".desk-name").includes("Jim"),
+        role: deskText(".desk-role").includes("Engineer"),
+        about: deskText(".desk-about").includes("Keeps the build green."),
+        status: deskText(".desk-state-pill").trim().length > 0,
+        // The contract copy AND the value, inside the disclosure that now
+        // holds them rather than above the task list.
+        contract: contextEl.querySelectorAll(".desk-contract").length === 1
+            && deskText(".desk-bar").includes("What done looks like for this agent:")
+            && deskText(".desk-bar").includes("Good: tests pass."),
+        tasks: sectionLabels.includes("Tasks")
+            && contextEl.querySelectorAll(".desk-tasks").length === 1,
+        files: sectionLabels.includes("Files")
+            && contextEl.querySelectorAll(".desk-files").length === 1,
+        // The desk's own facts: the workspace it was given and the model it runs.
+        desk: deskText(".desk-kv").includes("Workspace")
+            && deskText(".desk-kv").includes("jim-workspace")
+            && deskText(".desk-kv").includes("Model"),
+        notes: sectionLabels.includes("Notes")
+            && contextEl.querySelectorAll(".desk-notes").length === 1,
+    };
+    const lost = Object.keys(deskFields).filter((field) => !deskFields[field]);
+    if (lost.length) {
+        throw new Error(`the desk lost ${lost.join(", ")}; sections `
+            + `${sectionLabels.join("/")} footer "${deskText(".desk-kv")}"`);
+    }
+    // Every action that was a bordered button is still a control, just a quiet
+    // one — and "See all" now belongs to the Tasks header rather than floating
+    // under the list.
+    const seeAll = contextEl.querySelectorAll(".desk-section-action");
+    if (seeAll.length !== 1 || seeAll[0].textContent !== "See all") {
+        throw new Error(`Tasks owes its header a "See all", got ${seeAll.length}`);
+    }
+    const footerActions = contextEl.querySelectorAll(".desk-action")
+        .map((node) => node.textContent);
+    if (footerActions.join("|") !== "Edit role|Diagnostics|Reset runtime|Remove") {
+        throw new Error(`the footer lost an action: ${footerActions.join("|")}`);
+    }
+    // The contract is CLOSED until the operator asks for it.
+    if (contextEl.querySelector(".desk-contract").hasAttribute("open")) {
+        throw new Error("the contract must be a disclosure, not a standing alert");
+    }
 
     const askedFor = requestLog.filter((entry) => entry.agentId === "a1" && entry.path === "/me/notes");
     const readsTheWorkspace = askedFor.length > 0;
@@ -364,7 +494,11 @@ async function main() {
         switchesModes,
         drainsOnDestroy,
         rendersUnknownRoom,
+        drawsEveryMappedRoom,
+        emptyRoomsSaySo,
+        mapFailureDegradesRatherThanBlanks,
         seatOpensDesk,
+        deskFields,
         readsTheWorkspace,
         listsNewestFirst,
         opensSharedViewer,

@@ -67,12 +67,18 @@ CRITICAL_CALL_SITES = {
 API_BY_INJECTION = {
     "core/consent-card.js",
     # The rail's Threads half takes shell/roster.js's shared readJson helper,
-    # which is the only thing in the rail that touches apiFetch.
+    # which is the only thing in the rail that touches apiFetch. So does the
+    # creation half it was split into, which is what POSTs /api/channels.
     "shell/roster-threads.js",
+    "shell/thread-create.js",
     # The needs modules take `api` from the shell's ctx.
     "needs/needs-store.js",
     "needs/need-shape.js",
     # The context column takes `api` from the place ctx and hands it down.
+    # The office summary is on the list because the ROOM LIST comes from
+    # GET /api/map — the floor plan, not the roster — while who is standing in
+    # each room still comes from the store.
+    "context/mini-office.js",
     "context/desk-files.js",
     "context/desk-notes.js",
     "context/desk-opener.js",

@@ -129,6 +129,74 @@ yes.listeners.click[0]({ preventDefault() {} });
 if (!fired) throw new Error("primary action must fire onSelect");
 if (document.activeElement !== trigger2) throw new Error("focus must return after action");
 
+// ── The anchored menu: same contract, third shape ──
+//
+// It is the chat header's `⋯`. Non-modal, but it owes the same three things
+// the other two owe: Esc dismisses, Tab stays inside, and focus goes back to
+// the control that opened it — named explicitly rather than read off
+// document.activeElement, because a mouse click does not focus a button in
+// every browser.
+const container = makeEl("div");
+body.append(container);
+const anchor = makeEl("button");
+container.append(anchor);
+const optionA = makeEl("button");
+const optionB = makeEl("button");
+let menuClosed = 0;
+
+const menu = BossModOverlays.createMenu({
+    anchor,
+    label: "View options",
+    items: [optionA, optionB],
+    container,
+    onClose: () => { menuClosed += 1; },
+});
+
+if (menu.element.getAttribute("role") !== "dialog") {
+    throw new Error("the menu must be a dialog: it carries a role=switch, which is no menuitem");
+}
+// Non-modal on purpose: a handful of view options does not block the page.
+if (menu.element.getAttribute("aria-modal") !== null) {
+    throw new Error("the menu must not claim to be modal");
+}
+if (container.children.indexOf(menu.element) === -1) {
+    throw new Error("the menu must sit in the container it is positioned against");
+}
+if (document.activeElement !== optionA) {
+    throw new Error("the menu must land focus on its first option");
+}
+const menuFocusesFirstOption = true;
+
+// Tab from the last option wraps to the first rather than leaving the panel.
+optionB.focus();
+const menuKeys = () => document.listeners.keydown || [];
+if (menuKeys().length === 0) throw new Error("the menu must bind a keydown handler");
+menuKeys().forEach((fn) => fn({ key: "Tab", shiftKey: false, preventDefault() {} }));
+if (document.activeElement !== optionA) {
+    throw new Error("Tab must stay inside the menu");
+}
+const menuTrapsTab = true;
+
+menuKeys().forEach((fn) => fn({ key: "Escape", preventDefault() {} }));
+const menuEscCloses = container.children.indexOf(menu.element) === -1 && menuClosed === 1;
+if (!menuEscCloses) throw new Error("Esc must close the menu exactly once");
+const menuRestoresFocusToTheAnchor = document.activeElement === anchor;
+if (!menuRestoresFocusToTheAnchor) {
+    throw new Error("closing the menu must return focus to the control that opened it");
+}
+if ((document.listeners.keydown || []).length !== 0) {
+    throw new Error("the menu must unbind keydown on close");
+}
+
+// A menu with no control to hang off is a keyboard dead end, so it refuses.
+let menuNeedsAnAnchor = false;
+try {
+    BossModOverlays.createMenu({ label: "x", items: [], container });
+} catch (err) {
+    menuNeedsAnAnchor = true;
+}
+if (!menuNeedsAnAnchor) throw new Error("an anchorless menu must throw, not open");
+
 process.stdout.write(JSON.stringify({
     ok: true,
     hasDialogSemantics: true,
@@ -136,4 +204,9 @@ process.stdout.write(JSON.stringify({
     escClosesWithoutConfirming: true,
     restoresFocus: true,
     unbindsOnClose: true,
+    menuFocusesFirstOption,
+    menuTrapsTab,
+    menuEscCloses,
+    menuRestoresFocusToTheAnchor,
+    menuNeedsAnAnchor,
 }));

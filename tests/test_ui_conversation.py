@@ -25,6 +25,8 @@ CONVERSATION_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    # The chrome's overflow menu is an overlays.js panel, not a second popover.
+    JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -176,15 +178,25 @@ def test_conversation_harness() -> None:
         "unsubscribesPreviousSource": True,
         "errorStateRetries": True,
         # The visual-parity pass: the chrome names who you are talking to, its
-        # actions carry glyphs, the receipts preference lives in the action row,
-        # and an empty conversation offers the two things you can do in it.
+        # actions carry glyphs, and an empty conversation offers the two things
+        # you can do in it.
         "chromeShowsIdentityAvatar": True,
         "chromeAvatarNodeIsStable": True,
         "chromeActionCarriesItsIcon": True,
         "chromeGroupGlyphForThreads": True,
-        "receiptsLiveInTheActionRow": True,
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
+        # The polish round moved the receipts preference out of the action row
+        # and behind the header's `⋯`, where later view options go. Its storage
+        # key, its control, and the node that holds it are unchanged — which is
+        # what these four say, and why "moved" cannot become "dropped".
+        # tests/test_ui_polish_round_two.py reads the same four under the names
+        # the plan gave them.
+        "headerHasNoReceiptsSwitch": True,
+        "receiptsToggleReachableFromMenu": True,
+        "receiptsPreferencePersists": True,
+        "menuReturnsFocusToItsButton": True,
+        "receiptsNodeSurvivesReopen": True,
     }
 
 

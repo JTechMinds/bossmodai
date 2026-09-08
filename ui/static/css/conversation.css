@@ -4,16 +4,24 @@
 
 /* ─── Frame ─── */
 
+/* The centre column is the PANEL, and the grey belongs to what sits on it.
+   The visual-parity round specified the bubble colours and never said what
+   they sat on, so `.transcript` and `.msg-agent` both resolved to --bg: two
+   identical greys, and an agent's turn was invisible while the operator's
+   pale-blue one still read. Painting the column here rather than only on the
+   transcript closes the seam the empty state and a short conversation left. */
 .conversation {
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  background: var(--panel);
 }
 
 /* The same 48px row as the app header: one rhythm line across the window,
    rather than each surface's bar being whatever its padding added up to. */
 .conversation-chrome {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -23,6 +31,12 @@
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+
+/* The `⋯` opens the view-options menu, which core/overlays.js positions
+   against the header above. Icon-only, so its accessible name is its label;
+   composes .btn.btn-sm, so it is the same height as the action beside it. */
+.conversation-view-options { padding-inline: 8px; color: var(--muted); }
+.conversation-view-options:hover { color: var(--ink); }
 
 .chat-place-body { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 
@@ -49,8 +63,8 @@
   font-size: 13px;
 }
 
-/* The receipts switch shares this row with the actions, so it aligns on the
-   centre line rather than on the top of a two-line identity block. */
+/* The actions and the `⋯` share this row, aligned on the centre line rather
+   than on the top of a two-line identity block. */
 .conversation-actions {
   display: flex;
   align-items: center;
@@ -93,7 +107,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px;
-  background: var(--bg);
+  background: var(--panel);
 }
 
 /* Bubbles stop being readable long before the window stops being wide. */
@@ -119,12 +133,16 @@
 
 /* ─── Status states: loading, empty, error ─── */
 
+/* A content block in the transcript, so it takes the same ground an agent
+   bubble does. It was --panel with a --line border, which on a --panel column
+   is a 1.12:1 edge around an invisible card — the white-on-white mirror of the
+   grey-on-grey bug above. */
 .transcript-status {
   padding: 16px;
   margin-bottom: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--panel);
+  background: var(--bg);
 }
 
 .transcript-status-title { margin: 0; color: var(--ink); font-weight: 500; }
@@ -143,12 +161,15 @@
 
 .conversation-empty-actions { display: flex; gap: 8px; margin-top: 6px; }
 
-/* A skeleton matching the final layout, not a spinner on empty space. */
+/* A skeleton matching the final layout, not a spinner on empty space. The bars
+   sit inside .transcript-status, which is --bg now: --line measures 1.06:1
+   there and would be a skeleton nobody can see. --line-strong is 1.42:1, which
+   is more than it had on white. */
 .transcript-skeleton {
   height: 14px;
   margin-bottom: 8px;
   border-radius: var(--r);
-  background: var(--line);
+  background: var(--line-strong);
 }
 
 .transcript-skeleton:nth-child(3) { width: 70%; }
@@ -402,9 +423,15 @@
 
 /* ─── Event cards: one look, whether a transcript row or a needs-bar row ─── */
 
+/* The border, not the fill, is what makes the untinted card a card. It renders
+   on TWO grounds — the --panel transcript and the --bg needs bar — so neither
+   fill separates it and --line-strong measured 1.50:1 on white. --line-control
+   is 3.10:1, which is the token tokens.css reserves for a boundary that is
+   doing the work (SC 1.4.11). The three tone variants override border-color
+   and are unaffected. */
 .event-card {
   padding: 10px 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-control);
   border-left-width: 3px;
   border-radius: var(--r);
   background: var(--panel);

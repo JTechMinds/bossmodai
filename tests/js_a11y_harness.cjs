@@ -64,7 +64,7 @@ global.lucide = { createIcons() {} };
 
 const [
     dom, avatar, store, bus, agentStatus, overlays, places, header,
-    rosterPeople, rosterThreads, roster, footer,
+    rosterPeople, threadCreate, rosterThreads, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
@@ -76,6 +76,7 @@ load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
 load(header, "BossModHeader");
 load(rosterPeople, "BossModRosterPeople");
+load(threadCreate, "BossModThreadCreate");
 load(rosterThreads, "BossModRosterThreads");
 load(roster, "BossModRoster");
 load(footer, "BossModFooter");

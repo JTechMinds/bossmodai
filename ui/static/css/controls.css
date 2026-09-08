@@ -23,6 +23,33 @@
   font-weight: 600;
   flex: none;
   line-height: 1;
+  /* OPTICAL CENTRING — not a stray value; do not remove without re-deriving.
+   *
+   * Flex centres the LINE BOX, and the glyph sits on the baseline inside it.
+   * Where the baseline lands is a property of the FONT, not of the box: with
+   * `line-height: 1` the half-leading is (1 - (ascent + descent)) / 2, so the
+   * baseline is at 0.5 + (ascent - descent) / 2 down a 1em box and a capital
+   * occupies from there back up by the cap height. Measured on this stack:
+   *
+   *   font          ascent  descent  cap     above   below   glyph reads
+   *   Noto Sans     1.069   0.293    0.714   0.174   0.112   0.031em LOW
+   *   Segoe UI      1.079   0.251    0.700   0.214   0.086   0.064em LOW
+   *   SF Pro Text   0.952   0.241    0.705   0.151   0.145   0.003em low
+   *   DejaVu Sans   0.928   0.236    0.700   0.146   0.154   0.004em high
+   *
+   * Noto Sans is what `system-ui`/`sans-serif` resolve to on this machine and
+   * Segoe UI is the Windows arm of the stack, so the two fonts that are
+   * actually wrong are wrong in the same direction: the initial sits low.
+   * Lifting by 0.031em zeroes Noto and halves Segoe; on the two fonts that
+   * were already centred it costs under half a pixel at the largest size.
+   *
+   * Expressed as padding rather than a nudge on the text because there is no
+   * element around the text to nudge, and in `em` because the four sizes below
+   * differ only in font-size — one declaration corrects all four. With
+   * border-box sizing the bottom padding shortens the content box, so the
+   * centred line box moves up by HALF the padding: 0.062em of padding is the
+   * 0.031em lift. */
+  padding-bottom: 0.062em;
 }
 
 .avatar-chip { width: 14px; height: 14px; font-size: 8px; }

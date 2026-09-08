@@ -69,7 +69,7 @@ const BossModContextColumn = (() => {
                     onBack: toOffice,
                 });
             }
-            return BossModMiniOffice.createMiniOffice({ store, navigate });
+            return BossModMiniOffice.createMiniOffice({ store, api, navigate });
         }
 
         /**
