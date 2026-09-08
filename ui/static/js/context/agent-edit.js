@@ -44,7 +44,7 @@
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
 
-    const HIRE_TITLE = 'Hire someone';
+    const HIRE_TITLE = 'Add agent';
     const EDIT_TITLE = 'Edit role';
 
     /**
@@ -204,9 +204,16 @@ const BossModAgentEdit = (() => {
         let destroyed = false;
 
         const formEl = h('div', { class: 'agent-form-host' });
+        let modalBody = formEl;
+        let bindCatalogForm = null;
+        if (wasCreating) {
+            const add = BossModAgentFormCatalog.createAddBody(formEl);
+            modalBody = add.body;
+            bindCatalogForm = add.bindForm;
+        }
         const modal = BossModOverlays.createModal({
             title: wasCreating ? HIRE_TITLE : EDIT_TITLE,
-            body: formEl,
+            body: modalBody,
             // The variant, not a second modal: same trap, same Esc, same
             // focus restoration, more room and a body that scrolls.
             size: 'wide',
@@ -263,6 +270,7 @@ const BossModAgentEdit = (() => {
         // renderInline resolves after the form is in the DOM; a failure is the
         // operator's to see, not the console's alone.
         void renderInline(formEl, agent || null, onSave, onDelete)
+            .then(() => { if (bindCatalogForm) bindCatalogForm(formEl); })
             .catch((err) => {
                 console.error('[agent-edit] the agent form failed to render', err);
                 if (destroyed) return;

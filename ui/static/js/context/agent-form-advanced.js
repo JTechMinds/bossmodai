@@ -155,6 +155,26 @@ const BossModAgentFormAdvanced = (() => {
                         <span>Include prompt-visible runtime notifications</span>
                     </label>
                 </div>
+                ${!agent ? `
+                <div id="pack-url-import" class="pt-2 border-t border-bm-border">
+                    <label class="block text-sm font-medium mb-1" for="pack-url-input">Import pack URL</label>
+                    <div class="flex flex-wrap gap-2">
+                        <input type="url" name="pack_url" id="pack-url-input"
+                               placeholder="https://github.com/owner/repo/blob/sha/packs/id.agent.yaml"
+                               class="flex-1 min-w-0 px-3 py-2 text-sm border border-bm-border rounded-lg
+                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
+                                      focus:border-bm-accent">
+                        <button type="button" id="btn-import-pack-url"
+                                class="px-3 py-2 text-sm font-medium border border-bm-border rounded-lg
+                                       hover:bg-bm-bg">
+                            Import
+                        </button>
+                    </div>
+                    <p class="text-xs text-bm-muted mt-1">
+                        Pinned GitHub file. A repo that is not allowlisted asks for confirm.
+                    </p>
+                    <p id="pack-url-import-status" class="hidden text-xs mt-1" role="status"></p>
+                </div>` : ''}
             </div>
         </div>`;
     }

@@ -17,11 +17,13 @@ from core import config
 from core.agent_pack import (
     CATALOG_INDEX_PATH,
     DEFAULT_CATALOG_PATH,
+    DEFAULT_CATALOG_PIN,
     DEFAULT_CATALOG_REPO,
     PackImportRequest,
     confirm_token_for,
     export_pack,
     import_pack,
+    list_catalog,
     parse_pack_yaml,
     validate_pack_quality,
 )
@@ -148,7 +150,11 @@ def _catalog_source(pack_yaml: str | None = None, *, pack_path: str = AUDITOR_PA
     source = FakePackSource()
     owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
     pack_text = AUDITOR_PACK if pack_yaml is None else pack_yaml
-    for ref, sha in ((PINNED_SHA, PINNED_SHA), ("v1.0.0", TAG_SHA)):
+    for ref, sha in (
+        (PINNED_SHA, PINNED_SHA),
+        ("v1.0.0", TAG_SHA),
+        (DEFAULT_CATALOG_PIN, PINNED_SHA),
+    ):
         source.add(owner=owner, repo=repo, path=CATALOG_INDEX_PATH, ref=ref, sha=sha, yaml_text=CATALOG_YAML)
         source.add(
             owner=owner,
@@ -1011,7 +1017,90 @@ def test_api_rejects_floating_main_without_fetch(
 def test_seeded_catalog_settings_exist() -> None:
     assert config.get("agent_pack_catalog_repo") == DEFAULT_CATALOG_REPO
     assert config.get("agent_pack_catalog_path") == DEFAULT_CATALOG_PATH
+    assert config.get("agent_pack_catalog_pin") == DEFAULT_CATALOG_PIN
     assert config.get("agent_pack_url_allowlist") is None
+    assert DEFAULT_CATALOG_PIN == "3c1e0a6"
+
+
+def test_list_catalog_groups_categories_and_reads_author(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _catalog_source()
+    result = list_catalog(
+        source=source,
+        catalog_repo=DEFAULT_CATALOG_REPO,
+        ref=DEFAULT_CATALOG_PIN,
+    )
+    assert result.commit_sha == PINNED_SHA
+    assert result.requested_ref == DEFAULT_CATALOG_PIN
+    assert [card.entry.id for card in result.packs] == ["code-auditor", "feature-planner"]
+    assert result.packs[0].pack_author == {
+        "name": "JTech Minds",
+        "url": "https://github.com/JTechMinds",
+    }
+    assert result.packs[0].specialty == "Code Auditor"
+    assert source.resolve_calls[0][2] == DEFAULT_CATALOG_PIN
+    assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
+    assert db.list_agents() == []
+
+
+def test_list_catalog_empty_index_is_not_an_error() -> None:
+    source = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text="packs: []\n",
+    )
+    result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
+    assert result.packs == ()
+    assert result.commit_sha == PINNED_SHA
+
+
+def test_api_list_catalog_default_pin_and_empty_and_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _catalog_source()
+    client = _client(monkeypatch, source)
+    listed = client.get("/api/agent-packs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["ref"] == DEFAULT_CATALOG_PIN
+    assert body["commit_sha"] == PINNED_SHA
+    assert body["pin_short"] == PINNED_SHA[:7]
+    assert [c["id"] for c in body["categories"]] == ["engineering", "product"]
+    engineering = body["categories"][0]["packs"]
+    assert engineering[0]["id"] == "code-auditor"
+    assert engineering[0]["title"] == "Code Auditor"
+    assert engineering[0]["pack_author"] == {
+        "name": "JTech Minds",
+        "url": "https://github.com/JTechMinds",
+    }
+    assert db.list_agents() == []
+
+    empty = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    empty.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=DEFAULT_CATALOG_PIN,
+        sha=PINNED_SHA,
+        yaml_text="packs: []\n",
+    )
+    empty_client = _client(monkeypatch, empty)
+    empty_body = empty_client.get("/api/agent-packs", headers=_headers())
+    assert empty_body.status_code == 200, empty_body.text
+    assert empty_body.json()["categories"] == []
+
+    failed = FakePackSource()
+    fail_client = _client(monkeypatch, failed)
+    denied = fail_client.get("/api/agent-packs", headers=_headers())
+    assert denied.status_code == 400
+    assert denied.json()["detail"]["code"] == "pin_unresolved"
 
 
 def test_catalog_import_by_listed_path_and_unknown_id() -> None:

@@ -22,9 +22,13 @@ from core.agent_pack.schema import AgentPackError
 
 CATALOG_REPO_SETTING = "agent_pack_catalog_repo"
 CATALOG_PATH_SETTING = "agent_pack_catalog_path"
+CATALOG_PIN_SETTING = "agent_pack_catalog_pin"
 ALLOWLIST_SETTING = "agent_pack_url_allowlist"
 DEFAULT_CATALOG_REPO = "JTechMinds/BossMod_AgentMP"
 DEFAULT_CATALOG_PATH = "packs"
+# Browse and default catalog import pin a commit, never a floating branch.
+# Short SHAs are resolved through GitHub to the full commit.
+DEFAULT_CATALOG_PIN = "3c1e0a6"
 
 FLOATING_REFS = frozenset({
     "main",

@@ -82,7 +82,8 @@ const NAMES = [
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
     "BossModAgentApi", "BossModAgentFields", "BossModAgentFormFields",
     "BossModAgentFormAdvanced", "BossModAgentFormConnections",
-    "BossModAgentFormBindings", "BossModAgentForm",
+    "BossModAgentFormBindings", "BossModAgentFormHydrate", "BossModAgentFormCatalog",
+    "BossModAgentForm",
     "BossModAgentSubmit", "BossModAgentRecovery", "BossModAgentEdit", "BossModDeskPanel",
     "BossModContextColumn", "BossModChatPlace",
 ];
@@ -627,12 +628,19 @@ async function main() {
     await drain();
     const hire = wideModal();
     const hireOpensTheWideModal = Boolean(hire)
-        && hire.getAttribute("aria-label") === "Hire someone"
+        && hire.getAttribute("aria-label") === "Add agent"
         && Boolean(hire.querySelector("#agent-form"))
         && hire.querySelector("#btn-delete-agent") === null;
     if (!hireOpensTheWideModal) {
-        throw new Error(`Hire must open the same dialog: `
+        throw new Error(`Add agent must open the same dialog: `
             + `${hire && hire.getAttribute("aria-label")}`);
+    }
+    const addDoors = Boolean(hire.querySelector("#agent-add-browse"))
+        && Boolean(hire.querySelector("#agent-add-blank"))
+        && hire.querySelector("#agent-add-browse").textContent === "Browse packs"
+        && hire.querySelector("#agent-add-blank").textContent === "Start blank";
+    if (!addDoors) {
+        throw new Error("Add agent must offer Browse packs and Start blank");
     }
 
     // ── The pinned primary submits a form it is not inside ──

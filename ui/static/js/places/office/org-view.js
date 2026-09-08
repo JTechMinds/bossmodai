@@ -109,7 +109,7 @@ const BossModOrgView = (() => {
             body.append(h('div', { class: 'place-empty' },
                 h('p', { class: 'place-empty-title' }, 'Nobody works here yet'),
                 h('p', { class: 'place-empty-hint' },
-                    'Hire someone from the roster and they will appear on this chart.')));
+                    'Add an agent from the roster and they will appear on this chart.')));
         }
 
         function renderLoading() {
