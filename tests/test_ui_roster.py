@@ -18,7 +18,9 @@ HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 
 MODULES = [
     ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
-    ("core", "agent-status.js"), ("shell", "roster-people.js"),
+    ("core", "format.js"),
+    ("core", "agent-status.js"), ("shell", "roster-row-meta.js"),
+    ("shell", "roster-people.js"),
     ("shell", "thread-create.js"),
     ("shell", "roster-threads.js"), ("shell", "roster.js"),
 ]
@@ -86,9 +88,13 @@ def test_roster_owns_the_thread_creation_copy() -> None:
     # Re-pointed in the visual-parity pass: the one permanent "Create Thread"
     # button became two states — `New thread` opens select mode, `Create with N`
     # closes it. Re-pointed again in the polish round: `New thread` is the `+`
-    # on the section header, so the copy is its accessible name.
+    # on the section header, so the copy is its accessible name. And again in
+    # round three, which moved the confirm onto that same header row: it is
+    # icon-only too, so `Create thread` is its accessible name and the count it
+    # used to carry is the header's middle slot.
     assert "'New thread'" in source
-    assert "Create with ${" in source
+    assert "'Create thread'" in source
+    assert "${count} selected" in source
     assert "start a shared thread" in source
     # People owns the selection a thread is created from; this only reads it.
     assert "deps.getSelection" in source

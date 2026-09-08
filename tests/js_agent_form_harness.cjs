@@ -45,7 +45,8 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus", "BossModAvatar",
-    "BossModAgentFields", "BossModAgentFormFields", "BossModAgentSubmit",
+    "BossModAgentFields", "BossModAgentFormFields", "BossModAgentFormAdvanced",
+    "BossModAgentSubmit",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -158,8 +159,69 @@ async function main() {
     );
     const countRadios = (m) => (m.match(/name="agent-color"/g) || []).length;
 
+    // ── The field inventory ──
+    //
+    // Moving the form into a dialog is a CONTAINER change, so the thing that
+    // could go wrong is a field quietly not being built any more. Read off the
+    // markup the six builders produce, which is what a container receives —
+    // and produced for real rather than grepped, because a builder that throws
+    // renders nothing and a grep cannot tell the difference.
+    const editAgent = {
+        id: "a1", name: "Nadia", role: "Writer", description: "Drafts things.",
+        color: PALETTE[1], status: "idle", currentActivityKind: null,
+        desk_x: null, desk_y: null, model_social: "gpt-4o-mini",
+    };
+    const advanced = BossModAgentFormAdvanced.advancedSection(editAgent, {
+        personalities: [{ id: "p1", name: "Terse", prompt_template: "be terse" }],
+        roster: [],
+        promptHistoryPolicy: BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY,
+    });
+    const editMarkup = [
+        BossModAgentFormFields.nameField(editAgent),
+        BossModAgentFormFields.roleContractCard(editAgent, []),
+        BossModAgentFormFields.connectionsSection(editAgent, CONNECTIONS),
+        advanced,
+        BossModAgentFormFields.statusAndRecovery(editAgent),
+        BossModAgentFormFields.actionsRow(editAgent),
+    ].join("\n");
+    const hireMarkup = [
+        BossModAgentFormFields.nameField(null),
+        BossModAgentFormFields.roleContractCard(null, []),
+        BossModAgentFormFields.actionsRow(null),
+    ].join("\n");
+
+    const formFields = {
+        name: /<input type="text" name="name"/.test(editMarkup),
+        role: /<input type="text" name="role"/.test(editMarkup),
+        description: /<textarea name="description"/.test(editMarkup),
+        color: /name="agent-color"/.test(editMarkup),
+        desk: /<select name="desk"/.test(editMarkup)
+            && editMarkup.includes("Desk Assignment"),
+        // Every activation type, not merely the word "connection".
+        connections: MODEL_TYPES.every((t) => editMarkup.includes(`name="${t.key}"`))
+            && editMarkup.includes('name="model_all"'),
+        prompt_history: ["prompt_history_last_n", "prompt_history_max_tokens",
+            "prompt_history_earliest_ts", "prompt_history_include_notifications"]
+            .every((name) => editMarkup.includes(`name="${name}"`)),
+    };
+    // The recovery tools and the runtime pill are edit-only and travel with it.
+    const editFlowStillOffersRemove = editMarkup.includes('id="btn-delete-agent"')
+        && editMarkup.includes('id="btn-clear-chat-history"')
+        && editMarkup.includes('id="btn-reset-runtime"')
+        && editMarkup.includes('id="agent-form-submit"');
+    // ...and hiring offers no Delete, because there is nothing to delete yet.
+    const hireFlowOffersNoRemove = !hireMarkup.includes('id="btn-delete-agent"')
+        && hireMarkup.includes('id="agent-form-submit"');
+
     process.stdout.write(JSON.stringify({
         ok: true,
+        formFields,
+        editFlowStillOffersRemove,
+        hireFlowOffersNoRemove,
+        // The same refusal `submitRefusesAPaleColour` reports, under the name
+        // the move asks about: the clamp is a save-path guard, so moving the
+        // form to a dialog must not have taken it off the path.
+        colourClampStillEnforced: pale.threw === true && seeded.threw === false,
 
         // ── The clamp ──
         // Derived from the token, not typed: the bound is whatever luminance

@@ -6,15 +6,23 @@
    names. Shadows use a neutral rgba because a shadow is a depth cue, not a
    palette colour — the same treatment conversation.css already uses. */
 
-/* ─── Modal ─── */
+/* ─── Modal ───
+   Two sizes, one implementation (core/overlays.js). Both are centred in the
+   viewport by the same transform; `wide` only changes how much room the panel
+   is allowed to take. The panel is a flex column so the BODY is the part that
+   scrolls — the title and the action row stay put, which is the whole reason a
+   tall form can live in here at all. */
 
-.modal {
+.modal-panel {
   position: fixed;
   z-index: 60;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
   width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   padding: 20px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
@@ -22,10 +30,31 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 }
 
-.modal-title { margin: 0 0 8px; font-size: 16px; }
-.modal-body { margin-bottom: 16px; color: var(--muted); }
+/* Wide enough for the agent form's two-column matrix, and never wider than the
+   window. A dialog squeezed into a column is what this replaced. */
+.modal-panel[data-size="wide"] {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
 
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-title { flex: 0 0 auto; margin: 0 0 8px; font-size: 16px; }
+
+/* min-height: 0 is what actually lets a flex child scroll — without it the
+   body grows to its content and the panel overflows the viewport instead. */
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  color: var(--muted);
+}
+
+/* Pinned below the scroller, not inside it. */
+.modal-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
+
+/* The form the wide variant carries is the app's own ink on the app's own
+   ground, not the muted body copy a confirm dialog wants. */
+.modal-panel[data-size="wide"] .modal-body { color: var(--ink); }
 
 .modal-action {
   padding: 6px 14px;

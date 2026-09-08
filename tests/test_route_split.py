@@ -5,7 +5,10 @@ from __future__ import annotations
 from api.routes import router
 
 
-# Captured from api/routes.py on main @ 25f0732 before the package split.
+# Captured from api/routes.py on main @ 25f0732 before the package split, plus
+# every route deliberately added since. A new route belongs here the moment it
+# ships: the guard is "nothing appears or disappears by accident", not "the
+# table never grows".
 EXPECTED_ROUTES = {
     ((), "/api/ws", "websocket_endpoint"),
     (("GET",), "/api/map", "get_map"),
@@ -27,6 +30,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels", "list_channels"),
     (("POST",), "/api/channels", "create_channel"),
     (("GET",), "/api/channels/{channel_id}", "get_channel"),
+    (("PATCH",), "/api/channels/{channel_id}", "rename_channel"),
     (("POST",), "/api/channels/{channel_id}/archive", "archive_channel"),
     (("POST",), "/api/channels/{channel_id}/reopen", "reopen_channel"),
     (("GET",), "/api/channels/{channel_id}/open-tasks", "list_channel_open_tasks"),
@@ -114,7 +118,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 93
+    assert len(got) == 94
 
 
 def test_from_api_routes_import_router_still_works() -> None:

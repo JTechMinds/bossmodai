@@ -19,7 +19,8 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlays", "BossModEmptyState",
-    "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards", "BossModConversationChrome",
+    "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
+    "BossModTitleRename", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];
@@ -45,6 +46,19 @@ const delays = { a: 0, b: 0, c: 0, d: 0 };
 const failing = new Set();
 const requestLog = [];
 
+// Mutable on purpose: a rename is only proven if reading the thread back shows
+// the new name, rather than the view painting what the operator typed.
+const THREADS = {
+    t1: { id: "t1", name: "Standup", status: "active", members: [{ id: "m1", name: "Ada" }] },
+    // A sealed room takes no writes, and a rename is a write.
+    t2: { id: "t2", name: "Old room", status: "archived", members: [{ id: "m1", name: "Ada" }] },
+    // Somewhere to switch to mid-rename.
+    t3: { id: "t3", name: "Design sync", status: "active", members: [{ id: "m1", name: "Ada" }] },
+};
+const RENAME_FAILURE = "Thread name cannot be empty";
+const renamePayloads = [];
+let renameFails = false;
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -68,18 +82,22 @@ const api = async (url, init) => {
     }
     const thread = text.match(/^\/api\/channels\/([^/?]+)$/);
     if (thread) {
+        const room = THREADS[thread[1]];
+        if (!room) return { ok: false, status: 404, async text() { return "Thread not found"; } };
+        if (init && init.method === "PATCH") {
+            renamePayloads.push(JSON.parse(init.body));
+            if (renameFails) {
+                return { ok: false, status: 400, async text() { return RENAME_FAILURE; } };
+            }
+            // The server is what decides the name; the view adopts what comes
+            // back rather than what was typed.
+            room.name = String(JSON.parse(init.body).name).trim();
+            return { ok: true, async json() { return { ...room, members: room.members }; } };
+        }
         return {
             ok: true,
             async json() {
-                return {
-                    channel: {
-                        id: thread[1],
-                        name: "Standup",
-                        status: "active",
-                        members: [{ id: "m1", name: "Ada" }],
-                    },
-                    messages: [],
-                };
+                return { channel: { ...room, members: room.members }, messages: [] };
             },
         };
     }
@@ -350,6 +368,147 @@ async function main() {
     }
     await dots.dispatchClick();
 
+    // ─── The thread title renames in place ───
+    //
+    // Easy but non-obvious: at rest it is the title, and it is one control in
+    // two states rather than a label that swaps for an input. Driven through
+    // keys because "reachable by Tab, opened by Enter" is the half a click
+    // test would never see (SC 2.1.1).
+    await conversation.open("t1", "thread");
+    const titleSlot = () => conversation.element.querySelector(".conversation-title");
+    const titleInput = () => conversation.element.querySelector("#conversation-title-edit");
+    const actionLabels = () => conversation.element
+        .querySelector(".conversation-actions")
+        .querySelectorAll("button")
+        .map((btn) => btn.textContent)
+        .filter((label) => label.length > 0);
+    const errorLine = () => conversation.element.querySelector(".composer-error").textContent;
+    const press = (node, key) => (node.listeners.keydown || []).forEach((fn) => fn({
+        key, preventDefault() {}, stopPropagation() {},
+    }));
+
+    if (!titleInput()) throw new Error("a live thread's title must be renameable");
+    if (titleInput().getAttribute("data-editing") !== "false") {
+        throw new Error("the title must be at rest until it is asked for");
+    }
+    if (titleInput().getAttribute("aria-label") !== "Rename this thread") {
+        throw new Error("a control that looks like a heading needs its own name");
+    }
+    if (titleInput().value !== "Standup") throw new Error("the title must show the name");
+    if (actionLabels().join("|") !== "Archive") {
+        throw new Error(`at rest the row is Archive alone, got ${actionLabels().join("|")}`);
+    }
+
+    press(titleInput(), "Enter");
+    const titleOpensEditOnEnter = titleInput().getAttribute("data-editing") === "true"
+        && titleInput().readOnly === false
+        && documentStub.activeElement === titleInput();
+    if (!titleOpensEditOnEnter) {
+        throw new Error(`Enter must open edit mode and take focus, got `
+            + `${titleInput().getAttribute("data-editing")}`);
+    }
+    // Save joins the row Archive is in, through the same descriptor.
+    const saveActionAppearsBesideArchive = actionLabels().join("|") === "Save|Archive"
+        && Boolean(conversation.element.querySelector("#conversation-title-save"));
+    if (!saveActionAppearsBesideArchive) {
+        throw new Error(`Save must join the action row, got ${actionLabels().join("|")}`);
+    }
+
+    // Escape backs out and puts the confirmed name back, having sent nothing.
+    titleInput().value = "something half typed";
+    const patchesBeforeEscape = renamePayloads.length;
+    press(titleInput(), "Escape");
+    const escapeCancelsRenameWithoutSaving = titleInput().value === "Standup"
+        && titleInput().getAttribute("data-editing") === "false"
+        && renamePayloads.length === patchesBeforeEscape
+        && actionLabels().join("|") === "Archive";
+    if (!escapeCancelsRenameWithoutSaving) {
+        throw new Error(`Escape must discard the draft and send nothing, got `
+            + `"${titleInput().value}" after ${renamePayloads.length} patches`);
+    }
+
+    // A rename that lands: the request goes out, and re-reading the thread
+    // shows the new name — so the title is the server's answer, not the draft.
+    press(titleInput(), "Enter");
+    titleInput().value = "Release triage";
+    press(titleInput(), "Enter");
+    await tick();
+    await tick();
+    const renamePatchesTheChannel = renamePayloads.length === patchesBeforeEscape + 1
+        && renamePayloads[renamePayloads.length - 1].name === "Release triage"
+        && titleInput().getAttribute("data-editing") === "false"
+        && actionLabels().join("|") === "Archive";
+    if (!renamePatchesTheChannel) {
+        throw new Error(`the rename must PATCH and then close, got `
+            + `${JSON.stringify(renamePayloads)} editing `
+            + `${titleInput().getAttribute("data-editing")}`);
+    }
+    await conversation.open("b", "agent");
+    await conversation.open("t1", "thread");
+    const renameShowsTheSavedName = titleInput().value === "Release triage";
+    if (!renameShowsTheSavedName) {
+        throw new Error(`the renamed thread must read back renamed, got `
+            + `"${titleInput().value}"`);
+    }
+
+    // A rename that fails keeps the operator's text, stays in edit mode, and
+    // says what went wrong. Reverting to the old name would look exactly like
+    // a rename that worked and then un-happened.
+    renameFails = true;
+    press(titleInput(), "Enter");
+    titleInput().value = "Doomed name";
+    press(titleInput(), "Enter");
+    await tick();
+    await tick();
+    const failedRenameReportsError = errorLine().includes(RENAME_FAILURE);
+    const failedRenameKeepsDraft = titleInput().value === "Doomed name";
+    const failedRenameStaysInEditMode = titleInput().getAttribute("data-editing") === "true"
+        && actionLabels().join("|") === "Save|Archive";
+    if (!failedRenameReportsError) {
+        throw new Error(`a failed rename must say so, got "${errorLine()}"`);
+    }
+    if (!failedRenameKeepsDraft || !failedRenameStaysInEditMode) {
+        throw new Error(`a failed rename must keep the draft and the mode, got `
+            + `"${titleInput().value}" editing ${titleInput().getAttribute("data-editing")}`);
+    }
+    renameFails = false;
+    press(titleInput(), "Escape");
+
+    // A conversation switch must not carry a half-typed rename onto the next
+    // thread. apply() deliberately leaves the field alone while it is being
+    // edited — that is what stops a live repaint stealing the operator's
+    // typing — so without an explicit reset the draft would follow the switch
+    // and the new thread would wear the old one's name.
+    press(titleInput(), "Enter");
+    titleInput().value = "Never sent";
+    const patchesBeforeSwitch = renamePayloads.length;
+    await conversation.open("t3", "thread");
+    const renameDoesNotFollowASwitch = titleInput().value === "Design sync"
+        && titleInput().getAttribute("data-editing") === "false"
+        && actionLabels().join("|") === "Archive"
+        && renamePayloads.length === patchesBeforeSwitch;
+    if (!renameDoesNotFollowASwitch) {
+        throw new Error(`a switch must drop the rename, got "${titleInput().value}"`
+            + ` editing ${titleInput().getAttribute("data-editing")}`);
+    }
+
+    // An agent conversation is not renameable, and neither is a sealed room:
+    // both get a plain heading with no control in it and no tab stop.
+    await conversation.open("a", "agent");
+    const agentTitleIsNotEditable = titleInput() === null
+        && titleSlot().textContent === "Ada";
+    if (!agentTitleIsNotEditable) {
+        throw new Error(`an agent conversation must not be renameable, got `
+            + `"${titleSlot().textContent}"`);
+    }
+    await conversation.open("t2", "thread");
+    const archivedThreadIsNotRenameable = titleInput() === null
+        && titleSlot().textContent === "Old room";
+    if (!archivedThreadIsNotRenameable) {
+        throw new Error(`a sealed room takes no writes, rename included, got `
+            + `"${titleSlot().textContent}"`);
+    }
+
     // ─── The empty conversation offers the two things you can do ───
     await conversation.open("d", "agent");
     const empty = status();
@@ -408,6 +567,17 @@ async function main() {
         receiptsNodeSurvivesReopen,
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
+        titleOpensEditOnEnter,
+        saveActionAppearsBesideArchive,
+        escapeCancelsRenameWithoutSaving,
+        renamePatchesTheChannel,
+        renameShowsTheSavedName,
+        failedRenameReportsError,
+        failedRenameKeepsDraft,
+        failedRenameStaysInEditMode,
+        renameDoesNotFollowASwitch,
+        agentTitleIsNotEditable,
+        archivedThreadIsNotRenameable,
     }));
 }
 

@@ -48,6 +48,7 @@ CONVERSATION_STACK = [
     JS / "conversation" / "transcript-cache.js",
     JS / "conversation" / "message.js",
     JS / "conversation" / "event-cards.js",
+    JS / "conversation" / "title-rename.js",
     JS / "conversation" / "chrome.js",
     JS / "conversation" / "composer.js",
     JS / "conversation" / "system-receipts.js",
@@ -82,12 +83,15 @@ def test_operator_chrome_labels_threads() -> None:
     assert "'Threads'" in threads
     # The creation copy is two states since the visual-parity pass, and it
     # moved to shell/thread-create.js when the polish round split making a
-    # thread out of listing them. The rail still owns it, which is what these
-    # lines have always guarded, so the chain is asserted with them.
+    # thread out of listing them. Round three moved the second state onto the
+    # section header row, so `Create with N` became an icon-only confirm named
+    # `Create thread` with the count in the header's middle slot. The rail
+    # still owns the copy, which is what these lines have always guarded.
     creation = _read("shell/thread-create.js")
     assert "BossModThreadCreate.createThreadControls(" in threads
     assert "'New thread'" in creation
-    assert "Create with ${" in creation
+    assert "'Create thread'" in creation
+    assert "${count} selected" in creation
     assert "start a shared thread" in creation
     # Threads are a roster section, not a seventh place.
     assert "channels" not in places.lower()
@@ -197,7 +201,7 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "Threads" in roster_threads
     roster_create = _read("shell/thread-create.js")
     assert "'New thread'" in roster_create
-    assert "Create with ${" in roster_create
+    assert "'Create thread'" in roster_create
     # The rail still assembles both halves, and the Threads half assembles the
     # creation controls, so nothing in the chain is orphaned.
     assert "BossModRosterThreads.createThreads(" in roster
@@ -281,6 +285,8 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlays.js"),
+            str(JS / "core" / "format.js"),
+            str(JS / "shell" / "roster-row-meta.js"),
             str(JS / "conversation" / "sources" / "thread-archive.js"),
             str(JS / "conversation" / "sources" / "thread-source.js"),
             str(JS / "shell" / "roster-people.js"),

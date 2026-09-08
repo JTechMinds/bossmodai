@@ -187,11 +187,11 @@ const BossModRosterPeople = (() => {
                 },
                     h('span', { class: 'roster-name' }, agent.name),
                     h('span', { class: 'roster-status' }, statusLine(agent, paused, needy))),
-                // A sibling of the name button: inside the text column the
-                // dot pushed the status line around.
-                needy.has(agent.id)
-                    ? h('span', { class: 'roster-need-dot', 'aria-hidden': 'true' })
-                    : null);
+                // The row's right-hand column, shared with the Threads half:
+                // when the operator last spoke to this agent, over the need
+                // dot. A sibling of the name button, because inside the text
+                // column either of them pushes the status line around.
+                BossModRosterRowMeta.rowMeta(agent.lastMessageAt, needy.has(agent.id)));
             return li;
         }
 

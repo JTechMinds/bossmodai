@@ -70,6 +70,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
+    CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -116,7 +117,9 @@ ROSTER_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
     JS / "shell" / "roster-threads.js",
@@ -148,6 +151,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
+    CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -347,16 +351,30 @@ def test_new_thread_is_an_icon_button_on_the_section_header() -> None:
     assert ".roster-section-head {" in _read(CSS / "shell.css")
 
 
-def test_the_select_hint_only_appears_in_select_mode() -> None:
-    """"Select teammates and start a shared thread." is instructions for a
-    mode the operator is not in. It belongs beside Create and Cancel."""
+def test_the_select_hint_never_costs_the_rail_a_row() -> None:
+    """"Select teammates and start a shared thread." is instructions, and this
+    round moved it off the permanent line it was standing on below the list.
+
+    Round three moved it once more, into the section header's middle slot: it
+    is the invitation when the mode is closed and the count when it is open, so
+    it explains the mode from the row that opens it and still costs no height.
+    The property this has always guarded is the one that survives — the hint
+    never occupies a line of its own — so it is asserted that way rather than
+    on which of the two states shows it.
+    """
     js = _read(JS / "shell/thread-create.js")
     assert "THREAD_HINT" in js
-    # Attached with the mode, not built into the section that is always there.
+    # It lives on the header row, which the Threads half builds.
+    assert "roster-thread-hint" not in js
     assert "roster-thread-hint" not in _read(JS / "shell/roster-threads.js")
-    built = js.split("const element = h('div'", 1)[1].split(";", 1)[0]
-    assert "roster-thread-hint" not in built, built
-    assert _roster_payload()["hintOnlyShowsInSelectMode"] is True
+    assert "roster-section-hint" in js
+    head = _read(JS / "shell/roster-threads.js").split(
+        "class: 'roster-section-head'", 1)[1].split("threadFilters", 1)[0]
+    assert "create.middle" in head, head
+    payload = _roster_payload()
+    assert payload["hasStandaloneCreateRow"] is False
+    assert payload["idleMiddleSlot"] == "Select teammates and start a shared thread."
+    assert payload["selectingMiddleSlot"] == "1 selected"
 
 
 # ─── Task 5: select a person by clicking their row ───

@@ -327,7 +327,9 @@ ROSTER_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
     JS / "shell" / "roster-threads.js",
@@ -351,6 +353,7 @@ AGENT_FORM_MODULES = [
     JS / "core" / "avatar.js",
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
+    JS / "context" / "agent-form-advanced.js",
     JS / "context" / "agent-submit.js",
 ]
 
@@ -558,8 +561,10 @@ def test_people_rows_are_clean_until_select_mode() -> None:
     assert "selected.clear()" in exit_body, exit_body
     # Nothing hides the CONTROL instead of removing it. Matched as a whole
     # class name rather than as a substring: the polish round added
-    # `.roster-select-actions` for select mode's own hint-and-buttons block,
-    # and a substring ban would read that as the checkbox coming back.
+    # `.roster-select-actions` for select mode's own hint-and-buttons block —
+    # round three folded that block into the section header and the class is
+    # gone, but the whole-name match is what kept the ban honest while it
+    # existed, so it stays that way.
     assert re.search(r"\.roster-select(?![-\w])", _read(CSS / "shell.css")) is None
 
 
@@ -588,29 +593,51 @@ def test_hire_row_matches_the_person_rows() -> None:
 
 def test_the_need_dot_sits_beside_the_name_not_inside_it() -> None:
     """It was rendering inside the text column, which is why it moved the
-    status line. A sibling pinned right is what the concept has."""
+    status line. A sibling pinned right is what the concept has.
+
+    Round three gave that right edge a second occupant — the last-activity
+    time — and moved both into one shared column, shell/roster-row-meta.js, so
+    these assertions follow the dot to its new owner. What they guard is
+    unchanged: the dot is not inside the name button, and it is pinned right.
+    Read on the new owner rather than left where it was, which would have
+    passed on a file that no longer mentions the dot at all.
+    """
     roster = _read(JS / "shell/roster-people.js")
-    person = roster.split("class: 'roster-person',", 1)[1].split("needy.has(", 1)[0]
+    person = roster.split("class: 'roster-person',", 1)[1].split("BossModRosterRowMeta", 1)[0]
     assert "roster-need-dot" not in person, "the dot is a sibling of the button"
-    dot = _read(CSS / "shell.css").split(".roster-need-dot {", 1)[1].split("}", 1)[0]
-    assert "margin-left: auto" in dot
+    meta = _read(JS / "shell/roster-row-meta.js")
+    assert "roster-need-dot" in meta, "the shared column owns the dot"
+    assert "'aria-hidden': 'true'" in meta, "the status line already says it"
+    css = _read(CSS / "shell.css")
+    column = css.split(".roster-row-meta {", 1)[1].split("}", 1)[0]
+    assert "margin-left: auto" in column
+    # Two rules both pushing right would be one of them doing nothing.
+    dot = css.split(".roster-need-dot {", 1)[1].split("}", 1)[0]
+    assert "margin-left: auto" not in dot
 
 
 def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
-    """`New thread` opens the mode; `Create with N` and `Cancel` close it.
+    """`New thread` opens the mode; a confirm and a Cancel close it.
 
     Re-pointed at shell/thread-create.js, which the polish round split out of
     the Threads half: reading the thread list and making a new one are two
     jobs, and the second is the one this describes.
+
+    Re-pointed again in round three, which moved the second state onto the
+    section header row the first one already lived on. The two states are what
+    this has always guarded; what changed is that both now wear the header's
+    icon-only vocabulary instead of the mode owning a row of text buttons.
     """
     threads = _read(JS / "shell/thread-create.js")
     assert "'New thread'" in threads
-    assert "Create with ${" in threads
+    assert "'Create thread'" in threads
     assert "'Cancel'" in threads
-    # Both are quiet rows, the way the rail's other rows are.
-    assert "btn btn-quiet roster-create-thread" in threads
-    assert "btn btn-quiet roster-thread-cancel" in threads
+    # All three are the header row's quiet icon control, not a filled button
+    # that would outrank every person in the rail.
+    assert threads.count("class: 'roster-section-action'") == 2
+    assert "class: 'roster-section-action roster-confirm-thread'" in threads
     assert "btn-primary" not in threads
+    assert "btn btn-quiet" not in threads
 
     # The filter is a small pill that fills with the surface, not with accent.
     pressed = _read(CSS / "shell.css").split(

@@ -36,11 +36,18 @@ function makeEl(tag) {
             if (other === this) return true;
             return this.children.some((c) => c.contains && c.contains(other));
         },
+        // core/overlays.js asks for its FOCUSABLE list; this fake answers by
+        // TAG rather than by parsing the selector, which is enough for the
+        // three shapes here and honest about being a fake. It walks in
+        // document order, which is what the trap's first/last depend on. The
+        // wide modal is the case that needs more than buttons: its body is a
+        // form, and a trap that only cycled buttons would leak out of it.
         querySelectorAll() {
+            const FOCUSABLE_TAGS = ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"];
             const out = [];
             const walk = (node) => {
                 node.children.forEach((c) => {
-                    if (c.tagName === "BUTTON") out.push(c);
+                    if (FOCUSABLE_TAGS.includes(c.tagName) && !c.disabled) out.push(c);
                     if (c.children) walk(c);
                 });
             };
@@ -129,6 +136,90 @@ yes.listeners.click[0]({ preventDefault() {} });
 if (!fired) throw new Error("primary action must fire onSelect");
 if (document.activeElement !== trigger2) throw new Error("focus must return after action");
 
+// ── The wide variant: the same contract over a body that scrolls ──
+//
+// createModal was built for a short question with two buttons. The agent form
+// is tall, so `size: 'wide'` gives it a scrolling body with the title and the
+// action row pinned outside — and a scrolling body of form controls is exactly
+// where a focus trap leaks, so the trap is re-proven over one.
+const trigger3 = makeEl("button");
+body.append(trigger3);
+trigger3.focus();
+
+const field = makeEl("input");
+const area = makeEl("textarea");
+const formBody = makeEl("div");
+formBody.append(field, area);
+
+const wide = BossModOverlays.createModal({
+    title: "Edit role",
+    body: formBody,
+    actions: [{ label: "Cancel", tone: "quiet" }],
+    size: "wide",
+});
+
+const classesOf = (el) => String(el.getAttribute("class") || "").split(/\s+/);
+const wideModalIsMarked = classesOf(wide.element).includes("modal-panel")
+    && wide.element.getAttribute("data-size") === "wide"
+    && wide.element.getAttribute("role") === "dialog"
+    && wide.element.getAttribute("aria-modal") === "true";
+if (!wideModalIsMarked) {
+    throw new Error(`the wide variant must be the same dialog: `
+        + `${wide.element.getAttribute("class")} / ${wide.element.getAttribute("data-size")}`);
+}
+
+// The default size still says which it is, so the stylesheet never has to
+// guess and a caller cannot half-opt into the variant.
+const plain = BossModOverlays.createModal({
+    title: "Plain", body: "x", actions: [{ label: "Ok" }],
+});
+if (plain.element.getAttribute("data-size") !== "default") {
+    throw new Error("a modal with no size must still declare the default one");
+}
+plain.close();
+
+// The action row is a SIBLING of the body, not inside it: inside the scroller
+// it would scroll away from the form it applies to.
+const wideBody = wide.element.children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes("modal-body"))[0];
+const wideActions = wide.element.children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes("modal-actions"))[0];
+const cancelBtn = wideActions && wideActions.children[0];
+const wideModalActionsSitOutsideTheBody = Boolean(wideBody) && Boolean(wideActions)
+    && wideBody.contains(field)
+    && !wideBody.contains(cancelBtn)
+    && wide.element.children.indexOf(wideActions) > wide.element.children.indexOf(wideBody);
+if (!wideModalActionsSitOutsideTheBody) {
+    throw new Error("the wide modal's actions must be pinned outside the scrolling body");
+}
+
+// Focus opens on the safe action, and Tab wraps through the BODY rather than
+// walking into the page behind it.
+if (document.activeElement !== cancelBtn) {
+    throw new Error("the wide modal must focus its safe action like any other");
+}
+const wideKeys = () => document.listeners.keydown || [];
+wideKeys().forEach((fn) => fn({ key: "Tab", shiftKey: false, preventDefault() {} }));
+const wrappedToTheBody = document.activeElement === field;
+wideKeys().forEach((fn) => fn({ key: "Tab", shiftKey: true, preventDefault() {} }));
+const wideModalTrapsTabAcrossItsBody = wrappedToTheBody
+    && document.activeElement === cancelBtn;
+if (!wideModalTrapsTabAcrossItsBody) {
+    throw new Error(`Tab must stay inside the wide modal, got `
+        + `${document.activeElement && document.activeElement.tagName}`);
+}
+
+wideKeys().forEach((fn) => fn({ key: "Escape", preventDefault() {} }));
+const wideModalEscCloses = body.children.indexOf(wide.element) === -1;
+const wideModalRestoresFocus = document.activeElement === trigger3;
+if (!wideModalEscCloses) throw new Error("Esc must close the wide modal too");
+if (!wideModalRestoresFocus) {
+    throw new Error("the wide modal must return focus to whatever opened it");
+}
+if ((document.listeners.keydown || []).length !== 0) {
+    throw new Error("the wide modal must unbind keydown on close");
+}
+
 // ── The anchored menu: same contract, third shape ──
 //
 // It is the chat header's `⋯`. Non-modal, but it owes the same three things
@@ -204,6 +295,11 @@ process.stdout.write(JSON.stringify({
     escClosesWithoutConfirming: true,
     restoresFocus: true,
     unbindsOnClose: true,
+    wideModalIsMarked,
+    wideModalActionsSitOutsideTheBody,
+    wideModalTrapsTabAcrossItsBody,
+    wideModalEscCloses,
+    wideModalRestoresFocus,
     menuFocusesFirstOption,
     menuTrapsTab,
     menuEscCloses,

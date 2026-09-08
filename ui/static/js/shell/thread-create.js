@@ -6,20 +6,22 @@
  * server holds; this MAKES a new one. They share a section and nothing else —
  * this never reads `store.threads`, and Threads never posts.
  *
- * Creation is two states, not one permanent button. The `+` on the THREADS
- * header row opens select mode; `Create with N` and `Cancel` close it. The old
- * always-on Create Thread button was disabled most of the time, which made a
- * permanent row of checkboxes the only way to understand what it wanted.
+ * Creation is two states of ONE row, not a row that grows. The section header
+ * has three slots: the `THREADS` label, a middle slot, and an action group at
+ * the right. Idle, the middle slot invites — "Select teammates and start a
+ * shared thread." — and the group holds the `+`. Selecting, the middle slot
+ * counts what is picked and the group holds Cancel and the confirm.
  *
- * The `+` sits on the section header rather than in a row of its own: it is
- * always visible, costs no vertical space, and does not scroll away as the
- * thread list grows. Being icon-only it carries its own accessible name, and it
- * reports `aria-expanded` rather than going dead once the mode it opens is
- * open — a disabled control would also drop keyboard focus at the moment the
- * operator activated it.
+ * The control that STARTS the mode is the control that ends it. Cancel used to
+ * sit in a block of its own below the filters, so the operator entered the
+ * mode from the header and had to hunt somewhere else for the way out; the
+ * hint and the count each cost a line of rail besides. Both rows are gone and
+ * nothing moved further than one slot.
  *
- * The hint is instructions for select mode, so it is attached WITH select mode.
- * Standing under the list permanently, it explained a mode nobody was in.
+ * Every control here is icon-only, so each carries its own accessible name.
+ * Swapping the group also moves keyboard focus onto the group's new first
+ * control when the departing one held it — a mode entered from the keyboard
+ * must not drop focus on the body.
  */
 const BossModThreadCreate = (() => {
     const { h, clear } = BossModDom;
@@ -45,10 +47,10 @@ const BossModThreadCreate = (() => {
      *   People's job and this is the only way to ask for it.
      * @param {(channel: object) => Promise<void>|void} deps.onCreated  The new
      *   channel summary. Showing it is the list's job, not this module's.
-     * @returns {{ action: HTMLElement, element: HTMLElement,
-     *             applySelection: () => void }}
-     *   `action` belongs on the section header row; `element` is the block that
-     *   appears while select mode is on.
+     * @returns {{ actions: HTMLElement, middle: HTMLElement,
+     *             applySelection: () => void, destroy: () => void }}
+     *   Both nodes belong on the section header row, in that order after the
+     *   title.
      * @throws {Error} When any dependency is missing — a half-wired control
      *   would render a `+` whose clicks go nowhere.
      */
@@ -78,8 +80,9 @@ const BossModThreadCreate = (() => {
         }
 
         // Right-aligned on the THREADS title row. Icon-only, so the label is
-        // the accessible name rather than text nobody sees.
-        const action = h('button', {
+        // the accessible name rather than text nobody sees. It reports the mode
+        // it opens rather than going dead in it.
+        const newThread = h('button', {
             class: 'roster-section-action',
             id: 'roster-new-thread',
             type: 'button',
@@ -90,26 +93,69 @@ const BossModThreadCreate = (() => {
 
         // One button, one listener. Rebinding a fresh handler on every repaint
         // would stack listeners on a node the operator is already pointing at.
-        const createThread = h('button', {
-            class: 'btn btn-quiet roster-create-thread',
-            type: 'button',
-            onclick: () => { void createThreadFromSelection(); },
-        });
         const cancelSelect = h('button', {
-            class: 'btn btn-quiet roster-thread-cancel',
+            class: 'roster-section-action',
+            id: 'roster-cancel-select',
             type: 'button',
+            'aria-label': 'Cancel',
             onclick: () => onExitSelect(),
-        }, 'Cancel');
-        const selectHint = h('p', { class: 'roster-thread-hint' }, THREAD_HINT);
+        }, h('i', { 'data-lucide': 'x', 'aria-hidden': 'true' }));
 
-        // Built once and ATTACHED with the mode, never hidden with CSS: a
-        // hidden Cancel is still a tab stop for a mode nobody is in, and a
-        // hint nobody is meant to read is still read.
-        const element = h('div', { class: 'roster-select-actions' });
-        // Tracked here rather than read back off the DOM: "is it attached" is
-        // this module's own bookkeeping, and asking the node makes the answer
-        // depend on which parent property the host happens to expose.
-        let attached = false;
+        const createThread = h('button', {
+            class: 'roster-section-action roster-confirm-thread',
+            id: 'roster-create-thread',
+            type: 'button',
+            'aria-label': 'Create thread',
+            onclick: () => { void createThreadFromSelection(); },
+        }, h('i', { 'data-lucide': 'check', 'aria-hidden': 'true' }));
+
+        const actions = h('div', { class: 'roster-section-actions' });
+        // The middle slot. One line that already exists, so neither the hint
+        // nor the count costs the rail any height.
+        const middle = h('p', { class: 'roster-section-hint' });
+        /** Which group is attached, so an unchanged repaint moves no nodes. */
+        let attachedSelecting = null;
+
+        /**
+         * Leave select mode on Escape, the way every other dismissible state
+         * in the shell does.
+         *
+         * The dialog check is shell/shortcuts.js's rule, applied here for the
+         * same reason: a modal binds its own Escape handler AFTER this one and
+         * is still in the document while this runs, so Escape belongs to the
+         * innermost surface first. Without it, Escape inside a confirm dialog
+         * would also cancel the selection behind it.
+         *
+         * @param {KeyboardEvent} event
+         * @returns {void}
+         */
+        function onDocumentKeydown(event) {
+            if (event.key !== 'Escape') return;
+            if (!isSelecting()) return;
+            if (document.querySelector('[role="dialog"]')) return;
+            onExitSelect();
+        }
+        document.addEventListener('keydown', onDocumentKeydown);
+
+        /**
+         * Show the group the mode calls for, keeping the keyboard with it.
+         *
+         * @param {boolean} selecting
+         * @returns {void}
+         */
+        function swapActions(selecting) {
+            if (attachedSelecting === selecting) return;
+            const active = document.activeElement;
+            const hadFocus = Boolean(active) && actions.contains(active);
+            clear(actions);
+            if (selecting) actions.append(cancelSelect, createThread);
+            else actions.append(newThread);
+            attachedSelecting = selecting;
+            // The departing control is gone from the document; leaving focus
+            // where it was would drop the keyboard on the body.
+            if (hadFocus) (selecting ? cancelSelect : newThread).focus();
+            lucide.createIcons();
+        }
 
         /**
          * Turn the current selection into a thread.
@@ -132,15 +178,15 @@ const BossModThreadCreate = (() => {
         }
 
         return {
-            action,
-            element,
+            actions,
+            middle,
 
             /**
-             * Re-read the People selection and repaint the controls.
+             * Re-read the People selection and repaint the header row.
              *
-             * Out of select mode there are none: the `+` is the whole of the
-             * invitation. In it, the hint explains the mode, the button counts
-             * what is picked, and Cancel is the way out. The floor is one
+             * Out of select mode the `+` is the whole of the invitation and
+             * the middle slot says what it is for. In it, the middle slot
+             * counts and the group offers the two ways out. The floor is one
              * teammate, which is what POST /api/channels accepts — a thread of
              * one is a real thing the operator can already make.
              *
@@ -149,17 +195,21 @@ const BossModThreadCreate = (() => {
             applySelection() {
                 const selecting = isSelecting();
                 const count = getSelection().length;
-                action.setAttribute('aria-expanded', String(selecting));
-                clear(createThread);
-                createThread.append(`Create with ${count}`);
+                newThread.setAttribute('aria-expanded', String(selecting));
                 createThread.disabled = count === 0;
-                if (selecting && !attached) {
-                    element.append(selectHint, createThread, cancelSelect);
-                    attached = true;
-                } else if (!selecting && attached) {
-                    clear(element);
-                    attached = false;
-                }
+                clear(middle);
+                middle.append(selecting
+                    ? `${count} selected`
+                    : THREAD_HINT);
+                swapActions(selecting);
+            },
+
+            /**
+             * Drop the document listener this control owns.
+             * @returns {void}
+             */
+            destroy() {
+                document.removeEventListener('keydown', onDocumentKeydown);
             },
         };
     }

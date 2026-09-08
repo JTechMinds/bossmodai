@@ -190,6 +190,33 @@ const BossModThreadSource = (() => {
             signal('chrome');
         }
 
+        /**
+         * Rename this thread.
+         *
+         * The title the header shows afterwards is the SERVER's, read back off
+         * the response, so a rename that did not land cannot look like one that
+         * did. The view keeps the operator's text on a rejection; this only has
+         * to fail loudly.
+         *
+         * @param {string} nextName  Already trimmed by the caller; trimmed
+         *   again here because this is the boundary the server sees.
+         * @returns {Promise<void>}
+         * @throws {Error} With the server's message on any non-2xx, and before
+         *   the request on a name the server would reject anyway.
+         */
+        async function renameThread(nextName) {
+            const name = String(nextName || '').trim();
+            if (!name) throw new Error('A thread needs a name.');
+            const res = await api(`/api/channels/${threadId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            if (!res.ok) throw new Error((await res.text()) || 'Could not rename this thread.');
+            channel = await res.json();
+            signal('chrome');
+        }
+
         async function reopenThread() {
             const res = await api(`/api/channels/${threadId}/reopen`, { method: 'POST' });
             if (!res.ok) throw new Error((await res.text()) || 'Could not reopen this thread.');
@@ -199,13 +226,20 @@ const BossModThreadSource = (() => {
 
         /**
          * Title, participant count, and exactly one of Archive / Reopen.
-         * @returns {{title: string, subtitle: string, actions: object[]}}
+         *
+         * A LIVE thread also carries `onRename`, which is what makes its title
+         * editable in place. A sealed room does not: archiving seals it against
+         * writes, and renaming it is a write. Reopen is the way back.
+         *
+         * @returns {{title: string, subtitle: string, actions: object[],
+         *            onRename?: (name: string) => Promise<void>}}
          */
         function chrome() {
             const archived = !isLiveThread();
             return {
                 title: (channel && channel.name) || 'Thread',
                 subtitle: `${members().length} participants`,
+                onRename: archived ? null : renameThread,
                 actions: [archived
                     ? { id: 'channel-reopen-btn', label: 'Reopen', onSelect: reopenThread }
                     : { id: 'channel-archive-btn', label: 'Archive', onSelect: archiveThread }],

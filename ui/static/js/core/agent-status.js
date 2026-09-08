@@ -67,6 +67,10 @@ const BossModAgentStatus = (() => {
             boundTaskId: w.boundTaskId || null,
             idle_since: w.idle_since || null,
             location: w.location || null,
+            // When the operator and this agent last exchanged a direct
+            // message (db/world.py). Null for a conversation nobody has
+            // spoken in, which the rail renders as no timestamp at all.
+            lastMessageAt: w.lastMessageAt || null,
         };
     }
 

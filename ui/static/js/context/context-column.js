@@ -1,10 +1,15 @@
 /**
  * BossMod AI — the right-hand column on Chat.
  *
- * Two modes and one rule: whoever is showing owns its own subscriptions, and a
+ * Two views and one rule: whoever is showing owns its own subscriptions, and a
  * switch unmounts the outgoing view and drains them BEFORE mounting the
  * incoming one — exactly what the shell does for places. Two views holding
  * subscriptions at once is the leak this design's one real failure mode.
+ *
+ * It hosts no FORM. Hiring and editing an agent are one centred dialog
+ * (context/agent-edit.js); a column this narrow was never the right place for
+ * a two-column connection matrix, and hosting it here meant one form with two
+ * hosts and two ways in.
  *
  * The column belongs to the Chat place, not to the shell. `#app-context` lives
  * outside `#app-place` and the shell only toggles it from `place.hasContext`,
@@ -53,16 +58,6 @@ const BossModContextColumn = (() => {
         }
 
         function build(mode, agentId) {
-            if (mode === 'desk' && !agentId) {
-                // Desk mode with nobody in it is the desk about to exist: the
-                // hire form. This is where roster.js's "Hire someone" lands.
-                return BossModAgentEdit.createAgentEdit({
-                    store,
-                    agent: null,
-                    onDone: toOffice,
-                    onCancel: toOffice,
-                });
-            }
             if (mode === 'desk') {
                 return BossModDeskPanel.createDeskPanel({
                     store, bus, api, navigate, agentId,
@@ -83,7 +78,11 @@ const BossModContextColumn = (() => {
          */
         function apply() {
             const state = store.getState();
-            const mode = state.contextMode === 'desk' ? 'desk' : 'office';
+            // Desk mode with nobody in it used to be a third view — the hire
+            // form. That form is a dialog now (context/agent-edit.js), so the
+            // state is not a mode any more and resolves to the office rather
+            // than staying reachable as a view nothing builds.
+            const mode = state.contextMode === 'desk' && state.deskAgentId ? 'desk' : 'office';
             const agentId = mode === 'desk' ? state.deskAgentId : null;
             const key = `${mode}:${agentId || ''}`;
             if (key === viewKey) return;

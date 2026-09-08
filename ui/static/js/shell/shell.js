@@ -104,9 +104,14 @@ const BossModShell = (() => {
             bus,
             apiFetch,
             navigate,
-            // The create form lives in the Chat context column, so hiring is a
-            // navigation rather than a second form owned by the rail.
-            onHire: () => navigate('chat', { hire: true }),
+            // Hiring is the same centred dialog editing is, opened over
+            // whatever the operator is looking at. Chat first, because a
+            // successful hire opens the new agent's conversation and their
+            // desk — the same reason roster.js navigates before it selects.
+            onHire: () => {
+                if (store.getState().place !== 'chat') navigate('chat');
+                BossModAgentEdit.openAgentModal({ store });
+            },
         });
         BossModFooter.mount(requireElement('app-footer'), { store, bus });
         BossModBanners.mount({

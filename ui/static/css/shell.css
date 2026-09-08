@@ -191,14 +191,42 @@
 
 .roster-section { margin-bottom: 16px; }
 
-/* The section's own title row. It exists so a section-level action has a place
-   to sit that costs no vertical space and does not scroll away with the list
-   under it — which is what happened to `New thread` when it was a row of its
-   own below the filters. */
+/* The section's own title row, in three slots: the label, a middle slot the
+   mode speaks through, and the action group. It exists so a section-level
+   action has a place to sit that costs no vertical space and does not scroll
+   away with the list under it — which is what happened to `New thread` when it
+   was a row of its own below the filters, and to the hint and the
+   `Create with N` row after it. */
 .roster-section-head {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-height: 24px;
+}
+
+/* The middle slot: the invitation out of select mode, the count in it. One
+   line, ellipsised rather than wrapped — the row must not grow when a long
+   count or a long hint lands in it. */
+.roster-section-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 4px 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hint);
+  font-size: 11px;
+}
+
+/* Pinned right, whatever the middle slot is saying. The control that starts
+   the mode is the control that ends it, so the group swaps in place rather
+   than the mode adding a row somewhere else. */
+.roster-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: 6px;
 }
 
 .roster-section-title {
@@ -217,14 +245,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
-  margin-right: 6px;
   border-radius: var(--r);
   color: var(--muted);
 }
 
 .roster-section-action:hover { background: var(--bg); color: var(--ink); }
 .roster-section-action svg { width: 14px; height: 14px; }
+
+/* The confirm carries the mode's one positive action, so it is the one control
+   in the group with the accent on it. */
+.roster-confirm-thread { color: var(--accent); }
+
+/* Nothing is selected yet, so there is nothing to create. Same treatment
+   .popover-action:disabled carries, so a dead control reads the same
+   everywhere. */
+.roster-section-action:disabled { opacity: 0.45; pointer-events: none; }
 
 .roster-people,
 .roster-threads { list-style: none; margin: 0; padding: 0; }
@@ -251,6 +286,7 @@
 /* --hint measures 4.19:1 on --accent-bg and fails AA there; --muted is
    5.67:1. Same correction .msg-human .msg-time carries in conversation.css. */
 .roster-row[data-selected="true"] .roster-status { color: var(--muted); }
+.roster-row[data-selected="true"] .roster-time { color: var(--muted); }
 
 .roster-person,
 .roster-thread {
@@ -273,12 +309,32 @@
 
 .roster-status { color: var(--hint); font-size: 11px; }
 
-/* Pinned right, beside the name button rather than inside it: in the text
-   column the dot pushed the status line around. */
+/* The row's right-hand column: when this conversation was last spoken in, over
+   the need dot. Both want the right edge, and stacking them is what keeps one
+   from moving the other. Absent entirely when the row has neither. */
+.roster-row-meta {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  margin-left: auto;
+}
+
+/* Absolute, never relative (core/format.js): the rail is scanned, and eight
+   "3d ago"s are eight subtractions before you know which row is the oldest. */
+.roster-time {
+  color: var(--hint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Beside the name button rather than inside it: in the text column the dot
+   pushed the status line around. The right edge is .roster-row-meta's job now,
+   so the dot no longer pins itself. */
 .roster-need-dot {
   width: 6px;
   height: 6px;
-  margin-left: auto;
   border-radius: 50%;
   background: var(--alert);
   flex: none;
@@ -314,33 +370,6 @@
   color: var(--ink);
 }
 
-.roster-thread-hint { margin: 0 0 6px; color: var(--hint); font-size: 11px; }
-
-/* Select mode's own block: the hint that explains the mode, and the two ways
-   out of it. Present only while the mode is — roster-threads.js attaches and
-   detaches the whole thing, so out of the mode this is an empty div rather
-   than three controls hidden with CSS.
-
-   Both buttons compose .btn.btn-quiet from controls.css; what is left here is
-   where they sit in the rail. Quiet on purpose: this is a rail of quiet rows,
-   and a filled button in the middle of it would outrank every person in it. */
-.roster-select-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 0 6px 8px;
-}
-
-.roster-select-actions .roster-thread-hint { flex: 1 0 100%; }
-
-.roster-create-thread {
-  flex: 1 1 auto;
-  justify-content: center;
-  font-weight: 500;
-}
-
-.roster-thread-cancel { justify-content: center; }
-
 .roster-error { margin: 8px 6px; color: var(--alert); font-size: 12px; }
 
 .roster-hire {
@@ -370,7 +399,6 @@
 #main-layout[data-rail="collapsed"] .roster-section-head,
 #main-layout[data-rail="collapsed"] .roster-section-title,
 #main-layout[data-rail="collapsed"] .roster-thread-filters,
-#main-layout[data-rail="collapsed"] .roster-select-actions,
 #main-layout[data-rail="collapsed"] .roster-person,
 #main-layout[data-rail="collapsed"] .roster-thread,
 #main-layout[data-rail="collapsed"] .roster-hire span {

@@ -63,7 +63,7 @@ global.window = { document: global.document };
 global.lucide = { createIcons() {} };
 
 const [
-    dom, avatar, store, bus, agentStatus, overlays, places, header,
+    dom, avatar, store, bus, format, agentStatus, overlays, rowMeta, places, header,
     rosterPeople, threadCreate, rosterThreads, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -71,7 +71,10 @@ load(dom, "BossModDom");
 load(avatar, "BossModAvatar");
 load(store, "BossModStore");
 load(bus, "BossModBus");
+// A person row renders its last-activity timestamp through this.
+load(format, "BossModFormat");
 load(agentStatus, "BossModAgentStatus");
+load(rowMeta, "BossModRosterRowMeta");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
 load(header, "BossModHeader");

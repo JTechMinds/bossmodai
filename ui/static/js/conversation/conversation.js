@@ -229,6 +229,7 @@ const BossModConversation = (() => {
                 transcript.setMessages([]);
                 transcript.setStatus('loading');
             }
+            chrome.reset();  // a half-typed rename must not follow the switch
             applyChrome();
             composer.setDraft(drafts.get(id) || '');
             composer.applyState();

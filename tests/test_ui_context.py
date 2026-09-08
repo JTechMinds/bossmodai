@@ -31,6 +31,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
+    CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -381,7 +382,7 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "function openDeskFrom(store, target)" in column
     assert "deskPath: typeof target === 'string' && target.startsWith('/')" in column
 
-    # Hiring lands in the column's create mode and selects the new agent.
+    # Hiring selects the new agent and opens their desk.
     edit = _read(CONTEXT / "agent-edit.js")
     # Phase 4 split agent-panel.js away; renderInline is this module's own now.
     assert "void renderInline(formEl, agent || null, onSave, onDelete)" in edit
@@ -390,8 +391,17 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "savedAgent && wasCreating" in saved
     assert "conversationKind: 'agent'" in saved
     assert "deskAgentId: savedAgent.id" in saved
-    assert "if (mode === 'desk' && !agentId)" in column
-    assert "placeParams.hire === true" in place
+
+    # Round three made hire and edit one centred dialog, so the column's
+    # form-hosting mode and the navigation that reached it are gone rather than
+    # left reachable. The property these two lines guarded — hiring has exactly
+    # one entry point and it lands somewhere real — is asserted on the new one.
+    assert "if (mode === 'desk' && !agentId)" not in column
+    assert "AgentEdit" not in column, "the column hosts no form"
+    assert "placeParams.hire" not in place
+    shell_source = _read(JS / "shell" / "shell.js")
+    assert "BossModAgentEdit.openAgentModal({ store })" in shell_source
+    assert "onHire:" in shell_source
 
     # deskPath is a real store key with a real consumer, not dead state.
     shell = _read(JS / "shell" / "shell.js")

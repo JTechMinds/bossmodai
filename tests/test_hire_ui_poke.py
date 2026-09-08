@@ -149,9 +149,11 @@ def test_successful_create_dismisses_hire_form() -> None:
     assert "savedAgent && wasCreating" in on_save
     assert "conversationId: savedAgent.id" in on_save
     assert "conversationKind: 'agent'" in on_save
-    # The form closes either way; only a create moves the conversation.
-    assert "onDone();" in on_save
-    assert on_save.index("savedAgent && wasCreating") < on_save.index("onDone();")
+    # The form closes either way; only a create moves the conversation. Round
+    # three made the form a dialog, so "the form closes" is the dialog closing
+    # rather than the host being told to put its own view back.
+    assert "modal.close();" in on_save
+    assert on_save.index("savedAgent && wasCreating") < on_save.index("modal.close();")
     assert source.index("const wasCreating = !agent;") < source.index(
         "function onSave(savedAgent) {"
     )

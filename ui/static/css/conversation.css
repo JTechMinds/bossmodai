@@ -53,6 +53,33 @@
 
 .conversation-title { margin: 0; font-size: 15px; font-weight: 600; }
 
+/* The title, editable in place. Easy but non-obvious: at rest it wears no
+   affordance at all — no underline, no accent, no border — so it reads as the
+   heading it is. `font: inherit` is what keeps it identical to the plain title
+   an agent conversation shows, rather than two rules drifting apart. The
+   negative margin cancels the padding, so turning blue does not move the text.
+   The focus ring is base.css's, which is what makes it reachable by Tab
+   without looking like a control until it is. */
+.conversation-title-edit {
+  min-width: 0;
+  padding: 1px 5px;
+  margin: -1px -5px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: text;
+}
+
+/* Editing IS the feedback, and it is a background rather than a colour: a
+   recoloured title is what a link looks like, which is the thing this is not.
+   --ink on --accent-bg measures 14.35:1. */
+.conversation-title-edit[data-editing="true"] {
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
 .conversation-subtitle {
   margin: 0;
   min-width: 0;

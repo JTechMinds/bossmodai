@@ -75,6 +75,16 @@ class ChannelMessageBody(BaseModel):
     content: str
 
 
+class ChannelRenameBody(BaseModel):
+    name: str
+
+
+# A thread name is one line in the roster rail and one line in the chat header.
+# The cap is the same 120 characters the agent form gives a specialty, so the
+# two operator-typed labels that share a rail agree about what fits.
+CHANNEL_NAME_MAX_LENGTH = 120
+
+
 def _credentials_from_connection(connection_id: str | None) -> dict[str, Any]:
     """Resolve stored connection secrets so the UI never needs raw keys."""
     if not connection_id:
@@ -194,6 +204,38 @@ async def create_channel(body: ChannelCreateBody):
         agent_name=None,
     )
     return JSONResponse(summary, status_code=201)
+
+
+@router.patch("/channels/{channel_id}")
+async def rename_channel(channel_id: str, body: ChannelRenameBody):
+    """Rename one shared thread.
+
+    Metadata only: the roster, the transcript and the archive state are all
+    untouched. The 404 is raised before the write rather than inferred from a
+    ``None`` return, so an unknown thread and a failed update are never the
+    same answer.
+    """
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Thread name cannot be empty")
+    if len(name) > CHANNEL_NAME_MAX_LENGTH:
+        raise HTTPException(
+            400, f"Thread name must be {CHANNEL_NAME_MAX_LENGTH} characters or fewer",
+        )
+    if db.get_channel(channel_id) is None:
+        raise HTTPException(404, "Thread not found")
+
+    renamed = db.update_channel(channel_id, name=name)
+    if renamed is None:
+        raise HTTPException(404, "Thread not found")
+    members = db.list_channel_member_details(renamed.id)
+    latest = db.get_latest_channel_message(renamed.id)
+    summary = _serialize_channel_summary(renamed, members=members, latest_message=latest)
+    # Every other surface holding this thread's name — the rail, an open
+    # transcript in another window — learns about it the same way archive and
+    # reopen are learned about.
+    await manager.broadcast_channel_updated(summary)
+    return summary
 
 
 @router.post("/channels/{channel_id}/archive")

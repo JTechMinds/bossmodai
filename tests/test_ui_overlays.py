@@ -49,6 +49,16 @@ def test_modal_accessibility_contract() -> None:
         "escClosesWithoutConfirming": True,
         "restoresFocus": True,
         "unbindsOnClose": True,
+        # The wide SIZE, added with the agent form: one implementation, more
+        # room, and a body that scrolls with the title and the action row
+        # pinned outside it. Listed here because this file owns the modal's
+        # contract and the variant is part of it — a scrolling body of form
+        # controls is exactly where a focus trap leaks.
+        "wideModalIsMarked": True,
+        "wideModalActionsSitOutsideTheBody": True,
+        "wideModalTrapsTabAcrossItsBody": True,
+        "wideModalEscCloses": True,
+        "wideModalRestoresFocus": True,
         # The third shape, added with the chat header's `⋯`: non-modal and
         # anchored, and owing the same keyboard contract as the other two.
         "menuFocusesFirstOption": True,

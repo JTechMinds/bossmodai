@@ -6,11 +6,11 @@
  * that produces it and this module only reads it — and asks for the mode to
  * open or close, which is the one thing it drives rather than reads.
  *
- * MAKING a thread is shell/thread-create.js — the `+` on the header row, the
- * select-mode block under it, and the POST. This module reads the list; that
- * one writes to it, and the only thing crossing between them is "a channel was
- * created, show it". Both halves are mounted here because they share a
- * section, which is the whole of what they have in common.
+ * MAKING a thread is shell/thread-create.js — the header row's middle slot,
+ * its action group, and the POST. This module reads the list; that one writes
+ * to it, and the only thing crossing between them is "a channel was created,
+ * show it". Both halves are mounted here because they share a section header,
+ * which is the whole of what they have in common.
  *
  * Split out of shell/roster.js in Phase 2B, before the needs surfaces added
  * anything else to a file that had already passed the ~300-line guideline; the
@@ -96,9 +96,9 @@ const BossModRosterThreads = (() => {
             role: 'group',
             'aria-label': 'Thread list filter',
         }, filterActive, filterArchived);
-        // The creation half. It owns the `+`, the select-mode block, and the
-        // POST; showing what came back is this half's job, which is what
-        // onCreated hands over.
+        // The creation half. It owns the header row's middle slot, its
+        // action group, and the POST; showing what came back is this half's
+        // job, which is what onCreated hands over.
         const create = BossModThreadCreate.createThreadControls({
             readJson,
             getSelection,
@@ -115,12 +115,14 @@ const BossModRosterThreads = (() => {
             },
         });
 
+        // Three slots on one row: the label, what the mode is saying, and the
+        // controls for it. Select mode adds no row of its own.
         const element = h('section', { class: 'roster-section' },
             h('div', { class: 'roster-section-head' },
                 h('h2', { class: 'roster-section-title' }, 'Threads'),
-                create.action),
+                create.middle,
+                create.actions),
             threadFilters,
-            create.element,
             threadList);
 
         /** Threads live in the store too: boot validates a restored thread against them. */
@@ -165,7 +167,15 @@ const BossModRosterThreads = (() => {
                     },
                         h('span', { class: 'roster-name' }, thread.name),
                         h('span', { class: 'roster-status' },
-                            `${thread.member_count} member${thread.member_count === 1 ? '' : 's'}`))));
+                            `${thread.member_count} member${thread.member_count === 1 ? '' : 's'}`)),
+                    // The same right-hand column a person row carries, so the
+                    // two lists share a right edge as well as a left one.
+                    // GET /api/channels already carries the latest post's
+                    // time; a room nobody has written in gets no timestamp
+                    // rather than the moment the room was made. A thread has
+                    // no need dot — needs belong to a person.
+                    BossModRosterRowMeta.rowMeta(
+                        thread.latest_message && thread.latest_message.created_at, false)));
             });
         }
 
@@ -255,6 +265,8 @@ const BossModRosterThreads = (() => {
              */
             destroy() {
                 disposers.splice(0).forEach((off) => off());
+                // The creation half owns a document listener of its own.
+                create.destroy();
             },
         };
     }

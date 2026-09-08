@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These six answer one question — how does a value read on screen. They have
+ * These seven answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -54,6 +54,52 @@ const BossModFormat = (() => {
         const months = Math.floor(days / 30);
         if (months < 12) return `${months}mo ago`;
         return `${Math.floor(months / 12)}y ago`;
+    }
+
+    /** Short month names, so the output never depends on the host's locale data. */
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    /**
+     * When something last happened, absolutely — `10:10 AM` today, `Sep 2`
+     * earlier this year, `Sep 2, 2025` before that.
+     *
+     * Absolute rather than relative (the operator's decision): the rail is
+     * scanned, and "3d ago" on eight rows is eight subtractions to do in your
+     * head before you know which is the oldest. The year is carried on
+     * anything older than this one, because without it last September and this
+     * September render identically.
+     *
+     * Every comparison is on LOCAL calendar fields — getFullYear/getMonth/
+     * getDate, not the UTC pair. A message at 23:30 tonight is today whatever
+     * the offset; comparing UTC dates puts it on yesterday west of the
+     * meridian and on tomorrow east of it, and the operator reads their own
+     * clock.
+     *
+     * Formatted by hand rather than through toLocaleTimeString: the ICU data a
+     * host ships decides whether the separator before AM is a space or U+202F,
+     * and a rail that renders differently on two machines is not a format.
+     *
+     * @param {string|null} isoString
+     * @returns {string} '' when the timestamp is missing or unparseable — the
+     *   caller renders no time at all rather than a fabricated one.
+     */
+    function formatActivityTime(isoString) {
+        if (!isoString) return '';
+        const then = new Date(isoString);
+        if (isNaN(then.getTime())) return '';
+        const now = new Date();
+        const sameYear = then.getFullYear() === now.getFullYear();
+        if (sameYear
+            && then.getMonth() === now.getMonth()
+            && then.getDate() === now.getDate()) {
+            const hour24 = then.getHours();
+            const hour = hour24 % 12 === 0 ? 12 : hour24 % 12;
+            const minute = String(then.getMinutes()).padStart(2, '0');
+            return `${hour}:${minute} ${hour24 < 12 ? 'AM' : 'PM'}`;
+        }
+        const day = `${MONTHS[then.getMonth()]} ${then.getDate()}`;
+        return sameYear ? day : `${day}, ${then.getFullYear()}`;
     }
 
     /**
@@ -127,6 +173,7 @@ const BossModFormat = (() => {
     return {
         escapeHtml,
         formatRelativeTime,
+        formatActivityTime,
         formatNumber,
         formatDuration,
         formatTokenCount,

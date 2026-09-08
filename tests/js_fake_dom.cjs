@@ -307,6 +307,13 @@ const SIMPLE_NAME = /^[A-Za-z_-][A-Za-z0-9_-]*$/;
  * focusable list, and a fake that threw on them could not run a harness that
  * opens an overlay at all.
  *
+ * So is a tag followed by ONE attribute clause — `select[name="desk"]`,
+ * `input[name="name"]`, `textarea[name="description"]`. That is still one
+ * simple selector with no combinator in it, and it is how the agent form finds
+ * its own fields; throwing on it would have made the form untestable rather
+ * than catching anything. A compound the fake genuinely cannot express — two
+ * classes, a descendant — still throws.
+ *
  * @param {FakeEl} el
  * @param {string} selector
  * @returns {boolean}
@@ -339,6 +346,10 @@ function matches(el, selector) {
             throw new Error(`[fake-dom] unsupported selector: ${selector}`);
         }
         return String(el.className).split(/\s+/).includes(name);
+    }
+    const tagAttr = /^([A-Za-z][A-Za-z0-9]*)(\[[^\]]+\])$/.exec(selector);
+    if (tagAttr) {
+        return matches(el, tagAttr[1]) && matches(el, tagAttr[2]);
     }
     if (selector.startsWith("[") && selector.endsWith("]")) {
         const body = selector.slice(1, -1);

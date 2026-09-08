@@ -32,6 +32,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
+    CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -197,6 +198,23 @@ def test_conversation_harness() -> None:
         "receiptsPreferencePersists": True,
         "menuReturnsFocusToItsButton": True,
         "receiptsNodeSurvivesReopen": True,
+        # Round three made a thread's title renameable in place. It is one
+        # control in two states, reachable by Tab and opened by Enter; the
+        # rename is not optimistic, so a failure keeps the operator's text and
+        # says what went wrong rather than reverting as if nothing happened.
+        # Only threads: an agent conversation and a sealed room both get a
+        # plain heading with no control in it.
+        "titleOpensEditOnEnter": True,
+        "saveActionAppearsBesideArchive": True,
+        "escapeCancelsRenameWithoutSaving": True,
+        "renamePatchesTheChannel": True,
+        "renameShowsTheSavedName": True,
+        "failedRenameReportsError": True,
+        "failedRenameKeepsDraft": True,
+        "failedRenameStaysInEditMode": True,
+        "renameDoesNotFollowASwitch": True,
+        "agentTitleIsNotEditable": True,
+        "archivedThreadIsNotRenameable": True,
     }
 
 

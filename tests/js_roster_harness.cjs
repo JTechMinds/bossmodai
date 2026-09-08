@@ -62,9 +62,18 @@ global.document = {
     createTextNode: (t) => ({ nodeType: 3, textContent: String(t) }),
     body,
     getElementById() { return null; },
+    // The rail asks this before acting on Escape, so that Escape inside a
+    // modal belongs to the modal. Nothing in this harness opens one.
+    querySelector() { return null; },
     listeners: {},
     addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); },
-    removeEventListener() {},
+    // Was a no-op, which made "the listener is dropped on destroy" unprovable
+    // — the rail now owns one, so the fake has to be able to answer.
+    removeEventListener(n, fn) {
+        const l = this.listeners[n] || [];
+        const i = l.indexOf(fn);
+        if (i !== -1) l.splice(i, 1);
+    },
     get activeElement() { return activeElement; },
 };
 global.window = { document: global.document };
@@ -74,11 +83,17 @@ eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModD
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModStore = BossModStore;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModBus;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
-eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+// The rails render the last-activity timestamp through the shared formatter,
+// so it is the real one here — a stub would prove the column exists and
+// nothing about what it says.
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
+// Both halves build their right-hand column through this one builder.
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
+eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";
@@ -101,12 +116,23 @@ const hasClass = (name) => (el) => String(el.getAttribute("class") || "").split(
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 6; i += 1) await settled(); };
 
+// 10:10 this morning, LOCAL — built from the real clock rather than written
+// down, so the rendered "10:10 AM" is the same string whatever day the suite
+// runs on and whatever offset it runs in.
+const TODAY_AT_1010 = (() => {
+    const when = new Date();
+    when.setHours(10, 10, 0, 0);
+    return when.toISOString();
+})();
+
 const WORLD = [
-    { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "work_active", currentActivityKind: "work", x: 1, y: 1 },
-    { id: "a2", name: "Laura", role: "Writer", color: "#f59e0b", status: "idle", currentActivityKind: null, x: 2, y: 2 },
+    { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "work_active", currentActivityKind: "work", x: 1, y: 1, lastMessageAt: TODAY_AT_1010 },
+    // Nobody has spoken to Laura: her row gets no timestamp at all.
+    { id: "a2", name: "Laura", role: "Writer", color: "#f59e0b", status: "idle", currentActivityKind: null, x: 2, y: 2, lastMessageAt: null },
 ];
 const CHANNELS = [
-    { id: "c1", name: "Launch plan", kind: "shared", status: "active", member_count: 2, members: [], latest_message: null },
+    { id: "c1", name: "Launch plan", kind: "shared", status: "active", member_count: 2, members: [],
+      latest_message: { content: "shipped", author_name: "Jim", created_at: "2020-03-04T12:00:00+00:00" } },
 ];
 
 const apiCalls = [];
@@ -174,6 +200,32 @@ function rowFor(el, name) {
         throw new Error(`status label must come from BossModAgentStatus.getStatusLabel, got "${text(jim())}"`);
     }
 
+    // ── The last-activity column ──
+    //
+    // Read here, with the needs fixture cleared, so a row with a timestamp and
+    // a row with neither can be told apart. The dot is exercised above.
+    const metaIn = (listClass) => find(
+        find(el, hasClass(listClass), [])[0], hasClass("roster-row-meta"), []);
+    const timeIn = (listClass) => metaIn(listClass)
+        .map((meta) => text(find(meta, hasClass("roster-time"), [])[0]).trim());
+
+    const personTimestamps = timeIn("roster-people");
+    // One row has one, the other has none — so the column is absent, not empty.
+    const quietRowHasNoMeta = metaIn("roster-people").length === 1;
+    if (!quietRowHasNoMeta) {
+        throw new Error(`a row with nothing to say must carry no column, got `
+            + `${metaIn("roster-people").length}`);
+    }
+    if (personTimestamps.join("|") !== "10:10 AM") {
+        throw new Error(`a person row must render its last message time, got `
+            + `${personTimestamps.join("|")}`);
+    }
+    const threadTimestamps = timeIn("roster-threads");
+    if (threadTimestamps.length !== 1 || !/, 2020$/.test(threadTimestamps[0])) {
+        throw new Error(`a thread row must date an old post with its year, got `
+            + `${threadTimestamps.join("|")}`);
+    }
+
     // ── Search filters on name and role, and keeps the caret ──
     const input = find(el, hasClass("roster-search"), [])[0];
     if (!input) throw new Error("roster must render a search input");
@@ -234,16 +286,24 @@ function rowFor(el, name) {
     // exact way a "cleared" selection quietly builds the wrong thread.
     const boxesNow = () => find(el, hasClass("roster-select"), []);
     const click = (node) => (node.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
-    const createNow = () => find(el, hasClass("roster-create-thread"), [])[0];
-    const cancelNow = () => find(el, hasClass("roster-thread-cancel"), [])[0];
-    const hintsNow = () => find(el, hasClass("roster-thread-hint"), []);
+    const byId = (id) => find(el, (n) => n.getAttribute("id") === id, [])[0];
+    const createNow = () => byId("roster-create-thread");
+    const cancelNow = () => byId("roster-cancel-select");
+    // The section header's three slots: the label, the middle slot the mode
+    // speaks through, and the action group pinned right.
+    const middleNow = () => find(el, hasClass("roster-section-hint"), [])[0];
+    const actionGroup = () => find(el, hasClass("roster-section-actions"), [])[0];
+    const headerActionNames = () => find(actionGroup(), (n) => n.tagName === "BUTTON", [])
+        .map((b) => b.getAttribute("aria-label"));
+    const pressEscape = () => (document.listeners.keydown || [])
+        .forEach((fn) => fn({ key: "Escape", preventDefault() {} }));
 
     if (boxesNow().length !== 0) {
         throw new Error(`people rows must be clean until select mode, got ${boxesNow().length} boxes`);
     }
     // `New thread` is the `+` on the THREADS header row: icon-only, so its
     // whole accessible name is the label it carries.
-    const newThreadBtn = find(el, hasClass("roster-section-action"), [])[0];
+    const newThreadBtn = byId("roster-new-thread");
     if (!newThreadBtn) throw new Error("the THREADS header must carry a New thread action");
     if (newThreadBtn.getAttribute("aria-label") !== "New thread") {
         throw new Error(`an icon-only control needs its own name, got `
@@ -256,6 +316,16 @@ function rowFor(el, name) {
     if (cancelNow()) throw new Error("Cancel must not exist outside select mode");
     const rowsAreCleanUntilSelectMode = true;
 
+    // Idle: one control, and the middle slot says what it is for.
+    const idleHeaderActions = headerActionNames();
+    const idleMiddleSlot = text(middleNow()).trim();
+    if (idleHeaderActions.join("|") !== "New thread") {
+        throw new Error(`idle offers one header control, got ${idleHeaderActions.join("|")}`);
+    }
+    if (idleMiddleSlot !== "Select teammates and start a shared thread.") {
+        throw new Error(`the idle middle slot must invite, got "${idleMiddleSlot}"`);
+    }
+
     // ── Out of select mode a row click still opens the conversation ──
     click(rowFor(el, "Jim"));
     const rowClickOpensConversationNormally = store.getState().conversationId === "a1"
@@ -266,11 +336,14 @@ function rowFor(el, name) {
     }
     store.setState({ conversationId: null, conversationKind: null });
 
-    // The hint explains select mode, so out of select mode it explains a mode
-    // the operator is not in. It used to stand under the filters permanently.
-    if (hintsNow().length !== 0) {
-        throw new Error("the select hint must not stand outside select mode");
+    // Neither state adds a row: everything the mode says and every control it
+    // offers lives on the one header row that was already there.
+    const standaloneRows = find(el, hasClass("roster-select-actions"), [])
+        .concat(find(el, hasClass("roster-thread-hint"), []));
+    if (standaloneRows.length !== 0) {
+        throw new Error(`select mode must cost no extra row, got ${standaloneRows.length}`);
     }
+    const hasStandaloneCreateRow = standaloneRows.length > 0;
 
     // Entering is a click on a real <button>, so Enter and Space reach it too.
     click(newThreadBtn);
@@ -284,14 +357,22 @@ function rowFor(el, name) {
     const cancelBtn = cancelNow();
     if (!createBtn) throw new Error("select mode must offer a way to create");
     if (!cancelBtn) throw new Error("select mode must offer a way out");
-    const hints = hintsNow();
-    const hintOnlyShowsInSelectMode = hints.length === 1
-        && text(hints[0]).includes("Select teammates");
-    if (!hintOnlyShowsInSelectMode) {
-        throw new Error(`select mode must carry its own hint, got ${hints.length}`);
+    // Cancel first, confirm last: the confirm takes the `+`'s old position at
+    // the end of the row, so nothing moved further than one slot.
+    const selectingHeaderActions = headerActionNames();
+    if (selectingHeaderActions.join("|") !== "Cancel|Create thread") {
+        throw new Error(`select mode's controls are wrong: ${selectingHeaderActions.join("|")}`);
     }
-    if (createBtn.disabled !== true) {
+    // The `+` is out of the document while the mode it opened is open.
+    if (find(el, (n) => n.getAttribute("id") === "roster-new-thread", []).length !== 0) {
+        throw new Error("the `+` must leave the row it started, not sit dead in it");
+    }
+    const confirmDisabledAtZero = createBtn.disabled === true;
+    if (!confirmDisabledAtZero) {
         throw new Error("with nobody selected there is nothing to create");
+    }
+    if (text(middleNow()).trim() !== "0 selected") {
+        throw new Error(`the middle slot must count, got "${text(middleNow()).trim()}"`);
     }
 
     // ── In select mode the ROW selects ──
@@ -309,14 +390,26 @@ function rowFor(el, name) {
     const jimBox = boxesNow()[0];
     click(jimName);
     const rowClickSelectsInSelectMode = jimBox.checked === true
-        && text(createBtn).includes("Create with 1")
+        && text(middleNow()).trim() === "1 selected"
         && store.getState().conversationId === null
         && jimRow.getAttribute("data-selected") === "true";
     if (!rowClickSelectsInSelectMode) {
         throw new Error(`the name must toggle while selecting: checked ${jimBox.checked}`
-            + ` button "${text(createBtn)}" conversation ${store.getState().conversationId}`
+            + ` slot "${text(middleNow()).trim()}" conversation ${store.getState().conversationId}`
             + ` row ${jimRow.getAttribute("data-selected")}`);
     }
+    // One teammate is a real thread, and POST /api/channels accepts it — the
+    // confirm must not wait for a second pick.
+    const confirmEnabledAtOne = createBtn.disabled === false;
+    if (!confirmEnabledAtOne) throw new Error("a thread of one is a thread");
+
+    // The slot COUNTS rather than saying one fixed thing: with both rows
+    // picked it reads two, and a hard-coded string would fail here.
+    click(rowFor(el, "Laura"));
+    if (text(middleNow()).trim() !== "2 selected") {
+        throw new Error(`the count must track the selection, got "${text(middleNow()).trim()}"`);
+    }
+    click(rowFor(el, "Laura"));
 
     // The desk affordance is re-bound too, so it does not fire in this mode.
     const personAvatars = find(el, hasClass("avatar-md"), []).filter((n) => n.tagName === "BUTTON");
@@ -347,13 +440,20 @@ function rowFor(el, name) {
     boxesNow()[0].checked = true;
     (boxesNow()[0].listeners.change || []).forEach((fn) => fn({ target: boxesNow()[0] }));
     if (createBtn.disabled !== false) throw new Error("a selection must enable creation");
-    if (!text(createBtn).includes("Create with 1")) {
-        throw new Error(`the button must count the selection, got "${text(createBtn)}"`);
+    const selectingMiddleSlot = text(middleNow()).trim();
+    if (selectingMiddleSlot !== "1 selected") {
+        throw new Error(`the middle slot must count the selection, got "${selectingMiddleSlot}"`);
     }
     click(cancelBtn);
     if (boxesNow().length !== 0) throw new Error("Cancel must take the checkboxes away");
     if (cancelNow()) throw new Error("Cancel must remove itself with the mode it leaves");
-    if (hintsNow().length !== 0) throw new Error("the hint must leave with the mode");
+    if (headerActionNames().join("|") !== "New thread") {
+        throw new Error("leaving must restore the New thread control, got "
+            + headerActionNames().join("|"));
+    }
+    if (text(middleNow()).trim() !== "Select teammates and start a shared thread.") {
+        throw new Error("the middle slot must go back to inviting");
+    }
     click(newThreadBtn);
     if (boxesNow().some((box) => box.checked)) {
         throw new Error("re-entering select mode must start from an empty selection");
@@ -362,6 +462,33 @@ function rowFor(el, name) {
         throw new Error("Cancel must clear the selection, not just hide it");
     }
     const cancelClearsTheSelection = true;
+
+    // ── Escape leaves the mode too ──
+    //
+    // Every other dismissible state in the shell answers to it, and a mode
+    // opened from the header should not need the mouse to close. The mode is
+    // already open here, from the re-entry the section above ends on.
+    boxesNow()[0].checked = true;
+    (boxesNow()[0].listeners.change || []).forEach((fn) => fn({ target: boxesNow()[0] }));
+    pressEscape();
+    const escapeCancelsSelectMode = boxesNow().length === 0
+        && headerActionNames().join("|") === "New thread";
+    if (!escapeCancelsSelectMode) {
+        throw new Error(`Escape must leave select mode, got ${boxesNow().length} boxes`
+            + ` and ${headerActionNames().join("|")}`);
+    }
+    // Out of the mode the rail must not swallow Escape: it belongs to whatever
+    // surface is open.
+    pressEscape();
+    if (headerActionNames().join("|") !== "New thread") {
+        throw new Error("Escape outside select mode must change nothing");
+    }
+    // ...and it forgot who was picked, exactly as Cancel does. This re-entry
+    // is what the creation section below runs in.
+    click(newThreadBtn);
+    if (createNow().disabled !== true) {
+        throw new Error("Escape must clear the selection, not just hide it");
+    }
 
     // ── Creating a thread consumes the People selection ──
     // The selection lives with People and the create button with Threads, so
@@ -402,6 +529,10 @@ function rowFor(el, name) {
 
     // ── Disposers drain ──
     dispose();
+    const escapeListenerDrains = (document.listeners.keydown || []).length === 0;
+    if (!escapeListenerDrains) {
+        throw new Error(`the rail left ${(document.listeners.keydown || []).length} keydown listeners`);
+    }
     if (store.subscriberCount() !== storeBaseline) {
         throw new Error(`store leak: baseline ${storeBaseline}, now ${store.subscriberCount()}`);
     }
@@ -419,7 +550,18 @@ function rowFor(el, name) {
         rowsAreCleanUntilSelectMode,
         cancelClearsTheSelection,
         threadRowsCarryTheGroupAvatar,
-        hintOnlyShowsInSelectMode,
+        personTimestamps,
+        threadTimestamps,
+        quietRowHasNoMeta,
+        idleHeaderActions,
+        idleMiddleSlot,
+        selectingHeaderActions,
+        selectingMiddleSlot,
+        hasStandaloneCreateRow,
+        confirmDisabledAtZero,
+        confirmEnabledAtOne,
+        escapeCancelsSelectMode,
+        escapeListenerDrains,
         rowClickSelectsInSelectMode,
         rowClickOpensConversationNormally,
         avatarDoesNotOpenDeskWhileSelecting,

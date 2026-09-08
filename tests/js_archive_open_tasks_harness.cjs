@@ -18,7 +18,7 @@ global.window.lucide = global.lucide;
 
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
-    overlaysPath, archivePath, threadSourcePath,
+    overlaysPath, formatPath, rowMetaPath, archivePath, threadSourcePath,
     rosterPeoplePath, threadCreatePath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -30,6 +30,9 @@ load(busPath, "BossModBus");
 load(gatesPath, "BossModGates");
 load(consentPath, "BossModConsentCard");
 load(overlaysPath, "BossModOverlays");
+// Both rails render their last-activity column through these two.
+load(formatPath, "BossModFormat");
+load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");
 load(rosterPeoplePath, "BossModRosterPeople");
@@ -163,7 +166,7 @@ function sourceFor(threadId, confirmChoice) {
 }
 
 function modal() {
-    return documentStub.body.querySelector(".modal");
+    return documentStub.body.querySelector(".modal-panel");
 }
 
 function modalButton(id) {

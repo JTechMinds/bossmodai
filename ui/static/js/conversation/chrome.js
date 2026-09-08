@@ -17,6 +17,13 @@
  * than replacing it mid-click, which is the bug the dock-era Threads pane kept
  * reintroducing.
  *
+ * The TITLE may be renameable, and says so through the descriptor's optional
+ * `onRename` rather than by this view learning what a thread is. The control
+ * itself is conversation/title-rename.js; what belongs here is where its Save
+ * lands — in the same action row Archive sits in, through the same
+ * `{id, label, icon, onSelect}` descriptor, rather than as a bespoke button
+ * beside the title.
+ *
  * VIEW OPTIONS are a different kind of thing from actions and sit behind a `⋯`
  * rather than beside them. `Desk` is an action on the person; "show system
  * notifications" is a preference about the transcript, and the two were at the
@@ -55,12 +62,18 @@ const BossModConversationChrome = (() => {
         const actionNodes = new Map();
 
         const avatarEl = h('div', { class: 'conversation-avatar' });
-        const titleEl = h('h2', { class: 'conversation-title' });
+        // Renameable or not is the descriptor's call, made per conversation.
+        const title = BossModTitleRename.createEditableTitle({
+            onError,
+            // Opening or closing the rename adds or drops Save, and the action
+            // row is repainted from the descriptor that is already on screen.
+            onEditingChange: () => { if (latest) apply(latest); },
+        });
         const subtitleEl = h('p', { class: 'conversation-subtitle' });
         const actionsEl = h('div', { class: 'conversation-actions' });
         const element = h('header', { class: 'conversation-chrome' },
             avatarEl,
-            h('div', { class: 'conversation-identity' }, titleEl, subtitleEl),
+            h('div', { class: 'conversation-identity' }, title.element, subtitleEl),
             actionsEl);
 
         /** The open menu, or null. One at a time, and the `⋯` toggles it. */
@@ -155,20 +168,34 @@ const BossModConversationChrome = (() => {
         /**
          * Paint one chrome descriptor.
          *
-         * @param {{title: string, subtitle: string, avatar?: object, actions: object[]}} chrome
+         * @param {{title: string, subtitle: string, avatar?: object,
+         *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
          *   shown. Each action is `{id, label, icon?, onSelect}`, where `icon`
          *   is a Lucide glyph NAME — the source names it, this builds it.
-         *   `onSelect` may return a promise and may reject.
+         *   `onSelect` may return a promise and may reject. `onRename` is
+         *   optional: with it the title is editable in place, without it the
+         *   title is plain text.
          * @returns {void}
          */
         function apply(chrome) {
             latest = chrome;
             applyAvatar(chrome.avatar || null);
-            titleEl.textContent = chrome.title || '';
+            title.apply({ title: chrome.title || '', onRename: chrome.onRename });
             subtitleEl.textContent = chrome.subtitle || '';
             const wanted = new Set();
-            (chrome.actions || []).forEach((action) => {
+            // Save exists only while a rename is open, and it joins the row
+            // through the same descriptor every other action uses — first, so
+            // the commit sits ahead of Archive rather than after it.
+            const actions = title.isEditing()
+                ? [{
+                    id: 'conversation-title-save',
+                    label: 'Save',
+                    icon: 'check',
+                    onSelect: () => title.save(),
+                }].concat(chrome.actions || [])
+                : (chrome.actions || []);
+            actions.forEach((action) => {
                 wanted.add(action.id);
                 let btn = actionNodes.get(action.id);
                 if (!btn) {
@@ -198,6 +225,22 @@ const BossModConversationChrome = (() => {
         return {
             element,
             apply,
+
+            /**
+             * Forget an edit in progress.
+             *
+             * The controller calls this when the OPEN CONVERSATION changes. The
+             * descriptor carries no identity, so without it a rename half typed
+             * for one thread would survive into the next one — apply() leaves
+             * the field alone while it is being edited, which is exactly what
+             * keeps a live repaint from stealing the operator's typing.
+             *
+             * @returns {void}
+             */
+            reset() {
+                title.cancel();
+            },
+
             /**
              * Drop every action node and its binding, and put the menu away —
              * a panel left open would outlive the header it hangs off.
@@ -205,6 +248,9 @@ const BossModConversationChrome = (() => {
              */
             destroy() {
                 closeMenu();
+                // A rename left open would keep the last conversation's draft
+                // on screen over the next one.
+                title.cancel();
                 for (const btn of actionNodes.values()) {
                     btn.onclick = null;
                     btn.remove();

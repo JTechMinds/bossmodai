@@ -10,6 +10,10 @@
  * menu hanging off a control. They share trapKeydown() rather than each
  * carrying a trap of its own, which is how the first two drifted apart once
  * already.
+ *
+ * The modal has two SIZES and one implementation: a confirm dialog and the
+ * agent form differ in geometry, not in contract, so the difference is an
+ * attribute the stylesheet reads rather than a second function.
  */
 const BossModOverlays = (() => {
     const { h } = BossModDom;
@@ -77,9 +81,13 @@ const BossModOverlays = (() => {
      * @param {() => void} [options.onClose] Called after close, however it
      *   closed — and after the chosen action's onSelect, so a caller can treat
      *   it as "dismissed" when no choice was recorded.
+     * @param {'default'|'wide'} [options.size='default'] Geometry only.
+     *   'wide' is broad enough for a form and bounded by the viewport, with a
+     *   scrolling BODY and the title and action row pinned outside it. The
+     *   trap, Esc and focus restoration below are unchanged by it.
      * @returns {{ close: () => void, element: HTMLElement }}
      */
-    function createModal({ title, body, actions, onClose }) {
+    function createModal({ title, body, actions, onClose, size }) {
         const previouslyFocused = document.activeElement;
         const buttons = [];
 
@@ -109,7 +117,10 @@ const BossModOverlays = (() => {
         });
 
         const element = h('div', {
-            class: 'modal',
+            class: 'modal-panel',
+            // Read by the stylesheet, never by script: which geometry this
+            // is belongs in CSS, and the one implementation just says which.
+            'data-size': size === 'wide' ? 'wide' : 'default',
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': title,

@@ -102,12 +102,6 @@ const BossModChatPlace = (() => {
                 navigate: ctx.navigate,
             });
 
-            // roster.js's "Hire someone" is a navigation, and this is where it
-            // lands: desk mode with nobody in it is the hire form.
-            if (ctx.store.getState().placeParams.hire === true) {
-                ctx.store.setState({ contextMode: 'desk', deskAgentId: null, deskPath: null });
-            }
-
             disposers.push(store.subscribe((s) => s.conversationId, applyConversation));
             disposers.push(store.subscribe((s) => s.conversationKind, applyConversation));
             applyConversation();

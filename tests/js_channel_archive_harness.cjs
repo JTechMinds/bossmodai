@@ -23,7 +23,7 @@ const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
     "BossModFormat", "BossModGates", "BossModConsentCard",
     "BossModOverlays", "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
-    "BossModConversationChrome", "BossModComposer", "BossModSystemReceipts",
+    "BossModTitleRename", "BossModConversationChrome", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSource",
     "BossModAgentSource", "BossModConversation",
 ];

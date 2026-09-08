@@ -26,9 +26,9 @@
  * Phase 2B had it standing in for Notes, which had no data behind it; Phase 4
  * gave Notes the workspace it was always meant to read (spec 7).
  *
- * Editing the role swaps this panel for the hosted form in place, so the
- * operator comes back to the desk they opened rather than having to find it
- * again.
+ * Editing the role opens the one centred dialog (context/agent-edit.js) over
+ * this panel, which stays mounted underneath — so the operator comes back to
+ * the desk they opened rather than having to find it again.
  */
 const BossModDeskPanel = (() => {
     const { h, clear } = BossModDom;
@@ -103,8 +103,10 @@ const BossModDeskPanel = (() => {
         const notes = BossModDeskNotes.createDeskNotes({
             api, agentId, onOpenFolder: (path) => { void files.open(path); },
         });
-        /** The hosted role form, while the operator is editing. */
+        /** The open role dialog, or null. One at a time. */
         let edit = null;
+        /** Set before teardown closes the dialog, so its onClosed does nothing. */
+        let destroyed = false;
 
         const bodyEl = h('div', { class: 'desk-body' },
             h('button', { class: 'btn btn-sm context-link', type: 'button', onclick: () => onBack() },
@@ -168,31 +170,30 @@ const BossModDeskPanel = (() => {
         }
 
         /**
-         * Swap the desk for the role form, and back when it is done.
+         * Open the role form over the desk.
          *
-         * Editing happens in place: the operator stays on the desk they opened
-         * rather than being sent somewhere else and having to find it again.
+         * The desk stays mounted underneath: the operator comes back to the
+         * desk they opened rather than being sent somewhere else and having to
+         * find it again. One dialog at a time — a second Edit click while one
+         * is open would stack two forms over the same agent.
          *
          * @returns {void}
          */
         function openEdit() {
             if (edit) return;
-            edit = BossModAgentEdit.createAgentEdit({
+            edit = BossModAgentEdit.openAgentModal({
                 store,
                 agent: agent(),
-                onDone: closeEdit,
-                onCancel: closeEdit,
+                onClosed: closeEdit,
             });
-            clear(element);
-            element.append(edit.element);
         }
 
         function closeEdit() {
-            if (!edit) return;
-            edit.destroy();
             edit = null;
-            clear(element);
-            element.append(bodyEl);
+            // destroy() closes the dialog on its way out; refreshing three
+            // sections of a panel that is being unmounted would fire requests
+            // whose answers nothing will paint.
+            if (destroyed) return;
             // The saved role, description, and done bar arrive with the next
             // world_update; repaint from what the store holds now regardless.
             renderProfile();
@@ -223,9 +224,12 @@ const BossModDeskPanel = (() => {
              * @returns {void}
              */
             destroy() {
+                destroyed = true;
                 disposers.splice(0).forEach((off) => off());
                 actions.destroy();
-                if (edit) edit.destroy();
+                // A dialog outliving the desk that opened it would keep
+                // writing into a store the operator has navigated away from.
+                if (edit) edit.close();
                 edit = null;
                 tasks.destroy();
                 files.destroy();

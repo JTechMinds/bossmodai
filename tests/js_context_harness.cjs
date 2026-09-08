@@ -15,11 +15,64 @@ const documentStub = installDom();
 global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
 
+// ─── Enough of innerHTML for the agent form to be wired ───
+//
+// context/agent-form*.js build their markup as a string — the named markup
+// exemption — and assign it. The shared fake parses no HTML, so this harness
+// gives its elements a setter that creates one node per `id=` and per `name=`
+// the markup declares. That is enough for the form's own wiring to find every
+// control it binds, and it is honest about being a fake: it reproduces the
+// form's CONTROL INVENTORY, flat, not its layout. What each control CONTAINS
+// is tests/js_agent_form_harness.cjs's subject, and the nesting is nobody's.
+//
+// The getter still escapes textContent, because BossModFormat.escapeHtml round
+// trips through it and the whole form's copy depends on that.
+const TAGGED = /<([a-z][a-z0-9]*)\b([^>]*)>/gi;
+
+function stubControls(host, html) {
+    TAGGED.lastIndex = 0;
+    let match = TAGGED.exec(html);
+    while (match) {
+        const [, tag, attrs] = match;
+        const id = /\bid="([^"]+)"/.exec(attrs);
+        const name = /\bname="([^"]+)"/.exec(attrs);
+        if (id || name) {
+            const el = documentStub.createElement(tag);
+            if (id) el.setAttribute("id", id[1]);
+            if (name) el.setAttribute("name", name[1]);
+            host.append(el);
+        }
+        match = TAGGED.exec(html);
+    }
+}
+
+const baseCreateElement = documentStub.createElement.bind(documentStub);
+documentStub.createElement = (tag) => {
+    const el = baseCreateElement(tag);
+    let assigned = "";
+    Object.defineProperty(el, "innerHTML", {
+        get() {
+            if (assigned) return assigned;
+            return String(this.textContent)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+        },
+        set(value) {
+            assigned = String(value);
+            this.replaceChildren();
+            stubControls(this, assigned);
+        },
+        configurable: true,
+    });
+    return el;
+};
+
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
     "BossModConsentCard", "BossModOverlays", "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
-    "BossModEventCards", "BossModConversationChrome", "BossModComposer",
+    "BossModEventCards", "BossModTitleRename", "BossModConversationChrome", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSource", "BossModAgentSource",
     "BossModConversation", "BossModPlaces",
@@ -62,6 +115,12 @@ global.window.DOMParser = global.DOMParser;
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
+
+// context/agent-api.js and the form's bindings call the GLOBAL request helper
+// (api-auth.js patches window.fetch and every module reads it by name), so the
+// dialog only runs for real if the harness provides it. Pointed at the same
+// scripted API the column is injected with, so both see one world.
+global.apiFetch = (...args) => api(...args);
 
 // The floor plan GET /api/map answers with, trimmed to what the summary reads.
 // The names are core/world/tilemap.py's DEFAULT_ROOMS, because the join between
@@ -464,6 +523,102 @@ async function main() {
     }
     store.setState({ contextMode: "office" });
 
+    // ─── 3c. Hire and Edit are the same centred dialog ───
+    //
+    // The column hosted the form for one of the two flows and the desk swapped
+    // itself out for the other, so a source check would not notice if only one
+    // of them had moved. Driven from the desk's own footer control, because
+    // "what the operator clicks" is the claim.
+    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    await drain();
+
+    const modals = () => documentStub.body.querySelectorAll(".modal-panel");
+    const wideModal = () => modals().filter(
+        (node) => node.getAttribute("data-size") === "wide")[0];
+    if (modals().length !== 0) throw new Error("nothing should be open yet");
+
+    const editAction = contextEl.querySelectorAll(".desk-action")
+        .filter((node) => node.textContent === "Edit role")[0];
+    if (!editAction) throw new Error("the desk footer must offer Edit role");
+    await editAction.dispatchClick();
+    await drain();
+
+    const opened = wideModal();
+    const editOpensTheWideModal = Boolean(opened)
+        && opened.getAttribute("role") === "dialog"
+        && opened.getAttribute("aria-label") === "Edit role"
+        && Boolean(opened.querySelector("#agent-form"))
+        // The edit flow keeps its remove path.
+        && Boolean(opened.querySelector("#btn-delete-agent"));
+    if (!editOpensTheWideModal) {
+        throw new Error(`Edit role must open the wide dialog with the form in it: `
+            + `${opened && opened.getAttribute("data-size")} `
+            + `form ${Boolean(opened && opened.querySelector("#agent-form"))}`);
+    }
+    // It floats over the app, not inside the 320px column that used to host it.
+    const modalIsAttachedToTheBodyNotTheColumn =
+        documentStub.body.children.indexOf(opened) !== -1
+        && contextEl.querySelectorAll(".modal-panel").length === 0
+        // ...and the desk it was opened from is still mounted underneath.
+        && contextEl.querySelectorAll(".desk-panel").length === 1;
+    if (!modalIsAttachedToTheBodyNotTheColumn) {
+        throw new Error("the dialog must float over the app, leaving the desk mounted");
+    }
+    // The form is inside the SCROLLING body, and the dismissal outside it.
+    const modalBody = opened.querySelectorAll(".modal-body")[0];
+    const modalActions = opened.querySelectorAll(".modal-actions")[0];
+    if (!modalBody.querySelector("#agent-form")) {
+        throw new Error("the form must sit in the part that scrolls");
+    }
+    if (modalBody.querySelectorAll(".modal-action").length !== 0) {
+        throw new Error("the dialog's own action must not scroll away with the form");
+    }
+
+    // Dismissing puts the desk back in front and repaints it.
+    await modalActions.querySelectorAll(".modal-action")[0].dispatchClick();
+    await drain();
+    const closingTheModalRestoresTheDesk = modals().length === 0
+        && contextEl.querySelectorAll(".desk-panel").length === 1
+        && contextEl.querySelectorAll(".desk-name")
+            .map((n) => n.textContent).join("").includes("Jim");
+    if (!closingTheModalRestoresTheDesk) {
+        throw new Error(`closing must leave the desk showing, got `
+            + `${modals().length} dialogs`);
+    }
+
+    // One at a time. The rail's Hire row is reachable while a desk's Edit
+    // dialog is up, and the form's identity is per render — but two stacked
+    // wide modals would still fight over Escape and the focus trap.
+    await editAction.dispatchClick();
+    await drain();
+    const first = wideModal();
+    global.BossModAgentEdit.openAgentModal({ store });
+    await drain();
+    const onlyOneDialogAtATime = modals().length === 1 && wideModal() === first;
+    if (!onlyOneDialogAtATime) {
+        throw new Error(`a second dialog must not stack, got ${modals().length}`);
+    }
+    await first.querySelectorAll(".modal-action")[0].dispatchClick();
+    await drain();
+
+    // Hiring is the SAME dialog, minus the remove path — there is nothing to
+    // remove yet. This is the shell's Hire row entry point.
+    global.BossModAgentEdit.openAgentModal({ store });
+    await drain();
+    const hire = wideModal();
+    const hireOpensTheWideModal = Boolean(hire)
+        && hire.getAttribute("aria-label") === "Hire someone"
+        && Boolean(hire.querySelector("#agent-form"))
+        && hire.querySelector("#btn-delete-agent") === null;
+    if (!hireOpensTheWideModal) {
+        throw new Error(`Hire must open the same dialog: `
+            + `${hire && hire.getAttribute("aria-label")}`);
+    }
+    await hire.querySelectorAll(".modal-action")[0].dispatchClick();
+    await drain();
+    if (modals().length !== 0) throw new Error("the hire dialog must close");
+    store.setState({ contextMode: "office" });
+
     // ─── 4. Navigating away from Chat takes the column with it ───
 
     chat.unmount();
@@ -504,6 +659,11 @@ async function main() {
         opensSharedViewer,
         absentIsEmptyNotError,
         failureSurfaces,
+        editOpensTheWideModal,
+        hireOpensTheWideModal,
+        modalIsAttachedToTheBodyNotTheColumn,
+        closingTheModalRestoresTheDesk,
+        onlyOneDialogAtATime,
     }));
 }
 
