@@ -411,6 +411,15 @@
   cursor: not-allowed;
 }
 
+.host-path-consent-actions .hpc-action-primary {
+  background: var(--amber-ink);
+  color: var(--amber);
+}
+
+.host-path-consent-actions .hpc-action-muted {
+  font-weight: 500;
+}
+
 /* ─── Composer ─── */
 
 .composer {

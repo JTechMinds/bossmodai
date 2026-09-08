@@ -199,6 +199,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_agent_state_status_values(con)
     _ensure_task_status_values(con)
     _create_host_path_consent_tables_if_missing(con)
+    _ensure_workspace_preference_consent_schema(con)
     _ensure_notification_kind_values(con)
     _ensure_notification_link_target_kinds(con)
     _add_column_if_missing(
@@ -275,8 +276,15 @@ def _create_host_path_consent_tables_if_missing(con: SQLiteCompatConnection) -> 
             cwd             VARCHAR,
             task_id         VARCHAR REFERENCES tasks(id),
             channel_id      VARCHAR,
+            card_kind       VARCHAR NOT NULL DEFAULT 'host_path'
+                                CHECK (card_kind IN ('host_path', 'workspace_preference')),
+            is_git          BOOLEAN NOT NULL DEFAULT FALSE,
+            clone_dest      VARCHAR,
             status          VARCHAR NOT NULL DEFAULT 'pending'
-                                CHECK (status IN ('pending', 'allowed_once', 'always_allowed', 'denied')),
+                                CHECK (status IN (
+                                    'pending', 'allowed_once', 'always_allowed', 'denied',
+                                    'cloned', 'branched', 'edit_host'
+                                )),
             decision_by     VARCHAR,
             decision_note   TEXT,
             decided_at      TIMESTAMP,
@@ -314,7 +322,93 @@ def _create_host_path_consent_tables_if_missing(con: SQLiteCompatConnection) -> 
         CREATE INDEX IF NOT EXISTS idx_host_path_once_grants_agent
             ON host_path_once_grants (agent_id, task_id)
         """
+        )
+
+
+def _ensure_workspace_preference_consent_schema(con: SQLiteCompatConnection) -> None:
+    """Add workspace-preference columns and expand consent status values."""
+    _add_column_if_missing(
+        con, "host_path_consent_requests", "card_kind",
+        "VARCHAR NOT NULL DEFAULT 'host_path'",
     )
+    _add_column_if_missing(
+        con, "host_path_consent_requests", "is_git",
+        "BOOLEAN NOT NULL DEFAULT FALSE",
+    )
+    _add_column_if_missing(
+        con, "host_path_consent_requests", "clone_dest", "VARCHAR",
+    )
+    sql = _table_sql(con, "host_path_consent_requests")
+    if "'cloned'" in sql and "'workspace_preference'" in sql:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS host_path_consent_requests__new (
+                id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                agent_id        VARCHAR NOT NULL REFERENCES agents(id),
+                path            VARCHAR NOT NULL,
+                grant_root      VARCHAR NOT NULL,
+                reason          TEXT NOT NULL,
+                command         TEXT,
+                content         TEXT,
+                cwd             VARCHAR,
+                task_id         VARCHAR REFERENCES tasks(id),
+                channel_id      VARCHAR,
+                card_kind       VARCHAR NOT NULL DEFAULT 'host_path'
+                                    CHECK (card_kind IN ('host_path', 'workspace_preference')),
+                is_git          BOOLEAN NOT NULL DEFAULT FALSE,
+                clone_dest      VARCHAR,
+                status          VARCHAR NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN (
+                                        'pending', 'allowed_once', 'always_allowed', 'denied',
+                                        'cloned', 'branched', 'edit_host'
+                                    )),
+                decision_by     VARCHAR,
+                decision_note   TEXT,
+                decided_at      TIMESTAMP,
+                expires_at      TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO host_path_consent_requests__new (
+                id, agent_id, path, grant_root, reason, command, content, cwd,
+                task_id, channel_id, card_kind, is_git, clone_dest, status,
+                decision_by, decision_note, decided_at, expires_at, created_at
+            )
+            SELECT
+                id, agent_id, path, grant_root, reason, command, content, cwd,
+                task_id, channel_id,
+                COALESCE(card_kind, 'host_path'),
+                COALESCE(is_git, 0),
+                clone_dest, status,
+                decision_by, decision_note, decided_at, expires_at, created_at
+            FROM host_path_consent_requests
+            """
+        )
+        con.execute("DROP TABLE host_path_consent_requests")
+        con.execute(
+            "ALTER TABLE host_path_consent_requests__new RENAME TO host_path_consent_requests"
+        )
+        con.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_host_path_consent_agent_status
+                ON host_path_consent_requests (agent_id, status, created_at)
+            """
+        )
+        con.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_host_path_consent_path
+                ON host_path_consent_requests (agent_id, path, status)
+            """
+        )
+        logger.info("Migration: rebuilt host_path_consent_requests for workspace preference")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 def _ensure_notification_kind_values(con: SQLiteCompatConnection) -> None:

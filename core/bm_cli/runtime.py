@@ -483,6 +483,8 @@ def _execute_virtual(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Route to the virtual handler and record the audit event."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+
     handler = _HANDLERS.get(parsed.name)
     if handler is None:
         result = error_result(
@@ -506,7 +508,20 @@ def _execute_virtual(
         return result
 
     try:
-        result = handler(CliExecutionContext(agent=agent, state=state, cwd=cwd_before), parsed, content)
+        from core.bm_cli.workspace_preference import maybe_pause_for_workspace_preference
+
+        paused = maybe_pause_for_workspace_preference(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd=cwd_before,
+            task_id=get_active_task_id(agent.id),
+            channel_id=channel_id,
+        )
+        if paused is not None:
+            result = paused
+        else:
+            result = handler(CliExecutionContext(agent=agent, state=state, cwd=cwd_before), parsed, content)
     except PathOutsideRootsError as exc:
         raw_path = exc.raw_path or _named_path_from_command(parsed)
         if raw_path:

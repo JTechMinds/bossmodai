@@ -18,6 +18,58 @@ what-done-looks-like. Unknown keys are ignored and never executed. Keys
 that look like shell, install hooks, or credentials are rejected. YAML
 is parsed as data only.
 
+Optional `pack_author` is additive on v1:
+
+```yaml
+pack_author:
+  name: Example Studio
+  url: https://github.com/example
+```
+
+`name` is required when `pack_author` is present. `url` is optional and
+must be an `http` or `https` URL. Import stores author on the pack
+object returned by `POST /api/agent-packs/import`; it is not a hire
+field and does not create an agent. Export (`GET /api/agents/{id}/pack`)
+fills `pack_author` from the company name (and company URL when set),
+and omits it when the company is unknown.
+
+Optional `tools_hint` must be a YAML list of short tool names
+(`cli`, `work`). Prose strings are rejected.
+
+## Senior quality
+
+Bare schema still accepts a short hire snapshot (export of a casual
+live agent). Catalog import and pack CI require structured senior
+sections so a pack is not a one-liner.
+
+Required sections, either as labeled headings inside `description` /
+`what_done_looks_like` or as additive fields (`mission`, `in_scope`,
+`out_of_scope`, `handoff`, `fail_examples`) that fold into those two
+hire strings:
+
+- Mission
+- In scope
+- Out of scope
+- Handoff (who gets what next)
+- What done looks like, including **Fail examples**
+
+Canonical form is labeled text in `description` and
+`what_done_looks_like`, so hydrate stays on `role` / `description` /
+`done_fail_bar`. Mission and the done success bar have minimum length
+floors; Fail examples must name concrete bad outcomes, not only
+"empty done does not count."
+
+```yaml
+description: |
+  Mission: Review claims against a checkable allow/deny bar in this workspace.
+  In scope: Named artifacts and tests the operator can open from the desk.
+  Out of scope: Live production deploys, credentials, and host-wide scans.
+  Handoff: Operator receives the allow/deny note plus evidence paths.
+what_done_looks_like: |
+  A checkable allow/deny exists with a named artifact or tests path.
+  Fail examples: "Looks good" with no path; a vibe check; done with no evidence.
+```
+
 ## Catalog
 
 Default catalog repo: https://github.com/JTechMinds/BossMod_AgentMP
@@ -56,9 +108,10 @@ pin.
 
 `POST /api/agent-packs/import` fetches one pinned file and returns
 hire-form fields (`role`, `description`, `done_fail_bar`, optional
-hints). It does not create or patch an agent. The operator still supplies
+hints) plus the pack mapping (including `pack_author` when present).
+It does not create or patch an agent. The operator still supplies
 name and seats. Passing `agent_id` is rejected so a live hire cannot be
-silently overwritten.
+silently overwritten. Catalog imports must pass senior quality.
 
 Catalog body (resolves through `catalog.yaml`):
 `{ "id": "code-auditor", "ref": "<sha-or-tag>" }`.
@@ -77,4 +130,7 @@ hosts are never fetched.
 
 `GET /api/agents/{id}/pack` writes the agent's specialty, description,
 and done/fail bar back to a valid pack with `kind: agent` (two-way with
-import). Name and desk are omitted.
+import). Name and desk are omitted. `pack_author` is filled from company
+settings when available. Casual live hires may export a schema-valid
+pack that does not yet meet senior quality; catalog contribution still
+requires the structured sections above.

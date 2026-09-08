@@ -28,6 +28,13 @@ const BossModConsentCard = (() => {
         );
     }
 
+    function isWorkspacePreferenceCard(card) {
+        return Boolean(
+            card
+            && (card.kind === 'workspace_preference' || card.card_kind === 'workspace_preference')
+        );
+    }
+
     function requireApi(api) {
         if (typeof api !== 'function') {
             throw new Error('[consent-card] api is required');
@@ -55,46 +62,82 @@ const BossModConsentCard = (() => {
         if (!container || !card) return;
         container.classList.add('host-path-consent-card');
         if (card.grant_root) container.dataset.grantRoot = card.grant_root;
+        container.dataset.cardKind = isWorkspacePreferenceCard(card)
+            ? 'workspace_preference'
+            : 'host_path';
         const status = card.status || 'pending';
         container.classList.toggle('is-resolved', status !== 'pending');
         const title = document.createElement('div');
         title.className = 'hpc-title';
-        title.textContent = 'Host path consent';
+        const workspace = isWorkspacePreferenceCard(card);
+        title.textContent = workspace
+            ? (card.title || 'Work in your workspace?')
+            : 'Host path consent';
         const pathEl = document.createElement('div');
         pathEl.className = 'hpc-path';
         pathEl.textContent = card.path || '';
         const reasonEl = document.createElement('div');
         reasonEl.className = 'hpc-reason';
-        reasonEl.textContent = card.reason || '';
+        reasonEl.textContent = workspace
+            ? (card.body || card.reason || "Host paths stay safer if we clone (or branch) into the agent's workspace first. Editing the host folder directly is allowed but not advised.")
+            : (card.reason || '');
         container.appendChild(title);
         container.appendChild(pathEl);
-        if (card.reason && status === 'pending') container.appendChild(reasonEl);
+        if ((workspace ? (card.body || card.reason) : card.reason) && status === 'pending') {
+            container.appendChild(reasonEl);
+        }
 
         if (status !== 'pending') {
             const resolved = document.createElement('div');
             resolved.className = 'hpc-status';
-            resolved.textContent = status === 'denied'
-                ? (card.decision_note || 'Denied')
-                : (status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
+            resolved.textContent = consentStatusLabel(card);
             container.appendChild(resolved);
             return;
         }
 
         const actions = document.createElement('div');
         actions.className = 'host-path-consent-actions';
-        [
+        const buttons = workspace ? workspacePreferenceActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
             { label: 'Always allow (for all agents)', path: 'always-allow' },
             { label: 'Deny', path: 'deny' },
-        ].forEach((item) => {
+        ];
+        buttons.forEach((item) => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'hpc-action';
+            btn.className = item.primary ? 'hpc-action hpc-action-primary' : 'hpc-action';
+            if (item.muted) btn.classList.add('hpc-action-muted');
             btn.textContent = item.label;
+            if (item.hidden) {
+                btn.hidden = true;
+                btn.disabled = true;
+            }
             btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, actions, api));
             actions.appendChild(btn);
         });
         container.appendChild(actions);
+    }
+
+    function workspacePreferenceActions(card) {
+        const git = Boolean(card && (card.git || card.is_git));
+        return [
+            { label: 'Clone into workspace', path: 'clone', primary: true },
+            { label: 'Make a branch', path: 'branch', hidden: !git },
+            { label: 'Edit host directly (not advised)', path: 'edit-host', muted: true },
+            { label: 'Cancel', path: 'cancel' },
+        ];
+    }
+
+    function consentStatusLabel(card) {
+        const status = card.status || 'pending';
+        const workspace = isWorkspacePreferenceCard(card);
+        if (status === 'denied') return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
+        if (status === 'cloned') return card.clone_dest ? `Cloned into ${card.clone_dest}` : 'Cloned into workspace';
+        if (status === 'branched') return card.decision_note || 'Branched into workspace';
+        if (status === 'edit_host') return 'Edit host directly (not advised)';
+        if (status === 'always_allowed') return 'Always allowed (for all agents)';
+        if (status === 'allowed_once') return 'Allowed once';
+        return status;
     }
 
     /**
@@ -106,7 +149,7 @@ const BossModConsentCard = (() => {
      *
      * @param {HTMLElement} container
      * @param {object} card
-     * @param {'allow-once'|'always-allow'|'deny'} action
+     * @param {'allow-once'|'always-allow'|'deny'|'clone'|'branch'|'edit-host'|'cancel'} action
      * @param {HTMLElement} actions  The action row, disabled while in flight.
      * @param {Function} api  Authenticated fetch helper.
      * @returns {Promise<void>}
@@ -116,7 +159,10 @@ const BossModConsentCard = (() => {
         requireApi(api);
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
         try {
-            const res = await api(`/api/host-path-consent/${card.id}/${action}`, { method: 'POST' });
+            const endpoint = isWorkspacePreferenceCard(card)
+                ? `/api/workspace-preference/${card.id}/${action}`
+                : `/api/host-path-consent/${card.id}/${action}`;
+            const res = await api(endpoint, { method: 'POST' });
             if (!res.ok) {
                 throw new Error((await res.text()) || 'Consent update failed.');
             }
@@ -155,8 +201,11 @@ const BossModConsentCard = (() => {
         if (!scope) return;
         const grantRoot = card.grant_root || '';
         const companyWide = card.status === 'always_allowed';
+        const kind = container.dataset.cardKind || 'host_path';
         scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
             if (el === container || el.classList.contains('is-resolved')) return;
+            const sameKind = (el.dataset.cardKind || 'host_path') === kind;
+            if (!sameKind) return;
             const sameRoot = grantRoot && el.dataset.grantRoot === grantRoot;
             if (!companyWide && !sameRoot) return;
             el.classList.add('is-resolved');
@@ -165,9 +214,7 @@ const BossModConsentCard = (() => {
             if (!el.querySelector('.hpc-status')) {
                 const resolved = document.createElement('div');
                 resolved.className = 'hpc-status';
-                resolved.textContent = card.status === 'denied'
-                    ? (card.decision_note || 'Denied')
-                    : (card.status === 'always_allowed' ? 'Always allowed (for all agents)' : 'Allowed once');
+                resolved.textContent = consentStatusLabel(card);
                 el.appendChild(resolved);
             }
         });
@@ -175,6 +222,7 @@ const BossModConsentCard = (() => {
 
     return {
         isHostPathConsentMessage,
+        isWorkspacePreferenceCard,
         renderHostPathConsentCard,
         decideHostPathConsent,
         collapseRelatedConsentCards,

@@ -9,8 +9,11 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 
 _ALL_COLUMNS = (
     "id, agent_id, path, grant_root, reason, command, content, cwd, task_id, "
-    "channel_id, status, decision_by, decision_note, decided_at, expires_at, created_at"
+    "channel_id, card_kind, is_git, clone_dest, status, decision_by, "
+    "decision_note, decided_at, expires_at, created_at"
 )
+_HOST_PATH_KIND = "host_path"
+_WORKSPACE_KIND = "workspace_preference"
 
 
 def create_consent_request(
@@ -25,15 +28,19 @@ def create_consent_request(
     task_id: str | None = None,
     channel_id: str | None = None,
     expires_at: datetime | None = None,
+    card_kind: str = _HOST_PATH_KIND,
+    is_git: bool = False,
+    clone_dest: str | None = None,
 ) -> HostPathConsentRequest:
-    """Insert a pending host-path consent request."""
+    """Insert a pending host-path or workspace-preference consent request."""
+    kind = (card_kind or _HOST_PATH_KIND).strip() or _HOST_PATH_KIND
     return insert_returning(
         f"""
         INSERT INTO host_path_consent_requests (
             agent_id, path, grant_root, reason, command, content, cwd,
-            task_id, channel_id, expires_at
+            task_id, channel_id, card_kind, is_git, clone_dest, expires_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING {_ALL_COLUMNS}
         """,
         [
@@ -46,6 +53,9 @@ def create_consent_request(
             cwd,
             task_id,
             channel_id,
+            kind,
+            bool(is_git),
+            clone_dest,
             expires_at,
         ],
         HostPathConsentRequest,
@@ -135,6 +145,7 @@ def list_pending_for_grant_root(grant_root: str) -> list[HostPathConsentRequest]
         SELECT {_ALL_COLUMNS}
         FROM host_path_consent_requests
         WHERE status = 'pending' AND grant_root = $1
+          AND COALESCE(card_kind, 'host_path') = 'host_path'
         ORDER BY created_at ASC
         """,
         [token],
@@ -163,6 +174,7 @@ def list_pending_for_grant_root_scope(
             SELECT {_ALL_COLUMNS}
             FROM host_path_consent_requests
             WHERE status = 'pending' AND grant_root = $1 AND channel_id = $2
+              AND COALESCE(card_kind, 'host_path') = 'host_path'
             ORDER BY created_at ASC
             """,
             [token, scoped],
@@ -174,6 +186,7 @@ def list_pending_for_grant_root_scope(
         FROM host_path_consent_requests
         WHERE status = 'pending' AND grant_root = $1
           AND (channel_id IS NULL OR channel_id = '')
+          AND COALESCE(card_kind, 'host_path') = 'host_path'
         ORDER BY created_at ASC
         """,
         [token],
@@ -197,6 +210,7 @@ def find_pending_for_path(agent_id: str, path: str) -> HostPathConsentRequest | 
         SELECT {_ALL_COLUMNS}
         FROM host_path_consent_requests
         WHERE agent_id = $1 AND path = $2 AND status = 'pending'
+          AND COALESCE(card_kind, 'host_path') = 'host_path'
         ORDER BY created_at DESC
         LIMIT 1
         """,
@@ -219,6 +233,7 @@ def find_denied_for_scope(
             FROM host_path_consent_requests
             WHERE agent_id = $1 AND path = $2 AND status = 'denied'
               AND task_id = $3
+              AND COALESCE(card_kind, 'host_path') = 'host_path'
             ORDER BY decided_at DESC
             LIMIT 1
             """,
@@ -231,6 +246,7 @@ def find_denied_for_scope(
         FROM host_path_consent_requests
         WHERE agent_id = $1 AND path = $2 AND status = 'denied'
           AND task_id IS NULL
+          AND COALESCE(card_kind, 'host_path') = 'host_path'
         ORDER BY decided_at DESC
         LIMIT 1
         """,
@@ -245,18 +261,27 @@ def resolve_consent_request(
     status: str,
     decision_by: str = "human",
     decision_note: str | None = None,
+    clone_dest: str | None = None,
 ) -> HostPathConsentRequest | None:
     """Mark a pending request as resolved and return the updated row."""
-    if status not in {"allowed_once", "always_allowed", "denied"}:
+    if status not in {
+        "allowed_once",
+        "always_allowed",
+        "denied",
+        "cloned",
+        "branched",
+        "edit_host",
+    }:
         raise ValueError(f"Unsupported consent status: {status}")
     return fetch_one(
         f"""
         UPDATE host_path_consent_requests
-        SET status = $1, decision_by = $2, decision_note = $3, decided_at = $4
-        WHERE id = $5 AND status = 'pending'
+        SET status = $1, decision_by = $2, decision_note = $3, decided_at = $4,
+            clone_dest = COALESCE($5, clone_dest)
+        WHERE id = $6 AND status = 'pending'
         RETURNING {_ALL_COLUMNS}
         """,
-        [status, decision_by, decision_note, datetime.now(timezone.utc), request_id],
+        [status, decision_by, decision_note, datetime.now(timezone.utc), clone_dest, request_id],
         HostPathConsentRequest,
     )
 
@@ -324,6 +349,63 @@ def clear_once_grants_for_task(task_id: str) -> int:
     if count:
         execute("DELETE FROM host_path_once_grants WHERE task_id = $1", [task_id])
     return count
+
+
+def find_pending_workspace_preference(
+    agent_id: str,
+    path: str,
+) -> HostPathConsentRequest | None:
+    """Return the pending workspace-preference card for this agent + path."""
+    return fetch_one(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE agent_id = $1 AND path = $2 AND status = 'pending'
+          AND card_kind = '{_WORKSPACE_KIND}'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        [agent_id, path],
+        HostPathConsentRequest,
+    )
+
+
+def find_workspace_preference_for_scope(
+    agent_id: str,
+    path: str,
+    *,
+    task_id: str | None,
+) -> HostPathConsentRequest | None:
+    """Return the latest resolved workspace preference for this write scope."""
+    if task_id:
+        return fetch_one(
+            f"""
+            SELECT {_ALL_COLUMNS}
+            FROM host_path_consent_requests
+            WHERE agent_id = $1 AND path = $2
+              AND card_kind = '{_WORKSPACE_KIND}'
+              AND status IN ('edit_host', 'cloned', 'branched', 'denied')
+              AND task_id = $3
+            ORDER BY decided_at DESC
+            LIMIT 1
+            """,
+            [agent_id, path, task_id],
+            HostPathConsentRequest,
+        )
+    return fetch_one(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE agent_id = $1 AND path = $2
+          AND card_kind = '{_WORKSPACE_KIND}'
+          AND status IN ('edit_host', 'cloned', 'branched', 'denied')
+          AND task_id IS NULL
+        ORDER BY decided_at DESC
+        LIMIT 1
+        """,
+        [agent_id, path],
+        HostPathConsentRequest,
+    )
 
 
 def delete_agent_consent(agent_id: str) -> None:

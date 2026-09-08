@@ -152,10 +152,12 @@ Every turn injects a Role contract system message (specialty + what done looks l
 
 ## Agent packs
 
-Hire-contract templates live as YAML files in https://github.com/JTechMinds/BossMod_AgentMP, contributed by PR (`docs/AGENT_PACKS.md`). Layout: `catalog.yaml` plus `packs/<category-slug>/<id>.agent.yaml`. Schema `bossmod.agent_pack/v1` with `kind: agent`. Import (`POST /api/agent-packs/import`) reads the catalog index at a pinned commit or tag, then hydrates hire fields; export (`GET /api/agents/{id}/pack`) writes those fields back. No storefront UI, store backend, or skill/workflow install.
+Hire-contract templates live as YAML files in https://github.com/JTechMinds/BossMod_AgentMP, contributed by PR (`docs/AGENT_PACKS.md`). Layout: `catalog.yaml` plus `packs/<category-slug>/<id>.agent.yaml`. Schema `bossmod.agent_pack/v1` with `kind: agent` and optional `pack_author`. Import (`POST /api/agent-packs/import`) reads the catalog index at a pinned commit or tag, hydrates hire fields, and requires senior sections (Mission, in/out of scope, Fail examples, Handoff); export (`GET /api/agents/{id}/pack`) writes those fields back and fills `pack_author` from company settings when known. No storefront UI, store backend, or skill/workflow install.
 
 ## Runtime core and host-path consent
 
-A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
+A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, workspace preference, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
 
 Out-of-root host access is not negotiated in prose. The agent must call `request_host_access` (path + reason) or attempt the named-path CLI; either opens the in-chat Allow once / Always allow / Deny card. Verbal yes/no asks are rejected. Always allow writes the same `workspace_host_roots` allowlist Settings uses. Deny is fail-closed. Denied system trees such as `/etc` stay hard-denied with no card. Allow-once grants do not apply to operator Company Files.
+
+Named host-path **writes** do not edit the host folder silently. After the path is allowlisted, a mutating CLI command opens a workspace-preference card (Clone into workspace / Make a branch when git / Edit host directly / Cancel). Fail-closed until a choice. Desk `/me` stays the default workspace. Archive denies pending cards on that origin.

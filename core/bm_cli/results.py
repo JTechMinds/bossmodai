@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from core.bm_cli.types import BossModCliResult
-from core.models.host_path_consent import HostPathConsentRequest
+from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND, HostPathConsentRequest
 from core.default_prompts import load_default_prompt, render_default_prompt
 
 # Hard delimiters so CLI / tool stdout cannot be mistaken for system instructions.
@@ -115,25 +115,31 @@ def consent_required_result(
     consent_request: HostPathConsentRequest | None = None,
     reused: bool = False,
 ) -> BossModCliResult:
-    """Build a host-path consent pause result for the in-chat card."""
+    """Build a host-path or workspace-preference consent pause result."""
     card = consent_request.as_card() if consent_request is not None else {}
+    workspace = bool(card.get("kind") == WORKSPACE_PREFERENCE_KIND)
+    heading = "WORKSPACE PREFERENCE REQUIRED" if workspace else "HOST PATH CONSENT REQUIRED"
+    wait = (
+        "Stop and wait. The operator will Clone into workspace, Make a branch, "
+        "Edit host directly, or Cancel in chat."
+        if workspace
+        else "Stop and wait. The operator will Allow once, Always allow, or Deny in chat."
+    )
+    detail_prefix = (
+        "BossMod CLI workspace preference required"
+        if workspace
+        else "BossMod CLI host-path consent required"
+    )
+    kind = "workspace_preference_required" if workspace else "host_path_consent_required"
     return BossModCliResult(
         command=command,
         ok=False,
-        detail=f"BossMod CLI host-path consent required: {message}",
+        detail=f"{detail_prefix}: {message}",
         prompt_content=render_sections(
             command,
-            [
-                (
-                    "HOST PATH CONSENT REQUIRED",
-                    [
-                        message,
-                        "Stop and wait. The operator will Allow once, Always allow, or Deny in chat.",
-                    ],
-                )
-            ],
+            [(heading, [message, wait])],
         ),
-        kind="host_path_consent_required",
+        kind=kind,
         data={
             "consent_required": True,
             "message": message,

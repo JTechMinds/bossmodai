@@ -134,6 +134,7 @@ class ConversationDecision(BaseModel):
     taskDescription: str | None = None
     deliverables: list[DeliverableSpec] | None = None
     executionPlan: WorkExecutionPlan | None = None
+    proceedUntagged: bool = False
     thought: str = Field(default="")
 
     @model_validator(mode="after")
@@ -274,7 +275,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data") or {}
     if not isinstance(data, dict):
         raise ValueError('"data" must be an object when provided')
-    extra_data = set(data) - {"dst", "title", "detail", "task", "plan"}
+    extra_data = set(data) - {"dst", "title", "detail", "task", "plan", "proceed"}
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
     task = data.get("task") or {}
@@ -306,6 +307,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "taskDescription": task.get("desc"),
         "deliverables": _normalize_outs(task.get("outs")),
         "executionPlan": _normalize_work_plan(plan),
+        "proceedUntagged": _as_bool(data.get("proceed")),
         "thought": payload.get("th", ""),
     }
 
@@ -394,6 +396,15 @@ def _map_optional(value: Any, mapping: dict[str, str], field_name: str) -> str |
     if value in (None, ""):
         return None
     return _map_required(value, mapping, field_name)
+
+
+def _as_bool(value: Any) -> bool:
+    """Treat compact proceed flags as true only for explicit truthy values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
 
 
 def _candidate_thought(payload: Any) -> str:

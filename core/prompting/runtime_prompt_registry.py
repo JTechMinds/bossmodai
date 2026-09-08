@@ -65,6 +65,12 @@ _RUNTIME_PROMPT_SURFACES: tuple[RuntimePromptSurface, ...] = (
         "internal_loop",
     ),
     RuntimePromptSurface("internal_loop_decision_repair_keys", "Internal Decision Repair Keys", "default_file", "internal_loop"),
+    RuntimePromptSurface(
+        "internal_loop_decision_next_owner_nudge",
+        "Internal Decision Next-Owner Nudge",
+        "default_file",
+        "internal_loop",
+    ),
     RuntimePromptSurface("internal_loop_execution_cli_followup", "Internal Execution CLI Follow-up", "default_file", "internal_loop"),
     RuntimePromptSurface(
         "internal_loop_execution_continue_work_missing_deliverable",

@@ -19,6 +19,7 @@ from core.agent_loop.decision_replies import (
     _attach_reply_artifacts,
     _prepare_shared_response_trigger,
 )
+from core.agent_loop.next_owner import maybe_next_owner_nudge
 from core.agent_loop.decision_resume import (
     _complete_assignment_if_present,
     _record_watchdog_reply_if_needed,
@@ -58,6 +59,9 @@ def apply_decision(
 
         if is_verbal_host_access_ask(decision.reply):
             return verbal_host_access_steer(agent)
+        nudge = maybe_next_owner_nudge(agent, trigger, decision)
+        if nudge is not None:
+            return nudge
 
     result = {
         "event": "decision_applied",
