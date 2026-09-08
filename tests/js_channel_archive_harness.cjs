@@ -14,11 +14,15 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
+// The chrome paints its action glyphs after every apply.
+global.lucide = { createIcons() {} };
+global.window.lucide = global.lucide;
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModGates", "BossModConsentCard",
-    "BossModOverlays", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
+    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
+    "BossModFormat", "BossModGates", "BossModConsentCard",
+    "BossModOverlays", "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModConversationChrome", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSource",
     "BossModAgentSource", "BossModConversation",

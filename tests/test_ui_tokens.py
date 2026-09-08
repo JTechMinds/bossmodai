@@ -16,6 +16,17 @@ SURFACES = ("#ffffff", "#f6f7f9")
 # Tokens used only for dots, bar fills, and control borders (SC 1.4.11 -> 3:1).
 NON_TEXT_TOKENS = {"ok-mark": 3.0, "line-control": 3.0}
 
+# Inks that are never used on --bg or --panel: each one is text ON its tint, so
+# it is measured against that tint and nothing else. --ok-ink joined them when
+# the visual pass measured --ok on --ok-bg at 4.33 and found it under the floor.
+INK_ON_TINT = {
+    "ok-ink": "ok-bg",
+    "blue-ink": "blue",
+    "amber-ink": "amber",
+    "teal-ink": "teal",
+    "pink-ink": "pink",
+}
+
 
 def _channel(value: int) -> float:
     c = value / 255
@@ -57,6 +68,25 @@ def test_non_text_tokens_meet_component_contrast() -> None:
         assert name in tokens, f"--{name} missing from tokens.css"
         ratio = contrast(tokens[name], "#ffffff")
         assert ratio >= floor, f"--{name} {tokens[name]}: {ratio:.2f} < {floor}"
+
+
+def test_ink_on_tint_pairs_meet_aa() -> None:
+    """A tint's ink is measured on that tint, because that is where it is used.
+
+    --ok was the counter-example: it clears 4.55:1 on --bg, which is what
+    TEXT_TOKENS above proves, and 4.33:1 on --ok-bg, which nothing proved. The
+    Office state pill and the Log's Active badge are both small bold text on
+    --ok-bg, so both were failing while a green test said the token was fine.
+    """
+    tokens = _tokens()
+    failures = []
+    for ink, tint in INK_ON_TINT.items():
+        assert ink in tokens, f"--{ink} missing from tokens.css"
+        assert tint in tokens, f"--{tint} missing from tokens.css"
+        ratio = contrast(tokens[ink], tokens[tint])
+        if ratio < 4.5:
+            failures.append(f"--{ink} on --{tint}: {ratio:.2f}")
+    assert not failures, "WCAG AA failures: " + "; ".join(failures)
 
 
 def test_tailwind_config_mirrors_tokens() -> None:

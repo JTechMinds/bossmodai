@@ -171,15 +171,19 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Name, role, and — when the context column is there to receive it —
-         * the Desk toggle.
+         * Face, name, role, and — when the context column is there to receive
+         * it — the Desk toggle.
+         *
+         * `avatar` and `icon` are DATA: a name, a colour, and a glyph name. The
+         * adapter still builds nothing, which is what keeps the conversation
+         * from having to read the roster from inside its view.
          *
          * `ctx.openDesk` is an optional, documented capability (spec 4.1), and
          * the action renders only when it is injected. A control that renders
          * but does nothing is worse than one that is absent, which is the same
          * rule event-cards.js follows for "Open in Desk".
          *
-         * @returns {{title: string, subtitle: string, actions: object[]}}
+         * @returns {{title: string, subtitle: string, avatar: object, actions: object[]}}
          */
         function chrome() {
             const who = agent();
@@ -188,10 +192,16 @@ const BossModAgentSource = (() => {
                 actions.push({
                     id: 'conversation-desk-toggle',
                     label: 'Desk',
+                    icon: 'lamp-desk',
                     onSelect: () => ctx.openDesk(agentId),
                 });
             }
-            return { title: who.name, subtitle: who.role || '', actions };
+            return {
+                title: who.name,
+                subtitle: who.role || '',
+                avatar: { name: who.name, color: who.color || null },
+                actions,
+            };
         }
 
         return {
@@ -201,9 +211,12 @@ const BossModAgentSource = (() => {
             send,
             subscribe,
             chrome,
+            // The face too: a conversation nobody has spoken in is where the
+            // operator is least sure who they are looking at.
             emptyState: () => ({
                 title: `Chat with ${agent().name}`,
                 hint: 'Send a message to activate this agent.',
+                avatar: { name: agent().name, color: agent().color || null },
             }),
             // Model gating is the composer's job, through the store.
             canSend: () => true,

@@ -52,7 +52,12 @@ def test_needs_store_normalises_to_camel_case() -> None:
     the conversion had leaked, which is how three renderers ended up each
     knowing their own wire format the last time.
     """
-    consumers = [JS / "shell" / "roster.js", JS / "shell" / "header.js"]
+    consumers = [
+        JS / "shell" / "roster.js",
+        # The People half reads store.needs since the rail was split.
+        JS / "shell" / "roster-people.js",
+        JS / "shell" / "header.js",
+    ]
     consumers += [path for path in sorted(NEEDS.glob("*.js")) if path.name != "need-shape.js"]
     for path in consumers:
         source = _read(path)
@@ -196,8 +201,10 @@ def test_bell_is_never_suppressible() -> None:
             assert flag not in source, f"{path.relative_to(JS)} writes {flag}"
 
     # The header renders the bell unconditionally, with no branch above it.
+    # The rail toggle joined the row ahead of the brand in the visual-parity
+    # pass; the property is unchanged and only the spelling of the append moved.
     assert "errorEl, bellLive, bell, pause, gear" in header
-    assert "if (" not in header.split("el.append(brand, nav,", 1)[1].split("));", 1)[0]
+    assert "if (" not in header.split("el.append(railToggle, brand, nav,", 1)[1].split("));", 1)[0]
 
 
 def test_toast_and_bar_are_mutually_exclusive() -> None:

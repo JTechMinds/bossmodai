@@ -19,7 +19,8 @@ HARNESS = Path(__file__).resolve().parent / "js_board_harness.cjs"
 # Load order matters: the column map before the data layer that reads it, the
 # views before the place that mounts them.
 HARNESS_MODULES = [
-    JS / "core" / "dom.js", JS / "core" / "store.js", JS / "core" / "bus.js",
+    JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "switch.js",
+    JS / "core" / "store.js", JS / "core" / "bus.js",
     JS / "core" / "format.js", JS / "core" / "specialty.js",
     JS / "core" / "gates.js", JS / "core" / "overlays.js",
     JS / "shell" / "places.js",

@@ -5,6 +5,9 @@
  * because "icon-only buttons carry aria-label" is a property of what renders,
  * not of how the source is spelled.
  *
+ * It counts what it walked before it judges it, and reports the counts. A
+ * naming check over an empty walk is not a pass — see CONTROL_FLOOR below.
+ *
  * Invoked by tests/test_ui_a11y_contract.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -59,15 +62,20 @@ global.document = {
 global.window = { document: global.document };
 global.lucide = { createIcons() {} };
 
-const [dom, store, bus, agentStatus, overlays, places, header, rosterThreads, roster, footer] = process.argv.slice(2);
+const [
+    dom, avatar, store, bus, agentStatus, overlays, places, header,
+    rosterPeople, rosterThreads, roster, footer,
+] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
+load(avatar, "BossModAvatar");
 load(store, "BossModStore");
 load(bus, "BossModBus");
 load(agentStatus, "BossModAgentStatus");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
 load(header, "BossModHeader");
+load(rosterPeople, "BossModRosterPeople");
 load(rosterThreads, "BossModRosterThreads");
 load(roster, "BossModRoster");
 load(footer, "BossModFooter");
@@ -168,6 +176,48 @@ function apiFetch(url) {
     ];
     await drain();
 
+    const walked = {
+        header: controls(headerEl, []).length,
+        roster: controls(rosterEl, []).length,
+        footer: controls(footerEl, []).length,
+    };
+
+    // A walk that finds nothing names nothing, and then reports that every
+    // control it found was named. That is not a pass, it is a vacuum — and it
+    // is what this harness reported while roster.js was failing to paint: the
+    // exception went through a core/store.js subscriber, which catches and
+    // logs rather than letting one bad subscriber stop the rest, so the rail
+    // rendered zero rows and there was nothing left to disagree with.
+    //
+    // The floors sit under what the shell renders today, so removing one real
+    // control does not fail this by itself. The footer is a status bar and
+    // renders no controls at all; its floor is zero, and its count is reported
+    // so that the day it grows one, the number is on screen rather than nowhere.
+    const CONTROL_FLOOR = { header: 8, roster: 6, footer: 0 };
+    for (const [region, floor] of Object.entries(CONTROL_FLOOR)) {
+        if (walked[region] < floor) {
+            throw new Error(
+                `[a11y] the ${region} rendered ${walked[region]} controls, fewer than `
+                + `the ${floor} it must; the naming check below would pass vacuously`,
+            );
+        }
+    }
+
+    // The sharper half of the same guard. A rail that painted no PEOPLE still
+    // renders six controls — the search box, Hire, and the threads block — so a
+    // total alone cannot tell "the list is empty" from "the list is short". The
+    // fixture is one agent, so a working rail owes exactly one person row, and
+    // that is a claim about this fixture rather than about a head count that
+    // moves whenever the rail grows a button.
+    const personRows = controls(rosterEl, []).filter((control) =>
+        String(control.getAttribute("class") || "").split(/\s+/).includes("roster-person"));
+    if (personRows.length < 1) {
+        throw new Error(
+            "[a11y] the rail rendered no person rows for the one agent in the "
+            + "fixture; the naming walk below has no people to check",
+        );
+    }
+
     const unnamed = [];
     [headerEl, rosterEl, footerEl].forEach((root) => {
         const labelled = labelledIds(root, new Set());
@@ -188,6 +238,8 @@ function apiFetch(url) {
     process.stdout.write(JSON.stringify({
         ok: true,
         everyShellControlIsNamed: true,
+        controlsWalked: walked,
+        personRowsWalked: personRows.length,
     }));
 })().catch((err) => {
     process.stderr.write(String((err && err.stack) || err));

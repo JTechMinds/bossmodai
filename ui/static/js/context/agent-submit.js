@@ -12,14 +12,27 @@
  * template to copy, and a connection is a model name plus the base URL. A
  * connection with no explicit model identifier THROWS rather than saving an
  * agent that would fail on its first turn with no visible cause.
+ *
+ * The colour is validated the same way, and for the same reason: an agent whose
+ * seed is too light is drawn on the office floor as a sprite nobody can pick
+ * out. core/avatar.js owns the bound; this is the gate that enforces it.
  */
 const BossModAgentSubmit = (() => {
+
+    /** Used when the form offered no colour. A palette-era value, kept legible. */
+    const FALLBACK_COLOR = '#3b82f6';
+
+    const PALE_COLOR_MESSAGE =
+        'That colour is too light to see on the office floor. Pick a darker one.';
 
     /**
      * @param {HTMLFormElement} form
      * @param {object[]} connections
      * @returns {Promise<{agentData: object, promptHistoryPolicy: object}>}
-     * @throws {Error} When a selected connection carries no model identifier.
+     * @throws {Error} When a selected connection carries no model identifier,
+     *   or when the chosen colour is too light to render as a visible agent.
+     *   Refused rather than darkened: silently saving a different colour than
+     *   the operator picked is the behaviour this codebase forbids.
      */
     async function buildSubmitData(form, connections) {
         const formData = new FormData(form);
@@ -30,12 +43,17 @@ const BossModAgentSubmit = (() => {
             [desk_x, desk_y] = deskValue.split(',').map(Number);
         }
 
+        const color = formData.get('agent-color') || FALLBACK_COLOR;
+        if (!BossModAvatar.isSeedLegible(color)) {
+            throw new Error(PALE_COLOR_MESSAGE);
+        }
+
         const agentData = {
             name: formData.get('name'),
             role: formData.get('role') || null,
             description: formData.get('description') || null,
             done_fail_bar: formData.get('done_fail_bar') || null,
-            color: formData.get('agent-color') || '#3b82f6',
+            color,
             desk_x,
             desk_y,
         };

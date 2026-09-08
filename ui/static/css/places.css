@@ -70,12 +70,18 @@
   min-height: 0;
 }
 
+/* The concept's `.bar` rhythm: one 48px row. min-height rather than height —
+   the tabs wrap onto a second line in a narrow window, and a fixed height would
+   clip them off the bottom of the bar. .board-header, which Board, Metrics and
+   Log share, already stands taller than 48px unaided; this is the header that
+   sat under it. */
 .office-header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-height: 48px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -92,7 +98,7 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: var(--ok-bg);
-  color: var(--ok);
+  color: var(--ok-ink);
 }
 
 .office-state[data-state="paused"] { background: var(--amber); color: var(--amber-ink); }
@@ -112,10 +118,19 @@
   padding: 4px 12px;
   border-radius: 6px;
   font-size: 13px;
+  font-weight: 500;
   color: var(--muted);
 }
 
-.office-tab[aria-selected="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.office-tab:hover { background: var(--bg); color: var(--ink); }
+
+/* Quiet, the way .place-nav-item[aria-current] is quiet: the tab you are on is
+   the strongest TEXT in the group (--ink on --bg, 15.45:1), not the loudest
+   fill. Two blue pills competing in one window was the redesign's complaint. */
+.office-tab[aria-selected="true"] {
+  background: var(--bg);
+  color: var(--ink);
+}
 
 .office-stage { flex: 1 1 auto; min-height: 0; position: relative; }
 .office-pane { height: 100%; min-height: 0; overflow: auto; }
@@ -153,22 +168,26 @@
 
 /* ─── Activity ticker ─── */
 
+/* The strip carries the type size for everything in it, so an entry and the
+   empty state that replaces it cannot disagree about how big the strip is. */
 .ticker {
   flex: 0 0 auto;
   display: block;
   width: 100%;
-  padding: 6px 16px;
+  padding: 8px 16px;
   border-top: 1px solid var(--line);
   background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
   text-align: left;
 }
 
-.ticker:hover { background: var(--accent-bg); }
+.ticker:hover { background: var(--bg); }
 .ticker-list { display: flex; gap: 18px; overflow: hidden; white-space: nowrap; }
-.ticker-entry { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.ticker-entry { display: inline-flex; align-items: baseline; gap: 6px; }
 .ticker-time { color: var(--hint); }
 .ticker-text { color: var(--muted); }
-.ticker-empty { font-size: 12px; color: var(--hint); }
+.ticker-empty { color: var(--hint); }
 
 .ticker-entry[data-tone="error"] .ticker-text { color: var(--alert); }
 
@@ -225,18 +244,6 @@
 .org-live-dot.is-active { background: var(--ok-mark); }
 
 .org-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-
-.org-avatar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  color: var(--panel);
-  font-weight: 700;
-}
 
 .org-identity { min-width: 0; }
 .org-name { margin: 0; font-size: 13px; font-weight: 600; }
@@ -301,8 +308,6 @@
 
 .board-control { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .board-control-label { white-space: nowrap; }
-.board-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
-
 .board-search,
 .board-select {
   padding: 4px 8px;
@@ -315,15 +320,9 @@
 
 .board-search { width: 180px; }
 
-.board-dir,
-.board-chip-clear,
-.board-danger {
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
+/* All three compose .btn.btn-sm from controls.css. What is left here is only
+   what makes each one different from a plain button. */
+.board-dir { color: var(--muted); }
 
 .board-chip-clear { border-style: dashed; color: var(--accent); border-color: var(--accent); }
 .board-danger { border-color: var(--alert); color: var(--alert); background: var(--alert-bg); }
@@ -348,6 +347,8 @@
 
 .board-column.is-skeleton { min-height: 180px; background: var(--line); }
 
+/* The concept's column heading: quiet, so the cards under it are what the eye
+   lands on. --hint measures 4.83:1 on --panel, which is AA for this 12px text. */
 .board-column-title {
   display: flex;
   align-items: center;
@@ -358,8 +359,13 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted);
+  color: var(--hint);
 }
+
+/* The one column that is asking for something says so in words, at the top,
+   once. That is what lets the cards beneath it stay bordered rather than
+   filled — two alarms for one fact is one alarm too many. */
+.board-column[data-column="needs"] .board-column-title { color: var(--alert); }
 
 .board-column-count {
   padding: 0 7px;
@@ -391,8 +397,23 @@
 
 .task-card + .task-card,
 .board-closed .task-card { margin-top: 8px; }
+
+/* Bordered, never filled: the column header above already carries the alarm.
+   `data-needs` is stamped by task-card.js from board-columns.js's map, so this
+   rule cannot disagree with which statuses the Needs column actually holds.
+
+   It sits BEFORE hover and selection deliberately. All three have the same
+   specificity, so source order decides, and the two that answer what the
+   operator is doing right now should win a border that the column header and
+   the status pill are both still saying anyway. */
+.task-card[data-needs="true"] { border-color: var(--alert-line); }
+
 .task-card:hover { border-color: var(--line-strong); }
 .task-card.is-selected { border-color: var(--accent); background: var(--accent-bg); }
+
+/* Done recedes; it does not vanish. The card keeps its border and its
+   affordances — only the text steps back, at --muted's 6.54:1 on --panel. */
+.board-column[data-column="done"] .task-card { color: var(--muted); }
 
 /* The checkbox is always in the tab order. It is revealed on hover, on focus
    anywhere in the card, and whenever it is checked — never by hover alone,
@@ -412,19 +433,6 @@
   margin: 4px 0 0;
   font-size: 11px;
   color: var(--muted);
-}
-
-.task-card-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--line-strong);
-  color: var(--panel);
-  font-size: 9px;
-  font-weight: 700;
 }
 
 .task-card-age { color: var(--hint); }
@@ -876,7 +884,7 @@
 .metric-panel {
   padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   background: var(--panel);
 }
 
@@ -884,10 +892,50 @@
 .metric-card-value { margin: 4px 0 0; font-size: 22px; font-weight: 700; color: var(--ink); }
 .metric-card-sub { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
 
-.metric-health { display: flex; align-items: center; gap: 5px; }
-.metric-health[data-health="ok"] { color: var(--ok); }
-.metric-health[data-health="warn"] { color: var(--amber-ink); }
-.metric-health[data-health="bad"] { color: var(--alert); }
+/* The Error Rate card's tinted sub-line. Distinct from .metric-health below,
+   which is the whole verdict panel: this rule colours ALL of its element's
+   text by tone, which is right for one word and wrong for a paragraph. */
+.metric-card-health { display: flex; align-items: center; gap: 5px; }
+.metric-card-health[data-health="ok"] { color: var(--ok); }
+.metric-card-health[data-health="warn"] { color: var(--amber-ink); }
+.metric-card-health[data-health="bad"] { color: var(--alert); }
+
+/* ─── The health panel ───
+ *
+ * The concept's strip, leading the page. The tone is said three ways — the
+ * light, the verdict word, and the numbers beneath it — so the colour is never
+ * the only carrier (SC 1.4.1) and the light can be aria-hidden decoration.
+ */
+
+.metric-health {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+/* --line-control (3.10:1 on --panel) is the no-tone state: a light that fails
+   to match one of the three below stays visible and obviously uncoloured,
+   rather than disappearing into the card. */
+.metric-health-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--line-control);
+}
+
+/* Each clears 3:1 on --panel (SC 1.4.11): --ok-mark 3.49, --amber-ink 7.40,
+   --alert 4.90. --ok-mark rather than --ok because this is a mark, not text. */
+.metric-health-light[data-health="ok"] { background: var(--ok-mark); }
+.metric-health-light[data-health="warn"] { background: var(--amber-ink); }
+.metric-health-light[data-health="bad"] { background: var(--alert); }
+
+.metric-health-verdict { margin: 0; font-size: 13px; font-weight: 600; }
+.metric-health-detail { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
 .metric-cell { text-align: center; }
@@ -902,38 +950,55 @@
 
 .metric-rows { display: flex; flex-direction: column; gap: 8px; }
 
+/* The concept's `70px 1fr 90px`, widened at both ends: agent names come from
+   the roster rather than from a fixture of one-word names, and the token row's
+   value reads `1.2M tokens · 45 calls`. What the grid buys is what the three
+   flex tricks it replaced could not — labels and values that line up across
+   every row, whatever is in them. */
 .metric-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 90px;
   align-items: center;
   gap: 10px;
   font-size: 12px;
 }
 
-.metric-row-stacked { flex-wrap: wrap; }
-.metric-row-name { flex: 0 0 120px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.metric-row-value { margin-left: auto; color: var(--muted); white-space: nowrap; }
+/* Token rows carry a long value, so the bar drops to a second line beneath
+   both columns instead of being squeezed between them. */
+.metric-row-stacked { grid-template-columns: 120px minmax(0, 1fr); }
+.metric-row-stacked .metric-bar { grid-column: 1 / -1; }
+/* The token value is long and must not be clipped: in its own column it wraps
+   rather than running out of the panel, which is what the flex-wrap row it
+   replaced did for it. */
+.metric-row-stacked .metric-row-value { text-align: left; white-space: normal; }
+
+.metric-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.metric-row-value { color: var(--muted); white-space: nowrap; text-align: right; }
 
 .metric-row-link {
-  flex: 0 0 auto;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0;
   border: 0;
   background: none;
   color: var(--accent);
   font-size: 12px;
   font-weight: 500;
+  text-align: left;
 }
 
 .metric-row-link:hover { text-decoration: underline; }
 
 .metric-bar {
-  flex: 1 1 100%;
   height: 8px;
   border-radius: 999px;
   background: var(--line);
   overflow: hidden;
 }
-
-.metric-row .metric-bar { flex: 1 1 auto; }
 .metric-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
 .metric-bar-fill[data-hue="1"] { background: var(--ok-mark); }
 .metric-bar-fill[data-hue="2"] { background: var(--amber-ink); }
@@ -970,62 +1035,104 @@
   min-height: 0;
 }
 
-.log-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 16px; }
-.log-body { display: flex; flex-direction: column; gap: 6px; }
-.log-list { display: flex; flex-direction: column; gap: 4px; }
+.log-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.log-body { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; }
 
+/* The record, in the typeface a record is read in. The monospace and the type
+   size live on the list so every row, and the skeleton that stands in for
+   them, are the same size — a row cannot disagree with its neighbours. */
+.log-list {
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* A row, not a card: one rule underneath and nothing around it. The grid here
+   is the outer stack — the head button, and the expansion when it is open. */
 .log-row {
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
-  border-radius: var(--r);
+  display: grid;
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
-.log-row[data-type="error"] { border-left-color: var(--alert); }
-.log-row[data-type="task"] { border-left-color: var(--accent); }
-.log-row[data-type="agent"] { border-left-color: var(--ok-mark); }
-.log-row[data-type="system"] { border-left-color: var(--line-strong); }
+/* The whole error row is tinted rather than one edge of it, which is what the
+   left border used to do for four types at once. --alert measures 4.90:1 on
+   --panel. The dot below keeps the other three types distinguishable. */
+.log-row[data-type="error"] { color: var(--alert); }
 
 .log-row-toggle,
 .log-row-static {
   display: block;
   width: 100%;
-  padding: 6px 10px;
+  padding: 6px 16px;
   border: 0;
   background: none;
   text-align: left;
-  color: var(--ink);
+  color: inherit;
 }
 
-.log-row-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.log-row-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+/* The card border used to be what said "this row opens". Flat rows need that
+   affordance back, and hover is where it goes: the expansion is a <button>, so
+   the cursor and aria-expanded already carry it for pointer and screen-reader
+   users, and this is the third. Static rows are not buttons and get nothing. */
+.log-row-toggle:hover { background: var(--bg); }
+
+/* Four cells: when · who · what · state. The columns are the head's rather
+   than the row's because the head sits inside a <button>, and `display:
+   contents` on a button drops it out of the accessibility tree. */
+.log-row-head {
+  display: grid;
+  grid-template-columns: 96px 120px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.log-row-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
 .log-row[data-type="error"] .log-row-dot { color: var(--alert); }
 .log-row[data-type="task"] .log-row-dot { color: var(--accent); }
 .log-row[data-type="agent"] .log-row-dot { color: var(--ok-mark); }
 .log-row[data-type="system"] .log-row-dot { color: var(--hint); }
 
-.log-row-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--hint); }
-.log-row-agent { font-weight: 600; }
-.log-row-text { flex: 1 1 auto; min-width: 0; }
-.log-row-meta { color: var(--muted); font-size: 11px; }
+.log-row-time { color: var(--hint); white-space: nowrap; }
+.log-row-agent { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.log-row-text { min-width: 0; overflow-wrap: anywhere; }
+.log-row-tail { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; }
+.log-row-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
 
+/* Inside a tinted row the greys would fight the tint, so they step aside and
+   let the row's colour through. */
+.log-row[data-type="error"] .log-row-time,
+.log-row[data-type="error"] .log-row-meta { color: inherit; }
+
+/* --ok on --ok-bg measures 4.33:1, under the floor for 10px bold. --ok-ink is
+   the pair tokens.css carries for ink ON the tint. */
 .log-row-active {
   padding: 0 6px;
   border-radius: 999px;
   background: var(--ok-bg);
-  color: var(--ok);
+  color: var(--ok-ink);
   font-size: 10px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.log-row.is-skeleton { padding: 10px; border-left-color: var(--line); }
+.log-row.is-skeleton { padding: 10px 16px; }
 .log-skeleton-bar { display: block; width: 55%; height: 10px; border-radius: 4px; background: var(--line); }
 .log-more { align-self: center; margin-top: 8px; }
 
 /* ─── Log: the inline expansion ─── */
 
 .log-detail {
-  padding: 8px 12px 12px;
+  padding: 8px 16px 12px;
   border-top: 1px solid var(--line);
   background: var(--bg);
 }
@@ -1099,11 +1206,12 @@
 .log-step-action { font-weight: 600; }
 .log-step-meta { margin-left: auto; color: var(--muted); font-size: 11px; }
 
+/* --ok-ink, not --ok: 10px bold on --ok-bg, the same pair as .log-row-active. */
 .log-step-badge {
   padding: 0 6px;
   border-radius: 999px;
   background: var(--ok-bg);
-  color: var(--ok);
+  color: var(--ok-ink);
   font-size: 10px;
   font-weight: 600;
 }

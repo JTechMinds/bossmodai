@@ -17,6 +17,22 @@
   color: var(--ink);
 }
 
+/* A section head: what this is, a quiet word about it, and the way through to
+   the full view. The link is pushed right rather than the title being padded,
+   so a long room name cannot shove it off the column. */
+.context-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.context-head .context-title { margin: 0; }
+.context-head-link { margin-left: auto; }
+
+/* --hint on --panel measures 4.83:1. */
+.context-meta { color: var(--hint); font-size: 12px; font-weight: 400; }
+
 /* The three shared states. Error belongs to whoever ran the request. */
 .context-skeleton { margin: 0; color: var(--hint); font-size: 12px; }
 .context-empty { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -32,23 +48,62 @@
   font-size: 12px;
 }
 
-.context-link {
-  min-height: 24px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
+/* Composes .btn.btn-sm from controls.css; the accent ink is this column's. */
+.context-link { color: var(--accent); font-weight: 500; }
+
+/* ─── Mini office ───
+ *
+ * A map, not a list. Rooms are whatever `agent.location` says, so the layout
+ * rule is positional rather than by name: two columns, and the FIRST room in
+ * the (stable, alphabetical, Unknown-last) sort spans both. mini-office.js
+ * stamps `data-tone` from the same sorted position, which is what keeps a room
+ * from changing colour because somebody walked into another one.
+ */
+
+.mini-office-rooms {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
   border-radius: var(--r);
-  background: var(--panel);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 500;
+  background: var(--bg);
 }
 
-/* ─── Mini office ─── */
+/* The loading and empty states are the grid's only other children, and they
+   are sentences rather than rooms. */
+.mini-office-rooms > .context-skeleton,
+.mini-office-rooms > .context-empty { grid-column: 1 / -1; }
 
-.mini-office-rooms { display: flex; flex-direction: column; gap: 12px; }
+.mini-office-room {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 64px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+/* The room the operator is most likely to be looking for gets the width and
+   the panel treatment; everything after it takes a tint. */
+.mini-office-room:first-child {
+  grid-column: 1 / -1;
+  background: var(--panel);
+}
+
+/* Each tone is a tokens.css tint/ink pair, measured at 6.20-6.41:1. The room
+   name is the only text on the tile, so it takes the ink rather than --hint,
+   which measures 3.81-4.05:1 on these tints and would fail AA. */
+.mini-office-room[data-tone="blue"] { background: var(--blue); }
+.mini-office-room[data-tone="blue"] .mini-office-room-name { color: var(--blue-ink); }
+.mini-office-room[data-tone="amber"] { background: var(--amber); }
+.mini-office-room[data-tone="amber"] .mini-office-room-name { color: var(--amber-ink); }
+.mini-office-room[data-tone="teal"] { background: var(--teal); }
+.mini-office-room[data-tone="teal"] .mini-office-room-name { color: var(--teal-ink); }
+.mini-office-room[data-tone="pink"] { background: var(--pink); }
+.mini-office-room[data-tone="pink"] .mini-office-room-name { color: var(--pink-ink); }
 
 .mini-office-room-name {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -58,27 +113,26 @@
 
 .mini-office-seats { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* 24px, not the concept's 18px: this is a control, and 18px is under the
+   SC 2.5.8 floor. The chip avatar inside it is 14px of paint — the same split
+   core/switch.js uses, where the row is the target and the pill is not.
+   Unbordered, like every other avatar in the app; the initial is what
+   identifies it, and it clears 4.5:1 on its own tint by construction. */
 .mini-office-seat {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  color: var(--panel);
-  font-size: 12px;
-  font-weight: 600;
 }
-
-.mini-office-initial { line-height: 1; }
 
 /* Ambient and silent: a need ping never moves (spec 5.5). */
 .mini-office-ping {
   position: absolute;
-  top: -1px;
-  right: -1px;
+  top: 1px;
+  right: 1px;
   width: 8px;
   height: 8px;
   border: 1px solid var(--panel);
@@ -87,12 +141,10 @@
 }
 
 .mini-office-stat {
-  margin: 12px 0 8px;
+  margin: 12px 0 4px;
   color: var(--muted);
   font-size: 12px;
 }
-
-.mini-office-links { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ─── Desk ─── */
 
@@ -112,18 +164,6 @@
 .desk-profile { display: flex; flex-direction: column; gap: 6px; }
 
 .desk-profile-head { display: flex; align-items: center; gap: 8px; }
-
-.desk-avatar {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: var(--panel);
-  font-size: 13px;
-  font-weight: 600;
-}
 
 .desk-name { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
 .desk-role { margin: 0; font-size: 12px; color: var(--muted); }

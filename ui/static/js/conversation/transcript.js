@@ -246,9 +246,9 @@ const BossModTranscript = (() => {
                     h('div', { class: 'transcript-skeleton', 'aria-hidden': 'true' }),
                     h('div', { class: 'transcript-skeleton', 'aria-hidden': 'true' }));
             } else if (status === 'empty') {
-                statusEl = h('div', { class: 'transcript-status is-empty', 'data-status': 'empty' },
-                    h('p', { class: 'transcript-status-title' }, options.title || 'No messages yet.'),
-                    options.hint ? h('p', { class: 'transcript-status-hint' }, options.hint) : null);
+                // The one status with an identity and controls rather than just
+                // words; conversation/empty-state.js owns it.
+                statusEl = BossModEmptyState.render(options);
             } else if (status === 'error') {
                 statusEl = h('div', {
                     class: 'transcript-status is-error',

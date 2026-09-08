@@ -69,18 +69,22 @@ const BossModLogFilters = (() => {
             },
         });
 
-        const followBtn = h('button', {
-            class: 'board-dir', type: 'button',
-            'aria-pressed': follow ? 'true' : 'false',
-            onclick: () => {
-                follow = !follow;
-                followBtn.setAttribute('aria-pressed', follow ? 'true' : 'false');
-                followBtn.textContent = follow ? 'Following' : 'Follow';
+        // Follow is a switch, not a button that rewrites its own label: on/off
+        // is state, and the switch role announces it as state rather than as a
+        // pressed button. The label stays "Follow" in both positions —
+        // "Following" as a label meant the control's accessible name changed
+        // every time its value did.
+        const followSwitch = BossModSwitch.create({
+            label: 'Follow',
+            pressed: follow,
+            onChange: (on) => {
+                follow = on;
                 onFollow(follow);
             },
-        }, follow ? 'Following' : 'Follow');
+        });
 
-        const element = h('div', { class: 'board-controls' }, agents, types, search, followBtn);
+        const element = h('div', { class: 'board-controls' },
+            agents, types, search, followSwitch.element);
 
         return {
             element,

@@ -1,6 +1,6 @@
 /**
- * BossMod AI — the Metrics numbers: health, the four stat cards, the health
- * grid, and the communication line.
+ * BossMod AI — the Metrics numbers: the health panel, the four stat cards, the
+ * health grid, and the communication line.
  *
  * Pure rendering over the metrics dashboard payload. It formats
  * nothing itself: `formatNumber`, `formatDuration` and `formatTokenCount` are
@@ -34,18 +34,46 @@ const BossModMetricCards = (() => {
     }
 
     /**
-     * The one-line summary beside the heading (spec 6.5).
+     * The numbers behind the verdict (spec 6.5).
+     *
+     * This was `healthLine()`, which led with the verdict word because it was
+     * rendered alone in the header. The verdict is the panel's bold line now,
+     * so saying it twice would be the panel disagreeing with itself about how
+     * many times a thing needs saying. Every NUMBER it reported is still here.
      *
      * @param {object} data  The dashboard payload.
      * @returns {string}
      */
-    function healthLine(data) {
+    function healthDetail(data) {
         const health = errorRateHealth((data.errors || {}).rate);
         const uptime = (data.uptime || {}).seconds;
         const agents = (data.agents || {}).total || 0;
-        return `${health.label} · ${health.percent}% errors · `
+        return `${health.percent}% errors · `
             + `${U.formatDuration(uptime == null ? null : uptime)} uptime · `
             + `${U.formatNumber(agents)} agent${agents === 1 ? '' : 's'}`;
+    }
+
+    /**
+     * The verdict, as the first thing on the page.
+     *
+     * A new container, not new data. The tone is carried three ways — the
+     * light, the verdict word, and the numbers beneath it — so that none of
+     * them is the only carrier (SC 1.4.1) and the light can stay decoration.
+     *
+     * @param {object} data  The dashboard payload.
+     * @returns {HTMLElement}
+     */
+    function renderHealthPanel(data) {
+        const health = errorRateHealth((data.errors || {}).rate);
+        return h('section', { class: 'metric-health' },
+            h('span', {
+                class: 'metric-health-light',
+                'data-health': health.tone,
+                'aria-hidden': 'true',
+            }),
+            h('div', { class: 'metric-health-copy' },
+                h('p', { class: 'metric-health-verdict' }, health.label),
+                h('p', { class: 'metric-health-detail' }, healthDetail(data))));
     }
 
     function card(label, value, extra) {
@@ -77,7 +105,7 @@ const BossModMetricCards = (() => {
                 h('p', { class: 'metric-card-sub' },
                     `${U.formatTokenCount(tokens.total || 0)} all-time`)),
             card('Error Rate', `${health.percent}%`,
-                h('p', { class: 'metric-card-sub metric-health', 'data-health': health.tone },
+                h('p', { class: 'metric-card-sub metric-card-health', 'data-health': health.tone },
                     h('span', { class: 'status-dot', 'aria-hidden': 'true' }),
                     health.label)));
     }
@@ -132,6 +160,7 @@ const BossModMetricCards = (() => {
     }
 
     return {
-        errorRateHealth, healthLine, renderStatCards, renderHealthGrid, renderCommunication,
+        errorRateHealth, renderHealthPanel, renderStatCards, renderHealthGrid,
+        renderCommunication,
     };
 })();

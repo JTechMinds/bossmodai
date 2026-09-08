@@ -157,7 +157,7 @@ const BossModAgentEdit = (() => {
 
         const formEl = h('div', { class: 'agent-edit-form' });
         const element = h('section', { class: 'agent-edit' },
-            h('button', { class: 'context-link', type: 'button', onclick: () => onCancel() },
+            h('button', { class: 'btn btn-sm context-link', type: 'button', onclick: () => onCancel() },
                 wasCreating ? '← Cancel' : '← Back to the desk'),
             h('h2', { class: 'context-title' }, wasCreating ? 'Hire someone' : 'Edit role'),
             formEl);

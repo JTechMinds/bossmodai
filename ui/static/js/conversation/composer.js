@@ -38,8 +38,8 @@ const BossModComposer = (() => {
      *   Injected rather than reached for: the composer must not know which
      *   module owns the form, which is what keeps there being exactly one.
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
-     *             setError: Function, readDraft: Function, setDraft: Function,
-     *             destroy: Function }}
+     *             sendText: Function, setError: Function, readDraft: Function,
+     *             setDraft: Function, destroy: Function }}
      * @throws {Error} When any dependency is missing. A composer with no send
      *   path would look usable and silently do nothing.
      */
@@ -112,9 +112,12 @@ const BossModComposer = (() => {
         }, h('i', { 'data-lucide': 'clipboard', 'aria-hidden': 'true' }));
         const errorEl = h('p', { class: 'composer-error hidden', role: 'alert' });
 
+        // Clipboard first, then the field, then send — the concept's order, and
+        // the one that puts the two icon buttons on opposite ends of the row
+        // rather than stacked together beside the field.
         const element = h('div', { class: 'composer' },
             label,
-            h('div', { class: 'composer-row' }, input, assignBtn, sendBtn),
+            h('div', { class: 'composer-row' }, assignBtn, input, sendBtn),
             errorEl);
 
         /**
@@ -152,10 +155,10 @@ const BossModComposer = (() => {
 
         /**
          * Send the current draft, if there is one and the gates allow it.
-         * @returns {Promise<void>} Resolves once the gate has settled; never rejects.
+         * @returns {Promise<object>} The gate's verdict; never rejects.
          */
         async function submit() {
-            await sendGate.submit({
+            return sendGate.submit({
                 input,
                 sendBtn,
                 applyIdleState: applyState,
@@ -169,6 +172,30 @@ const BossModComposer = (() => {
             });
         }
 
+        /**
+         * Send a message the operator did not type.
+         *
+         * The empty state's "Say hello" comes through here rather than calling
+         * the source directly, so there is exactly ONE send path: one gate, one
+         * place that clears the draft only on acknowledgement, one error line.
+         *
+         * A blocked send is reported rather than swallowed — applyState() has
+         * already put the reason in the placeholder, so that is what it says —
+         * and the text stays in the box so nothing is lost.
+         *
+         * @param {string} text
+         * @returns {Promise<object>} The gate's verdict.
+         */
+        async function sendText(text) {
+            input.value = String(text == null ? '' : text);
+            grow();
+            const result = await submit();
+            if (result && result.submitted === false && result.reason === 'blocked') {
+                setError(input.placeholder);
+            }
+            return result;
+        }
+
         disposers.push(store.subscribe((s) => s.hasUsableModel, applyState));
 
         applyState();
@@ -177,6 +204,7 @@ const BossModComposer = (() => {
             element,
             focus: () => input.focus(),
             applyState,
+            sendText,
             setError,
             readDraft: () => input.value,
             setDraft: (text) => {

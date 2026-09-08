@@ -35,12 +35,15 @@ ARCHIVE_OPEN_TASKS_HARNESS = Path(__file__).resolve().parent / "js_archive_open_
 # The conversation stack, in the order the archive harness evaluates it.
 CONVERSATION_STACK = [
     JS / "core" / "dom.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlays.js",
+    JS / "conversation" / "empty-state.js",
     JS / "conversation" / "transcript.js",
     JS / "conversation" / "transcript-cache.js",
     JS / "conversation" / "message.js",
@@ -77,7 +80,10 @@ def test_operator_chrome_labels_threads() -> None:
     css = (CSS / "conversation.css").read_text(encoding="utf-8")
     # Phase 2B split the rail; the Threads half took the chrome with it.
     assert "'Threads'" in threads
-    assert "Create Thread" in threads
+    # The creation copy is two states since the visual-parity pass; the rail
+    # still owns it, which is what this line has always guarded.
+    assert "'New thread'" in threads
+    assert "Create with ${" in threads
     assert "start a shared thread" in threads
     # Threads are a roster section, not a seventh place.
     assert "channels" not in places.lower()
@@ -185,7 +191,8 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "Archive this thread?" not in archive
 
     assert "Threads" in roster_threads
-    assert "Create Thread" in roster_threads
+    assert "'New thread'" in roster_threads
+    assert "Create with ${" in roster_threads
     # The rail still assembles both halves, so neither is orphaned.
     assert "BossModRosterThreads.createThreads(" in roster
 
@@ -261,6 +268,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(ARCHIVE_OPEN_TASKS_HARNESS),
             str(JS / "core" / "agent-status.js"),
             str(JS / "core" / "dom.js"),
+            str(JS / "core" / "avatar.js"),
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
             str(JS / "core" / "gates.js"),
@@ -268,6 +276,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "overlays.js"),
             str(JS / "conversation" / "sources" / "thread-archive.js"),
             str(JS / "conversation" / "sources" / "thread-source.js"),
+            str(JS / "shell" / "roster-people.js"),
             str(JS / "shell" / "roster-threads.js"),
             str(JS / "shell" / "roster.js"),
         ],
@@ -306,8 +315,10 @@ def test_transcript_cache_swaps_without_loading() -> None:
             "node",
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
+            str(JS / "core" / "avatar.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "format.js"),
+            str(JS / "conversation" / "empty-state.js"),
             str(JS / "conversation" / "transcript.js"),
             str(JS / "conversation" / "transcript-cache.js"),
         ],

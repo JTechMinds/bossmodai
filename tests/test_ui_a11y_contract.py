@@ -13,12 +13,14 @@ HARNESS = Path(__file__).resolve().parent / "js_a11y_harness.cjs"
 
 HARNESS_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "avatar.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "overlays.js",
     SHELL / "places.js",
     SHELL / "header.js",
+    SHELL / "roster-people.js",
     SHELL / "roster-threads.js",
     SHELL / "roster.js",
     SHELL / "footer.js",
@@ -37,11 +39,33 @@ def _shell_sources() -> dict[str, str]:
 
 
 def test_every_icon_only_control_in_the_shell_has_an_accessible_name() -> None:
+    """…and the walk that judged them actually walked something.
+
+    `everyShellControlIsNamed` used to be reported over however many controls
+    the walk happened to find, including none. That is how this returned True
+    while the rail was painting nothing: core/store.js catches a subscriber's
+    exception rather than letting one bad subscriber stop the rest, so a
+    roster that threw during a repaint left an empty <aside> and a walk with
+    nothing to disagree with. The counts below are the harness proving it had
+    something to check before it reported that the check passed.
+    """
     args = ["node", str(HARNESS)] + [str(path) for path in HARNESS_MODULES]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout.strip().splitlines()[-1])
-    assert payload == {"ok": True, "everyShellControlIsNamed": True}
+    assert payload["ok"] is True
+    assert payload["everyShellControlIsNamed"] is True
+
+    walked = payload["controlsWalked"]
+    assert walked["header"] >= 8, walked
+    assert walked["roster"] >= 6, walked
+    # The fixture is one agent; a rail that painted no people still renders the
+    # search box, Hire and the threads block, so the row count is what tells
+    # "empty" from "short".
+    assert payload["personRowsWalked"] >= 1, payload
+    # The footer is a status bar. If it grows a control, give it a floor in the
+    # harness rather than letting it drift out of the count.
+    assert walked["footer"] == 0, walked
 
 
 def test_no_shell_control_is_bound_to_a_hold_gesture() -> None:

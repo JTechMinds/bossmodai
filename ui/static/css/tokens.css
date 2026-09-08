@@ -26,6 +26,8 @@
   --ok: #268057;            /* 4.55 on --bg  (was #2e9b6a at 3.26 — failed) */
   --ok-mark: #2e9b6a;       /* 3.49 — dots and bar fills only, never text */
   --ok-bg: #e6f5ee;
+  --ok-ink: #1c5c40;        /* 7.03 on --ok-bg  (--ok measures 4.33 there — failed).
+                               Text ON the tint. --ok is for text on --bg/--panel. */
 
   /* Avatar tints. Ink-on-tint pairs measure 6.20–6.41 — unchanged. */
   --blue: #dbe8fb;  --blue-ink: #1d4f9c;
@@ -46,6 +48,7 @@
   --office-shadow: rgba(0, 0, 0, 0.15);
 
   --r: 8px;
+  --r-lg: 12px;   /* Cards and panels. --r is for controls and small chrome. */
   --rail: 220px;
   --ctx: 280px;
 }

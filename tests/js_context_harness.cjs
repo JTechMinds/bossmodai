@@ -17,8 +17,8 @@ global.window.lucide = global.lucide;
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
-    "BossModConsentCard", "BossModOverlays", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
+    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
+    "BossModConsentCard", "BossModOverlays", "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModConversationChrome", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSource", "BossModAgentSource",

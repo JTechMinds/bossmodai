@@ -29,7 +29,11 @@ def test_chat_send_waits_for_ack_and_blocks_inflight() -> None:
     submit = source.split("async function submit() {", 1)[1].split(
         "disposers.push(", 1
     )[0]
-    assert "await sendGate.submit(" in submit
+    # Re-pointed in the visual-parity pass: submit() now RETURNS the gate's
+    # verdict so sendText() can report a blocked send instead of no-opping.
+    # The property is unchanged — every send goes through the one gate.
+    assert "return sendGate.submit(" in submit
+    assert "const result = await submit();" in source
     # The gate clears the input after the ack; the composer never may.
     assert "el.value = ''" not in source
     assert "input.value = ''" not in source

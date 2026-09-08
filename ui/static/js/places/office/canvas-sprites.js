@@ -137,10 +137,23 @@ const BossModCanvasSprites = (() => {
             ctx2d.fillStyle = palette.agentShadow;
             ctx2d.fill();
 
+            // body
             ctx2d.beginPath();
             ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
             ctx2d.fillStyle = body;
             ctx2d.fill();
+            // The ring is what separates an arbitrary operator-chosen colour
+            // from the desk and chair it is drawn on top of. Measured without
+            // it, EVERY colour in every candidate palette scores 1.1-1.5:1
+            // against the chair, so this is structural rather than a palette
+            // problem. `pill` is --panel: 5.02:1 on the chair and 3.19:1 on the
+            // desk. On the pale floor tiles the ring itself is near-invisible
+            // (1.10-1.24:1) and it is the body that carries the separation —
+            // 5.08:1 or better for every seed colour. Same stroke the status
+            // dot has always used.
+            ctx2d.strokeStyle = palette.pill;
+            ctx2d.lineWidth = 2;
+            ctx2d.stroke();
 
             if (hoveredId && hoveredId === agent.id) {
                 ctx2d.strokeStyle = body;
@@ -150,6 +163,7 @@ const BossModCanvasSprites = (() => {
                 ctx2d.stroke();
             }
 
+            // status dot
             ctx2d.beginPath();
             ctx2d.arc(cx + radius * 0.6, cy + radius * 0.6, 3, 0, Math.PI * 2);
             ctx2d.fillStyle = statusColor(agent.status, agent.currentActivityKind);

@@ -155,7 +155,12 @@ def test_follow_never_yanks_a_reading_operator() -> None:
     assert "&&" in stick_line, "Follow alone must not be enough to move the view"
 
     filters = _read("log-filters.js")
-    assert "'aria-pressed': follow ? 'true' : 'false'" in filters
+    # Follow is the shared core/switch.js control now. The state it announces
+    # is the switch's job (aria-checked on a role=switch button, asserted on
+    # the built node in test_ui_visual_parity.py); what stays this module's job
+    # is starting from the current value and reporting every change onward.
+    assert "BossModSwitch.create(" in filters
+    assert "pressed: follow" in filters
     assert "onFollow(follow)" in filters
 
     # The same principle one level down: rebuilding a <select> closes it, so a

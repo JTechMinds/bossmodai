@@ -61,7 +61,7 @@ const BossModDeskPanel = (() => {
         let edit = null;
 
         const bodyEl = h('div', { class: 'desk-body' },
-            h('button', { class: 'context-link', type: 'button', onclick: () => onBack() },
+            h('button', { class: 'btn btn-sm context-link', type: 'button', onclick: () => onBack() },
                 '← The office'),
             profileEl,
             tasks.element,
@@ -87,17 +87,14 @@ const BossModDeskPanel = (() => {
                 profileEl.append(h('p', { class: 'context-skeleton' }, 'Loading this desk…'));
                 return;
             }
-            const initial = String(who.name || '?').trim().charAt(0).toUpperCase() || '?';
             const bar = who.done_fail_bar ? String(who.done_fail_bar).trim() : '';
             // Built through h(), which drops a null child; Element.append does
             // not, and an agent with no description has one.
             profileEl.append(h('div', { class: 'desk-profile-body' },
                 h('div', { class: 'desk-profile-head' },
-                    h('span', {
-                        class: 'desk-avatar',
-                        'aria-hidden': 'true',
-                        style: `background:${who.color}`,
-                    }, initial),
+                    // Decorative: the name sits beside it, so a second
+                    // announcement of the same person would be noise.
+                    BossModAvatar.create({ name: who.name, color: who.color, size: 'lg' }),
                     h('div', {},
                         h('h2', { class: 'desk-name' }, String(who.name)),
                         // An agent with no role has no specialty; saying so is

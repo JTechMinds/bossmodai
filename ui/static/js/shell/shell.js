@@ -145,6 +145,21 @@ const BossModShell = (() => {
         }
         store.subscribe((s) => s.place, applyContextColumn);
 
+        /**
+         * Collapse or restore the roster track.
+         *
+         * An attribute on the grid rather than a class on the rail: the rail's
+         * width IS a grid track, so narrowing the element inside it would leave
+         * a 220px column with a 56px panel in it. The token override moves the
+         * track, and shell.css hides what 56px cannot show.
+         *
+         * @param {boolean} collapsed
+         */
+        function applyRailCollapsed(collapsed) {
+            layoutElement.setAttribute('data-rail', collapsed === true ? 'collapsed' : 'expanded');
+        }
+        store.subscribe((s) => s.railCollapsed, applyRailCollapsed);
+
         BossModSession.PERSISTED_KEYS.forEach((key) => {
             store.subscribe((s) => s[key], () => BossModSession.save(store.getState()));
         });
@@ -161,6 +176,10 @@ const BossModShell = (() => {
             railCollapsed: startup.railCollapsed,
         });
         applyContextColumn(startup.place);
+        // Applied, not left to the subscription: a session restored with the
+        // rail already expanded writes the same value it started with, which
+        // is not a change and would never fire.
+        applyRailCollapsed(startup.railCollapsed);
         navigate(startup.place);
 
         // Stage two: a persisted conversation is only safe once the live agent

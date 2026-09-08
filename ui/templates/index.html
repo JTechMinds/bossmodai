@@ -41,6 +41,10 @@
     <!-- Shell styles. tokens.css is the single source of truth for colour. -->
     <link rel="stylesheet" href="{{ static_url('css/tokens.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
+    <!-- The shared control vocabulary (.avatar, .btn, .switch). After base.css,
+         which resets <button>, and before every surface stylesheet, so a place
+         can position a primitive without redeclaring what it looks like. -->
+    <link rel="stylesheet" href="{{ static_url('css/controls.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/shell.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/conversation.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/context.css') }}">
@@ -101,6 +105,10 @@
     <script src="{{ static_url('js/core/specialty.js') }}"></script>
 
     <script src="{{ static_url('js/core/dom.js') }}"></script>
+    <!-- The shared controls build nodes through dom.js, so they load after it
+         and before every surface that mounts one. -->
+    <script src="{{ static_url('js/core/avatar.js') }}"></script>
+    <script src="{{ static_url('js/core/switch.js') }}"></script>
     <script src="{{ static_url('js/core/store.js') }}"></script>
     <script src="{{ static_url('js/core/bus.js') }}"></script>
     <script src="{{ static_url('js/core/overlays.js') }}"></script>
@@ -110,6 +118,7 @@
     <!-- Conversation views first: needs-bar.js renders its cards through
          event-cards.js, and conversation.js builds the bar, so the needs block
          sits between them rather than before or after both. -->
+    <script src="{{ static_url('js/conversation/empty-state.js') }}"></script>
     <script src="{{ static_url('js/conversation/transcript.js') }}"></script>
     <script src="{{ static_url('js/conversation/transcript-cache.js') }}"></script>
     <script src="{{ static_url('js/conversation/message.js') }}"></script>
@@ -140,6 +149,7 @@
     <script src="{{ static_url('js/shell/session.js') }}"></script>
     <script src="{{ static_url('js/shell/socket.js') }}"></script>
     <script src="{{ static_url('js/shell/header.js') }}"></script>
+    <script src="{{ static_url('js/shell/roster-people.js') }}"></script>
     <script src="{{ static_url('js/shell/roster-threads.js') }}"></script>
     <script src="{{ static_url('js/shell/roster.js') }}"></script>
     <script src="{{ static_url('js/shell/footer.js') }}"></script>

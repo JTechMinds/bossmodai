@@ -1,0 +1,152 @@
+/* BossMod AI — the shared control vocabulary.
+ *
+ * Loaded after base.css (which resets <button> to nothing) and before every
+ * surface stylesheet, so a place can still position or override a primitive
+ * without having to redeclare what it looks like.
+ *
+ * Colour resolves through tokens.css. There is no hex in this file.
+ */
+
+/* ─── Avatar ───
+ *
+ * Geometry only. The background/ink pair is an inline style, because it is
+ * DERIVED from the agent's stored colour at build time — core/avatar.js
+ * guarantees the pair clears 4.5:1 for any colour an operator can type, which
+ * a static class could not do.
+ */
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 600;
+  flex: none;
+  line-height: 1;
+}
+
+.avatar-chip { width: 14px; height: 14px; font-size: 8px; }
+.avatar-sm   { width: 22px; height: 22px; font-size: 10px; }
+.avatar-md   { width: 26px; height: 26px; font-size: 11px; }
+.avatar-lg   { width: 40px; height: 40px; font-size: 15px; }
+
+/* A conversation with no one face. --muted on --bg measures 6.10:1, so the
+   glyph is readable rather than a smudge. */
+.avatar-group { background: var(--bg); color: var(--muted); }
+
+/* The seat nobody is in yet: the Hire row, and an empty desk. */
+.avatar-empty {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--hint);
+}
+
+/* An avatar that is its own control. base.css's 24px minimum target (SC 2.5.8)
+   is deliberately NOT overridden here: a `chip` or `sm` avatar rendered as a
+   button would be under the floor, so it grows to 24px rather than being
+   allowed to paint a 14px target. Decorative avatars are spans and are
+   unaffected. */
+button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ─── Switch ───
+ *
+ * The pill is 26x14 and is NOT the target: core/switch.js wraps it and its
+ * label in one <button role="switch">, and that row carries the 24px minimum
+ * (SC 2.5.8). The pill is aria-hidden paint.
+ *
+ * The off-state track uses --line-control rather than --line-strong: the track
+ * is the only visual carrier of "off", which makes it a control boundary at
+ * 3:1 (SC 1.4.11). --line-strong measures 1.50:1 on white and would be a track
+ * you cannot see; --line-control measures 3.10:1. The knob is --panel, which
+ * reads 3.10:1 on the off track and 4.83:1 on the accent one.
+ *
+ * base.css already flattens every transition under prefers-reduced-motion with
+ * an !important rule over `*`, so the knob's slide needs no second opt-out here.
+ */
+
+.switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.switch-row[aria-checked="true"] { color: var(--ink); }
+
+.switch {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--line-control);
+  flex: none;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--panel);
+  transition: left 0.15s;
+}
+
+.switch-row[aria-checked="true"] .switch { background: var(--accent); }
+.switch-row[aria-checked="true"] .switch::after { left: 14px; }
+
+/* ─── Button ───
+ *
+ * Fifteen call sites already asked for `.btn` and got nothing: base.css strips
+ * <button> to bare text and no stylesheet defined the class, so Assign, Try
+ * again, + New task and the rest rendered as unstyled labels. This is that
+ * class, and the four bespoke button rules now compose it instead of each
+ * redeclaring border, padding and radius.
+ *
+ * The border is --line-control (3.10:1 on white), not --line-strong (1.50:1):
+ * tokens.css reserves the former for interactive borders precisely because a
+ * button's edge is an affordance rather than a separator.
+ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.btn:hover { background: var(--bg); }
+
+.btn-sm { min-height: 24px; padding: 4px 10px; font-size: 12px; }
+
+/* --panel on --accent measures 4.83:1. */
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.btn-primary:hover { background: var(--accent); }
+
+.btn-quiet { border-color: transparent; color: var(--muted); }
+
+/* --accent on --panel measures 4.83:1, and 4.51:1 on --bg. The 24px minimum
+   base.css gives every button is deliberately left alone: a link-styled button
+   is still a standalone target (SC 2.5.8), so it keeps its height even without
+   its border. */
+.btn-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.btn-link:hover { background: none; text-decoration: underline; }
+
+.btn[disabled] { opacity: 0.5; cursor: not-allowed; }

@@ -190,7 +190,7 @@ const BossModTaskDetail = (() => {
                 COLUMNS.isTerminal(task.status)
                     ? null
                     : h('button', {
-                        class: 'board-danger',
+                        class: 'btn btn-sm board-danger',
                         id: 'ct-cancel-task-btn',
                         type: 'button',
                         onclick: () => onCancel(task),

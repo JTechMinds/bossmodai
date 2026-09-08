@@ -38,13 +38,20 @@ const BossModLogRow = (() => {
      * @returns {HTMLElement}
      */
     function renderRow(row, { expanded, onToggle, detail }) {
+        // Four cells: when, who, what, and the trailing state. The type dot
+        // lives inside the time cell rather than taking a fifth column — it
+        // colours the type, and the timestamp is a timestamp OF that type. The
+        // Active pill and the meta share the trailing cell so that a row
+        // without a pill still lines its meta up with the rows that have one.
         const head = h('div', { class: 'log-row-head' },
-            h('span', { class: 'log-row-dot', 'aria-hidden': 'true' }),
-            h('span', { class: 'log-row-time' }, clockTime(row.at)),
+            h('span', { class: 'log-row-time' },
+                h('span', { class: 'log-row-dot', 'aria-hidden': 'true' }),
+                clockTime(row.at)),
             h('span', { class: 'log-row-agent' }, row.agentName),
             h('span', { class: 'log-row-text' }, row.text),
-            row.active ? h('span', { class: 'log-row-active' }, 'Active') : null,
-            h('span', { class: 'log-row-meta' }, row.meta));
+            h('span', { class: 'log-row-tail' },
+                row.active ? h('span', { class: 'log-row-active' }, 'Active') : null,
+                h('span', { class: 'log-row-meta' }, row.meta)));
 
         const element = h('article', {
             class: `log-row${expanded ? ' is-expanded' : ''}`,

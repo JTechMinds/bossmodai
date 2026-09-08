@@ -16,6 +16,8 @@ HARNESS = Path(__file__).resolve().parent / "js_context_harness.cjs"
 # The order the context harness evaluates its modules in.
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
@@ -24,6 +26,7 @@ CONTEXT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlays.js",
+    CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",

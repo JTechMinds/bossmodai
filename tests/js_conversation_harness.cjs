@@ -11,10 +11,14 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
+// The chrome paints its action glyphs after every apply.
+global.lucide = { createIcons() {} };
+global.window.lucide = global.lucide;
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModGates", "BossModConsentCard",
+    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
+    "BossModConsentCard", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
@@ -34,17 +38,25 @@ const AGENT_MESSAGES = {
     a: [{ id: "a1", from: "agent", content: "from Ada", created_at: "" }],
     b: [{ id: "b1", from: "agent", content: "from Bo", created_at: "" }],
     c: [{ id: "c1", from: "agent", content: "from Cy", created_at: "" }],
+    // Nobody has said anything to Di yet: the empty state is hers.
+    d: [],
 };
-const delays = { a: 0, b: 0, c: 0 };
+const delays = { a: 0, b: 0, c: 0, d: 0 };
 const failing = new Set();
 const requestLog = [];
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-const api = async (url) => {
+const activations = [];
+const api = async (url, init) => {
     const text = String(url);
     requestLog.push(text);
+    const activate = text.match(/^\/api\/agents\/([^/]+)\/activate$/);
+    if (activate) {
+        activations.push({ id: activate[1], body: JSON.parse((init && init.body) || "{}") });
+        return { ok: true, async json() { return {}; } };
+    }
     const agent = text.match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
         const id = agent[1];
@@ -79,6 +91,7 @@ const store = BossModStore.createStore({
         { id: "a", name: "Ada", role: "Writer" },
         { id: "b", name: "Bo", role: "Reviewer" },
         { id: "c", name: "Cy", role: "Engineer" },
+        { id: "d", name: "Di", role: "Designer", color: "#065f46" },
     ],
     threads: [],
     hasUsableModel: true,
@@ -95,8 +108,11 @@ const needsStub = {
     destroy: () => {},
 };
 
+const openedDesks = [];
 const conversation = BossModConversation.createConversation({
     store, bus, api, navigate() {}, needs: needsStub,
+    // Injected so the chrome has an action to carry a glyph on.
+    openDesk: (id) => openedDesks.push(id),
 });
 const listing = conversation.element.querySelector("[data-transcript]");
 const composerInput = conversation.element.querySelector(".composer-input");
@@ -222,6 +238,92 @@ async function main() {
         throw new Error(`retry did not recover: ${bodies().join("|")}`);
     }
 
+    // ─── The chrome carries the identity, its glyphs, and the receipts toggle ───
+    //
+    // The descriptor grew two optional fields rather than the view reaching for
+    // the roster. That boundary is why the conversation never subscribes to
+    // world_update, so it is asserted on what the view actually renders.
+    await conversation.open("a", "agent");
+    const avatarSlot = () => conversation.element.querySelector(".conversation-avatar");
+    const chromeAvatar = () => avatarSlot().querySelector(".avatar");
+    const identity = chromeAvatar();
+    const chromeShowsIdentityAvatar = Boolean(identity)
+        && identity.textContent === "A"
+        && identity.getAttribute("aria-hidden") === "true";
+    if (!chromeShowsIdentityAvatar) {
+        throw new Error(`the chrome must name who you are talking to: ${identity && identity.textContent}`);
+    }
+
+    // A repaint that changes nothing about the identity must not churn the node.
+    await conversation.open("a", "agent");
+    const chromeAvatarNodeIsStable = chromeAvatar() === identity;
+    if (!chromeAvatarNodeIsStable) throw new Error("a repaint rebuilt an unchanged avatar");
+
+    // The Desk action names its glyph; the source hands over a NAME, and the
+    // view is the only thing that builds an element from it.
+    const deskBtn = conversation.element.querySelector("#conversation-desk-toggle");
+    if (!deskBtn) throw new Error("an injected openDesk must produce the Desk action");
+    const glyph = deskBtn.querySelector("i");
+    const chromeActionCarriesItsIcon = Boolean(glyph)
+        && glyph.getAttribute("data-lucide") === "lamp-desk"
+        && deskBtn.textContent.includes("Desk");
+    if (!chromeActionCarriesItsIcon) {
+        throw new Error(`the Desk action must carry its glyph: ${deskBtn.textContent}`);
+    }
+
+    // A thread has no one face, so it gets the group glyph rather than nothing.
+    await conversation.open("t1", "thread");
+    const group = avatarSlot().querySelector(".avatar-group");
+    const chromeGroupGlyphForThreads = Boolean(group)
+        && avatarSlot().querySelectorAll(".avatar").length === 1;
+    if (!chromeGroupGlyphForThreads) throw new Error("a thread must get the group glyph");
+
+    // The receipts preference moved into the action row. It is a preference,
+    // not a per-conversation action, so it is a mount-time slot rather than a
+    // field on a descriptor that changes with every conversation.
+    const actionRow = conversation.element.querySelector(".conversation-actions");
+    const receiptsLiveInTheActionRow =
+        actionRow.querySelectorAll(".switch-row").length === 1
+        && conversation.element.querySelectorAll(".conversation-controls").length === 0;
+    if (!receiptsLiveInTheActionRow) {
+        throw new Error("the receipts toggle belongs in the chrome's action row");
+    }
+    // ...and it survives a conversation switch rather than being rebuilt with
+    // the actions around it.
+    const receiptsNode = conversation.element.querySelector(".switch-row");
+    await conversation.open("a", "agent");
+    if (conversation.element.querySelector(".switch-row") !== receiptsNode) {
+        throw new Error("the receipts toggle must outlive a conversation switch");
+    }
+
+    // ─── The empty conversation offers the two things you can do ───
+    await conversation.open("d", "agent");
+    const empty = status();
+    if (!empty || empty.getAttribute("data-status") !== "empty") {
+        throw new Error("a conversation with no messages must render the empty state");
+    }
+    const bigAvatar = empty.querySelector(".avatar-lg");
+    const emptyActions = empty.querySelector(".conversation-empty-actions").querySelectorAll("button");
+    const emptyConversationOffersActions = Boolean(bigAvatar)
+        && bigAvatar.textContent === "D"
+        && emptyActions.map((b) => b.textContent).join("|") === "Say hello|Assign a task";
+    if (!emptyConversationOffersActions) {
+        throw new Error(`the empty state must offer both actions: ${emptyActions.map((b) => b.textContent).join("|")}`);
+    }
+
+    // "Say hello" goes through the composer's send path — one send, one gate,
+    // one place that clears the draft only once the server has acknowledged.
+    await emptyActions[0].dispatchClick();
+    await tick();
+    await tick();
+    const greetingWentThroughTheComposer = activations.length === 1
+        && activations[0].id === "d"
+        && activations[0].body.content.includes("Di")
+        && composerInput.value === "";
+    if (!greetingWentThroughTheComposer) {
+        throw new Error(`the greeting must send through the composer: ${JSON.stringify(activations)}`);
+    }
+
     // Destroying drains everything the controller ever subscribed.
     conversation.destroy();
     if (bus.subscriberCount() !== 0) {
@@ -241,6 +343,13 @@ async function main() {
         presenceSurvivesSwitch,
         unsubscribesPreviousSource,
         errorStateRetries,
+        chromeShowsIdentityAvatar,
+        chromeAvatarNodeIsStable,
+        chromeActionCarriesItsIcon,
+        chromeGroupGlyphForThreads,
+        receiptsLiveInTheActionRow,
+        emptyConversationOffersActions,
+        greetingWentThroughTheComposer,
     }));
 }
 

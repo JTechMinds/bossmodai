@@ -1,9 +1,10 @@
 /**
  * Node harness: roster status-line precedence and search behaviour.
  *
- * Phase 2B split the Threads half into shell/roster-threads.js, which the
- * rail constructs; both halves are evaluated here so the same properties are
- * proven against the assembled rail. The emitted payload keys are unchanged.
+ * Phase 2B split the Threads half into shell/roster-threads.js and the visual
+ * parity pass split the People half into shell/roster-people.js; the rail
+ * constructs both. All three are evaluated here so the same properties are
+ * proven against the assembled rail.
  *
  * Invoked by tests/test_ui_roster.py. Not a browser bundle.
  */
@@ -70,11 +71,13 @@ global.window = { document: global.document };
 global.lucide = { createIcons() {} };
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
-eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);
-eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModBus;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);
+eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModStore = BossModStore;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModBus;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";
@@ -209,25 +212,84 @@ function rowFor(el, name) {
     (hire.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
     if (hires !== 1) throw new Error("the Hire row must start the hire flow");
 
+    // ── Select mode: the checkboxes are revealed on demand ──
+    //
+    // Absent from the DOM rather than hidden by CSS. A hidden checkbox is
+    // still a tab stop and still carries a stale checked state, which is the
+    // exact way a "cleared" selection quietly builds the wrong thread.
+    const boxesNow = () => find(el, hasClass("roster-select"), []);
+    const click = (node) => (node.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
+
+    if (boxesNow().length !== 0) {
+        throw new Error(`people rows must be clean until select mode, got ${boxesNow().length} boxes`);
+    }
+    const createBtn = find(el, hasClass("roster-create-thread"), [])[0];
+    if (!createBtn) throw new Error("roster must render a thread creation button");
+    if (!text(createBtn).includes("New thread")) {
+        throw new Error(`out of select mode the button invites, got "${text(createBtn)}"`);
+    }
+    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
+        throw new Error("Cancel must not exist outside select mode");
+    }
+    const rowsAreCleanUntilSelectMode = true;
+
+    // Entering is a click on a real <button>, so Enter and Space reach it too.
+    click(createBtn);
+    if (boxesNow().length !== 2) {
+        throw new Error(`select mode must reveal one box per person, got ${boxesNow().length}`);
+    }
+    const cancelBtn = find(el, hasClass("roster-thread-cancel"), [])[0];
+    if (!cancelBtn) throw new Error("select mode must offer a way out");
+    if (createBtn.disabled !== true) {
+        throw new Error("with nobody selected there is nothing to create");
+    }
+
+    // ── Leaving clears the selection ──
+    //
+    // A stale selection would silently build the wrong thread the next time.
+    boxesNow()[0].checked = true;
+    (boxesNow()[0].listeners.change || []).forEach((fn) => fn({ target: boxesNow()[0] }));
+    if (createBtn.disabled !== false) throw new Error("a selection must enable creation");
+    if (!text(createBtn).includes("Create with 1")) {
+        throw new Error(`the button must count the selection, got "${text(createBtn)}"`);
+    }
+    click(cancelBtn);
+    if (boxesNow().length !== 0) throw new Error("Cancel must take the checkboxes away");
+    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
+        throw new Error("Cancel must remove itself with the mode it leaves");
+    }
+    click(createBtn);
+    if (boxesNow().some((box) => box.checked)) {
+        throw new Error("re-entering select mode must start from an empty selection");
+    }
+    if (createBtn.disabled !== true) {
+        throw new Error("Cancel must clear the selection, not just hide it");
+    }
+    const cancelClearsTheSelection = true;
+
     // ── Creating a thread consumes the People selection ──
     // The selection lives with People and the create button with Threads, so
     // the reset crosses a module boundary and is easy to lose in a refactor.
-    const boxes = find(el, hasClass("roster-select"), []);
-    if (boxes.length !== 2) throw new Error(`expected two select boxes, got ${boxes.length}`);
-    boxes[0].checked = true;
-    (boxes[0].listeners.change || []).forEach((fn) => fn({ target: boxes[0] }));
-    const createBtn = find(el, hasClass("roster-create-thread"), [])[0];
-    if (!createBtn) throw new Error("roster must render a Create Thread button");
-    if (createBtn.disabled !== false) throw new Error("a selection must enable Create Thread");
-    (createBtn.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
+    boxesNow()[0].checked = true;
+    (boxesNow()[0].listeners.change || []).forEach((fn) => fn({ target: boxesNow()[0] }));
+    if (createBtn.disabled !== false) throw new Error("a selection must enable creation");
+    click(createBtn);
     await drain();
+    if (boxesNow().length !== 0) {
+        throw new Error("creating a thread must leave select mode, not merely clear it");
+    }
+    if (!text(createBtn).includes("New thread")) {
+        throw new Error(`after creating, the button invites again, got "${text(createBtn)}"`);
+    }
+    if (find(el, hasClass("roster-thread-cancel"), []).length !== 0) {
+        throw new Error("creating must take Cancel away with the mode");
+    }
+    // ...and the selection really is empty, not merely out of sight.
+    click(createBtn);
     if (createBtn.disabled !== true) {
-        throw new Error("creating a thread must clear the selection and disable the button");
+        throw new Error("creating a thread must clear the People selection");
     }
-    const reselect = find(el, hasClass("roster-select"), [])[0];
-    if (!reselect || reselect.checked !== false) {
-        throw new Error("creating a thread must clear the People checkboxes");
-    }
+    click(find(el, hasClass("roster-thread-cancel"), [])[0]);
     const selectionClearsAfterCreate = true;
 
     // A live channel_updated re-fetches the thread list.
@@ -253,6 +315,8 @@ function rowFor(el, name) {
         searchMatchesNameAndRole: true,
         caretSurvivesRerender: true,
         selectionClearsAfterCreate,
+        rowsAreCleanUntilSelectMode,
+        cancelClearsTheSelection,
         disposersDrain: true,
     }));
 })().catch((err) => {

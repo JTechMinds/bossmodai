@@ -81,9 +81,13 @@ const BossModMetricsPlace = (() => {
     }
 
     function paintDashboard(data) {
-        summaryEl.textContent = CARDS.healthLine(data);
+        // The verdict moved out of this line and into the panel below, where it
+        // leads the page instead of trailing the word "Metrics". What is left
+        // here is what the header row is for: what this place is.
+        summaryEl.textContent = 'Company health';
         const roster = ctxRef.store.getState().roster;
         setBody(
+            CARDS.renderHealthPanel(data),
             CARDS.renderStatCards(data),
             BARS.renderAgentActivity(data),
             BARS.renderTaskDistribution(data.tasks || {}),

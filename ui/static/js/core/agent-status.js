@@ -14,15 +14,31 @@ const BossModAgentStatus = (() => {
 
     // ─── Roster shape ───
 
+    /**
+     * Agent seed colours.
+     *
+     * These are ink values, not tints: core/avatar.js derives the pale avatar
+     * background from the seed, and the Office canvas fills the sprite with it
+     * directly. Both consumers want a mid-dark, saturated colour, so the
+     * register is Tailwind 700/800 rather than 500. Each seed already clears
+     * 4.5:1 on its own derived tint, which is what makes the swatch an honest
+     * preview of the avatar — test_palette_seeds_need_no_darkening asserts it,
+     * so a future edit cannot quietly break the promise.
+     *
+     * Existing agents are NOT migrated. Their stored colours are operator data;
+     * they render correctly through the derivation (4.7-4.9:1, with hue drift)
+     * and the sprite ring fixes them on the map. Recolouring is offered in the
+     * edit form.
+     */
     const AGENT_COLOR_PALETTE = [
-        '#3b82f6',
-        '#f59e0b',
-        '#10b981',
-        '#f43f5e',
-        '#8b5cf6',
-        '#06b6d4',
-        '#f97316',
-        '#ec4899',
+        '#1d4ed8',  // Blue
+        '#92400e',  // Amber
+        '#065f46',  // Emerald
+        '#be123c',  // Rose
+        '#6d28d9',  // Violet
+        '#155e75',  // Cyan
+        '#9a3412',  // Orange
+        '#a21caf',  // Pink
     ];
 
     /**

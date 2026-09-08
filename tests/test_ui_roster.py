@@ -1,4 +1,10 @@
-"""shell/roster.js + roster-threads.js — status precedence, search, thread copy."""
+"""The roster rail — status precedence, search, select mode, thread copy.
+
+Three modules since the visual-parity pass: shell/roster.js assembles,
+shell/roster-people.js is the People half, shell/roster-threads.js the
+Threads half. The harness drives the assembled rail, so every property here
+is proven against all three at once.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +17,9 @@ JS = ROOT / "ui" / "static" / "js"
 HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 
 MODULES = [
-    ("core", "dom.js"), ("core", "store.js"), ("core", "bus.js"),
-    ("core", "agent-status.js"), ("shell", "roster-threads.js"), ("shell", "roster.js"),
+    ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
+    ("core", "agent-status.js"), ("shell", "roster-people.js"),
+    ("shell", "roster-threads.js"), ("shell", "roster.js"),
 ]
 
 
@@ -31,14 +38,21 @@ def _threads_source() -> str:
     return (JS / "shell" / "roster-threads.js").read_text(encoding="utf-8")
 
 
+def _people_source() -> str:
+    return (JS / "shell" / "roster-people.js").read_text(encoding="utf-8")
+
+
 def test_status_line_precedence_is_paused_then_needs_then_status() -> None:
     """Paused wins over an open need, which wins over the agent's own status."""
     payload = _run_harness()
     assert payload["pausedBeatsNeedBeatsStatus"] is True
     assert payload["usesSharedStatusLabel"] is True
-    assert "BossModAgentStatus.getStatusLabel(" in _source(), (
+    # statusLine() travelled with the People half when the rail was split; the
+    # property is unchanged — it reads the shared helper, never a local copy.
+    assert "BossModAgentStatus.getStatusLabel(" in _people_source(), (
         "the status label must come from the shared helper, not a local copy"
     )
+    assert "BossModRosterPeople.createPeople(" in _source()
 
 
 def test_search_filters_on_name_and_role_and_preserves_the_caret() -> None:
@@ -66,7 +80,11 @@ def test_roster_owns_the_thread_creation_copy() -> None:
     dock-era pane, owns thread creation — is unchanged.
     """
     source = _threads_source()
-    assert "Create Thread" in source
+    # Re-pointed in the visual-parity pass: the one permanent "Create Thread"
+    # button became two states — `New thread` opens select mode, `Create with N`
+    # closes it. The property is the same: the rail owns thread creation.
+    assert "'New thread'" in source
+    assert "Create with ${" in source
     assert "start a shared thread" in source
     # People owns the selection a thread is created from; Threads only reads it.
     assert "deps.getSelection" in source

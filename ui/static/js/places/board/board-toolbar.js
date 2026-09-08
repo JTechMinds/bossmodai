@@ -58,7 +58,7 @@ const BossModBoardToolbar = (() => {
         });
 
         const clearFilter = h('button', {
-            class: 'board-chip-clear', type: 'button', hidden: !currentAgent,
+            class: 'btn btn-sm board-chip-clear', type: 'button', hidden: !currentAgent,
             onclick: () => {
                 currentAgent = null;
                 agents.value = '';
@@ -83,7 +83,8 @@ const BossModBoardToolbar = (() => {
             h('option', { value: entry.key, selected: entry.key === sortKey }, entry.label)));
 
         const direction = h('button', {
-            class: 'board-dir', type: 'button', 'aria-label': 'Reverse the sort order',
+            class: 'btn btn-sm board-dir', type: 'button',
+            'aria-label': 'Reverse the sort order',
             onclick: () => {
                 sortDir = sortDir === 'asc' ? 'desc' : 'asc';
                 direction.textContent = sortDir === 'asc' ? 'Oldest first' : 'Newest first';
@@ -91,14 +92,15 @@ const BossModBoardToolbar = (() => {
             },
         }, 'Newest first');
 
-        const children = h('label', { class: 'board-toggle' },
-            h('input', {
-                type: 'checkbox',
-                onchange: (event) => { showChildren = event.target.checked; onChange(); },
-            }), 'Show subtasks');
+        const children = BossModSwitch.create({
+            label: 'Show subtasks',
+            pressed: showChildren,
+            onChange: (on) => { showChildren = on; onChange(); },
+        });
 
         const cancel = h('button', {
-            class: 'board-danger', type: 'button', disabled: true, onclick: onCancelSelected,
+            class: 'btn btn-sm board-danger', type: 'button', disabled: true,
+            onclick: onCancelSelected,
         }, 'Cancel selected');
 
         function labelled(text, node) {
@@ -110,12 +112,12 @@ const BossModBoardToolbar = (() => {
             search,
             labelled('Assignee', agents), clearFilter,
             labelled('Sort', sort), direction,
-            children,
+            children.element,
             h('button', {
-                class: 'board-dir', type: 'button', 'aria-label': 'Refresh the board',
+                class: 'btn btn-sm board-dir', type: 'button', 'aria-label': 'Refresh the board',
                 onclick: onRefresh,
             }, 'Refresh'),
-            h('button', { class: 'btn', type: 'button', onclick: onNewTask }, '+ New task'),
+            h('button', { class: 'btn-link', type: 'button', onclick: onNewTask }, '+ New task'),
             cancel);
 
         return {

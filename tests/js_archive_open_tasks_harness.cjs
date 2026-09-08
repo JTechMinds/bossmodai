@@ -17,12 +17,14 @@ global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
 
 const [
-    agentStatusPath, domPath, storePath, busPath, gatesPath, consentPath,
-    overlaysPath, archivePath, threadSourcePath, rosterThreadsPath, rosterPath,
+    agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
+    overlaysPath, archivePath, threadSourcePath,
+    rosterPeoplePath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(agentStatusPath, "BossModAgentStatus");
 load(domPath, "BossModDom");
+load(avatarPath, "BossModAvatar");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
 load(gatesPath, "BossModGates");
@@ -30,6 +32,7 @@ load(consentPath, "BossModConsentCard");
 load(overlaysPath, "BossModOverlays");
 load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");
+load(rosterPeoplePath, "BossModRosterPeople");
 load(rosterThreadsPath, "BossModRosterThreads");
 load(rosterPath, "BossModRoster");
 

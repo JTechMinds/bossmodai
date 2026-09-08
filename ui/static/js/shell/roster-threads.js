@@ -3,7 +3,13 @@
  *
  * People owns the multi-select; Threads consumes it. That is the seam: a
  * thread is created FROM a selection, so selection state stays with the list
- * that produces it and this module only reads it.
+ * that produces it and this module only reads it — and asks for the mode to
+ * open or close, which is the one thing it drives rather than reads.
+ *
+ * Creation is two states, not one permanent button. `New thread` opens select
+ * mode; `Create with N` and `Cancel` close it. The old always-on Create Thread
+ * button was disabled most of the time, which made a permanent row of
+ * checkboxes the only way to understand what it wanted.
  *
  * Split out of shell/roster.js in Phase 2B, before the needs surfaces added
  * anything else to a file that had already passed the ~300-line guideline.
@@ -12,7 +18,7 @@ const BossModRosterThreads = (() => {
     const { h, clear } = BossModDom;
 
     const THREAD_HINT = 'Select teammates and start a shared thread.';
-    const CREATE_THREAD_LABEL = 'Create Thread';
+    const NEW_THREAD_LABEL = 'New thread';
 
     /**
      * Build the Threads section.
@@ -25,6 +31,11 @@ const BossModRosterThreads = (() => {
      *   reports on the rail's one error line when the request fails, so both
      *   halves surface a failure the same way rather than each inventing one.
      * @param {() => string[]} deps.getSelection  Selected agent ids, from People.
+     * @param {() => boolean} deps.isSelecting  Whether People is showing its
+     *   checkboxes. Read rather than mirrored: two copies of one mode is how
+     *   the button and the rows end up disagreeing about which state they are in.
+     * @param {() => void} deps.onEnterSelect  Ask People to show the checkboxes.
+     * @param {() => void} deps.onExitSelect   Ask it to hide them and forget.
      * @param {() => void} deps.onConsumed  Called once a selection has become a
      *   thread. Threads reads the selection but never owns it, so clearing the
      *   checkboxes is People's job and this is the only way to ask for it.
@@ -38,11 +49,23 @@ const BossModRosterThreads = (() => {
      *   fail at mount rather than render a list that never loads.
      */
     function createThreads(deps) {
-        const { store, readJson, getSelection, onConsumed, onOpen } = deps || {};
+        const {
+            store, readJson, getSelection, isSelecting,
+            onEnterSelect, onExitSelect, onConsumed, onOpen,
+        } = deps || {};
         if (!store) throw new Error('[roster-threads] deps.store is required');
         if (typeof readJson !== 'function') throw new Error('[roster-threads] deps.readJson is required');
         if (typeof getSelection !== 'function') {
             throw new Error('[roster-threads] deps.getSelection is required');
+        }
+        if (typeof isSelecting !== 'function') {
+            throw new Error('[roster-threads] deps.isSelecting is required');
+        }
+        if (typeof onEnterSelect !== 'function') {
+            throw new Error('[roster-threads] deps.onEnterSelect is required');
+        }
+        if (typeof onExitSelect !== 'function') {
+            throw new Error('[roster-threads] deps.onExitSelect is required');
         }
         if (typeof onConsumed !== 'function') {
             throw new Error('[roster-threads] deps.onConsumed is required');
@@ -73,17 +96,34 @@ const BossModRosterThreads = (() => {
             role: 'group',
             'aria-label': 'Thread list filter',
         }, filterActive, filterArchived);
+        // One button, one listener, two jobs — the state decides which. Rebinding
+        // a fresh handler on every repaint would stack listeners on a node the
+        // operator is already pointing at.
         const createThread = h('button', {
-            class: 'roster-create-thread',
+            class: 'btn btn-quiet roster-create-thread',
             type: 'button',
-            disabled: true,
-            onclick: () => { void createThreadFromSelection(); },
-        }, CREATE_THREAD_LABEL);
+            onclick: () => {
+                if (isSelecting()) void createThreadFromSelection();
+                else onEnterSelect();
+            },
+        }, NEW_THREAD_LABEL);
+        // Built once, attached only while the mode is on: a Cancel that is
+        // merely hidden is still a tab stop for a mode nobody is in.
+        const cancelSelect = h('button', {
+            class: 'btn btn-quiet roster-thread-cancel',
+            type: 'button',
+            onclick: () => onExitSelect(),
+        }, 'Cancel');
+        const threadActions = h('div', { class: 'roster-thread-actions' }, createThread);
+        // Tracked here rather than read back off the DOM: "is it attached" is
+        // this module's own bookkeeping, and asking the node makes the answer
+        // depend on which parent property the host happens to expose.
+        let cancelAttached = false;
         const element = h('section', { class: 'roster-section' },
             h('h2', { class: 'roster-section-title' }, 'Threads'),
             threadFilters,
             h('p', { class: 'roster-thread-hint' }, THREAD_HINT),
-            createThread,
+            threadActions,
             threadList);
 
         /** Threads live in the store too: boot validates a restored thread against them. */
@@ -197,11 +237,28 @@ const BossModRosterThreads = (() => {
             },
 
             /**
-             * Re-read the People selection and enable or disable creation.
+             * Re-read the People selection and repaint the creation controls.
+             *
+             * Out of select mode the button invites; in it, the button counts
+             * what is picked and Cancel appears beside it. The floor is one
+             * teammate, which is what POST /api/channels accepts — a thread of
+             * one is a real thing the operator can already make.
+             *
              * @returns {void}
              */
             applySelection() {
-                createThread.disabled = getSelection().length === 0;
+                const selecting = isSelecting();
+                const count = getSelection().length;
+                clear(createThread);
+                createThread.append(selecting ? `Create with ${count}` : NEW_THREAD_LABEL);
+                createThread.disabled = selecting && count === 0;
+                if (selecting && !cancelAttached) {
+                    threadActions.append(cancelSelect);
+                    cancelAttached = true;
+                } else if (!selecting && cancelAttached) {
+                    cancelSelect.remove();
+                    cancelAttached = false;
+                }
             },
 
             /**

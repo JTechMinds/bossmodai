@@ -11,52 +11,57 @@
   height: 100%;
 }
 
+/* The same 48px row as the app header: one rhythm line across the window,
+   rather than each surface's bar being whatever its padding added up to. */
 .conversation-chrome {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
 .chat-place-body { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 
-.conversation-identity { min-width: 0; }
-.conversation-title { margin: 0; font-size: 16px; }
-.conversation-subtitle { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.conversation-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.conversation-avatar { display: flex; flex: none; }
 
-.conversation-action {
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.conversation-action[disabled] { opacity: 0.5; cursor: not-allowed; }
-
-.conversation-controls {
-  flex: 0 0 auto;
+/* Name and role on one baseline: two stacked lines made a 48px bar impossible
+   and gave a role the same weight as a name. */
+.conversation-identity {
   display: flex;
-  justify-content: flex-end;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
-.conversation-system-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.conversation-title { margin: 0; font-size: 15px; font-weight: 600; }
+
+.conversation-subtitle {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
+  font-size: 13px;
 }
+
+/* The receipts switch shares this row with the actions, so it aligns on the
+   centre line rather than on the top of a two-line identity block. */
+.conversation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Composes .btn.btn-sm from controls.css; only the weight is this surface's. */
+.conversation-action { font-weight: 500; }
+.conversation-action svg { width: 14px; height: 14px; }
 
 .conversation-empty-title { margin: 0; color: var(--ink); font-weight: 500; }
 .conversation-empty-hint { margin: 0; color: var(--muted); }
@@ -91,10 +96,12 @@
   background: var(--bg);
 }
 
+/* Bubbles stop being readable long before the window stops being wide. */
 .transcript-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-width: 760px;
 }
 
 .transcript-presence {
@@ -122,6 +129,19 @@
 
 .transcript-status-title { margin: 0; color: var(--ink); font-weight: 500; }
 .transcript-status-hint { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+
+/* A conversation nobody has spoken in: the face, the words, and the two things
+   there are to do about it. */
+.conversation-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+}
+
+.conversation-empty-actions { display: flex; gap: 8px; margin-top: 6px; }
 
 /* A skeleton matching the final layout, not a spinner on empty space. */
 .transcript-skeleton {
@@ -177,9 +197,9 @@
 /* ─── Messages ─── */
 
 .msg {
-  max-width: 85%;
+  max-width: 72%;
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -193,27 +213,33 @@
   color: var(--muted);
 }
 
+/* Timestamps are ours, not the concept's, and they stay — but demoted, so they
+   stop competing with what was actually said. */
 .msg-time {
   display: block;
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: 2px;
+  font-size: 10px;
   color: var(--hint);
 }
 
+/* A tint rather than a solid accent block: a wall of filled blue makes the
+   operator's own turns the loudest thing in a transcript they are reading for
+   the agent's. --blue-ink on --accent-bg measures 6.86:1. */
 .msg-human {
-  margin-left: auto;
-  border-bottom-right-radius: var(--r);
-  background: var(--accent);
-  color: var(--panel);
+  align-self: flex-end;
+  background: var(--accent-bg);
+  color: var(--blue-ink);
 }
 
+/* Both the author and the time need the tint's own ink: --hint measures only
+   4.19:1 on --accent-bg and --accent is the same 4.19:1, so neither clears AA
+   there however quiet they look on the agent side. */
 .msg-human .msg-author,
-.msg-human .msg-time { color: var(--panel); }
+.msg-human .msg-time { color: var(--blue-ink); }
 
 .msg-agent {
-  border: 1px solid var(--line);
-  border-bottom-left-radius: var(--r);
-  background: var(--panel);
+  align-self: flex-start;
+  background: var(--bg);
   color: var(--ink);
 }
 
@@ -322,7 +348,7 @@
   background: var(--panel);
 }
 
-.composer-row { display: flex; align-items: flex-end; gap: 8px; }
+.composer-row { display: flex; align-items: center; gap: 8px; }
 
 .composer-input {
   flex: 1 1 auto;
@@ -339,22 +365,12 @@
 
 .composer-input:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.composer-send {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--r);
-  background: var(--accent);
-  color: var(--panel);
-}
-
-.composer-send:disabled { opacity: 0.5; cursor: not-allowed; }
-
-/* The assign sheet's trigger. Quiet next to Send: it is the second thing you
-   do here, not the first. Same 38px hit target (SC 2.5.8). */
+/* Two icon buttons on the same geometry, one on each side of the field. Send
+   is accent ink rather than a filled blue box: the field's own border is the
+   boundary that matters in this row, and a solid block beside it read as a
+   second, more important input. 38px, comfortably over the 24px floor
+   (SC 2.5.8); --accent on --panel measures 4.83:1. */
+.composer-send,
 .composer-assign {
   flex: 0 0 auto;
   display: inline-flex;
@@ -362,13 +378,18 @@
   justify-content: center;
   width: 38px;
   height: 38px;
-  border: 1px solid var(--line-control);
   border-radius: var(--r);
-  background: var(--panel);
-  color: var(--muted);
+  background: none;
 }
 
+.composer-send { color: var(--accent); }
+.composer-assign { color: var(--muted); }
+
+.composer-send:hover:not(:disabled),
+.composer-assign:hover:not(:disabled) { background: var(--bg); }
 .composer-assign:hover:not(:disabled) { color: var(--ink); }
+
+.composer-send:disabled,
 .composer-assign:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .composer-error {

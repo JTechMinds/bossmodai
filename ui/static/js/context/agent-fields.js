@@ -10,15 +10,20 @@
  */
 const BossModAgentFields = (() => {
 
+    /**
+     * The eight seeds, named. Keys are core/agent-status.js's palette values;
+     * a key that drifts out of step with it falls back to the raw hex below,
+     * which is the visible symptom of the two lists disagreeing.
+     */
     const AGENT_COLOR_NAMES = {
-        '#3b82f6': 'Blue',
-        '#f59e0b': 'Amber',
-        '#10b981': 'Emerald',
-        '#f43f5e': 'Rose',
-        '#8b5cf6': 'Purple',
-        '#06b6d4': 'Cyan',
-        '#f97316': 'Orange',
-        '#ec4899': 'Pink',
+        '#1d4ed8': 'Blue',
+        '#92400e': 'Amber',
+        '#065f46': 'Emerald',
+        '#be123c': 'Rose',
+        '#6d28d9': 'Violet',
+        '#155e75': 'Cyan',
+        '#9a3412': 'Orange',
+        '#a21caf': 'Pink',
     };
 
     /**

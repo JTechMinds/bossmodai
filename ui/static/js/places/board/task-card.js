@@ -16,10 +16,6 @@ const BossModTaskCard = (() => {
         delegated: 'delegated',
     });
 
-    function initial(name) {
-        return (String(name || '?').trim()[0] || '?').toUpperCase();
-    }
-
     /**
      * Build one task card.
      *
@@ -54,8 +50,13 @@ const BossModTaskCard = (() => {
         const marker = MARKERS[task.status];
 
         const meta = h('p', { class: 'task-card-meta' },
-            h('span', { class: 'task-card-avatar', style: `background:${task.assigned_to_color || ''}` },
-                initial(task.assigned_to_name)),
+            // An unassigned task has no colour, which tintFor() renders as the
+            // neutral pair rather than as a missing circle.
+            BossModAvatar.create({
+                name: task.assigned_to_name,
+                color: task.assigned_to_color,
+                size: 'chip',
+            }),
             h('span', { class: 'task-card-owner' }, task.assigned_to_name || 'Unassigned'),
             age ? h('span', { class: 'task-card-age' }, age) : null);
 
@@ -76,10 +77,18 @@ const BossModTaskCard = (() => {
                     : null,
                 parentTitle ? h('span', { class: 'task-card-parent' }, `in ${parentTitle}`) : null));
 
+        // Whether this task is waiting on the operator, asked of the one file
+        // that knows — board-columns.js, whose map test_ui_board.py proves
+        // total against the engine's TaskStatus. Spelling `blocked` and
+        // `stalled` again here, or in a CSS selector on data-status, would be a
+        // second copy that stops matching the day the engine adds a third.
+        const needsYou = BossModBoardColumns.columnFor(task.status) === 'needs';
+
         const article = h('article', {
             class: `task-card${selected ? ' is-selected' : ''}`,
             'data-task-id': task.id,
             'data-status': task.status,
+            'data-needs': needsYou ? 'true' : null,
         });
 
         // Always in the tab order. CSS reveals it on hover, on focus-within,

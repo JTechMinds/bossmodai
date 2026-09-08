@@ -147,12 +147,18 @@ const documentStub = {
 global.document = documentStub;
 global.window = { document: documentStub };
 
-const [domPath, gatesPath, formatPath, transcriptPath, cachePath] = process.argv.slice(2);
+const [
+    domPath, avatarPath, gatesPath, formatPath, emptyStatePath, transcriptPath, cachePath,
+] = process.argv.slice(2);
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
+// The empty state is the one status with a face and controls; it lives in its
+// own module and the transcript delegates to it.
+eval(`${fs.readFileSync(avatarPath, "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);
 eval(`${fs.readFileSync(gatesPath, "utf8")}\n;global.BossModGates = BossModGates;\n`);
 // The presence row's duration is formatted by the shared formatter, not a
 // second opinion local to the transcript.
 eval(`${fs.readFileSync(formatPath, "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
+eval(`${fs.readFileSync(emptyStatePath, "utf8")}\n;global.BossModEmptyState = BossModEmptyState;\n`);
 eval(`${fs.readFileSync(transcriptPath, "utf8")}\n;global.BossModTranscript = BossModTranscript;\n`);
 eval(`${fs.readFileSync(cachePath, "utf8")}\n;global.BossModTranscriptCache = BossModTranscriptCache;\n`);
 

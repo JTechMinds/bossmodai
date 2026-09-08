@@ -61,14 +61,33 @@ const BossModAgentFormFields = (() => {
         const defaultColor = agent?.color
             || BossModAgentStatus.nextUnusedAgentColor(roster, { excludeId: agent?.id })
             || '#3b82f6';
-        const colorOptions = FIELDS.AGENT_COLORS.map(c => {
+        // The swatch IS the avatar: same classes, same derived tint/ink pair,
+        // same initial. A raw colour chip was an honest preview of nothing —
+        // it showed the seed, while every surface renders the pale tint that
+        // core/avatar.js derives from it. Showing the derived pair means a
+        // custom hex previews its true rendered appearance before it is saved.
+        const previewInitial = BossModFormat.escapeHtml(BossModAvatar.initial(agent?.name));
+        // An agent hired before the palette changed holds a colour no swatch
+        // offers. Without a swatch to match it no radio is checked, and
+        // agent-submit.js's `formData.get('agent-color') || FALLBACK_COLOR`
+        // then rewrites that agent to the fallback the moment anything else on
+        // this form is saved — silently discarding a colour the operator never
+        // touched. Offering the stored colour as its own swatch is what keeps
+        // the round trip lossless.
+        const known = FIELDS.AGENT_COLORS.some(c => c.value === defaultColor);
+        const swatches = known
+            ? FIELDS.AGENT_COLORS
+            : [{ value: defaultColor, name: 'Current' }, ...FIELDS.AGENT_COLORS];
+        const colorOptions = swatches.map(c => {
             const selected = defaultColor === c.value;
+            const tint = BossModAvatar.tintFor(c.value);
             return `<label class="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="agent-color" value="${c.value}"
                        ${selected ? 'checked' : ''}
                        class="hidden peer">
-                <span class="w-6 h-6 rounded-full border-2 peer-checked:border-slate-800 border-transparent
-                             transition-all" style="background:${c.value}"></span>
+                <span class="avatar avatar-md border-2 peer-checked:border-slate-800 border-transparent
+                             transition-all" aria-hidden="true"
+                      style="background:${tint.bg};color:${tint.ink}">${previewInitial}</span>
                 <span class="text-sm">${c.name}</span>
             </label>`;
         }).join('');
@@ -166,7 +185,7 @@ const BossModAgentFormFields = (() => {
                        ${MODEL_TYPES.map(t => `
                            <div class="flex items-center gap-2">
                                <span class="text-xs text-bm-muted w-28 shrink-0">${t.label}</span>
-                               ${connectionSelect(t.key, agent?.[t.key])}
+                               ${connectionSelect(connections, t.key, agent?.[t.key])}
                            </div>
                        `).join('')}
                    </div>`

@@ -18,11 +18,14 @@ CONVERSATION_HARNESS = Path(__file__).resolve().parent / "js_conversation_harnes
 # The order the conversation harness evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
@@ -90,8 +93,10 @@ def _transcript_payload() -> dict:
             "node",
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
+            str(JS / "core" / "avatar.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "format.js"),
+            str(CONVERSATION / "empty-state.js"),
             str(CONVERSATION / "transcript.js"),
             str(CONVERSATION / "transcript-cache.js"),
         ],
@@ -170,6 +175,16 @@ def test_conversation_harness() -> None:
         "presenceSurvivesSwitch": True,
         "unsubscribesPreviousSource": True,
         "errorStateRetries": True,
+        # The visual-parity pass: the chrome names who you are talking to, its
+        # actions carry glyphs, the receipts preference lives in the action row,
+        # and an empty conversation offers the two things you can do in it.
+        "chromeShowsIdentityAvatar": True,
+        "chromeAvatarNodeIsStable": True,
+        "chromeActionCarriesItsIcon": True,
+        "chromeGroupGlyphForThreads": True,
+        "receiptsLiveInTheActionRow": True,
+        "emptyConversationOffersActions": True,
+        "greetingWentThroughTheComposer": True,
     }
 
 
@@ -227,7 +242,13 @@ def test_composer_opens_the_one_assign_form() -> None:
     assert "openAssignForm" not in composer
 
     controller = _read(CONVERSATION / "conversation.js")
-    assert "onAssign: () => BossModAssignForm.openAssignForm({" in controller
+    # Hoisted to a named function in the visual-parity pass, because the empty
+    # state opens the same form. Still exactly one caller of exactly one form,
+    # which is the property this guards.
+    assert "function openAssign() {" in controller
+    assert "return BossModAssignForm.openAssignForm({" in controller
+    assert controller.count("BossModAssignForm.openAssignForm(") == 1
+    assert "onAssign: openAssign," in controller
 
     # There is still exactly one assign form in the codebase.
     definers = sorted(

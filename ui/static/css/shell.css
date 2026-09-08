@@ -44,12 +44,16 @@
 
 /* ─── Header ─── */
 
+/* A fixed 48px row. The header is the app's rhythm line: the conversation
+   chrome and the place bars all match it, so it is a height rather than a
+   padding that whatever is inside happens to add up to. */
 .app-header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 8px 16px;
+  height: 48px;
+  padding: 0 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
@@ -65,11 +69,14 @@
 .brand-name { font-weight: 700; font-size: 15px; }
 .brand-company { color: var(--muted); font-size: 13px; white-space: nowrap; }
 
+/* Beside the brand, not centred in the window: the places are part of the
+   product's identity, and a nav floating in the middle of an empty bar reads
+   as a toolbar for whatever is under it. */
 .place-nav {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-inline: auto;
+  margin-left: 8px;
 }
 
 .place-nav-item {
@@ -77,22 +84,33 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: var(--r);
+  border-radius: 999px;
   color: var(--muted);
+  font-size: 13px;
   font-weight: 500;
 }
 
+/* Lucide swaps the <i> for an <svg>; 14px keeps the glyph subordinate to the
+   label instead of the two competing. */
+.place-nav-item svg { width: 14px; height: 14px; }
+
 .place-nav-item:hover { background: var(--bg); color: var(--ink); }
 
+/* Quiet, not a blue shout. The place you are already on does not need the
+   loudest colour in the header — --ink on --bg measures 15.45:1, which is the
+   strongest TEXT in the row, and that is what reads as current. */
 .place-nav-item[aria-current="page"] {
-  background: var(--accent-bg);
-  color: var(--accent);
+  background: var(--bg);
+  color: var(--ink);
 }
 
+/* The nav no longer centres itself, so the actions carry the shove that used
+   to come free with its auto margin. */
 .header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
 .header-error {
@@ -101,8 +119,11 @@
   max-width: 260px;
 }
 
-.header-bell,
-.header-gear {
+/* One icon button, three call sites: the rail toggle, the bell, and the gear.
+   `position: relative` is here rather than on .header-bell because the badge
+   is the only thing that needs it and a second rule for one property is how
+   these three drifted apart before. */
+.header-icon-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -113,8 +134,7 @@
   color: var(--muted);
 }
 
-.header-bell:hover,
-.header-gear:hover { background: var(--bg); color: var(--ink); }
+.header-icon-btn:hover { background: var(--bg); color: var(--ink); }
 
 .bell-badge {
   position: absolute;
@@ -193,13 +213,6 @@
 
 .roster-row:hover { background: var(--bg); }
 
-.roster-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-
 .roster-person,
 .roster-thread {
   display: flex;
@@ -221,11 +234,15 @@
 
 .roster-status { color: var(--hint); font-size: 11px; }
 
+/* Pinned right, beside the name button rather than inside it: in the text
+   column the dot pushed the status line around. */
 .roster-need-dot {
   width: 6px;
   height: 6px;
+  margin-left: auto;
   border-radius: 50%;
   background: var(--alert);
+  flex: none;
 }
 
 .roster-empty,
@@ -250,24 +267,33 @@
   font-weight: 500;
 }
 
+/* Filled with the surface, not with accent. Two pills where one is a solid
+   blue block reads as a primary action rather than as which list you are
+   looking at — --ink on --bg measures 15.45:1 and says it more quietly. */
 .roster-thread-filter[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--panel);
+  background: var(--bg);
+  color: var(--ink);
 }
 
 .roster-thread-hint { margin: 0 6px 6px; color: var(--hint); font-size: 11px; }
 
-.roster-create-thread {
-  width: calc(100% - 12px);
+/* The creation row. Both buttons compose .btn.btn-quiet from controls.css;
+   what is left here is where they sit in the rail. Quiet on purpose: this is a
+   rail of quiet rows, and a filled button in the middle of it would outrank
+   every person in the list. */
+.roster-thread-actions {
+  display: flex;
+  gap: 4px;
   margin: 0 6px 8px;
-  padding: 6px 10px;
-  border-radius: var(--r);
-  background: var(--accent);
-  color: var(--panel);
+}
+
+.roster-create-thread {
+  flex: 1 1 auto;
+  justify-content: center;
   font-weight: 500;
 }
 
-.roster-create-thread:disabled { opacity: 0.5; cursor: not-allowed; }
+.roster-thread-cancel { justify-content: center; }
 
 .roster-error { margin: 8px 6px; color: var(--alert); font-size: 12px; }
 
@@ -283,6 +309,33 @@
 }
 
 .roster-hire:hover { background: var(--accent-bg); }
+
+/* ─── Collapsed rail ───
+
+   The track above is `var(--rail)`, so collapsing is one token override and
+   the grid does the rest. What a 56px column cannot show is hidden rather than
+   clipped: a half-visible name is worse than none, and an input the operator
+   cannot see is a focus trap waiting to happen.
+
+   Every avatar and every hire target survives, so nothing here is reachable
+   only by expanding again. */
+
+#main-layout[data-rail="collapsed"] .roster-search-row,
+#main-layout[data-rail="collapsed"] .roster-section-title,
+#main-layout[data-rail="collapsed"] .roster-thread-filters,
+#main-layout[data-rail="collapsed"] .roster-thread-hint,
+#main-layout[data-rail="collapsed"] .roster-thread-actions,
+#main-layout[data-rail="collapsed"] .roster-person,
+#main-layout[data-rail="collapsed"] .roster-thread,
+#main-layout[data-rail="collapsed"] .roster-hire span {
+  display: none;
+}
+
+#main-layout[data-rail="collapsed"] .roster-row,
+#main-layout[data-rail="collapsed"] .roster-hire {
+  justify-content: center;
+  padding-inline: 0;
+}
 
 /* ─── Footer ─── */
 
@@ -333,13 +386,8 @@
 .place-error { border-color: var(--alert-line); background: var(--alert-bg); }
 .place-error p { color: var(--alert); }
 
-.place-error .btn {
-  margin-top: 12px;
-  padding: 6px 14px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-}
+/* .btn is a primitive now; all this surface adds is where it sits. */
+.place-error .btn { margin-top: 12px; }
 
 /* ─── Responsive: three breakpoints (spec 10) ───
 

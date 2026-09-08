@@ -23,6 +23,21 @@ const BossModMiniOffice = (() => {
     const UNPLACED_ROOM = 'Unknown';
 
     /**
+     * The tint ramp the rooms after the first cycle through.
+     *
+     * The concept hardcodes three rooms; ours are whatever `agent.location`
+     * says — any names, any count. So the rule is POSITIONAL: rooms keep their
+     * existing sort (alphabetical, Unknown last), the first one gets the panel
+     * treatment, and each one after takes the next tone. The sort is stable, so
+     * a room does not change colour because an agent walked into another one.
+     *
+     * Four tones with measured ink pairs in tokens.css (6.20-6.41:1). `ok` is
+     * deliberately not among them: --ok on --ok-bg measures 4.33:1, which is
+     * under AA, and there is no --ok-ink token to fix it with.
+     */
+    const TONES = Object.freeze(['blue', 'amber', 'teal', 'pink']);
+
+    /**
      * Build the office summary.
      *
      * @param {object} deps
@@ -43,20 +58,25 @@ const BossModMiniOffice = (() => {
         const statEl = h('p', { class: 'mini-office-stat' });
 
         const element = h('section', { class: 'mini-office' },
-            h('h2', { class: 'context-title' }, 'The office'),
-            roomsEl,
-            statEl,
-            h('div', { class: 'mini-office-links' },
+            h('div', { class: 'context-head' },
+                h('h2', { class: 'context-title' }, 'Office'),
+                // A property of the VIEW, not of the socket: this repaints from
+                // the store on every world tick. Whether the connection is
+                // healthy is the footer's job, and two indicators that can
+                // disagree are worse than one.
+                h('span', { class: 'context-meta' }, 'live'),
                 h('button', {
-                    class: 'context-link',
+                    class: 'btn-link context-head-link',
                     type: 'button',
                     onclick: () => navigate('office'),
-                }, 'Open the map'),
-                h('button', {
-                    class: 'context-link',
-                    type: 'button',
-                    onclick: () => navigate('metrics'),
-                }, 'Metrics')));
+                }, 'Open')),
+            roomsEl,
+            statEl,
+            h('button', {
+                class: 'btn-link',
+                type: 'button',
+                onclick: () => navigate('metrics'),
+            }, 'Open metrics'));
 
         /**
          * Group the roster by room name, unplaced agents last.
@@ -81,19 +101,23 @@ const BossModMiniOffice = (() => {
 
         function seat(agent, needy) {
             const wanted = needy.has(agent.id);
-            const initial = String(agent.name || '?').trim().charAt(0).toUpperCase() || '?';
+            // The seat is the target and carries the accessible name; the
+            // avatar inside it is paint, which is why it is built decoratively
+            // rather than as a second, nested control.
             return h('button', {
                 class: 'mini-office-seat',
                 type: 'button',
                 'data-agent-id': agent.id,
                 // The ping is decorative; the name states the fact instead.
                 'aria-label': wanted ? `${agent.name} — needs you` : String(agent.name),
-                style: `background:${agent.color}`,
                 onclick: () => {
                     store.setState({ contextMode: 'desk', deskAgentId: agent.id });
                 },
             },
-                h('span', { class: 'mini-office-initial', 'aria-hidden': 'true' }, initial),
+                // A chip, because a map of a floor is read as a shape rather
+                // than as a list of faces. The BUTTON keeps the 24px floor
+                // (SC 2.5.8); only the paint inside it shrinks.
+                BossModAvatar.create({ name: agent.name, color: agent.color, size: 'chip' }),
                 wanted
                     ? h('span', { class: 'mini-office-ping', 'aria-hidden': 'true' })
                     : null);
@@ -117,8 +141,15 @@ const BossModMiniOffice = (() => {
             }
 
             const needy = new Set(state.needs.map((need) => need.agentId));
-            byRoom(roster).forEach((room) => {
-                roomsEl.append(h('div', { class: 'mini-office-room' },
+            byRoom(roster).forEach((room, index) => {
+                roomsEl.append(h('div', {
+                    class: 'mini-office-room',
+                    // The first room is the wide one and takes the panel
+                    // treatment from :first-child; the rest start at the top of
+                    // the ramp and cycle. Offset by one, so the ramp's first
+                    // tone is the first tint an operator actually sees.
+                    'data-tone': index === 0 ? 'main' : TONES[(index - 1) % TONES.length],
+                },
                     h('p', { class: 'mini-office-room-name' }, room.name),
                     h('div', { class: 'mini-office-seats' },
                         room.agents.map((agent) => seat(agent, needy)))));

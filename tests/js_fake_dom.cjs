@@ -151,7 +151,13 @@ class FakeEl {
     }
 
     append(...nodes) {
-        for (const node of nodes) {
+        for (const raw of nodes) {
+            // ParentNode.append() takes strings as well as nodes, and modules
+            // written against the real DOM use that. Wrapping here rather than
+            // making every caller wrap keeps the fake honest about the contract.
+            const node = (raw && raw.nodeType)
+                ? raw
+                : { nodeType: 3, textContent: String(raw), parent: null };
             // Real DOM semantics: appending an attached node MOVES it.
             if (node.parent) {
                 node.parent.children = node.parent.children.filter((child) => child !== node);
@@ -262,6 +268,9 @@ class FakeEl {
     }
 }
 
+/** An id or class name: no combinator, no second `.`, `#` or `[` inside it. */
+const SIMPLE_NAME = /^[A-Za-z_-][A-Za-z0-9_-]*$/;
+
 /**
  * Match one element against a single simple selector.
  *
@@ -270,14 +279,39 @@ class FakeEl {
  * quietly matching nothing, because a selector the fake cannot understand
  * would turn a real failure into a green test.
  *
+ * That promise used to have a hole in it. A descendant selector (`.a .b`) or a
+ * compound one (`.a.b`) starts with a `.`, so the class branch took it, sliced
+ * the leading dot, and asked whether the element's class list contained the
+ * literal string `a .b` — which nothing ever does. The answer was a silent
+ * `false`, `querySelector` returned `null`, and a harness looking for a node it
+ * could not express read that null as "the node is absent". Every form the fake
+ * cannot express now throws, which is what the docstring above always claimed.
+ *
  * @param {FakeEl} el
  * @param {string} selector
  * @returns {boolean}
+ * @throws {Error} When the selector is not one simple selector.
  */
 function matches(el, selector) {
-    if (selector.startsWith("#")) return el.id === selector.slice(1);
+    if (/[\s>+~]/.test(selector)) {
+        throw new Error(
+            `[fake-dom] unsupported selector: ${selector} — this fake matches one `
+            + "simple selector, not a combinator. Find the node by walking to it.",
+        );
+    }
+    if (selector.startsWith("#")) {
+        const id = selector.slice(1);
+        if (!SIMPLE_NAME.test(id)) {
+            throw new Error(`[fake-dom] unsupported selector: ${selector}`);
+        }
+        return el.id === id;
+    }
     if (selector.startsWith(".")) {
-        return String(el.className).split(/\s+/).includes(selector.slice(1));
+        const name = selector.slice(1);
+        if (!SIMPLE_NAME.test(name)) {
+            throw new Error(`[fake-dom] unsupported selector: ${selector}`);
+        }
+        return String(el.className).split(/\s+/).includes(name);
     }
     if (selector.startsWith("[") && selector.endsWith("]")) {
         const body = selector.slice(1, -1);

@@ -57,6 +57,27 @@ const BossModHeader = (() => {
 
         clear(el);
 
+        // ─── Rail toggle ───
+        //
+        // A <button>, so Enter and Space work with no key handling of its own
+        // (SC 2.1.1) — the rail must never be something only a pointer can
+        // reach. The state lives in the store rather than here because
+        // shell/session.js persists it across reloads.
+
+        const railToggle = h('button', {
+            class: 'header-icon-btn header-rail-toggle',
+            type: 'button',
+            'aria-label': 'Toggle sidebar',
+            'aria-expanded': 'true',
+            onclick: () => {
+                store.setState({ railCollapsed: !store.getState().railCollapsed });
+            },
+        }, h('i', { 'data-lucide': 'menu', 'aria-hidden': 'true' }));
+
+        function applyRail(collapsed) {
+            railToggle.setAttribute('aria-expanded', collapsed === true ? 'false' : 'true');
+        }
+
         // ─── Brand ───
 
         const companyEl = h('span', { class: 'brand-company' });
@@ -93,7 +114,7 @@ const BossModHeader = (() => {
         // ─── Needs bell ───
 
         const bell = h('button', {
-            class: 'header-bell',
+            class: 'header-icon-btn header-bell',
             type: 'button',
             onclick: openNeeds,
         });
@@ -205,7 +226,7 @@ const BossModHeader = (() => {
         // ─── Settings ───
 
         const gear = h('button', {
-            class: 'header-gear',
+            class: 'header-icon-btn header-gear',
             type: 'button',
             // A toggle: the gear both opens and closes the Settings takeover,
             // so its name stays neutral rather than lying in one direction.
@@ -213,7 +234,7 @@ const BossModHeader = (() => {
             onclick: () => openSettings(),
         }, h('i', { 'data-lucide': 'settings', 'aria-hidden': 'true' }));
 
-        el.append(brand, nav, h('div', { class: 'header-actions' },
+        el.append(railToggle, brand, nav, h('div', { class: 'header-actions' },
             errorEl, bellLive, bell, pause, gear));
 
         function paintIcons() {
@@ -250,12 +271,17 @@ const BossModHeader = (() => {
         applyActivePlace(state.place);
         applyNeeds(state.needs);
         applyPaused(state.runtimePaused);
+        applyRail(state.railCollapsed);
         paintIcons();
         void loadCompanyName();
 
         disposers.push(store.subscribe((s) => s.place, applyActivePlace));
         disposers.push(store.subscribe((s) => s.needs, applyNeeds));
         disposers.push(store.subscribe((s) => s.runtimePaused, applyPaused));
+        // Subscribed rather than set only on click: boot restores the persisted
+        // rail state AFTER the header mounts, and a toggle that announces
+        // "expanded" beside a collapsed rail is worse than one with no state.
+        disposers.push(store.subscribe((s) => s.railCollapsed, applyRail));
 
         return () => { disposers.splice(0).forEach((off) => off()); };
     }

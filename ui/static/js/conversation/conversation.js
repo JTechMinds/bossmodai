@@ -43,8 +43,8 @@ const BossModConversation = (() => {
         const generation = BossModGates.createLoadGeneration();
         const presence = BossModGates.createChannelPresenceController();
         const cache = BossModTranscriptCache.createCache();
-        // One unsent draft per conversation. Switching away must not throw
-        // away what the operator had half-typed.
+        // One unsent draft per conversation: switching away must not throw away
+        // what the operator had half-typed.
         const drafts = new Map();
         const disposers = [];
         const cardCtx = { api, navigate, openDesk };
@@ -58,9 +58,8 @@ const BossModConversation = (() => {
         let pendingLive = null;
 
         /**
-         * When the roster says this agent's active turn began, or null.
-         * The transcript asks; only the controller reads the store.
-         *
+         * When the roster says this agent's active turn began, or null. The
+         * transcript asks; only the controller reads the store.
          * @param {string} agentId
          * @returns {string|null}
          */
@@ -77,6 +76,15 @@ const BossModConversation = (() => {
             renderEventCard: (message) => BossModEventCards.renderEventCard(message, cardCtx),
         });
 
+        /** Spec 4.4: the clipboard and the empty state open the ONE assign form. */
+        function openAssign() {
+            return BossModAssignForm.openAssignForm({
+                api,
+                store,
+                onCreated: () => navigate('board'),
+            });
+        }
+
         const composer = BossModComposer.createComposer({
             store,
             onSend: (text) => {
@@ -85,23 +93,8 @@ const BossModConversation = (() => {
             },
             canSend: () => Boolean(source) && source.canSend(),
             disabledReason: () => (source ? source.disabledReason() : NO_CONVERSATION_REASON),
-            // Spec 4.4: the clipboard opens the ONE assign form, the Board's.
-            // The composer never names it, so a second one cannot appear here
-            // without this line changing.
-            onAssign: () => BossModAssignForm.openAssignForm({
-                api,
-                store,
-                onCreated: () => navigate('board'),
-            }),
+            onAssign: openAssign,
         });
-
-        const chrome = BossModConversationChrome.createChrome({
-            onError: (message) => composer.setError(message),
-        });
-
-        // Directly above the composer: what needs the operator here, where
-        // they are already looking. Everything else goes to the toast.
-        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({
             onChange: () => {
@@ -110,9 +103,19 @@ const BossModConversation = (() => {
             },
         });
 
+        const chrome = BossModConversationChrome.createChrome({
+            onError: (message) => composer.setError(message),
+            // A preference, not a per-conversation action, so a slot rather
+            // than a descriptor field that would rebuild it on every switch.
+            trailing: systemReceipts.element,
+        });
+
+        // Directly above the composer: what needs the operator where they are
+        // already looking. Everything else goes to the toast.
+        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate });
+
         const element = h('div', { class: 'conversation' },
             chrome.element,
-            systemReceipts.element,
             transcript.element,
             needsBar.element,
             composer.element);
@@ -130,8 +133,13 @@ const BossModConversation = (() => {
 
         function paint(messages) {
             const visible = visibleMessages(messages);
-            transcript.setStatus(visible.length ? 'ready' : 'empty',
-                visible.length ? undefined : source.emptyState());
+            // The source says WHO; the controller supplies what can be done,
+            // because it owns the composer and the assign form.
+            if (visible.length) transcript.setStatus('ready');
+            else transcript.setStatus('empty', Object.assign({}, source.emptyState(), {
+                onGreet: (text) => composer.sendText(text),
+                onAssign: openAssign,
+            }));
             transcript.setMessages(visible);
             transcript.renderPresence(currentId);
         }
@@ -152,13 +160,8 @@ const BossModConversation = (() => {
                 cache.forget(currentId);
                 void open(currentId, currentKind);
             },
-            presence() {
-                transcript.renderPresence(currentId);
-            },
-            chrome() {
-                applyChrome();
-                composer.applyState();
-            },
+            presence() { transcript.renderPresence(currentId); },
+            chrome() { applyChrome(); composer.applyState(); },
         };
 
         function disposeSource() {
@@ -166,6 +169,7 @@ const BossModConversation = (() => {
             unsubscribe = null;
             source = null;
         }
+
 
         function buildSource(id, kind) {
             if (kind === 'agent') {

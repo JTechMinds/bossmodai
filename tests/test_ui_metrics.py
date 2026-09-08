@@ -60,7 +60,11 @@ def test_metrics_registers_itself_and_has_four_states() -> None:
     assert "BARS.renderTokenUsage(" in place
     assert "CARDS.renderHealthGrid(data)" in place
     assert "CARDS.renderCommunication(" in place
-    assert "CARDS.healthLine(data)" in place
+    # The health verdict, which was a sentence in the header (CARDS.healthLine)
+    # until the visual pass promoted it to the panel that leads the page. Same
+    # property, same numbers, new home.
+    assert "CARDS.renderHealthPanel(data)" in place
+    assert "function healthDetail(data)" in _read("metric-cards.js")
     bars = _read("metric-bars.js")
     assert "FORMER_LABEL = 'Former agents'" in bars
     # The disclosure needs no endpoint: token totals outlive the agent that
@@ -148,6 +152,10 @@ def test_metrics_modules_stay_focused() -> None:
     for selector in (
         '.metric-bar-fill[data-hue="1"]',
         '.metric-column-fill[data-status="complete"]',
-        '.metric-health[data-health="bad"]',
+        # Both health indicators. The stat card's sub-line was `.metric-health`
+        # until the verdict panel took that name; the tone it resolves is the
+        # same one, under the class that says which of the two it is.
+        '.metric-card-health[data-health="bad"]',
+        '.metric-health-light[data-health="bad"]',
     ):
         assert selector in css, f"places.css does not resolve {selector}"

@@ -12,11 +12,9 @@
  * sources, which is what decides `systemReceipt`.
  */
 const BossModSystemReceipts = (() => {
-    const { h } = BossModDom;
 
     /** Unchanged from the dock-era chat, so the operator's choice survives. */
     const STORAGE_KEY = 'bossmod.chat.showSystemReceipts';
-    const TOGGLE_ID = 'chat-system-receipts-toggle';
     const LABEL = 'Show system notifications';
 
     /**
@@ -52,7 +50,16 @@ const BossModSystemReceipts = (() => {
     }
 
     /**
-     * Build the labelled checkbox.
+     * Build the labelled toggle.
+     *
+     * The control is the shared core/switch.js pill rather than a checkbox of
+     * this module's own: the Board's subtask filter and the Log's Follow are
+     * the same idea, and three hand-rolled toggles is what made the surfaces
+     * look unrelated.
+     *
+     * What is returned is the switch itself, with no band around it. The
+     * full-width strip it used to sit in spent a whole row of the conversation
+     * on a preference; the caller mounts this in the chrome's action row.
      *
      * @param {object} deps
      * @param {(enabled: boolean) => void} deps.onChange  Called after the new
@@ -69,24 +76,17 @@ const BossModSystemReceipts = (() => {
 
         let enabled = read();
 
-        const input = h('input', {
-            type: 'checkbox',
-            id: TOGGLE_ID,
-            class: 'conversation-system-toggle',
-            onchange: () => {
-                enabled = input.checked === true;
+        const control = BossModSwitch.create({
+            label: LABEL,
+            pressed: enabled,
+            onChange: (next) => {
+                enabled = next;
                 write(enabled);
                 onChange(enabled);
             },
         });
-        input.checked = enabled;
 
-        const element = h('div', { class: 'conversation-controls' },
-            h('label', { class: 'conversation-system-label', for: TOGGLE_ID },
-                input,
-                h('span', {}, LABEL)));
-
-        return { element, isEnabled: () => enabled };
+        return { element: control.element, isEnabled: () => enabled };
     }
 
     return { createSystemReceiptsToggle };
