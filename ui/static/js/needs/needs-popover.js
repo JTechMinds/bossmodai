@@ -153,7 +153,7 @@ const BossModNeedsPopover = (() => {
                 h('p', { class: 'popover-need-title' }, need.title),
                 h('p', { class: 'popover-need-sub' }, need.sub),
                 h('p', { class: 'popover-need-time' },
-                    BossModUtils.formatRelativeTime(need.createdAt)),
+                    BossModFormat.formatRelativeTime(need.createdAt)),
                 need.error
                     ? h('p', { class: 'popover-need-error', role: 'alert' }, need.error)
                     : null,

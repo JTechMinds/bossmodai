@@ -44,8 +44,8 @@ const BossModFileGrid = (() => {
     function renderEntry(entry, { showPath, onOpen, onMenu }) {
         const isDir = entry.is_dir === true;
         const name = String(entry.name || '');
-        const size = isDir ? '' : BossModUtils.formatFileSize(entry.size_bytes);
-        const when = BossModUtils.formatRelativeTime(entry.updated_at);
+        const size = isDir ? '' : BossModFormat.formatFileSize(entry.size_bytes);
+        const when = BossModFormat.formatRelativeTime(entry.updated_at);
 
         const open = h('button', {
             class: 'file-entry',
@@ -127,7 +127,7 @@ const BossModFileGrid = (() => {
             .filter((entry) => entry.is_dir !== true)
             .reduce((sum, entry) => sum + (entry.size_bytes || 0), 0);
         const counts = `${dirs} folder${dirs !== 1 ? 's' : ''}, ${files} file${files !== 1 ? 's' : ''}`;
-        return bytes > 0 ? `${counts} · Total: ${BossModUtils.formatFileSize(bytes)}` : counts;
+        return bytes > 0 ? `${counts} · Total: ${BossModFormat.formatFileSize(bytes)}` : counts;
     }
 
     /**

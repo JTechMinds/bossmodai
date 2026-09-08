@@ -20,7 +20,7 @@ NEEDS_MODULES = [
     # needs-store.js guards refresh() with the shared load generation, so the
     # harness loads the real gates module rather than a second copy of it.
     JS / "core" / "gates.js",
-    JS / "utils.js",
+    JS / "core" / "format.js",
     JS / "conversation" / "event-cards.js",
     NEEDS / "need-shape.js",
     NEEDS / "needs-store.js",
@@ -143,9 +143,19 @@ def test_refresh_drops_a_superseded_response() -> None:
 
 
 def test_needs_modules_stay_focused() -> None:
+    """The cap moved tree-wide in Phase 4; what stays here is needs/'s own.
+
+    Every need title and sub-line is server text about agent activity — a
+    folder an agent asked to read, a command it wants to run — so none of it
+    may become markup, and none of these modules may reach for a global rather
+    than take `api` from ctx.
+    """
     for path in sorted(NEEDS.rglob("*.js")):
-        lines = len(_read(path).splitlines())
-        assert lines < 300, f"{path.relative_to(JS)} is {lines} lines"
+        source = _read(path)
+        assert "innerHTML" not in source, f"{path.name} builds markup from a string"
+        assert "insertAdjacentHTML" not in source, f"{path.name} injects markup"
+        assert "typeof BossMod" not in source, f"{path.name} probes for a global"
+        assert "apiFetch" not in source, f"{path.name} must take api from ctx"
 
 
 def test_popover_actions_come_from_the_server() -> None:
@@ -245,9 +255,15 @@ def test_bar_renders_through_event_cards() -> None:
 def test_no_source_emits_progress_or_event_kinds() -> None:
     """A source that emits one of the bar's kinds would render it twice.
 
-    event-cards.js owns the visuals for all six kinds; only needs-bar.js
-    produces `progress` and `event`. The throw on an unknown kind and this
+    event-cards.js owns the visuals for every non-message row; only
+    needs-bar.js produces `event`. The throw on an unknown kind and this
     assertion are what catch a source that forgets.
+
+    Phase 4 deleted `progress` outright (spec 12, carried items) — it had a
+    renderer and never had a producer, and its information now lives in the
+    presence row. The source-side ban stays: a source emitting it would now hit
+    the "no renderer" throw rather than paint a second answer to "is it still
+    working?".
     """
     sources = JS / "conversation" / "sources"
     for path in sorted(sources.glob("*.js")):
@@ -256,8 +272,9 @@ def test_no_source_emits_progress_or_event_kinds() -> None:
         assert "kind: 'event'" not in source, f"{path.name} emits a bar kind"
 
     cards = _read(JS / "conversation" / "event-cards.js")
-    for kind in ("'progress'", "'event'", "'request'", "'note'"):
+    for kind in ("'event'", "'request'", "'note'"):
         assert f"message.kind === {kind}" in cards
+    assert "message.kind === 'progress'" not in cards
     # An unrecognised tone must not paint as a neutral row.
     assert 'no treatment for event tone' in cards
     assert 'no renderer for kind' in cards

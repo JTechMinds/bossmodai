@@ -121,7 +121,7 @@ const BossModCanvasSprites = (() => {
      * @param {{tileSize: number, palette: object, hoveredId: string|null,
      *   statusColor: (status: string, kind: string|null) => string}} opts
      *   `statusColor` is injected rather than imported so this module keeps no
-     *   dependency of its own — it is BossModUtils.getStatusColor in the app.
+     *   dependency of its own — it is BossModAgentStatus.getStatusColor in the app.
      * @returns {void}
      */
     function drawAgents(ctx2d, agents, opts) {

@@ -18,11 +18,14 @@ CONTEXT_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
-    JS / "utils.js",
+    JS / "core" / "format.js",
+    JS / "core" / "agent-status.js",
+    JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "transcript.js",
+    CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
     CONVERSATION / "chrome.js",
@@ -45,9 +48,17 @@ CONTEXT_MODULES = [
     CONTEXT / "mini-office.js",
     CONTEXT / "desk-opener.js",
     CONTEXT / "desk-files.js",
+    CONTEXT / "desk-notes.js",
     CONTEXT / "desk-tasks.js",
     CONTEXT / "desk-actions.js",
-    JS / "agent-panel.js",
+    CONTEXT / "agent-api.js",
+    CONTEXT / "agent-fields.js",
+    CONTEXT / "agent-form-fields.js",
+    CONTEXT / "agent-form-advanced.js",
+    CONTEXT / "agent-form-bindings.js",
+    CONTEXT / "agent-form.js",
+    CONTEXT / "agent-submit.js",
+    CONTEXT / "agent-recovery.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "desk-panel.js",
     CONTEXT / "context-column.js",
@@ -81,8 +92,13 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
     assert "BossModContextColumn.createContextColumn(" in place
     assert "contextColumn.destroy()" in place
     # The shell hands the element down and knows nothing else about it.
+    # Phase 4 resolved it into a local so the responsive layer can move the
+    # same element into an overlay below 1200px; it is still resolved ONCE and
+    # still handed down rather than filled in here.
     shell = _read(JS / "shell" / "shell.js")
-    assert "contextEl: requireElement('app-context')" in shell
+    assert "const contextElement = requireElement('app-context');" in shell
+    assert shell.count("requireElement('app-context')") == 1
+    assert "contextEl: contextElement," in shell
     # It hands the element down and never builds what goes in it. (The shell's
     # own applyContextColumn only toggles the column from place.hasContext.)
     assert "BossModContextColumn" not in shell
@@ -108,10 +124,134 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
         assert forbidden not in source, f"the mini office must not render a map ({forbidden})"
 
 
-def test_context_modules_stay_focused() -> None:
-    for path in sorted(CONTEXT.rglob("*.js")):
+def test_desk_notes_read_the_workspace_not_a_column() -> None:
+    """Spec 7, resolved: Notes is a surfacing problem, not a data one.
+
+    Two phases carried "Notes" as a requirement no column could satisfy, and
+    Phase 2B put the done/fail bar in the slot as a stand-in. The operator's
+    answer was that agents already write markdown into their own workspace, so
+    the panel reads `/me/notes` and opens what it finds in the one viewer.
+
+    The half that matters most is the distinction: a new agent has written
+    nothing, so the folder 404s, and that is the EMPTY state. Rendering it as
+    an error would tell every operator their brand new agent was broken. A
+    genuine failure still has to look like one, which is why both are proven.
+    """
+    payload = _harness()
+    assert payload["readsTheWorkspace"] is True
+    assert payload["listsNewestFirst"] is True
+    assert payload["opensSharedViewer"] is True
+    assert payload["absentIsEmptyNotError"] is True
+    assert payload["failureSurfaces"] is True
+
+    notes = _read(CONTEXT / "desk-notes.js")
+    assert "NOTES_PATH = '/me/notes'" in notes
+    assert "No notes yet" in notes
+    # 404 is absence. It must be checked BEFORE the generic !res.ok branch, or
+    # a new agent's desk reports a failure that never happened.
+    assert notes.index("res.status === 404") < notes.index("if (!res.ok)")
+    # No schema work: this reads the desk endpoint that already exists.
+    assert "/desk?path=" in notes
+    assert "done_fail_bar" not in notes, "Notes is the workspace now, not the stand-in"
+    # One viewer, the same one the desk browser opens.
+    assert "BossModFileViewer.open(" in notes
+    assert "innerHTML" not in notes
+
+    # The stand-in was not deleted with the slot it occupied: the agent's
+    # contract copy moved to the profile, where test_role_contracts.py still
+    # finds it.
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "BossModDeskNotes.createDeskNotes(" in panel
+    assert "What done looks like for this agent:" in panel
+    assert panel.index("const bar = who.done_fail_bar") < panel.index("desk-bar")
+    # The section is drained with the rest of the panel.
+    assert "notes.destroy();" in panel
+
+
+def test_agent_edit_modules_stay_focused() -> None:
+    """825 lines with a 380-line function inside it, split by responsibility.
+
+    Every piece has one owner and one reason to change: the requests, the field
+    vocabulary, the two markup groups, the per-field bindings, the composition,
+    what the server is told, and the destructive tools. The cap is the cheap
+    half of that; the half that matters is that each module names exactly one
+    of those jobs, so this also checks nothing kept a private second copy of
+    the two things both halves of the form need.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    assert not (js / "agent-panel.js").exists(), "agent-panel.js is still on disk"
+    assert "AgentPanel" not in _read(CONTEXT / "agent-edit.js")
+
+    modules = sorted(CONTEXT.glob("agent-*.js"))
+    names = [path.name for path in modules]
+    assert names == [
+        "agent-api.js", "agent-edit.js", "agent-fields.js",
+        "agent-form-advanced.js", "agent-form-bindings.js",
+        "agent-form-fields.js", "agent-form.js", "agent-recovery.js",
+        "agent-submit.js",
+    ], names
+    for path in modules:
         lines = len(_read(path).splitlines())
         assert lines < 300, f"{path.relative_to(JS)} is {lines} lines"
+
+    # The vocabulary has ONE owner. A private MODEL_TYPES in the form and
+    # another in the submit path is a connection the operator sets and the
+    # agent never receives.
+    for name in ("MODEL_TYPES = [", "DEFAULT_PROMPT_HISTORY_POLICY = {", "DESK_OPTIONS = ["):
+        owners = [path.name for path in modules if name in _read(path)]
+        assert owners == ["agent-fields.js"], f"{name} is declared in {owners}"
+    for name in ("MODEL_TYPES", "DEFAULT_PROMPT_HISTORY_POLICY"):
+        assert f"BossModAgentFields.{name}" in _read(CONTEXT / "agent-submit.js")
+
+    # Requests live in one module; nothing else calls the agent endpoints.
+    api = _read(CONTEXT / "agent-api.js")
+    for fn in ("fetchAgent", "apiCreateAgent", "apiUpdateAgent", "apiDeleteAgent",
+               "fetchPromptHistoryPolicy", "apiUpdatePromptHistoryPolicy",
+               "apiClearChatHistory", "apiResetRuntime"):
+        assert f"async function {fn}(" in api, f"agent-api.js lost {fn}"
+        assert f"{fn}," in api.rsplit("return {", 1)[-1], f"agent-api.js does not export {fn}"
+
+    # The dead canvas refresh went with the split: OfficeCanvas has not been a
+    # global since Phase 3B, so `refreshCanvas` fetched /api/world on every
+    # save and threw the answer away behind a guard that can never be true.
+    for path in modules:
+        source = _read(path)
+        assert "refreshCanvas" not in source, f"{path.name} kept the dead canvas refresh"
+        assert "OfficeCanvas" not in source, f"{path.name} names a retired global"
+
+    # The three window.confirm calls the form inherited are gone: the guard is
+    # kept, but through the focus-trapped dialog (spec 8.4).
+    recovery = _read(CONTEXT / "agent-recovery.js")
+    assert "BossModOverlays.createModal(" in recovery
+    for path in modules:
+        source = _read(path)
+        assert "confirm(" not in source.replace("confirmDestructive(", ""), (
+            f"{path.name} still uses the native dialog"
+        )
+    for copy in ("Clear chat history", "Reset runtime", "Delete agent"):
+        assert copy in recovery or copy in _read(CONTEXT / "agent-edit.js"), copy
+
+
+def test_context_modules_stay_focused() -> None:
+    """The cap moved tree-wide in Phase 4; what stays here is context/'s own.
+
+    test_ui_index.py::test_every_module_stays_under_the_line_cap owns the 300
+    lines now, for every directory at once. The rule that is specific to this
+    one is the markup boundary: the desk renders file names and agent output,
+    so everything here builds nodes with h() — except the three form modules
+    covered by the named exemption, which render operator-entered config.
+    """
+    exempt = {"agent-form-fields.js", "agent-form-advanced.js", "agent-form.js"}
+    for path in sorted(CONTEXT.rglob("*.js")):
+        source = _read(path)
+        if path.name in exempt:
+            assert "MARKUP EXEMPTION" in source, path.name
+            continue
+        assert "innerHTML" not in source, f"{path.name} builds markup from a string"
+        assert "insertAdjacentHTML" not in source, f"{path.name} injects markup"
+        # Dependencies arrive by injection; a probe for a global is how app.js
+        # silently no-opped when a module failed to load.
+        assert "typeof BossMod" not in source, f"{path.name} probes for a global"
 
 
 def test_desk_files_guard_stale_loads() -> None:
@@ -225,7 +365,8 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
 
     # Hiring lands in the column's create mode and selects the new agent.
     edit = _read(CONTEXT / "agent-edit.js")
-    assert "AgentPanel.renderInline(" in edit
+    # Phase 4 split agent-panel.js away; renderInline is this module's own now.
+    assert "void renderInline(formEl, agent || null, onSave, onDelete)" in edit
     assert "const wasCreating = !agent;" in edit
     saved = edit.split("function onSave(savedAgent) {", 1)[1]
     assert "savedAgent && wasCreating" in saved

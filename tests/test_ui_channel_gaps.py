@@ -37,10 +37,12 @@ CONVERSATION_STACK = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlays.js",
     JS / "conversation" / "transcript.js",
+    JS / "conversation" / "transcript-cache.js",
     JS / "conversation" / "message.js",
     JS / "conversation" / "event-cards.js",
     JS / "conversation" / "chrome.js",
@@ -219,10 +221,14 @@ def test_thread_switch_keeps_shell_and_uses_cache() -> None:
     """
     source = _read("conversation/conversation.js")
     assert "cache.recall(" in source
-    assert "createCache()" in _read("conversation/transcript.js")
-    # The cache must be defined before its consumer runs.
+    assert "createCache()" in _read("conversation/transcript-cache.js")
+    # The cache must be defined before its consumer runs — and it borrows
+    # messageKey from the view, so the view has to come before it in turn.
     sources = _script_sources()
     assert sources.index("js/conversation/transcript.js") < sources.index(
+        "js/conversation/transcript-cache.js"
+    )
+    assert sources.index("js/conversation/transcript-cache.js") < sources.index(
         "js/conversation/conversation.js"
     )
 
@@ -253,7 +259,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
         [
             "node",
             str(ARCHIVE_OPEN_TASKS_HARNESS),
-            str(JS / "utils.js"),
+            str(JS / "core" / "agent-status.js"),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
@@ -301,7 +307,9 @@ def test_transcript_cache_swaps_without_loading() -> None:
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "gates.js"),
+            str(JS / "core" / "format.js"),
             str(JS / "conversation" / "transcript.js"),
+            str(JS / "conversation" / "transcript-cache.js"),
         ],
         check=False,
         capture_output=True,

@@ -113,7 +113,7 @@ const BossModOfficeCanvas = (() => {
             SPRITES.drawRoomLabels(ctx2d, mapData.rooms, opts);
             SPRITES.drawDesks(ctx2d, mapData.desks, opts);
             SPRITES.drawAgents(ctx2d, agents, {
-                ...opts, hoveredId, statusColor: BossModUtils.getStatusColor,
+                ...opts, hoveredId, statusColor: BossModAgentStatus.getStatusColor,
             });
             SPRITES.drawThoughtBubbles(ctx2d, motion.bubbles(), opts);
             ctx2d.restore();

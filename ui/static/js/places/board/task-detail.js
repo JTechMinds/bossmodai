@@ -55,8 +55,8 @@ const BossModTaskDetail = (() => {
     function roleContract(task) {
         const specialty = task.assigned_to_role || '';
         const doneBar = task.assigned_to_done_fail_bar || '';
-        const guidance = BossModUtils.doneClaimGuidance(task);
-        const claimLabel = BossModUtils.formatDoneClaim(resolveDoneClaim(task));
+        const guidance = BossModSpecialty.doneClaimGuidance(task);
+        const claimLabel = BossModSpecialty.formatDoneClaim(resolveDoneClaim(task));
         const showOpenGuidance = task.status !== 'complete' && Boolean(task.assigned_to);
         const showCompleteClaim = task.status === 'complete' && Boolean(claimLabel);
         if (!specialty && !doneBar && !showOpenGuidance && !showCompleteClaim) return null;
@@ -92,7 +92,7 @@ const BossModTaskDetail = (() => {
         if (task.cost_ceiling != null) lines.push(`Cost ceiling: ${task.cost_ceiling}`);
         if (task.created_at) lines.push(`Created: ${new Date(task.created_at).toLocaleString()}`);
         if (task.last_activity) {
-            lines.push(`Updated: ${BossModUtils.formatRelativeTime(task.last_activity)}`);
+            lines.push(`Updated: ${BossModFormat.formatRelativeTime(task.last_activity)}`);
         }
         return lines.map((line) => h('p', { class: 'task-detail-meta' }, line));
     }

@@ -15,7 +15,7 @@ HARNESS_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
-    JS / "utils.js",
+    JS / "core" / "agent-status.js",
     JS / "core" / "overlays.js",
     SHELL / "places.js",
     SHELL / "header.js",

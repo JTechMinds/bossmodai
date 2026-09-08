@@ -12,7 +12,7 @@ HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 
 MODULES = [
     ("core", "dom.js"), ("core", "store.js"), ("core", "bus.js"),
-    (".", "utils.js"), ("shell", "roster-threads.js"), ("shell", "roster.js"),
+    ("core", "agent-status.js"), ("shell", "roster-threads.js"), ("shell", "roster.js"),
 ]
 
 
@@ -36,7 +36,7 @@ def test_status_line_precedence_is_paused_then_needs_then_status() -> None:
     payload = _run_harness()
     assert payload["pausedBeatsNeedBeatsStatus"] is True
     assert payload["usesSharedStatusLabel"] is True
-    assert "BossModUtils.getStatusLabel(" in _source(), (
+    assert "BossModAgentStatus.getStatusLabel(" in _source(), (
         "the status label must come from the shared helper, not a local copy"
     )
 

@@ -28,7 +28,7 @@ const pressKey = (key, shiftKey) => {
 
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 const [
-    domPath, storePath, busPath, gatesPath, utilsPath, cardsPath, shapePath,
+    domPath, storePath, busPath, gatesPath, formatPath, cardsPath, shapePath,
     needsPath, popoverPath, barPath, toastPath,
 ] = process.argv.slice(2);
 load(domPath, "BossModDom");
@@ -36,7 +36,7 @@ load(storePath, "BossModStore");
 load(busPath, "BossModBus");
 // needs-store.js guards refresh() with the shared load generation.
 load(gatesPath, "BossModGates");
-load(utilsPath, "BossModUtils");
+load(formatPath, "BossModFormat");
 load(cardsPath, "BossModEventCards");
 load(shapePath, "BossModNeedShape");
 load(needsPath, "BossModNeeds");

@@ -15,34 +15,34 @@ global.document = {
 };
 global.window = { document: global.document };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
 
-if (typeof BossModUtils !== "object") {
-    throw new Error("BossModUtils missing");
+if (typeof BossModAgentStatus !== "object") {
+    throw new Error("BossModAgentStatus missing");
 }
-if (typeof BossModUtils.nextUnusedAgentColor !== "function") {
+if (typeof BossModAgentStatus.nextUnusedAgentColor !== "function") {
     throw new Error("nextUnusedAgentColor missing");
 }
-if (typeof BossModUtils.mergeRosterFromWorld !== "function") {
+if (typeof BossModAgentStatus.mergeRosterFromWorld !== "function") {
     throw new Error("mergeRosterFromWorld missing");
 }
 
-const palette = BossModUtils.AGENT_COLOR_PALETTE;
+const palette = BossModAgentStatus.AGENT_COLOR_PALETTE;
 if (!Array.isArray(palette) || palette.length < 2) {
     throw new Error("AGENT_COLOR_PALETTE missing");
 }
 
-const firstUnused = BossModUtils.nextUnusedAgentColor([]);
+const firstUnused = BossModAgentStatus.nextUnusedAgentColor([]);
 if (firstUnused !== palette[0]) {
     throw new Error(`empty roster should default to ${palette[0]}, got ${firstUnused}`);
 }
 
-const afterBlue = BossModUtils.nextUnusedAgentColor([{ id: "a1", color: palette[0] }]);
+const afterBlue = BossModAgentStatus.nextUnusedAgentColor([{ id: "a1", color: palette[0] }]);
 if (afterBlue !== palette[1]) {
     throw new Error(`next unused after blue should be ${palette[1]}, got ${afterBlue}`);
 }
 
-const skipUsed = BossModUtils.nextUnusedAgentColor([
+const skipUsed = BossModAgentStatus.nextUnusedAgentColor([
     { id: "a1", color: palette[0] },
     { id: "a2", color: palette[2] },
 ]);
@@ -50,7 +50,7 @@ if (skipUsed !== palette[1]) {
     throw new Error(`should pick first unused hole, got ${skipUsed}`);
 }
 
-const excludeOwn = BossModUtils.nextUnusedAgentColor(
+const excludeOwn = BossModAgentStatus.nextUnusedAgentColor(
     [{ id: "edit-me", color: palette[0] }, { id: "peer", color: palette[1] }],
     { excludeId: "edit-me" },
 );
@@ -58,14 +58,14 @@ if (excludeOwn !== palette[0]) {
     throw new Error(`editing agent should not consume its own color, got ${excludeOwn}`);
 }
 
-const wrapped = BossModUtils.nextUnusedAgentColor(
+const wrapped = BossModAgentStatus.nextUnusedAgentColor(
     palette.map((color, index) => ({ id: `full-${index}`, color })),
 );
 if (wrapped !== palette[0]) {
     throw new Error(`full palette should rotate, got ${wrapped}`);
 }
 
-const emptyIncoming = BossModUtils.mergeRosterFromWorld(
+const emptyIncoming = BossModAgentStatus.mergeRosterFromWorld(
     [{ id: "gone", name: "Gone", tasks_completed: 3 }],
     [],
 );
@@ -73,7 +73,7 @@ if (emptyIncoming.length !== 0) {
     throw new Error("empty world_update must drop stale roster rows");
 }
 
-const seeded = BossModUtils.mergeRosterFromWorld([], [
+const seeded = BossModAgentStatus.mergeRosterFromWorld([], [
     { id: "new-1", name: "Nova", role: "Writer", color: palette[1], status: "idle", x: 3, y: 4, location: "Main Workspace" },
 ]);
 if (seeded.length !== 1 || seeded[0].id !== "new-1" || seeded[0].name !== "Nova") {
@@ -83,7 +83,7 @@ if (seeded[0].location !== "Main Workspace") {
     throw new Error(`new agent should keep world location, got ${seeded[0].location}`);
 }
 
-const patched = BossModUtils.mergeRosterFromWorld(
+const patched = BossModAgentStatus.mergeRosterFromWorld(
     [{ id: "keep", name: "Ada", role: "Lead", tasks_completed: 9, location: "Main Workspace", status: "idle" }],
     [{ id: "keep", name: "Ada", status: "working", currentActivityKind: "work", x: 7, y: 4 }],
 );
@@ -94,7 +94,7 @@ if (patched[0].status !== "working" || patched[0].currentActivityKind !== "work"
     throw new Error("world tick must patch live status");
 }
 
-const upserted = BossModUtils.mergeRosterFromWorld(
+const upserted = BossModAgentStatus.mergeRosterFromWorld(
     [{ id: "old", name: "Ada" }],
     [
         { id: "old", name: "Ada", status: "idle" },
@@ -105,7 +105,7 @@ if (upserted.map((item) => item.id).join(",") !== "old,new-2") {
     throw new Error(`membership upsert failed: ${upserted.map((item) => item.id)}`);
 }
 
-const ignored = BossModUtils.mergeRosterFromWorld([{ id: "old", name: "Ada" }], null);
+const ignored = BossModAgentStatus.mergeRosterFromWorld([{ id: "old", name: "Ada" }], null);
 if (ignored.length !== 1 || ignored[0].id !== "old") {
     throw new Error("non-array incoming must leave roster unchanged");
 }

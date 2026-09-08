@@ -1,16 +1,24 @@
 /**
  * BossMod AI — the visual treatment for every non-message row.
  *
- * Six kinds, two producers. A conversation SOURCE produces `request` (a
+ * Three kinds, two producers. A conversation SOURCE produces `request` (a
  * host-path consent ask) and `note` (a task-lifecycle receipt), and nothing
- * else. `progress` and `event.*` are produced by needs/needs-bar.js, which
- * renders its cards through here rather than owning a second look for them.
+ * else. `event.*` is produced by needs/needs-bar.js, which renders its cards
+ * through here rather than owning a second look for them.
  *
  * That split is spec 4.3 as reconciled: one renderer, one appearance per need.
  * Putting `event.*` in the transcript AND in the composer bar would render one
  * CLI approval twice in the same conversation, which is exactly what the
- * suppression rule in spec 5.5 exists to prevent. A source emitting `progress`
- * or `event` is therefore a bug.
+ * suppression rule in spec 5.5 exists to prevent. A source emitting `event` is
+ * therefore a bug.
+ *
+ * `progress` was the fourth kind and is gone. It had a renderer and never had
+ * a producer; the operator's answer (spec 12, carried items) was to feed the
+ * turn duration through db.get_world_state() and paint it in the presence row,
+ * where the operator is already looking. Deleting the renderer is half of
+ * shipping that feature — a card kind nothing can emit is dead weight, and
+ * keeping it would leave two places that could claim to answer "is it still
+ * working?".
  *
  * An unknown kind throws. A default branch returning an empty div would turn a
  * producer bug into a silently missing row, which is the exact failure mode
@@ -76,26 +84,6 @@ const BossModEventCards = (() => {
                 }, 'Open in Desk'));
             }
             return note;
-        }
-
-        if (message.kind === 'progress') {
-            // A long-running turn. The dot is the only motion on the surface
-            // and CSS drops it under prefers-reduced-motion.
-            const card = message.card || {};
-            const label = String(card.label || 'working');
-            const elapsed = String(card.elapsed || '');
-            const row = h('div', { class: 'event-progress' },
-                h('span', { class: 'event-progress-dot', 'aria-hidden': 'true' }),
-                h('span', { class: 'event-progress-text' },
-                    elapsed ? `${label} · ${elapsed}` : label));
-            if (typeof card.onWatch === 'function') {
-                row.append(h('button', {
-                    class: 'event-progress-watch',
-                    type: 'button',
-                    onclick: () => card.onWatch(),
-                }, 'Watch'));
-            }
-            return row;
         }
 
         if (message.kind === 'event') {

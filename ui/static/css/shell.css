@@ -340,3 +340,120 @@
   border-radius: var(--r);
   background: var(--panel);
 }
+
+/* ─── Responsive: three breakpoints (spec 10) ───
+
+   The layout above is the ≥1200px one and stays exactly as it was. Below that
+   the grid sheds a column at a time, and shell/responsive.js supplies the
+   button that opens what the grid removed. Nothing here is gesture-only, and
+   nothing here reproduces the dock era's mobile bottom sheet: that was a stub
+   whose whole content was an instruction to swipe, which is why it was deleted
+   rather than ported.
+
+   Both moved columns keep their identity — the same element is reparented into
+   the slide-over and back — so these rules undo the grid chrome (the column
+   borders, the fixed track width) rather than restyling a copy. */
+
+.responsive-menu-btn,
+.responsive-desk-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* SC 2.5.8 floor, applied to the control itself rather than to a wrapper. */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.responsive-menu-btn:hover,
+.responsive-desk-btn:hover { background: var(--bg); color: var(--ink); }
+
+/* A column presented as a panel is no longer a grid track: it fills the
+   slide-over and drops the border that separated it from the centre. */
+.responsive-panel .app-roster,
+.responsive-panel .app-context {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  overflow: auto;
+}
+
+.responsive-panel .app-context { display: block; }
+
+/* ─── 768–1199px — the context column becomes an overlay; the roster stays ─── */
+
+@media (max-width: 1199px) {
+  #main-layout[data-context="on"] {
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+  }
+
+  #main-layout > .app-context { display: none; }
+
+  .responsive-desk-btn.is-available { display: inline-flex; }
+}
+
+/* ─── <768px — one column, a roster drawer, and a bottom tab bar ─── */
+
+@media (max-width: 767px) {
+  #main-layout,
+  #main-layout[data-context="on"] {
+    grid-template-columns: minmax(0, 1fr);
+    /* Room for the fixed tab bar, so the last row of a place is reachable. */
+    padding-bottom: 56px;
+  }
+
+  #main-layout > .app-roster { display: none; }
+
+  .responsive-menu-btn { display: inline-flex; }
+
+  .app-header { gap: 8px; padding: 6px 10px; }
+  .brand-company { display: none; }
+
+  /* The place nav becomes the bottom tab bar. Same buttons, same DOM order,
+     same aria-current — a second nav implementation would be a second thing
+     to keep in step with the registry. */
+  .place-nav {
+    position: fixed;
+    z-index: 40;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin-inline: 0;
+    display: flex;
+    justify-content: stretch;
+    gap: 0;
+    min-height: 56px;
+    padding: 4px;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .place-nav-item {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-width: 44px;
+    min-height: 48px;
+    padding: 4px 2px;
+    font-size: 11px;
+  }
+
+  /* The footer keeps the connection status visible above the bar rather than
+     being hidden behind it — "am I still connected" is the one thing a narrow
+     screen must not lose. */
+  .app-footer {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-bottom: 60px;
+  }
+
+  /* Full-screen rather than a 420px drawer: at this width there is nothing
+     behind it worth showing. */
+  .responsive-panel { width: 100vw; }
+}

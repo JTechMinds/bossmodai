@@ -1,5 +1,13 @@
 /**
- * BossMod AI — Settings → Runtime Contracts (HA-STRUCT-P1-04).
+ * BossMod AI — Settings → Runtime Contracts, the editor.
+ *
+ * The six runtime-owned prompt blocks and the preview pane: it loads them,
+ * renders the variables rail and the tabbed editors, and wires the resize
+ * handle, the tab switching and click-to-insert.
+ *
+ * Saving, resetting, refreshing and previewing are
+ * settings-runtime-contracts-actions.js — this file renders the editors, that
+ * one persists them, which is the seam the file was split at in Phase 3C.
  */
 
 const RuntimeContractsSection = (() => {
@@ -9,63 +17,8 @@ const RuntimeContractsSection = (() => {
     const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
         + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent';
 
-    function collectTemplateValues() {
-        return {
-            decision: document.getElementById('runtime-decision-contract')?.value || '',
-            execution: document.getElementById('runtime-execution-contract')?.value || '',
-            trigger_event: document.getElementById('runtime-trigger-event-contract')?.value || '',
-            conversation_envelope: document.getElementById('runtime-conversation-envelope-contract')?.value || '',
-            file_deliverable_guidance: document.getElementById('runtime-file-guidance-contract')?.value || '',
-            communication_snapshot: document.getElementById('runtime-communication-snapshot-contract')?.value || '',
-        };
-    }
 
-    function renderPromptHealth(container, health) {
-        if (!container) return;
-        const status = health?.status || 'clean';
-        const issues = Array.isArray(health?.issues) ? health.issues : [];
-        const tones = {
-            clean: {
-                panel: 'bg-emerald-50 border-emerald-200',
-                badge: 'bg-emerald-100 text-emerald-700',
-                title: 'Prompt surface is clean.',
-                detail: 'No contradictory prompt-contract instructions were detected across the editable and hidden runtime prompt layers.',
-            },
-            warning: {
-                panel: 'bg-amber-50 border-amber-200',
-                badge: 'bg-amber-100 text-amber-700',
-                title: 'Prompt warnings detected.',
-                detail: 'The current prompt surface is usable, but some instructions are ambiguous or overly broad.',
-            },
-            error: {
-                panel: 'bg-red-50 border-red-200',
-                badge: 'bg-red-100 text-red-700',
-                title: 'Prompt issues detected.',
-                detail: 'The current prompt surface includes conflicting or invalid contract language that should be corrected before relying on it.',
-            },
-        };
-        const tone = tones[status] || tones.clean;
-        const issuesHtml = issues.length
-            ? `<ul class="mt-3 space-y-2 text-sm text-bm-text">${issues.map(issue => `
-                <li class="rounded-lg border border-white/70 bg-white/70 px-3 py-2">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${issue.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}">${BossModUtils.escapeHtml(issue.severity || 'warning')}</span>
-                        <span class="text-sm font-medium">${BossModUtils.escapeHtml(issue.surface_label || issue.surface_key || 'Prompt Surface')}</span>
-                    </div>
-                    <div class="mt-1 text-sm text-bm-text">${BossModUtils.escapeHtml(issue.message || '')}</div>
-                </li>
-            `).join('')}</ul>`
-            : '';
-        container.innerHTML = `
-            <div class="p-3 border rounded-lg ${tone.panel}">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${tone.badge}">${BossModUtils.escapeHtml(status)}</span>
-                    <p class="text-sm font-medium text-bm-text">${BossModUtils.escapeHtml(tone.title)}</p>
-                </div>
-                <p class="mt-1 text-sm text-bm-muted">${BossModUtils.escapeHtml(tone.detail)}</p>
-                ${issuesHtml}
-            </div>`;
-    }
+    const { renderPromptHealth } = BossModRuntimeContractActions;
 
     function insertAtCursor(textarea, text) {
         if (!textarea) return;
@@ -84,6 +37,7 @@ const RuntimeContractsSection = (() => {
         let payload = null;
         try {
             const res = await apiFetch('/api/runtime/contracts');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             payload = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load runtime contracts.</p>';
@@ -112,7 +66,7 @@ const RuntimeContractsSection = (() => {
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
                 <div class="space-y-1 text-xs font-mono text-bm-muted">
-                    ${syntaxExamples.map(ex => `<div>${BossModUtils.escapeHtml(ex)}</div>`).join('')}
+                    ${syntaxExamples.map(ex => `<div>${BossModFormat.escapeHtml(ex)}</div>`).join('')}
                 </div>
             </div>
             <div class="flex gap-0 flex-1 min-h-0" style="height: calc(100vh - 320px); min-height: 400px;">
@@ -123,11 +77,11 @@ const RuntimeContractsSection = (() => {
                     <div class="space-y-1">
                         ${allowedVariables.map(item => {
                             const isSubProp = item.name.includes('.');
-                            return `<button type="button" data-var="${BossModUtils.escapeHtml(item.name)}"
+                            return `<button type="button" data-var="${BossModFormat.escapeHtml(item.name)}"
                                 class="rc-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
                                        transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
-                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModUtils.escapeHtml(item.name)}}}</div>
-                                <div class="text-[11px] text-bm-muted leading-tight">${BossModUtils.escapeHtml(item.description)}</div>
+                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModFormat.escapeHtml(item.name)}}}</div>
+                                <div class="text-[11px] text-bm-muted leading-tight">${BossModFormat.escapeHtml(item.description)}</div>
                             </button>`;
                         }).join('')}
                     </div>
@@ -149,27 +103,27 @@ const RuntimeContractsSection = (() => {
                     <!-- Tab content -->
                     <div class="flex-1 flex flex-col min-h-0 p-4">
                         <div id="rc-tab-decision" class="rc-tab-pane flex-1 flex flex-col min-h-0">
-                            <textarea id="runtime-decision-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(decisionContract)}</textarea>
+                            <textarea id="runtime-decision-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(decisionContract)}</textarea>
                         </div>
                         <div id="rc-tab-execution" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-execution-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(executionContract)}</textarea>
+                            <textarea id="runtime-execution-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(executionContract)}</textarea>
                         </div>
                         <div id="rc-tab-trigger-event" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-trigger-event-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(triggerEvent)}</textarea>
+                            <textarea id="runtime-trigger-event-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(triggerEvent)}</textarea>
                         </div>
                         <div id="rc-tab-conversation-envelope" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-conversation-envelope-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(conversationEnvelope)}</textarea>
+                            <textarea id="runtime-conversation-envelope-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(conversationEnvelope)}</textarea>
                         </div>
                         <div id="rc-tab-file-guidance" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-file-guidance-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(fileGuidance)}</textarea>
+                            <textarea id="runtime-file-guidance-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(fileGuidance)}</textarea>
                         </div>
                         <div id="rc-tab-communication-snapshot" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-communication-snapshot-contract" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(communicationSnapshot)}</textarea>
+                            <textarea id="runtime-communication-snapshot-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(communicationSnapshot)}</textarea>
                         </div>
                         <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <div class="flex items-center gap-2 mb-3 flex-wrap">
                                 <select id="runtime-preview-trigger" class="${SELECT_CLS}">
-                                    ${previewTriggers.map(t => `<option value="${BossModUtils.escapeHtml(t)}">${BossModUtils.escapeHtml(t)}</option>`).join('')}
+                                    ${previewTriggers.map(t => `<option value="${BossModFormat.escapeHtml(t)}">${BossModFormat.escapeHtml(t)}</option>`).join('')}
                                 </select>
                                 <select id="runtime-preview-kind" class="${SELECT_CLS}">
                                     <option value="decision">Decision</option>
@@ -245,88 +199,7 @@ const RuntimeContractsSection = (() => {
             });
         });
 
-        // ─── Save ───
-        document.getElementById('btn-save-runtime-contracts').addEventListener('click', async () => {
-            const status = document.getElementById('runtime-contract-save-status');
-            const templates = collectTemplateValues();
-            try {
-                const res = await apiFetch('/api/runtime/contracts', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(templates),
-                });
-                const payload = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(payload.detail || 'Save failed');
-                }
-                renderPromptHealth(document.getElementById('runtime-prompt-health'), payload.prompt_health);
-                status.textContent = 'Saved';
-                status.className = 'text-sm text-emerald-600';
-                setTimeout(() => { status.textContent = ''; }, 2000);
-            } catch (err) {
-                status.textContent = err.message || 'Save failed';
-                status.className = 'text-sm text-red-600';
-            }
-        });
-
-        document.getElementById('btn-reset-runtime-contracts').addEventListener('click', async () => {
-            if (!confirm('Reset both runtime contracts to their seeded defaults?')) return;
-            const status = document.getElementById('runtime-contract-save-status');
-            try {
-                const res = await apiFetch('/api/runtime/contracts/reset', {
-                    method: 'POST',
-                });
-                const payload = await res.json();
-                if (!res.ok) {
-                    throw new Error(payload.detail || 'Reset failed');
-                }
-                document.getElementById('runtime-decision-contract').value = payload.decision || '';
-                document.getElementById('runtime-execution-contract').value = payload.execution || '';
-                document.getElementById('runtime-trigger-event-contract').value = payload.trigger_event || '';
-                document.getElementById('runtime-conversation-envelope-contract').value = payload.conversation_envelope || '';
-                document.getElementById('runtime-file-guidance-contract').value = payload.file_deliverable_guidance || '';
-                document.getElementById('runtime-communication-snapshot-contract').value = payload.communication_snapshot || '';
-                renderPromptHealth(document.getElementById('runtime-prompt-health'), payload.prompt_health);
-                status.textContent = 'Reset to defaults';
-                status.className = 'text-sm text-emerald-600';
-                setTimeout(() => { status.textContent = ''; }, 2000);
-            } catch (err) {
-                status.textContent = err.message || 'Reset failed';
-                status.className = 'text-sm text-red-600';
-            }
-        });
-
-        // ─── Refresh ───
-        document.getElementById('btn-refresh-runtime-contracts').addEventListener('click', () => {
-            render(el);
-        });
-
-        // ─── Preview ───
-        document.getElementById('btn-render-preview').addEventListener('click', async () => {
-            const triggerType = document.getElementById('runtime-preview-trigger').value;
-            const contractKind = document.getElementById('runtime-preview-kind').value;
-            const templates = collectTemplateValues();
-            const output = document.getElementById('runtime-contract-preview-output');
-            output.textContent = 'Rendering full prompt bundle\u2026';
-            try {
-                const res = await apiFetch('/api/runtime/contracts/preview', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contract_kind: contractKind,
-                        trigger_type: triggerType,
-                        scope: 'bundle',
-                        templates,
-                    }),
-                });
-                const preview = await res.json();
-                if (!res.ok) throw new Error(preview.detail || 'Preview failed');
-                output.textContent = preview.rendered || '';
-                renderPromptHealth(document.getElementById('runtime-prompt-health'), preview.prompt_health);
-            } catch (err) {
-                output.textContent = err.message || 'Preview failed';
-            }
-        });
+        BossModRuntimeContractActions.bindActions({ onRefresh: () => render(el) });
     }
 
     return { render };

@@ -379,43 +379,6 @@
 
 .composer-error.hidden { display: none; }
 
-/* ─── Progress: a long-running turn ─── */
-
-.event-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.event-progress-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--amber-ink);
-  animation: event-progress-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes event-progress-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.event-progress-text { flex: 1 1 auto; }
-
-.event-progress-watch {
-  min-height: 24px;
-  padding: 3px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 500;
-}
-
 /* ─── Event cards: one look, whether a transcript row or a needs-bar row ─── */
 
 .event-card {
@@ -496,7 +459,3 @@
 }
 
 .needs-bar-dismiss:hover { border-color: var(--line-strong); color: var(--ink); }
-
-@media (prefers-reduced-motion: reduce) {
-  .event-progress-dot { animation: none; }
-}

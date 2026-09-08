@@ -1,10 +1,18 @@
 /**
- * BossMod AI — Settings → AI Connections (HA-STRUCT-P1-04).
+ * BossMod AI — Settings → AI Connections, the connection form.
+ *
+ * Create and edit one provider connection, test it before saving, and the
+ * show / copy controls for the API-key field. Split out of
+ * settings-connections.js in Phase 3C at the list-versus-form seam: the list
+ * reads connections and the form writes one, and only the form ever puts a
+ * secret on screen.
+ *
+ * The API-key field controls live here rather than beside the list because
+ * this is the only markup that carries `[data-toggle-api-key]` and
+ * `[data-copy-api-key]`; the list calls the binder through this module so
+ * there is one copy of it.
  */
-
-const ConnectionsSection = (() => {
-    let container = null;
-
+const BossModConnectionForm = (() => {
     async function copyApiKey(value, statusEl = null) {
         if (!value) return;
         try {
@@ -43,109 +51,20 @@ const ConnectionsSection = (() => {
         });
     }
 
-    async function render(el) {
-        container = el;
-        await renderList();
-    }
-
-    async function renderList() {
-        let connections = [];
-        try {
-            const res = await apiFetch('/api/connections');
-            connections = await res.json();
-        } catch (err) {
-            container.innerHTML = '<p class="text-red-500 text-sm">Failed to load connections.</p>';
-            return;
-        }
-
-        let html = `
-            <div class="flex items-center justify-between mb-6">
-                <div>
-                    <h2 class="text-lg font-semibold">AI Connections</h2>
-                    <p class="text-sm text-bm-muted mt-0.5">Manage your LLM provider API connections.</p>
-                </div>
-                <button id="btn-add-connection"
-                        class="flex items-center gap-2 px-3 py-2 bg-bm-accent text-white rounded-lg
-                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
-                    <i data-lucide="plus" class="w-4 h-4"></i> Add Connection
-                </button>
-            </div>`;
-
-        if (connections.length === 0) {
-            html += `<div class="text-center py-12 text-bm-muted">
-                <i data-lucide="plug" class="w-10 h-10 mx-auto mb-3 opacity-40"></i>
-                <p class="text-sm">No connections yet. Add your first AI provider.</p>
-            </div>`;
-        } else {
-            html += '<div class="space-y-3">';
-            for (const conn of connections) {
-                const maskedKey = conn.has_api_key
-                    ? `••••${BossModUtils.escapeHtml(conn.api_key_last4 || '')}`
-                    : 'No API key';
-                html += `
-                <div class="border border-bm-border rounded-lg p-4 bg-white">
-                    <div class="flex items-start justify-between">
-                        <div class="min-w-0">
-                            <div class="flex items-center gap-2">
-                                <h3 class="font-medium">${BossModUtils.escapeHtml(conn.name)}</h3>
-                                ${conn.model ? `<span class="text-xs px-2 py-0.5 bg-slate-100 rounded-full text-bm-muted">${BossModUtils.escapeHtml(conn.model)}</span>` : ''}
-                            </div>
-                            <p class="text-sm text-bm-muted mt-1">${BossModUtils.escapeHtml(conn.api_base_url)}</p>
-                            <div class="mt-1.5">
-                                <p class="text-xs font-mono text-bm-muted">${maskedKey}</p>
-                                <p class="text-[11px] text-bm-muted mt-1">Full API keys are never returned after save. Re-enter a key only when rotating it.</p>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-1 shrink-0 ml-4">
-                            <button data-edit-conn="${conn.id}"
-                                    class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-                                    title="Edit">
-                                <i data-lucide="pencil" class="w-4 h-4 text-bm-muted"></i>
-                            </button>
-                            <button data-delete-conn="${conn.id}"
-                                    class="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                                    title="Delete">
-                                <i data-lucide="trash-2" class="w-4 h-4 text-red-400"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>`;
-            }
-            html += '</div>';
-        }
-
-        container.innerHTML = html;
-        if (window.lucide) lucide.createIcons({ nodes: [container] });
-        bindApiKeyFieldControls(container);
-
-        // Bind events
-        const addBtn = document.getElementById('btn-add-connection');
-        if (addBtn) addBtn.addEventListener('click', () => renderForm(null));
-
-        container.querySelectorAll('[data-edit-conn]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const res = await apiFetch(`/api/connections/${btn.dataset.editConn}`);
-                if (res.ok) renderForm(await res.json());
-            });
-        });
-
-        container.querySelectorAll('[data-delete-conn]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (!confirm('Delete this connection?')) return;
-                try {
-                    await apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`, { method: 'DELETE' });
-                    await renderList();
-                    if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
-                        void BossModApp.refreshModelAvailability();
-                    }
-                } catch (err) {
-                    alert(err.message || 'Failed to delete connection.');
-                }
-            });
-        });
-    }
-
-    function renderForm(conn) {
+    /**
+     * Render the create / edit form over the section container.
+     *
+     * @param {object|null} conn  The connection to edit, or null to create.
+     *   An existing connection never carries its full key — only the last four
+     *   digits — so a blank key field means "keep the saved one".
+     * @param {object} options
+     * @param {Element} options.container  The section's content element; the
+     *   form replaces the list in place, as it did before the split.
+     * @param {() => Promise<void>} options.onDone  Return to the list, on
+     *   cancel and after a successful save.
+     * @returns {void}
+     */
+    function renderForm(conn, { container, onDone }) {
         const isEdit = !!conn;
         container.innerHTML = `
             <div class="max-w-lg">
@@ -156,7 +75,7 @@ const ConnectionsSection = (() => {
                         <label class="block text-sm font-medium mb-1">Connection Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">This is what you'll see when selecting a connection for an agent.</p>
                         <input type="text" name="name" required
-                               value="${BossModUtils.escapeHtml(conn?.name || '')}"
+                               value="${BossModFormat.escapeHtml(conn?.name || '')}"
                                placeholder="e.g. OpenAI Production"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -166,7 +85,7 @@ const ConnectionsSection = (() => {
                         <label class="block text-sm font-medium mb-1">API Base URL</label>
                         <p class="text-xs text-bm-muted mb-1.5">The exact provider base URL. Use something like <code>https://api.openai.com/v1</code>, not <code>/chat/completions</code>.</p>
                         <input type="url" name="api_base_url" required
-                               value="${BossModUtils.escapeHtml(conn?.api_base_url || '')}"
+                               value="${BossModFormat.escapeHtml(conn?.api_base_url || '')}"
                                placeholder="https://api.openai.com/v1"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -175,12 +94,12 @@ const ConnectionsSection = (() => {
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
                         <p class="text-xs text-bm-muted mb-1.5">${isEdit && conn?.has_api_key
-                            ? `A key is saved (last 4: ${BossModUtils.escapeHtml(conn.api_key_last4 || '')}). Leave blank to keep it, or enter a new key to rotate.`
+                            ? `A key is saved (last 4: ${BossModFormat.escapeHtml(conn.api_key_last4 || '')}). Leave blank to keep it, or enter a new key to rotate.`
                             : 'Optional. Leave blank for local OpenAI-compatible servers. The runtime supplies a harmless transport placeholder when the upstream library requires one.'}</p>
                         <div class="flex gap-2">
                             <input id="connection-api-key-input" type="password" name="api_key"
                                    value=""
-                                   placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModUtils.escapeHtml(conn.api_key_last4 || '') : 'sk-...'}"
+                                   placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModFormat.escapeHtml(conn.api_key_last4 || '') : 'sk-...'}"
                                    class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                           focus:border-bm-accent">
@@ -202,7 +121,7 @@ const ConnectionsSection = (() => {
                         <label class="block text-sm font-medium mb-1">Model Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">Model name exposed by the server. Raw names like <code>llama3</code> work for local OpenAI-compatible endpoints; provider-prefixed names also work.</p>
                         <input type="text" name="model"
-                               value="${BossModUtils.escapeHtml(conn?.model || '')}"
+                               value="${BossModFormat.escapeHtml(conn?.model || '')}"
                                placeholder="e.g. llama3 or openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -215,7 +134,7 @@ const ConnectionsSection = (() => {
                                   placeholder='e.g. {"stream": false, "thinking": {"type": "disabled"}}'
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                         focus:border-bm-accent font-mono">${BossModUtils.escapeHtml(conn?.extra_body || '')}</textarea>
+                                         focus:border-bm-accent font-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
                     <div id="connection-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>
@@ -239,7 +158,7 @@ const ConnectionsSection = (() => {
                 </form>
             </div>`;
 
-        document.getElementById('btn-cancel-conn').addEventListener('click', renderList);
+        document.getElementById('btn-cancel-conn').addEventListener('click', onDone);
         bindApiKeyFieldControls(container);
 
         document.getElementById('btn-test-conn').addEventListener('click', async () => {
@@ -281,12 +200,12 @@ const ConnectionsSection = (() => {
                         ? result.warning
                         : `Connected — ${result.models_count} model${result.models_count !== 1 ? 's' : ''} available`;
 
-                    let html = `<p class="font-medium">${BossModUtils.escapeHtml(msg)}</p>`;
+                    let html = `<p class="font-medium">${BossModFormat.escapeHtml(msg)}</p>`;
                     if (result.models && result.models.length > 0) {
                         html += `<p class="mt-2 mb-1 text-xs font-semibold opacity-70 uppercase tracking-wide">Available models</p>`;
                         html += `<div class="flex flex-wrap gap-1.5">`;
                         for (const m of result.models) {
-                            html += `<span class="px-2 py-0.5 rounded text-xs font-mono ${isWarning ? 'bg-amber-100' : 'bg-emerald-100'}">${BossModUtils.escapeHtml(m)}</span>`;
+                            html += `<span class="px-2 py-0.5 rounded text-xs font-mono ${isWarning ? 'bg-amber-100' : 'bg-emerald-100'}">${BossModFormat.escapeHtml(m)}</span>`;
                         }
                         if (result.models_count > result.models.length) {
                             html += `<span class="px-2 py-0.5 text-xs opacity-60">+${result.models_count - result.models.length} more</span>`;
@@ -336,10 +255,13 @@ const ConnectionsSection = (() => {
                         body: JSON.stringify(data),
                     });
                 }
-                await renderList();
-                if (typeof BossModApp !== 'undefined' && typeof BossModApp.refreshModelAvailability === 'function') {
-                    void BossModApp.refreshModelAvailability();
-                }
+                await onDone();
+                // BossModApp died with the dock shell; the banner moved to
+                // shell/banners.js. The old typeof guard silently swallowed
+                // this call, so the no-model banner outlived the change
+                // that fixed it. Unguarded on purpose: a missing module is
+                // a defect, not a condition to tiptoe around.
+                void BossModBanners.refreshModelAvailability();
             } catch (err) {
                 console.error('[Connections] Save failed:', err);
                 if (status) {
@@ -351,6 +273,5 @@ const ConnectionsSection = (() => {
         });
     }
 
-    return { render };
+    return { renderForm, bindApiKeyFieldControls };
 })();
-

@@ -3,8 +3,14 @@
  *
  * Profile, Tasks, Files, Notes, and a footer of actions, in that order
  * (spec 7). It composes rather than renders: Tasks is context/desk-tasks.js,
- * Files is context/desk-files.js, and the footer is context/desk-actions.js,
- * each owning its own request and its own load generation.
+ * Files is context/desk-files.js, Notes is context/desk-notes.js, and the
+ * footer is context/desk-actions.js, each owning its own request and its own
+ * load generation.
+ *
+ * The profile carries the agent's done/fail bar. Phase 2B had it standing in
+ * for Notes, which had no data behind it; Phase 4 gave Notes the workspace it
+ * was always meant to read (spec 7), so the bar moved to where it belongs
+ * rather than being deleted along with the stand-in.
  *
  * Editing the role swaps this panel for the hosted form in place, so the
  * operator comes back to the desk they opened rather than having to find it
@@ -15,7 +21,7 @@ const BossModDeskPanel = (() => {
 
     const NO_SPECIALTY = 'No specialty';
     const DONE_BAR_TITLE = 'What done looks like for this agent:';
-    const NO_NOTES = 'No done/fail bar set for this agent yet. Edit the role to add one.';
+    const NO_DONE_BAR = 'No done/fail bar set for this agent yet. Edit the role to add one.';
 
     /**
      * Build the desk panel.
@@ -42,12 +48,15 @@ const BossModDeskPanel = (() => {
         const disposers = [];
 
         const profileEl = h('section', { class: 'desk-profile' });
-        const notesEl = h('section', { class: 'desk-section' });
         const tasks = BossModDeskTasks.createDeskTasks({ api, agentId, navigate });
         const actions = BossModDeskActions.createDeskActions({
             store, api, navigate, agentId, onEdit: () => openEdit(),
         });
         const files = BossModDeskFiles.createDeskFiles({ api, bus, agentId });
+        // A folder inside /me/notes is the browser's job, not a second one.
+        const notes = BossModDeskNotes.createDeskNotes({
+            api, agentId, onOpenFolder: (path) => { void files.open(path); },
+        });
         /** The hosted role form, while the operator is editing. */
         let edit = null;
 
@@ -59,7 +68,7 @@ const BossModDeskPanel = (() => {
             h('section', { class: 'desk-section' },
                 h('p', { class: 'desk-section-title' }, 'Files'),
                 files.element),
-            notesEl,
+            notes.element,
             actions.element);
 
         const element = h('section', { class: 'desk-panel' }, bodyEl);
@@ -79,6 +88,7 @@ const BossModDeskPanel = (() => {
                 return;
             }
             const initial = String(who.name || '?').trim().charAt(0).toUpperCase() || '?';
+            const bar = who.done_fail_bar ? String(who.done_fail_bar).trim() : '';
             // Built through h(), which drops a null child; Element.append does
             // not, and an agent with no description has one.
             profileEl.append(h('div', { class: 'desk-profile-body' },
@@ -97,21 +107,14 @@ const BossModDeskPanel = (() => {
                     ? h('p', { class: 'desk-about' }, String(who.description))
                     : null,
                 h('span', { class: 'desk-state-pill' },
-                    BossModUtils.getStatusLabel(who.status, who.currentActivityKind))));
-        }
-
-        // ─── Notes ───
-
-        function renderNotes() {
-            const who = agent();
-            const bar = who && who.done_fail_bar ? String(who.done_fail_bar).trim() : '';
-            clear(notesEl);
-            notesEl.append(h('p', { class: 'desk-section-title' }, 'Notes'));
-            if (!bar) {
-                notesEl.append(h('p', { class: 'context-empty' }, NO_NOTES));
-                return;
-            }
-            notesEl.append(h('p', { class: 'desk-bar' }, `${DONE_BAR_TITLE} ${bar}`));
+                    BossModAgentStatus.getStatusLabel(who.status, who.currentActivityKind)),
+                // The agent's role contract belongs with the rest of who they
+                // are. It sat in the Notes slot only while Notes had no data
+                // behind it (spec 7); now that Notes reads the workspace, the
+                // bar comes home to the profile rather than being dropped.
+                h('p', { class: 'desk-bar' }, bar
+                    ? `${DONE_BAR_TITLE} ${bar}`
+                    : NO_DONE_BAR)));
         }
 
         /**
@@ -143,11 +146,13 @@ const BossModDeskPanel = (() => {
             // The saved role, description, and done bar arrive with the next
             // world_update; repaint from what the store holds now regardless.
             renderProfile();
-            renderNotes();
             void actions.refresh();
+            // A role edit can rewrite the workspace; re-read rather than trust
+            // what was on screen before the form opened.
+            void notes.refresh();
         }
 
-        disposers.push(store.subscribe((s) => s.roster, () => { renderProfile(); renderNotes(); }));
+        disposers.push(store.subscribe((s) => s.roster, () => { renderProfile(); }));
         // "Open in Desk" on a note for the agent whose desk is ALREADY open
         // changes only the path, so the column never rebuilds this panel and
         // nothing else would move the browser to the file.
@@ -156,7 +161,6 @@ const BossModDeskPanel = (() => {
         }));
 
         renderProfile();
-        renderNotes();
         // A note's "Open in Desk" puts the path in the store; without one, the
         // desk root is where a desk opens.
         void files.open(store.getState().deskPath || '/me');
@@ -175,6 +179,7 @@ const BossModDeskPanel = (() => {
                 edit = null;
                 tasks.destroy();
                 files.destroy();
+                notes.destroy();
             },
         };
     }

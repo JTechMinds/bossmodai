@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,6 +45,33 @@ def _read(name: str) -> str:
     return (JS / name).read_text(encoding="utf-8")
 
 
+# The agent form is composed from field-group modules (Phase 4 split
+# agent-panel.js). Its markup no longer lives in one file, so a source-index
+# comparison in any one of them would prove nothing about what the operator
+# actually reads. `_form_markup` rebuilds the form in the order
+# buildFormHTML composes it, which is strictly the stronger subject: it now
+# also proves the composition order in agent-form.js, not just the source
+# order of one file.
+SECTION_OWNERS = {
+    "BossModAgentFormFields": "context/agent-form-fields.js",
+    "BossModAgentFormAdvanced": "context/agent-form-advanced.js",
+}
+
+
+def _form_markup() -> str:
+    """Every field group's markup, in the order the form renders it."""
+    form = _read("context/agent-form.js")
+    template = form.split("container.innerHTML = `", 1)[1].split("\n        `;", 1)[0]
+    calls = re.findall(r"\$\{(BossModAgentForm\w+)\.(\w+)\(", template)
+    assert calls, "buildFormHTML composes no field groups"
+    chunks = []
+    for module, fn in calls:
+        source = _read(SECTION_OWNERS[module])
+        assert f"function {fn}(" in source, f"{module}.{fn} is not in {SECTION_OWNERS[module]}"
+        chunks.append(source.split(f"function {fn}(", 1)[1].split("\n    }\n", 1)[0])
+    return "\n".join(chunks)
+
+
 def _headers() -> dict[str, str]:
     return {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
 
@@ -66,7 +94,7 @@ def _api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_casual_hire_shows_color_under_description() -> None:
-    panel = _read("agent-panel.js")
+    panel = _form_markup()
     assert 'name="description"' in panel
     assert ">Color</label>" in panel
     assert panel.index('name="description"') < panel.index(">Color</label>")
@@ -79,16 +107,22 @@ def test_casual_hire_shows_color_under_description() -> None:
 
 
 def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
-    panel = _read("agent-panel.js")
+    # Re-pointed by Phase 4's split: the gate and the submit ordering are
+    # context/agent-edit.js's, the two markup ids and the disabled styling are
+    # the field groups', and the duplicate-name binding is agent-form.js's.
+    # Every assertion below is the one that was here before.
+    panel = _read("context/agent-edit.js")
+    markup = _form_markup()
     gates = _read("core/gates.js")
     assert "createInFlightGate()" in gates
     assert "const hireSubmit = BossModGates.createInFlightGate()" in panel
     assert "if (hireSubmit.busy()) return;" in panel
-    assert "id=\"agent-form-submit\"" in panel
-    assert "disabled:pointer-events-none" in panel
+    assert "id=\"agent-form-submit\"" in markup
+    assert "disabled:pointer-events-none" in markup
     assert "Creating…" in panel
-    assert "id=\"agent-name-duplicate-warn\"" in panel
-    assert "bindDuplicateNameWarning" in panel
+    assert "id=\"agent-name-duplicate-warn\"" in markup
+    assert "bindDuplicateNameWarning" in _read("context/agent-form.js")
+    assert "function bindDuplicateNameWarning(" in _read("context/agent-form-bindings.js")
     submit = panel.split("form.addEventListener('submit', async (e) => {", 1)[1].split(
         "if (deleteBtn)", 1
     )[0]
@@ -105,7 +139,8 @@ def test_successful_create_dismisses_hire_form() -> None:
     must leave the operator where they were.
     """
     source = _read("context/agent-edit.js")
-    assert "AgentPanel.renderInline(formEl, agent || null, onSave, onDelete)" in source
+    # Phase 4 split agent-panel.js away; renderInline is this module's own now.
+    assert "void renderInline(formEl, agent || null, onSave, onDelete)" in source
     # Captured at construction, before any save can land.
     assert "const wasCreating = !agent;" in source
     on_save = source.split("function onSave(savedAgent) {", 1)[1].split(
@@ -123,11 +158,16 @@ def test_successful_create_dismisses_hire_form() -> None:
 
 
 def test_directory_and_org_upsert_world_roster() -> None:
-    directory = _read("company-view.js")
-    handler = directory.split("function handleWorldUpdate(agents) {", 1)[1].split(
-        "function pruneSelection()", 1
+    # Re-pointed in Phase 4: company-view.js hosted the directory and was
+    # deleted with the rest of the dock era. The rail is the directory now, and
+    # it keeps the same two properties — the snapshot is MERGED rather than
+    # replacing what is on screen, and an empty incoming roster is still
+    # applied so a removed agent actually disappears.
+    directory = _read("shell/roster.js")
+    handler = directory.split("bus.subscribe('world_update', (world) => {", 1)[1].split(
+        "bus.subscribe('resync'", 1
     )[0]
-    assert "BossModUtils.mergeRosterFromWorld" in handler
+    assert "BossModAgentStatus.mergeRosterFromWorld" in handler
     assert "!roster.length" not in handler
     assert "roster.map(item =>" not in handler
 
@@ -140,7 +180,7 @@ def test_directory_and_org_upsert_world_roster() -> None:
     org_handler = org.split("function handleWorldUpdate(incomingAgents) {", 1)[1].split(
         "function updateCardStatus(agent) {", 1
     )[0]
-    assert "BossModUtils.mergeRosterFromWorld" in org_handler
+    assert "BossModAgentStatus.mergeRosterFromWorld" in org_handler
     assert "membershipChanged" in org_handler
     assert "renderGrid()" in org_handler
     assert "incomingAgents.length === 0" not in org_handler
@@ -148,7 +188,7 @@ def test_directory_and_org_upsert_world_roster() -> None:
 
 def test_hire_roster_harness_color_and_upsert() -> None:
     result = subprocess.run(
-        ["node", str(HARNESS), str(JS / "utils.js")],
+        ["node", str(HARNESS), str(JS / "core" / "agent-status.js")],
         check=False,
         capture_output=True,
         text=True,

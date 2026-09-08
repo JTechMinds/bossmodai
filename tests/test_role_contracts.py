@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -177,9 +178,36 @@ def test_create_agent_api_allows_blank_done_fail_bar(
     assert persisted.done_fail_bar is None
 
 
+# The agent form is composed from field-group modules (Phase 4 split
+# agent-panel.js). Its markup no longer lives in one file, so a source-index
+# comparison in any one of them would prove nothing about what the operator
+# actually reads. `_form_markup` rebuilds the form in the order buildFormHTML
+# composes it — the stronger subject, because it also proves the composition
+# order in agent-form.js and not just one file's source order.
+_JS = Path("ui/static/js")
+_SECTION_OWNERS = {
+    "BossModAgentFormFields": "context/agent-form-fields.js",
+    "BossModAgentFormAdvanced": "context/agent-form-advanced.js",
+}
+
+
+def _form_markup() -> str:
+    """Every field group's markup, in the order the form renders it."""
+    form = (_JS / "context/agent-form.js").read_text(encoding="utf-8")
+    template = form.split("container.innerHTML = `", 1)[1].split("\n        `;", 1)[0]
+    calls = re.findall(r"\$\{(BossModAgentForm\w+)\.(\w+)\(", template)
+    assert calls, "buildFormHTML composes no field groups"
+    chunks = []
+    for module, fn in calls:
+        source = (_JS / _SECTION_OWNERS[module]).read_text(encoding="utf-8")
+        assert f"function {fn}(" in source, f"{module}.{fn} is not in {_SECTION_OWNERS[module]}"
+        chunks.append(source.split(f"function {fn}(", 1)[1].split("\n    }\n", 1)[0])
+    return "\n".join(chunks)
+
+
 def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> None:
-    panel = Path("ui/static/js/agent-panel.js").read_text(encoding="utf-8")
-    utils_js = Path("ui/static/js/utils.js").read_text(encoding="utf-8")
+    panel = _form_markup()
+    specialty_js = Path("ui/static/js/core/specialty.js").read_text(encoding="utf-8")
     assert 'id="role-contract-card"' in panel
     assert 'name="role"' in panel
     assert "Specialty" in panel
@@ -194,19 +222,27 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "done/fail bar" not in panel.lower()
     assert "KPI" not in panel
     assert "SLA" not in panel
-    assert "done_fail_bar: formData.get('done_fail_bar')" in panel
+    # What the server is told moved to context/agent-submit.js with the split.
+    submit = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")
+    assert "done_fail_bar: formData.get('done_fail_bar')" in submit
     assert "first_unoccupied_chair" not in panel
     assert "No empty desk is free" in panel
     assert "An empty desk is selected when one is free." in panel
-    assert "description: formData.get('description')" in panel
-    assert "bindFinishLineSuggestion" in panel
-    assert "lastSuggested" in panel
-    assert "applySuggestion({ force: true })" in panel
+    assert "description: formData.get('description')" in submit
+    bindings = Path("ui/static/js/context/agent-form-bindings.js").read_text(encoding="utf-8")
+    assert "bindFinishLineSuggestion" in bindings
+    assert "lastSuggested" in bindings
+    assert "applySuggestion({ force: true })" in bindings
+    # ...and the form is what actually calls it. A binding nothing invokes is
+    # the same as no binding at all.
+    assert "bindFinishLineSuggestion" in Path(
+        "ui/static/js/context/agent-form.js"
+    ).read_text(encoding="utf-8")
     assert 'id="advanced-toggle"' in panel
     assert "Advanced" in panel
     assert 'name="personality_id"' in panel
-    assert "suggestFinishLine" in utils_js
-    assert "A named draft or document exists. Empty done does not count." in utils_js
+    assert "suggestFinishLine" in specialty_js
+    assert "A named draft or document exists. Empty done does not count." in specialty_js
     assert panel.index('name="name"') < panel.index('name="role"')
     assert panel.index('name="role"') < panel.index('name="description"')
     assert panel.index('name="description"') < panel.index(">Color</label>")
@@ -224,8 +260,9 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert 'name="runtime_core"' not in panel
     assert panel.index('name="done_fail_bar"') < panel.index("Runtime core")
     assert panel.index("Runtime core") < panel.index('name="personality_id"')
-    assert "nextUnusedAgentColor" in utils_js
-    assert "mergeRosterFromWorld" in utils_js
+    agent_status_js = Path("ui/static/js/core/agent-status.js").read_text(encoding="utf-8")
+    assert "nextUnusedAgentColor" in agent_status_js
+    assert "mergeRosterFromWorld" in agent_status_js
     # Re-pointed in Phase 3A: the assign sheet is places/board/assign-form.js and
     # its result panels are places/board/assign-outcomes.js. The id literals are
     # h() attributes now rather than markup, so `id="x"` reads `id: 'x'`; the
@@ -249,7 +286,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "allow/deny proof" in detail_js
     assert "What done looks like:" in detail_js
     assert "Done/fail bar" not in detail_js
-    assert "What done looks like for this agent:" in utils_js
+    assert "What done looks like for this agent:" in specialty_js
     # Re-pointed in Phase 3B: activity.js and diagnostics.js merged into the
     # Log place. The old assertion was that `world_feedback` appeared in a
     # twenty-five entry icon map, which is what made a role-contract breach

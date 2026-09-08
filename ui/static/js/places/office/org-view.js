@@ -62,7 +62,7 @@ const BossModOrgView = (() => {
                 'data-live-dot': agent.id,
             });
             const label = h('span', { 'data-status-label': agent.id },
-                BossModUtils.getStatusLabel(status, kind));
+                BossModAgentStatus.getStatusLabel(status, kind));
             const badge = h('span', {
                 class: 'status-pill', 'data-status-badge': agent.id,
                 'data-status': status, 'data-activity': kind || '',
@@ -88,8 +88,8 @@ const BossModOrgView = (() => {
                         h('span', { class: 'org-stat-label' }, 'Status'),
                         h('div', { class: 'org-stat-value' }, badge)),
                     stat('Location', agent.location || 'Unknown'),
-                    stat('Tasks done', BossModUtils.formatNumber(agent.tasks_completed ?? 0)),
-                    stat('Tokens used', BossModUtils.formatNumber(agent.tokens_used ?? 0))),
+                    stat('Tasks done', BossModFormat.formatNumber(agent.tasks_completed ?? 0)),
+                    stat('Tokens used', BossModFormat.formatNumber(agent.tokens_used ?? 0))),
                 h('p', { class: 'org-task' },
                     agent.current_task ? String(agent.current_task) : 'No active task'));
             cardNodes.set(agent.id, { root, dot, badge, label });
@@ -172,7 +172,7 @@ const BossModOrgView = (() => {
         function handleWorldUpdate(incomingAgents) {
             if (destroyed || !Array.isArray(incomingAgents)) return;
             const previousIds = agents.map((agent) => agent.id).join('\0');
-            const next = BossModUtils.mergeRosterFromWorld(agents, incomingAgents);
+            const next = BossModAgentStatus.mergeRosterFromWorld(agents, incomingAgents);
             const membershipChanged = previousIds !== next.map((agent) => agent.id).join('\0');
 
             if (membershipChanged) {
@@ -212,7 +212,7 @@ const BossModOrgView = (() => {
             nodes.dot.className = `org-live-dot ${active ? 'is-active' : 'is-idle'}`;
             nodes.badge.setAttribute('data-status', status);
             nodes.badge.setAttribute('data-activity', kind || '');
-            nodes.label.textContent = BossModUtils.getStatusLabel(status, kind);
+            nodes.label.textContent = BossModAgentStatus.getStatusLabel(status, kind);
             nodes.root.classList.toggle('is-dim', !active);
             return true;
         }

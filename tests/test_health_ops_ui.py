@@ -84,6 +84,37 @@ def test_walk_receipts_stay_visible_when_system_toggle_off() -> None:
     assert "messages.filter((message) => !message.systemReceipt)" in conversation
 
 
+def test_connection_changes_refresh_the_no_model_banner() -> None:
+    """Adding or deleting a connection must update the banner that gates Send.
+
+    Both call sites used to read
+    `if (typeof BossModApp !== 'undefined' && ...) BossModApp.refresh...()`.
+    BossModApp died with the dock shell in Phase 1b, so the guard silently
+    swallowed the call: connect your first model and the "No AI model is
+    connected" banner stayed up, with chat Send disabled, until something else
+    happened to refresh it. A typeof guard around a module that no longer
+    exists is not defensive — it is a bug with the alarm switched off.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    for name in ("settings/settings-connections.js",
+                 "settings/settings-connections-form.js"):
+        source = (js / name).read_text(encoding="utf-8")
+        assert "BossModBanners.refreshModelAvailability()" in source, name
+        assert "BossModApp.refreshModelAvailability" not in source, name
+
+    # The whole tree, not just these two: no module may guard its way past a
+    # dependency that is supposed to be there.
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        # The skip list is gone with the files it named: Phase 4 deleted
+        # app.js, dock-manager.js, company-view.js, company-dashboard.js and
+        # agent-panel.js from disk, so the rule now covers the whole tree with
+        # no exceptions. That is the stronger form of the same assertion.
+        assert "typeof BossModApp" not in text, path.name
+
+
 def test_pyproject_drops_unused_duckdb_and_twilio() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "duckdb" not in text

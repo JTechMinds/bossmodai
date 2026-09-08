@@ -42,7 +42,7 @@ const BossModConversation = (() => {
 
         const generation = BossModGates.createLoadGeneration();
         const presence = BossModGates.createChannelPresenceController();
-        const cache = BossModTranscript.createCache();
+        const cache = BossModTranscriptCache.createCache();
         // One unsent draft per conversation. Switching away must not throw
         // away what the operator had half-typed.
         const drafts = new Map();
@@ -57,8 +57,22 @@ const BossModConversation = (() => {
         // buffered rather than dropped; setMessages would otherwise erase them.
         let pendingLive = null;
 
+        /**
+         * When the roster says this agent's active turn began, or null.
+         * The transcript asks; only the controller reads the store.
+         *
+         * @param {string} agentId
+         * @returns {string|null}
+         */
+        function activitySince(agentId) {
+            const row = (store.getState().roster || [])
+                .find((item) => item && item.id === agentId);
+            return (row && row.currentActivitySince) || null;
+        }
+
         const transcript = BossModTranscript.createTranscript({
             presence,
+            activitySince,
             renderMessage: BossModMessage.renderMessage,
             renderEventCard: (message) => BossModEventCards.renderEventCard(message, cardCtx),
         });
@@ -248,6 +262,16 @@ const BossModConversation = (() => {
                 return row ? row.name : '';
             },
             () => { if (source) applyChrome(); }));
+
+        // A presence row that says "working · 12m" has to keep saying the
+        // right number. The roster is replaced on every simulation tick, so
+        // that reference IS the repaint clock — without this the duration
+        // freezes at whatever it read when the turn was announced. Note this
+        // is a STORE subscription, not a socket one: the surface still never
+        // remounts on a tick, which test_meeting_ui_incremental.py enforces.
+        disposers.push(store.subscribe(
+            (s) => s.roster,
+            () => { if (currentId) transcript.renderPresence(currentId); }));
 
         return {
             element,

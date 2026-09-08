@@ -91,26 +91,27 @@ def test_metrics_registers_itself_and_has_four_states() -> None:
 def test_metrics_reuses_shared_formatters() -> None:
     """company-metrics.js defined formatDuration and formatTokenCount locally.
 
-    Both now live in BossModUtils beside formatNumber, moved across verbatim so
-    no displayed number changed. A private copy here would be a second opinion
+    Both now live in BossModFormat beside formatNumber — utils.js in Phase 3B,
+    core/format.js since Phase 4 split it — moved across verbatim so no
+    displayed number changed. A private copy here would be a second opinion
     about what "< 1m" or "0" means.
     """
-    utils = (JS / "utils.js").read_text(encoding="utf-8")
-    assert "function formatDuration(seconds)" in utils
-    assert "function formatTokenCount(n)" in utils
-    assert "formatDuration," in utils and "formatTokenCount," in utils
+    fmt = (JS / "core" / "format.js").read_text(encoding="utf-8")
+    assert "function formatDuration(seconds)" in fmt
+    assert "function formatTokenCount(n)" in fmt
+    assert "formatDuration," in fmt and "formatTokenCount," in fmt
     # Verbatim: the thresholds and the exact strings the pane always showed.
-    assert "if (s < 60) return '< 1m';" in utils
-    assert "if (hours > 0) return `${hours}h ${minutes}m`;" in utils
-    assert "return formatNumber(n) + ' tokens';" in utils
+    assert "if (s < 60) return '< 1m';" in fmt
+    assert "if (hours > 0) return `${hours}h ${minutes}m`;" in fmt
+    assert "return formatNumber(n) + ' tokens';" in fmt
 
     cards = _read("metric-cards.js")
     bars = _read("metric-bars.js")
     assert "U.formatTokenCount(" in cards
     assert "U.formatTokenCount(" in bars
     assert "U.formatDuration(" in cards
-    assert "const U = BossModUtils;" in cards
-    assert "const U = BossModUtils;" in bars
+    assert "const U = BossModFormat;" in cards
+    assert "const U = BossModFormat;" in bars
     for source, name in ((cards, "metric-cards.js"), (bars, "metric-bars.js")):
         assert "function formatDuration(" not in source, f"{name} redefines formatDuration"
         assert "function formatTokenCount(" not in source, f"{name} redefines formatTokenCount"

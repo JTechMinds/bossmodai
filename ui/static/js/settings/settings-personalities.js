@@ -14,6 +14,7 @@ const PersonalitiesSection = (() => {
         let personalities = [];
         try {
             const res = await apiFetch('/api/personalities');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             personalities = await res.json();
         } catch (err) {
             container.innerHTML = '<p class="text-red-500 text-sm">Failed to load personalities.</p>';
@@ -48,8 +49,8 @@ const PersonalitiesSection = (() => {
                 <div class="border border-bm-border rounded-lg p-4 bg-white">
                     <div class="flex items-start justify-between">
                         <div class="min-w-0 flex-1">
-                            <h3 class="font-medium">${BossModUtils.escapeHtml(p.name)}</h3>
-                            <p class="text-sm text-bm-muted mt-1 line-clamp-2">${BossModUtils.escapeHtml(preview)}</p>
+                            <h3 class="font-medium">${BossModFormat.escapeHtml(p.name)}</h3>
+                            <p class="text-sm text-bm-muted mt-1 line-clamp-2">${BossModFormat.escapeHtml(preview)}</p>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
                             <button data-edit-pers="${p.id}"
@@ -78,7 +79,11 @@ const PersonalitiesSection = (() => {
         container.querySelectorAll('[data-edit-pers]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const res = await apiFetch(`/api/personalities/${btn.dataset.editPers}`);
-                if (res.ok) renderForm(await res.json());
+                if (!res.ok) {
+                    showRowError(container, 'This personality could not be opened.');
+                    return;
+                }
+                renderForm(await res.json());
             });
         });
 
@@ -102,7 +107,7 @@ const PersonalitiesSection = (() => {
                         <label class="block text-sm font-medium mb-1">Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">A short label used in dropdowns and the settings list so people can recognize this personality at a glance.</p>
                         <input type="text" name="name" required
-                               value="${BossModUtils.escapeHtml(p?.name || '')}"
+                               value="${BossModFormat.escapeHtml(p?.name || '')}"
                                placeholder="e.g. Product Manager, Code Reviewer"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -115,7 +120,7 @@ const PersonalitiesSection = (() => {
                                   placeholder="You are a senior product manager focused on clarity, prioritization, and stakeholder communication..."
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                         focus:border-bm-accent resize-y font-mono">${BossModUtils.escapeHtml(p?.prompt_template || '')}</textarea>
+                                         focus:border-bm-accent resize-y font-mono">${BossModFormat.escapeHtml(p?.prompt_template || '')}</textarea>
                     </div>
                     <div id="personality-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">

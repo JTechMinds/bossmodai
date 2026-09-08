@@ -143,6 +143,7 @@ const SystemSection = (() => {
         let settings = [];
         try {
             const res = await apiFetch('/api/settings');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             settings = await res.json();
         } catch (err) {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
@@ -190,10 +191,10 @@ const SystemSection = (() => {
             html += `
                     <button
                         type="button"
-                        data-system-category="${BossModUtils.escapeHtml(cat.key)}"
+                        data-system-category="${BossModFormat.escapeHtml(cat.key)}"
                         class="system-category-tab px-4 py-2 rounded-lg text-sm font-medium border transition-colors
                                ${active ? 'bg-bm-accent text-white border-bm-accent shadow-sm' : 'bg-white text-bm-text border-bm-border hover:bg-slate-50'}">
-                        ${BossModUtils.escapeHtml(cat.label)}
+                        ${BossModFormat.escapeHtml(cat.label)}
                     </button>`;
         }
 
@@ -201,8 +202,8 @@ const SystemSection = (() => {
                 </div>
                 <section class="border border-bm-border rounded-xl bg-white p-5 shadow-sm">
                     <div class="mb-4">
-                        <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide">${BossModUtils.escapeHtml(activeCategoryMeta?.label || 'Settings')}</h3>
-                        <p class="text-xs text-bm-muted mt-1">${BossModUtils.escapeHtml(CATEGORY_DESCRIPTIONS[activeCategory] || '')}</p>
+                        <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide">${BossModFormat.escapeHtml(activeCategoryMeta?.label || 'Settings')}</h3>
+                        <p class="text-xs text-bm-muted mt-1">${BossModFormat.escapeHtml(CATEGORY_DESCRIPTIONS[activeCategory] || '')}</p>
                     </div>
                     <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">`;
 
@@ -212,12 +213,12 @@ const SystemSection = (() => {
             const description = meta.description || 'System setting.';
             html += `
                     <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
-                        <label class="block text-sm font-medium mb-1">${BossModUtils.escapeHtml(label)}</label>
-                        <p class="text-xs text-bm-muted mb-1.5">${BossModUtils.escapeHtml(description)}</p>
+                        <label class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(label)}</label>
+                        <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(description)}</p>
                         <input type="text"
-                               data-setting-key="${BossModUtils.escapeHtml(s.key)}"
-                               data-setting-category="${BossModUtils.escapeHtml(s.category)}"
-                               value="${BossModUtils.escapeHtml(s.value)}"
+                               data-setting-key="${BossModFormat.escapeHtml(s.key)}"
+                               data-setting-category="${BossModFormat.escapeHtml(s.category)}"
+                               value="${BossModFormat.escapeHtml(s.value)}"
                                class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">

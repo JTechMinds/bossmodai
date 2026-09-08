@@ -72,7 +72,7 @@ global.lucide = { createIcons() {} };
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModBus;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModUtils = BossModUtils;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
@@ -164,10 +164,10 @@ function rowFor(el, name) {
     }
     if (text(jim()).includes("Paused")) throw new Error("Paused must clear when the runtime resumes");
     store.setState({ needs: [] });
-    // BossModUtils.getStatusLabel('work_active', 'work') === 'working'; the raw
+    // BossModAgentStatus.getStatusLabel('work_active', 'work') === 'working'; the raw
     // status would read 'work_active', so this pins the shared helper.
     if (!text(jim()).includes("working")) {
-        throw new Error(`status label must come from BossModUtils.getStatusLabel, got "${text(jim())}"`);
+        throw new Error(`status label must come from BossModAgentStatus.getStatusLabel, got "${text(jim())}"`);
     }
 
     // ── Search filters on name and role, and keeps the caret ──

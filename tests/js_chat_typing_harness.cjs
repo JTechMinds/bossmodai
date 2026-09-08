@@ -27,6 +27,10 @@ if (typeof BossModGates.createChannelPresenceController !== "function") {
 const presence = BossModGates.createChannelPresenceController();
 const transcript = BossModTranscript.createTranscript({
     presence,
+    // This harness proves SCOPING. A turn with no recorded start keeps the
+    // "is thinking..." copy, which is exactly the five properties' subject;
+    // the duration branch is proven in js_transcript_harness.cjs.
+    activitySince: () => null,
     renderMessage() {
         throw new Error("this harness paints presence only");
     },

@@ -49,7 +49,7 @@ eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModD
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModBus;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModShell = BossModShell;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModNavigator = BossModNavigator;\n`);
 
 const store = BossModStore.createStore({ place: "chat" });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
@@ -73,7 +73,7 @@ BossModPlaces.register("board", {
     unmount() { order.push("unmount:board"); },
 });
 
-const shell = BossModShell.createShell({ store, bus, container, api: () => {} });
+const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {} });
 
 shell.navigate("chat");
 shell.navigate("board");

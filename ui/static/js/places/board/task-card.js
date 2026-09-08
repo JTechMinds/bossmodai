@@ -50,7 +50,7 @@ const BossModTaskCard = (() => {
         }
 
         const title = task.title || 'Untitled task';
-        const age = BossModUtils.formatRelativeTime(task.last_activity);
+        const age = BossModFormat.formatRelativeTime(task.last_activity);
         const marker = MARKERS[task.status];
 
         const meta = h('p', { class: 'task-card-meta' },

@@ -4,8 +4,8 @@
  *
  * Pure rendering over the metrics dashboard payload. It formats
  * nothing itself: `formatNumber`, `formatDuration` and `formatTokenCount` are
- * BossModUtils', because company-metrics.js kept private copies of the last two
- * and a second opinion about what "< 1m" means is a second number on screen.
+ * BossModFormat's, because company-metrics.js kept private copies of the last
+ * two and a second opinion about what "< 1m" means is a second number on screen.
  *
  * Colour comes from data attributes resolved in places.css, never from a
  * hardcoded utility class — the dock-era cards named Tailwind greens and reds
@@ -13,7 +13,7 @@
  */
 const BossModMetricCards = (() => {
     const { h } = BossModDom;
-    const U = BossModUtils;
+    const U = BossModFormat;
 
     /** Thresholds ported verbatim from company-metrics.js. */
     const WARN_PERCENT = 5;

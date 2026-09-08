@@ -11,6 +11,7 @@ const TelegramSection = (() => {
         let settings = [];
         try {
             const res = await apiFetch('/api/settings?category=telegram');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             settings = await res.json();
         } catch {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load Telegram settings.</p>';
@@ -74,7 +75,7 @@ const TelegramSection = (() => {
                     <label class="block text-sm font-medium mb-1">Bot Token</label>
                     <p class="text-xs text-bm-muted mb-1.5">
                         The API token from @BotFather. Treated as a secret &mdash; the full value is never shown after save.
-                        ${hasToken ? `A token is saved (last 4: ${BossModUtils.escapeHtml(tokenLast4)}). Leave blank to keep it.` : 'Saved on change.'}
+                        ${hasToken ? `A token is saved (last 4: ${BossModFormat.escapeHtml(tokenLast4)}). Leave blank to keep it.` : 'Saved on change.'}
                     </p>
                     <input type="password"
                            id="telegram-bot-token"
@@ -82,7 +83,7 @@ const TelegramSection = (() => {
                            data-setting-category="telegram"
                            data-has-secret="${hasToken ? 'true' : 'false'}"
                            value=""
-                           placeholder="${hasToken ? '••••' + BossModUtils.escapeHtml(tokenLast4) : '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}"
+                           placeholder="${hasToken ? '••••' + BossModFormat.escapeHtml(tokenLast4) : '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                   focus:border-bm-accent font-mono">
@@ -101,7 +102,7 @@ const TelegramSection = (() => {
                            id="telegram-allowed-users"
                            data-setting-key="telegram_allowed_user_ids"
                            data-setting-category="telegram"
-                           value="${BossModUtils.escapeHtml(allowedUsers)}"
+                           value="${BossModFormat.escapeHtml(allowedUsers)}"
                            placeholder="123456789, 987654321"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30

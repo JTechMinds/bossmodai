@@ -45,7 +45,7 @@ const BossModTaskEvents = (() => {
                         'data-event-type': KNOWN_TYPES.indexOf(type) === -1 ? 'other' : type,
                     }, type.replace(/_/g, ' ')),
                     event.created_at
-                        ? h('span', {}, BossModUtils.formatRelativeTime(event.created_at))
+                        ? h('span', {}, BossModFormat.formatRelativeTime(event.created_at))
                         : null),
                 h('p', { class: 'task-detail-event-body' }, event.content || ''));
         }

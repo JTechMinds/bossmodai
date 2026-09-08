@@ -195,5 +195,5 @@ def test_files_modules_stay_focused() -> None:
     # Formatters come from the shared module; no private copies.
     for name in ("formatFileSize", "formatRelativeTime"):
         assert f"function {name}(" not in _read("file-grid.js")
-    assert "BossModUtils.formatFileSize(" in _read("file-grid.js")
-    assert "BossModUtils.formatFileSize(" in _read("file-viewer.js")
+    assert "BossModFormat.formatFileSize(" in _read("file-grid.js")
+    assert "BossModFormat.formatFileSize(" in _read("file-viewer.js")

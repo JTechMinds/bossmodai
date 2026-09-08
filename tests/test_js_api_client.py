@@ -19,7 +19,10 @@ APP_JS_FILES = [
 
 # Acceptance surfaces from the backlog: pause, chat, files, settings, simulator.
 CRITICAL_CALL_SITES = {
-    "app.js": [
+    # Pause was app.js's; the header owns it since Phase 1, and app.js was
+    # deleted in Phase 4. Same call, same endpoint, same reason it is listed:
+    # the emergency stop must go through the token wrap like everything else.
+    "shell/header.js": [
         "apiFetch('/api/runtime/state'",
     ],
     # The conversation sources take the helper through ctx.api, so their call
@@ -41,11 +44,17 @@ CRITICAL_CALL_SITES = {
     "places/files/folder-opener.js": [
         "api('/api/company/files/open-folder'",
     ],
-    "settings-connections.js": [
+    # Phase 3C split Connections at the list/form seam: the list reads, the
+    # form writes and tests. Both halves are named so neither loses coverage.
+    "settings/settings-connections.js": [
         "apiFetch('/api/connections')",
+    ],
+    "settings/settings-connections-form.js": [
         "apiFetch('/api/connections/test'",
     ],
-    "cli-policy-simulator.js": [
+    # Phase 3C: the simulator is a shell, a runner and an output painter. The
+    # request lives in the runner.
+    "settings/cli-policy/simulator-run.js": [
         "apiFetch('/api/cli-policy/simulator/execute'",
     ],
 }
@@ -65,6 +74,7 @@ API_BY_INJECTION = {
     "needs/need-shape.js",
     # The context column takes `api` from the place ctx and hands it down.
     "context/desk-files.js",
+    "context/desk-notes.js",
     "context/desk-opener.js",
     "context/desk-panel.js",
     "context/desk-tasks.js",
@@ -145,7 +155,10 @@ def test_index_loads_api_client_after_auth_and_before_app() -> None:
     assert "js/api-auth.js" in sources
     assert "js/api-client.js" in sources
     assert sources.index("js/api-auth.js") < sources.index("js/api-client.js")
-    assert sources.index("js/api-client.js") < sources.index("js/utils.js")
+    # utils.js was split into the three core modules in Phase 4; the load
+    # order it stood for is asserted against each of them.
+    for module in ("js/core/format.js", "js/core/agent-status.js", "js/core/specialty.js"):
+        assert sources.index("js/api-client.js") < sources.index(module)
     # app.js, agent-context.js and company-files.js left the manifest with the
     # dock shell. The modules that call apiFetch in their place are asserted
     # instead, so every loaded consumer is still covered.
@@ -154,8 +167,8 @@ def test_index_loads_api_client_after_auth_and_before_app() -> None:
     assert sources.index("js/api-client.js") < sources.index("js/shell/header.js")
     assert sources.index("js/api-client.js") < sources.index("js/shell/roster.js")
     assert sources.index("js/api-client.js") < sources.index("js/shell/banners.js")
-    assert sources.index("js/api-client.js") < sources.index("js/cli-policy-simulator.js")
-    assert sources.index("js/api-client.js") < sources.index("js/settings-connections.js")
+    assert sources.index("js/api-client.js") < sources.index("js/settings/cli-policy/simulator.js")
+    assert sources.index("js/api-client.js") < sources.index("js/settings/settings-connections.js")
 
 
 def test_modules_below_the_shell_take_api_by_injection() -> None:
@@ -169,7 +182,8 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
     """
     shell = _read("shell/shell.js")
     assert "api: apiFetch" in shell
-    for name in ("conversation/conversation.js",
+    for name in ("context/desk-notes.js",
+                 "conversation/conversation.js",
                  "conversation/sources/agent-source.js",
                  "conversation/sources/thread-source.js",
                  "conversation/sources/thread-archive.js",
@@ -207,7 +221,15 @@ def test_app_js_has_no_raw_fetch_calls() -> None:
             leftovers.append(path.name)
         if "/api/" in text:
             relative = path.relative_to(JS).as_posix()
-            assert "apiFetch(" in text or relative in API_BY_INJECTION, path.name
+            # apiFetchOk counts: api-client.js defines it as apiFetch plus a
+            # res.ok check, so a module that only ever calls the throwing
+            # variant is still entirely under the token wrap. rule-form.js is
+            # the first module whose every call is a mutating save.
+            assert (
+                "apiFetch(" in text
+                or "apiFetchOk(" in text
+                or relative in API_BY_INJECTION
+            ), path.name
     assert leftovers == []
 
 
@@ -263,21 +285,34 @@ def test_api_fetch_ok_throws_on_http_error_with_parsed_detail() -> None:
 
 # Settings / CLI mutating saves that previously ignored res.ok (false-green).
 _SAVE_OK_SITES = {
-    "settings-connections.js": [
-        "apiFetchOk(`/api/connections/${conn.id}`",
-        "apiFetchOk('/api/connections'",
+    "settings/settings-connections.js": [
         "apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`",
     ],
-    "cli-policy-section.js": [
+    "settings/settings-connections-form.js": [
+        "apiFetchOk(`/api/connections/${conn.id}`",
+        "apiFetchOk('/api/connections'",
+    ],
+    "settings/cli-policy/policy-settings.js": [
         "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(newVal)}&category=cli_policy`",
         "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`",
-        "apiFetchOk('/api/cli-policy/rules'",
         "applySettingSaveResult(card, false",
     ],
-    "settings-system.js": [
+    # The rule writes left cli-policy-section.js in Phase 3C. Every mutating
+    # call site is named individually now rather than the create alone, so the
+    # unguarded-mutation scan below still covers all of them.
+    "settings/cli-policy/rules-tab.js": [
+        "apiFetchOk(`/api/cli-policy/rules/${rule.id}`",
+        "apiFetchOk(`/api/cli-policy/rules/${del.dataset.deleteRule}`",
+        "apiFetchOk('/api/cli-policy/rules/seed-defaults'",
+    ],
+    "settings/cli-policy/rule-form.js": [
+        "apiFetchOk(`/api/cli-policy/rules/${rule.id}`",
+        "apiFetchOk('/api/cli-policy/rules'",
+    ],
+    "settings/settings-system.js": [
         "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`",
     ],
-    "settings-advanced.js": [
+    "settings/settings-advanced.js": [
         "apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`",
         "apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
@@ -350,12 +385,12 @@ def test_injected_saves_check_the_response() -> None:
 
 # These already inspect res.ok before success UI; leave the explicit check.
 _ALLOWED_UNGUARDED_MUTATING = {
-    "settings-advanced.js": {
+    "settings/settings-advanced.js": {
         "await apiFetch('/api/agents'",
         "await apiFetch('/api/settings/reseed-application'",
     },
     # Test-connection already branches on resp.ok / result.ok before any success UI.
-    "settings-connections.js": {
+    "settings/settings-connections-form.js": {
         "await apiFetch('/api/connections/test'",
     },
 }

@@ -1,100 +1,15 @@
 /**
- * BossMod AI — application shell.
+ * BossMod AI — application boot.
  *
- * Renders the persistent frame once, then swaps the centre place on
- * navigation. Places receive ctx and are never wired by global name, so a
- * missing module fails loudly at mount instead of silently no-opping.
+ * Builds the store, the bus, and the persistent frame once, in the order that
+ * guarantees every subscriber exists before the first broadcast arrives, then
+ * hands the centre column to shell/navigator.js and connects the socket last.
+ *
+ * The frame is mounted for the life of the page and never swapped. Only the
+ * centre place is, which is why the navigator is a separate module and the
+ * disposers here are deliberately not retained.
  */
 const BossModShell = (() => {
-    const { h, clear } = BossModDom;
-
-    /**
-     * @param {object} options
-     * @param {object} options.store      From BossModStore.createStore.
-     * @param {object} options.bus        From BossModBus.createBus.
-     * @param {HTMLElement} options.container  The centre column element.
-     * @param {Function} options.api      Authenticated request helper, apiFetch.
-     * @param {object} options.needs      From BossModNeeds.createNeedsStore.
-     * @param {HTMLElement} options.contextEl  #app-context. The shell owns the
-     *   element and toggles the column; it knows nothing about what fills it.
-     * @returns {{ navigate: (id: string, params?: object) => void, getCtx: () => object }}
-     */
-    function createShell({ store, bus, container, api, needs, contextEl }) {
-        let current = null;
-
-        const ctx = {
-            store,
-            bus,
-            api,
-            needs,
-            contextEl,
-            navigate: (id, params) => navigate(id, params),
-        };
-
-        /**
-         * Swap the centre place.
-         *
-         * Unmounts the outgoing place before mounting the incoming one, so two
-         * places never hold subscriptions simultaneously. Moves focus to the
-         * new place's heading — without this, keyboard and screen-reader users
-         * are dropped to the top of the document on every navigation.
-         */
-        function navigate(placeId, params) {
-            const place = BossModPlaces.get(placeId);
-            if (!place) throw new Error(`[shell] unknown place "${placeId}"`);
-
-            if (current) {
-                try {
-                    current.unmount();
-                } catch (err) {
-                    // A failing unmount must not strand the UI on the old place,
-                    // but it is a real defect and is never swallowed silently.
-                    console.error(`[shell] unmount of "${store.getState().place}" threw`, err);
-                }
-            }
-
-            clear(container);
-            current = place;
-            store.setState({ place: placeId, placeParams: params || {} });
-
-            try {
-                place.mount(container, ctx);
-            } catch (err) {
-                console.error(`[shell] mount of "${placeId}" threw`, err);
-                renderMountError(placeId, err);
-                return;
-            }
-
-            focusHeading();
-        }
-
-        function renderMountError(placeId, err) {
-            clear(container);
-            container.append(h('div', { class: 'place-error', role: 'alert' },
-                h('h1', { tabindex: '-1' }, `${placeId} could not be opened`),
-                h('p', {}, String((err && err.message) || err)),
-                h('button', {
-                    class: 'btn',
-                    type: 'button',
-                    onclick: () => navigate(placeId, store.getState().placeParams),
-                }, 'Try again')));
-            focusHeading();
-        }
-
-        function focusHeading() {
-            const heading = container.querySelector('h1');
-            if (!heading) {
-                // Every place owes the shell exactly one h1; without it focus
-                // falls to <body> and keyboard navigation silently degrades.
-                console.warn('[shell] mounted place rendered no h1 — focus not moved');
-                return;
-            }
-            heading.setAttribute('tabindex', '-1');
-            heading.focus();
-        }
-
-        return { navigate, getCtx: () => ctx };
-    }
 
     // ─── Boot ───
 
@@ -149,16 +64,18 @@ const BossModShell = (() => {
 
         const layoutElement = requireElement('main-layout');
         const placeElement = requireElement('app-place');
+        const rosterElement = requireElement('app-roster');
+        const contextElement = requireElement('app-context');
         // Built before the frame so the bell, the bar and the toast all read a
         // queue that is already subscribed when the first broadcast lands.
         const needs = BossModNeeds.createNeedsStore({ store, bus, api: apiFetch });
-        const shell = createShell({
+        const shell = BossModNavigator.createNavigator({
             store,
             bus,
             container: placeElement,
             api: apiFetch,
             needs,
-            contextEl: requireElement('app-context'),
+            contextEl: contextElement,
         });
         const navigate = (placeId, params) => shell.navigate(placeId, params);
 
@@ -182,7 +99,7 @@ const BossModShell = (() => {
             needs,
             openSettings: toggleSettings,
         });
-        BossModRoster.mount(requireElement('app-roster'), {
+        BossModRoster.mount(rosterElement, {
             store,
             bus,
             apiFetch,
@@ -208,6 +125,17 @@ const BossModShell = (() => {
             onEscape: closeSettings,
         });
         requireElement('no-model-banner-settings').addEventListener('click', toggleSettings);
+        // Below 1200px the grid sheds a column; these are the buttons that
+        // open what it shed (spec 10). Mounted after the header so they can be
+        // inserted into it.
+        BossModResponsive.mount({
+            headerEl: requireElement('app-header'),
+            layoutEl: layoutElement,
+            rosterEl: rosterElement,
+            placeEl: placeElement,
+            contextEl: contextElement,
+            store,
+        });
 
         // The context column exists on Chat alone; every other place is two
         // columns wide (spec 3.1).
@@ -302,7 +230,7 @@ const BossModShell = (() => {
         socket.connect();
     }
 
-    return { createShell, boot };
+    return { boot };
 })();
 
 document.addEventListener('DOMContentLoaded', () => { void BossModShell.boot(); });

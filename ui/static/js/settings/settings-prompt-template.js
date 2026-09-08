@@ -28,6 +28,9 @@ const PromptTemplateSection = (() => {
                 apiFetch('/api/settings?category=advanced'),
                 apiFetch('/api/runtime/contracts'),
             ]);
+            if (!settingsRes.ok || !runtimeRes.ok) {
+                throw new Error(`HTTP ${settingsRes.ok ? runtimeRes.status : settingsRes.status}`);
+            }
             settings = await settingsRes.json();
             runtimeMeta = await runtimeRes.json();
         } catch (err) {
@@ -48,7 +51,7 @@ const PromptTemplateSection = (() => {
             <div class="mb-4 p-3 bg-slate-50 border border-bm-border rounded-lg">
                 <p class="text-xs font-semibold text-bm-muted uppercase tracking-wide mb-2">Template Syntax</p>
                 <div class="space-y-1 text-xs font-mono text-bm-muted">
-                    ${syntaxExamples.map(ex => `<div>${BossModUtils.escapeHtml(ex)}</div>`).join('')}
+                    ${syntaxExamples.map(ex => `<div>${BossModFormat.escapeHtml(ex)}</div>`).join('')}
                 </div>
             </div>
             <div class="flex gap-0 flex-1 min-h-0" style="height: calc(100vh - 300px); min-height: 400px;">
@@ -59,11 +62,11 @@ const PromptTemplateSection = (() => {
                     <div class="space-y-1">
                         ${allowedVariables.map(item => {
                             const isSubProp = item.name.includes('.');
-                            return `<button type="button" data-var="${BossModUtils.escapeHtml(item.name)}"
+                            return `<button type="button" data-var="${BossModFormat.escapeHtml(item.name)}"
                                 class="spt-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
                                        transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
-                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModUtils.escapeHtml(item.name)}}}</div>
-                                <div class="text-[11px] text-bm-muted leading-tight">${BossModUtils.escapeHtml(item.description)}</div>
+                                <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModFormat.escapeHtml(item.name)}}}</div>
+                                <div class="text-[11px] text-bm-muted leading-tight">${BossModFormat.escapeHtml(item.description)}</div>
                             </button>`;
                         }).join('')}
                     </div>
@@ -76,7 +79,7 @@ const PromptTemplateSection = (() => {
                         <p class="text-xs text-bm-muted">Full wrapper prompt sent before every turn. Controls role framing, context layout, and the rules the model sees.</p>
                     </div>
                     <div class="flex-1 min-h-0 p-4">
-                        <textarea id="system-prompt-textarea" class="${TEXTAREA_CLS}">${BossModUtils.escapeHtml(templateValue)}</textarea>
+                        <textarea id="system-prompt-textarea" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(templateValue)}</textarea>
                     </div>
                     <div class="flex items-center gap-3 px-4 pb-4 shrink-0">
                         <button id="btn-save-template"

@@ -23,6 +23,15 @@ const BossModTranscript = (() => {
     const { isNearEdge } = BossModDom;
 
     /**
+     * How long an active turn must run before the presence row trades
+     * "is thinking..." for a duration. One minute, because that is the exact
+     * point `formatDuration` starts returning a number instead of `< 1m` —
+     * below it the switch would cost the operator information rather than add
+     * any.
+     */
+    const LONG_TURN_MS = 60 * 1000;
+
+    /**
      * A message's dedupe key, normalised. `''` means the backend gave none.
      * @param {object} message
      * @returns {string}
@@ -39,6 +48,10 @@ const BossModTranscript = (() => {
      *   by conversation.js and keyed `conversationId::agentId`.
      * @param {(m: object) => HTMLElement} deps.renderMessage  For kind 'message'.
      * @param {(m: object) => HTMLElement} deps.renderEventCard  For every other kind.
+     * @param {(agentId: string) => string|null} deps.activitySince  ISO-8601
+     *   start of the member's active turn, or null when the roster does not
+     *   know of one. The transcript never reads the roster itself; this is the
+     *   whole of what it needs from it (spec 12, carried items).
      * @returns {{ element: HTMLElement, setMessages: Function, append: Function,
      *             renderPresence: Function, setStatus: Function,
      *             isNearBottom: Function, scrollToBottom: Function,
@@ -51,12 +64,16 @@ const BossModTranscript = (() => {
         const presence = deps && deps.presence;
         const renderMessage = deps && deps.renderMessage;
         const renderEventCard = deps && deps.renderEventCard;
+        const activitySince = deps && deps.activitySince;
         if (!presence) throw new Error('[transcript] deps.presence is required');
         if (typeof renderMessage !== 'function') {
             throw new Error('[transcript] deps.renderMessage is required');
         }
         if (typeof renderEventCard !== 'function') {
             throw new Error('[transcript] deps.renderEventCard is required');
+        }
+        if (typeof activitySince !== 'function') {
+            throw new Error('[transcript] deps.activitySince is required');
         }
 
         const renderedKeys = new Set();
@@ -163,6 +180,32 @@ const BossModTranscript = (() => {
         }
 
         /**
+         * What one presence row says.
+         *
+         * Under the threshold the copy is unchanged, because that is the
+         * honest reading: `formatDuration` says `< 1m` below a minute, which
+         * tells the operator nothing `is thinking...` did not already. Past it
+         * the turn is long enough to be worth a number, so the row switches to
+         * the duration (spec 12, carried items — this is where the retired
+         * `progress` card's information went).
+         *
+         * @param {{agentId: string, name: string}} member
+         * @returns {string}
+         */
+        function presenceText(member) {
+            const since = activitySince(member.agentId);
+            const startedAt = since ? new Date(since).getTime() : NaN;
+            if (!Number.isNaN(startedAt)) {
+                const elapsedMs = Date.now() - startedAt;
+                if (elapsedMs >= LONG_TURN_MS) {
+                    const elapsed = BossModFormat.formatDuration(Math.floor(elapsedMs / 1000));
+                    return `${member.name} is working · ${elapsed}`;
+                }
+            }
+            return `${member.name} is thinking...`;
+        }
+
+        /**
          * Repaint the "someone is thinking" rows for one conversation.
          * @param {string} conversationId
          * @returns {void} An empty presence list clears the slot completely.
@@ -174,7 +217,7 @@ const BossModTranscript = (() => {
                 presenceEl.append(h('div', {
                     class: 'transcript-presence-row',
                     'data-agent-id': member.agentId,
-                }, `${member.name} is thinking...`));
+                }, presenceText(member)));
             }
             keepPresenceLast();
             if (stick) scrollToBottom();
@@ -242,57 +285,5 @@ const BossModTranscript = (() => {
         };
     }
 
-    /**
-     * Last-loaded transcript per conversation, so a re-click is not cold.
-     *
-     * @returns {{ remember: (id: string, messages: object[]) => void,
-     *             recall: (id: string) => object[]|null,
-     *             forget: (id: string) => boolean,
-     *             append: (id: string, message: object) => boolean }}
-     *   `recall` returns a COPY: a caller that mutates what it got back must
-     *   not silently rewrite what the next switch will paint. `append` returns
-     *   false for an unknown id or a key already cached; a keyless message is
-     *   always cached, matching the transcript's own dedupe rule.
-     */
-    function createCache() {
-        const items = new Map();
-
-        function normalize(conversationId) {
-            return String(conversationId || '').trim();
-        }
-
-        function remember(conversationId, messages) {
-            const id = normalize(conversationId);
-            if (!id) return;
-            items.set(id, Array.isArray(messages) ? messages.slice() : []);
-        }
-
-        function recall(conversationId) {
-            const id = normalize(conversationId);
-            if (!id) return null;
-            const entry = items.get(id);
-            return entry ? entry.slice() : null;
-        }
-
-        function forget(conversationId) {
-            const id = normalize(conversationId);
-            if (!id) return false;
-            return items.delete(id);
-        }
-
-        function append(conversationId, message) {
-            const id = normalize(conversationId);
-            if (!id || !message) return false;
-            const entry = items.get(id);
-            if (!entry) return false;
-            const key = messageKey(message);
-            if (key && entry.some((item) => messageKey(item) === key)) return false;
-            entry.push(message);
-            return true;
-        }
-
-        return { remember, recall, forget, append };
-    }
-
-    return { createTranscript, createCache, messageKey };
+    return { createTranscript, messageKey };
 })();

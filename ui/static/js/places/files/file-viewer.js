@@ -117,7 +117,7 @@ const BossModFileViewer = (() => {
         const rendered = h('div', { class: 'file-view-rendered' });
         const editor = h('textarea', { class: 'file-view-editor', hidden: true });
         const status = h('p', { class: 'file-view-status', role: 'status' });
-        const size = BossModUtils.formatFileSize(payload.size_bytes);
+        const size = BossModFormat.formatFileSize(payload.size_bytes);
         const updated = payload.updated_at ? new Date(payload.updated_at).toLocaleString() : '';
 
         const save = h('button', {

@@ -7,7 +7,7 @@
  * the entry point conversation/composer.js opens in Phase 3B.
  *
  * Specialty ranking, the mismatch warning, and the match labels all come from
- * BossModUtils. None of that logic is reimplemented here — a second copy would
+ * BossModSpecialty. None of that logic is reimplemented here — a second copy would
  * be a second opinion about whether an assignment is sensible.
  */
 const BossModAssignForm = (() => {
@@ -26,8 +26,8 @@ const BossModAssignForm = (() => {
      */
     function rankRoster(roster, title, description) {
         return roster.slice().sort((a, b) => {
-            const delta = BossModUtils.specialtyRank(a, title, description)
-                - BossModUtils.specialtyRank(b, title, description);
+            const delta = BossModSpecialty.specialtyRank(a, title, description)
+                - BossModSpecialty.specialtyRank(b, title, description);
             if (delta !== 0) return delta;
             return (a.name || '').localeCompare(b.name || '');
         });
@@ -42,7 +42,7 @@ const BossModAssignForm = (() => {
      * @returns {string}
      */
     function optionLabel(agent, title, description) {
-        const status = BossModUtils.specialtyMatch(agent.role, title, description);
+        const status = BossModSpecialty.specialtyMatch(agent.role, title, description);
         let label = agent.name || 'Teammate';
         if (agent.role) label += ` — ${agent.role}`;
         if (status === 'match') label += ' (matches)';
@@ -131,7 +131,7 @@ const BossModAssignForm = (() => {
 
             clear(mismatch);
             const agent = roster.find((item) => item.id === chosen);
-            const warning = BossModUtils.specialtyWarningMessage(agent, title, note);
+            const warning = BossModSpecialty.specialtyWarningMessage(agent, title, note);
             mismatch.hidden = !warning;
             if (warning) {
                 mismatch.append(

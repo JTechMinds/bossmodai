@@ -16,7 +16,7 @@
  */
 const BossModMetricBars = (() => {
     const { h } = BossModDom;
-    const U = BossModUtils;
+    const U = BossModFormat;
 
     /** Bar tints, cycled. Every one is a token; no hex reaches this file. */
     const HUES = 4;

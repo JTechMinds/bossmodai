@@ -23,6 +23,11 @@ def test_resync_fires_only_on_reconnect() -> None:
         "noResyncOnFirstConnect": True,
         "resyncOnEveryReconnect": True,
         "backoffCapped": True,
+        # Re-pointed from js_ws_reconnect_harness.cjs when Phase 4 deleted
+        # app.js: the retry delay climbs while connects fail and restarts at
+        # 1s after a good one, and a deliberate close leaves no timer behind.
+        "backoffResetsAfterConnect": True,
+        "unloadStopsReconnect": True,
         "routesMessages": True,
     }
 

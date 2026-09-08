@@ -59,12 +59,12 @@ global.document = {
 global.window = { document: global.document };
 global.lucide = { createIcons() {} };
 
-const [dom, store, bus, utils, overlays, places, header, rosterThreads, roster, footer] = process.argv.slice(2);
+const [dom, store, bus, agentStatus, overlays, places, header, rosterThreads, roster, footer] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
 load(store, "BossModStore");
 load(bus, "BossModBus");
-load(utils, "BossModUtils");
+load(agentStatus, "BossModAgentStatus");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
 load(header, "BossModHeader");

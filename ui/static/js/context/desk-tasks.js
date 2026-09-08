@@ -75,7 +75,7 @@ const BossModDeskTasks = (() => {
                     ? h('div', { class: 'desk-task-claim' },
                         h('p', { class: 'desk-task-blocked' }, blocked ? BLOCKED_COPY : 'Done claim'),
                         h('p', { class: 'desk-task-guidance' },
-                            BossModUtils.doneClaimGuidance(task)),
+                            BossModSpecialty.doneClaimGuidance(task)),
                         h('p', { class: 'desk-task-guidance' }, NEEDED_COPY))
                     : null);
         }

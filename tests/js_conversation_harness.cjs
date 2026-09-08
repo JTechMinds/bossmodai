@@ -14,8 +14,8 @@ const documentStub = installDom();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModGates", "BossModConsentCard",
-    "BossModTranscript", "BossModMessage", "BossModEventCards", "BossModConversationChrome",
+    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModGates", "BossModConsentCard",
+    "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];

@@ -27,7 +27,7 @@ const BossModRoster = (() => {
     function statusLine(agent, runtimePaused, agentsWithNeeds) {
         if (runtimePaused) return 'Paused';
         if (agentsWithNeeds.has(agent.id)) return 'Needs you';
-        return BossModUtils.getStatusLabel(agent.status, agent.currentActivityKind);
+        return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
     }
 
     /**
@@ -240,7 +240,7 @@ const BossModRoster = (() => {
                 return;
             }
             peopleState = 'ready';
-            store.setState({ roster: world.map(BossModUtils.normalizeAgent) });
+            store.setState({ roster: world.map(BossModAgentStatus.normalizeAgent) });
         }
 
         // ─── Live updates ───
@@ -248,7 +248,7 @@ const BossModRoster = (() => {
         disposers.push(bus.subscribe('world_update', (world) => {
             peopleState = 'ready';
             store.setState({
-                roster: BossModUtils.mergeRosterFromWorld(people(), world.map(BossModUtils.normalizeAgent)),
+                roster: BossModAgentStatus.mergeRosterFromWorld(people(), world.map(BossModAgentStatus.normalizeAgent)),
             });
         }));
         // A dropped socket loses every world_update and channel_updated in the gap.

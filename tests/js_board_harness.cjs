@@ -17,7 +17,7 @@ global.lucide = null;
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModUtils", "BossModGates",
+    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
     "BossModOverlays", "BossModPlaces",
     "BossModBoardColumns", "BossModBoardData", "BossModBoardGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetail",

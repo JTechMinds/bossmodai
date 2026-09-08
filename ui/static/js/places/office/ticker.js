@@ -40,7 +40,7 @@ const BossModTicker = (() => {
         }, list);
 
         function row(entry) {
-            const when = BossModUtils.formatRelativeTime(entry.timestamp);
+            const when = BossModFormat.formatRelativeTime(entry.timestamp);
             return h('span', {
                 class: 'ticker-entry',
                 // Errors are marked, not coloured alone: the marker carries the

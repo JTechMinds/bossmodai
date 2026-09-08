@@ -147,17 +147,22 @@ const documentStub = {
 global.document = documentStub;
 global.window = { document: documentStub };
 
-const [domPath, gatesPath, transcriptPath] = process.argv.slice(2);
+const [domPath, gatesPath, formatPath, transcriptPath, cachePath] = process.argv.slice(2);
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(gatesPath, "utf8")}\n;global.BossModGates = BossModGates;\n`);
+// The presence row's duration is formatted by the shared formatter, not a
+// second opinion local to the transcript.
+eval(`${fs.readFileSync(formatPath, "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(transcriptPath, "utf8")}\n;global.BossModTranscript = BossModTranscript;\n`);
+eval(`${fs.readFileSync(cachePath, "utf8")}\n;global.BossModTranscriptCache = BossModTranscriptCache;\n`);
 
 const BossModTranscript = global.BossModTranscript;
 if (!BossModTranscript || typeof BossModTranscript.createTranscript !== "function") {
     throw new Error("BossModTranscript.createTranscript missing");
 }
-if (typeof BossModTranscript.createCache !== "function") {
-    throw new Error("BossModTranscript.createCache missing");
+const BossModTranscriptCache = global.BossModTranscriptCache;
+if (!BossModTranscriptCache || typeof BossModTranscriptCache.createCache !== "function") {
+    throw new Error("BossModTranscriptCache.createCache missing");
 }
 
 function message(key, text, kind = "message") {
@@ -177,9 +182,13 @@ function message(key, text, kind = "message") {
 
 const presence = BossModGates.createChannelPresenceController();
 let eventCards = 0;
+// What the roster would say about each agent's active turn. The transcript
+// never reads the roster itself, so a plain map is the whole of the seam.
+const activityStarts = new Map();
 
 const transcript = BossModTranscript.createTranscript({
     presence,
+    activitySince: (agentId) => activityStarts.get(agentId) || null,
     renderMessage(m) {
         const node = new FakeEl("div");
         node.setAttribute("class", "msg");
@@ -203,6 +212,20 @@ try {
     threw = true;
 }
 if (!threw) throw new Error("a missing renderEventCard must throw, not no-op");
+
+let threwOnActivity = false;
+try {
+    BossModTranscript.createTranscript({
+        presence,
+        renderMessage() {},
+        renderEventCard() {},
+    });
+} catch (err) {
+    threwOnActivity = true;
+}
+if (!threwOnActivity) {
+    throw new Error("a missing activitySince must throw, not silently drop the duration");
+}
 
 const listing = transcript.element.querySelector("[data-transcript]");
 if (!listing) throw new Error("the scrolling list must carry data-transcript");
@@ -330,6 +353,39 @@ if (presenceSlot.children.length !== 1) {
     throw new Error("returning to a conversation must restore its presence");
 }
 
+// ─── A long-running turn trades the copy for a duration ───
+// This is where the retired `progress` card's information went (spec 12,
+// carried items). Below the threshold the copy must not move: "< 1m" tells the
+// operator strictly less than "is thinking..." does.
+
+activityStarts.set("ada", new Date(Date.now() - 30 * 1000).toISOString());
+transcript.renderPresence("a");
+const shortTurnUnchanged = presenceSlot.children[0].textContent === "Ada is thinking...";
+if (!shortTurnUnchanged) {
+    throw new Error(`a 30s turn must still read "is thinking...", got "${presenceSlot.children[0].textContent}"`);
+}
+
+activityStarts.set("ada", new Date(Date.now() - 12 * 60 * 1000).toISOString());
+transcript.renderPresence("a");
+const longTurnShowsDuration = presenceSlot.children[0].textContent === "Ada is working · 12m";
+if (!longTurnShowsDuration) {
+    throw new Error(`a 12m turn must read the duration, got "${presenceSlot.children[0].textContent}"`);
+}
+
+// A start time the roster does not have, or cannot parse, is not an excuse to
+// paint a broken row: the copy falls back to the honest one.
+activityStarts.set("ada", "not-a-timestamp");
+transcript.renderPresence("a");
+const unparseableFallsBack = presenceSlot.children[0].textContent === "Ada is thinking...";
+if (!unparseableFallsBack) {
+    throw new Error(`an unparseable start must not paint a duration, got "${presenceSlot.children[0].textContent}"`);
+}
+activityStarts.delete("ada");
+transcript.renderPresence("a");
+if (presenceSlot.children[0].textContent !== "Ada is thinking...") {
+    throw new Error("no start time at all must read as thinking");
+}
+
 // ─── Status states ───
 
 function statusNodes() {
@@ -349,7 +405,7 @@ if (statusNodes().length !== 0) throw new Error("ready must clear the status nod
 
 // ─── Cache ───
 
-const cache = BossModTranscript.createCache();
+const cache = BossModTranscriptCache.createCache();
 cache.remember("a", [message("c1", "cached one")]);
 const recalled = cache.recall("a");
 if (!recalled || recalled.length !== 1) throw new Error("recall must return the remembered list");
@@ -381,5 +437,6 @@ process.stdout.write(JSON.stringify({
     keepsScrollWhenReading: true,
     announcesNewCount: true,
     presenceScoped: true,
+    presenceShowsDuration: shortTurnUnchanged && longTurnShowsDuration && unparseableFallsBack,
     cacheCopies: true,
 }));

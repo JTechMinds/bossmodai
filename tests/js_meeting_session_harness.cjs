@@ -41,6 +41,9 @@ function message(key, author, text) {
 
 const transcript = BossModTranscript.createTranscript({
     presence: global.BossModGates.createChannelPresenceController(),
+    // No meeting turn in this harness has an active activity behind it, so
+    // every presence row keeps the "is thinking..." copy.
+    activitySince: () => null,
     renderMessage(m) {
         const node = document.createElement("div");
         node.className = "msg";

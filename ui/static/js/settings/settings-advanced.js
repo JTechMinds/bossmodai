@@ -11,6 +11,9 @@ const AdvancedSystemSection = (() => {
                 apiFetch('/api/settings?category=advanced'),
                 apiFetch('/api/settings/desktop-open-folder-options'),
             ]);
+            if (!settingsRes.ok || !openerRes.ok) {
+                throw new Error(`HTTP ${settingsRes.ok ? openerRes.status : settingsRes.status}`);
+            }
             settings = await settingsRes.json();
             folderOpenerMeta = await openerRes.json();
         } catch {
@@ -92,7 +95,7 @@ const AdvancedSystemSection = (() => {
                     <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
                     <input type="number" id="diag-retention-limit"
-                           value="${BossModUtils.escapeHtml(diagLimit?.value || '5000')}"
+                           value="${BossModFormat.escapeHtml(diagLimit?.value || '5000')}"
                            min="100" max="50000" step="100"
                            class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -102,7 +105,7 @@ const AdvancedSystemSection = (() => {
                     <label class="block text-sm font-medium mb-1">CLI Read Range Limit (lines)</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum number of lines one <code>read-range</code> command may return before the runtime requires smaller targeted reads.</p>
                     <input type="number" id="cli-read-range-limit"
-                           value="${BossModUtils.escapeHtml(cliReadLimit?.value || '200')}"
+                           value="${BossModFormat.escapeHtml(cliReadLimit?.value || '200')}"
                            min="10" max="5000" step="10"
                            class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -114,7 +117,7 @@ const AdvancedSystemSection = (() => {
                             <h3 class="text-sm font-semibold">Folder Opener</h3>
                             <p class="text-xs text-bm-muted mt-0.5">Choose which app opens Desk folders. If left unset, BossMod will ask the first time you use Open Folder.</p>
                         </div>
-                        <span class="text-xs text-bm-muted">${currentFolderOpener ? `Current: ${BossModUtils.escapeHtml(currentFolderOpener)}` : 'Current: ask on first use'}</span>
+                        <span class="text-xs text-bm-muted">${currentFolderOpener ? `Current: ${BossModFormat.escapeHtml(currentFolderOpener)}` : 'Current: ask on first use'}</span>
                     </div>
                     <div class="mt-3 space-y-3">
                         <label class="block text-sm font-medium">
@@ -125,8 +128,8 @@ const AdvancedSystemSection = (() => {
                                            focus:border-bm-accent">
                                 <option value="">Ask on first use</option>
                                 ${folderOpenerOptions.map(option => `
-                                    <option value="${BossModUtils.escapeHtml(option.value)}" ${folderOpenerMode === 'preset' && currentFolderOpener === option.value ? 'selected' : ''}>
-                                        ${BossModUtils.escapeHtml(option.label)}
+                                    <option value="${BossModFormat.escapeHtml(option.value)}" ${folderOpenerMode === 'preset' && currentFolderOpener === option.value ? 'selected' : ''}>
+                                        ${BossModFormat.escapeHtml(option.label)}
                                     </option>
                                 `).join('')}
                                 <option value="__custom__" ${folderOpenerMode === 'custom' ? 'selected' : ''}>Custom executable</option>
@@ -135,7 +138,7 @@ const AdvancedSystemSection = (() => {
                         <label class="block text-sm font-medium">
                             <span class="block mb-1">Custom executable</span>
                             <input type="text" id="desktop-folder-opener-custom"
-                                   value="${folderOpenerMode === 'custom' ? BossModUtils.escapeHtml(currentFolderOpener) : ''}"
+                                   value="${folderOpenerMode === 'custom' ? BossModFormat.escapeHtml(currentFolderOpener) : ''}"
                                    placeholder="e.g. thunar"
                                    class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30

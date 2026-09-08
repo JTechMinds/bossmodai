@@ -20,7 +20,8 @@ HARNESS = Path(__file__).resolve().parent / "js_board_harness.cjs"
 # views before the place that mounts them.
 HARNESS_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "store.js", JS / "core" / "bus.js",
-    JS / "utils.js", JS / "core" / "gates.js", JS / "core" / "overlays.js",
+    JS / "core" / "format.js", JS / "core" / "specialty.js",
+    JS / "core" / "gates.js", JS / "core" / "overlays.js",
     JS / "shell" / "places.js",
     BOARD / "board-columns.js", BOARD / "board-data.js", BOARD / "board-grid.js",
     BOARD / "task-card.js", BOARD / "task-deliverables.js", BOARD / "task-events.js",
@@ -200,14 +201,15 @@ def test_selection_and_bulk_cancel_are_keyboard_reachable_and_confirmed() -> Non
 def test_assign_form_reuses_the_shared_specialty_helpers() -> None:
     """One opinion about whether an assignment is sensible, not two.
 
-    The ranking, the match labels, and the warning copy all live in utils.js.
+    The ranking, the match labels, and the warning copy all live in
+    core/specialty.js.
     A local copy here would be a second opinion that drifts, and the operator
     would have no way to tell which one they were reading.
     """
     source = (BOARD / "assign-form.js").read_text(encoding="utf-8")
-    assert "BossModUtils.specialtyRank(" in source
-    assert "BossModUtils.specialtyWarningMessage(" in source
-    assert "BossModUtils.specialtyMatch(" in source
+    assert "BossModSpecialty.specialtyRank(" in source
+    assert "BossModSpecialty.specialtyWarningMessage(" in source
+    assert "BossModSpecialty.specialtyMatch(" in source
     for helper in ("specialtyRank", "specialtyWarningMessage", "specialtyMatch",
                    "inferWorkFamily", "specialtyFamily"):
         assert f"function {helper}(" not in source, f"assign-form.js redefines {helper}"

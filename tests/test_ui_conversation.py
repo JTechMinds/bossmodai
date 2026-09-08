@@ -20,9 +20,11 @@ CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     CONVERSATION / "transcript.js",
+    CONVERSATION / "transcript-cache.js",
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
     CONVERSATION / "chrome.js",
@@ -82,22 +84,27 @@ def test_sources_never_touch_the_dom() -> None:
             assert forbidden not in source, f"{name} must not touch the DOM ({forbidden})"
 
 
-def test_transcript_harness() -> None:
+def _transcript_payload() -> dict:
     result = subprocess.run(
         [
             "node",
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "gates.js"),
+            str(JS / "core" / "format.js"),
             str(CONVERSATION / "transcript.js"),
+            str(CONVERSATION / "transcript-cache.js"),
         ],
         check=False,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr or result.stdout
-    payload = json.loads(result.stdout.strip().splitlines()[-1])
-    assert payload == {
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_transcript_harness() -> None:
+    assert _transcript_payload() == {
         "ok": True,
         "dedupes": True,
         "keylessAlwaysAppends": True,
@@ -105,8 +112,45 @@ def test_transcript_harness() -> None:
         "keepsScrollWhenReading": True,
         "announcesNewCount": True,
         "presenceScoped": True,
+        "presenceShowsDuration": True,
         "cacheCopies": True,
     }
+
+
+def test_presence_shows_duration_for_a_long_running_turn() -> None:
+    """The turn duration lives in the presence row, and nowhere else.
+
+    Spec 12, carried items: `progress` had a renderer and no producer, so the
+    operator's answer was to feed `act.created_at` through the world snapshot
+    and paint it where they are already looking. Two halves, both asserted
+    here — the presence row switches copy past the threshold, and the card kind
+    it replaces is gone from event-cards.js so nothing can render the same
+    information a second way.
+    """
+    assert _transcript_payload()["presenceShowsDuration"] is True
+
+    transcript = _read(CONVERSATION / "transcript.js")
+    # The threshold is a named constant, not a magic number buried in a branch.
+    assert "const LONG_TURN_MS" in transcript
+    assert "is working · ${elapsed}" in transcript
+    # Below the threshold the copy is untouched — test_ui_chat_typing.py owns
+    # that property, and this is the line that keeps it reachable.
+    assert "is thinking..." in transcript
+    # The transcript asks for the start time; it never reads the roster itself.
+    assert "deps.activitySince is required" in transcript
+    assert "s.roster" not in transcript
+
+    # The controller is what owns the store, and what keeps the number moving:
+    # a duration painted once and never repainted is worse than no duration.
+    controller = _read(CONVERSATION / "conversation.js")
+    assert "function activitySince(agentId)" in controller
+    assert "currentActivitySince" in controller
+    assert "(s) => s.roster," in controller
+
+    cards = _read(CONVERSATION / "event-cards.js")
+    assert "message.kind === 'progress'" not in cards
+    assert "event-progress" not in cards
+    assert "event-progress" not in _read(CSS / "conversation.css")
 
 
 def test_conversation_harness() -> None:

@@ -24,6 +24,9 @@ RETIRED_SCRIPTS = (
     "js/dock-manager.js", "js/app.js", "js/company-view.js", "js/company-dashboard.js",
     "js/agent-context.js", "js/channels-view.js", "js/channel-thread-dom.js",
     "js/activity.js", "js/canvas.js", "js/diagnostics.js",
+    # The two CLI-policy monoliths Phase 3C broke up. Their replacements live
+    # under js/settings/cli-policy/, so neither prefix can match one of those.
+    "js/cli-policy-section.js", "js/cli-policy-simulator.js",
     # The dock-era company panes. Phase 2B had to name these individually
     # rather than use the prefix "js/company-", because the desk browser was
     # still loading the real company-file-viewer.js. Phase 3B moved that file to
@@ -39,20 +42,45 @@ RETIRED_SCRIPTS = (
 DELETED_MODULES = (
     "company-files.js", "company-file-ops.js", "company-file-viewer.js",
     "company-metrics.js", "activity.js", "diagnostics.js",
+    # Phase 3C: 1,426 lines of CLI policy, now nine files under
+    # settings/cli-policy/. Left on disk they would be the next thing copied
+    # from, the way app.js was.
+    "cli-policy-section.js", "cli-policy-simulator.js",
+    # Phase 4: the last of the dock era. app.js in particular sat unloaded for
+    # three phases carrying `typeof X !== 'undefined'` guards for modules that
+    # no longer existed — working-looking code that could not run.
+    "app.js", "dock-manager.js", "company-view.js", "company-dashboard.js",
+    # Phase 4 also split agent-panel.js into context/agent-*.js.
+    "agent-panel.js", "utils.js",
 )
 
+# Deleted stylesheets. style.css was the dock era's, redistributed into the
+# seven files linked from index.html.
+DELETED_STYLESHEETS = ("style.css",)
+
 SETTINGS_SCRIPTS = [
-    "js/cli-policy-simulator.js",
-    "js/cli-policy-section.js",
-    "js/settings-shared.js",
-    "js/settings-connections.js",
-    "js/settings-personalities.js",
-    "js/settings-system.js",
-    "js/settings-prompt-template.js",
-    "js/settings-advanced.js",
-    "js/settings-runtime-contracts.js",
-    "js/settings-telegram.js",
-    "js/settings-view.js",
+    "js/settings/cli-policy/shared.js",
+    "js/settings/cli-policy/rules-table.js",
+    "js/settings/cli-policy/rules-tab.js",
+    "js/settings/cli-policy/rule-form.js",
+    "js/settings/cli-policy/policy-settings.js",
+    "js/settings/cli-policy/virtual-commands.js",
+    "js/settings/cli-policy/simulator-output.js",
+    "js/settings/cli-policy/simulator-run.js",
+    "js/settings/cli-policy/simulator.js",
+    "js/settings/cli-policy/approvals.js",
+    "js/settings/cli-policy/section.js",
+    "js/settings/settings-shared.js",
+    "js/settings/settings-connections-form.js",
+    "js/settings/settings-connections.js",
+    "js/settings/settings-personalities.js",
+    "js/settings/settings-system.js",
+    "js/settings/settings-prompt-template.js",
+    "js/settings/settings-advanced.js",
+    "js/settings/settings-runtime-contracts-actions.js",
+    "js/settings/settings-runtime-contracts.js",
+    "js/settings/settings-telegram.js",
+    "js/settings/settings-view.js",
 ]
 
 
@@ -83,6 +111,250 @@ def test_the_dock_era_panes_phase_3b_replaced_are_gone_from_disk() -> None:
         assert not (ROOT / "ui" / "static" / "js" / name).exists(), (
             f"{name} is still on disk"
         )
+
+
+# What utils.js exported, minus the three overlay helpers Phase 4 retired.
+# Every one of these must now have exactly one owner under core/.
+UTILS_EXPORTS = {
+    "core/format.js": (
+        "escapeHtml", "formatRelativeTime", "formatNumber", "formatDuration",
+        "formatTokenCount", "formatFileSize",
+    ),
+    "core/agent-status.js": (
+        "normalizeAgent", "AGENT_COLOR_PALETTE", "nextUnusedAgentColor",
+        "mergeRosterFromWorld", "getStatusColor", "getStatusClasses",
+        "getStatusDot", "getStatusLabel",
+    ),
+    "core/specialty.js": (
+        "inferWorkFamily", "specialtyFamily", "suggestFinishLine",
+        "specialtyMatch", "specialtyRank", "specialtyWarningMessage",
+        "doneClaimGuidance", "formatDoneClaim",
+    ),
+}
+
+
+def _core_sources() -> dict[str, str]:
+    core = ROOT / "ui" / "static" / "js" / "core"
+    return {
+        path.relative_to(ROOT / "ui" / "static" / "js").as_posix():
+            path.read_text(encoding="utf-8")
+        for path in sorted(core.rglob("*.js"))
+    }
+
+
+def test_utils_is_gone_and_its_exports_have_owners() -> None:
+    """418 lines, 25 names, four unrelated concerns, and no owner.
+
+    Splitting it is only half the job: the half that can rot silently is a name
+    that ends up defined in two of the three modules, or defined in none
+    because the split dropped it. So every surviving export is checked to be
+    declared exactly once across all of core/, and in the module the split
+    assigned it to.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    assert not (js / "utils.js").exists(), "utils.js is still on disk"
+    assert "js/utils.js" not in _scripts(), "utils.js is still loaded"
+
+    sources = _core_sources()
+    for owner, names in UTILS_EXPORTS.items():
+        assert owner in sources, f"{owner} does not exist"
+        for name in names:
+            declarations = [
+                path for path, text in sources.items()
+                if re.search(rf"^\s*(?:function|const)\s+{re.escape(name)}\b", text, re.M)
+            ]
+            assert declarations == [owner], (
+                f"{name} should be declared once, in {owner}; found {declarations}"
+            )
+            # Declared is not exported. A name that survived the move but
+            # never made it into the return block is unreachable.
+            assert f"{name}," in sources[owner].rsplit("return {", 1)[-1], (
+                f"{owner} declares {name} but does not export it"
+            )
+
+    # 22 names, three owners, no overlap.
+    all_names = [name for names in UTILS_EXPORTS.values() for name in names]
+    assert len(all_names) == 22
+    assert len(set(all_names)) == 22
+
+
+def test_no_module_uses_the_retired_overlay_helpers() -> None:
+    """createModal / openOverlay / closeOverlay were the pre-redesign overlays.
+
+    They had no focus trap and no Esc handling. core/overlays.js is the real
+    one and has both, and by Phase 4 nothing called the old three. Deleting
+    them is only safe while nothing calls them again, which is what this
+    asserts — a module reaching for `BossModUtils` would be reaching for a
+    global that no longer exists, and would fail at runtime rather than here.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    offenders = []
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        relative = path.relative_to(js).as_posix()
+        if "BossModUtils" in text:
+            offenders.append(f"{relative} names BossModUtils")
+        for helper in ("openOverlay", "closeOverlay"):
+            if helper in text:
+                offenders.append(f"{relative} uses {helper}")
+    assert offenders == [], "\n".join(offenders)
+
+    # The surviving createModal is the focus-trapped one, and it is the only
+    # one: a second implementation is how the old pair stayed alive.
+    overlays = (js / "core" / "overlays.js").read_text(encoding="utf-8")
+    assert "function createModal(" in overlays
+    assert "trapKeydown" in overlays
+    modals = [
+        path.relative_to(js).as_posix() for path in sorted(js.rglob("*.js"))
+        if "vendor" not in path.parts and "function createModal(" in path.read_text(encoding="utf-8")
+    ]
+    assert modals == ["core/overlays.js"], modals
+
+
+def test_the_dock_era_is_gone_from_disk() -> None:
+    """Unloaded is not deleted, and unloaded is where the bugs hide.
+
+    These five were dropped from index.html in Phase 1b and left on disk for
+    three phases. In that time app.js and company-view.js kept calling
+    `BossModApp.refreshModelAvailability()` and guarding on globals that had
+    stopped existing, and `test_health_ops_ui.py` had to carve them out of a
+    tree-wide rule to stay green. A file nobody loads is a file nobody fixes
+    and the first thing the next change copies from.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    css = ROOT / "ui" / "static" / "css"
+    for name in ("app.js", "dock-manager.js", "company-view.js", "company-dashboard.js"):
+        assert not (js / name).exists(), f"{name} is still on disk"
+    for name in DELETED_STYLESHEETS:
+        assert not (css / name).exists(), f"{name} is still on disk"
+
+    # Only three top-level modules survive: the two the shell cannot start
+    # without and the Tailwind mirror. Everything else lives in a directory
+    # that says what it is for.
+    top_level = sorted(path.name for path in js.glob("*.js"))
+    assert top_level == ["api-auth.js", "api-client.js", "tailwind-config.js"], top_level
+
+    # The globals they defined must not survive them anywhere in the tree.
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for symbol in ("BossModApp.", "DockManager.", "CompanyView.", "CompanyDashboard."):
+            assert symbol not in text, f"{path.name} calls {symbol}"
+
+    # No stylesheet may reference the deleted one either.
+    for sheet in sorted(css.glob("*.css")):
+        text = sheet.read_text(encoding="utf-8")
+        for name in DELETED_STYLESHEETS:
+            assert name not in text, f"{sheet.name} imports {name}"
+
+
+# Where markup may be built from strings instead of BossModDom.h.
+#
+# `settings/` is the operator's decision, recorded in spec 6.7: the h() rule
+# exists for escaping safety and its priority follows the DATA. Task titles,
+# file names and agent output flow through places/, conversation/, context/,
+# needs/ and shell/; settings render operator-entered configuration, and
+# rewriting ~2,000 lines of the most feature-dense area of the app for a
+# lower-risk data class is scope creep with real regression risk.
+#
+# The two `context/agent-form-*` modules are Phase 4's decision on the same
+# question, made explicitly rather than left ambiguous (Task 4 Step 2). Every
+# value they interpolate is operator-entered configuration — an agent name, a
+# specialty, a connection or a personality created in Settings — and each one
+# already goes through BossModFormat.escapeHtml. They are named INDIVIDUALLY,
+# not by a `context/agent-*` prefix: agent-api.js, agent-edit.js,
+# agent-fields.js, agent-form-bindings.js, agent-recovery.js and
+# agent-submit.js are covered by the rule like everything else, and adding a
+# seventh agent module must not silently inherit the exemption.
+MARKUP_EXEMPT = (
+    "context/agent-form-fields.js",
+    "context/agent-form-advanced.js",
+    "context/agent-form.js",
+)
+
+# Reading `div.innerHTML` back off a text node IS the escape. Banning the
+# getter would ban the mechanism the rule exists to enforce.
+MARKUP_ESCAPE_READER = "core/format.js"
+
+
+def test_the_markup_exemption_stays_bounded() -> None:
+    """innerHTML lives under settings/ and in three named files. Nowhere else.
+
+    An exemption nobody wrote down is an exemption that spreads. This is the
+    written form: everything outside the list builds nodes with BossModDom.h,
+    where a task title or a file name cannot become markup no matter what an
+    agent puts in it.
+
+    The subject is the WRITE — `innerHTML =` and insertAdjacentHTML — because
+    that is what turns a string into nodes. core/format.js reads
+    `div.innerHTML` to escape, which is the opposite of a violation and is
+    allowed by name.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    offenders = []
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        relative = path.relative_to(js).as_posix()
+        if relative.startswith("settings/") or relative in MARKUP_EXEMPT:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "insertAdjacentHTML" in text:
+            offenders.append(f"{relative} uses insertAdjacentHTML")
+        if re.search(r"\.innerHTML\s*=", text):
+            offenders.append(f"{relative} assigns innerHTML")
+        if ".innerHTML" in text and relative != MARKUP_ESCAPE_READER:
+            offenders.append(f"{relative} reads innerHTML")
+    assert offenders == [], "\n".join(offenders)
+
+    # The exemption is real: each named file must actually be building markup.
+    # A stale entry is how a list of exceptions outlives the exception.
+    for relative in MARKUP_EXEMPT:
+        text = (js / relative).read_text(encoding="utf-8")
+        assert re.search(r"innerHTML\s*=", text) or "return `" in text, (
+            f"{relative} is exempt but builds no markup — drop it from the list"
+        )
+        assert "MARKUP EXEMPTION" in text, (
+            f"{relative} is exempt but does not say so in its own docstring"
+        )
+
+    # And it is bounded: the other six agent modules are NOT exempt, which is
+    # what stops "context/agent-*" from becoming the rule by accident.
+    for path in sorted((js / "context").glob("agent-*.js")):
+        relative = path.relative_to(js).as_posix()
+        if relative in MARKUP_EXEMPT:
+            continue
+        assert "innerHTML" not in path.read_text(encoding="utf-8"), relative
+
+
+def test_every_module_stays_under_the_line_cap() -> None:
+    """One assertion over the whole tree, not five over five directories.
+
+    places/, conversation/, context/, needs/ and settings/ each had their own
+    copy of this rule, so the modules that belonged to none of them — the top
+    level, core/, shell/ — were never checked. shell.js was 321 lines when this
+    was written and nothing said so.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    oversized = {}
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        lines = len(path.read_text(encoding="utf-8").splitlines())
+        if lines >= 300:
+            oversized[path.relative_to(js).as_posix()] = lines
+    assert oversized == {}, f"over the 300-line cap: {oversized}"
+
+    # The rule is worth nothing if it covers three files. Every directory the
+    # spec names must actually be on disk and carry modules.
+    directories = {path.relative_to(js).parts[0] for path in js.rglob("*.js")
+                   if "vendor" not in path.parts and len(path.relative_to(js).parts) > 1}
+    assert directories == {
+        "core", "shell", "conversation", "context", "needs", "places", "settings",
+    }, directories
 
 
 def test_api_auth_is_the_first_script() -> None:
@@ -119,7 +391,15 @@ def test_settings_takeover_and_banners_survive() -> None:
 # object another loaded script calls into.
 # CompanyFileViewer left this list in Phase 3B: the shared viewer is
 # BossModFileViewer now, which the BossMod* pattern already covers.
-NON_PREFIXED_GLOBALS = ("SettingsView", "AgentPanel")
+# CliPolicySection and CliPolicySimulator joined in Phase 3C. Both were always
+# cross-module calls — settings-view.js into the section, the section into the
+# simulator — but neither matched the BossMod* pattern, so the load-order guard
+# below could not see them. Now that all nine CLI-policy modules load from a
+# different directory than their callers, an unseen ordering bug is exactly the
+# failure this phase could introduce.
+NON_PREFIXED_GLOBALS = (
+    "SettingsView", "AgentPanel", "CliPolicySection", "CliPolicySimulator",
+)
 
 MODULE_DEF = re.compile(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(", re.M)
 MODULE_USE = re.compile(
@@ -144,8 +424,9 @@ def test_every_module_global_a_loaded_script_calls_is_actually_loaded() -> None:
 
     References written as `typeof X !== 'undefined'` are excluded on purpose:
     that is the documented optional-capability pattern, and such a reference
-    cannot throw. Two dock-era ones survive in settings-connections.js
-    (BossModApp, BossModApi); Phase 4's cleanup owns them.
+    cannot throw. Two dock-era ones survive in the Connections section, which
+    Phase 3C split in two: BossModApp in both halves and BossModApi in the
+    form. Phase 4's cleanup owns them.
     """
     scripts = _loaded_app_scripts()
     assert scripts, "index.html loads no application scripts"

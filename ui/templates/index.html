@@ -20,9 +20,6 @@
     <!-- Lucide Icons (vendored UMD 0.469.0) -->
     <script src="{{ static_url('js/vendor/lucide.min.js') }}"></script>
 
-    <!-- Split.js (vendored 1.6.5) — the Board's table/detail divider -->
-    <script src="{{ static_url('js/vendor/split.min.js') }}"></script>
-
     <!-- Marked.js (local, markdown renderer) -->
     <script src="{{ static_url('js/vendor/marked.min.js') }}"></script>
 
@@ -99,7 +96,9 @@
 
     <!-- ═══════════════ SCRIPTS ═══════════════ -->
     <script src="{{ static_url('js/api-client.js') }}"></script>
-    <script src="{{ static_url('js/utils.js') }}"></script>
+    <script src="{{ static_url('js/core/format.js') }}"></script>
+    <script src="{{ static_url('js/core/agent-status.js') }}"></script>
+    <script src="{{ static_url('js/core/specialty.js') }}"></script>
 
     <script src="{{ static_url('js/core/dom.js') }}"></script>
     <script src="{{ static_url('js/core/store.js') }}"></script>
@@ -112,6 +111,7 @@
          event-cards.js, and conversation.js builds the bar, so the needs block
          sits between them rather than before or after both. -->
     <script src="{{ static_url('js/conversation/transcript.js') }}"></script>
+    <script src="{{ static_url('js/conversation/transcript-cache.js') }}"></script>
     <script src="{{ static_url('js/conversation/message.js') }}"></script>
     <script src="{{ static_url('js/conversation/event-cards.js') }}"></script>
     <script src="{{ static_url('js/conversation/chrome.js') }}"></script>
@@ -136,6 +136,7 @@
     <script src="{{ static_url('js/conversation/conversation.js') }}"></script>
 
     <script src="{{ static_url('js/shell/places.js') }}"></script>
+    <script src="{{ static_url('js/shell/navigator.js') }}"></script>
     <script src="{{ static_url('js/shell/session.js') }}"></script>
     <script src="{{ static_url('js/shell/socket.js') }}"></script>
     <script src="{{ static_url('js/shell/header.js') }}"></script>
@@ -144,18 +145,31 @@
     <script src="{{ static_url('js/shell/footer.js') }}"></script>
     <script src="{{ static_url('js/shell/banners.js') }}"></script>
     <script src="{{ static_url('js/shell/shortcuts.js') }}"></script>
+    <script src="{{ static_url('js/shell/responsive.js') }}"></script>
 
-    <script src="{{ static_url('js/cli-policy-simulator.js') }}"></script>
-    <script src="{{ static_url('js/cli-policy-section.js') }}"></script>
-    <script src="{{ static_url('js/settings-shared.js') }}"></script>
-    <script src="{{ static_url('js/settings-connections.js') }}"></script>
-    <script src="{{ static_url('js/settings-personalities.js') }}"></script>
-    <script src="{{ static_url('js/settings-system.js') }}"></script>
-    <script src="{{ static_url('js/settings-prompt-template.js') }}"></script>
-    <script src="{{ static_url('js/settings-advanced.js') }}"></script>
-    <script src="{{ static_url('js/settings-runtime-contracts.js') }}"></script>
-    <script src="{{ static_url('js/settings-telegram.js') }}"></script>
-    <script src="{{ static_url('js/settings-view.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/shared.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/rules-table.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/rules-tab.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/rule-form.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/policy-settings.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/virtual-commands.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/simulator-output.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/simulator-shell.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/simulator-run.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/simulator.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/approvals.js') }}"></script>
+    <script src="{{ static_url('js/settings/cli-policy/section.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-shared.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-connections-form.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-connections.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-personalities.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-system.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-prompt-template.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-advanced.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-runtime-contracts-actions.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-runtime-contracts.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-telegram.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-view.js') }}"></script>
 
     <!-- Files: the shared viewer and the dialogs come first, because the desk
          browser opens the viewer and the Board's deliverable cards do too.
@@ -179,10 +193,18 @@
          SettingsView, and the desk browser, which opens the shared file
          viewer. Both must already be defined, so this block loads last before
          the shell boots. -->
-    <script src="{{ static_url('js/agent-panel.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-api.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-advanced.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-bindings.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-submit.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-recovery.js') }}"></script>
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
     <script src="{{ static_url('js/context/desk-files.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
     <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
     <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
     <script src="{{ static_url('js/context/desk-panel.js') }}"></script>

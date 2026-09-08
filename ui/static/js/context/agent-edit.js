@@ -1,19 +1,135 @@
 /**
  * BossMod AI — hire and edit, hosted in the context column.
  *
- * A thin host over AgentPanel.renderInline. agent-panel.js is 824 lines and
- * already carries the form, its duplicate-name warning, its in-flight submit
- * gate, and the recovery tools — all covered by test_hire_ui_poke.py. Rewriting
- * a working, well-tested hire form inside a phase about needs and context would
- * be scope creep, not cleanup; spec 2 renames it to context/agent-edit.js
- * proper in Phase 4's "split the remainder" work.
+ * Phase 4 finished the split spec 2 planned: agent-panel.js is gone and its
+ * 825 lines are eight modules under context/. What lands here is the entry
+ * point the column already called plus the orchestration `renderInline` always
+ * did — the in-flight submit gate and the save and delete paths. The form
+ * itself is context/agent-form.js, its fields are context/agent-fields.js,
+ * context/agent-form-fields.js and context/agent-form-advanced.js, its
+ * per-field behaviours are context/agent-form-bindings.js, what the server is
+ * told is context/agent-submit.js, the feedback line and the two destructive
+ * tools are context/agent-recovery.js, and every request is
+ * context/agent-api.js.
  *
- * What this module owns is the wiring the dock-era host used to do: after a
- * successful CREATE the form closes and the new agent becomes the open
- * conversation, and after a delete the column falls back to the office.
+ * What this module owns beyond that is the wiring the dock-era host used to
+ * do: after a successful CREATE the form closes and the new agent becomes the
+ * open conversation, and after a delete the column falls back to the office.
  */
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
+
+    // ─── State ───
+    let currentAgentId = null;
+    let isCreating = false;
+
+    /**
+     * Render the form into `container` and own everything that happens after.
+     *
+     * @param {HTMLElement} container
+     * @param {object|null} agent      null to hire.
+     * @param {(saved?: object) => void} onSave    Called with the saved agent
+     *   after a create/update, and with nothing after a recovery action, which
+     *   saves nothing about the agent itself.
+     * @param {() => void} onDelete
+     * @returns {Promise<void>} Rejects only if the form itself cannot render;
+     *   a failed SAVE becomes the in-form feedback and the draft is kept.
+     */
+    async function renderInline(container, agent, onSave, onDelete) {
+        isCreating = !agent;
+        currentAgentId = agent?.id || null;
+        if (agent?.id) {
+            const full = await BossModAgentApi.fetchAgent(agent.id);
+            if (full) {
+                agent = { ...agent, ...full };
+            }
+        }
+
+        await BossModAgentForm.buildFormHTML(container, agent);
+
+        const form = container.querySelector('#agent-form');
+        const deleteBtn = container.querySelector('#btn-delete-agent');
+
+        // Fetch connections for submit resolution
+        let connections = [];
+        try {
+            const res = await apiFetch('/api/connections');
+            connections = await res.json();
+        } catch { /* empty */ }
+
+        const RECOVERY = BossModAgentRecovery;
+        const feedback = RECOVERY.createFeedback(form);
+        const say = (tone, text) => feedback.say(tone, text);
+        RECOVERY.bindRecoveryTools({
+            container,
+            agentId: () => currentAgentId,
+            feedback,
+            onSave: () => { if (onSave) onSave(); },
+        });
+
+        const submitBtn = form.querySelector('#agent-form-submit');
+        const hireSubmit = BossModGates.createInFlightGate();
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (hireSubmit.busy()) return;
+
+            await hireSubmit.run(async () => {
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = isCreating ? 'Creating…' : 'Saving…';
+                }
+                say('busy', 'Saving...');
+
+                let savedAgent = null;
+                try {
+                    const { agentData, promptHistoryPolicy } = await BossModAgentSubmit.buildSubmitData(form, connections);
+                    if (isCreating) {
+                        savedAgent = await BossModAgentApi.apiCreateAgent(agentData);
+                    } else {
+                        savedAgent = await BossModAgentApi.apiUpdateAgent(currentAgentId, agentData);
+                    }
+
+                    try {
+                        await BossModAgentApi.apiUpdatePromptHistoryPolicy(savedAgent.id, promptHistoryPolicy);
+                    } catch (policyErr) {
+                        console.error('[agent-edit] Prompt history policy save failed:', policyErr);
+                        say('warn', 'Agent saved, but AI history settings failed to save.');
+                        if (onSave) onSave(savedAgent);
+                        return;
+                    }
+
+                    say('ok', 'Saved successfully');
+                    setTimeout(() => feedback.hide(), 3000);
+                    if (onSave) onSave(savedAgent);
+                } catch (err) {
+                    console.error('[agent-edit] Save failed:', err);
+                    say('bad', err?.message || 'Save failed — check console for details');
+                } finally {
+                    if (submitBtn && (!isCreating || !savedAgent)) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = isCreating ? 'Create Agent' : 'Save Changes';
+                    }
+                }
+            });
+        });
+
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => {
+                if (!currentAgentId) return;
+                RECOVERY.confirmDestructive(
+                    'Delete this agent?', 'This cannot be undone.', 'Delete agent',
+                    () => {
+                        void BossModAgentApi.apiDeleteAgent(currentAgentId)
+                            .then(() => { if (onDelete) onDelete(); })
+                            .catch((err) => {
+                                console.error('[agent-edit] Delete failed:', err);
+                                say('bad', err?.message || 'Delete failed — check console for details');
+                            });
+                    });
+            });
+        }
+    }
 
     /**
      * Host the agent form.
@@ -78,7 +194,7 @@ const BossModAgentEdit = (() => {
 
         // renderInline resolves after the form is in the DOM; a failure is the
         // operator's to see, not the console's alone.
-        void AgentPanel.renderInline(formEl, agent || null, onSave, onDelete)
+        void renderInline(formEl, agent || null, onSave, onDelete)
             .catch((err) => {
                 console.error('[agent-edit] the agent form failed to render', err);
                 if (destroyed) return;
@@ -101,5 +217,5 @@ const BossModAgentEdit = (() => {
         };
     }
 
-    return { createAgentEdit };
+    return { createAgentEdit, renderInline };
 })();

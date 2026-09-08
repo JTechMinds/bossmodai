@@ -20,7 +20,7 @@ FILES_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
-    JS / "utils.js",
+    JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "places.js",
@@ -127,14 +127,23 @@ def test_company_files_open_folder_errors_are_visible() -> None:
 
 
 def test_settings_can_open_cli_policy_host_roots() -> None:
-    view = _read("settings-view.js")
+    view = _read("settings/settings-view.js")
     assert "function open(sectionId, options)" in view
     assert "CliPolicySection.render(content, pendingOptions)" in view
-    section = _read("cli-policy-section.js")
+    section = _read("settings/cli-policy/section.js")
     assert "async function render(el, options)" in section
     assert "options.focusKey" in section
-    assert "data-setting-card=" in section
-    assert "Host workspace roots can also be added from Company Files" in section
+    # Phase 3C split the Settings tab out of the section. The deep link now has
+    # one more hop — section -> policy-settings.js — so the hop itself is
+    # asserted; without it the split could drop the focus key and every
+    # remaining assertion here would still pass.
+    assert "BossModCliPolicySettings.renderSettingsTab(content, { takeFocusKey })" in section
+    settings_tab = _read("settings/cli-policy/policy-settings.js")
+    assert "renderSettingsTab(el, { takeFocusKey })" in settings_tab
+    assert "const focusKey = takeFocusKey();" in settings_tab
+    assert '`[data-setting-card="${focusKey}"]`' in settings_tab
+    assert "data-setting-card=" in settings_tab
+    assert "Host workspace roots can also be added from Company Files" in settings_tab
 
 
 def test_company_files_named_path_harness() -> None:

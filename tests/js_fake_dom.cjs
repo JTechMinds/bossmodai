@@ -167,6 +167,29 @@ class FakeEl {
         return node;
     }
 
+    prepend(...nodes) {
+        const existing = this.children;
+        this.children = [];
+        this.append(...nodes);
+        for (const child of existing) {
+            child.parent = this;
+            this.children.push(child);
+        }
+        this._text = "";
+    }
+
+    insertBefore(node, reference) {
+        if (node.parent) {
+            node.parent.children = node.parent.children.filter((child) => child !== node);
+        }
+        node.parent = this;
+        const at = this.children.indexOf(reference);
+        if (at === -1) this.children.push(node);
+        else this.children.splice(at, 0, node);
+        this._text = "";
+        return node;
+    }
+
     replaceChildren(...nodes) {
         for (const child of this.children) child.parent = null;
         this.children = [];
@@ -320,14 +343,40 @@ function installDom() {
     // path runs; delete window.localStorage in a harness to exercise the
     // blocked-storage branch instead.
     const stored = new Map();
+    const mediaQueries = new Map();
     global.document = documentStub;
     global.window = {
         document: documentStub,
         lucide: null,
         // Real browser API, not a module: the toast asks whether the operator
-        // has asked for reduced motion. Reassign in a harness to exercise the
-        // reduced-motion branch.
-        matchMedia: (query) => ({ media: String(query), matches: false }),
+        // has asked for reduced motion, and the responsive layer asks which
+        // breakpoint is live. Reassign window.matchMedia in a harness to
+        // exercise a query that matches, or call `_emit` on what this returns
+        // to simulate a viewport crossing a breakpoint.
+        matchMedia: (query) => {
+            // Memoised by query, as a browser's is: two calls for the same
+            // media string must return the same object, or a harness cannot
+            // reach the listener the module under test registered.
+            const key = String(query);
+            if (mediaQueries.has(key)) return mediaQueries.get(key);
+            const listeners = [];
+            const media = {
+                media: String(query),
+                matches: false,
+                addEventListener: (_type, fn) => { listeners.push(fn); },
+                removeEventListener: (_type, fn) => {
+                    const at = listeners.indexOf(fn);
+                    if (at !== -1) listeners.splice(at, 1);
+                },
+                _listenerCount: () => listeners.length,
+                _emit: (matches) => {
+                    media.matches = matches;
+                    listeners.slice().forEach((fn) => fn({ matches }));
+                },
+            };
+            mediaQueries.set(key, media);
+            return media;
+        },
         localStorage: {
             getItem: (key) => (stored.has(key) ? stored.get(key) : null),
             setItem: (key, value) => { stored.set(key, String(value)); },
