@@ -82,11 +82,11 @@ const SettingsView = (() => {
 
     function navButton(item) {
         const active = activeSection === item.id;
-        return `<button data-section="${item.id}"
+        return `<button data-section="${BossModFormat.escapeAttribute(item.id)}"
                     class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
                            transition-colors text-left
                            ${active ? 'bg-bm-accent/10 text-bm-accent' : 'text-bm-text hover:bg-slate-100'}">
-                <i data-lucide="${item.icon}" class="w-4 h-4 shrink-0"></i>
+                <i data-lucide="${BossModFormat.escapeAttribute(item.icon)}" class="w-4 h-4 shrink-0"></i>
                 ${item.label}
             </button>`;
     }

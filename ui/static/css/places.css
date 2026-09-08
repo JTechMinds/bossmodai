@@ -411,6 +411,19 @@
 .task-card:hover { border-color: var(--line-strong); }
 .task-card.is-selected { border-color: var(--accent); background: var(--accent-bg); }
 
+/* Selection swaps the ground under rules that were written for the neutral
+   card: --hint measures 4.19:1 on --accent-bg and fails AA there, --muted is
+   5.67:1. --muted and not --blue-ink, which is 6.86:1 and is what .msg-human
+   gives its children, because that bubble sets `color` for ITSELF and its
+   children are taking the tint's own ink. A card sets no colour: the title
+   stays --ink and .task-card-meta stays --muted whether or not it is selected,
+   so blue metadata here would read as a link and split one card's text across
+   two ramps. Same correction .roster-row[data-selected="true"] carries in
+   shell.css, for the same reason. */
+.task-card.is-selected .task-card-age,
+.task-card.is-selected .task-card-subs,
+.task-card.is-selected .task-card-parent { color: var(--muted); }
+
 /* Done recedes; it does not vanish. The card keeps its border and its
    affordances — only the text steps back, at --muted's 6.54:1 on --panel. */
 .board-column[data-column="done"] .task-card { color: var(--muted); }

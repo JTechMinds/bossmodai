@@ -495,11 +495,17 @@
 .event-card-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .event-card-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: break-word; }
 
+/* --alert-ink, not --alert: EVENT_TONES in conversation/event-cards.js maps
+   every tone onto tone-alert, tone-amber or tone-ok, so this line is always
+   text on a tint and never on --panel. --alert measures 4.29 on --alert-bg,
+   4.11 on --amber and 4.36 on --ok-bg — under AA on all three, and on the one
+   line in the card that carries role="alert". --alert-ink is 5.86 / 5.61 /
+   5.95, which is what that token exists for (tokens.css). */
 .event-card-error {
   margin: 6px 0 0;
   font-size: 12px;
   font-weight: 500;
-  color: var(--alert);
+  color: var(--alert-ink);
 }
 
 .event-card-actions {

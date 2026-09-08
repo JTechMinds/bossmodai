@@ -15,6 +15,7 @@
  */
 const BossModCliPolicyShared = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
 
     let agentsCache = [];
     let agentsFetched = false;
@@ -93,7 +94,7 @@ const BossModCliPolicyShared = (() => {
             expired:  'bg-slate-500/10 text-slate-400',
         };
         const cls = map[status] || 'bg-slate-500/10 text-slate-400';
-        return `<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium capitalize ${cls}">${esc(status)}</span>`;
+        return `<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium capitalize ${escAttr(cls)}">${esc(status)}</span>`;
     }
 
     /**

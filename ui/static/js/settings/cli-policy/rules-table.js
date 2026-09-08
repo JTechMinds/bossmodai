@@ -14,6 +14,7 @@
  */
 const BossModCliPolicyRulesTable = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons, agentName } = BossModCliPolicyShared;
 
     const TIER_ORDER  = { never_allowed: 0, approval_required: 1, always_allowed: 2 };
@@ -98,24 +99,24 @@ const BossModCliPolicyRulesTable = (() => {
                 const tierCss = TIER_CSS[rule.tier] || '';
                 const tierShort = TIER_SHORT[rule.tier] || '';
                 html += `
-                <tr class="bm-rule-row" data-rule-id="${rule.id}">
+                <tr class="bm-rule-row" data-rule-id="${escAttr(rule.id)}">
                     <td class="bm-rule-cmd">${esc(rule.pattern)}</td>
-                    <td><span class="bm-tier-label ${tierCss}">${esc(tierShort)}</span></td>
+                    <td><span class="bm-tier-label ${escAttr(tierCss)}">${esc(tierShort)}</span></td>
                     <td style="color:#475569;font-size:12.5px">${esc(rule.description || '')}</td>
                     <td style="color:#475569;font-size:12.5px">${esc(rule.category || '')}</td>
                     <td style="color:#475569;font-size:12.5px">${esc(rule.match_mode)}</td>
                     <td>
-                        <button class="bm-toggle" role="switch" aria-checked="${checked}"
-                                data-toggle-rule="${rule.id}" title="${checked ? 'Enabled' : 'Disabled'}">
+                        <button class="bm-toggle" role="switch" aria-checked="${checked ? 'true' : 'false'}"
+                                data-toggle-rule="${escAttr(rule.id)}" title="${checked ? 'Enabled' : 'Disabled'}">
                             <span class="bm-toggle-knob"></span>
                         </button>
                     </td>
                     <td>
                         <div class="bm-rule-actions">
-                            <button class="bm-action-btn" data-edit-rule="${rule.id}" title="Edit">
+                            <button class="bm-action-btn" data-edit-rule="${escAttr(rule.id)}" title="Edit">
                                 <i data-lucide="pencil" class="w-3.5 h-3.5 text-bm-muted"></i>
                             </button>
-                            <button class="bm-action-btn bm-delete" data-delete-rule="${rule.id}" title="Delete">
+                            <button class="bm-action-btn bm-delete" data-delete-rule="${escAttr(rule.id)}" title="Delete">
                                 <i data-lucide="trash-2" class="w-3.5 h-3.5 text-red-400"></i>
                             </button>
                         </div>

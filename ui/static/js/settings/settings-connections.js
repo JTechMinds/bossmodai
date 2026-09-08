@@ -70,12 +70,12 @@ const ConnectionsSection = (() => {
                             </div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
-                            <button data-edit-conn="${conn.id}"
+                            <button data-edit-conn="${BossModFormat.escapeAttribute(conn.id)}"
                                     class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
                                     title="Edit">
                                 <i data-lucide="pencil" class="w-4 h-4 text-bm-muted"></i>
                             </button>
-                            <button data-delete-conn="${conn.id}"
+                            <button data-delete-conn="${BossModFormat.escapeAttribute(conn.id)}"
                                     class="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
                                     title="Delete">
                                 <i data-lucide="trash-2" class="w-4 h-4 text-red-400"></i>

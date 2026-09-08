@@ -84,12 +84,12 @@ const BossModAgentFormFields = (() => {
             const selected = defaultColor === c.value;
             const tint = BossModAvatar.tintFor(c.value);
             return `<label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="agent-color" value="${c.value}"
+                <input type="radio" name="agent-color" value="${BossModFormat.escapeAttribute(c.value)}"
                        ${selected ? 'checked' : ''}
                        class="hidden peer">
                 <span class="avatar avatar-md border-2 peer-checked:border-slate-800 border-transparent
                              transition-all" aria-hidden="true"
-                      style="background:${tint.bg};color:${tint.ink}">${previewInitial}</span>
+                      style="background:${BossModFormat.escapeAttribute(tint.bg)};color:${BossModFormat.escapeAttribute(tint.ink)}">${previewInitial}</span>
                 <span class="text-sm">${c.name}</span>
             </label>`;
         }).join('');
@@ -137,8 +137,8 @@ const BossModAgentFormFields = (() => {
             <div class="flex items-center justify-between text-sm">
                 <span class="text-bm-muted">Status</span>
                 <span id="agent-runtime-status-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
-                             ${BossModAgentStatus.getStatusClasses(agent.status || 'idle', agent.currentActivityKind)}">
-                    <span id="agent-runtime-status-dot" class="w-1.5 h-1.5 rounded-full ${BossModAgentStatus.getStatusDot(agent.status || 'idle', agent.currentActivityKind)}"></span>
+                             ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusClasses(agent.status || 'idle', agent.currentActivityKind))}">
+                    <span id="agent-runtime-status-dot" class="w-1.5 h-1.5 rounded-full ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusDot(agent.status || 'idle', agent.currentActivityKind))}"></span>
                     <span id="agent-runtime-status-label">${BossModAgentStatus.getStatusLabel(agent.status || 'idle', agent.currentActivityKind)}</span>
                 </span>
             </div>

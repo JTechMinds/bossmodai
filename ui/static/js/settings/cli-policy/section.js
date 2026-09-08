@@ -20,6 +20,7 @@ const CliPolicySection = (() => {
     // Shared badge / roster helpers live in cli-policy/shared.js — several
     // tabs use them and they get exactly one home.
     const { icons, fetchAgents } = BossModCliPolicyShared;
+    const escAttr = BossModFormat.escapeAttribute;
 
     let pendingFocusKey = null;
 
@@ -121,10 +122,10 @@ const CliPolicySection = (() => {
         for (const tab of TABS) {
             const active = tab.id === activeTab;
             html += `
-                <button type="button" data-cli-tab="${tab.id}"
+                <button type="button" data-cli-tab="${escAttr(tab.id)}"
                         class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors
                                ${active ? 'bg-bm-accent text-white border-bm-accent shadow-sm' : 'bg-white text-bm-text border-bm-border hover:bg-slate-50'}">
-                    <i data-lucide="${tab.icon}" class="w-4 h-4"></i>
+                    <i data-lucide="${escAttr(tab.icon)}" class="w-4 h-4"></i>
                     ${tab.label}
                     ${tab.id === 'approvals' ? '<span id="cli-approval-count-badge" class="hidden ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500 text-white leading-none"></span>' : ''}
                 </button>`;

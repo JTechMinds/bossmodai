@@ -15,6 +15,7 @@
  */
 const BossModCliPolicyApprovals = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons, agentName, statusBadge } = BossModCliPolicyShared;
 
     /**
@@ -141,11 +142,11 @@ const BossModCliPolicyApprovals = (() => {
         if (isPending) {
             html += `
                     <div class="flex items-center gap-2 shrink-0">
-                        <button data-approve="${req.id}"
+                        <button data-approve="${escAttr(req.id)}"
                                 class="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-xs font-medium hover:opacity-90">
                             Approve
                         </button>
-                        <button data-reject-show="${req.id}"
+                        <button data-reject-show="${escAttr(req.id)}"
                                 class="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:opacity-90">
                             Reject
                         </button>
@@ -157,12 +158,12 @@ const BossModCliPolicyApprovals = (() => {
 
         if (isPending) {
             html += `
-                <div id="reject-note-${req.id}" class="hidden mt-3 pt-3 border-t border-bm-border">
+                <div id="reject-note-${escAttr(req.id)}" class="hidden mt-3 pt-3 border-t border-bm-border">
                     <div class="flex items-center gap-2">
-                        <input type="text" id="reject-note-input-${req.id}"
+                        <input type="text" id="reject-note-input-${escAttr(req.id)}"
                                placeholder="Rejection note (optional)"
                                class="flex-1 px-3 py-1.5 bg-bm-bg border border-bm-border rounded-lg text-xs text-bm-text">
-                        <button data-reject-confirm="${req.id}"
+                        <button data-reject-confirm="${escAttr(req.id)}"
                                 class="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:opacity-90">
                             Confirm Reject
                         </button>

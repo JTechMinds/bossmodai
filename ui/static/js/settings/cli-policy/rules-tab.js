@@ -42,7 +42,7 @@ const BossModCliPolicyRules = (() => {
 
         const tierChip = (value, label) => {
             const active = table.getTierFilter() === value;
-            return `<button type="button" data-tier-filter="${value || ''}"
+            return `<button type="button" data-tier-filter="${escAttr(value || '')}"
                             class="bm-tier-chip ${active ? 'active' : ''}">${label}</button>`;
         };
 

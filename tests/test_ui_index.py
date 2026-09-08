@@ -367,6 +367,173 @@ def test_no_attribute_interpolation_uses_the_text_escaper() -> None:
     )
 
 
+# ─── The other half of the same rule: an attribute with NO escaper at all ───
+#
+# The pattern above catches the WRONG escaper. It cannot catch a missing one:
+# `<option value="${c.id}">` matches nothing, and stayed that way in two agent
+# form modules because the ids happen to be uuids. Nothing enforced that they
+# would stay uuids.
+#
+# So this reads every `${…}` that lands inside a double-quoted attribute value
+# — including one in the MIDDLE of a value, `id="reject-note-${req.id}"`, which
+# an `="${` anchor never sees — and requires the expression to be provably
+# unable to emit a `"`. Provable means one of exactly three things:
+#
+#   1. it calls escapeAttribute (or the `escAttr` alias), or
+#   2. every value that can REACH the output is a literal, which is what makes
+#      `${selected ? 'checked' : ''}` safe and `${value || ''}` not — the first
+#      can only ever produce one of two authored strings, the second returns
+#      whatever `value` holds, or
+#   3. it is a constant declared in the same file whose initialiser is itself
+#      provably literal, which is what `class="${SELECT_CLASS}"` is.
+#
+# Rule 2 is decided by reduction, not by a pattern: escaper calls and literals
+# collapse to LITERAL, then `LITERAL + LITERAL`, `(LITERAL)` and
+# `cond ? LITERAL : LITERAL` collapse again until nothing changes. An
+# expression is safe when what is left is exactly LITERAL. Widening the regex
+# instead would have made `${value || ''}` pass on the strength of its `''`.
+#
+# Rule 3 demands the file's ONLY binding of that name. settings/cli-policy/
+# shared.js has two `const cls`, one of them a literal ternary and one of them
+# `map[status] || '…'`, and a name-only rule let the safe one vouch for the
+# other.
+#
+# NOT markup, and deliberately skipped: `[data-setting-card="${key}"]` inside a
+# querySelector template, recognised by the `[` that opens it. Escaping there
+# would be wrong — the DOM parser decodes entities, so a selector must carry
+# the RAW value. Those sites have a real fragility of their own (a selector
+# built from data breaks on a quote or a `]`), but it is a different bug with a
+# different fix and this rule would only hide it.
+
+LITERAL = "\x00"
+ATTRIBUTE_OPEN = re.compile(r'([A-Za-z_:][-\w:.]*)\s*=\s*"')
+ESCAPER_CALL = re.compile(r"\b(?:BossModFormat\.)?(?:escapeAttribute|escAttr)\s*\(")
+LITERAL_VALUE = re.compile(r"'[^']*'|\"[^\"]*\"|`[^`$]*`")
+LITERAL_SCALAR = re.compile(r"\b(?:\d+(?:\.\d+)?|true|false)\b")
+BINDING = r"\b(?:const|let|var)\s+{name}\b"
+
+
+def _balanced(text: str, start: int, opener: str, closer: str) -> int:
+    """Index one past the `closer` that matches the `opener` already consumed."""
+    depth, index = 1, start
+    while index < len(text) and depth:
+        if text[index] == opener:
+            depth += 1
+        elif text[index] == closer:
+            depth -= 1
+        index += 1
+    return index
+
+
+def _attribute_interpolations(text: str) -> list[tuple[int, str]]:
+    """Every (line, expression) `${…}` that renders inside `attr="…"`.
+
+    A double-quoted JS string cannot interpolate, so a region opened by a plain
+    `x = "…"` in code can never yield a hit; only template literals can, which
+    is why this does not need to know which kind of quote it is inside.
+    """
+    found: list[tuple[int, str]] = []
+    index, size = 0, len(text)
+    while index < size:
+        opener = ATTRIBUTE_OPEN.search(text, index)
+        if not opener:
+            return found
+        if opener.start() and text[opener.start() - 1] == "[":
+            index = opener.end()  # A CSS attribute selector, not markup.
+            continue
+        cursor = opener.end()
+        while cursor < size:
+            if text.startswith("${", cursor):
+                end = _balanced(text, cursor + 2, "{", "}")
+                found.append((text.count("\n", 0, cursor) + 1, text[cursor + 2:end - 1]))
+                cursor = end
+                continue
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+            if text[cursor] == '"':
+                break
+            cursor += 1
+        index = cursor + 1
+    return found
+
+
+def _reduce(expression: str, constants: set[str]) -> str:
+    """Collapse an expression to LITERAL when nothing data-bearing can escape it."""
+    text = expression.replace("?.", ".")  # So `a?.b ? x : y` still reads as one ternary.
+    while True:
+        call = ESCAPER_CALL.search(text)
+        if not call:
+            break
+        text = text[:call.start()] + LITERAL + text[_balanced(text, call.end(), "(", ")"):]
+    text = LITERAL_VALUE.sub(LITERAL, text)
+    text = LITERAL_SCALAR.sub(LITERAL, text)
+    for name in constants:
+        text = re.sub(rf"\b{re.escape(name)}\b", LITERAL, text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(rf"\(\s*{LITERAL}\s*\)", LITERAL, text)
+        text = re.sub(rf"{LITERAL}(?:\s*(?:\+|\|\||\?\?|&&)\s*{LITERAL})+", LITERAL, text)
+        text = re.sub(rf"[^?:]*\?\s*{LITERAL}\s*:\s*{LITERAL}", LITERAL, text)
+        text = text.strip()
+    return text
+
+
+def _literal_constants(source: str) -> set[str]:
+    """Names bound exactly once in this file to a provably literal expression."""
+    safe = set()
+    for match in re.finditer(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*", source):
+        name = match.group(1)
+        if len(re.findall(BINDING.format(name=re.escape(name)), source)) != 1:
+            continue
+        depth, end = 0, match.end()
+        while end < len(source):
+            character = source[end]
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+            elif character == ";" and depth <= 0:
+                break
+            end += 1
+        if _reduce(source[match.end():end], set()) == LITERAL:
+            safe.add(name)
+    return safe
+
+
+def test_no_attribute_interpolation_is_left_unescaped() -> None:
+    """Every value interpolated into an attribute must be unable to close it.
+
+    The sibling test above proves nobody reached for escapeHtml here. This one
+    proves nobody reached for nothing at all, which is the failure it could not
+    see: `<option value="${c.id}">` in agent-form-connections.js and the same
+    line in agent-form-advanced.js were writing a database id straight into an
+    attribute with no escaper on the path, and the only thing keeping that
+    honest was a `VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()` that no
+    frontend rule mentioned.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    offenders = []
+    checked = 0
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        source = path.read_text(encoding="utf-8")
+        constants = _literal_constants(source)
+        for number, expression in _attribute_interpolations(source):
+            checked += 1
+            if _reduce(expression, constants) != LITERAL:
+                relative = path.relative_to(js).as_posix()
+                offenders.append(f"{relative}:{number}: ${{{' '.join(expression.split())}}}")
+    # A scanner that stops finding attributes proves nothing by being green.
+    assert checked > 50, f"only {checked} attribute interpolations found — scanner broke"
+    assert offenders == [], (
+        "interpolated into an attribute with no escaper — use escapeAttribute, "
+        "or make every branch a literal:\n" + "\n".join(offenders)
+    )
+
+
 def test_every_module_stays_under_the_line_cap() -> None:
     """One assertion over the whole tree, not five over five directories.
 

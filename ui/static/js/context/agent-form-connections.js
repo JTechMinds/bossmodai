@@ -47,7 +47,7 @@ const BossModAgentFormConnections = (() => {
             const selected = currentValue && (
                 currentValue === c.model || currentValue === c.name
             );
-            return `<option value="${c.id}" title="${BossModFormat.escapeAttribute(label)}"${selected ? ' selected' : ''}>${BossModFormat.escapeHtml(label)}</option>`;
+            return `<option value="${BossModFormat.escapeAttribute(c.id)}" title="${BossModFormat.escapeAttribute(label)}"${selected ? ' selected' : ''}>${BossModFormat.escapeHtml(label)}</option>`;
         }).join('');
     }
 
@@ -63,7 +63,8 @@ const BossModAgentFormConnections = (() => {
      * @returns {string}
      */
     function connectionSelect(connections, modelKey, currentValue) {
-        return `<select name="${modelKey}" id="${connectionSelectId(modelKey)}" class="${SELECT_CLASS}">
+        return `<select name="${BossModFormat.escapeAttribute(modelKey)}"
+                    id="${BossModFormat.escapeAttribute(connectionSelectId(modelKey))}" class="${SELECT_CLASS}">
                 <option value="">None</option>
                 ${connectionOptions(connections, currentValue)}
             </select>`;
@@ -103,9 +104,11 @@ const BossModAgentFormConnections = (() => {
                 : `<p class="text-xs text-bm-muted mb-2">Assign an AI connection to each activation type.</p>
                    <div class="space-y-2">
                        <div>
-                           <label for="${connectionSelectId('model_all')}"
+                           <label for="${BossModFormat.escapeAttribute(connectionSelectId('model_all'))}"
                                   class="block text-xs font-medium text-bm-text mb-1">Set All</label>
-                           <select name="model_all" id="${connectionSelectId('model_all')}" class="${SELECT_CLASS}">
+                           <select name="model_all"
+                                   id="${BossModFormat.escapeAttribute(connectionSelectId('model_all'))}"
+                                   class="${SELECT_CLASS}">
                                <option value="">— Set all connections —</option>
                                ${connectionOptions(connections, null)}
                            </select>
@@ -113,7 +116,7 @@ const BossModAgentFormConnections = (() => {
                        <hr class="border-bm-border">
                        <div class="connection-grid">
                            ${MODEL_TYPES.map(t => `<div>
-                               <label for="${connectionSelectId(t.key)}"
+                               <label for="${BossModFormat.escapeAttribute(connectionSelectId(t.key))}"
                                       class="block text-xs text-bm-muted mb-1">${t.label}</label>
                                ${connectionSelect(connections, t.key, agent?.[t.key])}
                            </div>`).join('')}

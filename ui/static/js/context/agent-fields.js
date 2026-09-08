@@ -86,9 +86,10 @@ const BossModAgentFields = (() => {
         const freeDesk = DESK_OPTIONS.find((d) => !occupiedChairs.has(`${d.x},${d.y}`)) || null;
         const selectedDesk = assignedDesk || freeDesk;
         const deskOptions = DESK_OPTIONS.map(d => {
+            const value = `${d.x},${d.y}`;
             const selected = selectedDesk && selectedDesk.x === d.x && selectedDesk.y === d.y;
-            const taken = occupiedChairs.has(`${d.x},${d.y}`);
-            return `<option value="${d.x},${d.y}" ${selected ? 'selected' : ''}>${d.label}${taken ? ' (taken)' : ''}</option>`;
+            const taken = occupiedChairs.has(value);
+            return `<option value="${BossModFormat.escapeAttribute(value)}" ${selected ? 'selected' : ''}>${d.label}${taken ? ' (taken)' : ''}</option>`;
         }).join('');
         return { selectedDesk, noFreeDesk: !assignedDesk && !freeDesk, deskOptions };
     }

@@ -31,7 +31,7 @@ const BossModAgentFormAdvanced = (() => {
         // the template text, not the personality ID.
         const personalityOptions = personalities.map(p => {
             const selected = agent?.prompt_template && agent.prompt_template === p.prompt_template;
-            return `<option value="${p.id}" ${selected ? 'selected' : ''}>${BossModFormat.escapeHtml(p.name)}</option>`;
+            return `<option value="${BossModFormat.escapeAttribute(p.id)}" ${selected ? 'selected' : ''}>${BossModFormat.escapeHtml(p.name)}</option>`;
         }).join('');
         const noPersonalities = personalities.length === 0;
         const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed

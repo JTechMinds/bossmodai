@@ -77,9 +77,9 @@ const BossModRuntimeContractActions = (() => {
             `).join('')}</ul>`
             : '';
         container.innerHTML = `
-            <div class="p-3 border rounded-lg ${tone.panel}">
+            <div class="p-3 border rounded-lg ${BossModFormat.escapeAttribute(tone.panel)}">
                 <div class="flex items-center gap-2 flex-wrap">
-                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${tone.badge}">${BossModFormat.escapeHtml(status)}</span>
+                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${BossModFormat.escapeAttribute(tone.badge)}">${BossModFormat.escapeHtml(status)}</span>
                     <p class="text-sm font-medium text-bm-text">${BossModFormat.escapeHtml(tone.title)}</p>
                 </div>
                 <p class="mt-1 text-sm text-bm-muted">${BossModFormat.escapeHtml(tone.detail)}</p>

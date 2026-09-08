@@ -94,7 +94,8 @@ const BossModCliPolicySettings = (() => {
 
         for (const s of known) {
             const meta = SETTINGS_META[s.key];
-            html += `<div class="border border-bm-border rounded-xl p-4 bg-white transition-colors" data-setting-card="${s.key}">`;
+            html += `<div class="border border-bm-border rounded-xl p-4 bg-white transition-colors"
+                          data-setting-card="${escAttr(s.key)}">`;
 
             if (meta.type === 'toggle') {
                 const isOn = s.value === 'true';
@@ -104,10 +105,10 @@ const BossModCliPolicySettings = (() => {
                             <h3 class="text-sm font-semibold">${esc(meta.label)}</h3>
                             <p class="text-xs text-bm-muted mt-0.5">${esc(meta.description)}</p>
                         </div>
-                        <button data-cli-setting-toggle="${s.key}"
+                        <button data-cli-setting-toggle="${escAttr(s.key)}"
                                 class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0
                                        ${isOn ? 'bg-bm-accent' : 'bg-slate-300'}"
-                                role="switch" aria-checked="${isOn}">
+                                role="switch" aria-checked="${isOn ? 'true' : 'false'}">
                             <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
                                          ${isOn ? 'translate-x-6' : 'translate-x-1'}"></span>
                         </button>
@@ -119,7 +120,7 @@ const BossModCliPolicySettings = (() => {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
-                    <select data-cli-setting-input="${s.key}"
+                    <select data-cli-setting-input="${escAttr(s.key)}"
                             class="w-full max-w-xs px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
                         ${options}
                     </select>`;
@@ -127,14 +128,14 @@ const BossModCliPolicySettings = (() => {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
-                    <textarea data-cli-setting-input="${s.key}" rows="4"
+                    <textarea data-cli-setting-input="${escAttr(s.key)}" rows="4"
                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono"
                               placeholder="/home/you/src">${esc(s.value || '')}</textarea>`;
             } else {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
-                    <input type="number" data-cli-setting-input="${s.key}"
+                    <input type="number" data-cli-setting-input="${escAttr(s.key)}"
                            value="${escAttr(s.value)}"
                            class="w-full max-w-xs px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">`;
             }

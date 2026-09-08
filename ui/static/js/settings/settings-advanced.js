@@ -46,7 +46,7 @@ const AdvancedSystemSection = (() => {
                         <button id="btn-toggle-diagnostics"
                                 class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors
                                        ${isEnabled ? 'bg-bm-accent' : 'bg-slate-300'}"
-                                role="switch" aria-checked="${isEnabled}">
+                                role="switch" aria-checked="${isEnabled ? 'true' : 'false'}">
                             <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
                                          ${isEnabled ? 'translate-x-6' : 'translate-x-1'}"></span>
                         </button>
