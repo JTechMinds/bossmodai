@@ -22,6 +22,9 @@ from core.models.agent import (
 )
 
 SCHEMA_ID = "bossmod.agent_pack/v1"
+PACK_KIND_AGENT = "agent"
+# Reserved for later pack types. v1 implements agent packs only.
+RESERVED_PACK_KINDS = frozenset({"agent", "skill", "workflow"})
 MAX_PACK_BYTES = 65_536
 PERSONALITY_HINT_MAX_LEN = HIRE_ROLE_MAX_LEN
 TOOLS_HINT_MAX_ITEMS = 24
@@ -29,6 +32,7 @@ TOOLS_HINT_ITEM_MAX_LEN = 40
 
 _CANONICAL_KEYS = (
     "schema",
+    "kind",
     "specialty",
     "description",
     "what_done_looks_like",
@@ -103,6 +107,7 @@ class AgentPack:
     """Validated pack fields. Name and desk are never part of a pack."""
 
     schema: str
+    kind: str
     specialty: str
     description: str
     what_done_looks_like: str
@@ -131,6 +136,7 @@ class AgentPack:
         """Canonical pack mapping for API responses (no ignored keys)."""
         data: dict[str, Any] = {
             "schema": self.schema,
+            "kind": self.kind,
             "specialty": self.specialty,
             "description": self.description,
             "what_done_looks_like": self.what_done_looks_like,
@@ -207,6 +213,7 @@ def export_agent_pack(
     hint = normalize_hire_text(personality_hint, max_len=PERSONALITY_HINT_MAX_LEN)
     return AgentPack(
         schema=SCHEMA_ID,
+        kind=PACK_KIND_AGENT,
         specialty=specialty,
         description=description,
         what_done_looks_like=done,
@@ -237,6 +244,7 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
             f"Pack schema must be {SCHEMA_ID!r}.",
             code="invalid_schema",
         )
+    kind = _parse_kind(normalized.get("kind"))
     missing = [name for name in _REQUIRED_FIELDS if name not in normalized]
     if missing:
         raise AgentPackError(
@@ -255,12 +263,33 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
     tools_hint = _optional_tools_hint(normalized.get("tools_hint"))
     return AgentPack(
         schema=SCHEMA_ID,
+        kind=kind,
         specialty=specialty,
         description=description,
         what_done_looks_like=done,
         personality_hint=personality_hint,
         tools_hint=tools_hint,
         ignored_keys=tuple(ignored),
+    )
+
+
+def _parse_kind(value: Any) -> str:
+    """v1 is agent packs only. ``kind`` is reserved so later types need no rewrite."""
+    if value is None:
+        return PACK_KIND_AGENT
+    if not isinstance(value, str):
+        raise AgentPackError("Pack field 'kind' must be a string.", code="invalid_schema")
+    kind = value.strip().lower()
+    if not kind or kind == PACK_KIND_AGENT:
+        return PACK_KIND_AGENT
+    if kind in RESERVED_PACK_KINDS:
+        raise AgentPackError(
+            f"Pack kind {kind!r} is reserved. v1 imports agent packs only.",
+            code="unsupported_kind",
+        )
+    raise AgentPackError(
+        f"Pack kind must be {PACK_KIND_AGENT!r}.",
+        code="invalid_schema",
     )
 
 

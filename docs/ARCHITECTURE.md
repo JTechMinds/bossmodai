@@ -152,7 +152,7 @@ Every turn injects a Role contract system message (specialty + what done looks l
 
 ## Agent packs
 
-Hire-contract templates live as YAML files in a GitHub repo (`docs/AGENT_PACKS.md`). Schema `bossmod.agent_pack/v1`. Import (`POST /api/agent-packs/import`) hydrates hire fields from a pinned commit or tag; export (`GET /api/agents/{id}/pack`) writes those fields back. No storefront UI.
+Hire-contract templates live as YAML files in a GitHub repo, contributed by PR (`docs/AGENT_PACKS.md`). Schema `bossmod.agent_pack/v1` with `kind: agent`. Import (`POST /api/agent-packs/import`) hydrates hire fields from a pinned commit or tag; export (`GET /api/agents/{id}/pack`) writes those fields back. No storefront UI, store backend, or skill/workflow install.
 
 ## Runtime core and host-path consent
 

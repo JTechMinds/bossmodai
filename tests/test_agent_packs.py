@@ -29,7 +29,7 @@ from core.agent_pack.github import (
     parse_github_pack_url,
     validate_pin_ref,
 )
-from core.agent_pack.schema import SCHEMA_ID, AgentPackError
+from core.agent_pack.schema import PACK_KIND_AGENT, SCHEMA_ID, AgentPackError
 from core.agent_loop.role_contracts import suggest_finish_line
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +39,7 @@ TAG_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 VALID_PACK = """
 schema: bossmod.agent_pack/v1
+kind: agent
 specialty: Software Engineer
 description: Implements features and fixes in the office workspace.
 what_done_looks_like: Tests evidence or a named artifact exists. Empty done does not count.
@@ -124,6 +125,7 @@ def _catalog_source(yaml_text: str = VALID_PACK, *, path: str = "packs/software-
 def test_schema_validates_required_hire_fields() -> None:
     pack = parse_pack_yaml(VALID_PACK)
     assert pack.schema == SCHEMA_ID
+    assert pack.kind == PACK_KIND_AGENT
     assert pack.specialty == "Software Engineer"
     assert "Implements features" in pack.description
     assert "Tests evidence" in pack.what_done_looks_like
@@ -135,7 +137,49 @@ def test_schema_validates_required_hire_fields() -> None:
     assert hire["description"] == pack.description
     assert hire["done_fail_bar"] == pack.what_done_looks_like
     assert "name" not in hire
+    assert "kind" not in hire
     assert "desk_x" not in hire
+
+
+def test_schema_defaults_missing_kind_to_agent() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    )
+    assert pack.kind == PACK_KIND_AGENT
+
+
+@pytest.mark.parametrize("kind", ["skill", "workflow"])
+def test_schema_rejects_reserved_non_agent_kinds(kind: str) -> None:
+    with pytest.raises(AgentPackError) as exc:
+        parse_pack_yaml(
+            f"""
+schema: bossmod.agent_pack/v1
+kind: {kind}
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists.
+"""
+        )
+    assert exc.value.code == "unsupported_kind"
+
+
+def test_schema_rejects_unknown_kind() -> None:
+    with pytest.raises(AgentPackError) as exc:
+        parse_pack_yaml(
+            """
+schema: bossmod.agent_pack/v1
+kind: plugin
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists.
+"""
+        )
+    assert exc.value.code == "invalid_schema"
 
 
 def test_schema_accepts_hire_field_aliases() -> None:
@@ -241,6 +285,7 @@ what_done_looks_like: Tests or an artifact exist.
 def test_sample_catalog_pack_validates() -> None:
     pack = parse_pack_yaml(SAMPLE_PACK.read_text(encoding="utf-8"))
     assert pack.schema == SCHEMA_ID
+    assert pack.kind == PACK_KIND_AGENT
     assert pack.specialty
     assert pack.description
     assert pack.what_done_looks_like
@@ -276,6 +321,30 @@ def test_pin_accepts_commit_sha_and_tag() -> None:
     )
     assert catalog.path == "packs/software-engineer.yaml"
     assert catalog.from_catalog is True
+
+
+def test_import_rejects_skill_kind_without_installing() -> None:
+    source = _catalog_source(
+        """
+schema: bossmod.agent_pack/v1
+kind: skill
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists.
+"""
+    )
+    before = db.list_agents()
+    with pytest.raises(AgentPackError) as exc:
+        import_pack(
+            PackImportRequest(path="software-engineer.yaml", ref=PINNED_SHA),
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            catalog_path=DEFAULT_CATALOG_PATH,
+            extra_allowlist="",
+            confirm_secret="test-secret",
+        )
+    assert exc.value.code == "unsupported_kind"
+    assert db.list_agents() == before
 
 
 def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
@@ -438,7 +507,9 @@ def test_export_round_trip_matches_hire_profile_fields() -> None:
     )
     pack = export_pack(agent)
     assert pack.schema == SCHEMA_ID
+    assert pack.kind == PACK_KIND_AGENT
     parsed = parse_pack_yaml(pack.to_yaml())
+    assert parsed.kind == PACK_KIND_AGENT
     assert parsed.specialty == agent.role
     assert parsed.description == agent.description
     assert parsed.what_done_looks_like == agent.done_fail_bar
@@ -491,6 +562,7 @@ def test_api_import_hydrates_then_operator_still_names_hire(
     assert exported.status_code == 200, exported.text
     pack = exported.json()["pack"]
     assert pack["schema"] == SCHEMA_ID
+    assert pack["kind"] == PACK_KIND_AGENT
     assert pack["specialty"] == created["role"]
     assert pack["description"] == created["description"]
     parse_pack_yaml(exported.json()["yaml"])

@@ -1,23 +1,29 @@
 # Agent packs
 
-Packs are YAML files in a GitHub repository. Each file is a hire-contract
-template: specialty, description, and what done looks like. Optional
-personality and tools hints may be included. A pack does not include an
-agent name, desk, seats, credentials, or executable content.
+Packs are YAML files in a GitHub repository, contributed by pull request.
+There is no custom store backend, module marketplace, or storefront UI.
+
+Each file is a hire-contract template: specialty, description, and what
+done looks like. Optional personality and tools hints may be included. A
+pack does not include an agent name, desk, seats, credentials, or
+executable content.
 
 ## Schema
 
-`schema` must be `bossmod.agent_pack/v1`. Required fields match the hire
-Advanced contract (specialty, description, what-done-looks-like). Unknown
-keys are ignored and never executed. Keys that look like shell, install
-hooks, or credentials are rejected. YAML is parsed as data only.
+`schema` must be `bossmod.agent_pack/v1`. `kind` is `agent` (v1 implements
+agent packs only). The field is reserved so skill or workflow packs can
+be added later without a schema rewrite; those kinds are not imported or
+installed in v1. Required hire fields: specialty, description,
+what-done-looks-like. Unknown keys are ignored and never executed. Keys
+that look like shell, install hooks, or credentials are rejected. YAML
+is parsed as data only.
 
 ## Catalog
 
-The default catalog is the `packs/` directory of the configured GitHub
+The catalog is git: YAML files under `packs/` in the configured GitHub
 repo (`agent_pack_catalog_repo`, default `JTechMinds/bossmodai`). Extra
 trusted `owner/repo` slugs may be listed in `agent_pack_url_allowlist`.
-Contribute a pack by adding a `.yaml` file to that repo and merging it.
+Contribute a pack by opening a pull request that adds a `.yaml` file.
 
 ## Pin
 
@@ -47,5 +53,5 @@ hosts are never fetched.
 ## Export
 
 `GET /api/agents/{id}/pack` writes the agent's specialty, description,
-and done/fail bar back to a valid pack (two-way with import). Name and
-desk are omitted.
+and done/fail bar back to a valid pack with `kind: agent` (two-way with
+import). Name and desk are omitted.

@@ -1,4 +1,5 @@
 schema: bossmod.agent_pack/v1
+kind: agent
 specialty: Software Engineer
 description: >
   Implements features and fixes in the office workspace.

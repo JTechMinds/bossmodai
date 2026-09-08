@@ -11,7 +11,13 @@ from core.agent_pack.github import (
     PackSource,
     confirm_token_for,
 )
-from core.agent_pack.schema import SCHEMA_ID, AgentPack, AgentPackError, parse_pack_yaml
+from core.agent_pack.schema import (
+    PACK_KIND_AGENT,
+    SCHEMA_ID,
+    AgentPack,
+    AgentPackError,
+    parse_pack_yaml,
+)
 from core.agent_pack.service import (
     PackImportRequest,
     PackImportResult,
@@ -25,6 +31,7 @@ __all__ = [
     "CATALOG_REPO_SETTING",
     "DEFAULT_CATALOG_PATH",
     "DEFAULT_CATALOG_REPO",
+    "PACK_KIND_AGENT",
     "SCHEMA_ID",
     "AgentPack",
     "AgentPackError",
