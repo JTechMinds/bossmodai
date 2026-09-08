@@ -1,7 +1,8 @@
 """Capability pass item (3) — host-path peer assign → wake → edit → deliver.
 
 Uses the same actions/decisions/triggers the live loop calls. No LLM.
-Fixture names stay impersonal. Host-roots jail stays fail-closed.
+Fixture names stay impersonal. Host writes pause for workspace preference
+until the operator chooses. Host-roots jail stays fail-closed.
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_runtime import apply_decision
 from core.bm_cli.virtual_fs import resolve_cli_path
+from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
 from core.runtime import runtime_services
+from tests.test_workspace_preference import choose_edit_host
 
 
 def _set_host_roots(*roots: Path) -> None:
@@ -219,6 +222,25 @@ async def test_host_path_owner_assigns_worker_edits_and_deny_stays_closed(
     )
     assert read["event"] == "bm_cli_result"
     assert "before-review" in read.get("cli_prompt_content", "") + read.get("detail", "")
+
+    written = await execute_action(
+        {
+            "action": "bm_cli",
+            "command": f"write {deliverable_path}",
+            "content": 'print("after-review")\n',
+        },
+        worker,
+        worker_state,
+    )
+    assert written["event"] == "workspace_preference_required"
+    assert written.get("consent_required") is True
+    card = written.get("host_path_consent") or {}
+    assert card.get("kind") == WORKSPACE_PREFERENCE_KIND
+    request_id = written.get("consent_request_id")
+    assert request_id
+    assert fixture.read_text(encoding="utf-8") == 'print("before-review")\n'
+
+    choose_edit_host(client, request_id, headers=headers)
 
     written = await execute_action(
         {
