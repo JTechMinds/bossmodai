@@ -14,6 +14,7 @@ from core.agent_loop.decision_contract import (
 )
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
+from core.agent_loop.next_owner import NUDGE_FEEDBACK_CODE, next_owner_nudge_continuation
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
@@ -461,6 +462,39 @@ async def _run_decision_turn(
 
         result = apply_decision(decision.model_dump(), agent, state, trigger)
         executed_actions.append(summarize_decision(decision.model_dump()))
+
+        if result.get("feedback_code") == NUDGE_FEEDBACK_CODE:
+            if decision.thought:
+                await manager.broadcast_thought(
+                    agent_id=agent.id,
+                    thought=decision.thought,
+                    action_name=decision.decision,
+                )
+            await manager.broadcast_activity(
+                event=result.get("event", "world_feedback"),
+                detail=result.get("detail", ""),
+                agent_name=result.get("agent_name"),
+            )
+            step_traces.append(
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=response.content,
+                    action=decision.model_dump(),
+                    result=result,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    total_tokens=response.total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            )
+            continuation_messages = [
+                {"role": "assistant", "content": response.content},
+                *next_owner_nudge_continuation(member_names=result.get("nudge_members") or []),
+            ]
+            current_context.extend(continuation_messages)
+            next_context_snapshot = _serialize_trace_value(continuation_messages)
+            continue
 
         await manager.broadcast_world_state()
 

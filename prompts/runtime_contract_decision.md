@@ -233,6 +233,8 @@ For reply:
 {"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
 ```
 
+In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
+
 For accept:
 ```json
 {"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
@@ -256,6 +258,8 @@ For reply:
 ```json
 {"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
 ```
+
+In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
 
 For accept:
 ```json
