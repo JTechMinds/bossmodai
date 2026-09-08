@@ -99,6 +99,8 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-form-advanced.js",
     JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-form-bindings.js",
+    JS / "context" / "agent-form-hydrate.js",
+    JS / "context" / "agent-form-catalog.js",
     JS / "context" / "agent-form.js",
     JS / "context" / "agent-submit.js",
     JS / "context" / "agent-recovery.js",

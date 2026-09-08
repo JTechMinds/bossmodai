@@ -62,6 +62,8 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-form-advanced.js",
     CONTEXT / "agent-form-connections.js",
     CONTEXT / "agent-form-bindings.js",
+    CONTEXT / "agent-form-hydrate.js",
+    CONTEXT / "agent-form-catalog.js",
     CONTEXT / "agent-form.js",
     CONTEXT / "agent-submit.js",
     CONTEXT / "agent-recovery.js",
@@ -208,7 +210,9 @@ def test_agent_edit_modules_stay_focused() -> None:
     assert names == [
         "agent-api.js", "agent-edit.js", "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
+        "agent-form-catalog.js",
         "agent-form-connections.js", "agent-form-fields.js",
+        "agent-form-hydrate.js",
         "agent-form.js", "agent-recovery.js", "agent-submit.js",
     ], names
     for path in modules:
@@ -228,7 +232,8 @@ def test_agent_edit_modules_stay_focused() -> None:
     api = _read(CONTEXT / "agent-api.js")
     for fn in ("fetchAgent", "apiCreateAgent", "apiUpdateAgent", "apiDeleteAgent",
                "fetchPromptHistoryPolicy", "apiUpdatePromptHistoryPolicy",
-               "apiClearChatHistory", "apiResetRuntime"):
+               "apiClearChatHistory", "apiResetRuntime",
+               "fetchCatalog", "importPack"):
         assert f"async function {fn}(" in api, f"agent-api.js lost {fn}"
         assert f"{fn}," in api.rsplit("return {", 1)[-1], f"agent-api.js does not export {fn}"
 

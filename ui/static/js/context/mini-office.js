@@ -192,7 +192,7 @@ const BossModMiniOffice = (() => {
             }
             if (roster.length === 0) {
                 roomsEl.append(h('p', { class: 'context-empty' },
-                    'Nobody is hired yet. Hire someone from the rail and they will take a desk.'));
+                    'Nobody is on the roster yet. Add an agent from the rail and they will take a desk.'));
                 statEl.textContent = '';
                 return;
             }

@@ -89,6 +89,112 @@
    the Tailwind `disabled:` pair on the old in-form button carried. */
 .modal-action:disabled { opacity: 0.55; pointer-events: none; }
 
+/* ─── Add agent: browse door ───
+   Lives in the same wide dialog as the thin-shell form. Doors are two
+   quiet chips; pack cards are catalog rows, not a storefront. Author
+   names become accent links only when pack_author.url is set. */
+
+.agent-add-body { display: flex; flex-direction: column; gap: 12px; }
+
+.agent-add-doors { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.agent-add-door {
+  min-height: 24px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.agent-add-door[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue-ink);
+}
+
+.pack-catalog-status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agent-add-retry {
+  margin-top: 8px;
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.pack-category + .pack-category { margin-top: 14px; }
+
+.pack-category-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.pack-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .pack-cards { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+}
+
+.pack-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+
+.pack-card-pick {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+}
+
+.pack-card-pick:hover { color: var(--accent); }
+
+.pack-author-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.pack-author-plain { font-size: 12px; color: var(--muted); }
+
+.pack-from-banner,
+.pack-tools-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pack-browse.hidden,
+.pack-from-banner.hidden,
+.pack-tools-hint.hidden { display: none; }
+
 /* ─── The agent form's AI Connections matrix ───
    Only ever rendered inside the wide dialog above, which is why it is here and
    not in controls.css: controls.css is the vocabulary several surfaces share,

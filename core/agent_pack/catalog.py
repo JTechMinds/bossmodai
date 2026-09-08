@@ -65,8 +65,13 @@ class CatalogIndex:
         return {entry.path: entry for entry in self.entries}
 
 
-def parse_catalog_yaml(raw: str | bytes) -> CatalogIndex:
-    """Parse catalog.yaml. Data-only; does not install packs."""
+def parse_catalog_yaml(raw: str | bytes, *, allow_empty: bool = False) -> CatalogIndex:
+    """Parse catalog.yaml. Data-only; does not install packs.
+
+    ``allow_empty`` is for the browse list: an index with no packs is a
+    valid empty catalog, not a parse error. Import still requires at
+    least one row so a pin cannot resolve to nothing by accident.
+    """
     text = _utf8_text(raw)
     try:
         loaded = yaml.safe_load(text)
@@ -78,7 +83,14 @@ def parse_catalog_yaml(raw: str | bytes) -> CatalogIndex:
             code="invalid_catalog",
         )
     packs = loaded.get("packs")
-    if not isinstance(packs, list) or not packs:
+    if not isinstance(packs, list):
+        raise AgentPackError(
+            "catalog.yaml must list packs (id, kind, path, category, title).",
+            code="invalid_catalog",
+        )
+    if not packs:
+        if allow_empty:
+            return CatalogIndex(entries=())
         raise AgentPackError(
             "catalog.yaml must list packs (id, kind, path, category, title).",
             code="invalid_catalog",

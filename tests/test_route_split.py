@@ -46,6 +46,7 @@ EXPECTED_ROUTES = {
     (("DELETE",), "/api/agents", "delete_all_agents"),
     (("DELETE",), "/api/agents/{agent_id}", "delete_agent"),
     (("GET",), "/api/agents/{agent_id}/pack", "export_agent_pack"),
+    (("GET",), "/api/agent-packs", "list_agent_packs"),
     (("POST",), "/api/agent-packs/import", "import_agent_pack"),
     (("GET",), "/api/agents/{agent_id}/messages", "get_agent_messages"),
     (("GET",), "/api/agents/{agent_id}/notifications", "get_agent_notifications"),
@@ -122,7 +123,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 98
+    assert len(got) == 99
 
 
 def test_from_api_routes_import_router_still_works() -> None:

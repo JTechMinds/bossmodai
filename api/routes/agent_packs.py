@@ -11,13 +11,17 @@ from core import config
 from core.agent_pack import (
     ALLOWLIST_SETTING,
     CATALOG_PATH_SETTING,
+    CATALOG_PIN_SETTING,
     CATALOG_REPO_SETTING,
     DEFAULT_CATALOG_PATH,
+    DEFAULT_CATALOG_PIN,
     DEFAULT_CATALOG_REPO,
     GitHubPackSource,
+    CatalogListResult,
     PackImportRequest,
     export_pack,
     import_pack,
+    list_catalog,
 )
 from core.agent_pack.github import PackLocation
 from core.agent_pack.schema import AgentPackError
@@ -55,6 +59,33 @@ def _catalog_settings() -> tuple[str, str, str | None, str]:
     return catalog_repo, catalog_path, extra, secret
 
 
+def _catalog_pin(requested: str | None = None) -> str:
+    return (requested or "").strip() or config.get(CATALOG_PIN_SETTING) or DEFAULT_CATALOG_PIN
+
+
+def _group_categories(result: CatalogListResult) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for card in result.packs:
+        entry = card.entry
+        if entry.category not in grouped:
+            grouped[entry.category] = []
+            order.append(entry.category)
+        payload: dict[str, Any] = {
+            "id": entry.id,
+            "kind": entry.kind,
+            "path": entry.path,
+            "category": entry.category,
+            "title": entry.title,
+        }
+        if card.specialty:
+            payload["specialty"] = card.specialty
+        if card.pack_author:
+            payload["pack_author"] = card.pack_author
+        grouped[entry.category].append(payload)
+    return [{"id": category, "packs": grouped[category]} for category in order]
+
+
 def _pin_payload(location: PackLocation) -> dict[str, Any]:
     return {
         "owner": location.owner,
@@ -64,6 +95,27 @@ def _pin_payload(location: PackLocation) -> dict[str, Any]:
         "commit_sha": location.commit_sha,
         "from_catalog": location.from_catalog,
         "canonical": location.canonical_source(),
+    }
+
+
+@router.get("/agent-packs")
+def list_agent_packs(ref: str | None = None) -> dict[str, Any]:
+    """List catalog packs at the pinned commit for the Add agent browse door.
+
+    Does not hire. Pick still goes through ``POST /api/agent-packs/import``.
+    """
+    catalog_repo, _catalog_path, _extra, _secret = _catalog_settings()
+    pin = _catalog_pin(ref)
+    try:
+        result = list_catalog(source=_SOURCE, catalog_repo=catalog_repo, ref=pin)
+    except AgentPackError as exc:
+        raise _http_error(exc) from exc
+    return {
+        "repo": result.repo,
+        "ref": result.requested_ref,
+        "commit_sha": result.commit_sha,
+        "pin_short": result.commit_sha[:7],
+        "categories": _group_categories(result),
     }
 
 

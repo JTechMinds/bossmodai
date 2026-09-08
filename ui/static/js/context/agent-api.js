@@ -116,6 +116,60 @@ const BossModAgentApi = (() => {
         return res.json();
     }
 
+    /**
+     * Read a failed pack-API body without assuming FastAPI's detail shape.
+     *
+     * @param {Response} res
+     * @param {string} fallback
+     * @returns {Promise<{error: Error, data: object}>}
+     */
+    async function packFailure(res, fallback) {
+        const data = await res.json().catch(() => ({}));
+        const detail = data && data.detail;
+        const message = (detail && detail.message) || (typeof detail === 'string' ? detail : '') || fallback;
+        const error = new Error(message);
+        error.code = (detail && detail.code) || data.code || '';
+        error.status = res.status;
+        return { error, data };
+    }
+
+    /**
+     * List catalog packs at the seeded pin. Does not hire.
+     *
+     * @param {string} [ref]
+     * @returns {Promise<object>}
+     */
+    async function fetchCatalog(ref) {
+        const qs = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+        const res = await apiFetch(`/api/agent-packs${qs}`);
+        if (!res.ok) {
+            const { error } = await packFailure(res, 'Couldn’t load packs.');
+            throw error;
+        }
+        return res.json();
+    }
+
+    /**
+     * Hydrate hire-form fields from a pinned pack. Never sends agent_id.
+     *
+     * @param {object} body  Catalog `{id, ref}` or `{url}` (plus confirm).
+     * @returns {Promise<object>}
+     */
+    async function importPack(body) {
+        const payload = { ...body };
+        delete payload.agent_id;
+        const res = await apiFetch('/api/agent-packs/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            const { error } = await packFailure(res, 'Pack import failed.');
+            throw error;
+        }
+        return res.json();
+    }
+
     return {
         fetchAgent,
         apiCreateAgent,
@@ -125,5 +179,7 @@ const BossModAgentApi = (() => {
         apiUpdatePromptHistoryPolicy,
         apiClearChatHistory,
         apiResetRuntime,
+        fetchCatalog,
+        importPack,
     };
 })();

@@ -27,6 +27,7 @@ from core.agent_pack.github import (
 )
 from core.agent_pack.quality import validate_pack_quality
 from core.agent_pack.schema import (
+    PACK_KIND_AGENT,
     AgentPack,
     AgentPackError,
     export_agent_pack,
@@ -58,6 +59,25 @@ class PackImportResult:
     location: PackLocation
     hire_fields: dict[str, Any]
     catalog_entry: CatalogEntry | None = None
+
+
+@dataclass(frozen=True)
+class CatalogListPack:
+    """One browse card. Author comes from the pack file when it parses."""
+
+    entry: CatalogEntry
+    pack_author: dict[str, str] | None = None
+    specialty: str | None = None
+
+
+@dataclass(frozen=True)
+class CatalogListResult:
+    """Pinned catalog index for the Add agent browse door."""
+
+    repo: str
+    requested_ref: str
+    commit_sha: str
+    packs: tuple[CatalogListPack, ...]
 
 
 def import_pack(
@@ -108,6 +128,47 @@ def import_pack(
         ref=ref,
         source=source,
         catalog_repo=catalog_repo,
+    )
+
+
+def list_catalog(
+    *,
+    source: PackSource,
+    catalog_repo: str,
+    ref: str,
+) -> CatalogListResult:
+    """Read catalog.yaml at a pinned ref and return browse cards.
+
+    Fetches each listed agent pack only to surface ``pack_author`` and
+    specialty on the card. A pack that fails to parse is still listed
+    from the index row — pick still goes through ``import_pack``. Does
+    not create or patch an agent.
+    """
+    validate_pin_ref(ref)
+    owner, repo = parse_catalog_repo(catalog_repo)
+    sha = source.resolve_commit_sha(owner, repo, ref)
+    index_text = source.fetch_file(owner, repo, CATALOG_INDEX_PATH, sha)
+    index = parse_catalog_yaml(index_text, allow_empty=True)
+    cards: list[CatalogListPack] = []
+    for entry in index.entries:
+        if entry.kind != PACK_KIND_AGENT:
+            continue
+        author = None
+        specialty = None
+        try:
+            raw = source.fetch_file(owner, repo, entry.path, sha)
+            pack = parse_pack_yaml(raw)
+            if pack.pack_author:
+                author = pack.pack_author.as_dict()
+            specialty = pack.specialty
+        except AgentPackError:
+            pass
+        cards.append(CatalogListPack(entry=entry, pack_author=author, specialty=specialty))
+    return CatalogListResult(
+        repo=f"{owner}/{repo}",
+        requested_ref=ref,
+        commit_sha=sha,
+        packs=tuple(cards),
     )
 
 
