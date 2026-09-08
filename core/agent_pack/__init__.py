@@ -17,8 +17,10 @@ from core.agent_pack.schema import (
     SCHEMA_ID,
     AgentPack,
     AgentPackError,
+    PackAuthor,
     parse_pack_yaml,
 )
+from core.agent_pack.quality import validate_pack_quality
 from core.agent_pack.service import (
     PackImportRequest,
     PackImportResult,
@@ -39,6 +41,7 @@ __all__ = [
     "AgentPackError",
     "CatalogEntry",
     "GitHubPackSource",
+    "PackAuthor",
     "PackImportRequest",
     "PackImportResult",
     "PackLocation",
@@ -47,4 +50,5 @@ __all__ = [
     "export_pack",
     "import_pack",
     "parse_pack_yaml",
+    "validate_pack_quality",
 ]

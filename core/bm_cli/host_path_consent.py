@@ -22,7 +22,7 @@ from core.bm_cli.host_roots import (
 from core.bm_cli.results import consent_required_result, error_result, success_result
 from core.bm_cli.types import BossModCliResult
 from core.models import Agent
-from core.models.host_path_consent import HostPathConsentRequest
+from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND, HostPathConsentRequest
 
 ConsentDecision = Literal["allow_once", "always_allow", "deny"]
 
@@ -320,6 +320,8 @@ async def resume_host_path_consent(
     existing = db.get_consent_request(request_id)
     if existing is None or existing.status != "pending":
         return None
+    if getattr(existing, "card_kind", "host_path") == WORKSPACE_PREFERENCE_KIND and decision != "deny":
+        return None
 
     if decision == "deny":
         updated = db.resolve_consent_request(
@@ -451,6 +453,8 @@ async def _enqueue_resume(
         "path": request.path,
         "task_id": request.task_id,
     }
+    if request.clone_dest:
+        payload["clone_dest"] = request.clone_dest
     if note:
         payload["decision_note"] = note
     channel_id = None if omit_origin_channel else _clean_channel_id(request.channel_id)

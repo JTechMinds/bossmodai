@@ -279,8 +279,12 @@ def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
         result["consent_request_id"] = getattr(cli_result, "consent_request_id", None)
         result["consent_reused"] = bool(cli_data.get("consent_reused"))
         result["host_path_consent"] = card
-        result["event"] = "host_path_consent_required"
-        result["detail"] = f"{agent.name} requests host-path access: {path}"
+        if card.get("kind") == "workspace_preference":
+            result["event"] = "workspace_preference_required"
+            result["detail"] = f"{agent.name} needs a workspace preference: {path}"
+        else:
+            result["event"] = "host_path_consent_required"
+            result["detail"] = f"{agent.name} requests host-path access: {path}"
         result["suppress_activity_broadcast"] = False
     return result
 

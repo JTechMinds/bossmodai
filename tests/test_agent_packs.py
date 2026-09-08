@@ -23,6 +23,7 @@ from core.agent_pack import (
     export_pack,
     import_pack,
     parse_pack_yaml,
+    validate_pack_quality,
 )
 from core.agent_pack.catalog import parse_catalog_yaml, resolve_catalog_entry, validate_catalog_pack_path
 from core.agent_pack.github import (
@@ -44,12 +45,34 @@ PLANNER_PACK = (FIXTURES / PLANNER_PATH).read_text(encoding="utf-8")
 PINNED_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TAG_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-VALID_PACK = """
+THIN_PACK = """
 schema: bossmod.agent_pack/v1
 kind: agent
 specialty: Software Engineer
 description: Implements features and fixes in the office workspace.
 what_done_looks_like: Tests evidence or a named artifact exists. Empty done does not count.
+personality_hint: Software Engineer
+tools_hint:
+  - cli
+  - work
+extra_credit: ignored on purpose
+"""
+
+VALID_PACK = """
+schema: bossmod.agent_pack/v1
+kind: agent
+pack_author:
+  name: Northwind
+  url: https://northwind.example
+specialty: Software Engineer
+description: |
+  Mission: Implements features and fixes against a checkable bar in the office workspace.
+  In scope: Named files, tests, and desk artifacts the operator can open.
+  Out of scope: Production deploys, credential hunting, and host-wide scans.
+  Handoff: The operator or a reviewer receives the named artifact plus test evidence.
+what_done_looks_like: |
+  Tests evidence or a named artifact exists. Empty done does not count.
+  Fail examples: "Looks good" with no path; a vibe check; done with zero evidence.
 personality_hint: Software Engineer
 tools_hint:
   - cli
@@ -147,7 +170,7 @@ def _catalog_source(pack_yaml: str | None = None, *, pack_path: str = AUDITOR_PA
 
 
 def test_schema_validates_required_hire_fields() -> None:
-    pack = parse_pack_yaml(VALID_PACK)
+    pack = parse_pack_yaml(THIN_PACK)
     assert pack.schema == SCHEMA_ID
     assert pack.kind == PACK_KIND_AGENT
     assert pack.specialty == "Software Engineer"
@@ -155,6 +178,7 @@ def test_schema_validates_required_hire_fields() -> None:
     assert "Tests evidence" in pack.what_done_looks_like
     assert pack.personality_hint == "Software Engineer"
     assert pack.tools_hint == ("cli", "work")
+    assert pack.pack_author is None
     assert "extra_credit" in pack.ignored_keys
     hire = pack.hire_fields()
     assert hire["role"] == pack.specialty
@@ -163,6 +187,7 @@ def test_schema_validates_required_hire_fields() -> None:
     assert "name" not in hire
     assert "kind" not in hire
     assert "desk_x" not in hire
+    assert "pack_author" not in hire
 
 
 def test_schema_defaults_missing_kind_to_agent() -> None:
@@ -259,6 +284,194 @@ tags:
     assert "author" in pack.ignored_keys
     assert "tags" in pack.ignored_keys
     assert "name" not in pack.hire_fields()
+    assert pack.pack_author is None
+
+
+def test_schema_accepts_pack_author_name_and_optional_url() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+pack_author:
+  name: Northwind
+  url: https://northwind.example
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    )
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "Northwind"
+    assert pack.pack_author.url == "https://northwind.example"
+    assert pack.as_dict()["pack_author"] == {
+        "name": "Northwind",
+        "url": "https://northwind.example",
+    }
+    assert "pack_author" not in pack.hire_fields()
+
+
+def test_schema_ignores_unknown_pack_author_keys() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+pack_author:
+  name: Northwind
+  twitter: not-stored
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    )
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "Northwind"
+    assert "pack_author.twitter" in pack.ignored_keys
+
+
+def test_schema_accepts_pack_author_name_only() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+pack_author:
+  name: Northwind
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    )
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "Northwind"
+    assert pack.pack_author.url is None
+    assert pack.as_dict()["pack_author"] == {"name": "Northwind"}
+
+
+@pytest.mark.parametrize(
+    "author_yaml",
+    [
+        "pack_author: Northwind",
+        "pack_author: []",
+        "pack_author: 3",
+        "pack_author:\n  url: https://northwind.example",
+        "pack_author:\n  name: ''",
+        "pack_author:\n  name: Northwind\n  url: not-a-url",
+        "pack_author:\n  name: Northwind\n  url: javascript:alert(1)",
+        "pack_author:\n  name: Northwind\n  url: 12",
+    ],
+)
+def test_schema_rejects_bad_pack_author_shapes(author_yaml: str) -> None:
+    raw = f"""
+schema: bossmod.agent_pack/v1
+{author_yaml}
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    with pytest.raises(AgentPackError) as exc:
+        parse_pack_yaml(raw)
+    assert exc.value.code == "invalid_schema"
+
+
+def test_schema_rejects_tools_hint_prose() -> None:
+    with pytest.raises(AgentPackError) as prose:
+        parse_pack_yaml(
+            """
+schema: bossmod.agent_pack/v1
+specialty: Engineer
+description: Builds software.
+what_done_looks_like: Tests or an artifact exist.
+tools_hint: use the cli and work tools to finish the job
+"""
+        )
+    assert prose.value.code == "invalid_schema"
+    with pytest.raises(AgentPackError) as listed:
+        parse_pack_yaml(
+            """
+schema: bossmod.agent_pack/v1
+specialty: Engineer
+description: Builds software.
+what_done_looks_like: Tests or an artifact exist.
+tools_hint:
+  - use the cli tool for everything
+"""
+        )
+    assert listed.value.code == "invalid_schema"
+
+
+def test_quality_accepts_labeled_senior_sections() -> None:
+    pack = parse_pack_yaml(VALID_PACK)
+    validate_pack_quality(pack)
+    assert "Mission:" in pack.description
+    assert "In scope:" in pack.description
+    assert "Out of scope:" in pack.description
+    assert "Handoff:" in pack.description
+    assert "Fail examples:" in pack.what_done_looks_like
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "Northwind"
+
+
+def test_quality_folds_additive_fields_into_hire_hydrate() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+specialty: Writer
+description: Extra office context for drafts.
+mission: Writes first drafts that a reviewer can open as a named file in this workspace.
+in_scope: Named drafts, outlines, and edit passes the operator can read from the desk.
+out_of_scope: Publishing, production deploys, and sending mail on behalf of the operator.
+handoff: A reviewer or the operator receives the named draft and the finish line.
+what_done_looks_like: A named draft exists and can be opened. Empty done does not count.
+fail_examples: '"Looks good" with no file; a vibe paragraph; done with no named draft.'
+"""
+    )
+    validate_pack_quality(pack)
+    hire = pack.hire_fields()
+    assert "Mission:" in hire["description"]
+    assert "In scope:" in hire["description"]
+    assert "Handoff:" in hire["description"]
+    assert "Fail examples:" in hire["done_fail_bar"]
+    assert "pack_author" not in hire
+
+
+def test_quality_rejects_one_liner_and_missing_fail_examples() -> None:
+    thin = parse_pack_yaml(THIN_PACK)
+    with pytest.raises(AgentPackError) as missing:
+        validate_pack_quality(thin)
+    assert missing.value.code == "pack_quality"
+    no_fail = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+specialty: Writer
+description: |
+  Mission: Writes first drafts that a reviewer can open as a named file in this workspace.
+  In scope: Named drafts, outlines, and edit passes the operator can read from the desk.
+  Out of scope: Publishing, production deploys, and sending mail on behalf of the operator.
+  Handoff: A reviewer or the operator receives the named draft and the finish line.
+what_done_looks_like: A named draft exists. Empty done does not count.
+"""
+    )
+    with pytest.raises(AgentPackError) as fail_exc:
+        validate_pack_quality(no_fail)
+    assert fail_exc.value.code == "pack_quality"
+    assert "Fail examples" in str(fail_exc.value)
+
+
+def test_quality_rejects_short_mission() -> None:
+    pack = parse_pack_yaml(
+        """
+schema: bossmod.agent_pack/v1
+specialty: Writer
+description: |
+  Mission: Writes drafts.
+  In scope: Named drafts, outlines, and edit passes the operator can read from the desk.
+  Out of scope: Publishing, production deploys, and sending mail on behalf of the operator.
+  Handoff: A reviewer or the operator receives the named draft and the finish line.
+what_done_looks_like: |
+  A named draft exists and can be opened. Empty done does not count.
+  Fail examples: "Looks good" with no file; a vibe paragraph; done with no named draft.
+"""
+    )
+    with pytest.raises(AgentPackError) as exc:
+        validate_pack_quality(pack)
+    assert exc.value.code == "pack_quality"
+    assert "Mission" in str(exc.value)
 
 
 @pytest.mark.parametrize(
@@ -320,8 +533,12 @@ def test_sample_catalog_fixture_validates() -> None:
     pack = parse_pack_yaml(AUDITOR_PACK)
     assert pack.schema == SCHEMA_ID
     assert pack.kind == PACK_KIND_AGENT
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "JTech Minds"
+    validate_pack_quality(pack)
     planner = parse_pack_yaml(PLANNER_PACK)
     assert planner.specialty == "Feature Planner"
+    validate_pack_quality(planner)
 
 
 def test_catalog_rejects_category_folder_mismatch() -> None:
@@ -434,7 +651,11 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
     )
     assert result.hire_fields["role"] == "Code Auditor"
     assert "Reviews claims" in result.hire_fields["description"]
+    assert "Fail examples:" in result.hire_fields["done_fail_bar"]
     assert "name" not in result.hire_fields
+    assert "pack_author" not in result.hire_fields
+    assert result.pack.pack_author is not None
+    assert result.pack.pack_author.name == "JTech Minds"
     assert result.location.commit_sha == PINNED_SHA
     assert result.location.path == AUDITOR_PATH
     assert result.catalog_entry is not None
@@ -444,6 +665,22 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
     assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
     assert source.fetch_calls[1][2] == AUDITOR_PATH
     assert source.fetch_calls[0][3] == PINNED_SHA
+
+
+def test_import_rejects_thin_pack_without_creating_an_agent() -> None:
+    source = _catalog_source(THIN_PACK)
+    before = db.list_agents()
+    with pytest.raises(AgentPackError) as exc:
+        import_pack(
+            PackImportRequest(pack_id="code-auditor", ref=PINNED_SHA),
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            catalog_path=DEFAULT_CATALOG_PATH,
+            extra_allowlist="",
+            confirm_secret="test-secret",
+        )
+    assert exc.value.code == "pack_quality"
+    assert db.list_agents() == before
 
 
 def test_import_pins_tag_to_resolved_commit() -> None:
@@ -599,7 +836,43 @@ def test_export_round_trip_matches_hire_profile_fields() -> None:
     assert hire["description"] == agent.description
     assert hire["done_fail_bar"] == agent.done_fail_bar
     assert "name" not in hire
+    assert "pack_author" not in hire
     assert hire["role"] != agent.name
+    assert parsed.pack_author is None
+
+
+def test_export_fills_pack_author_from_company_and_round_trips() -> None:
+    agent = db.create_agent(
+        "Operator Named",
+        role="QA Engineer",
+        description="Checks claims and files.",
+        done_fail_bar="A checkable allow/deny exists. Empty done does not count.",
+    )
+    pack = export_pack(
+        agent,
+        company_name="Northwind",
+        company_url="https://northwind.example",
+    )
+    assert pack.pack_author is not None
+    assert pack.pack_author.name == "Northwind"
+    assert pack.pack_author.url == "https://northwind.example"
+    parsed = parse_pack_yaml(pack.to_yaml())
+    assert parsed.pack_author is not None
+    assert parsed.pack_author.name == "Northwind"
+    assert parsed.pack_author.url == "https://northwind.example"
+    assert "pack_author" not in parsed.hire_fields()
+
+
+def test_export_omits_pack_author_when_company_unknown() -> None:
+    agent = db.create_agent(
+        "Operator Named",
+        role="QA Engineer",
+        description="Checks claims and files.",
+        done_fail_bar="A checkable allow/deny exists. Empty done does not count.",
+    )
+    pack = export_pack(agent, company_name="", company_url="https://northwind.example")
+    assert pack.pack_author is None
+    assert "pack_author" not in pack.as_dict()
 
 
 def test_export_fills_done_bar_from_specialty_when_blank() -> None:
@@ -629,6 +902,8 @@ def test_api_import_hydrates_then_operator_still_names_hire(
     assert body["catalog"]["category"] == "engineering"
     assert body["hire_fields"]["role"] == "Code Auditor"
     assert "name" not in body["hire_fields"]
+    assert "pack_author" not in body["hire_fields"]
+    assert body["pack"]["pack_author"]["name"] == "JTech Minds"
     hired = client.post(
         "/api/agents",
         headers=_headers(),
@@ -648,7 +923,35 @@ def test_api_import_hydrates_then_operator_still_names_hire(
     assert pack["kind"] == PACK_KIND_AGENT
     assert pack["specialty"] == created["role"]
     assert pack["description"] == created["description"]
-    parse_pack_yaml(exported.json()["yaml"])
+    parsed = parse_pack_yaml(exported.json()["yaml"])
+    validate_pack_quality(parsed)
+    assert "pack_author" not in pack
+
+
+def test_api_export_fills_pack_author_from_company_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _catalog_source()
+    client = _client(monkeypatch, source)
+    agent = db.create_agent(
+        "Desk Neighbor",
+        role="Code Auditor",
+        description="Reviews claims.",
+        done_fail_bar="A checkable allow/deny exists.",
+    )
+    db.set_setting("company_name", "Northwind", "general")
+    db.set_setting("company_url", "https://northwind.example", "general")
+    config.reload()
+    exported = client.get(f"/api/agents/{agent.id}/pack", headers=_headers())
+    assert exported.status_code == 200, exported.text
+    body = exported.json()["pack"]
+    assert body["pack_author"] == {
+        "name": "Northwind",
+        "url": "https://northwind.example",
+    }
+    parsed = parse_pack_yaml(exported.json()["yaml"])
+    assert parsed.pack_author is not None
+    assert parsed.pack_author.name == "Northwind"
 
 
 def test_api_trust_gate_and_live_hire_overwrite(

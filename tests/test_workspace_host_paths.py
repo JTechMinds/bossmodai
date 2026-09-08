@@ -223,8 +223,11 @@ def test_execute_bm_cli_reads_and_writes_named_host_path(tmp_path: Path) -> None
         f"write {fixture}",
         "print('after')\n",
     )
-    assert written.ok is True
-    assert fixture.read_text(encoding="utf-8") == "print('after')\n"
+    assert written.ok is False
+    assert written.consent_required is True
+    card = (written.data or {}).get("host_path_consent") or {}
+    assert card.get("kind") == "workspace_preference"
+    assert fixture.read_text(encoding="utf-8") == "print('before')\n"
 
     denied = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert denied.ok is False
