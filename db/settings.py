@@ -119,7 +119,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("telegram_allowed_user_ids", "", "telegram"),
 
     # ── Agent packs (engine import/export; no storefront UI) ──
-    ("agent_pack_catalog_repo", "JTechMinds/bossmodai", "agent_packs"),
+    ("agent_pack_catalog_repo", "JTechMinds/BossMod_AgentMP", "agent_packs"),
     ("agent_pack_catalog_path", "packs", "agent_packs"),
     ("agent_pack_url_allowlist", "", "agent_packs"),
 

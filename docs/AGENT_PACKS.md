@@ -3,10 +3,10 @@
 Packs are YAML files in a GitHub repository, contributed by pull request.
 There is no custom store backend, module marketplace, or storefront UI.
 
-Each file is a hire-contract template: specialty, description, and what
-done looks like. Optional personality and tools hints may be included. A
-pack does not include an agent name, desk, seats, credentials, or
-executable content.
+Each pack file is a hire-contract template: specialty, description, and
+what done looks like. Optional personality and tools hints may be
+included. A pack does not include an agent name, desk, seats,
+credentials, or executable content.
 
 ## Schema
 
@@ -20,10 +20,30 @@ is parsed as data only.
 
 ## Catalog
 
-The catalog is git: YAML files under `packs/` in the configured GitHub
-repo (`agent_pack_catalog_repo`, default `JTechMinds/bossmodai`). Extra
-trusted `owner/repo` slugs may be listed in `agent_pack_url_allowlist`.
-Contribute a pack by opening a pull request that adds a `.yaml` file.
+Default catalog repo: https://github.com/JTechMinds/BossMod_AgentMP
+(`agent_pack_catalog_repo`). Extra trusted `owner/repo` slugs may be
+listed in `agent_pack_url_allowlist`. Contribute by opening a pull
+request in that repo. The locked directory shape is:
+
+```text
+catalog.yaml
+packs/
+  engineering/
+    code-auditor.agent.yaml
+  product/
+    feature-planner.agent.yaml
+```
+
+- Folder = category slug (not a display name). No `Profiles/` wrapper.
+- File = stable pack id: `packs/<category>/<id>.agent.yaml`.
+- `catalog.yaml` is the index. Each row has `id`, `kind`, `path`,
+  `category`, and `title`.
+- Category in `catalog.yaml` must match the folder in `path`. Catalog CI
+  should fail when they drift.
+
+The app reads `catalog.yaml` first at the pinned commit or tag, then
+fetches the pack file from that index row. It does not browse or render
+a storefront.
 
 ## Pin
 
@@ -40,8 +60,11 @@ hints). It does not create or patch an agent. The operator still supplies
 name and seats. Passing `agent_id` is rejected so a live hire cannot be
 silently overwritten.
 
-Catalog body: `{ "path": "software-engineer.yaml", "ref": "<sha-or-tag>" }`.
-GitHub URL body: `{ "url": "https://github.com/owner/repo/blob/<sha>/packs/example.yaml" }`.
+Catalog body (resolves through `catalog.yaml`):
+`{ "id": "code-auditor", "ref": "<sha-or-tag>" }`.
+Path is accepted only when that path is listed in the index at the pin.
+GitHub URL body:
+`{ "url": "https://github.com/owner/repo/blob/<sha>/packs/engineering/code-auditor.agent.yaml" }`.
 
 ## Trust
 

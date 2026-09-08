@@ -17,12 +17,13 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
+from core.agent_pack.catalog import validate_catalog_pack_path
 from core.agent_pack.schema import AgentPackError
 
 CATALOG_REPO_SETTING = "agent_pack_catalog_repo"
 CATALOG_PATH_SETTING = "agent_pack_catalog_path"
 ALLOWLIST_SETTING = "agent_pack_url_allowlist"
-DEFAULT_CATALOG_REPO = "JTechMinds/bossmodai"
+DEFAULT_CATALOG_REPO = "JTechMinds/BossMod_AgentMP"
 DEFAULT_CATALOG_PATH = "packs"
 
 FLOATING_REFS = frozenset({
@@ -214,22 +215,15 @@ def parse_github_pack_url(raw: str) -> PackLocation:
     )
 
 
-def catalog_location(*, catalog_repo: str, catalog_path: str, path: str, ref: str) -> PackLocation:
-    """Build a location under the configured catalog repo."""
+def catalog_pack_location(*, catalog_repo: str, path: str, ref: str) -> PackLocation:
+    """Build a location for a catalog pack path already resolved from catalog.yaml."""
     owner, repo = parse_catalog_repo(catalog_repo)
     validate_pin_ref(ref)
-    prefix = (catalog_path or DEFAULT_CATALOG_PATH).strip().strip("/")
-    relative = (path or "").strip().lstrip("/")
-    if not relative:
-        raise AgentPackError("Catalog pack path is required.", code="invalid_source")
-    if prefix and not relative.startswith(prefix + "/") and relative != prefix:
-        joined = f"{prefix}/{relative}"
-    else:
-        joined = relative
+    cleaned, _category, _pack_id = validate_catalog_pack_path(path)
     return PackLocation(
         owner=owner,
         repo=repo,
-        path=_validate_pack_path(joined),
+        path=cleaned,
         requested_ref=ref,
         from_catalog=True,
     )

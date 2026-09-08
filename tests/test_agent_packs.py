@@ -15,6 +15,7 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.agent_pack import (
+    CATALOG_INDEX_PATH,
     DEFAULT_CATALOG_PATH,
     DEFAULT_CATALOG_REPO,
     PackImportRequest,
@@ -23,9 +24,10 @@ from core.agent_pack import (
     import_pack,
     parse_pack_yaml,
 )
+from core.agent_pack.catalog import parse_catalog_yaml, resolve_catalog_entry, validate_catalog_pack_path
 from core.agent_pack.github import (
     FLOATING_REFS,
-    catalog_location,
+    catalog_pack_location,
     parse_github_pack_url,
     validate_pin_ref,
 )
@@ -33,7 +35,12 @@ from core.agent_pack.schema import PACK_KIND_AGENT, SCHEMA_ID, AgentPackError
 from core.agent_loop.role_contracts import suggest_finish_line
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLE_PACK = ROOT / "packs" / "software-engineer.yaml"
+FIXTURES = ROOT / "tests" / "fixtures" / "agent_mp"
+AUDITOR_PATH = "packs/engineering/code-auditor.agent.yaml"
+PLANNER_PATH = "packs/product/feature-planner.agent.yaml"
+CATALOG_YAML = (FIXTURES / "catalog.yaml").read_text(encoding="utf-8")
+AUDITOR_PACK = (FIXTURES / AUDITOR_PATH).read_text(encoding="utf-8")
+PLANNER_PACK = (FIXTURES / PLANNER_PATH).read_text(encoding="utf-8")
 PINNED_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TAG_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
@@ -114,11 +121,28 @@ def _client(monkeypatch: pytest.MonkeyPatch, source: FakePackSource) -> TestClie
     return TestClient(app)
 
 
-def _catalog_source(yaml_text: str = VALID_PACK, *, path: str = "packs/software-engineer.yaml") -> FakePackSource:
+def _catalog_source(pack_yaml: str | None = None, *, pack_path: str = AUDITOR_PATH) -> FakePackSource:
     source = FakePackSource()
     owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
-    source.add(owner=owner, repo=repo, path=path, ref=PINNED_SHA, sha=PINNED_SHA, yaml_text=yaml_text)
-    source.add(owner=owner, repo=repo, path=path, ref="v1.0.0", sha=TAG_SHA, yaml_text=yaml_text)
+    pack_text = AUDITOR_PACK if pack_yaml is None else pack_yaml
+    for ref, sha in ((PINNED_SHA, PINNED_SHA), ("v1.0.0", TAG_SHA)):
+        source.add(owner=owner, repo=repo, path=CATALOG_INDEX_PATH, ref=ref, sha=sha, yaml_text=CATALOG_YAML)
+        source.add(
+            owner=owner,
+            repo=repo,
+            path=AUDITOR_PATH,
+            ref=ref,
+            sha=sha,
+            yaml_text=pack_text if pack_path == AUDITOR_PATH else AUDITOR_PACK,
+        )
+        source.add(
+            owner=owner,
+            repo=repo,
+            path=PLANNER_PATH,
+            ref=ref,
+            sha=sha,
+            yaml_text=pack_text if pack_path == PLANNER_PATH else PLANNER_PACK,
+        )
     return source
 
 
@@ -282,13 +306,64 @@ what_done_looks_like: Tests or an artifact exist.
     assert exc.value.code in {"invalid_yaml", "invalid_schema"}
 
 
-def test_sample_catalog_pack_validates() -> None:
-    pack = parse_pack_yaml(SAMPLE_PACK.read_text(encoding="utf-8"))
+def test_sample_catalog_fixture_validates() -> None:
+    index = parse_catalog_yaml(CATALOG_YAML)
+    assert [entry.id for entry in index.entries] == ["code-auditor", "feature-planner"]
+    auditor = resolve_catalog_entry(index, pack_id="code-auditor")
+    assert auditor.path == AUDITOR_PATH
+    assert auditor.category == "engineering"
+    assert auditor.kind == PACK_KIND_AGENT
+    path, category, pack_id = validate_catalog_pack_path(auditor.path)
+    assert path == AUDITOR_PATH
+    assert category == auditor.category
+    assert pack_id == auditor.id
+    pack = parse_pack_yaml(AUDITOR_PACK)
     assert pack.schema == SCHEMA_ID
     assert pack.kind == PACK_KIND_AGENT
-    assert pack.specialty
-    assert pack.description
-    assert pack.what_done_looks_like
+    planner = parse_pack_yaml(PLANNER_PACK)
+    assert planner.specialty == "Feature Planner"
+
+
+def test_catalog_rejects_category_folder_mismatch() -> None:
+    with pytest.raises(AgentPackError) as exc:
+        parse_catalog_yaml(
+            """
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: product
+    title: Code Auditor
+"""
+        )
+    assert exc.value.code == "catalog_category_mismatch"
+
+
+def test_catalog_rejects_profiles_wrapper_and_display_name_folder() -> None:
+    with pytest.raises(AgentPackError) as profiles:
+        parse_catalog_yaml(
+            """
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/Profiles/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+"""
+        )
+    assert profiles.value.code == "invalid_catalog"
+    with pytest.raises(AgentPackError) as display:
+        parse_catalog_yaml(
+            """
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/Engineering/code-auditor.agent.yaml
+    category: Engineering
+    title: Code Auditor
+"""
+        )
+    assert display.value.code == "invalid_catalog"
 
 
 @pytest.mark.parametrize("ref", sorted(FLOATING_REFS))
@@ -298,7 +373,7 @@ def test_pin_rejects_floating_refs(ref: str) -> None:
     assert exc.value.code == "floating_ref"
     with pytest.raises(AgentPackError) as url_exc:
         parse_github_pack_url(
-            f"https://github.com/acme/packs/blob/{ref}/packs/software-engineer.yaml"
+            f"https://github.com/acme/packs/blob/{ref}/packs/engineering/code-auditor.agent.yaml"
         )
     assert url_exc.value.code == "floating_ref"
 
@@ -313,13 +388,12 @@ def test_pin_accepts_commit_sha_and_tag() -> None:
         "https://raw.githubusercontent.com/acme/extra/v1.0.0/roles/writer.yaml"
     )
     assert tag_loc.requested_ref == "v1.0.0"
-    catalog = catalog_location(
+    catalog = catalog_pack_location(
         catalog_repo=DEFAULT_CATALOG_REPO,
-        catalog_path=DEFAULT_CATALOG_PATH,
-        path="software-engineer.yaml",
+        path=AUDITOR_PATH,
         ref=PINNED_SHA,
     )
-    assert catalog.path == "packs/software-engineer.yaml"
+    assert catalog.path == AUDITOR_PATH
     assert catalog.from_catalog is True
 
 
@@ -336,7 +410,7 @@ what_done_looks_like: A named draft exists.
     before = db.list_agents()
     with pytest.raises(AgentPackError) as exc:
         import_pack(
-            PackImportRequest(path="software-engineer.yaml", ref=PINNED_SHA),
+            PackImportRequest(pack_id="code-auditor", ref=PINNED_SHA),
             source=source,
             catalog_repo=DEFAULT_CATALOG_REPO,
             catalog_path=DEFAULT_CATALOG_PATH,
@@ -351,26 +425,31 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
     source = _catalog_source()
     before = db.list_agents()
     result = import_pack(
-        PackImportRequest(path="software-engineer.yaml", ref=PINNED_SHA),
+        PackImportRequest(pack_id="code-auditor", ref=PINNED_SHA),
         source=source,
         catalog_repo=DEFAULT_CATALOG_REPO,
         catalog_path=DEFAULT_CATALOG_PATH,
         extra_allowlist="",
         confirm_secret="test-secret",
     )
-    assert result.hire_fields["role"] == "Software Engineer"
-    assert "Implements features" in result.hire_fields["description"]
+    assert result.hire_fields["role"] == "Code Auditor"
+    assert "Reviews claims" in result.hire_fields["description"]
     assert "name" not in result.hire_fields
     assert result.location.commit_sha == PINNED_SHA
+    assert result.location.path == AUDITOR_PATH
+    assert result.catalog_entry is not None
+    assert result.catalog_entry.id == "code-auditor"
+    assert result.catalog_entry.category == "engineering"
     assert db.list_agents() == before
-    assert source.fetch_calls
+    assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
+    assert source.fetch_calls[1][2] == AUDITOR_PATH
     assert source.fetch_calls[0][3] == PINNED_SHA
 
 
 def test_import_pins_tag_to_resolved_commit() -> None:
     source = _catalog_source()
     result = import_pack(
-        PackImportRequest(path="software-engineer.yaml", ref="v1.0.0"),
+        PackImportRequest(pack_id="code-auditor", ref="v1.0.0"),
         source=source,
         catalog_repo=DEFAULT_CATALOG_REPO,
         catalog_path=DEFAULT_CATALOG_PATH,
@@ -379,7 +458,9 @@ def test_import_pins_tag_to_resolved_commit() -> None:
     )
     assert result.location.requested_ref == "v1.0.0"
     assert result.location.commit_sha == TAG_SHA
+    assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
     assert source.fetch_calls[0][3] == TAG_SHA
+    assert source.fetch_calls[1][3] == TAG_SHA
 
 
 def test_import_rejects_agent_id_so_live_hire_is_not_overwritten() -> None:
@@ -393,7 +474,7 @@ def test_import_rejects_agent_id_so_live_hire_is_not_overwritten() -> None:
     with pytest.raises(AgentPackError) as exc:
         import_pack(
             PackImportRequest(
-                path="software-engineer.yaml",
+                pack_id="code-auditor",
                 ref=PINNED_SHA,
                 agent_id=agent.id,
             ),
@@ -539,12 +620,14 @@ def test_api_import_hydrates_then_operator_still_names_hire(
     imported = client.post(
         "/api/agent-packs/import",
         headers=_headers(),
-        json={"path": "software-engineer.yaml", "ref": PINNED_SHA},
+        json={"id": "code-auditor", "ref": PINNED_SHA},
     )
     assert imported.status_code == 200, imported.text
     body = imported.json()
     assert body["pin"]["commit_sha"] == PINNED_SHA
-    assert body["hire_fields"]["role"] == "Software Engineer"
+    assert body["catalog"]["id"] == "code-auditor"
+    assert body["catalog"]["category"] == "engineering"
+    assert body["hire_fields"]["role"] == "Code Auditor"
     assert "name" not in body["hire_fields"]
     hired = client.post(
         "/api/agents",
@@ -599,7 +682,7 @@ def test_api_trust_gate_and_live_hire_overwrite(
     blocked = client.post(
         "/api/agent-packs/import",
         headers=_headers(),
-        json={"path": "software-engineer.yaml", "ref": PINNED_SHA, "agent_id": agent.id},
+        json={"id": "code-auditor", "ref": PINNED_SHA, "agent_id": agent.id},
     )
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "live_hire_overwrite"
@@ -614,7 +697,7 @@ def test_api_rejects_floating_main_without_fetch(
         "/api/agent-packs/import",
         headers=_headers(),
         json={
-            "url": "https://github.com/JTechMinds/bossmodai/blob/main/packs/software-engineer.yaml"
+            "url": "https://github.com/JTechMinds/BossMod_AgentMP/blob/main/packs/engineering/code-auditor.agent.yaml"
         },
     )
     assert response.status_code == 400
@@ -626,3 +709,37 @@ def test_seeded_catalog_settings_exist() -> None:
     assert config.get("agent_pack_catalog_repo") == DEFAULT_CATALOG_REPO
     assert config.get("agent_pack_catalog_path") == DEFAULT_CATALOG_PATH
     assert config.get("agent_pack_url_allowlist") is None
+
+
+def test_catalog_import_by_listed_path_and_unknown_id() -> None:
+    source = _catalog_source()
+    listed = import_pack(
+        PackImportRequest(path=AUDITOR_PATH, ref=PINNED_SHA),
+        source=source,
+        catalog_repo=DEFAULT_CATALOG_REPO,
+        catalog_path=DEFAULT_CATALOG_PATH,
+        extra_allowlist="",
+        confirm_secret="test-secret",
+    )
+    assert listed.catalog_entry is not None
+    assert listed.catalog_entry.id == "code-auditor"
+    with pytest.raises(AgentPackError) as missing:
+        import_pack(
+            PackImportRequest(pack_id="not-a-pack", ref=PINNED_SHA),
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            catalog_path=DEFAULT_CATALOG_PATH,
+            extra_allowlist="",
+            confirm_secret="test-secret",
+        )
+    assert missing.value.code == "catalog_miss"
+    with pytest.raises(AgentPackError) as unlisted:
+        import_pack(
+            PackImportRequest(path="packs/engineering/missing.agent.yaml", ref=PINNED_SHA),
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            catalog_path=DEFAULT_CATALOG_PATH,
+            extra_allowlist="",
+            confirm_secret="test-secret",
+        )
+    assert unlisted.value.code == "catalog_miss"

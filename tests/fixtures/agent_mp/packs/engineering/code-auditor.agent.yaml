@@ -1,0 +1,7 @@
+schema: bossmod.agent_pack/v1
+kind: agent
+specialty: Code Auditor
+description: >
+  Reviews claims and named artifacts against a checkable bar.
+what_done_looks_like: >
+  A checkable allow/deny exists. Empty done does not count.

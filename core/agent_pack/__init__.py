@@ -1,5 +1,6 @@
 """Agent pack schema, GitHub import, and profile export."""
 
+from core.agent_pack.catalog import CATALOG_INDEX_PATH, CatalogEntry
 from core.agent_pack.github import (
     ALLOWLIST_SETTING,
     CATALOG_PATH_SETTING,
@@ -27,6 +28,7 @@ from core.agent_pack.service import (
 
 __all__ = [
     "ALLOWLIST_SETTING",
+    "CATALOG_INDEX_PATH",
     "CATALOG_PATH_SETTING",
     "CATALOG_REPO_SETTING",
     "DEFAULT_CATALOG_PATH",
@@ -35,6 +37,7 @@ __all__ = [
     "SCHEMA_ID",
     "AgentPack",
     "AgentPackError",
+    "CatalogEntry",
     "GitHubPackSource",
     "PackImportRequest",
     "PackImportResult",

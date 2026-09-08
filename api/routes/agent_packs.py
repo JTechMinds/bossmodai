@@ -35,6 +35,7 @@ class AgentPackImportBody(BaseModel):
     """
 
     url: str | None = None
+    id: str | None = None
     path: str | None = None
     ref: str | None = None
     confirm: bool = False
@@ -74,6 +75,7 @@ def import_agent_pack(body: AgentPackImportBody) -> dict[str, Any]:
         result = import_pack(
             PackImportRequest(
                 url=body.url,
+                pack_id=body.id,
                 path=body.path,
                 ref=body.ref,
                 confirm=body.confirm,
@@ -88,12 +90,21 @@ def import_agent_pack(body: AgentPackImportBody) -> dict[str, Any]:
         )
     except AgentPackError as exc:
         raise _http_error(exc) from exc
-    return {
+    payload: dict[str, Any] = {
         "pack": result.pack.as_dict(),
         "hire_fields": result.hire_fields,
         "ignored_keys": list(result.pack.ignored_keys),
         "pin": _pin_payload(result.location),
     }
+    if result.catalog_entry is not None:
+        payload["catalog"] = {
+            "id": result.catalog_entry.id,
+            "kind": result.catalog_entry.kind,
+            "path": result.catalog_entry.path,
+            "category": result.catalog_entry.category,
+            "title": result.catalog_entry.title,
+        }
+    return payload
 
 
 @router.get("/agents/{agent_id}/pack")

@@ -1,0 +1,7 @@
+schema: bossmod.agent_pack/v1
+kind: agent
+specialty: Feature Planner
+description: >
+  Turns requests into a named plan with a finish line.
+what_done_looks_like: >
+  A named plan exists. Empty done does not count.
