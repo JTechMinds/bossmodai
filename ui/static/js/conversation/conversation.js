@@ -81,7 +81,7 @@ const BossModConversation = (() => {
             return BossModAssignForm.openAssignForm({
                 api,
                 store,
-                onCreated: () => navigate('board'),
+                bindOrigin: true, onCreated: () => navigate('board'),
             });
         }
 

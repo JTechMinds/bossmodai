@@ -143,6 +143,42 @@ def test_channel_task_create_posts_created_line() -> None:
     assert not _queued_channel_messages(jimothy.id)
 
 
+def test_operator_thread_assign_payload_posts_created_on_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conversation assign sheet's POST body must bind Created to the thread.
+
+    Without source_channel=channel + notification_channel_id, the API defaults
+    to source_channel=api and the line lands in Focus.
+    """
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    client = _task_api_client(monkeypatch)
+    created = client.post(
+        "/api/tasks",
+        headers=_headers(),
+        json={
+            "title": "Share review findings",
+            "assigned_to": jimothy.id,
+            "source_channel": "channel",
+            "notification_channel_id": channel.id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["outcome"] == "create_new_task"
+    assert body["task"]["source_channel"] == "channel"
+    assert body["task"]["notification_channel_id"] == channel.id
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert contents.count("Created: Share review findings") == 1
+    notes = db.list_notifications(agent_id=jimothy.id)
+    assert not any(note.content == "Created: Share review findings" for note in notes)
+
+
 def test_chat_task_create_posts_created_line() -> None:
     ada = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     creation = _chat_task(assignee_id=ada.id)

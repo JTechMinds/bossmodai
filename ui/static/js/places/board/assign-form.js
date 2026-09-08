@@ -60,6 +60,9 @@ const BossModAssignForm = (() => {
      *   "the person you were already looking at".
      * @param {string} [deps.taskId]  An existing workstream to bind to, sent as
      *   `bind_task_id`.
+     * @param {boolean} [deps.bindOrigin]  Conversation assign stamps the open
+     *   thread (or Focus) so Created/Accepted land there. Board omits this —
+     *   leftover conversationId in the store is not a bind the operator asked for.
      * @param {(task: object) => void} [deps.onCreated]
      * @param {(taskId: string) => void} [deps.onOpenTask]  Optional capability.
      *   When supplied, an ambiguous-match candidate can be opened as well as
@@ -69,7 +72,7 @@ const BossModAssignForm = (() => {
      * @throws {Error} When api or store is missing.
      */
     function openAssignForm(deps) {
-        const { api, store, taskId, onCreated, onOpenTask } = deps || {};
+        const { api, store, taskId, onCreated, onOpenTask, bindOrigin } = deps || {};
         if (typeof api !== 'function') throw new Error('[assign-form] deps.api is required');
         if (!store) throw new Error('[assign-form] deps.store is required');
 
@@ -184,6 +187,12 @@ const BossModAssignForm = (() => {
             if (chosen) payload.assigned_to = chosen;
             if (bindTaskId || taskId) payload.bind_task_id = bindTaskId || taskId;
             if (confirmSpecialtyMismatch) payload.confirm_specialty_mismatch = true;
+            if (bindOrigin && state.conversationKind === 'thread' && state.conversationId) {
+                payload.source_channel = 'channel';
+                payload.notification_channel_id = state.conversationId;
+            } else if (bindOrigin && state.conversationKind === 'agent') {
+                payload.source_channel = 'chat';
+            }
             try {
                 const res = await api('/api/tasks', {
                     method: 'POST',
