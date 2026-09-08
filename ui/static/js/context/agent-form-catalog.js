@@ -89,7 +89,9 @@ const BossModAgentFormCatalog = (() => {
             browseBtn.setAttribute('aria-pressed', next === 'browse' ? 'true' : 'false');
             blankBtn.setAttribute('aria-pressed', next === 'blank' ? 'true' : 'false');
             browsePanel.classList.toggle('hidden', next === 'blank');
-            if (next === 'blank') clearPackFields();
+            if (next === 'blank' && !banner.classList.contains('hidden')) {
+                clearPackFields();
+            }
         }
 
         function clearPackFields() {
