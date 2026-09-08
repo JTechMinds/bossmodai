@@ -25,7 +25,14 @@ from core.agent_pack.github import (
     parse_github_pack_url,
     validate_pin_ref,
 )
-from core.agent_pack.schema import AgentPack, AgentPackError, export_agent_pack, parse_pack_yaml
+from core.agent_pack.quality import validate_pack_quality
+from core.agent_pack.schema import (
+    AgentPack,
+    AgentPackError,
+    export_agent_pack,
+    pack_author_from_company,
+    parse_pack_yaml,
+)
 from core.models.agent import Agent
 from core.models.settings import AIPersonality
 
@@ -108,10 +115,13 @@ def export_pack(
     agent: Agent,
     *,
     personalities: Iterable[AIPersonality] | None = None,
+    company_name: str | None = None,
+    company_url: str | None = None,
 ) -> AgentPack:
     """Export an agent's specialty / description / done bar as a pack."""
     hint = _personality_hint(agent, personalities)
-    return export_agent_pack(agent, personality_hint=hint)
+    author = pack_author_from_company(company_name, company_url)
+    return export_agent_pack(agent, personality_hint=hint, pack_author=author)
 
 
 def _import_url(
@@ -142,7 +152,7 @@ def _import_url(
     sha = source.resolve_commit_sha(location.owner, location.repo, location.requested_ref)
     pinned = location.with_sha(sha)
     raw = source.fetch_file(pinned.owner, pinned.repo, pinned.path, pinned.commit_sha or sha)
-    pack = parse_pack_yaml(raw)
+    pack = _parse_imported_pack(raw)
     return PackImportResult(
         pack=pack,
         location=pinned,
@@ -167,13 +177,20 @@ def _import_catalog(
     location = catalog_pack_location(catalog_repo=catalog_repo, path=entry.path, ref=ref)
     pinned = location.with_sha(sha)
     raw = source.fetch_file(pinned.owner, pinned.repo, pinned.path, sha)
-    pack = parse_pack_yaml(raw)
+    pack = _parse_imported_pack(raw)
     return PackImportResult(
         pack=pack,
         location=pinned,
         hire_fields=pack.hire_fields(),
         catalog_entry=entry,
     )
+
+
+def _parse_imported_pack(raw: str | bytes) -> AgentPack:
+    """Schema-parse an imported pack and require senior quality sections."""
+    pack = parse_pack_yaml(raw)
+    validate_pack_quality(pack)
+    return pack
 
 
 def _personality_hint(

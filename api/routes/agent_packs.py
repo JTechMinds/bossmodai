@@ -114,7 +114,12 @@ def export_agent_pack(agent_id: str) -> dict[str, Any]:
     if not agent:
         raise HTTPException(404, "Agent not found")
     try:
-        pack = export_pack(agent, personalities=db.list_personalities())
+        pack = export_pack(
+            agent,
+            personalities=db.list_personalities(),
+            company_name=config.get("company_name"),
+            company_url=config.get("company_url"),
+        )
     except AgentPackError as exc:
         raise _http_error(exc) from exc
     return {

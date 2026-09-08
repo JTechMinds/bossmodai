@@ -1,7 +1,16 @@
 schema: bossmod.agent_pack/v1
 kind: agent
+pack_author:
+  name: JTech Minds
+  url: https://github.com/JTechMinds
 specialty: Feature Planner
-description: >
-  Turns requests into a named plan with a finish line.
-what_done_looks_like: >
-  A named plan exists. Empty done does not count.
+description: |
+  Mission: Turns requests into a named plan with a checkable finish line the operator can open.
+  In scope: Scoping notes, sequenced work, and a finish line tied to a named artifact.
+  Out of scope: Implementing the plan, shipping production code, or owning live operations.
+  Handoff: An implementer or the operator receives the named plan and the finish line.
+what_done_looks_like: |
+  A named plan exists with a finish line the operator can check. Empty done does not count.
+  Fail examples: A vibe sketch with no name; "we should maybe"; a plan with no finish line.
+tools_hint:
+  - work
