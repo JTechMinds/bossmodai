@@ -25,6 +25,7 @@ CONTEXT_MODULES = [
     JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -59,6 +60,7 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-fields.js",
     CONTEXT / "agent-form-fields.js",
     CONTEXT / "agent-form-advanced.js",
+    CONTEXT / "agent-form-connections.js",
     CONTEXT / "agent-form-bindings.js",
     CONTEXT / "agent-form.js",
     CONTEXT / "agent-submit.js",
@@ -206,8 +208,8 @@ def test_agent_edit_modules_stay_focused() -> None:
     assert names == [
         "agent-api.js", "agent-edit.js", "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
-        "agent-form-fields.js", "agent-form.js", "agent-recovery.js",
-        "agent-submit.js",
+        "agent-form-connections.js", "agent-form-fields.js",
+        "agent-form.js", "agent-recovery.js", "agent-submit.js",
     ], names
     for path in modules:
         lines = len(_read(path).splitlines())

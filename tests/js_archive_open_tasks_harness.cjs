@@ -18,7 +18,7 @@ global.window.lucide = global.lucide;
 
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
-    overlaysPath, formatPath, rowMetaPath, archivePath, threadSourcePath,
+    overlayFocusPath, overlaysPath, formatPath, rowMetaPath, archivePath, threadSourcePath,
     rosterPeoplePath, threadCreatePath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -29,6 +29,7 @@ load(storePath, "BossModStore");
 load(busPath, "BossModBus");
 load(gatesPath, "BossModGates");
 load(consentPath, "BossModConsentCard");
+load(overlayFocusPath, "BossModOverlayFocus");
 load(overlaysPath, "BossModOverlays");
 // Both rails render their last-activity column through these two.
 load(formatPath, "BossModFormat");

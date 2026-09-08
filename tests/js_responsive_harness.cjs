@@ -15,7 +15,8 @@ global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
 
 const paths = process.argv.slice(2);
-const NAMES = ["BossModDom", "BossModStore", "BossModOverlays", "BossModPlaces", "BossModResponsive"];
+const NAMES = ["BossModDom", "BossModStore", "BossModOverlayFocus", "BossModOverlays",
+    "BossModPlaces", "BossModResponsive"];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
 }

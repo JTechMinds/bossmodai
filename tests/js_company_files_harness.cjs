@@ -24,7 +24,8 @@ global.window.BossModApi = {
 
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
-    "BossModOverlays", "BossModPlaces", "BossModFileContent", "BossModFileForm",
+    "BossModOverlayFocus", "BossModOverlays", "BossModPlaces",
+    "BossModFileContent", "BossModFileForm",
     "BossModFileOps", "BossModFileViewer", "BossModFilesData", "BossModHostRoots",
     "BossModDeskOpener", "BossModFolderOpener", "BossModFileGrid",
     "BossModFileActions", "BossModFilesToolbar", "BossModFilesPlace",

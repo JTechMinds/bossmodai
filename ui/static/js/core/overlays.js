@@ -7,64 +7,22 @@
  * confirming, and focus returns to whatever opened it.
  *
  * Three shapes, one contract — a modal question, a slide-over panel, and a
- * menu hanging off a control. They share trapKeydown() rather than each
- * carrying a trap of its own, which is how the first two drifted apart once
- * already.
+ * menu hanging off a control. They share core/overlay-focus.js's trapKeydown()
+ * rather than each carrying a trap of its own, which is how the first two
+ * drifted apart once already. That module holds the keyboard rule; this one
+ * holds the three shapes that obey it.
  *
  * The modal has two SIZES and one implementation: a confirm dialog and the
  * agent form differ in geometry, not in contract, so the difference is an
- * attribute the stylesheet reads rather than a second function.
+ * attribute the stylesheet reads rather than a second function. It also owns
+ * the BACKDROP that blocks the page — built and removed with the panel,
+ * because a scrim that outlives its dialog leaves the app unclickable.
  */
 const BossModOverlays = (() => {
     const { h } = BossModDom;
-
-    /** Everything the browser will place in the tab order by default. */
-    const FOCUSABLE = [
-        'button:not([disabled])', '[href]', 'input:not([disabled])',
-        'select:not([disabled])', 'textarea:not([disabled])',
-        'summary', '[tabindex]:not([tabindex="-1"])',
-    ].join(', ');
-
-    /**
-     * Keep Tab inside one overlay, and let Esc dismiss it.
-     *
-     * Shared by both overlays on purpose. They previously carried separate
-     * implementations and only one of them was a real trap: the modal's cycled
-     * over its own action buttons and bailed out when focus was anywhere else,
-     * so any focusable content in the body leaked Tab into the page behind.
-     *
-     * @param {KeyboardEvent} event
-     * @param {HTMLElement} element  The overlay root.
-     * @param {() => void} close
-     * @returns {void}
-     */
-    function trapKeydown(event, element, close) {
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            close();
-            return;
-        }
-        if (event.key !== 'Tab') return;
-        const stops = Array.from(element.querySelectorAll(FOCUSABLE));
-        if (stops.length === 0) return;
-        const first = stops[0];
-        const last = stops[stops.length - 1];
-        const active = document.activeElement;
-        // Focus outside the overlay means the trap was escaped — pull it back
-        // rather than letting Tab walk into the page behind.
-        if (!element.contains(active)) {
-            event.preventDefault();
-            first.focus();
-            return;
-        }
-        if (event.shiftKey && active === first) {
-            event.preventDefault();
-            last.focus();
-        } else if (!event.shiftKey && active === last) {
-            event.preventDefault();
-            first.focus();
-        }
-    }
+    // The trap and the tab-order selector are core/overlay-focus.js's: one
+    // rule, three overlays, and no room left in this file to keep it here.
+    const { FOCUSABLE, trapKeydown } = BossModOverlayFocus;
 
     /**
      * Open a modal dialog.
@@ -72,12 +30,18 @@ const BossModOverlays = (() => {
      * @param {object} options
      * @param {string} options.title
      * @param {string|HTMLElement} options.body
-     * @param {Array<{label: string, tone?: string, id?: string,
+     * @param {Array<{label: string, tone?: string, id?: string, form?: string,
      *   onSelect?: () => void}>} options.actions
-     *   Rendered left to right. The LAST action receives focus on open, so put
-     *   the safe choice last — Esc and the default focus should agree. An
-     *   optional `id` is set on the button, so a caller whose buttons are
-     *   already named (and selected by name in tests) keeps those names.
+     *   Rendered left to right. The LAST receives focus on open when — and
+     *   only when — the body has nothing focusable in it: that is the safe
+     *   choice in a confirm dialog, and it is wrong in a form one, where the
+     *   primary is now the last action and focusing it means Enter submits an
+     *   empty form. See the focus line at the end of this function. `id` names
+     *   the button, so a caller whose buttons are already named (and selected
+     *   by name in tests) keeps those names. `form` is the id of a form THIS
+     *   BUTTON SUBMITS from outside it — how a form's primary can be pinned
+     *   above a scrolling body — and such an action does not close the dialog,
+     *   because the form's own handler and validation own the outcome.
      * @param {() => void} [options.onClose] Called after close, however it
      *   closed — and after the chosen action's onSelect, so a caller can treat
      *   it as "dismissed" when no choice was recorded.
@@ -93,14 +57,14 @@ const BossModOverlays = (() => {
 
         const actionRow = h('div', { class: 'modal-actions' });
         (actions || []).forEach((action) => {
+            // A `form` makes this that form's submit button from outside it,
+            // and it must NOT close: a refused save keeps the draft on screen.
             const btn = h('button', {
                 class: `modal-action ${action.tone || 'default'}`,
-                type: 'button',
-                onclick: () => {
-                    // The chosen action runs BEFORE the dialog closes, so a
-                    // caller that also passes onClose can tell a real choice
-                    // from a dismissal. The finally keeps a throwing handler
-                    // from leaving the modal stuck open.
+                type: action.form ? 'submit' : 'button',
+                form: action.form || null,
+                onclick: action.form ? null : () => {
+                    // Runs BEFORE close (options.onClose); finally unwedges it.
                     try {
                         if (action.onSelect) action.onSelect();
                     } finally {
@@ -108,48 +72,59 @@ const BossModOverlays = (() => {
                     }
                 },
             }, action.label);
-            // Test surface: lets a fake DOM identify a button without
-            // reimplementing textContent traversal.
+            // Test surface: a fake DOM can name a button without textContent.
             btn.textLabel = action.label;
             if (action.id) btn.id = action.id;
             buttons.push(btn);
             actionRow.append(btn);
         });
 
+        const bodyNode = h('div', { class: 'modal-body' }, body);
+
         const element = h('div', {
             class: 'modal-panel',
-            // Read by the stylesheet, never by script: which geometry this
-            // is belongs in CSS, and the one implementation just says which.
+            // Read by the stylesheet, never by script: geometry is CSS's.
             'data-size': size === 'wide' ? 'wide' : 'default',
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': title,
         },
             h('h2', { class: 'modal-title' }, title),
-            h('div', { class: 'modal-body' }, body),
+            bodyNode,
             actionRow);
 
-        // Was a cycle over `buttons` alone, which returned without preventing
-        // the default whenever focus sat anywhere else — so Tab from a radio or
-        // a text field in `body` walked straight into the page behind. Modals
-        // do carry such bodies (context/desk-opener.js). One trap now serves
-        // both overlays; a second implementation is how the two drifted apart.
+        // What makes it modal: without this the panel floated over a LIVE page
+        // and clicks reached the controls behind it. No dismiss handler — the
+        // wide variant holds a half-filled form a stray click must not discard.
+        const backdrop = h('div', { class: 'modal-backdrop' });
+
         const onKeydown = (event) => trapKeydown(event, element, close);
 
         let closed = false;
         function close() {
             if (closed) return;
             closed = true;
-            document.removeEventListener('keydown', onKeydown);
+            BossModOverlayFocus.unmountOverlay(element, onKeydown);
+            // With the panel, always: a leaked scrim bricks the app.
+            backdrop.remove();
             element.remove();
             if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
             if (onClose) onClose();
         }
 
-        document.addEventListener('keydown', onKeydown);
-        document.body.append(element);
-        // The safe choice holds focus, so Enter and Esc do the same thing.
-        if (buttons.length) buttons[buttons.length - 1].focus();
+        BossModOverlayFocus.mountOverlay(element, onKeydown);
+        // Backdrop first, so the panel paints over it in document order too.
+        document.body.append(backdrop, element);
+        // A FORM dialog starts in the form. Round four pinned the primary last
+        // and this focused the last action, so opening Hire put the keyboard on
+        // `Create Agent` and Enter submitted an empty form. The test is what the
+        // BODY holds, not the `size` flag: a wide dialog with nothing to type in
+        // has no better place for focus than its action row, and a confirm
+        // dialog's last action is the safe one a destructive prompt should open
+        // on. Both fall through to the same line.
+        const bodyStops = bodyNode.querySelectorAll(FOCUSABLE);
+        if (bodyStops.length) bodyStops[0].focus();
+        else if (buttons.length) buttons[buttons.length - 1].focus();
 
         return { close, element };
     }
@@ -198,13 +173,13 @@ const BossModOverlays = (() => {
         function close() {
             if (closed) return;
             closed = true;
-            document.removeEventListener('keydown', onKeydown);
+            BossModOverlayFocus.unmountOverlay(element, onKeydown);
             element.remove();
             if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
             if (onClose) onClose();
         }
 
-        document.addEventListener('keydown', onKeydown);
+        BossModOverlayFocus.mountOverlay(element, onKeydown);
         document.body.append(element);
         closeButton.focus();
 
@@ -272,14 +247,14 @@ const BossModOverlays = (() => {
         function close() {
             if (closed) return;
             closed = true;
-            document.removeEventListener('keydown', onKeydown);
+            BossModOverlayFocus.unmountOverlay(element, onKeydown);
             document.removeEventListener('mousedown', onPointerDown);
             element.remove();
             if (anchor.focus) anchor.focus();
             if (onClose) onClose();
         }
 
-        document.addEventListener('keydown', onKeydown);
+        BossModOverlayFocus.mountOverlay(element, onKeydown);
         document.addEventListener('mousedown', onPointerDown);
         container.append(element);
         // The first option, so the keyboard lands on something to act on. With

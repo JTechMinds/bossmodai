@@ -111,6 +111,9 @@
     <script src="{{ static_url('js/core/switch.js') }}"></script>
     <script src="{{ static_url('js/core/store.js') }}"></script>
     <script src="{{ static_url('js/core/bus.js') }}"></script>
+    <!-- The one focus trap the three overlays share, before the file that
+         builds them: overlays.js reads it at load time, not on first open. -->
+    <script src="{{ static_url('js/core/overlay-focus.js') }}"></script>
     <script src="{{ static_url('js/core/overlays.js') }}"></script>
     <script src="{{ static_url('js/core/gates.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card.js') }}"></script>
@@ -210,6 +213,7 @@
     <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-advanced.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-connections.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-bindings.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form.js') }}"></script>
     <script src="{{ static_url('js/context/agent-submit.js') }}"></script>

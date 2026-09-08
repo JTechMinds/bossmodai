@@ -8,9 +8,14 @@
  *
  * Creation is two states of ONE row, not a row that grows. The section header
  * has three slots: the `THREADS` label, a middle slot, and an action group at
- * the right. Idle, the middle slot invites — "Select teammates and start a
- * shared thread." — and the group holds the `+`. Selecting, the middle slot
- * counts what is picked and the group holds Cancel and the confirm.
+ * the right. Idle, the middle slot says NOTHING and the group holds the `+`.
+ * Selecting, the middle slot counts what is picked and the group holds Cancel
+ * and the confirm.
+ *
+ * The slot used to carry a one-sentence invitation. It truncated after about
+ * fourteen characters at rail width, which reads as broken, and it explained a
+ * mode nobody was in. The `+` is the whole of the invitation; the count is the
+ * only thing the slot has ever had to say.
  *
  * The control that STARTS the mode is the control that ends it. Cancel used to
  * sit in a block of its own below the filters, so the operator entered the
@@ -25,8 +30,6 @@
  */
 const BossModThreadCreate = (() => {
     const { h, clear } = BossModDom;
-
-    const THREAD_HINT = 'Select teammates and start a shared thread.';
 
     /**
      * Build the creation controls.
@@ -110,8 +113,9 @@ const BossModThreadCreate = (() => {
         }, h('i', { 'data-lucide': 'check', 'aria-hidden': 'true' }));
 
         const actions = h('div', { class: 'roster-section-actions' });
-        // The middle slot. One line that already exists, so neither the hint
-        // nor the count costs the rail any height.
+        // The middle slot. One line that already exists, so the count costs
+        // the rail no height — and it collapses when it is empty, so an idle
+        // header is the label and the `+` and nothing else.
         const middle = h('p', { class: 'roster-section-hint' });
         /** Which group is attached, so an unchanged repaint moves no nodes. */
         let attachedSelecting = null;
@@ -185,10 +189,10 @@ const BossModThreadCreate = (() => {
              * Re-read the People selection and repaint the header row.
              *
              * Out of select mode the `+` is the whole of the invitation and
-             * the middle slot says what it is for. In it, the middle slot
-             * counts and the group offers the two ways out. The floor is one
-             * teammate, which is what POST /api/channels accepts — a thread of
-             * one is a real thing the operator can already make.
+             * the middle slot is empty. In it, the middle slot counts and the
+             * group offers the two ways out. The floor is one teammate, which
+             * is what POST /api/channels accepts — a thread of one is a real
+             * thing the operator can already make.
              *
              * @returns {void}
              */
@@ -198,9 +202,7 @@ const BossModThreadCreate = (() => {
                 newThread.setAttribute('aria-expanded', String(selecting));
                 createThread.disabled = count === 0;
                 clear(middle);
-                middle.append(selecting
-                    ? `${count} selected`
-                    : THREAD_HINT);
+                if (selecting) middle.append(`${count} selected`);
                 swapActions(selecting);
             },
 

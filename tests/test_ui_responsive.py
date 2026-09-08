@@ -26,6 +26,7 @@ HARNESS = Path(__file__).resolve().parent / "js_responsive_harness.cjs"
 HARNESS_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "places.js",
     JS / "shell" / "responsive.js",
@@ -138,13 +139,18 @@ def test_no_gesture_only_controls() -> None:
                 offenders.append(f"{relative} binds {gesture}")
     assert offenders == [], "\n".join(offenders)
 
-    # The overlay is core/overlays.js's, with its focus trap and its Esc — not
-    # a third implementation living in the responsive layer.
+    # The overlay is the overlay chain's, with its focus trap and its Esc — not
+    # a third implementation living in the responsive layer. Round five split
+    # the trap into core/overlay-focus.js, so the two halves of that sentence
+    # are now read off the two files that own them rather than off one.
     responsive = (JS / "shell" / "responsive.js").read_text(encoding="utf-8")
     assert "BossModOverlays.slideOver(" in responsive
-    assert "addEventListener('keydown'" not in responsive, "the trap is overlays.js's"
-    overlays = (CSS.parent / "js" / "core" / "overlays.js").read_text(encoding="utf-8")
-    assert "trapKeydown" in overlays and "Escape" in overlays
+    assert "addEventListener('keydown'" not in responsive, "the trap is the overlay chain's"
+    core = CSS.parent / "js" / "core"
+    overlays = (core / "overlays.js").read_text(encoding="utf-8")
+    focus = (core / "overlay-focus.js").read_text(encoding="utf-8")
+    assert "trapKeydown" in overlays, "the slide-over must still wire the shared trap"
+    assert "trapKeydown" in focus and "Escape" in focus
 
 
 def test_touch_targets_meet_the_minimum() -> None:

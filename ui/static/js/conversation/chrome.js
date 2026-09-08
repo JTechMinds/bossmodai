@@ -19,10 +19,12 @@
  *
  * The TITLE may be renameable, and says so through the descriptor's optional
  * `onRename` rather than by this view learning what a thread is. The control
- * itself is conversation/title-rename.js; what belongs here is where its Save
- * lands — in the same action row Archive sits in, through the same
- * `{id, label, icon, onSelect}` descriptor, rather than as a bespoke button
- * beside the title.
+ * itself is conversation/title-rename.js; what belongs here is where its
+ * confirm and cancel land — in the same action row Archive sits in, through
+ * the same `{id, label, icon, onSelect}` descriptor, rather than as bespoke
+ * buttons beside the title. Both are icon-only, so each carries its own
+ * accessible name: colour is not the only carrier (SC 1.4.1), and a check and
+ * a cross differ in shape as well as in hue.
  *
  * VIEW OPTIONS are a different kind of thing from actions and sit behind a `⋯`
  * rather than beside them. `Desk` is an action on the person; "show system
@@ -171,8 +173,10 @@ const BossModConversationChrome = (() => {
          * @param {{title: string, subtitle: string, avatar?: object,
          *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. Each action is `{id, label, icon?, onSelect}`, where `icon`
-         *   is a Lucide glyph NAME — the source names it, this builds it.
+         *   shown. Each action is `{id, label, icon?, iconOnly?, onSelect}`,
+         *   where `icon` is a Lucide glyph NAME — the source names it, this
+         *   builds it — and `iconOnly` shows the glyph alone with `label` as
+         *   the button's accessible name instead of its text (SC 4.1.2).
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
@@ -184,14 +188,23 @@ const BossModConversationChrome = (() => {
             title.apply({ title: chrome.title || '', onRename: chrome.onRename });
             subtitleEl.textContent = chrome.subtitle || '';
             const wanted = new Set();
-            // Save exists only while a rename is open, and it joins the row
-            // through the same descriptor every other action uses — first, so
-            // the commit sits ahead of Archive rather than after it.
+            // The pair exists only while a rename is open, and both join the
+            // row through the same descriptor every other action uses —
+            // first, so the two ways out of the mode sit ahead of Archive
+            // rather than after it. Cancel calls the SAME function Esc does,
+            // so the keystroke and the control cannot drift apart.
             const actions = title.isEditing()
                 ? [{
+                    id: 'conversation-title-cancel',
+                    label: 'Cancel rename',
+                    icon: 'x',
+                    iconOnly: true,
+                    onSelect: () => title.cancel(),
+                }, {
                     id: 'conversation-title-save',
-                    label: 'Save',
+                    label: 'Save name',
                     icon: 'check',
+                    iconOnly: true,
                     onSelect: () => title.save(),
                 }].concat(chrome.actions || [])
                 : (chrome.actions || []);
@@ -206,7 +219,10 @@ const BossModConversationChrome = (() => {
                 if (action.icon) {
                     btn.append(h('i', { 'data-lucide': action.icon, 'aria-hidden': 'true' }));
                 }
-                btn.append(action.label);
+                // An icon-only action shows its glyph and NAMES itself, so the
+                // label is still announced rather than lost with the text.
+                if (action.iconOnly) btn.setAttribute('aria-label', action.label);
+                else btn.append(action.label);
                 btn.onclick = () => { void run(btn, action); };
                 btn.disabled = gate.busy();
                 actionsEl.append(btn);

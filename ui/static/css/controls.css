@@ -68,11 +68,26 @@
   color: var(--hint);
 }
 
+/* A DECORATIVE avatar is an icon, not text. Nothing set `cursor: text` on it —
+   the browser's default cursor over text content simply IS an I-beam, and a
+   decorative avatar is a <span> holding a glyph, so hovering the `⋯` beside a
+   thread name showed one. It follows its row's cursor instead, and the glyph
+   is not selectable: it is a picture of who is in the room, never text an
+   operator would copy. The -webkit- prefix is for the WebKit the Tauri shell
+   renders in. */
+span.avatar {
+  cursor: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* An avatar that is its own control. base.css's 24px minimum target (SC 2.5.8)
    is deliberately NOT overridden here: a `chip` or `sm` avatar rendered as a
    button would be under the floor, so it grows to 24px rather than being
-   allowed to paint a 14px target. Decorative avatars are spans and are
-   unaffected. */
+   allowed to paint a 14px target. The pointer restates base.css's default for
+   a button rather than inheriting it silently, so the rule above cannot be
+   read as covering both forms. */
+button.avatar { cursor: pointer; }
 button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ─── Switch ───

@@ -42,6 +42,7 @@ CONVERSATION_STACK = [
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "conversation" / "empty-state.js",
     JS / "conversation" / "transcript.js",
@@ -86,13 +87,16 @@ def test_operator_chrome_labels_threads() -> None:
     # thread out of listing them. Round three moved the second state onto the
     # section header row, so `Create with N` became an icon-only confirm named
     # `Create thread` with the count in the header's middle slot. The rail
-    # still owns the copy, which is what these lines have always guarded.
+    # still owns the copy, which is what these lines have always guarded. Round
+    # four deleted the invitation the middle slot showed at rest — it truncated
+    # at rail width and explained a mode nobody was in — so the count is now
+    # the whole of what that slot says.
     creation = _read("shell/thread-create.js")
     assert "BossModThreadCreate.createThreadControls(" in threads
     assert "'New thread'" in creation
     assert "'Create thread'" in creation
     assert "${count} selected" in creation
-    assert "start a shared thread" in creation
+    assert "start a shared thread" not in creation
     # Threads are a roster section, not a seventh place.
     assert "channels" not in places.lower()
     assert ".host-path-consent-card.is-resolved" in css
@@ -284,6 +288,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "bus.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
+            str(JS / "core" / "overlay-focus.js"),
             str(JS / "core" / "overlays.js"),
             str(JS / "core" / "format.js"),
             str(JS / "shell" / "roster-row-meta.js"),

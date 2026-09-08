@@ -13,6 +13,22 @@
    scrolls — the title and the action row stay put, which is the whole reason a
    tall form can live in here at all. */
 
+/* The scrim, between the app and the panel. Until round four there was none,
+   so the dialog floated over a live page and clicks reached the controls
+   behind it. The BACKGROUND is the affordance and is declared first; the blur
+   is progressive enhancement, and where backdrop-filter is unsupported the
+   scrim alone still reads. Neutral rgba rather than a token, on the same
+   reasoning the shadows below use one: this is a depth cue, not a palette
+   colour. Clicking it does not dismiss — core/overlays.js binds no handler,
+   because a stray click must not discard a half-filled form. */
+.modal-backdrop {
+  position: fixed;
+  z-index: 55;
+  inset: 0;
+  background: rgba(15, 20, 28, 0.42);
+  backdrop-filter: blur(2px);
+}
+
 .modal-panel {
   position: fixed;
   z-index: 60;
@@ -65,6 +81,54 @@
 
 .modal-action.danger { border-color: var(--alert); background: var(--alert); color: var(--panel); }
 .modal-action.quiet { background: var(--panel); color: var(--ink); }
+/* A form dialog's primary, pinned beside the dismissal. Same treatment the
+   needs popover's primary already has, so the two read as one control. */
+.modal-action.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); }
+
+/* The in-flight submit gate disables it while a save is running; this is what
+   the Tailwind `disabled:` pair on the old in-form button carried. */
+.modal-action:disabled { opacity: 0.55; pointer-events: none; }
+
+/* ─── The agent form's AI Connections matrix ───
+   Only ever rendered inside the wide dialog above, which is why it is here and
+   not in controls.css: controls.css is the vocabulary several surfaces share,
+   and nothing outside this dialog has a connection grid.
+
+   Five activation types used to be five full-width rows — ~264px of a dialog
+   that already scrolls, spent so five selects could display the word `None`.
+   Three columns puts them in two rows. Five across was rejected: at the
+   dialog's 760px that is ~140px per select, which truncates a connection label
+   at ~18 characters, and real ones already exceed that. */
+
+.connection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+/* The dialog is min(760px, calc(100vw - 32px)), so its width follows the
+   window's and three columns crush on a small one. Two, then one — and the
+   wider query comes FIRST, because two rules of equal specificity are settled
+   by source order and a narrower one placed above would never apply. */
+@media (max-width: 760px) {
+  .connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .connection-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+}
+
+/* A connection label is `${name} (${model})` of arbitrary operator input, so a
+   ~225px column will clip one. Clipping is only acceptable because it stays
+   recoverable: every <option> carries the full label in a `title`, and the
+   native dropdown popup is not bounded by the control's width either.
+   min-width: 0 is what lets the select shrink inside its grid cell at all. */
+.connection-select {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 /* ─── Menu ───
    A small panel hanging off the control that opened it, positioned against its

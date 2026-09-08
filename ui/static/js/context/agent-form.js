@@ -68,7 +68,7 @@ const BossModAgentForm = (() => {
         <form id="agent-form" class="space-y-4">
             ${BossModAgentFormFields.nameField(agent)}
             ${BossModAgentFormFields.roleContractCard(agent, roster)}
-            ${BossModAgentFormFields.connectionsSection(agent, connections)}
+            ${BossModAgentFormConnections.connectionsSection(agent, connections)}
             ${BossModAgentFormAdvanced.advancedSection(agent, {
                 personalities, roster, promptHistoryPolicy,
             })}

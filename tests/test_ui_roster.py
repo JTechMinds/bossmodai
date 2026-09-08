@@ -91,11 +91,14 @@ def test_roster_owns_the_thread_creation_copy() -> None:
     # on the section header, so the copy is its accessible name. And again in
     # round three, which moved the confirm onto that same header row: it is
     # icon-only too, so `Create thread` is its accessible name and the count it
-    # used to carry is the header's middle slot.
+    # used to carry is the header's middle slot. Round four deleted the
+    # invitation the slot showed at rest — it truncated at rail width and
+    # explained a mode nobody was in — so the copy this module owns is the two
+    # names and the count, and the count is the whole of the middle slot.
     assert "'New thread'" in source
     assert "'Create thread'" in source
     assert "${count} selected" in source
-    assert "start a shared thread" in source
+    assert "start a shared thread" not in source
     # People owns the selection a thread is created from; this only reads it.
     assert "deps.getSelection" in source
     # rail -> Threads -> creation. Each link named, so a broken one is loud.

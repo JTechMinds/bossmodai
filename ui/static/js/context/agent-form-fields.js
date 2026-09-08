@@ -1,13 +1,15 @@
 /**
- * BossMod AI — the agent form's field groups, minus the Advanced disclosure.
+ * BossMod AI — the agent form's field groups, minus two that outgrew it.
  *
  * One of the modules agent-panel.js became, whose `buildFormHTML` was a single
  * ~380-line function. Each export renders one section, in the order the
  * operator reads them: name, the role contract (specialty, description,
- * colour), the connection matrix, the runtime status and recovery tools, and
- * the actions row. The Advanced disclosure is the sixth and lives in
- * context/agent-form-advanced.js — on its own it is 120 lines of markup, which
- * is why it is not here. The field vocabulary all of them share is
+ * colour), the runtime status and recovery tools, and the actions row. Two of
+ * the six live elsewhere for the same reason — a fieldset that reaches ~120
+ * lines of markup is a module rather than a paragraph: the Advanced disclosure
+ * is context/agent-form-advanced.js, and the AI Connections matrix became
+ * context/agent-form-connections.js when round five's three-column grid took
+ * it past the line. The field vocabulary all of them share is
  * context/agent-fields.js.
  *
  * MARKUP EXEMPTION, declared rather than assumed (Phase 4, Task 4 Step 2).
@@ -122,78 +124,6 @@ const BossModAgentFormFields = (() => {
     }
 
     /**
-     * One connection dropdown for one activation type.
-     *
-     * @param {object[]} connections
-     * @param {string} modelKey
-     * @param {string|null} currentValue  The model name stored on the agent.
-     * @returns {string}
-     */
-    function connectionSelect(connections, modelKey, currentValue) {
-        const opts = connections.map(c => {
-            const label = c.model
-                ? `${c.name} (${c.model})`
-                : c.name;
-            // Match by combining connection fields into what would have been stored
-            const selected = currentValue && (
-                currentValue === c.model ||
-                currentValue === c.name
-            );
-            return `<option value="${c.id}" ${selected ? 'selected' : ''}>${BossModFormat.escapeHtml(label)}</option>`;
-        }).join('');
-        return `<select name="${modelKey}"
-                    class="flex-1 px-2 py-1.5 text-xs border border-bm-border rounded
-                           bg-bm-bg focus:outline-none focus:ring-1 focus:ring-bm-accent/30">
-                <option value="">None</option>
-                ${opts}
-            </select>`;
-    }
-
-    /**
-     * The model matrix: one connection per activation type, plus "Set All".
-     *
-     * @param {object|null} agent
-     * @param {object[]} connections
-     * @returns {string} With no connections configured, a link to Settings —
-     *   an empty matrix would look like a broken form.
-     */
-    function connectionsSection(agent, connections) {
-        const noConnections = connections.length === 0;
-        const MODEL_TYPES = FIELDS.MODEL_TYPES;
-        return `
-        <!-- AI Connections (Model Matrix) -->
-        <div>
-            <label class="block text-sm font-medium mb-2">AI Connections</label>
-            ${noConnections
-                ? `<p class="text-xs text-bm-muted">No connections configured.
-                     <button type="button" id="btn-goto-connections" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
-                : `<p class="text-xs text-bm-muted mb-2">Assign an AI connection to each activation type.</p>
-                   <div class="space-y-2">
-                       <div class="flex items-center gap-2">
-                           <span class="text-xs font-medium text-bm-text w-28 shrink-0">Set All</span>
-                           <select name="model_all"
-                               class="flex-1 px-2 py-1.5 text-xs border border-bm-border rounded
-                                      bg-bm-bg focus:outline-none focus:ring-1 focus:ring-bm-accent/30">
-                               <option value="">\u2014 Set all connections \u2014</option>
-                               ${connections.map(c => {
-                                   const label = c.model ? `${c.name} (${c.model})` : c.name;
-                                   return `<option value="${c.id}">${BossModFormat.escapeHtml(label)}</option>`;
-                               }).join('')}
-                           </select>
-                       </div>
-                       <hr class="border-bm-border">
-                       ${MODEL_TYPES.map(t => `
-                           <div class="flex items-center gap-2">
-                               <span class="text-xs text-bm-muted w-28 shrink-0">${t.label}</span>
-                               ${connectionSelect(connections, t.key, agent?.[t.key])}
-                           </div>
-                       `).join('')}
-                   </div>`
-            }
-        </div>`;
-    }
-
-    /**
      * The read-only runtime status pill and the recovery tools.
      *
      * @param {object|null} agent
@@ -239,35 +169,37 @@ const BossModAgentFormFields = (() => {
     }
 
     /**
-     * Submit and, for an existing agent, Delete.
+     * The form's own action row: Delete, for an existing agent.
+     *
+     * The PRIMARY is not here. It was, at the bottom of a form tall enough to
+     * scroll, while the dialog's Cancel sat pinned and obvious — and the
+     * operator could not find it. It is now `#agent-form-submit` in the
+     * dialog's pinned row (context/agent-edit.js), submitting this form from
+     * outside it through the HTML `form` attribute, so the form's validation
+     * and its submit handler are unchanged.
+     *
+     * Delete stays. It is destructive and belongs away from the primary, not
+     * beside it, which is why it did not travel with it.
      *
      * @param {object|null} agent
-     * @returns {string}
+     * @returns {string} '' while hiring: there is nothing to delete yet.
      */
     function actionsRow(agent) {
+        if (!agent) return '';
         return `
         <!-- Actions -->
         <div class="flex gap-2 pt-2">
-            <button type="submit" id="agent-form-submit"
-                    class="flex-1 px-4 py-2 bg-bm-accent text-white rounded-lg
-                           hover:bg-bm-accent-hover transition-colors text-sm font-medium
-                           disabled:opacity-50 disabled:pointer-events-none">
-                ${agent ? 'Save Changes' : 'Create Agent'}
-            </button>
-            ${agent ? `
             <button type="button" id="btn-delete-agent"
                     class="px-4 py-2 border border-red-300 text-red-600 rounded-lg
                            hover:bg-red-50 transition-colors text-sm font-medium">
                 Delete
-            </button>` : ''}
+            </button>
         </div>`;
     }
 
     return {
         nameField,
         roleContractCard,
-        connectionSelect,
-        connectionsSection,
         statusAndRecovery,
         actionsRow,
     };

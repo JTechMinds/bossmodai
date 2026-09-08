@@ -303,16 +303,20 @@ def test_select_mode_lives_entirely_in_the_section_header() -> None:
     The mode used to be announced on a hint line and left through a
     `Create with N` / `Cancel` row, both of them below the filters and neither
     of them near the `+` that opened it. Both rows are gone; the middle slot
-    of the header says what the mode is for and then what is picked, and the
-    action group swaps in place.
+    of the header says what is picked, and the action group swaps in place.
+
+    Round four emptied the idle slot: the invitation it carried truncated at
+    rail width and explained a mode nobody was in. The property here — the
+    mode lives ENTIRELY on this row — is unchanged, so the assertion follows
+    the slot to what it says now.
     """
     payload = _roster_payload()
-    # Idle: one control, the invitation in the middle slot.
+    # Idle: one control, and nothing in the middle slot.
     assert payload["idleHeaderActions"] == ["New thread"]
-    assert payload["idleMiddleSlot"] == "Select teammates and start a shared thread."
-    # Selecting: cancel and confirm, the count replacing the invitation.
+    assert payload["idleMiddleSlot"] == ""
+    # Selecting: cancel and confirm, and the count appears in the slot.
     assert payload["selectingHeaderActions"] == ["Cancel", "Create thread"]
-    assert payload["selectingMiddleSlot"] == "1 selected"
+    assert payload["selectingMiddleSlotAtOne"] == "1 selected"
     # The separate row is gone.
     assert payload["hasStandaloneCreateRow"] is False
     # ...and so is its stylesheet, so nothing can render one by accident.
@@ -404,6 +408,7 @@ CONTEXT_MODULES = [
     JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -436,6 +441,7 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-form-bindings.js",
     JS / "context" / "agent-form.js",
     JS / "context" / "agent-submit.js",
@@ -459,6 +465,7 @@ AGENT_FORM_MODULES = [
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-submit.js",
 ]
 
@@ -504,7 +511,8 @@ def test_the_wide_modal_keeps_the_shared_keyboard_contract() -> None:
     is the case the confirm dialog never exercised — proven at the overlay
     level, where the behaviour lives.
     """
-    payload = _run("js_overlays_harness.cjs", [JS / "core/dom.js", JS / "core/overlays.js"])
+    payload = _run("js_overlays_harness.cjs",
+                   [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js"])
     assert payload["wideModalIsMarked"] is True
     assert payload["wideModalTrapsTabAcrossItsBody"] is True
     assert payload["wideModalEscCloses"] is True
@@ -567,6 +575,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -592,23 +601,31 @@ def _conversation_payload() -> dict:
 def test_the_title_is_editable_without_looking_like_a_link() -> None:
     """Easy but non-obvious — the operator's requirement.
 
-    No blue, no underline, no affordance at rest: at rest it is the title. The
-    edit state is the feedback, and it is a background rather than a colour
-    change, because a coloured title is what "this is a link" looks like.
+    No blue, no underline, no affordance at rest: at rest it is the title, and
+    the edit state is the feedback.
+
+    Round four respelled BOTH halves of that after the operator saw it —
+    "sleek, not jarring". The rest state's `border: 0` became a reserved
+    transparent hairline, which is the same property (nothing visible, and
+    nothing moves when something appears); the edit state's `--accent-bg` fill
+    became a soft blue text colour, which is the same property too (editing
+    looks different from resting). Each assertion below is the one that was
+    here, pointed at the spelling that now carries it.
     """
     css = _read(CSS / "conversation.css")
     rule = _rule(css, ".conversation-title-edit")
     # No link costume at rest.
     assert "text-decoration" not in rule
     assert "var(--accent)" not in rule
-    assert "border: 0" in rule
+    assert "border: 1px dotted transparent" in rule
     assert "background: transparent" in rule
     # ...and it inherits the title's type rather than declaring its own, so the
     # two cannot drift into looking like different things.
     assert "font: inherit" in rule
-    # Editing IS the feedback, and it is a background.
+    # Editing IS the feedback, and it is now the text rather than the ground.
     editing = _rule(css, '.conversation-title-edit[data-editing="true"]')
-    assert "background: var(--accent-bg)" in editing
+    assert "color: var(--accent)" in editing
+    assert "dotted" in editing
 
     chrome = _read(CONVERSATION / "chrome.js") + _read(CONVERSATION / "title-rename.js")
     # Keyboard reachable, and Enter opens it (SC 2.1.1).

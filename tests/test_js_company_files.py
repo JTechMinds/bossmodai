@@ -22,6 +22,7 @@ FILES_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "places.js",
     FILES / "file-content.js",

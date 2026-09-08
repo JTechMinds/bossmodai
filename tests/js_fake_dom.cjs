@@ -250,12 +250,39 @@ class FakeEl {
         this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== fn);
     }
 
+    /**
+     * The form this button submits, or null.
+     *
+     * Real DOM semantics, and the half the fake was missing: a submit button
+     * submits the form it sits in, OR the form its `form` attribute names —
+     * which need not contain it. That attribute is the whole mechanism behind
+     * a dialog pinning a form's primary action outside a scrolling body, and
+     * without it here a harness could only assert the markup, never the click.
+     *
+     * @returns {FakeEl|null}
+     */
+    _formToSubmit() {
+        if (this.tagName !== "BUTTON") return null;
+        // HTML's default button type inside a form is "submit".
+        if ((this.getAttribute("type") || "submit") !== "submit") return null;
+        if (this.disabled) return null;
+        const named = this.getAttribute("form");
+        if (named) {
+            return this.ownerDocument ? this.ownerDocument.getElementById(named) : null;
+        }
+        return this.closest("form");
+    }
+
     /** Fire every click handler, including the onclick property. @returns {Promise<void>} */
     async dispatchClick() {
         const event = { preventDefault() {}, stopPropagation() {}, target: this, key: "", shiftKey: false };
         const handlers = [...(this.listeners.click || [])];
         if (typeof this.onclick === "function") handlers.push(this.onclick);
         for (const fn of handlers) await fn(event);
+        const form = this._formToSubmit();
+        if (!form) return;
+        const submitEvent = { preventDefault() {}, stopPropagation() {}, target: form };
+        for (const fn of [...(form.listeners.submit || [])]) await fn(submitEvent);
     }
 
     click() {

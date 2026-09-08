@@ -64,6 +64,7 @@ CONTEXT_MODULES = [
     JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -96,6 +97,7 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-form-bindings.js",
     JS / "context" / "agent-form.js",
     JS / "context" / "agent-submit.js",
@@ -145,6 +147,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -352,18 +355,19 @@ def test_new_thread_is_an_icon_button_on_the_section_header() -> None:
 
 
 def test_the_select_hint_never_costs_the_rail_a_row() -> None:
-    """"Select teammates and start a shared thread." is instructions, and this
-    round moved it off the permanent line it was standing on below the list.
+    """A sentence of instructions, moved off the permanent line it stood on.
 
-    Round three moved it once more, into the section header's middle slot: it
-    is the invitation when the mode is closed and the count when it is open, so
-    it explains the mode from the row that opens it and still costs no height.
-    The property this has always guarded is the one that survives — the hint
-    never occupies a line of its own — so it is asserted that way rather than
-    on which of the two states shows it.
+    Round three moved it once more, into the section header's middle slot.
+    Round four DELETED it: it truncated to about fourteen characters at rail
+    width, which reads as broken, and it explained a mode nobody was in.
+
+    The property this has always guarded survives all three moves — whatever
+    the mode has to say never occupies a line of its own — so it is asserted
+    that way rather than on which words are in the slot. What the slot says is
+    now the count alone, and that is what these assertions follow.
     """
     js = _read(JS / "shell/thread-create.js")
-    assert "THREAD_HINT" in js
+    assert "${count} selected" in js
     # It lives on the header row, which the Threads half builds.
     assert "roster-thread-hint" not in js
     assert "roster-thread-hint" not in _read(JS / "shell/roster-threads.js")
@@ -373,8 +377,8 @@ def test_the_select_hint_never_costs_the_rail_a_row() -> None:
     assert "create.middle" in head, head
     payload = _roster_payload()
     assert payload["hasStandaloneCreateRow"] is False
-    assert payload["idleMiddleSlot"] == "Select teammates and start a shared thread."
-    assert payload["selectingMiddleSlot"] == "1 selected"
+    assert payload["idleMiddleSlot"] == ""
+    assert payload["selectingMiddleSlotAtOne"] == "1 selected"
 
 
 # ─── Task 5: select a person by clicking their row ───
@@ -437,12 +441,17 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
 
     # And there is still exactly ONE focus trap in the tree — the whole reason
     # the menu is an overlays.js function rather than a popover of its own.
+    # Round five moved that one definition into core/overlay-focus.js so the
+    # builders had room to hold a bug fix; the count is what this asserts and
+    # the count has not moved.
     definers = sorted(
         path.relative_to(JS).as_posix()
         for path in _app_js()
         if "function trapKeydown(" in _read(path)
     )
-    assert definers == ["core/overlays.js"], definers
+    assert definers == ["core/overlay-focus.js"], definers
+    # ...and the menu still reaches for it rather than growing its own.
+    assert "trapKeydown(event, element, close)" in _read(JS / "core/overlays.js")
     assert "createMenu" in _read(JS / "core/overlays.js")
 
 
@@ -474,7 +483,8 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
     the name Task 6 gave it.
     """
     harness = HERE / "js_overlays_harness.cjs"
-    args = ["node", str(harness), str(JS / "core/dom.js"), str(JS / "core/overlays.js")]
+    args = ["node", str(harness), str(JS / "core/dom.js"), str(JS / "core/overlay-focus.js"),
+            str(JS / "core/overlays.js")]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout.strip().splitlines()[-1])

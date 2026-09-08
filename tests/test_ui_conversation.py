@@ -26,6 +26,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     # The chrome's overflow menu is an overlays.js panel, not a second popover.
+    JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
@@ -215,6 +216,17 @@ def test_conversation_harness() -> None:
         "renameDoesNotFollowASwitch": True,
         "agentTitleIsNotEditable": True,
         "archivedThreadIsNotRenameable": True,
+        # Round four turned the word `Save` into a green check and gave it the
+        # red cross the mode never had — Esc cancelled and nothing said so.
+        # Both are icon-only, so each carries its own accessible name and the
+        # shapes differ as well as the hues; and Cancel calls the same function
+        # Esc does, so the keystroke and the control cannot drift apart.
+        # tests/test_ui_polish_round_four.py reads the same five.
+        "renameActions": ["Cancel rename", "Save name"],
+        "renameActionIcons": ["x", "check"],
+        "renameActionsAreIconOnly": True,
+        "renameActionsAbsentAtRest": True,
+        "cancelActionRestoresLikeEsc": True,
     }
 
 

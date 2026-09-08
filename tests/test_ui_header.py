@@ -11,7 +11,8 @@ JS = ROOT / "ui" / "static" / "js"
 HARNESS = Path(__file__).resolve().parent / "js_header_harness.cjs"
 
 MODULES = [
-    ("core", "dom.js"), ("core", "store.js"), ("core", "overlays.js"),
+    ("core", "dom.js"), ("core", "store.js"),
+    ("core", "overlay-focus.js"), ("core", "overlays.js"),
     ("shell", "places.js"), ("shell", "header.js"),
 ]
 

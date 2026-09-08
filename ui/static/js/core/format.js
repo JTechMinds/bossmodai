@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These seven answer one question — how does a value read on screen. They have
+ * These eight answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -27,6 +27,23 @@ const BossModFormat = (() => {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    /**
+     * Escape a string for a double-quoted ATTRIBUTE value.
+     *
+     * escapeHtml serialises a text node, so it escapes `&`, `<` and `>` and
+     * leaves `"` alone. That is correct between tags and wrong inside an
+     * attribute, where an operator-entered `Bob "fast" Local` would close the
+     * attribute early and let the rest of its own name become markup. Here
+     * rather than in the one markup module that needs it today, because the
+     * next one would otherwise re-derive it and get it subtly wrong.
+     *
+     * @param {string} text
+     * @returns {string} '' for any falsy input.
+     */
+    function escapeAttribute(text) {
+        return escapeHtml(text).replace(/"/g, '&quot;');
     }
 
     /**
@@ -172,6 +189,7 @@ const BossModFormat = (() => {
 
     return {
         escapeHtml,
+        escapeAttribute,
         formatRelativeTime,
         formatActivityTime,
         formatNumber,

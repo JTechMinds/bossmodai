@@ -46,7 +46,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus", "BossModAvatar",
     "BossModAgentFields", "BossModAgentFormFields", "BossModAgentFormAdvanced",
-    "BossModAgentSubmit",
+    "BossModAgentFormConnections", "BossModAgentSubmit",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -123,9 +123,68 @@ async function submitting(values) {
 const MODEL_TYPES = BossModAgentFields.MODEL_TYPES;
 const AGENT = { id: "a1", name: "Nadia", model_social: "gpt-4o-mini" };
 
+/** Every `<select …>` open tag in a chunk of markup. */
+function selectTags(markup) {
+    return markup.match(/<select\b[^>]*>/g) || [];
+}
+
+/**
+ * The `name` of every select, in document order.
+ *
+ * Read off the whole open tag rather than off `<select name=` directly: round
+ * five gives each select an `id` so a `<label for>` can point at it, and an
+ * assertion that breaks when an attribute moves is pinning the spelling rather
+ * than the property.
+ */
 function selectNames(markup) {
-    return (markup.match(/<select\s+name="([^"]+)"/g) || [])
-        .map((tag) => tag.match(/name="([^"]+)"/)[1]);
+    return selectTags(markup)
+        .map((tag) => /\bname="([^"]+)"/.exec(tag))
+        .filter((match) => match !== null)
+        .map((match) => match[1]);
+}
+
+/**
+ * Is every select pointed at by a `<label for>` carrying visible text?
+ *
+ * A form control whose label is a bare `<span>` beside it is a screen-reader
+ * dead end: nothing connects the two. Round five moved the labels above their
+ * selects to buy the width back, and above is exactly where an unassociated
+ * label is easiest to ship by accident.
+ */
+function everySelectIsLabelled(markup) {
+    const tags = selectTags(markup);
+    if (tags.length === 0) return false;
+    return tags.every((tag) => {
+        const id = /\bid="([^"]+)"/.exec(tag);
+        if (!id) return false;
+        const label = new RegExp(`<label[^>]*\\bfor="${id[1]}"[^>]*>([\\s\\S]*?)</label>`)
+            .exec(markup);
+        return Boolean(label) && label[1].trim().length > 0;
+    });
+}
+
+/**
+ * Every option that names a connection but does not carry its full label.
+ *
+ * A three-column grid narrows each select to roughly thirty characters, and a
+ * connection label is `${name} (${model})` — arbitrary operator input that can
+ * be far longer. Truncation is only acceptable while it stays recoverable, so
+ * the title must be present AND equal to the visible text, not merely present.
+ * The two placeholders (`None` and `— Set all connections —`) carry no value
+ * and are already complete, so they are not asked for one.
+ */
+function optionsMissingTheirFullLabel(markup) {
+    return (markup.match(/<option\b[^>]*>[\s\S]*?<\/option>/g) || []).filter((tag) => {
+        const value = /\bvalue="([^"]*)"/.exec(tag);
+        if (!value || value[1] === "") return false;
+        const title = /\btitle="([^"]*)"/.exec(tag);
+        const text = tag.replace(/<[^>]*>/g, "").trim();
+        // The title is attribute-escaped and the text is not, so `&quot;` is
+        // decoded before the two are compared: an operator's `Bob "fast"` must
+        // read as the same label in both places, not fail for being escaped
+        // correctly in one of them.
+        return !title || title[1].replace(/&quot;/g, '"') !== text;
+    });
 }
 
 async function main() {
@@ -135,12 +194,12 @@ async function main() {
     let matrixError = null;
     let markup = "";
     try {
-        markup = BossModAgentFormFields.connectionsSection(AGENT, CONNECTIONS);
+        markup = BossModAgentFormConnections.connectionsSection(AGENT, CONNECTIONS);
     } catch (err) {
         matrixError = String((err && err.message) || err);
     }
     const names = selectNames(markup);
-    const empty = BossModAgentFormFields.connectionsSection(AGENT, []);
+    const empty = BossModAgentFormConnections.connectionsSection(AGENT, []);
 
     // ── An agent hired before the palette changed ──
     // The round trip that must not lose a colour: render the form for an agent
@@ -179,7 +238,7 @@ async function main() {
     const editMarkup = [
         BossModAgentFormFields.nameField(editAgent),
         BossModAgentFormFields.roleContractCard(editAgent, []),
-        BossModAgentFormFields.connectionsSection(editAgent, CONNECTIONS),
+        BossModAgentFormConnections.connectionsSection(editAgent, CONNECTIONS),
         advanced,
         BossModAgentFormFields.statusAndRecovery(editAgent),
         BossModAgentFormFields.actionsRow(editAgent),
@@ -205,13 +264,21 @@ async function main() {
             .every((name) => editMarkup.includes(`name="${name}"`)),
     };
     // The recovery tools and the runtime pill are edit-only and travel with it.
+    //
+    // Round four pinned `#agent-form-submit` in the DIALOG's action row, so it
+    // is no longer part of this markup and cannot be looked for here. The
+    // property it carried — the flow still has a way to save — moved with it
+    // and is proven on built nodes by tests/test_ui_polish_round_four.py's
+    // `submitIdCount` and `pinnedPrimarySubmitsTheForm`. What is still this
+    // markup's to answer is that Delete stayed behind, in the form body and
+    // away from the primary.
     const editFlowStillOffersRemove = editMarkup.includes('id="btn-delete-agent"')
         && editMarkup.includes('id="btn-clear-chat-history"')
         && editMarkup.includes('id="btn-reset-runtime"')
-        && editMarkup.includes('id="agent-form-submit"');
+        && !editMarkup.includes('id="agent-form-submit"');
     // ...and hiring offers no Delete, because there is nothing to delete yet.
     const hireFlowOffersNoRemove = !hireMarkup.includes('id="btn-delete-agent"')
-        && hireMarkup.includes('id="agent-form-submit"');
+        && !hireMarkup.includes('id="agent-form-submit"');
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -260,8 +327,38 @@ async function main() {
             && (markup.match(/value="c1"/g) || []).length === MODEL_TYPES.length + 1
             && (markup.match(/value="c2"/g) || []).length === MODEL_TYPES.length + 1,
         // ...and the value already stored on the agent comes back selected.
+        // Attribute-order independent since round five put a `title` on every
+        // connection option; the property is that c2 is the one marked, not
+        // where `selected` sits in the tag.
         matrixPreselectsTheStoredModel:
-            /<option value="c2" selected>/.test(markup),
+            /<option[^>]*\bvalue="c2"[^>]*\bselected\b[^>]*>/.test(markup),
+
+        // ── The three-column layout ──
+        //
+        // Five activation types rendered as five full-width rows, each select
+        // spanning ~600px to display the word `None`, and the block cost ~264px
+        // of a dialog that already scrolls. The column COUNT lives in
+        // overlays.css, which is the only thing that lays the grid out;
+        // tests/test_ui_polish_round_five.py reads it there. What the markup
+        // owes is the structure the stylesheet needs.
+        //
+        // `Set All` writes to the other five rather than being a sixth value,
+        // so it sits above the grid at full width — which is what stops it
+        // reading as one of them.
+        setAllIsOutsideTheGrid: (() => {
+            const grid = markup.indexOf('connection-grid');
+            const setAll = markup.indexOf('name="model_all"');
+            return grid !== -1 && setAll !== -1 && setAll < grid
+                && MODEL_TYPES.every((t) => markup.indexOf(`name="${t.key}"`) > grid);
+        })(),
+        // Labels moved above their selects to buy back the width. Above or
+        // beside, each must still be a `<label for>` pointing at its control.
+        everySelectHasAnAssociatedLabel: everySelectIsLabelled(markup),
+        // A narrow select truncates; a `title` keeps the full label readable
+        // without opening the control.
+        optionsCarryTitleAttribute: (markup.match(/<option\b/g) || []).length > 0
+            && optionsMissingTheirFullLabel(markup).length === 0,
+        optionsMissingTheirFullLabel: optionsMissingTheirFullLabel(markup),
         // The empty case still offers the way out rather than a blank matrix.
         emptyMatrixLinksToSettings: empty.includes("btn-goto-connections")
             && selectNames(empty).length === 0,

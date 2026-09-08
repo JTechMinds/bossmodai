@@ -71,7 +71,8 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
-    "BossModConsentCard", "BossModOverlays", "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays",
+    "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModConversationChrome", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSource", "BossModAgentSource",
@@ -80,7 +81,8 @@ const NAMES = [
     "BossModMiniOffice",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
     "BossModAgentApi", "BossModAgentFields", "BossModAgentFormFields",
-    "BossModAgentFormAdvanced", "BossModAgentFormBindings", "BossModAgentForm",
+    "BossModAgentFormAdvanced", "BossModAgentFormConnections",
+    "BossModAgentFormBindings", "BossModAgentForm",
     "BossModAgentSubmit", "BossModAgentRecovery", "BossModAgentEdit", "BossModDeskPanel",
     "BossModContextColumn", "BossModChatPlace",
 ];
@@ -574,6 +576,24 @@ async function main() {
         throw new Error("the dialog's own action must not scroll away with the form");
     }
 
+    // Round four pinned the PRIMARY beside the dismissal. The operator could
+    // not find `Save Changes` at the bottom of a scrolling form while Cancel
+    // sat pinned and obvious. Cancel first, primary last.
+    const pinnedNamesIn = (dialog) => dialog.querySelectorAll(".modal-actions")[0]
+        .querySelectorAll("button").map((btn) => btn.textContent);
+    const editPinnedActions = pinnedNamesIn(opened);
+    if (editPinnedActions.join("|") !== "Cancel|Save Changes") {
+        throw new Error(`the edit dialog pins Cancel then the primary, got `
+            + editPinnedActions.join("|"));
+    }
+    // Delete is destructive and stays in the form body, away from the primary.
+    const deleteIsNotPinned = Boolean(opened.querySelector("#btn-delete-agent"))
+        && modalActions.querySelector("#btn-delete-agent") === null
+        && Boolean(modalBody.querySelector("#btn-delete-agent"));
+    if (!deleteIsNotPinned) {
+        throw new Error("Delete must stay in the form body, not beside the primary");
+    }
+
     // Dismissing puts the desk back in front and repaints it.
     await modalActions.querySelectorAll(".modal-action")[0].dispatchClick();
     await drain();
@@ -614,6 +634,55 @@ async function main() {
         throw new Error(`Hire must open the same dialog: `
             + `${hire && hire.getAttribute("aria-label")}`);
     }
+
+    // ── The pinned primary submits a form it is not inside ──
+    //
+    // A submit button moved out of its form stops submitting it, which is why
+    // round three left this one at the bottom of the scroll. `form="agent-form"`
+    // is the standard answer, and this proves the CLICK rather than the markup:
+    // the button is outside the form and the form's own handler still runs.
+    const pinnedActions = pinnedNamesIn(hire);
+    const primary = hire.querySelectorAll(".modal-actions")[0]
+        .querySelectorAll("button")[1];
+    if (pinnedActions.join("|") !== "Cancel|Create Agent") {
+        throw new Error(`the hire dialog pins Cancel then the primary, got `
+            + pinnedActions.join("|"));
+    }
+    const primaryCarriesFormAttribute = primary.getAttribute("form");
+    const primaryIsSubmitType = primary.getAttribute("type") === "submit";
+    if (!primaryIsSubmitType || primaryCarriesFormAttribute !== "agent-form") {
+        throw new Error(`the pinned primary must be the form's submit button, got `
+            + `type ${primary.getAttribute("type")} form ${primaryCarriesFormAttribute}`);
+    }
+    // The id the suite pins moved with the button; two elements cannot share
+    // it, and the one that owns it must be THIS button — context/agent-edit.js
+    // looks it up by id from the document to drive the busy label, and would
+    // silently find nothing if the id had stayed behind in the form.
+    const submitIdCount = documentStub.querySelectorAll("#agent-form-submit").length;
+    if (submitIdCount !== 1) {
+        throw new Error(`exactly one element owns #agent-form-submit, got ${submitIdCount}`);
+    }
+    if (documentStub.querySelector("#agent-form-submit") !== primary) {
+        throw new Error("#agent-form-submit must be the pinned primary itself");
+    }
+
+    let formSubmits = 0;
+    hire.querySelector("#agent-form").addEventListener("submit", () => { formSubmits += 1; });
+    await primary.dispatchClick();
+    await drain();
+    const pinnedPrimarySubmitsTheForm = formSubmits === 1;
+    // ...and the click alone does not dismiss. The form's handler owns the
+    // outcome — including the seed-legibility clamp, which REFUSES a save — so
+    // a dialog that closed here would discard a draft the form just rejected.
+    const pinnedPrimaryDoesNotCloseTheDialog = modals().length === 1;
+    if (!pinnedPrimarySubmitsTheForm) {
+        throw new Error(`the pinned button must submit the form it names, got `
+            + `${formSubmits} submits`);
+    }
+    if (!pinnedPrimaryDoesNotCloseTheDialog) {
+        throw new Error("the dialog must outlive the click; the form decides");
+    }
+
     await hire.querySelectorAll(".modal-action")[0].dispatchClick();
     await drain();
     if (modals().length !== 0) throw new Error("the hire dialog must close");
@@ -664,6 +733,14 @@ async function main() {
         modalIsAttachedToTheBodyNotTheColumn,
         closingTheModalRestoresTheDesk,
         onlyOneDialogAtATime,
+        pinnedActions,
+        editPinnedActions,
+        primaryCarriesFormAttribute,
+        primaryIsSubmitType,
+        submitIdCount,
+        deleteIsNotPinned,
+        pinnedPrimarySubmitsTheForm,
+        pinnedPrimaryDoesNotCloseTheDialog,
     }));
 }
 

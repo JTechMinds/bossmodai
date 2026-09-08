@@ -354,6 +354,7 @@ AGENT_FORM_MODULES = [
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-submit.js",
 ]
 

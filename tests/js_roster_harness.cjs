@@ -316,14 +316,17 @@ function rowFor(el, name) {
     if (cancelNow()) throw new Error("Cancel must not exist outside select mode");
     const rowsAreCleanUntilSelectMode = true;
 
-    // Idle: one control, and the middle slot says what it is for.
+    // Idle: one control, and an EMPTY middle slot. It used to invite —
+    // "Select teammates and start a shared thread." — which truncated to
+    // "Select teammat..." at rail width, read as broken, and explained a mode
+    // nobody was in. The slot speaks only while there is something to say.
     const idleHeaderActions = headerActionNames();
     const idleMiddleSlot = text(middleNow()).trim();
     if (idleHeaderActions.join("|") !== "New thread") {
         throw new Error(`idle offers one header control, got ${idleHeaderActions.join("|")}`);
     }
-    if (idleMiddleSlot !== "Select teammates and start a shared thread.") {
-        throw new Error(`the idle middle slot must invite, got "${idleMiddleSlot}"`);
+    if (idleMiddleSlot !== "") {
+        throw new Error(`the idle middle slot must say nothing, got "${idleMiddleSlot}"`);
     }
 
     // ── Out of select mode a row click still opens the conversation ──
@@ -371,8 +374,9 @@ function rowFor(el, name) {
     if (!confirmDisabledAtZero) {
         throw new Error("with nobody selected there is nothing to create");
     }
-    if (text(middleNow()).trim() !== "0 selected") {
-        throw new Error(`the middle slot must count, got "${text(middleNow()).trim()}"`);
+    const selectingMiddleSlotAtZero = text(middleNow()).trim();
+    if (selectingMiddleSlotAtZero !== "0 selected") {
+        throw new Error(`the middle slot must count, got "${selectingMiddleSlotAtZero}"`);
     }
 
     // ── In select mode the ROW selects ──
@@ -440,9 +444,9 @@ function rowFor(el, name) {
     boxesNow()[0].checked = true;
     (boxesNow()[0].listeners.change || []).forEach((fn) => fn({ target: boxesNow()[0] }));
     if (createBtn.disabled !== false) throw new Error("a selection must enable creation");
-    const selectingMiddleSlot = text(middleNow()).trim();
-    if (selectingMiddleSlot !== "1 selected") {
-        throw new Error(`the middle slot must count the selection, got "${selectingMiddleSlot}"`);
+    const selectingMiddleSlotAtOne = text(middleNow()).trim();
+    if (selectingMiddleSlotAtOne !== "1 selected") {
+        throw new Error(`the middle slot must count the selection, got "${selectingMiddleSlotAtOne}"`);
     }
     click(cancelBtn);
     if (boxesNow().length !== 0) throw new Error("Cancel must take the checkboxes away");
@@ -451,8 +455,8 @@ function rowFor(el, name) {
         throw new Error("leaving must restore the New thread control, got "
             + headerActionNames().join("|"));
     }
-    if (text(middleNow()).trim() !== "Select teammates and start a shared thread.") {
-        throw new Error("the middle slot must go back to inviting");
+    if (text(middleNow()).trim() !== "") {
+        throw new Error(`leaving must empty the middle slot, got "${text(middleNow()).trim()}"`);
     }
     click(newThreadBtn);
     if (boxesNow().some((box) => box.checked)) {
@@ -556,7 +560,8 @@ function rowFor(el, name) {
         idleHeaderActions,
         idleMiddleSlot,
         selectingHeaderActions,
-        selectingMiddleSlot,
+        selectingMiddleSlotAtZero,
+        selectingMiddleSlotAtOne,
         hasStandaloneCreateRow,
         confirmDisabledAtZero,
         confirmEnabledAtOne,

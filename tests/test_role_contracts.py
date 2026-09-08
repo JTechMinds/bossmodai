@@ -188,6 +188,7 @@ _JS = Path("ui/static/js")
 _SECTION_OWNERS = {
     "BossModAgentFormFields": "context/agent-form-fields.js",
     "BossModAgentFormAdvanced": "context/agent-form-advanced.js",
+    "BossModAgentFormConnections": "context/agent-form-connections.js",
 }
 
 

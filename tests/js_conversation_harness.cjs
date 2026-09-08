@@ -18,7 +18,7 @@ global.window.lucide = global.lucide;
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
-    "BossModConsentCard", "BossModOverlays", "BossModEmptyState",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
@@ -382,6 +382,20 @@ async function main() {
         .querySelectorAll("button")
         .map((btn) => btn.textContent)
         .filter((label) => label.length > 0);
+    // Round four made the rename pair ICON-ONLY, so textContent no longer
+    // names them: what a screen reader announces is the label for a text
+    // button and the aria-label for an icon. The `⋯` belongs to the surface
+    // rather than to any conversation and is not part of this row's meaning.
+    const actionNames = () => conversation.element
+        .querySelector(".conversation-actions")
+        .querySelectorAll("button")
+        .map((btn) => btn.textContent || btn.getAttribute("aria-label") || "")
+        .filter((name) => name && name !== "View options");
+    const RENAME_IDS = ["conversation-title-cancel", "conversation-title-save"];
+    const renameButtons = () => conversation.element
+        .querySelector(".conversation-actions")
+        .querySelectorAll("button")
+        .filter((btn) => RENAME_IDS.includes(btn.getAttribute("id")));
     const errorLine = () => conversation.element.querySelector(".composer-error").textContent;
     const press = (node, key) => (node.listeners.keydown || []).forEach((fn) => fn({
         key, preventDefault() {}, stopPropagation() {},
@@ -398,6 +412,10 @@ async function main() {
     if (actionLabels().join("|") !== "Archive") {
         throw new Error(`at rest the row is Archive alone, got ${actionLabels().join("|")}`);
     }
+    const renameActionsAbsentAtRest = renameButtons().length === 0;
+    if (!renameActionsAbsentAtRest) {
+        throw new Error("neither rename control may exist when nothing is being renamed");
+    }
 
     press(titleInput(), "Enter");
     const titleOpensEditOnEnter = titleInput().getAttribute("data-editing") === "true"
@@ -407,11 +425,30 @@ async function main() {
         throw new Error(`Enter must open edit mode and take focus, got `
             + `${titleInput().getAttribute("data-editing")}`);
     }
-    // Save joins the row Archive is in, through the same descriptor.
-    const saveActionAppearsBesideArchive = actionLabels().join("|") === "Save|Archive"
+    // The pair joins the row Archive is in, through the same descriptor.
+    // Round four replaced the word `Save` with a green check and added the
+    // red cross beside it — the operator's ask, and until then Esc cancelled
+    // and nothing said so.
+    const saveActionAppearsBesideArchive =
+        actionNames().join("|") === "Cancel rename|Save name|Archive"
         && Boolean(conversation.element.querySelector("#conversation-title-save"));
     if (!saveActionAppearsBesideArchive) {
-        throw new Error(`Save must join the action row, got ${actionLabels().join("|")}`);
+        throw new Error(`the rename pair must join the action row, got ${actionNames().join("|")}`);
+    }
+    // Icon-only, so each carries its own accessible name: colour is not the
+    // only carrier (SC 1.4.1) and the two shapes differ as well as the hues.
+    const renameActions = renameButtons().map((btn) => btn.getAttribute("aria-label"));
+    const renameActionIcons = renameButtons().map((btn) => {
+        const icon = btn.querySelectorAll("i")[0];
+        return icon ? icon.getAttribute("data-lucide") : null;
+    });
+    const renameActionsAreIconOnly = renameButtons().length === 2
+        && renameButtons().every((btn) => btn.textContent === ""
+            && Boolean(btn.getAttribute("aria-label"))
+            && btn.querySelectorAll("i").length === 1);
+    if (!renameActionsAreIconOnly) {
+        throw new Error(`an icon-only control needs its own name, got `
+            + `${JSON.stringify(renameActions)}`);
     }
 
     // Escape backs out and puts the confirmed name back, having sent nothing.
@@ -424,6 +461,27 @@ async function main() {
         && actionLabels().join("|") === "Archive";
     if (!escapeCancelsRenameWithoutSaving) {
         throw new Error(`Escape must discard the draft and send nothing, got `
+            + `"${titleInput().value}" after ${renamePayloads.length} patches`);
+    }
+
+    // ── Cancel is a control now, not only a keystroke ──
+    //
+    // It restores the last SERVER-confirmed name, which is exactly what Esc
+    // above just did. One path, two triggers: proven by asserting the same
+    // three things — the draft is gone, the mode is closed, and nothing was
+    // sent — rather than by reading which function the descriptor names.
+    press(titleInput(), "Enter");
+    titleInput().value = "abandoned draft";
+    const patchesBeforeCancel = renamePayloads.length;
+    await renameButtons()[0].dispatchClick();
+    await tick();
+    const cancelActionRestoresLikeEsc = titleInput().value === "Standup"
+        && titleInput().getAttribute("data-editing") === "false"
+        && renamePayloads.length === patchesBeforeCancel
+        && renameButtons().length === 0
+        && actionNames().join("|") === "Archive";
+    if (!cancelActionRestoresLikeEsc) {
+        throw new Error(`the cancel control must restore like Esc, got `
             + `"${titleInput().value}" after ${renamePayloads.length} patches`);
     }
 
@@ -463,7 +521,7 @@ async function main() {
     const failedRenameReportsError = errorLine().includes(RENAME_FAILURE);
     const failedRenameKeepsDraft = titleInput().value === "Doomed name";
     const failedRenameStaysInEditMode = titleInput().getAttribute("data-editing") === "true"
-        && actionLabels().join("|") === "Save|Archive";
+        && actionNames().join("|") === "Cancel rename|Save name|Archive";
     if (!failedRenameReportsError) {
         throw new Error(`a failed rename must say so, got "${errorLine()}"`);
     }
@@ -576,6 +634,11 @@ async function main() {
         failedRenameKeepsDraft,
         failedRenameStaysInEditMode,
         renameDoesNotFollowASwitch,
+        renameActions,
+        renameActionIcons,
+        renameActionsAreIconOnly,
+        renameActionsAbsentAtRest,
+        cancelActionRestoresLikeEsc,
         agentTitleIsNotEditable,
         archivedThreadIsNotRenameable,
     }));

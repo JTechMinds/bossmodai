@@ -28,10 +28,18 @@
  * core/overlays.js's wide modal — centred in the viewport, wide enough for the
  * form, with the title and the dismissal pinned outside a body that scrolls.
  *
- * The dialog's action row holds the dismissal only. Save and Delete are the
- * FORM's own controls: `#agent-form-submit` is a `type="submit"` inside the
- * `<form>`, which is what makes Enter in a text field submit it, and a button
- * moved out of its form stops submitting it.
+ * The dialog's action row holds Cancel and the PRIMARY, in that order. Round
+ * three left the primary at the bottom of the scroll because a submit button
+ * moved out of its form stops submitting it; the operator then could not find
+ * `Create Agent` at all. `<button type="submit" form="agent-form">` is the
+ * standard answer — it submits that form from anywhere in the document, so
+ * the form's constraint validation and its submit handler (and through it the
+ * seed-legibility colour clamp) are exactly as they were. Enter in a text
+ * field still submits, because the form is still a form.
+ *
+ * DELETE did not travel with it. It is destructive and belongs away from the
+ * primary, so it stays in the form body where context/agent-form-fields.js
+ * builds it.
  */
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
@@ -94,7 +102,12 @@ const BossModAgentEdit = (() => {
             onSave: () => { if (onSave) onSave(); },
         });
 
-        const submitBtn = form.querySelector('#agent-form-submit');
+        // Pinned in the dialog's action row, OUTSIDE the form it submits, so
+        // it is not reachable from `container`. The id is document-unique —
+        // exactly one element owns it — which is what makes this the lookup
+        // rather than a search. A caller that renders the form without a
+        // dialog gets null and no busy label; the save itself is the form's.
+        const submitBtn = document.querySelector('#agent-form-submit');
         const hireSubmit = BossModGates.createInFlightGate();
 
         form.addEventListener('submit', async (e) => {
@@ -197,9 +210,19 @@ const BossModAgentEdit = (() => {
             // The variant, not a second modal: same trap, same Esc, same
             // focus restoration, more room and a body that scrolls.
             size: 'wide',
-            // The one dismissal, pinned outside the scroll. It is the last
-            // action, so it holds focus on open and Esc agrees with it.
-            actions: [{ label: 'Cancel', tone: 'quiet' }],
+            // Both pinned outside the scroll, Cancel then the primary. The
+            // primary carries `form`, so it submits the form it is not inside
+            // and does NOT close the dialog itself — a save the form refuses
+            // has to leave the operator's draft on screen to fix.
+            actions: [
+                { label: 'Cancel', tone: 'quiet' },
+                {
+                    label: wasCreating ? 'Create Agent' : 'Save Changes',
+                    tone: 'primary',
+                    id: 'agent-form-submit',
+                    form: 'agent-form',
+                },
+            ],
             onClose: () => {
                 destroyed = true;
                 openDialog = null;

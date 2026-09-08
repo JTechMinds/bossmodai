@@ -51,6 +51,25 @@ function makeEl(tag) {
             if (other === this) return true;
             return this.children.some((c) => c && c.contains && c.contains(other));
         },
+        // core/overlays.js asks a modal's body for its focusable content to
+        // decide where the keyboard opens, and core/overlay-focus.js asks the
+        // panel for the same to trap Tab. Answered by TAG rather than by
+        // parsing the selector — the same fake tests/js_overlays_harness.cjs
+        // uses, and honest about being a fake. Pause's dialog carries a
+        // sentence and two buttons, so the answer here is the action row.
+        querySelectorAll() {
+            const FOCUSABLE_TAGS = ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"];
+            const out = [];
+            const walk = (node) => {
+                (node.children || []).forEach((c) => {
+                    if (!c || c.nodeType !== 1) return;
+                    if (FOCUSABLE_TAGS.includes(c.tagName) && !c.disabled) out.push(c);
+                    walk(c);
+                });
+            };
+            walk(this);
+            return out;
+        },
     };
 }
 
@@ -74,9 +93,10 @@ global.lucide = { createIcons() { iconPasses += 1; } };
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);
-eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
+eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
 
 /** Text a screen reader would announce: aria-hidden subtrees contribute nothing. */
 function accessibleText(node) {

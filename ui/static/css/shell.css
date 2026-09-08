@@ -204,9 +204,12 @@
   min-height: 24px;
 }
 
-/* The middle slot: the invitation out of select mode, the count in it. One
-   line, ellipsised rather than wrapped — the row must not grow when a long
-   count or a long hint lands in it. */
+/* The middle slot: empty out of select mode, the count in it. One line,
+   ellipsised rather than wrapped — the row must not grow when a long count
+   lands in it. Empty it collapses entirely rather than holding its margins,
+   because an idle header is the label and the `+` and nothing else. */
+.roster-section-hint:empty { display: none; }
+
 .roster-section-hint {
   flex: 1 1 auto;
   min-width: 0;

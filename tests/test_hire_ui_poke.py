@@ -55,6 +55,7 @@ def _read(name: str) -> str:
 SECTION_OWNERS = {
     "BossModAgentFormFields": "context/agent-form-fields.js",
     "BossModAgentFormAdvanced": "context/agent-form-advanced.js",
+    "BossModAgentFormConnections": "context/agent-form-connections.js",
 }
 
 
@@ -117,8 +118,15 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
     assert "createInFlightGate()" in gates
     assert "const hireSubmit = BossModGates.createInFlightGate()" in panel
     assert "if (hireSubmit.busy()) return;" in panel
-    assert "id=\"agent-form-submit\"" in markup
-    assert "disabled:pointer-events-none" in markup
+    # Round four pinned the primary in the DIALOG's action row, outside the
+    # form it submits, because the operator could not find it at the bottom of
+    # a scrolling form. The id this pins and the disabled styling moved with
+    # it — the id onto the dialog's action descriptor, the styling onto
+    # `.modal-action:disabled`, which is what the Tailwind pair carried.
+    assert "id: 'agent-form-submit'" in panel
+    assert "form: 'agent-form'" in panel
+    overlays_css = (ROOT / "ui" / "static" / "css" / "overlays.css").read_text(encoding="utf-8")
+    assert "pointer-events: none" in overlays_css
     assert "Creating…" in panel
     assert "id=\"agent-name-duplicate-warn\"" in markup
     assert "bindDuplicateNameWarning" in _read("context/agent-form.js")
