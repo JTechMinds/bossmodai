@@ -73,6 +73,23 @@ def _allow_host(host: Path) -> None:
     config.reload()
 
 
+def choose_edit_host(
+    client: TestClient,
+    request_id: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Operator chooses Edit host directly on a pending workspace preference card."""
+    response = client.post(
+        f"/api/workspace-preference/{request_id}/edit-host",
+        headers=headers or _headers(),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "edit_host"
+    return body
+
+
 def test_card_fires_on_named_host_path_write(tmp_path: Path) -> None:
     host = tmp_path / "named-root"
     host.mkdir()
@@ -134,9 +151,8 @@ def test_edit_host_requires_explicit_choice(tmp_path: Path, monkeypatch: pytest.
     assert fixture.read_text(encoding="utf-8") == "before\n"
 
     request_id = paused.consent_request_id
-    edited = client.post(f"/api/workspace-preference/{request_id}/edit-host", headers=_headers())
-    assert edited.status_code == 200
-    assert edited.json()["status"] == "edit_host"
+    assert request_id
+    choose_edit_host(client, request_id)
 
     allowed = execute_bm_cli(agent, state, f"write {fixture}", content="after\n")
     assert allowed.ok is True
