@@ -34,6 +34,7 @@ _PROMPT_FILE_BY_KEY = {
     "internal_loop_decision_repair_primary": "internal/loop_decision_repair_primary.md",
     "internal_loop_decision_repair_preserve_intent": "internal/loop_decision_repair_preserve_intent.md",
     "internal_loop_decision_repair_keys": "internal/loop_decision_repair_keys.md",
+    "internal_loop_decision_next_owner_nudge": "internal/loop_decision_next_owner_nudge.md",
     "internal_loop_execution_repair_primary": "internal/loop_execution_repair_primary.md",
     "internal_loop_execution_repair_keys": "internal/loop_execution_repair_keys.md",
     "internal_loop_execution_repair_followup": "internal/loop_execution_repair_followup.md",
