@@ -318,6 +318,32 @@ def test_composer_opens_the_one_assign_form() -> None:
     assert scripts.count("js/places/board/assign-form.js") == 1
 
 
+def test_conversation_assign_stamps_thread_origin() -> None:
+    """Hire → thread → Assign must bind Created/Accepted to that thread.
+
+    POST /api/tasks defaults source_channel to `api`, which origin_thread_target
+    treats as Focus. Conversation assign therefore stamps the open room. Board
+    assign must not inherit a leftover conversationId from the store.
+    """
+    controller = _read(CONVERSATION / "conversation.js")
+    assign = controller.split("function openAssign() {", 1)[1].split(
+        "const composer = BossModComposer.createComposer({", 1
+    )[0]
+    assert "bindOrigin: true" in assign
+
+    form = _read(JS / "places" / "board" / "assign-form.js")
+    assert "bindOrigin && state.conversationKind === 'thread'" in form
+    assert "payload.source_channel = 'channel'" in form
+    assert "payload.notification_channel_id = state.conversationId" in form
+    assert "payload.source_channel = 'chat'" in form
+
+    board = _read(JS / "places" / "board" / "board-place.js")
+    board_assign = board.split("function openAssign() {", 1)[1].split(
+        "return {", 1
+    )[0]
+    assert "bindOrigin" not in board_assign
+
+
 def test_conversation_css_uses_tokens_only() -> None:
     css = _read(CSS / "conversation.css")
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), "colour comes from tokens.css"
