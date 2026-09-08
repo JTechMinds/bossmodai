@@ -1,0 +1,11 @@
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+  - id: feature-planner
+    kind: agent
+    path: packs/product/feature-planner.agent.yaml
+    category: product
+    title: Feature Planner

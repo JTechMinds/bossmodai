@@ -165,6 +165,7 @@ dependencies = [
     { name = "pathfinding" },
     { name = "pydantic" },
     { name = "python-telegram-bot" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -184,6 +185,7 @@ requires-dist = [
     { name = "pathfinding", specifier = ">=1.0.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "python-telegram-bot", specifier = ">=22.7" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 

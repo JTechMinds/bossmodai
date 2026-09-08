@@ -118,6 +118,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("telegram_bot_token", "", "telegram"),
     ("telegram_allowed_user_ids", "", "telegram"),
 
+    # ── Agent packs (engine import/export; no storefront UI) ──
+    ("agent_pack_catalog_repo", "JTechMinds/BossMod_AgentMP", "agent_packs"),
+    ("agent_pack_catalog_path", "packs", "agent_packs"),
+    ("agent_pack_url_allowlist", "", "agent_packs"),
+
     # ── System prompt template (advanced) ──
     ("system_prompt_template", SYSTEM_PROMPT_TEMPLATE, "advanced"),
     ("runtime_contract_decision", RUNTIME_CONTRACT_DECISION_TEMPLATE, "advanced"),

@@ -150,6 +150,10 @@ Complete / deliver on the existing `done` path requires a checkable claim. A sat
 
 Every turn injects a Role contract system message (specialty + what done looks like + assign/complete hard rules) so live databases pick up the behavior without reseeding prompts. Refused empty-done and mismatch `world_feedback` is visible in the activity feed.
 
+## Agent packs
+
+Hire-contract templates live as YAML files in https://github.com/JTechMinds/BossMod_AgentMP, contributed by PR (`docs/AGENT_PACKS.md`). Layout: `catalog.yaml` plus `packs/<category-slug>/<id>.agent.yaml`. Schema `bossmod.agent_pack/v1` with `kind: agent`. Import (`POST /api/agent-packs/import`) reads the catalog index at a pinned commit or tag, then hydrates hire fields; export (`GET /api/agents/{id}/pack`) writes those fields back. No storefront UI, store backend, or skill/workflow install.
+
 ## Runtime core and host-path consent
 
 A shared runtime core is injected every turn beside the Role contract: identity (name + specialty), desk/`/me`, allowed tools, host-path consent, and checkable done. Role-specific quality bars stay in Description. Hire Advanced shows the core as a read-only preview.
