@@ -41,7 +41,7 @@ const BossModAgentFormFields = (() => {
         <div>
             <label class="block text-sm font-medium mb-1">Name</label>
             <input type="text" name="name" required
-                   value="${BossModFormat.escapeHtml(agent?.name || '')}"
+                   value="${BossModFormat.escapeAttribute(agent?.name || '')}"
                    placeholder="e.g. PM Agent"
                    class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -98,7 +98,7 @@ const BossModAgentFormFields = (() => {
             <div>
                 <label class="block text-sm font-medium mb-1">Specialty</label>
                 <input type="text" name="role"
-                       value="${BossModFormat.escapeHtml(agent?.role || '')}"
+                       value="${BossModFormat.escapeAttribute(agent?.role || '')}"
                        placeholder="e.g. Writer, Auditor, Engineer"
                        maxlength="120"
                        class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg

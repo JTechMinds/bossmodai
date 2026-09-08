@@ -44,7 +44,7 @@
   border: 1px solid var(--alert-line);
   border-radius: var(--r);
   background: var(--alert-bg);
-  color: var(--alert);
+  color: var(--alert-ink);
   font-size: 12px;
 }
 

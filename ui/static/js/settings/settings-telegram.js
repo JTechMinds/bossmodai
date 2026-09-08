@@ -83,7 +83,7 @@ const TelegramSection = (() => {
                            data-setting-category="telegram"
                            data-has-secret="${hasToken ? 'true' : 'false'}"
                            value=""
-                           placeholder="${hasToken ? '••••' + BossModFormat.escapeHtml(tokenLast4) : '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}"
+                           placeholder="${hasToken ? '••••' + BossModFormat.escapeAttribute(tokenLast4) : '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ'}"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                   focus:border-bm-accent font-mono">
@@ -102,7 +102,7 @@ const TelegramSection = (() => {
                            id="telegram-allowed-users"
                            data-setting-key="telegram_allowed_user_ids"
                            data-setting-category="telegram"
-                           value="${BossModFormat.escapeHtml(allowedUsers)}"
+                           value="${BossModFormat.escapeAttribute(allowedUsers)}"
                            placeholder="123456789, 987654321"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                   bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30

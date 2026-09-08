@@ -13,6 +13,7 @@
  */
 const BossModCliPolicyRules = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons } = BossModCliPolicyShared;
     const table = BossModCliPolicyRulesTable;
 
@@ -69,7 +70,7 @@ const BossModCliPolicyRules = (() => {
                     <div class="relative">
                         <i data-lucide="search" class="w-3.5 h-3.5 text-bm-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
                         <input id="cli-rules-search" type="text" placeholder="Search rules..."
-                               value="${esc(table.getSearchText())}"
+                               value="${escAttr(table.getSearchText())}"
                                class="pl-8 pr-3 py-1.5 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text w-52
                                       focus:outline-none focus:border-bm-accent focus:ring-1 focus:ring-bm-accent/30">
                     </div>

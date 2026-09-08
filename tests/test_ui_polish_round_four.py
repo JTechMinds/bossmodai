@@ -87,6 +87,11 @@ def test_the_scrim_reads_without_the_blur() -> None:
     scrim_layer = int(re.search(r"z-index:\s*(\d+)", rule).group(1))
     panel_layer = int(re.search(r"z-index:\s*(\d+)", _rule(css, ".modal-panel")).group(1))
     assert scrim_layer < panel_layer, (scrim_layer, panel_layer)
+    # And nothing in a place outranks the scrim: the Files menus were at 65.
+    places = _read(CSS / "places.css")
+    for selector in (".file-menu", ".file-new-list"):
+        layer = int(re.search(r"z-index:\s*(\d+)", _rule(places, selector)).group(1))
+        assert layer < scrim_layer, (selector, layer, scrim_layer)
 
 
 # ─── Task 2: the primary action is pinned ───

@@ -160,10 +160,13 @@ const BossModThreadArchive = (() => {
                     body: BossModDom.h('div', {},
                         BossModDom.h('p', {}, prompted.body),
                         BossModDom.h('p', { class: 'modal-honesty' }, prompted.honesty)),
-                    // The overlay focuses its LAST action, and the safe choice
-                    // is the one that should hold focus, so the row is rendered
-                    // committing-action-first — the same shape as the Pause
-                    // dialog. Ids, labels, and choices are unchanged.
+                    // createModal focuses the first focusable control in the
+                    // BODY, and falls back to the LAST action only when the
+                    // body has none. This body is two <p>s, so the fallback is
+                    // what runs here and the last action takes focus — which is
+                    // why the row is rendered committing-action-first, leaving
+                    // the safe choice last where focus lands. The same shape as
+                    // the Pause dialog. Ids, labels, and choices are unchanged.
                     actions: prompted.buttons.slice().reverse().map((btn) => ({
                         id: btn.id,
                         label: btn.label,

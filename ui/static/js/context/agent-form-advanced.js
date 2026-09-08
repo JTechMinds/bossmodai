@@ -59,7 +59,7 @@ const BossModAgentFormAdvanced = (() => {
                         </button>
                     </div>
                     <input type="text" name="done_fail_bar"
-                           value="${BossModFormat.escapeHtml(agent?.done_fail_bar || '')}"
+                           value="${BossModFormat.escapeAttribute(agent?.done_fail_bar || '')}"
                            placeholder="Suggested from specialty. Editable."
                            maxlength="500"
                            class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
@@ -119,7 +119,7 @@ const BossModAgentFormAdvanced = (() => {
                                min="0"
                                max="500"
                                name="prompt_history_last_n"
-                               value="${BossModFormat.escapeHtml(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
+                               value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
@@ -130,7 +130,7 @@ const BossModAgentFormAdvanced = (() => {
                                min="0"
                                max="50000"
                                name="prompt_history_max_tokens"
-                               value="${BossModFormat.escapeHtml(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
+                               value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">
@@ -139,7 +139,7 @@ const BossModAgentFormAdvanced = (() => {
                         <label class="block text-xs font-medium mb-1">Earliest Allowed Timestamp</label>
                         <input type="datetime-local"
                                name="prompt_history_earliest_ts"
-                               value="${BossModFormat.escapeHtml(earliestAllowedValue)}"
+                               value="${BossModFormat.escapeAttribute(earliestAllowedValue)}"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">

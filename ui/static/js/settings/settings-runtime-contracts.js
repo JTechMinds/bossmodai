@@ -77,7 +77,7 @@ const RuntimeContractsSection = (() => {
                     <div class="space-y-1">
                         ${allowedVariables.map(item => {
                             const isSubProp = item.name.includes('.');
-                            return `<button type="button" data-var="${BossModFormat.escapeHtml(item.name)}"
+                            return `<button type="button" data-var="${BossModFormat.escapeAttribute(item.name)}"
                                 class="rc-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
                                        transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
                                 <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModFormat.escapeHtml(item.name)}}}</div>
@@ -123,7 +123,7 @@ const RuntimeContractsSection = (() => {
                         <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <div class="flex items-center gap-2 mb-3 flex-wrap">
                                 <select id="runtime-preview-trigger" class="${SELECT_CLS}">
-                                    ${previewTriggers.map(t => `<option value="${BossModFormat.escapeHtml(t)}">${BossModFormat.escapeHtml(t)}</option>`).join('')}
+                                    ${previewTriggers.map(t => `<option value="${BossModFormat.escapeAttribute(t)}">${BossModFormat.escapeHtml(t)}</option>`).join('')}
                                 </select>
                                 <select id="runtime-preview-kind" class="${SELECT_CLS}">
                                     <option value="decision">Decision</option>

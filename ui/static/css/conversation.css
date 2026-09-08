@@ -231,7 +231,7 @@
   background: var(--alert-bg);
 }
 
-.transcript-status.is-error .transcript-status-title { color: var(--alert); }
+.transcript-status.is-error .transcript-status-title { color: var(--alert-ink); }
 
 .transcript-retry {
   margin-top: 10px;

@@ -75,7 +75,7 @@ const BossModConnectionForm = (() => {
                         <label class="block text-sm font-medium mb-1">Connection Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">This is what you'll see when selecting a connection for an agent.</p>
                         <input type="text" name="name" required
-                               value="${BossModFormat.escapeHtml(conn?.name || '')}"
+                               value="${BossModFormat.escapeAttribute(conn?.name || '')}"
                                placeholder="e.g. OpenAI Production"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -85,7 +85,7 @@ const BossModConnectionForm = (() => {
                         <label class="block text-sm font-medium mb-1">API Base URL</label>
                         <p class="text-xs text-bm-muted mb-1.5">The exact provider base URL. Use something like <code>https://api.openai.com/v1</code>, not <code>/chat/completions</code>.</p>
                         <input type="url" name="api_base_url" required
-                               value="${BossModFormat.escapeHtml(conn?.api_base_url || '')}"
+                               value="${BossModFormat.escapeAttribute(conn?.api_base_url || '')}"
                                placeholder="https://api.openai.com/v1"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
@@ -99,7 +99,7 @@ const BossModConnectionForm = (() => {
                         <div class="flex gap-2">
                             <input id="connection-api-key-input" type="password" name="api_key"
                                    value=""
-                                   placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModFormat.escapeHtml(conn.api_key_last4 || '') : 'sk-...'}"
+                                   placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModFormat.escapeAttribute(conn.api_key_last4 || '') : 'sk-...'}"
                                    class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                           focus:border-bm-accent">
@@ -121,7 +121,7 @@ const BossModConnectionForm = (() => {
                         <label class="block text-sm font-medium mb-1">Model Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">Model name exposed by the server. Raw names like <code>llama3</code> work for local OpenAI-compatible endpoints; provider-prefixed names also work.</p>
                         <input type="text" name="model"
-                               value="${BossModFormat.escapeHtml(conn?.model || '')}"
+                               value="${BossModFormat.escapeAttribute(conn?.model || '')}"
                                placeholder="e.g. llama3 or openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30

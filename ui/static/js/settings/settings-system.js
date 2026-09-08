@@ -191,7 +191,7 @@ const SystemSection = (() => {
             html += `
                     <button
                         type="button"
-                        data-system-category="${BossModFormat.escapeHtml(cat.key)}"
+                        data-system-category="${BossModFormat.escapeAttribute(cat.key)}"
                         class="system-category-tab px-4 py-2 rounded-lg text-sm font-medium border transition-colors
                                ${active ? 'bg-bm-accent text-white border-bm-accent shadow-sm' : 'bg-white text-bm-text border-bm-border hover:bg-slate-50'}">
                         ${BossModFormat.escapeHtml(cat.label)}
@@ -216,9 +216,9 @@ const SystemSection = (() => {
                         <label class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(label)}</label>
                         <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(description)}</p>
                         <input type="text"
-                               data-setting-key="${BossModFormat.escapeHtml(s.key)}"
-                               data-setting-category="${BossModFormat.escapeHtml(s.category)}"
-                               value="${BossModFormat.escapeHtml(s.value)}"
+                               data-setting-key="${BossModFormat.escapeAttribute(s.key)}"
+                               data-setting-category="${BossModFormat.escapeAttribute(s.category)}"
+                               value="${BossModFormat.escapeAttribute(s.value)}"
                                class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
                                       focus:border-bm-accent">

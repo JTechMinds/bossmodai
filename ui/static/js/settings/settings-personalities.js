@@ -107,7 +107,7 @@ const PersonalitiesSection = (() => {
                         <label class="block text-sm font-medium mb-1">Name</label>
                         <p class="text-xs text-bm-muted mb-1.5">A short label used in dropdowns and the settings list so people can recognize this personality at a glance.</p>
                         <input type="text" name="name" required
-                               value="${BossModFormat.escapeHtml(p?.name || '')}"
+                               value="${BossModFormat.escapeAttribute(p?.name || '')}"
                                placeholder="e.g. Product Manager, Code Reviewer"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30

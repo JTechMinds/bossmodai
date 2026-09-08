@@ -62,7 +62,7 @@ const PromptTemplateSection = (() => {
                     <div class="space-y-1">
                         ${allowedVariables.map(item => {
                             const isSubProp = item.name.includes('.');
-                            return `<button type="button" data-var="${BossModFormat.escapeHtml(item.name)}"
+                            return `<button type="button" data-var="${BossModFormat.escapeAttribute(item.name)}"
                                 class="spt-var-btn w-full text-left px-2 py-1.5 rounded hover:bg-white
                                        transition-colors cursor-pointer group ${isSubProp ? 'pl-5' : ''}">
                                 <div class="text-xs font-mono text-bm-accent group-hover:text-bm-accent-hover">{{${BossModFormat.escapeHtml(item.name)}}}</div>

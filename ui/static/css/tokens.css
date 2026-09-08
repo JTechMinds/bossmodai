@@ -22,6 +22,8 @@
   --alert: #d03737;         /* 4.57 on --bg  (was #d93a3a at 4.24 — failed) */
   --alert-bg: #fdecec;
   --alert-line: #f3b9b9;
+  --alert-ink: #b02525;     /* 5.86 on --alert-bg  (--alert measures 4.29 there — failed).
+                               Text ON the tint. --alert is for text on --bg/--panel. */
 
   --ok: #268057;            /* 4.55 on --bg  (was #2e9b6a at 3.26 — failed) */
   --ok-mark: #2e9b6a;       /* 3.49 — dots and bar fills only, never text */

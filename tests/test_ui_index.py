@@ -330,6 +330,43 @@ def test_the_markup_exemption_stays_bounded() -> None:
         assert "innerHTML" not in path.read_text(encoding="utf-8"), relative
 
 
+# An interpolation that opens with `="${` lands inside a double-quoted
+# attribute value. `esc` is the `const esc = BossModFormat.escapeHtml` alias
+# the settings/cli-policy modules use — the same function, the same bug.
+ATTRIBUTE_INTERPOLATION = re.compile(r'="\$\{[^}]*\b(?:escapeHtml|esc)\(')
+
+
+def test_no_attribute_interpolation_uses_the_text_escaper() -> None:
+    """Inside `attr="…"` the quote itself has to be escaped, and escapeHtml does not.
+
+    escapeHtml sets `textContent` and reads `innerHTML` back, which is how a
+    text node serialises: `&`, `<` and `>` become entities and `"` is left
+    alone, because between tags a quote is just a quote. Inside a
+    double-quoted attribute the quote is the TERMINATOR, so an operator- or
+    agent-supplied `Bob" autofocus onfocus=alert(1) x="` closes the attribute
+    early and the rest of the value is parsed as markup and an event handler
+    — an XSS the text escaper cannot see.
+
+    BossModFormat.escapeAttribute is escapeHtml plus `"` -> `&quot;`, and it
+    is what every attribute site must call. escapeHtml stays correct for text
+    BETWEEN tags, which is why this pattern is anchored on `="` and not on
+    the call alone.
+    """
+    js = ROOT / "ui" / "static" / "js"
+    offenders = []
+    for path in sorted(js.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        relative = path.relative_to(js).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if ATTRIBUTE_INTERPOLATION.search(line):
+                offenders.append(f"{relative}:{number}: {line.strip()}")
+    assert offenders == [], (
+        "escapeHtml in a double-quoted attribute — use escapeAttribute:\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_every_module_stays_under_the_line_cap() -> None:
     """One assertion over the whole tree, not five over five directories.
 

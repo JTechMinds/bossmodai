@@ -11,6 +11,7 @@
  */
 const BossModCliPolicyRuleForm = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons, getAgents } = BossModCliPolicyShared;
 
     /**
@@ -29,7 +30,7 @@ const BossModCliPolicyRuleForm = (() => {
         if (!slot) return;
 
         const agentOptions = getAgents().map(a =>
-            `<option value="${esc(a.id)}" ${rule?.agent_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`
+            `<option value="${escAttr(a.id)}" ${rule?.agent_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`
         ).join('');
 
         slot.innerHTML = `
@@ -57,7 +58,7 @@ const BossModCliPolicyRuleForm = (() => {
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Pattern</label>
                         <input type="text" name="pattern" required
-                               value="${esc(rule?.pattern || '')}"
+                               value="${escAttr(rule?.pattern || '')}"
                                placeholder="e.g. rm -rf, git push --force"
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
                     </div>
@@ -78,14 +79,14 @@ const BossModCliPolicyRuleForm = (() => {
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Description</label>
                         <input type="text" name="description"
-                               value="${esc(rule?.description || '')}"
+                               value="${escAttr(rule?.description || '')}"
                                placeholder="What this rule does"
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
                     </div>
                     <div>
                         <label class="block text-xs font-medium mb-1">Category</label>
                         <input type="text" name="category"
-                               value="${esc(rule?.category || 'general')}"
+                               value="${escAttr(rule?.category || 'general')}"
                                placeholder="e.g. filesystem, network, packages"
                                list="cli-category-suggestions"
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
@@ -102,7 +103,7 @@ const BossModCliPolicyRuleForm = (() => {
                     <div>
                         <label class="block text-xs font-medium mb-1">Usage Syntax</label>
                         <input type="text" name="usage_syntax"
-                               value="${esc(rule?.usage_syntax || '')}"
+                               value="${escAttr(rule?.usage_syntax || '')}"
                                placeholder="e.g. curl [options] <url>"
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
                     </div>

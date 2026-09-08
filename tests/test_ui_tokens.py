@@ -18,14 +18,22 @@ NON_TEXT_TOKENS = {"ok-mark": 3.0, "line-control": 3.0}
 
 # Inks that are never used on --bg or --panel: each one is text ON its tint, so
 # it is measured against that tint and nothing else. --ok-ink joined them when
-# the visual pass measured --ok on --ok-bg at 4.33 and found it under the floor.
-INK_ON_TINT = {
-    "ok-ink": "ok-bg",
-    "blue-ink": "blue",
-    "amber-ink": "amber",
-    "teal-ink": "teal",
-    "pink-ink": "pink",
-}
+# the visual pass measured --ok on --ok-bg at 4.33 and found it under the floor,
+# and --alert-ink joined for the same reason at 4.29 on --alert-bg.
+#
+# Pairs, not a mapping: one ink can carry more than one tint. --blue-ink is the
+# text on --accent-bg as well as on --blue, because --accent measures 4.19 on
+# its own tint and minting a second near-identical navy for it would be two
+# tokens for one colour.
+INK_ON_TINT = (
+    ("ok-ink", "ok-bg"),
+    ("alert-ink", "alert-bg"),
+    ("blue-ink", "blue"),
+    ("blue-ink", "accent-bg"),
+    ("amber-ink", "amber"),
+    ("teal-ink", "teal"),
+    ("pink-ink", "pink"),
+)
 
 
 def _channel(value: int) -> float:
@@ -77,10 +85,14 @@ def test_ink_on_tint_pairs_meet_aa() -> None:
     TEXT_TOKENS above proves, and 4.33:1 on --ok-bg, which nothing proved. The
     Office state pill and the Log's Active badge are both small bold text on
     --ok-bg, so both were failing while a green test said the token was fine.
+
+    --alert and --accent were the same counter-example one round later: 4.57
+    and 4.51 on --bg, 4.29 and 4.19 on their own tints, and every error panel
+    and selected row in the app is text on the tint.
     """
     tokens = _tokens()
     failures = []
-    for ink, tint in INK_ON_TINT.items():
+    for ink, tint in INK_ON_TINT:
         assert ink in tokens, f"--{ink} missing from tokens.css"
         assert tint in tokens, f"--{tint} missing from tokens.css"
         ratio = contrast(tokens[ink], tokens[tint])

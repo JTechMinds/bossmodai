@@ -159,7 +159,7 @@
   border: 1px solid var(--alert-line);
   border-radius: var(--r);
   background: var(--alert-bg);
-  color: var(--alert);
+  color: var(--alert-ink);
   font-weight: 500;
 }
 
@@ -386,7 +386,10 @@
   font-weight: 500;
 }
 
-.roster-hire:hover { background: var(--accent-bg); }
+/* Hovering swaps the ground to --accent-bg, where the resting --accent ink
+   measures only 4.19:1 and fails AA — --blue-ink is 6.86:1 there. Same
+   correction .msg-human and the selected roster row already carry. */
+.roster-hire:hover { background: var(--accent-bg); color: var(--blue-ink); }
 
 /* ─── Collapsed rail ───
 
@@ -461,7 +464,7 @@
 .place-error h1 { margin: 0 0 8px; font-size: 18px; }
 .place-stub-note { margin: 0; color: var(--muted); }
 .place-error { border-color: var(--alert-line); background: var(--alert-bg); }
-.place-error p { color: var(--alert); }
+.place-error p { color: var(--alert-ink); }
 
 /* .btn is a primitive now; all this surface adds is where it sits. */
 .place-error .btn { margin-top: 12px; }

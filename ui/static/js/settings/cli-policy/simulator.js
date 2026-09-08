@@ -13,6 +13,7 @@
  */
 const CliPolicySimulator = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons } = BossModCliPolicyShared;
     const output = BossModSimulatorOutput;
 
@@ -74,7 +75,7 @@ const CliPolicySimulator = (() => {
     function _renderNotice(el, icon, title, detail) {
         el.innerHTML = `
             <div class="text-center py-16 text-bm-muted">
-                <i data-lucide="${esc(icon)}" class="w-12 h-12 mx-auto mb-4 opacity-30"></i>
+                <i data-lucide="${escAttr(icon)}" class="w-12 h-12 mx-auto mb-4 opacity-30"></i>
                 <p class="text-sm font-medium mb-1">${esc(title)}</p>
                 <p class="text-xs">${esc(detail)}</p>
             </div>`;
@@ -133,7 +134,7 @@ const CliPolicySimulator = (() => {
         }
 
         const agentOptions = agentsCache.map(a =>
-            `<option value="${esc(a.id)}">${esc(a.name)}</option>`
+            `<option value="${escAttr(a.id)}">${esc(a.name)}</option>`
         ).join('');
 
         el.innerHTML = BossModSimulatorShell.terminalMarkup({

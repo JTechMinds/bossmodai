@@ -22,7 +22,7 @@
 .place-error-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
 .place-empty-hint { margin: 0; color: var(--muted); }
 .place-error-panel { border-color: var(--alert-line); background: var(--alert-bg); }
-.place-error-detail { margin: 0 0 12px; color: var(--alert); }
+.place-error-detail { margin: 0 0 12px; color: var(--alert-ink); }
 
 .status-pill {
   display: inline-flex;
@@ -45,7 +45,7 @@
 
 /* Status tones. Left column mirrors STATUS_CONFIG, right ACTIVITY_CONFIG. */
 .status-pill[data-status="blocked"],
-.status-pill[data-status="stalled"] { background: var(--alert-bg); color: var(--alert); }
+.status-pill[data-status="stalled"] { background: var(--alert-bg); color: var(--alert-ink); }
 
 .status-pill[data-status="waiting"],
 .status-pill[data-status="in_transit"],
@@ -198,7 +198,7 @@
   font-weight: 600;
   text-transform: uppercase;
   background: var(--alert-bg);
-  color: var(--alert);
+  color: var(--alert-ink);
 }
 
 /* ─── Org chart ─── */
@@ -325,7 +325,7 @@
 .board-dir { color: var(--muted); }
 
 .board-chip-clear { border-style: dashed; color: var(--accent); border-color: var(--accent); }
-.board-danger { border-color: var(--alert); color: var(--alert); background: var(--alert-bg); }
+.board-danger { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-bg); }
 .board-danger:disabled { opacity: 0.45; pointer-events: none; }
 .board-chip-clear[hidden] { display: none !important; }
 
@@ -537,7 +537,7 @@
 .assign-panel[data-tone="ok"] { border-color: var(--ok); background: var(--ok-bg); }
 .assign-panel[data-tone="info"] { border-color: var(--accent); background: var(--accent-bg); }
 .assign-panel[data-tone="warn"] { border-color: var(--amber-ink); background: var(--amber); color: var(--amber-ink); }
-.assign-panel[data-tone="error"] { border-color: var(--alert); background: var(--alert-bg); color: var(--alert); }
+.assign-panel[data-tone="error"] { border-color: var(--alert); background: var(--alert-bg); color: var(--alert-ink); }
 .assign-panel-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
 .assign-panel-body { margin: 0; font-size: 12px; }
 
@@ -646,7 +646,7 @@
   padding: 6px 16px;
   border-bottom: 1px solid var(--alert-line);
   background: var(--alert-bg);
-  color: var(--alert);
+  color: var(--alert-ink);
   font-size: 12px;
 }
 
@@ -705,11 +705,17 @@
 .file-row.is-skeleton { pointer-events: none; padding: 10px; }
 .file-skeleton-bar { display: block; width: 45%; height: 10px; border-radius: 4px; background: var(--line); }
 
-/* ─── Files: menus ─── */
+/* ─── Files: menus ───
+ *
+ * Both menus sit ABOVE the place they belong to and BELOW the modal scrim
+ * (.modal-backdrop, 55, in overlays.css). At 65 they cleared the scrim and the
+ * dialog panel at 60, so an open Files menu drew on top of the dialog that had
+ * just replaced it — and over the scrim that is supposed to say the page
+ * behind is inert. */
 
 .file-menu {
   position: fixed;
-  z-index: 65;
+  z-index: 50;
   min-width: 180px;
   padding: 4px 0;
   border: 1px solid var(--line-strong);
@@ -738,7 +744,7 @@
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
-  z-index: 65;
+  z-index: 50;
   min-width: 150px;
   padding: 4px 0;
   border: 1px solid var(--line-strong);
@@ -774,7 +780,7 @@
   border: 1px solid var(--alert-line);
   border-radius: 6px;
   background: var(--alert-bg);
-  color: var(--alert);
+  color: var(--alert-ink);
   font-size: 12px;
 }
 
@@ -1216,4 +1222,4 @@
   font-weight: 600;
 }
 
-.log-step[data-status="error"] .log-step-badge { background: var(--alert-bg); color: var(--alert); }
+.log-step[data-status="error"] .log-step-badge { background: var(--alert-bg); color: var(--alert-ink); }

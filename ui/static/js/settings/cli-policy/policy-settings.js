@@ -12,6 +12,7 @@
  */
 const BossModCliPolicySettings = (() => {
     const esc = BossModFormat.escapeHtml;
+    const escAttr = BossModFormat.escapeAttribute;
     const { icons, applySettingSaveResult } = BossModCliPolicyShared;
 
     const SETTINGS_META = {
@@ -113,7 +114,7 @@ const BossModCliPolicySettings = (() => {
                     </div>`;
             } else if (meta.type === 'select') {
                 const options = meta.options.map(opt =>
-                    `<option value="${esc(opt.value)}" ${s.value === opt.value ? 'selected' : ''}>${esc(opt.label)}</option>`
+                    `<option value="${escAttr(opt.value)}" ${s.value === opt.value ? 'selected' : ''}>${esc(opt.label)}</option>`
                 ).join('');
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
@@ -134,7 +135,7 @@ const BossModCliPolicySettings = (() => {
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
                     <input type="number" data-cli-setting-input="${s.key}"
-                           value="${esc(s.value)}"
+                           value="${escAttr(s.value)}"
                            class="w-full max-w-xs px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">`;
             }
 
