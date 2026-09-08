@@ -11,6 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Hire-contract field lengths. Agent packs use the same caps so import
+# hydrates Advanced hire fields without a second set of limits.
+HIRE_ROLE_MAX_LEN = 120
+HIRE_DESCRIPTION_MAX_LEN = 1000
+HIRE_DONE_FAIL_BAR_MAX_LEN = 500
+
 
 # ---------------------------------------------------------------------------
 # Agent — persistent identity & configuration
@@ -81,7 +87,7 @@ class AgentState(BaseModel):
 # API input models
 # ---------------------------------------------------------------------------
 
-def _normalize_optional_text(value: str | None, *, max_len: int) -> str | None:
+def normalize_hire_text(value: str | None, *, max_len: int) -> str | None:
     """Strip optional hire-contract text and drop empty strings."""
     if value is None:
         return None
@@ -119,17 +125,17 @@ class AgentCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def _normalize_role(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=120)
+        return normalize_hire_text(value, max_len=HIRE_ROLE_MAX_LEN)
 
     @field_validator("description")
     @classmethod
     def _normalize_description(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=1000)
+        return normalize_hire_text(value, max_len=HIRE_DESCRIPTION_MAX_LEN)
 
     @field_validator("done_fail_bar")
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=500)
+        return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
 
 
 class AgentUpdate(BaseModel):
@@ -167,14 +173,14 @@ class AgentUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def _normalize_role(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=120)
+        return normalize_hire_text(value, max_len=HIRE_ROLE_MAX_LEN)
 
     @field_validator("description")
     @classmethod
     def _normalize_description(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=1000)
+        return normalize_hire_text(value, max_len=HIRE_DESCRIPTION_MAX_LEN)
 
     @field_validator("done_fail_bar")
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, max_len=500)
+        return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)

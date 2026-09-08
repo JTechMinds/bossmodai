@@ -41,6 +41,8 @@ EXPECTED_ROUTES = {
     (("PATCH",), "/api/agents/{agent_id}/prompt-history-policy", "update_agent_prompt_history_policy"),
     (("DELETE",), "/api/agents", "delete_all_agents"),
     (("DELETE",), "/api/agents/{agent_id}", "delete_agent"),
+    (("GET",), "/api/agents/{agent_id}/pack", "export_agent_pack"),
+    (("POST",), "/api/agent-packs/import", "import_agent_pack"),
     (("GET",), "/api/agents/{agent_id}/messages", "get_agent_messages"),
     (("GET",), "/api/agents/{agent_id}/notifications", "get_agent_notifications"),
     (("GET",), "/api/agents/{agent_id}/triggers", "get_agent_triggers"),
@@ -112,7 +114,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 91
+    assert len(got) == 93
 
 
 def test_from_api_routes_import_router_still_works() -> None:

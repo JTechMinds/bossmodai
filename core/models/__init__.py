@@ -11,7 +11,16 @@ from core.models.cli import AgentCliState
 from core.models.cli_policy import CliApprovalRequest, CliPolicyRule, CliPolicyRuleCreate
 from core.models.host_path_consent import HostPathConsentRequest
 from core.models.activity import Activity
-from core.models.agent import Agent, AgentCreate, AgentState, AgentUpdate
+from core.models.agent import (
+    Agent,
+    AgentCreate,
+    AgentState,
+    AgentUpdate,
+    HIRE_DESCRIPTION_MAX_LEN,
+    HIRE_DONE_FAIL_BAR_MAX_LEN,
+    HIRE_ROLE_MAX_LEN,
+    normalize_hire_text,
+)
 from core.models.artifact import Artifact
 from core.models.channel import (
     Channel,
@@ -56,6 +65,10 @@ __all__ = [
     "AgentCreate",
     "AgentState",
     "AgentUpdate",
+    "HIRE_DESCRIPTION_MAX_LEN",
+    "HIRE_DONE_FAIL_BAR_MAX_LEN",
+    "HIRE_ROLE_MAX_LEN",
+    "normalize_hire_text",
     "AgentCliState",
     "CliApprovalRequest",
     "CliPolicyRule",
