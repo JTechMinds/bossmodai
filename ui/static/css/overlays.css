@@ -176,6 +176,13 @@
 
 .pack-card-pick:hover { color: var(--accent); }
 
+.pack-card-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 .pack-author-link {
   font-size: 12px;
   color: var(--accent);

@@ -78,6 +78,8 @@ def _group_categories(result: CatalogListResult) -> list[dict[str, Any]]:
             "category": entry.category,
             "title": entry.title,
         }
+        if card.summary:
+            payload["summary"] = card.summary
         if card.specialty:
             payload["specialty"] = card.specialty
         if card.pack_author:
@@ -149,13 +151,16 @@ def import_agent_pack(body: AgentPackImportBody) -> dict[str, Any]:
         "pin": _pin_payload(result.location),
     }
     if result.catalog_entry is not None:
-        payload["catalog"] = {
+        catalog: dict[str, Any] = {
             "id": result.catalog_entry.id,
             "kind": result.catalog_entry.kind,
             "path": result.catalog_entry.path,
             "category": result.catalog_entry.category,
             "title": result.catalog_entry.title,
         }
+        if result.catalog_entry.summary:
+            catalog["summary"] = result.catalog_entry.summary
+        payload["catalog"] = catalog
     return payload
 
 

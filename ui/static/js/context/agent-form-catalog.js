@@ -173,6 +173,10 @@ const BossModAgentFormCatalog = (() => {
                 : (author && author.name
                     ? h('span', { class: 'pack-author-plain' }, author.name)
                     : null);
+            const summary = String(pack.summary || '').trim();
+            const subtitle = summary
+                ? h('p', { class: 'pack-card-summary' }, summary)
+                : null;
             return h('div', { class: 'pack-card' },
                 h('button', {
                     class: 'pack-card-pick',
@@ -180,6 +184,7 @@ const BossModAgentFormCatalog = (() => {
                     'data-pack-id': pack.id,
                     onclick: () => { void pickPack(pack, pin); },
                 }, pack.title || pack.id),
+                subtitle,
                 authorNode);
         }
 

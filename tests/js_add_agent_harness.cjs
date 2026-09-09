@@ -42,6 +42,7 @@ const CATALOG = {
                 id: "code-auditor",
                 title: "Code Auditor",
                 category: "engineering",
+                summary: "Hire when work claims done and needs evidence-backed CLEAR.",
                 pack_author: { name: "JTech Minds", url: "https://github.com/JTechMinds" },
             }],
         },
@@ -51,6 +52,7 @@ const CATALOG = {
                 id: "feature-planner",
                 title: "Feature Planner",
                 category: "product",
+                summary: "Hire when you need product cuts / sequencing, not code.",
                 pack_author: { name: "Studio" },
             }],
         },
@@ -190,6 +192,19 @@ async function main() {
         && plannerAuthor.textContent === "Studio";
     const categories = ready.host.textContent.includes("Engineering")
         && ready.host.textContent.includes("Product");
+    const auditorPick = ready.host.querySelector('[data-pack-id="code-auditor"]');
+    const auditorCard = auditorPick && auditorPick.closest(".pack-card");
+    const auditorKids = auditorCard ? auditorCard.children : [];
+    const plannerPick = ready.host.querySelector('[data-pack-id="feature-planner"]');
+    const plannerCard = plannerPick && plannerPick.closest(".pack-card");
+    const plannerKids = plannerCard ? plannerCard.children : [];
+    const subtitleUnderTitle = Boolean(auditorPick)
+        && auditorKids[0] === auditorPick
+        && auditorKids[1]
+        && String(auditorKids[1].getAttribute("class")) === "pack-card-summary"
+        && auditorKids[1].textContent === "Hire when work claims done and needs evidence-backed CLEAR."
+        && plannerKids[1]
+        && plannerKids[1].textContent === "Hire when you need product cuts / sequencing, not code.";
 
     const pick = ready.host.querySelector('[data-pack-id="code-auditor"]');
     if (!pick) throw new Error("code-auditor card missing");
@@ -240,6 +255,7 @@ async function main() {
         blankClearsPackOnly,
         blankDoorHidesBrowse,
         fromPackCopy,
+        subtitleUnderTitle,
         createFooterUnchanged: true,
     }));
 }
