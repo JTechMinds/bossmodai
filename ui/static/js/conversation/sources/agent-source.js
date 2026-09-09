@@ -69,19 +69,23 @@ const BossModAgentSource = (() => {
         function toMessage(raw) {
             const isSystem = raw.from === 'system' || raw.message_type === 'system';
             const isWalkReceipt = raw.notification_kind === 'receipt';
+            const isQueue = raw.notification_kind === 'queue_visibility';
             const consent = BossModConsentCard.isHostPathConsentMessage(raw)
                 && raw.host_path_consent;
+            const text = raw.content || '';
             return {
-                key: String(raw.id || raw.message_id || '').trim(),
+                key: isQueue ? `queue-visibility:${agentId}` : String(raw.id || raw.message_id || '').trim(),
                 author: raw.from || 'agent',
                 authorName: raw.from_name || '',
                 showAuthor: false,
-                text: raw.content || '',
+                text,
                 createdAt: raw.created_at || '',
-                kind: consent ? 'request' : (isSystem ? 'note' : 'message'),
+                kind: consent ? 'request' : (isSystem || isQueue ? 'note' : 'message'),
                 card: raw.host_path_consent || null,
                 deskPath: raw.desk_path || null,
-                systemReceipt: isSystem && !isWalkReceipt && !consent,
+                systemReceipt: isSystem && !isWalkReceipt && !consent && !isQueue,
+                live: isQueue,
+                cleared: isQueue && !String(text).trim(),
             };
         }
 

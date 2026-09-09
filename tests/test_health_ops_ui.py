@@ -71,7 +71,7 @@ def test_walk_receipts_stay_visible_when_system_toggle_off() -> None:
     source = (JS / "conversation" / "sources" / "agent-source.js").read_text(encoding="utf-8")
     assert "notification_kind === 'receipt'" in source
     assert "BossModConsentCard.isHostPathConsentMessage(raw)" in source
-    assert "systemReceipt: isSystem && !isWalkReceipt && !consent" in source
+    assert "systemReceipt: isSystem && !isWalkReceipt && !consent && !isQueue" in source
     conversation = (JS / "conversation" / "conversation.js").read_text(encoding="utf-8")
     # Phase 2B split the persisted preference out of the controller; the key is
     # unchanged, so an operator's existing choice still applies.

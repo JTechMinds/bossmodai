@@ -20,6 +20,7 @@ from core.agent_loop.activity_scheduler import (
 )
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
+from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
     origin_thread_target,
@@ -112,6 +113,7 @@ class TurnDispatcher:
             payload=payload,
             task_id=task_id,
         )
+        schedule_queue_visibility(agent_id)
         self.notify()
 
     async def reset_runtime(self) -> None:
@@ -156,6 +158,7 @@ class TurnDispatcher:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        await emit_queue_visibility(agent_id)
         self.notify()
 
     def _retry_limit(self) -> int:
@@ -501,6 +504,7 @@ class TurnDispatcher:
 
             claimed = db.claim_trigger(trigger.id)
             if claimed is not None:
+                schedule_queue_visibility(claimed.agent_id)
                 return claimed
         return None
 
@@ -600,6 +604,7 @@ class TurnDispatcher:
             final_state = db.get_agent_state(agent.id)
             if final_state and final_state.status == "idle":
                 self.notify_agent_idle(agent.id)
+            await emit_queue_visibility(agent.id)
             self.notify()
 
     async def handle_arrival(self, agent_id: str, room_name: str) -> None:
