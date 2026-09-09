@@ -126,16 +126,22 @@ const BossModTranscript = (() => {
         }
 
         function nodeFor(message) {
-            return message.kind === 'message' ? renderMessage(message) : renderEventCard(message);
+            const node = message.kind === 'message' ? renderMessage(message) : renderEventCard(message);
+            const key = messageKey(message);
+            if (key && !node.getAttribute('data-message-key')) node.setAttribute('data-message-key', key);
+            return node;
         }
 
-        /**
-         * Replace the whole list and land at the bottom. Nothing is preserved
-         * across the swap, dedupe set included: `incoming` IS the transcript now.
-         *
-         * @param {object[]} incoming
-         * @returns {void}
-         */
+        function removeByKey(key) {
+            const node = key ? listEl.querySelector(`[data-message-key="${key}"]`) : null;
+            if (!node) return false;
+            node.remove();
+            renderedKeys.delete(key);
+            messages = Math.max(0, messages - 1);
+            return true;
+        }
+
+        /** Replace the list. `incoming` IS the transcript now. */
         function setMessages(incoming) {
             clear(listEl);
             renderedKeys.clear();
@@ -153,21 +159,25 @@ const BossModTranscript = (() => {
         }
 
         /**
-         * Append one message.
-         *
-         * @param {object} message
-         * @returns {boolean} false when the key is already on screen. A message
-         *   with an empty key ALWAYS appends and always returns true.
+         * Append, or replace/remove a live queue-visibility line by key.
+         * @returns {boolean} false when a non-live key is already on screen.
          */
         function append(message) {
             const key = messageKey(message);
+            if (message.cleared && key) return removeByKey(key);
+            if (key && renderedKeys.has(key) && message.live) {
+                const node = listEl.querySelector(`[data-message-key="${key}"]`);
+                if (node && typeof node.replaceWith === 'function') {
+                    node.replaceWith(nodeFor(message));
+                    return true;
+                }
+                if (node) removeByKey(key);
+            }
             if (key && renderedKeys.has(key)) return false;
             const stick = isNearBottom();
             listEl.append(nodeFor(message));
             if (key) renderedKeys.add(key);
             messages += 1;
-            // A message arriving proves the conversation is not empty; any
-            // other status is the controller's to clear.
             if (statusKind === 'empty') setStatus('ready');
             keepPresenceLast();
             if (stick) scrollToBottom();

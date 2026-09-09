@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from core.models.notification import Notification
-from db.crud import execute, fetch_all, insert_returning, query_one
+from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 
 _NOTIFICATION_COLUMNS = (
     "id, agent_id, task_id, activity_id, kind, content, "
@@ -80,6 +80,49 @@ def list_notifications(
         LIMIT ${len(params)}
         """,
         params,
+        Notification,
+    )
+
+
+def get_queue_visibility_notification(agent_id: str) -> Notification | None:
+    """Return the live queue-visibility line for an agent, if any."""
+    return fetch_one(
+        f"""
+        SELECT {_NOTIFICATION_COLUMNS}
+        FROM notifications
+        WHERE agent_id = $1 AND kind = 'queue_visibility'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        [agent_id],
+        Notification,
+    )
+
+
+def update_notification_content(notification_id: str, content: str) -> Notification | None:
+    """Replace the text of one notification and return the updated row."""
+    return fetch_one(
+        f"""
+        UPDATE notifications
+        SET content = $1
+        WHERE id = $2
+        RETURNING {_NOTIFICATION_COLUMNS}
+        """,
+        [content, notification_id],
+        Notification,
+    )
+
+
+def delete_notification(notification_id: str) -> Notification | None:
+    """Delete one notification and return the removed row."""
+    execute("DELETE FROM notification_links WHERE notification_id = $1", [notification_id])
+    return fetch_one(
+        f"""
+        DELETE FROM notifications
+        WHERE id = $1
+        RETURNING {_NOTIFICATION_COLUMNS}
+        """,
+        [notification_id],
         Notification,
     )
 

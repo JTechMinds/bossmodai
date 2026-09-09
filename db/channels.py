@@ -301,6 +301,71 @@ def create_channel_message(
     return message
 
 
+def find_queue_visibility_channel_message(
+    *,
+    agent_id: str,
+    channel_id: str | None = None,
+) -> ChannelMessage | None:
+    """Return this agent's live queue-visibility line on a channel, if any."""
+    conditions = ["notification_kind = 'queue_visibility'", "author_agent_id = $1"]
+    params: list[Any] = [agent_id]
+    if channel_id:
+        params.append(channel_id)
+        conditions.append(f"channel_id = ${len(params)}")
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        params,
+        ChannelMessage,
+    )
+
+
+def update_channel_message_content(message_id: str, content: str) -> ChannelMessage | None:
+    """Replace the text of one channel message and return the updated row."""
+    return fetch_one(
+        f"""
+        UPDATE channel_messages
+        SET content = $1
+        WHERE id = $2
+        RETURNING {_MESSAGE_COLUMNS}
+        """,
+        [content, message_id],
+        ChannelMessage,
+    )
+
+
+def delete_channel_message(message_id: str) -> ChannelMessage | None:
+    """Delete one channel message and return the removed row."""
+    return fetch_one(
+        f"""
+        DELETE FROM channel_messages
+        WHERE id = $1
+        RETURNING {_MESSAGE_COLUMNS}
+        """,
+        [message_id],
+        ChannelMessage,
+    )
+
+
+def list_queue_visibility_channel_messages(agent_id: str) -> list[ChannelMessage]:
+    """Return every live queue-visibility line this agent posted on a channel."""
+    return fetch_all(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages
+        WHERE notification_kind = 'queue_visibility' AND author_agent_id = $1
+        ORDER BY created_at DESC, id DESC
+        """,
+        [agent_id],
+        ChannelMessage,
+    )
+
+
 def list_channel_messages(channel_id: str, *, limit: int = 80) -> list[ChannelMessage]:
     """Return recent channel transcript entries, oldest first."""
     rows = fetch_all(

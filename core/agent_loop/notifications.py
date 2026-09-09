@@ -17,6 +17,7 @@ NotificationKind = Literal[
     "abandoned",
     "task_update",
     "host_path_consent",
+    "queue_visibility",
 ]
 
 _DESTINATION_LABELS = {

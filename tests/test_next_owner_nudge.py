@@ -261,6 +261,7 @@ def test_system_one_liners_are_exempt() -> None:
     assert is_system_one_liner("Accepted: Share review findings")
     assert is_system_one_liner("Writing /me/review.md")
     assert is_system_one_liner("Done — /me/review.md")
+    assert is_system_one_liner("Busy — 2 queued")
     assert is_exempt_reply("Accepted: Share review findings")
     assert not is_system_one_liner("Findings are ready in the review note.")
 

@@ -83,6 +83,18 @@ class FakeEl {
         this.parent = null;
     }
 
+    replaceWith(node) {
+        if (!this.parent) return;
+        const kids = this.parent.children;
+        const idx = kids.indexOf(this);
+        if (node.parent) {
+            node.parent.children = node.parent.children.filter((child) => child !== node);
+        }
+        node.parent = this.parent;
+        kids[idx] = node;
+        this.parent = null;
+    }
+
     addEventListener(type, fn) {
         (this.listeners[type] ||= []).push(fn);
     }
@@ -435,6 +447,54 @@ if (cache.forget("a") !== true || cache.recall("a") !== null) {
     throw new Error("forget must drop the cached transcript");
 }
 
+// ─── Live queue-visibility line: increment / decrement / clear ───
+
+function liveLine(text) {
+    return {
+        key: "queue-visibility:ada",
+        author: "system",
+        authorName: "Ada",
+        showAuthor: false,
+        text,
+        createdAt: "",
+        kind: "note",
+        live: true,
+        cleared: !String(text || "").trim(),
+    };
+}
+
+transcript.setMessages([]);
+if (transcript.append(liveLine("Busy — 1 queued")) !== true || transcript.messageCount() !== 1) {
+    throw new Error("a live Busy line must append");
+}
+if (transcript.append(liveLine("Busy — 2 queued")) !== true || transcript.messageCount() !== 1) {
+    throw new Error("increment must replace the same live line, not stack");
+}
+const busyNode = listing.querySelector('[data-message-key="queue-visibility:ada"]');
+if (!busyNode || !String(busyNode.textContent).includes("Busy — 2 queued")) {
+    throw new Error(`increment must paint the new depth, got "${busyNode && busyNode.textContent}"`);
+}
+if (transcript.append(liveLine("Busy — 1 queued")) !== true || transcript.messageCount() !== 1) {
+    throw new Error("decrement must replace the same live line");
+}
+if (transcript.append(liveLine("")) !== true || transcript.messageCount() !== 0) {
+    throw new Error("clear must remove the live Busy line");
+}
+if (listing.querySelector('[data-message-key="queue-visibility:ada"]')) {
+    throw new Error("a cleared Busy line must leave no node");
+}
+
+cache.remember("q", [liveLine("Busy — 1 queued")]);
+if (cache.append("q", liveLine("Busy — 2 queued")) !== true || cache.recall("q").length !== 1) {
+    throw new Error("cache increment must replace, not stack");
+}
+if (cache.recall("q")[0].text !== "Busy — 2 queued") {
+    throw new Error("cache increment must keep the new depth");
+}
+if (cache.append("q", liveLine("")) !== true || cache.recall("q").length !== 0) {
+    throw new Error("cache clear must drop the live line");
+}
+
 process.stdout.write(JSON.stringify({
     ok: true,
     dedupes: duplicate === false,
@@ -445,4 +505,5 @@ process.stdout.write(JSON.stringify({
     presenceScoped: true,
     presenceShowsDuration: shortTurnUnchanged && longTurnShowsDuration && unparseableFallsBack,
     cacheCopies: true,
+    liveQueueLine: true,
 }));
