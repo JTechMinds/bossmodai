@@ -632,7 +632,7 @@ packs:
     )
 
 
-def test_list_catalog_prefers_index_summary_over_pack_preamble() -> None:
+def test_list_catalog_prefers_pack_preamble_over_index_summary() -> None:
     source = FakePackSource()
     owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
     source.add(
@@ -660,7 +660,42 @@ packs:
         yaml_text=AUDITOR_PACK,
     )
     result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
-    assert result.packs[0].summary == "Hire from the catalog index, not the pack preamble."
+    assert result.packs[0].summary == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
+
+
+def test_list_catalog_uses_index_summary_when_pack_has_no_preamble() -> None:
+    source = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text="""
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+    summary: Hire from the catalog index when the pack has no preamble.
+""",
+    )
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=AUDITOR_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text=VALID_PACK,
+    )
+    result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
+    assert result.packs[0].summary == (
+        "Hire from the catalog index when the pack has no preamble."
+    )
 
 
 def test_catalog_rejects_category_folder_mismatch() -> None:

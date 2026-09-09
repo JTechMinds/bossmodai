@@ -94,8 +94,9 @@ packs/
 - File = stable pack id: `packs/<category>/<id>.agent.yaml`.
 - `catalog.yaml` is the index. Each row has `id`, `kind`, `path`,
   `category`, `title`, and optional `summary` (one-line When-to-hire).
-- Browse cards show `summary` under the title. If the index omits it,
-  the first unlabeled preamble line from the pack description is used.
+- Browse cards show When-to-hire under the title. Pack description
+  preamble is the source of truth; catalog `summary` is used only when
+  the pack has no preamble or failed to parse.
 - Category in `catalog.yaml` must match the folder in `path`. Catalog CI
   should fail when they drift.
 

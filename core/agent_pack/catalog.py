@@ -254,7 +254,7 @@ def _required_title(value: Any) -> str:
 
 
 def _optional_summary(value: Any) -> str | None:
-    """One-line When-to-hire for browse cards. Missing or blank is fine."""
+    """Optional When-to-hire when the pack has no preamble. Missing is fine."""
     if value is None:
         return None
     if not isinstance(value, str):

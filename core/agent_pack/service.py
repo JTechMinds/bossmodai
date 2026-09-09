@@ -142,10 +142,11 @@ def list_catalog(
     """Read catalog.yaml at a pinned ref and return browse cards.
 
     Fetches each listed agent pack only to surface ``pack_author``,
-    specialty, and a When-to-hire fallback when the index row has no
-    ``summary``. A pack that fails to parse is still listed from the
-    index row — pick still goes through ``import_pack``. Does not
-    create or patch an agent.
+    specialty, and When-to-hire. Pack description preamble is the
+    source of truth; catalog ``summary`` is used only when the pack
+    has no preamble or failed to parse. A pack that fails to parse is
+    still listed from the index row — pick still goes through
+    ``import_pack``. Does not create or patch an agent.
     """
     validate_pin_ref(ref)
     owner, repo = parse_catalog_repo(catalog_repo)
@@ -173,7 +174,7 @@ def list_catalog(
                 entry=entry,
                 pack_author=author,
                 specialty=specialty,
-                summary=entry.summary or preamble,
+                summary=preamble or entry.summary,
             )
         )
     return CatalogListResult(

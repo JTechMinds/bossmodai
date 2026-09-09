@@ -90,7 +90,7 @@ def extract_labeled_sections(text: str) -> tuple[str, dict[str, str]]:
 
 
 def first_unlabeled_line(text: str) -> str | None:
-    """First unlabeled preamble line — When-to-hire fallback for browse cards."""
+    """First unlabeled preamble line — When-to-hire source for browse cards."""
     preamble, _ = extract_labeled_sections(text)
     if not preamble:
         return None
