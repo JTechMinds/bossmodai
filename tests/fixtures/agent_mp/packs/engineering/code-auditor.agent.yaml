@@ -5,6 +5,7 @@ pack_author:
   url: https://github.com/JTechMinds
 specialty: Code Auditor
 description: |
+  Hire when work claims done and needs evidence-backed CLEAR.
   Mission: Reviews claims and named artifacts against a checkable allow/deny bar in this workspace.
   In scope: Named files, pull requests, and test evidence the operator can open from the desk.
   Out of scope: Live production deploys, credential hunting, and host-wide filesystem scans.

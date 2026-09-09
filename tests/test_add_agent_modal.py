@@ -69,6 +69,7 @@ def test_browse_load_empty_fail_pick_and_blank() -> None:
     assert payload["blankClearsPackOnly"] is True
     assert payload["blankDoorHidesBrowse"] is True
     assert payload["fromPackCopy"] is True
+    assert payload["subtitleUnderTitle"] is True
     assert payload["createFooterUnchanged"] is True
 
 
@@ -81,8 +82,8 @@ def test_import_client_never_sends_agent_id() -> None:
     assert "/api/agent-packs" in api
 
 
-def test_catalog_pin_is_3c1e0a6() -> None:
+def test_catalog_pin_is_dcc94ca() -> None:
     github = _read(ROOT / "core" / "agent_pack" / "github.py")
-    assert 'DEFAULT_CATALOG_PIN = "3c1e0a6"' in github
+    assert 'DEFAULT_CATALOG_PIN = "dcc94ca"' in github
     settings = _read(ROOT / "db" / "settings.py")
-    assert '("agent_pack_catalog_pin", "3c1e0a6", "agent_packs")' in settings
+    assert '("agent_pack_catalog_pin", "dcc94ca", "agent_packs")' in settings

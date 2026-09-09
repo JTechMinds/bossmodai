@@ -89,6 +89,18 @@ def extract_labeled_sections(text: str) -> tuple[str, dict[str, str]]:
     return preamble, sections
 
 
+def first_unlabeled_line(text: str) -> str | None:
+    """First unlabeled preamble line — When-to-hire source for browse cards."""
+    preamble, _ = extract_labeled_sections(text)
+    if not preamble:
+        return None
+    for line in preamble.splitlines():
+        cleaned = " ".join(line.split())
+        if cleaned:
+            return cleaned
+    return None
+
+
 def compose_labeled_description(preamble: str, sections: dict[str, str]) -> str:
     """Render canonical Mission / scope / Handoff labeled description text."""
     parts: list[str] = []

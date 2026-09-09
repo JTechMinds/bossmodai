@@ -11,7 +11,8 @@ Default repo: ``JTechMinds/BossMod_AgentMP``. Layout::
 
 Folder is a category slug. File stem is the stable pack id
 (``<id>.agent.yaml``). The app reads ``catalog.yaml`` first (id, kind,
-path, category, title) at a pinned commit or tag, then fetches that path.
+path, category, title, optional summary) at a pinned commit or tag,
+then fetches that path.
 There is no ``Profiles/`` wrapper. Category in the index must match the
 folder (catalog CI should enforce the same).
 """
@@ -35,6 +36,7 @@ CATALOG_INDEX_PATH = "catalog.yaml"
 CATALOG_PACKS_ROOT = "packs"
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _TITLE_MAX_LEN = 80
+_SUMMARY_MAX_LEN = 160
 _AGENT_PACK_PATH_RE = re.compile(
     r"^packs/(?P<category>[a-z][a-z0-9-]{0,62})/"
     r"(?P<pack_id>[a-z][a-z0-9-]{0,62})\.agent\.yaml$"
@@ -50,6 +52,7 @@ class CatalogEntry:
     path: str
     category: str
     title: str
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -201,7 +204,15 @@ def _parse_entry(item: Any) -> CatalogEntry:
                 f"Catalog pack id {pack_id!r} must match file {file_id!r}.",
                 code="invalid_catalog",
             )
-    return CatalogEntry(id=pack_id, kind=kind, path=path, category=category, title=title)
+    summary = _optional_summary(item.get("summary"))
+    return CatalogEntry(
+        id=pack_id,
+        kind=kind,
+        path=path,
+        category=category,
+        title=title,
+        summary=summary,
+    )
 
 
 def _required_kind(value: Any) -> str:
@@ -240,6 +251,20 @@ def _required_title(value: Any) -> str:
     if len(title) > _TITLE_MAX_LEN:
         raise AgentPackError("Catalog pack title is too long.", code="invalid_catalog")
     return title
+
+
+def _optional_summary(value: Any) -> str | None:
+    """Optional When-to-hire when the pack has no preamble. Missing is fine."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AgentPackError("Catalog pack summary must be a string.", code="invalid_catalog")
+    summary = " ".join(value.split())
+    if not summary:
+        return None
+    if len(summary) > _SUMMARY_MAX_LEN:
+        raise AgentPackError("Catalog pack summary is too long.", code="invalid_catalog")
+    return summary
 
 
 def _normalize_index_path(path: str) -> str:

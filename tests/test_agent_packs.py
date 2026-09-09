@@ -532,6 +532,9 @@ def test_sample_catalog_fixture_validates() -> None:
     assert auditor.path == AUDITOR_PATH
     assert auditor.category == "engineering"
     assert auditor.kind == PACK_KIND_AGENT
+    assert auditor.summary == "Hire when work claims done and needs evidence-backed CLEAR."
+    planner = resolve_catalog_entry(index, pack_id="feature-planner")
+    assert planner.summary == "Hire when you need product cuts / sequencing, not code."
     path, category, pack_id = validate_catalog_pack_path(auditor.path)
     assert path == AUDITOR_PATH
     assert category == auditor.category
@@ -541,10 +544,158 @@ def test_sample_catalog_fixture_validates() -> None:
     assert pack.kind == PACK_KIND_AGENT
     assert pack.pack_author is not None
     assert pack.pack_author.name == "JTech Minds"
+    assert pack.description.startswith(
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
     validate_pack_quality(pack)
-    planner = parse_pack_yaml(PLANNER_PACK)
-    assert planner.specialty == "Feature Planner"
-    validate_pack_quality(planner)
+    planner_pack = parse_pack_yaml(PLANNER_PACK)
+    assert planner_pack.specialty == "Feature Planner"
+    assert planner_pack.description.startswith(
+        "Hire when you need product cuts / sequencing, not code."
+    )
+    validate_pack_quality(planner_pack)
+
+
+def test_catalog_allows_missing_summary() -> None:
+    index = parse_catalog_yaml(
+        """
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+"""
+    )
+    assert index.entries[0].summary is None
+
+
+def test_catalog_rejects_non_string_or_long_summary() -> None:
+    with pytest.raises(AgentPackError) as not_text:
+        parse_catalog_yaml(
+            """
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+    summary: ["not", "a", "line"]
+"""
+        )
+    assert not_text.value.code == "invalid_catalog"
+    with pytest.raises(AgentPackError) as too_long:
+        parse_catalog_yaml(
+            f"""
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+    summary: {"x" * 161}
+"""
+        )
+    assert too_long.value.code == "invalid_catalog"
+
+
+def test_list_catalog_falls_back_to_pack_preamble_when_summary_missing() -> None:
+    source = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text="""
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+""",
+    )
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=AUDITOR_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text=AUDITOR_PACK,
+    )
+    result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
+    assert result.packs[0].entry.summary is None
+    assert result.packs[0].summary == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
+
+
+def test_list_catalog_prefers_pack_preamble_over_index_summary() -> None:
+    source = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text="""
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+    summary: Hire from the catalog index, not the pack preamble.
+""",
+    )
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=AUDITOR_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text=AUDITOR_PACK,
+    )
+    result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
+    assert result.packs[0].summary == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
+
+
+def test_list_catalog_uses_index_summary_when_pack_has_no_preamble() -> None:
+    source = FakePackSource()
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=CATALOG_INDEX_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text="""
+packs:
+  - id: code-auditor
+    kind: agent
+    path: packs/engineering/code-auditor.agent.yaml
+    category: engineering
+    title: Code Auditor
+    summary: Hire from the catalog index when the pack has no preamble.
+""",
+    )
+    source.add(
+        owner=owner,
+        repo=repo,
+        path=AUDITOR_PATH,
+        ref=PINNED_SHA,
+        sha=PINNED_SHA,
+        yaml_text=VALID_PACK,
+    )
+    result = list_catalog(source=source, catalog_repo=DEFAULT_CATALOG_REPO, ref=PINNED_SHA)
+    assert result.packs[0].summary == (
+        "Hire from the catalog index when the pack has no preamble."
+    )
 
 
 def test_catalog_rejects_category_folder_mismatch() -> None:
@@ -656,6 +807,9 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
         confirm_secret="test-secret",
     )
     assert result.hire_fields["role"] == "Code Auditor"
+    assert result.hire_fields["description"].startswith(
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
     assert "Reviews claims" in result.hire_fields["description"]
     assert "Fail examples:" in result.hire_fields["done_fail_bar"]
     assert "name" not in result.hire_fields
@@ -667,6 +821,9 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
     assert result.catalog_entry is not None
     assert result.catalog_entry.id == "code-auditor"
     assert result.catalog_entry.category == "engineering"
+    assert result.catalog_entry.summary == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
     assert db.list_agents() == before
     assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
     assert source.fetch_calls[1][2] == AUDITOR_PATH
@@ -1019,7 +1176,25 @@ def test_seeded_catalog_settings_exist() -> None:
     assert config.get("agent_pack_catalog_path") == DEFAULT_CATALOG_PATH
     assert config.get("agent_pack_catalog_pin") == DEFAULT_CATALOG_PIN
     assert config.get("agent_pack_url_allowlist") is None
-    assert DEFAULT_CATALOG_PIN == "3c1e0a6"
+    assert DEFAULT_CATALOG_PIN == "dcc94ca"
+
+
+def test_previous_default_catalog_pin_is_bumped() -> None:
+    db.set_setting("agent_pack_catalog_pin", "3c1e0a6", "agent_packs")
+    from db.settings import seed_defaults
+
+    seed_defaults()
+    config.reload()
+    assert config.get("agent_pack_catalog_pin") == DEFAULT_CATALOG_PIN
+
+
+def test_custom_catalog_pin_is_not_bumped() -> None:
+    db.set_setting("agent_pack_catalog_pin", "cafebab", "agent_packs")
+    from db.settings import seed_defaults
+
+    seed_defaults()
+    config.reload()
+    assert config.get("agent_pack_catalog_pin") == "cafebab"
 
 
 def test_list_catalog_groups_categories_and_reads_author(
@@ -1039,6 +1214,12 @@ def test_list_catalog_groups_categories_and_reads_author(
         "url": "https://github.com/JTechMinds",
     }
     assert result.packs[0].specialty == "Code Auditor"
+    assert result.packs[0].summary == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
+    assert result.packs[1].summary == (
+        "Hire when you need product cuts / sequencing, not code."
+    )
     assert source.resolve_calls[0][2] == DEFAULT_CATALOG_PIN
     assert source.fetch_calls[0][2] == CATALOG_INDEX_PATH
     assert db.list_agents() == []
@@ -1075,6 +1256,12 @@ def test_api_list_catalog_default_pin_and_empty_and_fail(
     engineering = body["categories"][0]["packs"]
     assert engineering[0]["id"] == "code-auditor"
     assert engineering[0]["title"] == "Code Auditor"
+    assert engineering[0]["summary"] == (
+        "Hire when work claims done and needs evidence-backed CLEAR."
+    )
+    assert body["categories"][1]["packs"][0]["summary"] == (
+        "Hire when you need product cuts / sequencing, not code."
+    )
     assert engineering[0]["pack_author"] == {
         "name": "JTech Minds",
         "url": "https://github.com/JTechMinds",

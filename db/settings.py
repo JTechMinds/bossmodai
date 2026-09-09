@@ -121,7 +121,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Agent packs (catalog browse + import; no store backend) ──
     ("agent_pack_catalog_repo", "JTechMinds/BossMod_AgentMP", "agent_packs"),
     ("agent_pack_catalog_path", "packs", "agent_packs"),
-    ("agent_pack_catalog_pin", "3c1e0a6", "agent_packs"),
+    ("agent_pack_catalog_pin", "dcc94ca", "agent_packs"),
     ("agent_pack_url_allowlist", "", "agent_packs"),
 
     # ── System prompt template (advanced) ──
@@ -139,6 +139,11 @@ _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
 }
 
 
+# Prior shipped defaults. Bumped on init when the stored pin is still one of
+# these so Browse picks up catalog ``summary`` without overwriting a custom pin.
+_PREVIOUS_DEFAULT_CATALOG_PINS = frozenset({"3c1e0a6"})
+
+
 def seed_defaults() -> None:
     """Populate settings that don't yet exist. Never overwrites user values."""
     for key, value, category in _SEED_SETTINGS:
@@ -151,6 +156,7 @@ def seed_defaults() -> None:
                 [key, value, category, now],
             )
     ensure_local_api_token()
+    reconcile_catalog_pin()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -193,6 +199,18 @@ def force_reseed() -> None:
         )
     prune_obsolete_settings()
     logger.info("Settings force-reseeded (%d keys)", len(_SEED_SETTINGS))
+
+
+def reconcile_catalog_pin() -> None:
+    """Move the shipped catalog pin off a previous default. Custom pins stay."""
+    seeded = get_seed_setting_default("agent_pack_catalog_pin")
+    if seeded is None:
+        return
+    new_pin, category = seeded
+    row = query_one("SELECT value FROM settings WHERE key = $1", ["agent_pack_catalog_pin"])
+    current = str((row or {}).get("value") or "").strip()
+    if current in _PREVIOUS_DEFAULT_CATALOG_PINS and current != new_pin:
+        set_setting("agent_pack_catalog_pin", new_pin, category)
 
 
 def get_seed_setting_default(key: str) -> tuple[str, str] | None:

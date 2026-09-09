@@ -26,6 +26,7 @@ from core.agent_pack.github import (
     validate_pin_ref,
 )
 from core.agent_pack.quality import validate_pack_quality
+from core.agent_pack.sections import first_unlabeled_line
 from core.agent_pack.schema import (
     PACK_KIND_AGENT,
     AgentPack,
@@ -68,6 +69,7 @@ class CatalogListPack:
     entry: CatalogEntry
     pack_author: dict[str, str] | None = None
     specialty: str | None = None
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -139,10 +141,12 @@ def list_catalog(
 ) -> CatalogListResult:
     """Read catalog.yaml at a pinned ref and return browse cards.
 
-    Fetches each listed agent pack only to surface ``pack_author`` and
-    specialty on the card. A pack that fails to parse is still listed
-    from the index row — pick still goes through ``import_pack``. Does
-    not create or patch an agent.
+    Fetches each listed agent pack only to surface ``pack_author``,
+    specialty, and When-to-hire. Pack description preamble is the
+    source of truth; catalog ``summary`` is used only when the pack
+    has no preamble or failed to parse. A pack that fails to parse is
+    still listed from the index row — pick still goes through
+    ``import_pack``. Does not create or patch an agent.
     """
     validate_pin_ref(ref)
     owner, repo = parse_catalog_repo(catalog_repo)
@@ -155,15 +159,24 @@ def list_catalog(
             continue
         author = None
         specialty = None
+        preamble = None
         try:
             raw = source.fetch_file(owner, repo, entry.path, sha)
             pack = parse_pack_yaml(raw)
             if pack.pack_author:
                 author = pack.pack_author.as_dict()
             specialty = pack.specialty
+            preamble = first_unlabeled_line(pack.description)
         except AgentPackError:
             pass
-        cards.append(CatalogListPack(entry=entry, pack_author=author, specialty=specialty))
+        cards.append(
+            CatalogListPack(
+                entry=entry,
+                pack_author=author,
+                specialty=specialty,
+                summary=preamble or entry.summary,
+            )
+        )
     return CatalogListResult(
         repo=f"{owner}/{repo}",
         requested_ref=ref,
