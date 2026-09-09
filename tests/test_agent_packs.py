@@ -1144,6 +1144,24 @@ def test_seeded_catalog_settings_exist() -> None:
     assert DEFAULT_CATALOG_PIN == "dcc94ca"
 
 
+def test_previous_default_catalog_pin_is_bumped() -> None:
+    db.set_setting("agent_pack_catalog_pin", "3c1e0a6", "agent_packs")
+    from db.settings import seed_defaults
+
+    seed_defaults()
+    config.reload()
+    assert config.get("agent_pack_catalog_pin") == DEFAULT_CATALOG_PIN
+
+
+def test_custom_catalog_pin_is_not_bumped() -> None:
+    db.set_setting("agent_pack_catalog_pin", "cafebab", "agent_packs")
+    from db.settings import seed_defaults
+
+    seed_defaults()
+    config.reload()
+    assert config.get("agent_pack_catalog_pin") == "cafebab"
+
+
 def test_list_catalog_groups_categories_and_reads_author(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
