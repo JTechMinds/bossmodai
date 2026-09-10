@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update", "host_path_consent"]
+NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update", "host_path_consent", "queue_visibility"]
 NotificationSourceChannel = Literal["chat", "channel", "api", "slack", "telegram", "peer", "task", "work", "meeting", "system"]
 TaskNotificationPolicy = Literal["none", "completion_blocked", "all"]
 

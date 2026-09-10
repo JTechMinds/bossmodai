@@ -562,7 +562,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     task_id           VARCHAR REFERENCES tasks(id),
     activity_id       VARCHAR REFERENCES activities(id),
     kind              VARCHAR NOT NULL
-                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent')),
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'queue_visibility')),
     content           TEXT NOT NULL,
     source_channel    VARCHAR NOT NULL,
     policy            VARCHAR NOT NULL

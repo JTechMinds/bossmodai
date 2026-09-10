@@ -91,6 +91,22 @@ def test_sources_never_touch_the_dom() -> None:
             assert forbidden not in source, f"{name} must not touch the DOM ({forbidden})"
 
 
+def test_sources_map_queue_visibility_as_a_live_note() -> None:
+    """Busy — N queued is always visible and replaceable, not a hidden receipt."""
+    agent = _read(SOURCES / "agent-source.js")
+    thread = _read(SOURCES / "thread-source.js")
+    for source in (agent, thread):
+        assert "notification_kind === 'queue_visibility'" in source
+        assert "queue-visibility:" in source
+        assert "live: isQueue" in source
+        assert "cleared: isQueue && !String(text).trim()" in source
+    assert "systemReceipt: isSystem && !isWalkReceipt && !consent && !isQueue" in agent
+    transcript = _read(CONVERSATION / "transcript.js")
+    assert "message.live" in transcript
+    assert "message.cleared" in transcript
+    assert "removeByKey" in transcript
+
+
 def _transcript_payload() -> dict:
     result = subprocess.run(
         [
@@ -123,6 +139,7 @@ def test_transcript_harness() -> None:
         "presenceScoped": True,
         "presenceShowsDuration": True,
         "cacheCopies": True,
+        "liveQueueLine": True,
     }
 
 

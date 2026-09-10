@@ -28,7 +28,8 @@ DEFAULT_CATALOG_REPO = "JTechMinds/BossMod_AgentMP"
 DEFAULT_CATALOG_PATH = "packs"
 # Browse and default catalog import pin a commit, never a floating branch.
 # Short SHAs are resolved through GitHub to the full commit.
-DEFAULT_CATALOG_PIN = "3c1e0a6"
+# dcc94ca is the tip that includes catalog.yaml `summary:` (When-to-hire).
+DEFAULT_CATALOG_PIN = "dcc94ca"
 
 FLOATING_REFS = frozenset({
     "main",

@@ -412,9 +412,9 @@ def _ensure_workspace_preference_consent_schema(con: SQLiteCompatConnection) -> 
 
 
 def _ensure_notification_kind_values(con: SQLiteCompatConnection) -> None:
-    """Rebuild notifications if it is missing host_path_consent."""
+    """Rebuild notifications if it is missing a later kind value."""
     sql = _table_sql(con, "notifications")
-    if "'host_path_consent'" in sql:
+    if "'queue_visibility'" in sql:
         return
     con.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -426,7 +426,7 @@ def _ensure_notification_kind_values(con: SQLiteCompatConnection) -> None:
                 task_id           VARCHAR REFERENCES tasks(id),
                 activity_id       VARCHAR REFERENCES activities(id),
                 kind              VARCHAR NOT NULL
-                                     CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent')),
+                                     CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'queue_visibility')),
                 content           TEXT NOT NULL,
                 source_channel    VARCHAR NOT NULL,
                 policy            VARCHAR NOT NULL
@@ -451,7 +451,7 @@ def _ensure_notification_kind_values(con: SQLiteCompatConnection) -> None:
         )
         con.execute("DROP TABLE notifications")
         con.execute("ALTER TABLE notifications__new RENAME TO notifications")
-        logger.info("Migration: rebuilt notifications to add host_path_consent")
+        logger.info("Migration: rebuilt notifications to add queue_visibility")
     finally:
         con.execute("PRAGMA foreign_keys = ON")
 

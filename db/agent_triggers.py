@@ -441,6 +441,32 @@ def count_queued_triggers(agent_id: str) -> int:
     return int(row["cnt"]) if row else 0
 
 
+def count_waiting_triggers(agent_id: str) -> int:
+    """Count triggers waiting behind the current turn (status=queued only)."""
+    row = query_one(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE agent_id = $1 AND status = 'queued'
+        """,
+        [agent_id],
+    )
+    return int(row["cnt"]) if row else 0
+
+
+def has_claimed_trigger(agent_id: str) -> bool:
+    """Return whether the agent has an in-flight claimed trigger."""
+    row = query_one(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM agent_triggers
+        WHERE agent_id = $1 AND status = 'claimed'
+        """,
+        [agent_id],
+    )
+    return bool(row and int(row["cnt"]) > 0)
+
+
 def has_open_trigger(agent_id: str) -> bool:
     """Return whether the agent has any queued or claimed trigger."""
     return count_queued_triggers(agent_id) > 0

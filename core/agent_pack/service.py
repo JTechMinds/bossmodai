@@ -44,6 +44,7 @@ from core.agent_pack.sections import (
     DESCRIPTION_SECTION_KEYS,
     DONE_SECTION_KEYS,
     extract_labeled_sections,
+    first_unlabeled_line,
 )
 from core.models.agent import Agent
 from core.models.settings import AIPersonality
@@ -98,6 +99,12 @@ class CatalogListPack:
     ``pack_author`` stays optional because a schema- and quality-valid pack may
     legitimately name no author. ``tools_hint`` is an empty tuple for a pack
     that lists no tools; it can no longer mean "was never read".
+
+    ``summary`` is the card's When-to-hire line and is optional for the same
+    reason: the pack's own description preamble is the source of truth, the
+    catalog index row's ``summary`` is the fallback, and a pack that carries
+    neither names no When-to-hire at all. ``None`` here means exactly that —
+    it still cannot mean "was never read".
     """
 
     entry: CatalogEntry
@@ -107,6 +114,7 @@ class CatalogListPack:
     tools_hint: tuple[str, ...]
     content_hash: str
     pack_author: dict[str, str] | None = None
+    summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +278,17 @@ def list_catalog(
     ``validate_pack_quality`` is a pure function over the parsed pack, so
     validating costs no further fetch. Does not create or patch an agent.
 
+    The card's When-to-hire line is the pack's own description preamble, and
+    the catalog index row's ``summary`` is only the fallback. The pack is the
+    source of truth because it is the thing that gets installed: an index row
+    can drift from the file it points at, and a card that promised one job
+    while the installed template describes another would be the index lying
+    about the pack. The index summary still earns its place — a pack whose
+    description opens straight on ``Mission:`` has no preamble to read, and
+    the row can name the occasion the pack itself never does. Neither is a
+    "pack could not be read" fallback: a pack that could not be read is
+    withheld before this ever runs.
+
     Args:
         source: Pack source the index and each pack file are read through.
         catalog_repo: ``owner/repo`` of the catalog to browse.
@@ -318,6 +337,9 @@ def list_catalog(
                 tools_hint=pack.tools_hint,
                 content_hash=pack_content_hash(pack),
                 pack_author=pack.pack_author.as_dict() if pack.pack_author else None,
+                # The pack read here IS the pack install writes, so its own
+                # preamble outranks the index row's summary.
+                summary=first_unlabeled_line(pack.description) or entry.summary,
             )
         )
     return CatalogListResult(

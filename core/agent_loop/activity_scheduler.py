@@ -89,6 +89,7 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
     inventing a second queue.
     """
     persisted: list[Any] = []
+    seen: set[str] = set()
     for queued in result.get("trigger_requests") or []:
         if not isinstance(queued, dict):
             continue
@@ -115,6 +116,11 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
                 task_id=queued.get("task_id"),
             )
         )
+        seen.add(agent_id)
+    from core.agent_loop.queue_visibility import schedule_queue_visibility
+
+    for queued_agent_id in seen:
+        schedule_queue_visibility(queued_agent_id)
     return persisted
 
 

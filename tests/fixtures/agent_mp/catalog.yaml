@@ -4,8 +4,10 @@ packs:
     path: packs/engineering/code-auditor.agent.yaml
     category: engineering
     title: Code Auditor
+    summary: Hire when work claims done and needs evidence-backed CLEAR.
   - id: feature-planner
     kind: agent
     path: packs/product/feature-planner.agent.yaml
     category: product
     title: Feature Planner
+    summary: Hire when you need product cuts / sequencing, not code.

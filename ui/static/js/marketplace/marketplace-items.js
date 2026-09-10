@@ -69,17 +69,38 @@ const BossModMarketplaceItems = (() => {
      * open on the same two paragraphs and must not be able to disagree about
      * which they are or which comes first.
      *
-     * @param {object} sections  The API's `sections`, already checked by
-     *   `parsed()`. Not optional: both routes always send it.
+     * A pack that opens straight on `Mission:` has no lead-in, and there the
+     * catalog index row's `summary` — its one-line When-to-hire — stands in.
+     * That ORDER is the server's, not a second opinion invented here: the pack
+     * is the file that gets installed, an index row can drift from it, and a
+     * card promising one job while the installed template describes another
+     * would be the index lying about the pack. What the client adds is length.
+     * The server has one slot and picks the preamble's FIRST LINE for it; the
+     * card and the detail have room for the whole lead-in, so they read it off
+     * `sections` and fall back to `summary` only where the server's own rule
+     * would have fallen back too.
+     *
+     * This is a content fallback and not a failure one. A row whose pack could
+     * not be read never reaches here — `list_catalog` withholds it — so a null
+     * `intro` means the pack and its catalog row both name no occasion to hire,
+     * which is a thing a valid pack is allowed to do.
+     *
+     * @param {object} row  A catalog card or an installed template row. Reads
+     *   `sections`, already checked by `parsed()`, and `summary`, which only a
+     *   catalog card carries: `summary` lives in the catalog index, and
+     *   installing snapshots the pack file, not the row that pointed at it.
      * @returns {{intro: string|null, mission: string|null}} Verbatim bodies, in
      *   the order they are read. Either is null when the pack carries none —
      *   never `''`, so a caller branches on truthiness and never renders an
      *   empty paragraph.
      */
-    function openingText(sections) {
-        const group = sections.description;
+    function openingText(row) {
+        const group = row.sections.description;
         const body = (text) => (typeof text === 'string' && text.trim() ? text : null);
-        return { intro: body(group.preamble), mission: body(group.mission) };
+        return {
+            intro: body(group.preamble) || body(row.summary),
+            mission: body(group.mission),
+        };
     }
 
     /**
@@ -140,7 +161,7 @@ const BossModMarketplaceItems = (() => {
         }
         return {
             sections,
-            ...openingText(sections),
+            ...openingText(row),
             toolsHint: Array.isArray(row.tools_hint) ? row.tools_hint : null,
         };
     }

@@ -179,6 +179,9 @@ class RuntimeServices:
             payload=payload,
             task_id=task_id,
         )
+        from core.agent_loop.queue_visibility import emit_queue_visibility
+
+        await emit_queue_visibility(agent_id)
         async with self._guard():
             if self._process_is_running() and not db.has_open_runtime_command(["wake_dispatcher"]):
                 db.create_runtime_command("wake_dispatcher")

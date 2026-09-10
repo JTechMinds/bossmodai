@@ -115,6 +115,11 @@ def test_marketplace_behaviour() -> None:
         # Both opening paragraphs, in the order they are read.
         "cardDrawsTheIntroAboveTheMission", "detailDrawsTheIntroAboveTheMission",
         "emptyPreambleDrawsNoIntro",
+        # And the catalog index row's When-to-hire, which stands in only where
+        # the pack itself opens on a heading.
+        "cardReadsTheIndexSummaryWhereThePackIsSilent",
+        "detailReadsTheIndexSummaryWhereThePackIsSilent",
+        "thePacksOwnLeadInOutranksTheIndexRow",
         # The card leads with what kind of pack it is, not with its own name
         # said twice.
         "cardShowsTheCategoryNotTheTitleTwice", "cardKeepsASpecialtyThatSaysSomethingElse",
@@ -546,7 +551,10 @@ def test_the_sections_are_the_servers_and_absence_is_reported_as_absence() -> No
     # The dead branch is gone from both readers, not merely unused.
     items = _code(JS / "marketplace" / "marketplace-items.js")
     assert "row.sections || null" not in items
-    assert "const group = sections.description;" in items
+    # Reached straight off the row, with no guard between: `parsed()` has
+    # already refused a row that carries none, so the projection dereferences
+    # `sections` rather than branching on it.
+    assert "const group = row.sections.description;" in items
     assert "carries no parsed sections" in items
     # One reader, and it answers all three absences the same way. It moved to
     # marketplace-sections.js with the tab list that is now its only caller:
@@ -737,21 +745,37 @@ def test_the_preamble_is_content_and_renders_above_the_mission() -> None:
     The pairing is decided in the PROJECTION rather than in each view, so the
     card and the detail cannot disagree about which two paragraphs a pack opens
     with or which of them comes first.
+
+    The lead-in has a second source and a fixed order between them. A pack
+    whose description opens straight on ``Mission:`` has no preamble, and there
+    the catalog INDEX row's one-line ``summary`` stands in; where the pack
+    carries its own lead-in, that lead-in wins and is drawn in FULL, because
+    the route has one slot and fills it with the preamble's first line only.
+    The pack outranks the row because the pack is the file that gets installed
+    — a card promising one job while the installed template describes another
+    would be the index lying about the pack.
     """
     payload = _harness()
     for key in (
         "cardDrawsTheIntroAboveTheMission", "detailDrawsTheIntroAboveTheMission",
         "emptyPreambleDrawsNoIntro",
+        "cardReadsTheIndexSummaryWhereThePackIsSilent",
+        "detailReadsTheIndexSummaryWhereThePackIsSilent",
+        "thePacksOwnLeadInOutranksTheIndexRow",
     ):
         assert payload[key] is True, key
     items = _read(JS / "marketplace" / "marketplace-items.js")
-    assert "function openingText(sections)" in items
-    # Both bodies still come out of the SAME group, in this order — that is the
-    # rule this test exists for. The `group ? … : null` guards that used to be
-    # written around them are gone: `sections` can no longer be absent from
-    # either route, so the guard was a dead branch that let a broken payload
-    # render as a blank card instead of saying so. `parsed()` names it now.
-    assert "return { intro: body(group.preamble), mission: body(group.mission) };" in items
+    assert "function openingText(row)" in items
+    # Both bodies still come out of the same row, in this order — that is the
+    # rule this test exists for — and the index summary is reached only past a
+    # falsy preamble, never instead of one. The `group ? … : null` guards that
+    # used to be written around them are gone: `sections` can no longer be
+    # absent from either route, so the guard was a dead branch that let a broken
+    # payload render as a blank card instead of saying so. `parsed()` names it
+    # now, and `row.summary` is a content fallback, not a failure one — a row
+    # whose pack could not be read is withheld and never reaches the projection.
+    assert "intro: body(group.preamble) || body(row.summary)," in items
+    assert "mission: body(group.mission)," in items
     # Neither view re-derives either paragraph: both read what the projection
     # decided, which is what keeps them from drifting apart. The section reader
     # is in the same ban — it reads the five labelled sections and never the two

@@ -5,6 +5,7 @@ pack_author:
   url: https://github.com/JTechMinds
 specialty: Feature Planner
 description: |
+  Hire when you need product cuts / sequencing, not code.
   Mission: Turns requests into a named plan with a checkable finish line the operator can open.
   In scope: Scoping notes, sequenced work, and a finish line tied to a named artifact.
   Out of scope: Implementing the plan, shipping production code, or owning live operations.

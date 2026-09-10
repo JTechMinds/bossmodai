@@ -63,6 +63,7 @@ floors; Fail examples must name concrete bad outcomes, not only
 
 ```yaml
 description: |
+  Hire when work claims done and needs evidence-backed CLEAR.
   Mission: Review claims against a checkable allow/deny bar in this workspace.
   In scope: Named artifacts and tests the operator can open from the desk.
   Out of scope: Live production deploys, credentials, and host-wide scans.
@@ -71,6 +72,9 @@ what_done_looks_like: |
   A checkable allow/deny exists with a named artifact or tests path.
   Fail examples: "Looks good" with no path; a vibe check; done with no evidence.
 ```
+
+Unlabeled lead-in on `description` is the When-to-hire preamble. Hydrate
+keeps it on the hire description.
 
 ## Catalog
 
@@ -91,7 +95,13 @@ packs/
 - Folder = category slug (not a display name). No `Profiles/` wrapper.
 - File = stable pack id: `packs/<category>/<id>.agent.yaml`.
 - `catalog.yaml` is the index. Each row has `id`, `kind`, `path`,
-  `category`, and `title`.
+  `category`, `title`, and optional `summary` (one-line When-to-hire).
+- Marketplace cards and the pack detail both open on When-to-hire. The
+  pack description's own preamble is the source of truth and is shown in
+  full; catalog `summary` stands in only for a pack whose description
+  opens straight on a heading and so has no preamble. It is not a
+  fallback for a pack that could not be read: `list_catalog` withholds
+  that row, so it never becomes a card at all.
 - Category in `catalog.yaml` must match the folder in `path`. Catalog CI
   should fail when they drift.
 

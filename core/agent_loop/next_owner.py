@@ -44,7 +44,7 @@ _EXEMPT_NOTIFICATION_KINDS = frozenset(
 # Locked origin-thread one-liners (Created/Accepted/Writing/…).
 _SYSTEM_ONE_LINER = re.compile(
     r"^(Created|Accepted|Writing|Waiting|Stalled|Declined|Rerouted|"
-    r"Cancelled|Done|Blocked)\b"
+    r"Cancelled|Done|Blocked|Busy)\b"
 )
 # Explicit park-the-ball language. Conservative: only these phrases count.
 _PARK_BALL = re.compile(

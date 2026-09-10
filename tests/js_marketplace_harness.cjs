@@ -109,8 +109,18 @@ const CATALOG = {
     ],
 };
 
-const INTRO_LEAD = "Read this before hiring: it reviews, it never edits.";
+// Two lines on purpose. The route has ONE slot for a When-to-hire line and
+// fills it with the preamble's FIRST line; the card and the detail have room
+// for the whole lead-in. A pack whose row carries both is the only shape that
+// can tell "the client re-read the preamble" apart from "the client printed
+// whatever the route put in `summary`".
+const INTRO_LEAD_FIRST = "Read this before hiring: it reviews, it never edits.";
+const INTRO_LEAD = `${INTRO_LEAD_FIRST}\nIt reads a diff and reports what is not true.`;
 const INTRO_MISSION = "Reads a release and writes the notes for it.";
+// The catalog INDEX row's one-line When-to-hire, for a pack whose own
+// description opens straight on a heading and so has no lead-in of its own.
+const SUMMARY_LINE = "Hire when a release needs cutting, not writing.";
+const SUMMARY_MISSION = "Cuts a release and tags it.";
 
 /** A description carrying prose BEFORE its first heading: preamble AND mission,
  *  which is what `extract_labeled_sections` returns for
@@ -137,6 +147,13 @@ function withIntro(preamble, mission) {
 // rendered nowhere at all. Every other pack here and in CATALOG carries the
 // empty preamble `describe_pack` returns when the text starts on a heading,
 // which is what proves no empty lead-in node is drawn for it.
+//
+// `summary-pack` is the third case, and the two around it are what make it a
+// case at all: it has no preamble, exactly like `thin-pack`, but its catalog
+// INDEX row names the occasion to hire it. `thin-pack` proves an absent
+// lead-in draws nothing; this proves the index line is read where the pack
+// itself has nothing to say, and NOT read over a pack that does — that is
+// `intro-pack`, whose own lead-in wins with no `summary` on the row to lose to.
 const ABSENCE_CATALOG = {
     repo: "JTechMinds/BossMod_AgentMP",
     ref: "aa11bb2",
@@ -150,6 +167,9 @@ const ABSENCE_CATALOG = {
                 title: "Intro Pack", specialty: "Writes release notes",
                 description: `${INTRO_LEAD}\n\nMission: ${INTRO_MISSION}`,
                 sections: withIntro(INTRO_LEAD, INTRO_MISSION),
+                // What `list_catalog` sends for a pack that HAS a preamble:
+                // its first line. The card must still draw the whole lead-in.
+                summary: INTRO_LEAD_FIRST,
                 content_hash: "hash-intro-v1",
             },
             {
@@ -162,6 +182,20 @@ const ABSENCE_CATALOG = {
                     "A named diff exists.", null,
                 ),
                 content_hash: "hash-thin-v1",
+            },
+            {
+                id: "summary-pack", kind: "agent", category: "engineering",
+                title: "Summary Pack", specialty: "Cuts releases",
+                description: `Mission: ${SUMMARY_MISSION}`,
+                what_done_looks_like: "A tagged release exists.",
+                // What the route sends for a row whose pack has no preamble:
+                // `list_catalog` falls back to the index row's own summary.
+                summary: SUMMARY_LINE,
+                sections: split(
+                    SUMMARY_MISSION, null, null, null,
+                    "A tagged release exists.", null,
+                ),
+                content_hash: "hash-summary-v1",
             },
         ],
     }],
@@ -1002,6 +1036,27 @@ async function main() {
     verdict.detailDrawsTheIntroAboveTheMission = introDetail.length === 2
         && introDetail[0].textContent === INTRO_LEAD
         && introDetail[1].textContent === INTRO_MISSION;
+
+    // ── The catalog INDEX row's When-to-hire line, which only stands in where
+    //    the pack itself opens on a heading and has no lead-in to read. The
+    //    pack is the file that gets installed, so its own words outrank the
+    //    row's: `intro-pack` carries BOTH and its preamble wins — in full,
+    //    not cut to the one line the route had room to send.
+    await click(host().querySelector("#market-back"));
+    const summaryCard = cardFor("summary-pack")
+        .querySelectorAll(".market-card-intro, .market-card-desc");
+    verdict.cardReadsTheIndexSummaryWhereThePackIsSilent = summaryCard.length === 2
+        && summaryCard[0].textContent === SUMMARY_LINE
+        && summaryCard[1].textContent === SUMMARY_MISSION;
+    verdict.thePacksOwnLeadInOutranksTheIndexRow = introCard.length === 2
+        && introCard[0].textContent === INTRO_LEAD
+        && introCard[0].textContent !== INTRO_LEAD_FIRST;
+    await click(cardFor("summary-pack"));
+    const summaryDetail = host()
+        .querySelectorAll(".market-detail-intro, .market-detail-lead");
+    verdict.detailReadsTheIndexSummaryWhereThePackIsSilent = summaryDetail.length === 2
+        && summaryDetail[0].textContent === SUMMARY_LINE
+        && summaryDetail[1].textContent === SUMMARY_MISSION;
     handle.close();
 
     // ── The rows the grid would not show. Hiding the CARD is right — install

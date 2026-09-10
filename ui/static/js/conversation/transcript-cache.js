@@ -55,7 +55,21 @@ const BossModTranscriptCache = (() => {
             const entry = items.get(id);
             if (!entry) return false;
             const key = BossModTranscript.messageKey(message);
-            if (key && entry.some((item) => BossModTranscript.messageKey(item) === key)) return false;
+            if (key) {
+                const idx = entry.findIndex((item) => BossModTranscript.messageKey(item) === key);
+                if (idx >= 0) {
+                    if (message.cleared) {
+                        entry.splice(idx, 1);
+                        return true;
+                    }
+                    if (message.live) {
+                        entry[idx] = message;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            if (message.cleared) return false;
             entry.push(message);
             return true;
         }
