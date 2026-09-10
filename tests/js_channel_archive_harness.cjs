@@ -14,13 +14,16 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
+// core/markdown.js reads `marked`, `hljs` and `DOMParser`; Node has none
+// of them, and this harness is not what proves the sanitiser correct.
+require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 // The chrome paints its action glyphs after every apply.
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
     "BossModFormat", "BossModGates", "BossModConsentCard",
     "BossModOverlayFocus", "BossModOverlays",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",

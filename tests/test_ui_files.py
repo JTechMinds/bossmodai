@@ -170,9 +170,9 @@ def test_files_modules_stay_focused() -> None:
 
     File names and agent output flow through these views. h() escapes by
     construction; a template literal does not, so nothing here may build markup
-    from a string. The one place HTML text becomes nodes is markdown, which is
-    parsed (inertly) rather than assigned, and it is named here so a second one
-    cannot appear quietly.
+    from a string. Markdown was the one exception and is no longer here at all:
+    core/markdown.js owns the single path from HTML text to nodes, for this
+    viewer and for the transcript alike.
     """
     for path in _modules():
         source = path.read_text(encoding="utf-8")
@@ -189,8 +189,16 @@ def test_files_modules_stay_focused() -> None:
         assert "window.BossModDom" not in source
         assert "window.BossModOverlays" not in source
 
+    # Nothing under places/ parses HTML any more. This module used to, against a
+    # trust boundary its own docstring named as "the operator's own workspace
+    # markdown" — which is not the boundary a chat body needs, and pointing the
+    # transcript at that renderer as it stood would have moved untrusted text
+    # through a path built for trusted text. The renderer moved to core/ and
+    # grew an allowlist instead; tests/test_ui_markdown.py owns the seam now and
+    # asserts it has exactly one owner tree-wide.
     parsers = [p.name for p in _modules() if "DOMParser" in p.read_text(encoding="utf-8")]
-    assert parsers == ["file-content.js"], f"HTML is parsed in more than one place: {parsers}"
+    assert parsers == [], f"HTML is parsed under places/files again: {parsers}"
+    assert "BossModMarkdown.renderInto(" in _read("file-content.js")
 
     # Formatters come from the shared module; no private copies.
     for name in ("formatFileSize", "formatRelativeTime"):

@@ -55,6 +55,7 @@ def _run(harness: str, modules: list[Path]) -> dict:
 # would hide which of them a breakage belongs to.
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
@@ -147,6 +148,7 @@ def _app_js() -> list[Path]:
 # The order tests/js_conversation_harness.cjs evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",

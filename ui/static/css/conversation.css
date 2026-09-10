@@ -276,7 +276,10 @@
   overflow-wrap: anywhere;
 }
 
-.msg-body { white-space: pre-wrap; }
+/* `.msg-body` deliberately has no rule of its own. Whitespace is markdown's
+   job now (css/markdown.css): `pre-wrap` here on top of marked's
+   `breaks: true` rendered every newline the operator typed twice — once as a
+   <br>, once as the literal character it came from. */
 
 .msg-author {
   margin-bottom: 2px;
@@ -308,6 +311,18 @@
    there however quiet they look on the agent side. */
 .msg-human .msg-author,
 .msg-human .msg-time { color: var(--blue-ink); }
+
+/* The tint's own ink for everything markdown paints in the operator's bubble
+   too. --accent measures 4.19:1 on --accent-bg, so a link rendered at the
+   shared prose colour would fail AA in exactly the bubble the operator wrote;
+   --blue-ink on --accent-bg is 6.86:1. Inline code takes --panel for the same
+   reason: --bg on --accent-bg is barely a surface at all. */
+.msg-human .md a { color: var(--blue-ink); }
+.msg-human .md :not(pre) > code { background: var(--panel); }
+.msg-human .md blockquote {
+  border-left-color: var(--blue-ink);
+  color: var(--blue-ink);
+}
 
 .msg-agent {
   align-self: flex-start;

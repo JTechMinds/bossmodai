@@ -3,12 +3,15 @@
  *
  * Split out of the viewer panel because "is this markdown, an image, or code,
  * and how is it rendered" is a different question from "what does the panel
- * look like" — and because it is the one file in the new UI that turns HTML
- * text into DOM, which deserves to be small enough to read in full.
+ * look like".
  *
  * Code never goes in as markup: `hljs.highlightElement` highlights a node that
  * already holds the text, so file contents are never concatenated into a
- * string. Markdown is the exception and is documented at renderMarkdownInto.
+ * string. Markdown was the exception and no longer lives here — core/markdown.js
+ * owns the one path from HTML text to nodes, for this viewer and for the
+ * transcript alike. It used to be parsed here against a trust boundary this
+ * module's own docstring named as "the operator's own workspace markdown",
+ * which is not the boundary a chat body needs.
  */
 const BossModFileContent = (() => {
     const { h, clear } = BossModDom;
@@ -95,28 +98,6 @@ const BossModFileContent = (() => {
     }
 
     /**
-     * Render markdown into a container.
-     *
-     * This is the ONE place in the new UI where HTML text becomes nodes, and it
-     * is parsed rather than assigned: `marked` has no node-returning API, and
-     * dropping rendered markdown would be a feature removed. The trust boundary
-     * is unchanged from the module this replaces — the operator's own workspace
-     * markdown — and DOMParser is inert, so nothing runs on the way in. Fenced
-     * code inside it is highlighted afterwards, on nodes.
-     *
-     * @param {HTMLElement} el
-     * @param {string} raw
-     * @returns {void}
-     */
-    function renderMarkdownInto(el, raw) {
-        clear(el);
-        const parsed = new DOMParser().parseFromString(
-            marked.parse(raw, { breaks: true, gfm: true }), 'text/html');
-        el.append(...Array.from(parsed.body.childNodes));
-        el.querySelectorAll('pre code').forEach((node) => hljs.highlightElement(node));
-    }
-
-    /**
      * Paint a text file's content into a container.
      *
      * @param {HTMLElement} el
@@ -126,7 +107,7 @@ const BossModFileContent = (() => {
      */
     function renderInto(el, name, content) {
         if (isMarkdown(name)) {
-            renderMarkdownInto(el, content);
+            BossModMarkdown.renderInto(el, content);
             return;
         }
         clear(el);
@@ -135,6 +116,6 @@ const BossModFileContent = (() => {
 
     return {
         extension, getLanguage, isImage, isMarkdown, isJson,
-        prettyJson, codeBlock, renderMarkdownInto, renderInto,
+        prettyJson, codeBlock, renderInto,
     };
 })();

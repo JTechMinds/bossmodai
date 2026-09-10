@@ -6,8 +6,15 @@
  * a backend field, which is the whole point of the source adapters: three wire
  * formats used to mean three renderers.
  *
- * Message bodies are agent output and are therefore untrusted. They are set
- * through textContent, never innerHTML.
+ * Message bodies are agent output and are therefore untrusted. They are also
+ * markdown — agents write lists, fences and emphasis whether or not anything
+ * renders them — so they go through core/markdown.js, which parses inertly and
+ * sanitises against an allowlist before a node reaches the page. This module
+ * still builds no markup of its own and still never touches innerHTML.
+ *
+ * Every author renders the same way, the operator's own turns included: one
+ * transcript that formatted `**x**` for one speaker and not the other would be
+ * two renderers again, and a pasted log is worth a fence whoever pasted it.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -57,7 +64,8 @@ const BossModMessage = (() => {
             message.showAuthor
                 ? h('div', { class: 'msg-author' }, message.authorName || 'Unknown')
                 : null,
-            h('div', { class: 'msg-body' }, String(message.text || '')),
+            h('div', { class: 'msg-body md' },
+                BossModMarkdown.render(String(message.text || ''))),
             createdAt
                 ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
                 : null);

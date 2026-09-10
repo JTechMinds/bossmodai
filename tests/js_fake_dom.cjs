@@ -22,6 +22,35 @@ function toDatasetKey(attr) {
     return attr.slice(5).replace(KEBAB, (_, c) => c.toUpperCase());
 }
 
+/**
+ * A text or comment node, with the slice of CharacterData a walker needs.
+ *
+ * These used to be bare object literals in two places, and both were missing
+ * `remove()` — which every real text and comment node has, because they
+ * inherit it from ChildNode along with elements. core/markdown.js drops a
+ * comment out of a parsed tree and moves text nodes when it unwraps a tag, so
+ * a fake without it turns a working sanitiser into a TypeError.
+ *
+ * @param {number} nodeType  3 for text, 8 for a comment.
+ * @param {string} text
+ * @returns {object}
+ */
+function characterData(nodeType, text) {
+    return {
+        nodeType,
+        textContent: String(text),
+        parent: null,
+        get parentNode() {
+            return this.parent;
+        },
+        remove() {
+            if (!this.parent) return;
+            this.parent.children = this.parent.children.filter((child) => child !== this);
+            this.parent = null;
+        },
+    };
+}
+
 class FakeEl {
     constructor(tag = "div") {
         this.tagName = String(tag).toUpperCase();
@@ -144,6 +173,20 @@ class FakeEl {
         return this.parent;
     }
 
+    /**
+     * Every child node, text nodes included.
+     *
+     * NOT the same list as `children`, which this fake happens to store
+     * everything in: a real element's `children` is elements ONLY, so a walker
+     * written against `children` would silently skip every text node in the
+     * browser while passing here. core/markdown.js sanitises a parsed tree and
+     * has to see the text, so it reads `childNodes` and this is what makes the
+     * fake honest about the difference.
+     */
+    get childNodes() {
+        return this.children;
+    }
+
     getAttribute(name) {
         return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null;
     }
@@ -188,7 +231,7 @@ class FakeEl {
             // making every caller wrap keeps the fake honest about the contract.
             const node = (raw && raw.nodeType)
                 ? raw
-                : { nodeType: 3, textContent: String(raw), parent: null };
+                : characterData(3, raw);
             // Real DOM semantics: appending an attached node MOVES it.
             if (node.parent) {
                 node.parent.children = node.parent.children.filter((child) => child !== node);
@@ -448,6 +491,12 @@ function installDom() {
     const documentStub = {
         _activeElement: null,
         body,
+        // The base every relative URL resolves against, as a real document
+        // reports it. core/markdown.js resolves an agent-supplied href before
+        // it will trust the scheme, and `new URL(href, undefined)` THROWS on a
+        // relative one — so without this the fake would exercise the reject
+        // path for links the browser resolves perfectly well.
+        baseURI: "https://bossmod.localhost/",
         createElement(tag) {
             const el = new FakeEl(tag);
             el.ownerDocument = documentStub;
@@ -465,7 +514,10 @@ function installDom() {
             return el;
         },
         createTextNode(text) {
-            return { nodeType: 3, textContent: String(text), parent: null };
+            return characterData(3, text);
+        },
+        createComment(text) {
+            return characterData(8, text);
         },
         getElementById(id) {
             const found = body.querySelector(`#${id}`);

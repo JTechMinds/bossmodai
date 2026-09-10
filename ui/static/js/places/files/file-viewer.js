@@ -114,7 +114,11 @@ const BossModFileViewer = (() => {
         const editable = !binary && !image;
         let content = String(payload.content || '');
 
-        const rendered = h('div', { class: 'file-view-rendered' });
+        // `md` is the shared prose vocabulary in css/markdown.css. Rendered
+        // markdown had none until it existed: this pane painted headings and
+        // tables at browser defaults, which is a different document from the
+        // one the transcript shows for the same file.
+        const rendered = h('div', { class: 'file-view-rendered md' });
         const editor = h('textarea', { class: 'file-view-editor', hidden: true });
         const status = h('p', { class: 'file-view-status', role: 'status' });
         const size = BossModFormat.formatFileSize(payload.size_bytes);

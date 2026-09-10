@@ -102,6 +102,7 @@ def test_the_scrim_reads_without_the_blur() -> None:
 # breakage belongs to.
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
@@ -208,6 +209,7 @@ def test_the_form_still_submits_from_the_pinned_button() -> None:
 # The order tests/js_conversation_harness.cjs evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",

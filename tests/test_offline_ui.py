@@ -14,7 +14,30 @@ STATIC = ROOT / "ui" / "static"
 # retained for (spec 3.1, superseded), so it was a vendored library with zero
 # consumers. Asserted absent from BOTH the manifest and the disk, so it cannot
 # creep back in as a script tag or as an unreferenced file.
-RETIRED_VENDOR = ("split.min.js",)
+#
+# The eleven highlight.js language packs are the second kind of dead weight,
+# and the kind the rule below could not see: they WERE referenced, so
+# "nothing on disk is unreferenced" passed while they did nothing at all.
+# highlight.min.js is the `common` build and already registered every one of
+# them at the same 11.11.1 version — measured, loading all eleven took the
+# language count from 36 to 36 and changed no highlighting output on any of
+# the eleven grammars, under both explicit and auto-detected highlighting.
+# 68KB and eleven requests. Named here so re-adding one is a test failure
+# rather than a judgement call.
+RETIRED_VENDOR = (
+    "split.min.js",
+    "hljs-lang-bash.min.js",
+    "hljs-lang-css.min.js",
+    "hljs-lang-ini.min.js",
+    "hljs-lang-javascript.min.js",
+    "hljs-lang-json.min.js",
+    "hljs-lang-markdown.min.js",
+    "hljs-lang-python.min.js",
+    "hljs-lang-sql.min.js",
+    "hljs-lang-typescript.min.js",
+    "hljs-lang-xml.min.js",
+    "hljs-lang-yaml.min.js",
+)
 
 # The three the app cannot render without. Split.js was the fourth.
 CHROME_ASSETS = ("tailwindcss.js", "lucide.min.js", "marked.min.js",
@@ -49,22 +72,28 @@ def test_vendor_chrome_assets_exist() -> None:
 
     Widened in Phase 4 from a hand-written list of three. Dropping Split.js
     from a list of names would have left the remaining vendored assets — marked,
-    highlight.js and its nine language packs, the hljs stylesheet — covered by
-    nothing at all, which is how this test could have gone quiet while still
-    passing. Both directions are asserted: nothing is referenced that is not on
-    disk (a blank UI in the packaged app), and nothing is on disk that is not
-    referenced (dead weight nobody notices, which is exactly what Split.js
-    became).
+    highlight.js, the hljs stylesheet — covered by nothing at all, which is how
+    this test could have gone quiet while still passing. Both directions are
+    asserted: nothing is referenced that is not on disk (a blank UI in the
+    packaged app), and nothing is on disk that is not referenced (dead weight
+    nobody notices, which is exactly what Split.js became).
+
+    Neither direction catches an asset that is referenced AND loads AND does
+    nothing, which is what the eleven language packs were. That one needs a
+    human to measure, and the answer is recorded in RETIRED_VENDOR.
     """
     references = _vendor_references()
-    assert len(references) >= 15, f"only {len(references)} vendored references found"
+    # Five: Tailwind, Lucide, marked, highlight.js and the hljs stylesheet.
+    # An exact count rather than a floor, because a floor is what let eleven
+    # redundant language packs sit here inflating it.
+    assert len(references) == 5, f"{len(references)} vendored references: {references}"
 
     for ref in references:
         path = STATIC / ref
         assert path.is_file(), f"index.html references {ref}, which is not on disk"
         # A stub file would satisfy "is_file" and break the app at runtime.
-        # The chrome keeps the 1KB floor it always had; the highlight.js
-        # language packs are legitimately small (json.min.js is 516 bytes).
+        # The chrome keeps the 1KB floor it always had; the hljs stylesheet is
+        # the one remaining asset legitimately under it (1,315 bytes).
         floor = 1000 if path.name in CHROME_ASSETS else 200
         assert path.stat().st_size > floor, f"{ref} is suspiciously small"
 

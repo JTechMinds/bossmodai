@@ -18,6 +18,7 @@ CONVERSATION_HARNESS = Path(__file__).resolve().parent / "js_conversation_harnes
 # The order the conversation harness evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",

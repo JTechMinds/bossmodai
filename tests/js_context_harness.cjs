@@ -12,6 +12,9 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
+// core/markdown.js reads `marked`, `hljs` and `DOMParser`; Node has none
+// of them, and this harness is not what proves the sanitiser correct.
+require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
@@ -110,7 +113,7 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModConversationChrome", "BossModComposer",
@@ -142,23 +145,6 @@ NAMES.forEach((name, index) => {
 // `const` here would be in its temporal dead zone while the evals above run,
 // and chat-place.js calls BossModPlaces.register() at load time.
 const { BossModStore, BossModBus, BossModNeeds } = global;
-
-// The shared file viewer renders markdown, and the vendored libraries that
-// do it are not part of this harness's subject. Stubbing them keeps the
-// assertion on "a note opens the ONE viewer" rather than on marked's output;
-// places/files owns the rendering itself.
-global.marked = { parse: (raw) => String(raw) };
-global.hljs = { highlightElement() {} };
-global.window.marked = global.marked;
-global.window.hljs = global.hljs;
-global.DOMParser = class {
-    parseFromString(html) {
-        const body = documentStub.createElement("body");
-        body.append(documentStub.createTextNode(String(html)));
-        return { body: { childNodes: body.children } };
-    }
-};
-global.window.DOMParser = global.DOMParser;
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };

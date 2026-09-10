@@ -23,20 +23,21 @@
     <!-- Marked.js (local, markdown renderer) -->
     <script src="{{ static_url('js/vendor/marked.min.js') }}"></script>
 
-    <!-- Highlight.js (local, syntax highlighting) -->
+    <!-- Highlight.js (local, syntax highlighting). This is the `common` build
+         and it already registers 36 grammars on its own — including go, rust,
+         java, ruby, php, swift, kotlin, c/cpp/csharp and diff, none of which
+         were ever loaded separately.
+
+         Eleven `hljs-lang-*.min.js` packs used to sit under this line. Every
+         one of them (bash, css, ini, javascript, json, markdown, python, sql,
+         typescript, xml, yaml) was ALREADY in the bundle at the same 11.11.1
+         version: loading all eleven took the language count from 36 to 36 and
+         changed no highlighting output. 68KB and eleven requests for nothing.
+         They are retired by name in tests/test_offline_ui.py so they cannot
+         come back quietly. Add a pack only for a grammar that
+         `hljs.listLanguages()` does not already return. -->
     <link rel="stylesheet" href="{{ static_url('css/vendor/hljs-github-dark.css') }}">
     <script src="{{ static_url('js/vendor/highlight.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-python.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-javascript.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-typescript.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-json.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-yaml.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-xml.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-sql.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-css.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-bash.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-markdown.min.js') }}"></script>
-    <script src="{{ static_url('js/vendor/hljs-lang-ini.min.js') }}"></script>
 
     <!-- Shell styles. tokens.css is the single source of truth for colour. -->
     <link rel="stylesheet" href="{{ static_url('css/tokens.css') }}">
@@ -45,6 +46,12 @@
          which resets <button>, and before every surface stylesheet, so a place
          can position a primitive without redeclaring what it looks like. -->
     <link rel="stylesheet" href="{{ static_url('css/controls.css') }}">
+    <!-- The shared PROSE vocabulary, the same way controls.css is the shared
+         control one. The transcript and the file viewer both render markdown
+         and neither redeclares what a heading or a fenced block looks like.
+         Before the surface sheets, so a bubble can tint a link it does not
+         have to describe. -->
+    <link rel="stylesheet" href="{{ static_url('css/markdown.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/shell.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/conversation.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/context.css') }}">
@@ -109,6 +116,11 @@
     <script src="{{ static_url('js/core/specialty.js') }}"></script>
 
     <script src="{{ static_url('js/core/dom.js') }}"></script>
+    <!-- The one path from HTML text to nodes, over the vendored marked and
+         highlight.js in the head. Agent output is untrusted, so it parses
+         inertly and sanitises against an allowlist; every surface that renders
+         markdown loads after it. -->
+    <script src="{{ static_url('js/core/markdown.js') }}"></script>
     <!-- The one icon painter, over the vendored lucide bundle loaded in the
          head. Every surface below paints through it, so it loads ahead of all
          of them. -->

@@ -11,6 +11,9 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
+// core/markdown.js reads `marked`, `hljs` and `DOMParser`; Node has none
+// of them, and this harness is not what proves the sanitiser correct.
+require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
 global.window.BossModApi = {
@@ -23,7 +26,7 @@ global.window.BossModApi = {
 };
 
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModOverlayFocus", "BossModOverlays", "BossModPlaces",
     "BossModFileContent", "BossModFileForm",
     "BossModFileOps", "BossModFileViewer", "BossModFilesData", "BossModHostRoots",

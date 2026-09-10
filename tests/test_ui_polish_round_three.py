@@ -399,6 +399,7 @@ def test_the_two_rails_share_one_right_hand_column() -> None:
 # would hide which of them a breakage belongs to.
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
@@ -575,6 +576,7 @@ def test_the_form_lost_no_fields_in_the_move() -> None:
 # The order tests/js_conversation_harness.cjs evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",

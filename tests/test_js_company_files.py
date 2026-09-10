@@ -18,6 +18,7 @@ FILES = JS / "places" / "files"
 # The order the Files harness evaluates its modules in.
 FILES_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
