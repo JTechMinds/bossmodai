@@ -626,8 +626,19 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
     icon = overlays.split(".add-agent-choice svg {", 1)[1].split("}", 1)[0]
     assert "width: 16px;" in icon and "height: 16px;" in icon
     assert "flex: 0 0 auto;" in icon
-    # And the accent treatment .roster-hire carries, hover correction included.
-    assert "color: var(--accent);" in choice
-    assert (
-        ".add-agent-choice:hover { background: var(--accent-bg); color: var(--blue-ink); }"
-    ) in overlays
+    # And the same ink .roster-hire carries — the coupling is the point: a menu
+    # whose rows are louder than the row that opened it reads as a different
+    # control. Both were accent once; both are grey now, and this asserts them
+    # TOGETHER so the pair cannot drift again the way it just did.
+    shell_css = _read(ROOT / "ui" / "static" / "css" / "shell.css")
+    hire = shell_css.split(".roster-hire {", 1)[1].split("}", 1)[0]
+    assert "color: var(--hint);" in choice
+    assert "color: var(--hint);" in hire
+    assert "var(--accent)" not in choice
+    assert "var(--accent)" not in hire
+    # The --blue-ink hover correction went with the blue: it existed because
+    # --accent measures only 4.19:1 on --accent-bg, and neither row uses either
+    # colour now. --hint is 4.83:1 on --panel, --ink is 15.45:1 on --bg.
+    assert ".add-agent-choice:hover { background: var(--bg); color: var(--ink); }" in overlays
+    hire_hover = shell_css.split(".roster-hire:hover {", 1)[1].split("}", 1)[0]
+    assert "background: var(--bg)" in hire_hover and "color: var(--ink)" in hire_hover

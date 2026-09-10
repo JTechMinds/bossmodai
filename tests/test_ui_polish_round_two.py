@@ -129,9 +129,12 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "overlays.js",
     JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
+    JS / "shell" / "thread-view-menu.js",
     JS / "shell" / "roster-threads.js",
     JS / "shell" / "roster.js",
 ]
@@ -440,10 +443,19 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
     about the view. Different kinds of thing, so not the same level.
 
     The menu is where later view options go, which is what makes it a place to
-    put things rather than a place to hide one thing.
+    put things rather than a place to hide one thing — and a later round put
+    something else there: an action the SOURCE marks `slot: 'menu'`, which is how
+    Archive got off the header row. So the `⋯` is the overflow rather than a
+    preferences drawer, and it says `More actions`. What this has always
+    guarded is that there is one panel and one focus trap behind it, and both
+    are still true.
     """
     chrome = _read(CONVERSATION / "chrome.js")
-    assert "'aria-label': 'View options'" in chrome
+    assert "const MENU_LABEL = 'More actions';" in chrome
+    assert "'aria-label': MENU_LABEL" in chrome
+    # Named twice from one constant: the label a screen reader hears and the
+    # bubble a pointer gets cannot drift apart.
+    assert "'data-tooltip': MENU_LABEL" in chrome
     assert "aria-haspopup" in chrome
     # It reuses the one overlay implementation.
     assert "BossModOverlays." in chrome

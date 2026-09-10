@@ -38,6 +38,8 @@ const BossModDeskPanel = (() => {
     const NO_DONE_BAR = 'No done/fail bar set for this agent yet. Edit the role to add one.';
     /** The summary the operator opens the contract from. */
     const CONTRACT_SUMMARY = 'Done/fail contract';
+    /** The back arrow's accessible name and its tooltip: one string, never two. */
+    const BACK_LABEL = 'Back to the office';
 
     /**
      * One labelled section: a header row, an optional right-aligned action,
@@ -109,8 +111,20 @@ const BossModDeskPanel = (() => {
         let destroyed = false;
 
         const bodyEl = h('div', { class: 'desk-body' },
-            h('button', { class: 'btn btn-sm context-link', type: 'button', onclick: () => onBack() },
-                '← The office'),
+            // Icon-only, like every other way back and every other glyph
+            // control in the window. It was `← The office` on a full-width
+            // .btn: the arrow was a character typed into the label rather than
+            // a mark, and .desk-body stretches its children, so the control
+            // spanned the whole column and read as a banner. `label` is spent
+            // twice — accessible name and tooltip — so nothing is lost with
+            // the words.
+            h('button', {
+                class: 'btn btn-sm desk-back',
+                type: 'button',
+                'aria-label': BACK_LABEL,
+                'data-tooltip': BACK_LABEL,
+                onclick: () => onBack(),
+            }, h('i', { 'data-lucide': 'chevron-left', 'aria-hidden': 'true' })),
             profileEl,
             h('details', { class: 'desk-contract' },
                 h('summary', { class: 'desk-contract-summary' }, CONTRACT_SUMMARY),
@@ -127,6 +141,11 @@ const BossModDeskPanel = (() => {
             actions.element);
 
         const element = h('section', { class: 'desk-panel' }, bodyEl);
+        // Nothing else in the context column sweeps for placeholders, so this
+        // view paints its own — the same rule context/mini-office.js follows.
+        // Scoped, and the painter is idempotent, so the sections that build
+        // glyphs of their own later are unaffected.
+        BossModIcons.paint(element, 'desk-panel');
 
         /** The roster row for this agent, or null while the roster is loading. */
         function agent() {

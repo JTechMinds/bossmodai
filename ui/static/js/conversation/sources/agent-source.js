@@ -197,6 +197,11 @@ const BossModAgentSource = (() => {
                     id: 'conversation-desk-toggle',
                     label: 'Desk',
                     icon: 'lamp-desk',
+                    // The lamp says desk on its own, and the word beside it
+                    // spent a quarter of the header row repeating the glyph.
+                    // `iconOnly` keeps `label` as the accessible name and as
+                    // the hover tooltip, so nothing is lost but the ink.
+                    iconOnly: true,
                     onSelect: () => ctx.openDesk(agentId),
                 });
             }

@@ -43,8 +43,15 @@ const BossModRoster = (() => {
             placeholder: 'Search by name or role',
             oninput: (event) => { store.setState({ rosterQuery: event.target.value }); },
         });
+        // The glyph, then the field. Decorative: the <label> above it is the
+        // accessible name and the placeholder repeats it in words — a magnifier
+        // announced as well would be a third copy. It is here because a field
+        // with no border and no fill reads as a heading over the list at rail
+        // width, and the glyph is the whole of what puts it back.
         const searchRow = h('div', { class: 'roster-search-row' },
             h('label', { class: 'visually-hidden', for: 'roster-search' }, 'Search people and threads'),
+            h('span', { class: 'roster-search-icon', 'aria-hidden': 'true' },
+                h('i', { 'data-lucide': 'search', 'aria-hidden': 'true' })),
             search);
 
         const errorEl = h('p', { class: 'roster-error', role: 'alert' });

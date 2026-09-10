@@ -44,15 +44,16 @@
 
 /* ─── Header ─── */
 
-/* A fixed 48px row. The header is the app's rhythm line: the conversation
-   chrome and the place bars all match it, so it is a height rather than a
-   padding that whatever is inside happens to add up to. */
+/* The app's rhythm line, --bar. The conversation chrome, the rail's search row
+   and the place bars all end on the same line, so it is a HEIGHT rather than a
+   padding that whatever is inside happens to add up to — which is exactly how
+   the rail's row ended up four pixels below this one. */
 .app-header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 16px;
-  height: 48px;
+  height: var(--bar);
   padding: 0 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -119,10 +120,13 @@
   max-width: 260px;
 }
 
-/* One icon button, three call sites: the rail toggle, the bell, and the gear.
-   `position: relative` is here rather than on .header-bell because the badge
-   is the only thing that needs it and a second rule for one property is how
-   these three drifted apart before. */
+/* One icon button, four call sites: the rail toggle, the bell, Pause and the
+   gear. `position: relative` is here rather than on .header-bell because the
+   badge is the only thing that needs it and a second rule for one property is
+   how these drifted apart before — Pause arrived as a fifth geometry (a
+   bordered alert pill with a label) and is the reason the list grew rather
+   than the rule being copied a fourth time. It needs no declaration of its
+   own; controls.css's [data-tooltip] supplies the bubble under it. */
 .header-icon-btn {
   position: relative;
   display: inline-flex;
@@ -151,20 +155,6 @@
   text-align: center;
 }
 
-.header-pause {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--alert-line);
-  border-radius: var(--r);
-  background: var(--alert-bg);
-  color: var(--alert-ink);
-  font-weight: 500;
-}
-
-.header-pause:hover { border-color: var(--alert); }
-
 /* ─── Roster rail ─── */
 
 .app-roster {
@@ -176,15 +166,82 @@
   border-right: 1px solid var(--line);
 }
 
-.roster-search-row { padding: 10px; border-bottom: 1px solid var(--line); }
+/* On --bar, so its rule and the conversation chrome's are one line across the
+   window. A height rather than padding: the field inside grows with the font
+   and this row must not. */
+.roster-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--bar);
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
 
+/* Decorative — the field is labelled, and the placeholder says the same thing
+   in words. It is here because a borderless field at rail width reads as a
+   heading over the list rather than as something you can type into; the glyph
+   is the whole of what puts it back. --hint on --panel measures 4.83:1. */
+.roster-search-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--hint);
+}
+
+.roster-search-icon svg { width: 14px; height: 14px; }
+
+/* Typed ONTO the rail, not into a box sitting on it. The border and the grey
+   fill are both gone: the row already ends in a hairline, which is the only
+   boundary this field needs, and a second one inside it was the loudest thing
+   in a column of quiet names.
+ *
+ * The 14px inset is derived rather than picked — .roster-body pads 8px and
+ * .roster-row adds 6px, so the placeholder now starts on the same left edge as
+ * every avatar under it and the rail reads as one column instead of a control
+ * above a list.
+ *
+ * What identifies the field is its placeholder (SC 1.4.11 is satisfied by the
+ * component being identifiable, and --hint measures 4.83:1 on --panel, so the
+ * text itself clears AA). What indicates focus is base.css's accent ring,
+ * which is NOT replaced here — a borderless field with no ring would be a
+ * keyboard dead end. */
 .roster-search {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--bg);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
   color: var(--ink);
+  /* The focus hairline arrives rather than appearing. See :focus-visible. */
+  transition: box-shadow 0.15s ease;
+}
+
+.roster-search::placeholder { color: var(--hint); }
+
+/* base.css's 2px accent ring drew a box around a field whose whole point is
+   that it has none — and it fires on a mouse click too, because a browser
+   always treats a text field as needing a focus indicator. So the indicator is
+   REPLACED, never removed (SC 2.4.7): an underline, inset so it costs no
+   layout and cannot move the row.
+
+   Focus is a place, not an action, so it is not the accent either.
+   A HAIRLINE, and the quietest one that is still legal. The colour cannot be
+   the lever: --line-control is 3.10:1 on --panel and 3:1 is the floor
+   SC 1.4.11 sets for a focus indicator, which is exactly why tokens.css
+   reserves this token for borders that ARE the affordance. Fading it does not
+   help either — the same grey at 60% composites to 1.87:1 and at 40% to
+   1.49:1, both well under. So WEIGHT is the lever: 1px rather than 2, which
+   halves the mark without touching the ratio, plus a short fade so it arrives
+   rather than appearing. (WCAG 2.2's ≥2px rule is SC 2.4.13 Focus Appearance,
+   which is AAA; AA asks that the indicator be visible and clear 3:1, and a 1px
+   hairline at 3.10:1 does both.)
+
+   base.css flattens the fade under prefers-reduced-motion, so there is no
+   second opt-out here.
+   .composer-input is spelled the same way. */
+.roster-search:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -1px 0 var(--line-control);
 }
 
 .roster-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
@@ -198,10 +255,17 @@
    was a row of its own below the filters, and to the hint and the
    `Create with N` row after it. */
 .roster-section-head {
+  /* The menu the view gear opens is positioned against this row, so the row
+     is the positioned ancestor core/overlays.js's createMenu() requires. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  /* The row's own right inset. It used to be a margin on the action group,
+     which made the rail's right edge a property of whichever group happened to
+     be last — and the view gear sits after that group. */
+  padding-right: 6px;
 }
 
 /* The middle slot: empty out of select mode, the count in it. One line,
@@ -229,7 +293,6 @@
   align-items: center;
   gap: 2px;
   margin-left: auto;
-  margin-right: 6px;
 }
 
 .roster-section-title {
@@ -348,48 +411,36 @@
 
 .roster-skeleton { background: var(--bg); border-radius: var(--r); }
 
-.roster-thread-filters {
-  display: inline-flex;
-  gap: 2px;
-  margin: 0 6px 6px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-
-.roster-thread-filter {
-  padding: 3px 10px;
-  border-radius: var(--r);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-/* Filled with the surface, not with accent. Two pills where one is a solid
-   blue block reads as a primary action rather than as which list you are
-   looking at — --ink on --bg measures 15.45:1 and says it more quietly. */
-.roster-thread-filter[aria-pressed="true"] {
-  background: var(--bg);
-  color: var(--ink);
-}
-
 .roster-error { margin: 8px 6px; color: var(--alert); font-size: 12px; }
 
+/* --dock, so it sits on the same line the composer rests on. The composer is
+   the half that cannot be told a height — it grows with the draft — so this
+   one takes ITS resting height rather than the other way round.
+
+   NO RULE above it. The border made the row a compartment bolted to the foot
+   of the rail; without one it floats at the bottom of the same column the
+   names are in, which is what it is. Nothing is lost by dropping it: the row
+   is 52px of empty space away from the last name whether or not a line is
+   drawn in it.
+
+   And it is GREY, at --hint, which is the ink its own dashed seat already
+   carries — one row, one colour, rather than a blue label sitting in a grey
+   circle. It was the loudest thing in the rail and it is a secondary action;
+   --hint measures 4.83:1 on --panel, so it clears AA as text. */
 .roster-hire {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: var(--dock);
   padding: 10px 14px;
-  border-top: 1px solid var(--line);
-  color: var(--accent);
+  color: var(--hint);
   font-weight: 500;
 }
 
-/* Hovering swaps the ground to --accent-bg, where the resting --accent ink
-   measures only 4.19:1 and fails AA — --blue-ink is 6.86:1 there. Same
-   correction .msg-human and the selected roster row already carry. */
-.roster-hire:hover { background: var(--accent-bg); color: var(--blue-ink); }
+/* The same quiet hover every other frameless control in the app uses, rather
+   than the blue-on-blue pair this row used to need a contrast correction for. */
+.roster-hire:hover { background: var(--bg); color: var(--ink); }
 
 /* ─── Collapsed rail ───
 
@@ -402,9 +453,9 @@
    only by expanding again. */
 
 #main-layout[data-rail="collapsed"] .roster-search-row,
+#main-layout[data-rail="collapsed"] .roster-search-icon,
 #main-layout[data-rail="collapsed"] .roster-section-head,
 #main-layout[data-rail="collapsed"] .roster-section-title,
-#main-layout[data-rail="collapsed"] .roster-thread-filters,
 #main-layout[data-rail="collapsed"] .roster-person,
 #main-layout[data-rail="collapsed"] .roster-thread,
 #main-layout[data-rail="collapsed"] .roster-hire span {

@@ -285,9 +285,12 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "overlays.js",
     JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
+    JS / "shell" / "thread-view-menu.js",
     JS / "shell" / "roster-threads.js",
     JS / "shell" / "roster.js",
 ]
@@ -613,13 +616,15 @@ def test_the_title_is_editable_without_looking_like_a_link() -> None:
     No blue, no underline, no affordance at rest: at rest it is the title, and
     the edit state is the feedback.
 
-    Round four respelled BOTH halves of that after the operator saw it —
-    "sleek, not jarring". The rest state's `border: 0` became a reserved
-    transparent hairline, which is the same property (nothing visible, and
-    nothing moves when something appears); the edit state's `--accent-bg` fill
-    became a soft blue text colour, which is the same property too (editing
-    looks different from resting). Each assertion below is the one that was
-    here, pointed at the spelling that now carries it.
+    The spelling has moved twice and the property has not. Round four turned
+    the rest state's `border: 0` into a reserved transparent hairline (nothing
+    visible, and nothing moves when something appears) and the edit state's
+    `--accent-bg` fill into a soft blue text colour. This round took the blue
+    out too: the text going blue while you typed it was the last accent in the
+    row, and it read as a state the title had entered rather than as a field
+    you were in. The dotted hairline is the whole of the edit state now, in the
+    same token and the same texture the field's focus indicator uses — one
+    event, told once.
     """
     css = _read(CSS / "conversation.css")
     rule = _rule(css, ".conversation-title-edit")
@@ -631,10 +636,18 @@ def test_the_title_is_editable_without_looking_like_a_link() -> None:
     # ...and it inherits the title's type rather than declaring its own, so the
     # two cannot drift into looking like different things.
     assert "font: inherit" in rule
-    # Editing IS the feedback, and it is now the text rather than the ground.
+    # FIXED width. The field used to set its own `size` from its value on every
+    # paint, so the header re-flowed on every keystroke — and the two controls
+    # that confirm the edit sit beside it now, so they moved with it.
+    assert "width: 24ch" in rule
+    assert "sizeToValue" not in _read(CONVERSATION / "title-rename.js")
+    # A name past the box ellipsises at rest rather than clipping mid-glyph.
+    assert "text-overflow: ellipsis" in rule
+    # Editing IS the feedback, and it is the hairline and nothing else.
     editing = _rule(css, '.conversation-title-edit[data-editing="true"]')
-    assert "color: var(--accent)" in editing
     assert "dotted" in editing
+    assert "var(--line-control)" in editing
+    assert "var(--accent)" not in editing
 
     chrome = _read(CONVERSATION / "chrome.js") + _read(CONVERSATION / "title-rename.js")
     # Keyboard reachable, and Enter opens it (SC 2.1.1).

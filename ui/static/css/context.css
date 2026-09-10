@@ -19,16 +19,40 @@
 
 /* A section head: what this is, a quiet word about it, and the way through to
    the full view. The link is pushed right rather than the title being padded,
-   so a long room name cannot shove it off the column. */
+   so a long room name cannot shove it off the column.
+
+   Centred, not baselined: the third slot is a glyph now, and a glyph has no
+   baseline to share with the two runs of text beside it — it would hang
+   below them. The title and the meta word still line up with each other
+   because they are the same 12-13px type on the same centre line. */
 .context-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 10px;
 }
 
 .context-head .context-title { margin: 0; }
-.context-head-link { margin-left: auto; }
+
+/* The way through to the full Office. Quiet and icon-only: the panel under it
+   is already a picture of the floor, so the control is a map rather than a
+   blue `Open` competing with the room names for the eye.
+
+   Same 24px-target-with-a-14px-glyph split .roster-section-action uses — and
+   the same --muted resting ink, which measures 6.10:1 on --bg and 6.54:1 on
+   the --panel this column is painted in. controls.css's [data-tooltip] gives
+   it the bubble that carries what the word used to say. */
+.context-head-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border-radius: var(--r);
+  color: var(--muted);
+}
+
+.context-head-link:hover { background: var(--bg); color: var(--ink); }
+.context-head-link svg { width: 14px; height: 14px; }
 
 /* --hint on --panel measures 4.83:1. */
 .context-meta { color: var(--hint); font-size: 12px; font-weight: 400; }
@@ -53,8 +77,18 @@
    `.needs-bar-error:empty` carries in conversation.css. */
 .context-error:empty { display: none; }
 
-/* Composes .btn.btn-sm from controls.css; the accent ink is this column's. */
-.context-link { color: var(--accent); font-weight: 500; }
+/* The way back out of a desk. Composes .btn.btn-sm, so it is the raised,
+   pressable control every other button in the app is — and .btn[data-tooltip]
+   squares it off around the glyph.
+
+   `align-self` is the whole of what this rule adds. .desk-body is a flex
+   column and stretches its children, so the button spanned all 280px and read
+   as a banner across the top of the panel rather than as a control; the arrow
+   was a `←` typed into the label, which is why it could not line up with
+   anything either. */
+.desk-back { align-self: flex-start; color: var(--muted); }
+.desk-back:hover { color: var(--ink); }
+.desk-back svg { width: 14px; height: 14px; }
 
 /* ─── Mini office ───
  *
@@ -157,12 +191,6 @@
   border: 1px solid var(--panel);
   border-radius: 50%;
   background: var(--alert);
-}
-
-.mini-office-stat {
-  margin: 12px 0 4px;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 /* ─── Desk ───

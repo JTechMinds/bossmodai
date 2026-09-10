@@ -65,7 +65,7 @@ installIconsStub();
 
 const [
     dom, avatar, store, bus, format, agentStatus, overlayFocus, overlays, rowMeta, places, header,
-    rosterPeople, threadCreate, rosterThreads, roster, footer,
+    rosterPeople, threadCreate, threadViewMenu, rosterThreads, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
@@ -82,6 +82,7 @@ load(places, "BossModPlaces");
 load(header, "BossModHeader");
 load(rosterPeople, "BossModRosterPeople");
 load(threadCreate, "BossModThreadCreate");
+load(threadViewMenu, "BossModThreadViewMenu");
 load(rosterThreads, "BossModRosterThreads");
 load(roster, "BossModRoster");
 load(footer, "BossModFooter");

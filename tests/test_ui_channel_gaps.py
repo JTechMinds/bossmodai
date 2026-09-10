@@ -183,8 +183,19 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert ">Close<" not in thread
     assert ">Close<" not in roster
     assert ">Close<" not in roster_threads
-    assert "channels-filter-active" in roster_threads
-    assert "channels-filter-archived" in roster_threads
+    # The archived list is still reachable, and that is the property — sealing a
+    # room must never read as deleting it. A later round replaced the pair of
+    # `Active` / `Archived` pills, which cost a permanent row of rail, with one
+    # switch behind the section's view gear.
+    # WHICH LIST is a third owner of the header row now — shell/thread-view-menu.js
+    # holds the `⋯` and the segment; this half still holds the answer.
+    thread_view = _read("shell/thread-view-menu.js")
+    assert "id: 'roster-thread-view'" in thread_view
+    assert "id: 'channels-filter-active'" in thread_view
+    assert "id: 'channels-filter-archived'" in thread_view
+    assert "getStatus: () => threadFilter" in roster_threads
+    assert "onSelect: setThreadFilter" in roster_threads
+    assert "status=${encodeURIComponent(threadFilter)}" in roster_threads
     assert "function isLiveThread(" in thread
     assert "function seal(" in thread
     assert "archive.prompt(open.count)" in thread
@@ -306,6 +317,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "conversation" / "sources" / "thread-source.js"),
             str(JS / "shell" / "roster-people.js"),
             str(JS / "shell" / "thread-create.js"),
+            str(JS / "shell" / "thread-view-menu.js"),
             str(JS / "shell" / "roster-threads.js"),
             str(JS / "shell" / "roster.js"),
         ],

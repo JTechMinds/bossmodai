@@ -89,12 +89,19 @@ eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModB
 // nothing about what it says.
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
+// The Threads half hangs a menu off its `⋯`, so the real panel is loaded
+// rather than stubbed: a stub would prove a button exists and nothing about
+// what opening it does.
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 // Both halves build their right-hand column through this one builder.
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
-eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
-eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
-eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
+eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
+eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
+// Which list the rail is showing — the header row's third owner.
+eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
+eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";

@@ -17,7 +17,6 @@ const BossModComposer = (() => {
     const NO_MODEL_PLACEHOLDER = 'Connect a model in Settings to send messages';
     const NO_MODEL_TITLE = 'Connect a model in Settings to send';
     const SEND_TITLE = 'Send message';
-    const ASSIGN_TITLE = 'Assign a task';
     const INPUT_ID = 'conversation-composer-input';
     /** The textarea grows with its content, then scrolls (spec 4.4). */
     const MAX_HEIGHT_PX = 160;
@@ -34,9 +33,6 @@ const BossModComposer = (() => {
      *   thread.
      * @param {() => string} deps.disabledReason  Shown as the placeholder when
      *   `canSend()` is false; '' otherwise.
-     * @param {() => void} deps.onAssign  Opens the assign sheet (spec 4.4).
-     *   Injected rather than reached for: the composer must not know which
-     *   module owns the form, which is what keeps there being exactly one.
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
      *             sendText: Function, setError: Function, readDraft: Function,
      *             setDraft: Function, destroy: Function }}
@@ -48,18 +44,11 @@ const BossModComposer = (() => {
         const onSend = deps && deps.onSend;
         const canSend = deps && deps.canSend;
         const disabledReason = deps && deps.disabledReason;
-        const onAssign = deps && deps.onAssign;
         if (!store) throw new Error('[composer] deps.store is required');
         if (typeof onSend !== 'function') throw new Error('[composer] deps.onSend is required');
         if (typeof canSend !== 'function') throw new Error('[composer] deps.canSend is required');
         if (typeof disabledReason !== 'function') {
             throw new Error('[composer] deps.disabledReason is required');
-        }
-        // Required, not optional: a clipboard button that rendered and did
-        // nothing would be worse than one that is absent, and this composer has
-        // exactly one builder.
-        if (typeof onAssign !== 'function') {
-            throw new Error('[composer] deps.onAssign is required');
         }
 
         const sendGate = BossModGates.createComposerSendGate();
@@ -80,10 +69,6 @@ const BossModComposer = (() => {
             void submit();
         }
 
-        function onAssignClick() {
-            onAssign();
-        }
-
         const input = h('textarea', {
             class: 'composer-input',
             id: INPUT_ID,
@@ -102,22 +87,17 @@ const BossModComposer = (() => {
             title: SEND_TITLE,
             onclick: onSendClick,
         }, h('i', { 'data-lucide': 'send', 'aria-hidden': 'true' }));
-        // Icon-only, so it carries its own name; the icon is decorative.
-        const assignBtn = h('button', {
-            class: 'composer-assign',
-            type: 'button',
-            'aria-label': ASSIGN_TITLE,
-            title: ASSIGN_TITLE,
-            onclick: onAssignClick,
-        }, h('i', { 'data-lucide': 'clipboard', 'aria-hidden': 'true' }));
         const errorEl = h('p', { class: 'composer-error hidden', role: 'alert' });
 
-        // Clipboard first, then the field, then send — the concept's order, and
-        // the one that puts the two icon buttons on opposite ends of the row
-        // rather than stacked together beside the field.
+        // The field, then send. The clipboard that used to open this row was a
+        // third front door to the one assign form — the Board's `+ New task`
+        // and the empty conversation's `Assign a task` are the other two — and
+        // it was the only one sitting in front of the operator every second
+        // they were typing a message. Removing it costs no reach: the form is
+        // still one click from the Board, which is where a task goes anyway.
         const element = h('div', { class: 'composer' },
             label,
-            h('div', { class: 'composer-row' }, assignBtn, input, sendBtn),
+            h('div', { class: 'composer-row' }, input, sendBtn),
             errorEl);
 
         /**
@@ -133,9 +113,6 @@ const BossModComposer = (() => {
             const allowed = canSend();
             const enabled = hasUsableModel && allowed && !sendGate.busy();
             sendBtn.disabled = !enabled;
-            // Same gates as Send: with no model connected, or in a conversation
-            // that cannot be posted to, a new task could not be worked either.
-            assignBtn.disabled = !enabled;
             input.disabled = !enabled;
             input.setAttribute('aria-disabled', enabled ? 'false' : 'true');
             sendBtn.setAttribute('title', hasUsableModel ? SEND_TITLE : NO_MODEL_TITLE);
@@ -219,7 +196,6 @@ const BossModComposer = (() => {
                 input.removeEventListener('input', grow);
                 input.removeEventListener('keydown', onKeyDown);
                 sendBtn.removeEventListener('click', onSendClick);
-                assignBtn.removeEventListener('click', onAssignClick);
                 disposers.splice(0).forEach((off) => off());
             },
         };

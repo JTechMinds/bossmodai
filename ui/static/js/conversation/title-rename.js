@@ -3,8 +3,16 @@
  *
  * Easy but non-obvious, which is the operator's requirement: at rest it is the
  * title and nothing else — no colour, no underline, no affordance. Click it,
- * or Tab to it and press Enter, and it turns a light shade of blue; type, then
- * Enter or the Save action that appears beside Archive.
+ * or Tab to it and press Enter, and a dotted hairline appears around it; type,
+ * then Enter, or the check that appears beside it.
+ *
+ * The field is a FIXED width, set in CSS. It used to size itself to its value
+ * on every paint, which meant the header re-flowed on every keystroke and
+ * again on every conversation switch — and the two controls that confirm the
+ * edit sit right beside it, so they moved with it. A width that does not
+ * depend on the content is the whole of what keeps that row still. A name
+ * longer than the box scrolls inside it while editing and ellipsises at rest,
+ * which is what a text field does everywhere else.
  *
  * It is ONE control in two states rather than a label that swaps for an input.
  * A swap loses the caret and the focus at the moment the operator commits to
@@ -80,11 +88,6 @@ const BossModTitleRename = (() => {
 
         const element = h('h2', { class: 'conversation-title' });
 
-        /** Keep the field the width of what it holds; an input has no auto. */
-        function sizeToValue() {
-            input.size = Math.max(8, Math.min(48, String(input.value || '').length + 1));
-        }
-
         function setEditing(on) {
             editing = on;
             input.readOnly = !on;
@@ -109,7 +112,6 @@ const BossModTitleRename = (() => {
         function cancel() {
             if (!editing) return;
             input.value = committed;
-            sizeToValue();
             setEditing(false);
         }
 
@@ -142,7 +144,6 @@ const BossModTitleRename = (() => {
             }
             committed = next;
             input.value = next;
-            sizeToValue();
             setEditing(false);
         }
 
@@ -198,7 +199,6 @@ const BossModTitleRename = (() => {
             }
             if (editing) return;
             input.value = next;
-            sizeToValue();
         }
 
         return { element, apply, isEditing: () => editing, save, cancel };

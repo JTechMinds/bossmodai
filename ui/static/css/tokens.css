@@ -18,6 +18,12 @@
 
   --accent: #2d6be5;        /* 4.51 on --bg  (was #2f6fed at 4.24 — failed) */
   --accent-bg: #e8effd;
+  /* The bottom stop of a primary button's gradient. DARKER than --accent on
+     purpose: a lighter stop would thin the white label's contrast at one end
+     of the button, and this way the pair only improves it — --panel measures
+     4.83:1 on --accent and 6.36:1 here, so the worst row of the gradient is
+     still the flat colour's. */
+  --accent-deep: #2559c4;
 
   --alert: #d03737;         /* 4.57 on --bg  (was #d93a3a at 4.24 — failed) */
   --alert-bg: #fdecec;
@@ -49,8 +55,47 @@
   --office-grid: rgba(0, 0, 0, 0.04);
   --office-shadow: rgba(0, 0, 0, 0.15);
 
+  /* A BUTTON'S FACE. Fifteen call sites share .btn and it was one flat fill,
+     which reads as a rectangle of border rather than as something pressable —
+     the operator's word for it was "noise". These are the two stops of its
+     gradient and the lift under it.
+   *
+   * They do NOT carry the identification job (SC 1.4.11): --btn-face measures
+   * 1.06:1 against --panel, and no fill this light could reach 3:1. The border
+   * is still --line-control at 3.10:1 and is still what says "control". The
+   * gradient and the shadow are what say "raised", which is a different
+   * question and the one that was unanswered.
+   *
+   * --ink measures 13.9:1 on --btn-face and --muted 5.71:1, so a label and an
+   * icon-only glyph both still clear AA at the darkest point of the ramp. */
+  --btn-face: #f2f4f7;
+  --btn-face-hover: #e7eaef;
+  --btn-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+
   --r: 8px;
   --r-lg: 12px;   /* Cards and panels. --r is for controls and small chrome. */
   --rail: 220px;
   --ctx: 280px;
+
+  /* The two horizontal rules that cross the whole window.
+   *
+   * --bar is the app's rhythm line: the header, the conversation chrome and
+   * the rail's search row all end on it, so their bottom borders are ONE line
+   * across the window rather than three that nearly agree. It was three copies
+   * of `48px` before, and the rail's row was not one of them — it added up to
+   * about 52px out of its padding and sat four pixels low.
+   *
+   * --dock is the same idea at the bottom: the composer band and the rail's
+   * `Add agent` row rest on one line. 62px is the composer's resting height
+   * (12px padding, a 38px send target, 12px padding) rather than a number
+   * chosen for the look, because the composer is the one of the two that
+   * cannot be told what height to be — it grows with what is typed into it.
+   * The tall band is the resting state both share.
+   *
+   * 52px, down from 62: the send target was 38px for no reason beyond being
+   * comfortably over the 24px floor (SC 2.5.8), and 62px of chrome under every
+   * conversation read as a tall empty band. 32px matches .header-icon-btn, so
+   * the two icon-only targets in the window are now one size. */
+  --bar: 48px;
+  --dock: 52px;
 }

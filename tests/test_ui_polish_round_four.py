@@ -273,18 +273,23 @@ def test_the_rename_tones_come_from_tokens() -> None:
 # ─── Task 4: the edit state stops shouting ───
 
 
-def test_the_edit_state_is_a_tint_not_a_fill() -> None:
+def test_the_edit_state_is_a_hairline_not_a_fill() -> None:
     """"Sleek, not jarring" — the operator's words.
 
     Two rules were stacked: a filled `--accent-bg` ground, and base.css's 2px
-    accent focus outline on top of it. The text goes soft blue and the border
-    is a hairline instead.
+    accent focus outline on top of it. Round four cut that to a soft blue text
+    colour and a dotted hairline; a later round cut the blue as well, leaving
+    the hairline alone. The property this has always guarded is that the GROUND
+    does not change, and it never has.
     """
     css = _read(CSS / "conversation.css")
     editing = _rule(css, '.conversation-title-edit[data-editing="true"]')
     assert "background" not in editing, "the ground does not change"
-    assert "color: var(--accent)" in editing
     assert "dotted" in editing
+    assert "var(--line-control)" in editing
+    # Nothing in the edit state is accent any more — not the ground, not the
+    # text, not the border.
+    assert "var(--accent)" not in editing
 
 
 def test_focus_stays_visible_after_the_outline_is_replaced() -> None:
@@ -318,9 +323,12 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "overlays.js",
     JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
+    JS / "shell" / "thread-view-menu.js",
     JS / "shell" / "roster-threads.js",
     JS / "shell" / "roster.js",
 ]

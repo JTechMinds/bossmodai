@@ -19,9 +19,11 @@ HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 MODULES = [
     ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
     ("core", "format.js"),
-    ("core", "agent-status.js"), ("shell", "roster-row-meta.js"),
+    ("core", "agent-status.js"),
+    ("core", "overlay-focus.js"), ("core", "overlays.js"),
+    ("shell", "roster-row-meta.js"),
     ("shell", "roster-people.js"),
-    ("shell", "thread-create.js"),
+    ("shell", "thread-create.js"), ("shell", "thread-view-menu.js"),
     ("shell", "roster-threads.js"), ("shell", "roster.js"),
 ]
 

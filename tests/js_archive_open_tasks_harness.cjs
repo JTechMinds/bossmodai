@@ -19,7 +19,7 @@ installIconsStub();
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
     overlayFocusPath, overlaysPath, formatPath, rowMetaPath, archivePath, threadSourcePath,
-    rosterPeoplePath, threadCreatePath, rosterThreadsPath, rosterPath,
+    rosterPeoplePath, threadCreatePath, threadViewMenuPath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(agentStatusPath, "BossModAgentStatus");
@@ -38,6 +38,7 @@ load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");
 load(rosterPeoplePath, "BossModRosterPeople");
 load(threadCreatePath, "BossModThreadCreate");
+load(threadViewMenuPath, "BossModThreadViewMenu");
 load(rosterThreadsPath, "BossModRosterThreads");
 load(rosterPath, "BossModRoster");
 
@@ -379,14 +380,40 @@ async function main() {
     });
     await tick();
 
-    const archivedFilter = rail.querySelector("#channels-filter-archived");
-    if (!archivedFilter) throw new Error("Archived filter missing from the roster");
+    // The archived list moved behind the section's `⋯`: a pair of pills above
+    // the list spent a permanent row of rail on a choice that is `Active`
+    // almost every time it is looked at. The property is unchanged — sealing a
+    // room must never read as deleting it, so the sealed list stays reachable —
+    // and it is now two clicks: open the menu, pick the list.
+    const dots = rail.querySelector("#roster-thread-view");
+    if (!dots) throw new Error("the Threads section must offer its options");
+    await dots.dispatchClick();
+    await tick();
+
+    // Both lists are on screen at once and the one you are looking at is
+    // filled — state is a shape rather than a sentence you have to read.
+    const pill = (id) => rail.querySelector(id);
+    if (!pill("#channels-filter-active") || !pill("#channels-filter-archived")) {
+        throw new Error("the thread view segment must offer both lists");
+    }
+    if (pill("#channels-filter-active").getAttribute("aria-pressed") !== "true"
+        || pill("#channels-filter-archived").getAttribute("aria-pressed") !== "false") {
+        throw new Error("the rail opens on the live list, and the segment must say so");
+    }
     calls.length = 0;
-    await archivedFilter.dispatchClick();
+    await pill("#channels-filter-archived").dispatchClick();
     await tick();
     if (!calls.some((item) => item.method === "GET" && item.url.includes("status=archived"))) {
-        throw new Error("Archived filter must list archived threads");
+        throw new Error("the Archived pill must list archived threads");
     }
+    // Picking does not close the panel — the filled pill moving IS the answer,
+    // and a menu that vanished as it answered would take the answer with it.
+    if (pill("#channels-filter-archived").getAttribute("aria-pressed") !== "true"
+        || pill("#channels-filter-active").getAttribute("aria-pressed") !== "false") {
+        throw new Error("the segment must report the list it switched to");
+    }
+    await dots.dispatchClick();
+    await tick();
     const listed = rail.querySelectorAll(".roster-thread")
         .map((el) => el.getAttribute("data-thread-id"));
     const archivedFilterLists = listed.includes("open-a")
@@ -394,7 +421,7 @@ async function main() {
         && !listed.includes("open-d")
         && !listed.includes("none-c");
     if (!archivedFilterLists) {
-        throw new Error(`Archived filter must show sealed threads only, got ${listed.join(",")}`);
+        throw new Error(`Archived option must show sealed threads only, got ${listed.join(",")}`);
     }
     unmountRoster();
 

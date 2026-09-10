@@ -76,7 +76,15 @@ const BossModConversation = (() => {
             renderEventCard: (message) => BossModEventCards.renderEventCard(message, cardCtx),
         });
 
-        /** Spec 4.4: the clipboard and the empty state open the ONE assign form. */
+        /**
+         * Open the ONE assign form.
+         *
+         * The empty state's `Assign a task` is its only caller here now — the
+         * composer's clipboard was the other, and it went with the row it sat
+         * in. The Board owns the third door.
+         *
+         * @returns {object} The open slide-over, from BossModAssignForm.
+         */
         function openAssign() {
             return BossModAssignForm.openAssignForm({
                 api,
@@ -93,7 +101,6 @@ const BossModConversation = (() => {
             },
             canSend: () => Boolean(source) && source.canSend(),
             disabledReason: () => (source ? source.disabledReason() : NO_CONVERSATION_REASON),
-            onAssign: openAssign,
         });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({

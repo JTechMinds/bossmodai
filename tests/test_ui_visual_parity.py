@@ -448,9 +448,12 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "overlays.js",
     JS / "shell" / "roster-row-meta.js",
     JS / "shell" / "roster-people.js",
     JS / "shell" / "thread-create.js",
+    JS / "shell" / "thread-view-menu.js",
     JS / "shell" / "roster-threads.js",
     JS / "shell" / "roster.js",
 ]
@@ -590,7 +593,87 @@ def test_header_nav_geometry() -> None:
     assert "color: var(--ink)" in active
 
     header = css.split(".app-header {", 1)[1].split("}", 1)[0]
-    assert "height: 48px" in header
+    assert "height: var(--bar)" in header
+
+
+def test_the_four_rules_that_cross_the_window_are_two_lines() -> None:
+    """The operator's words: the borders "dont line up cleanly".
+
+    They did not. The header, the conversation chrome and the rail's search row
+    all ended near 48px but only two of them said so — the search row added up
+    to about 52px out of its own padding and sat four pixels low. The composer
+    band and the rail's `Add agent` row were 62px and 46px.
+
+    So the alignment is a declared token rather than four paddings that nearly
+    agree, and each surface reads it. --dock is derived from the COMPOSER,
+    because the composer is the one of the pair that cannot be told a height:
+    it grows with the draft, and the other three can be told to match its rest.
+    """
+    tokens = _read(CSS / "tokens.css")
+    assert "--bar: 48px;" in tokens
+    # 52, down from 62: --dock is derived from the composer's rest, and the
+    # send target inside it dropped from 38px to the 32px .header-icon-btn
+    # already used. The band followed the control rather than the reverse.
+    assert "--dock: 52px;" in tokens
+
+    shell = _read(CSS / "shell.css")
+    conversation = _read(CSS / "conversation.css")
+    # Each of the five reads the token, and none of them keeps a private copy of
+    # the number beside it. Scoped to these rule bodies rather than swept over
+    # the file: `.place-nav-item` is 48px too and that 48 is a touch target
+    # (SC 2.5.8), not the rhythm line — a blanket scan would read them as the
+    # same decision and force one of them to move when the other changed.
+    for sheet, rule, prop in (
+        (shell, ".app-header", "height"),
+        (shell, ".roster-search-row", "height"),
+        (conversation, ".conversation-chrome", "min-height"),
+        (shell, ".roster-hire", "min-height"),
+        (conversation, ".composer", "min-height"),
+    ):
+        body = sheet.split(f"{rule} {{", 1)[1].split("}", 1)[0]
+        token = "--bar" if prop == "height" or rule == ".conversation-chrome" else "--dock"
+        assert f"{prop}: var({token})" in body, rule
+        assert "48px" not in body and "62px" not in body, rule
+
+
+def test_neither_borderless_field_lost_its_focus_indicator() -> None:
+    """The operator called the blue ring jarring, and it was: base.css paints a
+    2px accent box around a field whose whole point is that it has none, and a
+    browser fires :focus-visible on a text field for a MOUSE click too.
+
+    It is replaced, never removed (SC 2.4.7) — an inset 2px underline, which
+    costs no layout and cannot move the row the send button is centred in. Both
+    fields make the same swap, spelled the same way: one of them keeping the
+    box would read as the other being broken.
+
+    A HAIRLINE, and the quietest one that is still legal — the ask was "look,
+    you're typing", not "HEY YOU ARE TYPING".
+
+    Colour is not the lever and neither is opacity. --line-control measures
+    3.10:1 on --panel and 3:1 is the floor SC 1.4.11 sets for a focus
+    indicator; the same grey at 60% composites to 1.87:1 and at 40% to 1.49:1,
+    both well under. WEIGHT is the lever, so it is 1px rather than 2 — half the
+    mark, same ratio — with a short fade so it arrives rather than appears.
+    (The ≥2px rule people reach for is SC 2.4.13 Focus Appearance, which is
+    AAA. AA asks that the indicator be visible and clear 3:1.)
+
+    Both fields, spelled the same way: one of them keeping a heavier mark would
+    read as the other being broken.
+    """
+    for css_file, rule in ((CSS / "conversation.css", ".composer-input"),
+                           (CSS / "shell.css", ".roster-search")):
+        css = _read(css_file)
+        focus = css.split(f"{rule}:focus-visible {{", 1)[1].split("}", 1)[0]
+        assert "outline: none" in focus, rule
+        # Removed only because something visible takes its place.
+        assert "box-shadow: inset 0 -1px 0 var(--line-control)" in focus, rule
+        # Never the accent, and never below the floor: no alpha channel here.
+        assert "var(--accent)" not in focus, rule
+        assert "rgba" not in focus, rule
+        # It arrives rather than appearing. base.css flattens this under
+        # prefers-reduced-motion, so the rule needs no opt-out of its own.
+        rest = css.split(f"\n{rule} {{", 1)[1].split("}", 1)[0]
+        assert "transition: box-shadow" in rest, rule
 
 
 def test_one_header_icon_button() -> None:
@@ -604,12 +687,27 @@ def test_one_header_icon_button() -> None:
     assert ".header-icon-btn {" in css
     assert ".header-bell {" not in css, "the bell composes the icon button"
     assert ".header-gear {" not in css, "the gear composes the icon button"
+    # Pause is the fourth, and the one that arrived as a FIFTH geometry — a
+    # bordered alert pill carrying a label. It is a glyph in the same 32px box
+    # as the three beside it now, and it declares nothing of its own.
+    assert ".header-pause {" not in css, "Pause composes the icon button"
 
     header = _read(JS / "shell/header.js")
     for control in ("header-icon-btn header-bell",
                     "header-icon-btn header-gear",
-                    "header-icon-btn header-rail-toggle"):
+                    "header-icon-btn header-rail-toggle",
+                    "header-icon-btn header-pause"):
         assert control in header, control
+    # The state is a SHAPE, not a hue (SC 1.4.1) — and it is a shape three
+    # other surfaces already announce in words, which is why the control itself
+    # went quiet: the pause banner, the footer's dot, and every roster row.
+    assert "paused ? 'play' : 'pause'" in header
+    assert "var(--alert" not in css.split(
+        ".header-icon-btn {", 1)[1].split(".bell-badge", 1)[0]
+    # One string, spent twice: the accessible name and the tooltip that replaces
+    # the label a pointer operator lost.
+    assert "pause.setAttribute('aria-label', label);" in header
+    assert "pause.setAttribute('data-tooltip', label);" in header
 
 
 def test_rail_collapse_is_keyboard_reachable() -> None:
@@ -701,14 +799,107 @@ def test_select_mode_is_proven_on_the_built_rail() -> None:
     assert payload["selectionClearsAfterCreate"] is True
 
 
+def test_one_button_vocabulary_and_it_projects() -> None:
+    """The operator's words: the icon buttons "feel flat and noisy", and the ask
+    was a reusable style with "a bit more projection".
+
+    Flat was the whole of it — one fill inside one crisp border reads as a drawn
+    rectangle, not as something that will move when pressed. Three declarations
+    answer it, and they live on `.btn` so every call site gets the same one
+    rather than two surfaces agreeing by hand.
+
+    The PRESS is the half that makes it a control rather than a bevel someone
+    drew: :active collapses the ramp and drops the lift, so the button goes down
+    under the pointer. Without it the raise is a picture of a button.
+    """
+    controls = _read(CSS / "controls.css")
+    tokens = _read(CSS / "tokens.css")
+    for token in ("--btn-face:", "--btn-face-hover:", "--btn-shadow:"):
+        assert token in tokens, token
+
+    btn = controls.split(".btn {", 1)[1].split("}", 1)[0]
+    assert "linear-gradient(180deg, var(--panel), var(--btn-face))" in btn
+    assert "box-shadow: var(--btn-shadow)" in btn
+    # The border still carries the identification job (SC 1.4.11) — no fill this
+    # light could: --btn-face measures 1.06:1 against --panel.
+    assert "border: 1px solid var(--line-control)" in btn
+
+    press = controls.split(".btn:active:not([disabled]) {", 1)[1].split("}", 1)[0]
+    assert "box-shadow: none" in press
+    assert "background: var(--btn-face-hover)" in press
+
+    # The primary ramp only ever improves the white label's contrast: --panel is
+    # 4.83:1 on --accent and 6.36:1 on --accent-deep, so the worst row of the
+    # gradient is the flat colour it replaced.
+    assert "--accent-deep: #2559c4;" in tokens
+    primary = controls.split(".btn-primary {", 1)[1].split("}", 1)[0]
+    assert "linear-gradient(180deg, var(--accent), var(--accent-deep))" in primary
+
+    # The two variants that are meant to be flat opt out of all three rather
+    # than inheriting a raise they then have to fight.
+    for flat in (".btn-quiet {", ".btn-link {"):
+        body = controls.split(flat, 1)[1].split("}", 1)[0]
+        assert "box-shadow: none" in body, flat
+        assert "background: none" in body, flat
+
+    # ICON-ONLY is one rule on the primitive, not one per surface. It moved here
+    # the moment a second surface — the desk's back arrow — wanted it.
+    assert ".btn[data-tooltip] { padding-inline: 6px; }" in controls
+    assert "[data-tooltip] { padding-inline" not in _read(CSS / "conversation.css")
+
+
+def test_the_way_out_of_a_desk_is_a_control_not_a_banner() -> None:
+    """`← The office` was a full-width .btn with the arrow typed into its label.
+
+    .desk-body is a flex column and stretches its children, so it spanned all
+    280px and read as a banner across the top of the panel. It is the same
+    icon-only button every other glyph control in the window is now, and the
+    only thing the surface adds is that it stops stretching.
+    """
+    js = _read(JS / "context/desk-panel.js")
+    assert "const BACK_LABEL = 'Back to the office';" in js
+    assert "'aria-label': BACK_LABEL" in js
+    assert "'data-tooltip': BACK_LABEL" in js
+    assert "'data-lucide': 'chevron-left'" in js
+    assert "class: 'btn btn-sm desk-back'" in js
+    assert "The office" not in _code(js)
+    assert "context-link" not in _code(js)
+    # Nothing else in this column sweeps for placeholders, so the view paints
+    # its own subtree — the same rule context/mini-office.js follows.
+    assert "BossModIcons.paint(element, 'desk-panel')" in js
+
+    css = _read(CSS / "context.css")
+    back = css.split(".desk-back {", 1)[1].split("}", 1)[0]
+    assert "align-self: flex-start" in back
+    assert "color: var(--muted)" in back
+    # The class its one caller left behind went with it.
+    assert ".context-link" not in css
+
+
 def test_hire_row_matches_the_person_rows() -> None:
-    """An empty seat, aligned with the seats above it — not a stray glyph."""
+    """An empty seat, aligned with the seats above it — not a stray glyph.
+
+    And ONE colour across the row: the label is --hint, the ink its own dashed
+    seat already carries. It was --accent, which made a secondary action the
+    loudest thing in the rail and put a blue word inside a grey circle. --hint
+    measures 4.83:1 on --panel, so it clears AA as text.
+
+    The rule above it is gone too. A border made the row a compartment bolted
+    to the foot of the rail; without one it floats at the bottom of the same
+    column the names are in, which is what it is.
+    """
     roster = _read(JS / "shell/roster.js")
     assert "user-plus" not in roster
     assert "avatar-empty" in roster
     css = _read(CSS / "shell.css")
     hire = css.split(".roster-hire {", 1)[1].split("}", 1)[0]
-    assert "color: var(--accent)" in hire
+    assert "color: var(--hint)" in hire
+    assert "var(--accent)" not in hire
+    assert "border-top" not in hire
+    # ...and the hover is the quiet pair every other frameless control uses,
+    # rather than the blue-on-blue that needed its own contrast correction.
+    hover = css.split(".roster-hire:hover {", 1)[1].split("}", 1)[0]
+    assert "background: var(--bg)" in hover and "color: var(--ink)" in hover
 
 
 def test_the_need_dot_sits_beside_the_name_not_inside_it() -> None:
@@ -759,12 +950,81 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     assert "btn-primary" not in threads
     assert "btn btn-quiet" not in threads
 
-    # The filter is a small pill that fills with the surface, not with accent.
-    pressed = _read(CSS / "shell.css").split(
-        '.roster-thread-filter[aria-pressed="true"] {', 1)[1].split("}", 1)[0]
+    # WHICH LIST is a third owner of the same header row — the `⋯`, its panel,
+    # and the segment inside it — not a pair of pills below the header. The
+    # pills cost a permanent row of a 220px rail to answer a question that is
+    # `Active` almost every visit; behind the `⋯` they cost no height at all.
+    shell_css = _read(CSS / "shell.css")
+    assert ".roster-thread-filter" not in shell_css
+    assert ".roster-thread-filters" not in shell_css
+
+    roster_threads = _read(JS / "shell/roster-threads.js")
+    view = _read(JS / "shell/thread-view-menu.js")
+    assert "class: 'roster-section-action roster-thread-view'" in view
+    # The `⋯` sits OUTSIDE the group thread-create.js empties on every mode
+    # swap: a control that survives the swap cannot live in the cleared node.
+    head = roster_threads.split("class: 'roster-section-head'", 1)[1].split(");", 1)[0]
+    assert head.index("create.actions") < head.index("view.button"), head
+    # The seam: the menu owns the control, the list owns the answer. A second
+    # copy of "which list" is how the pills and the list drift apart.
+    assert "getStatus: () => threadFilter" in roster_threads
+    assert "onSelect: setThreadFilter" in roster_threads
+    assert "threadFilter" not in view
+    # `getContainer` is a THUNK because the row the panel hangs off cannot be
+    # built until the button that goes in it exists.
+    assert "getContainer: () => head" in roster_threads
+    # ...so the row's right inset belongs to the ROW rather than to whichever
+    # group happens to be last in it.
+    assert "margin-right: 6px" not in shell_css.split(
+        ".roster-section-actions {", 1)[1].split("}", 1)[0]
+    assert "padding-right: 6px" in shell_css.split(
+        ".roster-section-head {", 1)[1].split("}", 1)[0]
+
+    # ONE GLYPH FOR A MENU. This control was a gear for a day and it was the
+    # third mark for the same idea in one window — `⋯` on the conversation
+    # header, sliders here, the application gear in the app header. The rule:
+    # `⋯` opens a menu of things you can do to the thing beside it, and a gear
+    # means application settings and appears exactly once.
+    assert "'data-lucide': 'ellipsis'" in view
+    assert "settings" not in _code(view)
+    gears = [
+        path.relative_to(JS).as_posix()
+        for path in _app_js()
+        if "'data-lucide': 'settings'" in _read(path)
+    ]
+    assert gears == ["shell/header.js"], gears
+
+    # It reuses the shared panel rather than growing a popover of its own.
+    assert "BossModOverlays.createMenu({" in view
+
+    # BOTH lists on screen at once, and the one you are looking at is filled:
+    # state is a shape, not a sentence. Two earlier spellings were wrong in
+    # opposite directions — a `Show archived threads` switch implied the two
+    # lists were additive when they are exclusive, and a row that renamed
+    # itself `View archives` / `View active threads` was so quiet you had to
+    # read it to find out where you were.
+    assert "status: 'active', label: 'Active'" in view
+    assert "status: 'archived', label: 'Archived'" in view
+    assert "const SEGMENT_LABEL = 'Thread view';" in view
+    assert "class: 'menu-segment-option'" in view
+    assert "aria-pressed" in view
+    assert "Show archived" not in _code(view)
+    assert "View archives" not in _code(view)
+    # The caption is a real heading the group points at, rather than an
+    # aria-label repeating on screen text into the accessibility tree.
+    assert "'aria-labelledby': SEGMENT_ID" in view
+    assert "class: 'menu-label', id: SEGMENT_ID" in view
+    overlays = _read(CSS / "overlays.css")
+    pressed = overlays.split('.menu-segment-option[aria-pressed="true"] {', 1)[1].split("}", 1)[0]
     assert "var(--accent)" not in pressed
-    assert "background: var(--bg)" in pressed
-    assert "color: var(--ink)" in pressed
+    assert "background: var(--bg)" in pressed and "color: var(--ink)" in pressed
+
+    # A menu panel is DETACHED while it is closed, so the document sweep that
+    # paints the rail can never reach a glyph inside it. Both menus paint what
+    # they just attached — the bug that rendered Archive as a bare heading.
+    assert "BossModIcons.paint(menu.element, 'thread-view-menu')" in view
+    chrome = _read(CONVERSATION / "chrome.js")
+    assert "BossModIcons.paint(menu.element, 'conversation-chrome.menu')" in chrome
 
 
 # ─── Conversation: identity, glyphs, bubbles, and the empty state ───
@@ -860,18 +1120,58 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     assert ".msg-human .msg-time { color: var(--blue-ink); }" in css
 
 
-def test_the_composer_puts_the_clipboard_first_and_quiets_send() -> None:
+def test_the_composer_is_the_field_and_send_and_nothing_else() -> None:
+    """The clipboard on the left is gone; what is left is quieter than before.
+
+    It was a third front door to the one assign form — the Board's `+ New task`
+    and the empty conversation's `Assign a task` are the other two — and the
+    only one parked in front of the operator for every second they were typing.
+
+    Send went quiet with it. It is --muted at rest and --ink under the pointer
+    — the pair every other frameless glyph in the app wears — because it was
+    the last accent mark in a band this round was spent quieting, and it is not
+    the primary send path: Enter is, and the placeholder beside it says so.
+    """
     composer = _read(CONVERSATION / "composer.js")
     row = composer.split("class: 'composer-row' }", 1)[1].split(")", 1)[0]
-    assert row.strip().startswith(", assignBtn, input, sendBtn"), row
+    assert row.strip().startswith(", input, sendBtn"), row
 
     css = _read(CSS / "conversation.css")
-    send = css.split(".composer-send { ", 1)[1].split("}", 1)[0]
-    assert "color: var(--accent)" in send
-    shared = css.split(".composer-send,\n.composer-assign {", 1)[1].split("}", 1)[0]
-    assert "background: none" in shared
-    # The hit target does not shrink with the fill (SC 2.5.8).
-    assert "width: 38px" in shared and "height: 38px" in shared
+    send = css.split(".composer-send {", 1)[1].split("}", 1)[0]
+    assert "color: var(--muted)" in send
+    assert "var(--accent)" not in send
+    assert "background: none" in send
+    hover = css.split(".composer-send:hover:not(:disabled) {", 1)[1].split("}", 1)[0]
+    assert "color: var(--ink)" in hover
+    # 32px, the same target .header-icon-btn carries, so the window has one
+    # icon-target size. Still well over the 24px floor (SC 2.5.8).
+    assert "width: 32px" in send and "height: 32px" in send
+    # And there is no second control in the row to share a rule with.
+    assert ".composer-assign" not in css
+
+
+def test_both_typing_surfaces_are_the_page_not_a_box_on_it() -> None:
+    """The operator's ask: no grey fill, no border, a light placeholder that
+    reads as floating on the surface it is typed onto.
+
+    The two fields are asserted TOGETHER because they are one decision — a
+    borderless composer beside a boxed rail search would read as one of them
+    being broken. Each keeps the two things a field cannot give up: a
+    placeholder that clears AA as text, which is what identifies a control with
+    no boundary (SC 1.4.11), and base.css's focus ring, which is NOT replaced
+    here and is the only thing a keyboard operator has to find it by (SC 2.4.7).
+    """
+    for css_file, rule in ((CSS / "conversation.css", ".composer-input"),
+                           (CSS / "shell.css", ".roster-search")):
+        css = _read(css_file)
+        body = css.split(f"{rule} {{", 1)[1].split("}", 1)[0]
+        assert "border: 0" in body, rule
+        assert "background: none" in body, rule
+        assert "var(--line-control)" not in body, rule
+        assert "var(--bg)" not in body, rule
+        assert f"{rule}::placeholder {{ color: var(--hint); }}" in css, rule
+        # Neither replaces the focus indicator it inherits.
+        assert "outline" not in body, rule
 
 
 def test_an_empty_conversation_is_not_a_dead_end() -> None:
@@ -936,15 +1236,47 @@ def test_mini_office_is_a_map() -> None:
     assert "'data-tone'" in js
 
 
-def test_mini_office_keeps_its_navigation() -> None:
-    """The concept's `Open` / `Open metrics` links, not two bordered buttons."""
+def test_mini_office_keeps_the_one_door_that_is_only_its_own() -> None:
+    """`Open` became a map; `Open metrics` went entirely.
+
+    Metrics has been a place on the header nav, on every screen, since the nav
+    was built — so the link was a second front door to the same trip, one row
+    lower and worded differently. The Office link stays because the panel IS a
+    summary of that place and is the only thing on screen that says so, but it
+    stops spending a word on the verb: the control is a map, named for a screen
+    reader and tooltipped for a pointer out of ONE string.
+    """
     js = _read(JS / "context/mini-office.js")
-    assert "btn-link" in js
-    assert "navigate('office')" in js and "navigate('metrics')" in js
-    # And the numbers are still ours: real counts, not the concept's mock
-    # token totals.
-    assert "on the floor" in js
-    assert "need${" in js
+    assert "navigate('office')" in js
+    # Read against the CODE: the module explains in prose which link it dropped
+    # and why, and a naive substring check reads that explanation as the link.
+    code = _code(js)
+    assert "navigate('metrics')" not in code
+    assert "Open metrics" not in code
+    assert "const OPEN_OFFICE_LABEL = 'Open the office';" in js
+    assert "'aria-label': OPEN_OFFICE_LABEL" in js
+    assert "'data-tooltip': OPEN_OFFICE_LABEL" in js
+    assert "'data-lucide': 'map'" in js
+    # A glyph nothing paints is an empty placeholder on screen. Nothing else
+    # mounted in this column paints, so this view paints its own subtree.
+    assert "BossModIcons.paint(element, 'mini-office')" in js
+    # Quiet and icon-sized, not the accent link it was: the panel under it is
+    # already a picture of the floor.
+    context_css = _read(CSS / "context.css")
+    head_link = context_css.split(".context-head-link {", 1)[1].split("}", 1)[0]
+    assert "color: var(--muted)" in head_link
+    assert "var(--accent)" not in head_link
+    assert ".context-head-link svg { width: 14px; height: 14px; }" in context_css
+    # The `N on the floor · N need you` line went with it. It was the THIRD
+    # statement of a fact already on screen twice — the bell's badge counts what
+    # needs the operator, and the seats in this panel each carry a ping — and
+    # counting the roster back to someone looking at a picture of it is not
+    # news. The real counts it reported are still rendered, as those pings.
+    code = _code(js)
+    assert "on the floor" not in code
+    assert "mini-office-stat" not in code
+    assert "mini-office-stat" not in context_css
+    assert "mini-office-ping" in js
 
 
 def test_mini_office_seats_are_chips_on_a_legal_target() -> None:

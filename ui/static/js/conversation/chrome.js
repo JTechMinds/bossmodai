@@ -20,21 +20,46 @@
  * The TITLE may be renameable, and says so through the descriptor's optional
  * `onRename` rather than by this view learning what a thread is. The control
  * itself is conversation/title-rename.js; what belongs here is where its
- * confirm and cancel land — in the same action row Archive sits in, through
- * the same `{id, label, icon, onSelect}` descriptor, rather than as bespoke
- * buttons beside the title. Both are icon-only, so each carries its own
- * accessible name: colour is not the only carrier (SC 1.4.1), and a check and
- * a cross differ in shape as well as in hue.
+ * confirm and cancel land — BESIDE the title, which is the thing they act on.
+ * They sat at the far right for a while, seven hundred pixels from the field
+ * whose edit they were confirming, and the operator had to cross the header to
+ * answer a question the header was asking on the left. Both are icon-only, so
+ * each carries its own accessible name: colour is not the only carrier
+ * (SC 1.4.1), and a check and a cross differ in shape as well as in hue.
  *
- * VIEW OPTIONS are a different kind of thing from actions and sit behind a `⋯`
- * rather than beside them. `Desk` is an action on the person; "show system
- * notifications" is a preference about the transcript, and the two were at the
- * same level with the preference's 25-character label crowding out the one
- * real action. The menu is where later view options go, which is what makes it
- * a place to put things rather than a place to hide one thing.
+ * THREE SLOTS, ONE FIELD. Every action is the same `{id, label, icon,
+ * onSelect}` with the same reused node, the same in-flight gate and the same
+ * error path; `slot` is the only thing that says where it lands, so nothing
+ * about a control can drift from the vocabulary by sitting somewhere else.
+ *
+ *   (default)      the action row, at the right. Frequent and safe.
+ *   slot: 'menu'   behind the `⋯`. Rare or irreversible — Archive and Reopen.
+ *   slot: 'title'  beside the title. Confirming an edit to the title itself.
+ *
+ * The `⋯` is the header's OVERFLOW and it holds two kinds of thing. The first
+ * is view options — "show system notifications" is a preference about the
+ * transcript rather than an action on the person, and it was crowding out the
+ * one real action with its 25-character label. The second is any `slot:
+ * 'menu'` action: a destructive, once-a-month control does not earn a
+ * permanent seat beside the conversation title, and a bordered `Archive`
+ * sitting there every time you open a thread reads as a suggestion.
+ *
+ * The menu's actions are appended into a STABLE panel node this view owns
+ * rather than handed to the menu at open time, which is what lets a repaint
+ * that happens while the panel is open — Archive succeeding and becoming
+ * Reopen — land inside the panel the operator is looking at.
+ *
+ * The SUBTITLE sits with the actions rather than with the title. `3
+ * participants` is a fact about the room and the title is its name; putting
+ * the fact directly after the name meant a long name shoved it, and the two
+ * controls that confirm a rename had to go somewhere else because the space
+ * beside the title was already spent.
  */
 const BossModConversationChrome = (() => {
     const { h, clear } = BossModDom;
+
+    /** The `⋯`'s accessible name and its tooltip: one string, never two. */
+    const MENU_LABEL = 'More actions';
 
     /**
      * Build the header.
@@ -48,8 +73,9 @@ const BossModConversationChrome = (() => {
      *   so a preference keeps what it holds across every open, and across every
      *   conversation switch. They are the surface's, not any one
      *   conversation's, which is why they are a mount-time slot rather than a
-     *   descriptor field that would be rebuilt on each switch. With none, no
-     *   `⋯` is rendered: a menu with nothing in it is not a menu.
+     *   descriptor field that would be rebuilt on each switch. With none, the
+     *   `⋯` is rendered only for as long as some conversation puts a
+     *   `slot: 'menu'` action behind it: a menu with nothing in it is not one.
      * @returns {{ element: HTMLElement,
      *             apply: (chrome: object) => void,
      *             destroy: () => void }}
@@ -72,27 +98,42 @@ const BossModConversationChrome = (() => {
             onEditingChange: () => { if (latest) apply(latest); },
         });
         const subtitleEl = h('p', { class: 'conversation-subtitle' });
+        // Empty out of edit mode, and `:empty` collapses it, so the header at
+        // rest is the name and nothing beside it.
+        const titleActionsEl = h('div', { class: 'conversation-title-actions' });
         const actionsEl = h('div', { class: 'conversation-actions' });
         const element = h('header', { class: 'conversation-chrome' },
             avatarEl,
-            h('div', { class: 'conversation-identity' }, title.element, subtitleEl),
+            h('div', { class: 'conversation-identity' }, title.element, titleActionsEl),
+            // The subtitle leads the action group: a fact about the room, at
+            // the end of the row, where a long name cannot shove it.
             actionsEl);
+        actionsEl.append(subtitleEl);
 
         /** The open menu, or null. One at a time, and the `⋯` toggles it. */
         let menu = null;
-        const menuButton = viewOptions.length
-            ? h('button', {
-                class: 'btn btn-sm conversation-action conversation-view-options',
-                type: 'button',
-                id: 'conversation-view-options',
-                'aria-label': 'View options',
-                // dialog, not menu: the panel holds a role="switch", which is
-                // not a menuitem and must not be announced as one.
-                'aria-haspopup': 'dialog',
-                'aria-expanded': 'false',
-                onclick: () => toggleMenu(),
-            }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }))
-            : null;
+        /**
+         * The menu ACTIONS' parent, owned here and reused forever.
+         *
+         * Built once and never replaced, for the same reason the view options
+         * are the caller's nodes rather than rebuilt on open: it may be inside
+         * an open panel when apply() runs, and refilling a stable node is what
+         * keeps a live chrome swap visible to whoever is looking at it. While
+         * the panel is closed this is simply detached, holding its buttons.
+         */
+        const menuActionsEl = h('div', { class: 'menu-actions' });
+        const menuButton = h('button', {
+            class: 'btn btn-sm conversation-action conversation-view-options',
+            type: 'button',
+            id: 'conversation-view-options',
+            'aria-label': MENU_LABEL,
+            'data-tooltip': MENU_LABEL,
+            // dialog, not menu: the panel holds a role="switch", which is
+            // not a menuitem and must not be announced as one.
+            'aria-haspopup': 'dialog',
+            'aria-expanded': 'false',
+            onclick: () => toggleMenu(),
+        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
 
         /** @returns {void} */
         function closeMenu() {
@@ -119,14 +160,23 @@ const BossModConversationChrome = (() => {
             }
             menu = BossModOverlays.createMenu({
                 anchor: menuButton,
-                label: 'View options',
-                items: viewOptions,
+                label: MENU_LABEL,
+                // Actions first, then preferences: one is a thing to do and
+                // the other is a thing to set, and the doing comes first.
+                items: [menuActionsEl].concat(viewOptions),
                 container: element,
                 onClose: () => {
                     menu = null;
                     menuButton.setAttribute('aria-expanded', 'false');
                 },
             });
+            // THE PANEL IS THE ONE TREE THE SWEEP CANNOT REACH. apply() ends on
+            // BossModIcons.paintDocument, which walks document.body — and while
+            // the menu is closed `menuActionsEl` hangs off a detached node, so
+            // an action built in there kept its bare `<i>` placeholder and
+            // rendered as a bare word. Archive read as a stray heading in the
+            // panel because of exactly this. Paint what was just attached.
+            BossModIcons.paint(menu.element, 'conversation-chrome.menu');
             menuButton.setAttribute('aria-expanded', 'true');
         }
 
@@ -173,10 +223,12 @@ const BossModConversationChrome = (() => {
          * @param {{title: string, subtitle: string, avatar?: object,
          *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. Each action is `{id, label, icon?, iconOnly?, onSelect}`,
-         *   where `icon` is a Lucide glyph NAME — the source names it, this
-         *   builds it — and `iconOnly` shows the glyph alone with `label` as
-         *   the button's accessible name instead of its text (SC 4.1.2).
+         *   shown. Each action is `{id, label, icon?, iconOnly?, slot?,
+         *   onSelect}`, where `icon` is a Lucide glyph NAME — the source names
+         *   it, this builds it — `iconOnly` shows the glyph alone with `label`
+         *   as the button's accessible name instead of its text (SC 4.1.2) and
+         *   as its tooltip, and `slot` is `'menu'` to put it behind the `⋯`,
+         *   `'title'` to put it beside the name, or absent for the action row.
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
@@ -199,33 +251,65 @@ const BossModConversationChrome = (() => {
                     label: 'Cancel rename',
                     icon: 'x',
                     iconOnly: true,
+                    slot: 'title',
                     onSelect: () => title.cancel(),
                 }, {
                     id: 'conversation-title-save',
                     label: 'Save name',
                     icon: 'check',
                     iconOnly: true,
+                    slot: 'title',
                     onSelect: () => title.save(),
                 }].concat(chrome.actions || [])
                 : (chrome.actions || []);
+            let inMenu = 0;
             actions.forEach((action) => {
                 wanted.add(action.id);
+                const menuAction = action.slot === 'menu';
                 let btn = actionNodes.get(action.id);
                 if (!btn) {
-                    btn = h('button', { class: 'btn btn-sm conversation-action', type: 'button', id: action.id });
+                    btn = h('button', { type: 'button', id: action.id });
                     actionNodes.set(action.id, btn);
                 }
+                // Set on every pass rather than at construction: an action may
+                // move between the row and the menu across a chrome swap, and
+                // the node is deliberately reused when it does.
+                btn.className = menuAction
+                    ? 'menu-action'
+                    : 'btn btn-sm conversation-action';
                 clear(btn);
                 if (action.icon) {
                     btn.append(h('i', { 'data-lucide': action.icon, 'aria-hidden': 'true' }));
                 }
                 // An icon-only action shows its glyph and NAMES itself, so the
-                // label is still announced rather than lost with the text.
-                if (action.iconOnly) btn.setAttribute('aria-label', action.label);
-                else btn.append(action.label);
-                btn.onclick = () => { void run(btn, action); };
+                // label is still announced rather than lost with the text — and
+                // the same string becomes the bubble a pointer gets on hover,
+                // which is the only way a glyph alone says what it does. A menu
+                // action always keeps its text: a panel of bare glyphs is a
+                // puzzle, and there is room for words in there.
+                if (action.iconOnly && !menuAction) {
+                    btn.setAttribute('aria-label', action.label);
+                    btn.setAttribute('data-tooltip', action.label);
+                } else {
+                    btn.removeAttribute('aria-label');
+                    btn.removeAttribute('data-tooltip');
+                    btn.append(action.label);
+                }
+                // A menu action puts the panel away before it runs, so focus is
+                // back on the `⋯` before a confirm dialog captures it — and so
+                // the panel is not left hanging over the answer.
+                btn.onclick = menuAction
+                    ? () => { closeMenu(); void run(btn, action); }
+                    : () => { void run(btn, action); };
                 btn.disabled = gate.busy();
-                actionsEl.append(btn);
+                if (menuAction) {
+                    menuActionsEl.append(btn);
+                    inMenu += 1;
+                } else if (action.slot === 'title') {
+                    titleActionsEl.append(btn);
+                } else {
+                    actionsEl.append(btn);
+                }
             });
             for (const [id, btn] of Array.from(actionNodes)) {
                 if (wanted.has(id)) continue;
@@ -233,9 +317,22 @@ const BossModConversationChrome = (() => {
                 actionNodes.delete(id);
             }
             // Appended last on every pass, so the `⋯` stays at the end of the
-            // row however the actions before it churn.
-            if (menuButton) actionsEl.append(menuButton);
+            // row however the actions before it churn — and only when there is
+            // something behind it, because a menu with nothing in it is not a
+            // menu. A conversation that loses its last menu action mid-open
+            // takes the panel down with it rather than leaving an empty one.
+            if (inMenu || viewOptions.length) actionsEl.append(menuButton);
+            else {
+                closeMenu();
+                menuButton.remove();
+            }
             BossModIcons.paintDocument('conversation-chrome');
+            // The sweep above reaches the panel only while it is open, and an
+            // apply() that runs then has just rebuilt the rows inside it —
+            // Archive becoming Reopen is that case. Painting it explicitly
+            // costs nothing when there is nothing left to paint (the painter is
+            // idempotent) and is the difference between a glyph and a word.
+            if (menu) BossModIcons.paint(menu.element, 'conversation-chrome.menu');
         }
 
         return {
@@ -255,6 +352,10 @@ const BossModConversationChrome = (() => {
              */
             reset() {
                 title.cancel();
+                // Same reason: the panel holds THIS conversation's actions, and
+                // a menu left hanging over the next one is a control pointed at
+                // something that is no longer on screen.
+                closeMenu();
             },
 
             /**

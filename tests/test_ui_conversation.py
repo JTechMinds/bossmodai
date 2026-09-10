@@ -46,6 +46,18 @@ CONVERSATION_MODULES = [
 ]
 
 
+def _code(source: str) -> str:
+    """The source with its comments stripped.
+
+    A "this control no longer exists" assertion has to read what the module
+    DOES. A module that explains in prose which control it dropped, and why,
+    would otherwise be read as still carrying it. Same helper, same reason, as
+    tests/test_ui_visual_parity.py's.
+    """
+    without_blocks = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", without_blocks, flags=re.M)
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -204,6 +216,13 @@ def test_conversation_harness() -> None:
         "chromeAvatarNodeIsStable": True,
         "chromeActionCarriesItsIcon": True,
         "chromeGroupGlyphForThreads": True,
+        # Archive is rare and reads as irreversible, so it moved off the header
+        # row and behind the `⋯` — where the source puts it with `slot: 'menu'`
+        # rather than by the view learning what a thread is.
+        "archiveLivesInTheMenu": True,
+        # And the subtitle went to the end of the row with the actions, which
+        # is what freed the space beside the name for the rename's own pair.
+        "subtitleIsWithTheActions": True,
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
         # The polish round moved the receipts preference out of the action row
@@ -270,45 +289,48 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "BossModContextColumn.openDeskFrom(" in place
 
 
-def test_composer_opens_the_one_assign_form() -> None:
-    """Spec 4.4's deferred clipboard button, finished in the phase that owns
-    the form.
+def test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it() -> None:
+    """Spec 4.4's clipboard button, retired by the round that quietened the
+    composer.
 
     Phase 2 deliberately did NOT build an assign form, because deduplicating a
     second one against the Board's in Phase 3 would have been exactly the
-    transitional scaffolding this refactor exists to avoid. So the property
-    that matters is not "the composer has a button" — it is that the button
-    reaches the one form there is, and that the composer cannot name it.
+    transitional scaffolding this refactor exists to avoid. THAT is the property
+    that has always mattered here — one form, reached by whoever needs it — and
+    it is the one that survives the button.
+
+    The clipboard itself was a third front door beside the Board's `+ New task`
+    and the empty conversation's `Assign a task`, and it was the only one parked
+    in front of the operator for every second they were typing a message. So the
+    composer is the field and Send now, and it no longer knows a form exists —
+    which is a stronger version of the boundary the button was written to keep.
     """
     composer = _read(CONVERSATION / "composer.js")
-    # Injected, and required: a clipboard that rendered and did nothing would
-    # be worse than one that is absent.
-    assert "deps.onAssign" in composer
-    assert "throw new Error('[composer] deps.onAssign is required');" in composer
-    assert "onclick: onAssignClick" in composer
-    assert "function onAssignClick()" in composer
-    # Icon-only, so it carries its own accessible name (spec 8.4).
-    assert "'aria-label': ASSIGN_TITLE" in composer
-    assert "const ASSIGN_TITLE = 'Assign a task';" in composer
-    # Disabled by the same gate as Send, in the same place, so the two can
-    # never disagree about whether this conversation can be acted on.
-    apply_state = composer.split("function applyState() {", 1)[1].split("\n        }", 1)[0]
-    assert "assignBtn.disabled = !enabled;" in apply_state
-    assert "sendBtn.disabled = !enabled;" in apply_state
-    # And it lets its listener go, like every other control here.
-    assert "assignBtn.removeEventListener('click', onAssignClick);" in composer
-    # The composer names no form module of its own.
+    # The whole control is gone: no dependency, no button, no listener, no copy.
+    # Read against the CODE — the module explains in prose which control was
+    # removed and why, and a naive substring check reads that as the control.
+    code = _code(composer)
+    for gone in ("onAssign", "assignBtn", "ASSIGN_TITLE", "composer-assign", "clipboard"):
+        assert gone not in code, gone
+    # The composer names no form module of its own — it never did, and now it
+    # has no route to one at all.
     assert "AssignForm" not in composer
     assert "openAssignForm" not in composer
+    # What is left in the row is the field and Send, in that order.
+    row = composer.split("class: 'composer-row' }", 1)[1].split(")", 1)[0]
+    assert row.strip().startswith(", input, sendBtn"), row
 
     controller = _read(CONVERSATION / "conversation.js")
-    # Hoisted to a named function in the visual-parity pass, because the empty
-    # state opens the same form. Still exactly one caller of exactly one form,
-    # which is the property this guards.
+    # Still exactly one caller of exactly one form. The empty state is its only
+    # caller here now, which is why the named function stayed rather than being
+    # folded back into the composer's dependency.
     assert "function openAssign() {" in controller
     assert "return BossModAssignForm.openAssignForm({" in controller
     assert controller.count("BossModAssignForm.openAssignForm(") == 1
     assert "onAssign: openAssign," in controller
+    # ...and the composer is not handed it any more.
+    createComposer = controller.split("BossModComposer.createComposer({", 1)[1].split("});", 1)[0]
+    assert "onAssign" not in createComposer, createComposer
 
     # There is still exactly one assign form in the codebase.
     definers = sorted(

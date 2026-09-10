@@ -12,6 +12,16 @@
  * method. The guard stays because pausing cancels in-flight turns and loses
  * that work; the artificial delay goes, because when someone reaches for a
  * kill switch they want it now. Resume is a single click with no dialog.
+ *
+ * Pause is the FOURTH .header-icon-btn rather than a bordered red pill of its
+ * own. It used to shout — alert border, alert ink, a `Resume` label — and it
+ * was shouting the same news three other surfaces already carry: the banner
+ * under the header, the footer's status dot, and every roster row saying
+ * `Paused`. Four alarms for one fact is noise, so the control is quiet and the
+ * STATE is what the other three announce. What is left is a glyph pair that
+ * differs in shape rather than in hue (SC 1.4.1) — a pause bar and a play
+ * triangle — plus one string used twice: as the accessible name, and as the
+ * `data-tooltip` bubble that replaces the text a pointer operator lost.
  */
 const BossModHeader = (() => {
     const { h, clear } = BossModDom;
@@ -161,14 +171,32 @@ const BossModHeader = (() => {
         // ─── Pause / Resume ───
 
         const errorEl = h('span', { class: 'header-error', role: 'alert' });
-        const pause = h('button', { class: 'header-pause', type: 'button', onclick: onPauseClick });
+        const pause = h('button', {
+            class: 'header-icon-btn header-pause',
+            type: 'button',
+            onclick: onPauseClick,
+        });
 
+        /**
+         * Paint the runtime control for one pause state.
+         *
+         * The label is built once and spent twice — `aria-label` names the
+         * control, `data-tooltip` is the bubble a pointer sees. Two copies of
+         * one sentence is how a tooltip and a label drift into disagreeing
+         * about what a button does.
+         *
+         * @param {boolean} paused
+         * @returns {void}
+         */
         function applyPaused(paused) {
-            pause.setAttribute('aria-label', paused ? 'Resume the AI runtime' : 'Pause the AI runtime');
+            const label = paused ? 'Resume the AI runtime' : 'Pause the AI runtime';
+            pause.setAttribute('aria-label', label);
+            pause.setAttribute('data-tooltip', label);
             clear(pause);
-            pause.append(
-                h('i', { 'data-lucide': paused ? 'play' : 'octagon-x', 'aria-hidden': 'true' }),
-                h('span', { class: 'header-pause-label' }, paused ? 'Resume' : 'Pause'));
+            pause.append(h('i', {
+                'data-lucide': paused ? 'play' : 'pause',
+                'aria-hidden': 'true',
+            }));
             paintIcons();
         }
 

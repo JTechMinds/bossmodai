@@ -169,12 +169,28 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
  * Fifteen call sites already asked for `.btn` and got nothing: base.css strips
  * <button> to bare text and no stylesheet defined the class, so Assign, Try
  * again, + New task and the rest rendered as unstyled labels. This is that
- * class, and the four bespoke button rules now compose it instead of each
+ * class, and the bespoke button rules now compose it instead of each
  * redeclaring border, padding and radius.
  *
  * The border is --line-control (3.10:1 on white), not --line-strong (1.50:1):
  * tokens.css reserves the former for interactive borders precisely because a
- * button's edge is an affordance rather than a separator.
+ * button's edge is an affordance rather than a separator. That border is what
+ * satisfies SC 1.4.11, and it is why the face below cannot be asked to.
+ *
+ * RAISED, not flat. One flat fill inside one crisp border reads as a drawn
+ * rectangle rather than as something that will move when pressed — the
+ * operator called the icon-only ones "flat and noisy", and flat was the whole
+ * of it. Three declarations answer that and they are the same three on every
+ * call site, which is what makes this the shared vocabulary rather than a look
+ * two surfaces happen to share:
+ *
+ *   a top-lit gradient   --panel down to --btn-face
+ *   a lift               --btn-shadow, 1px of it, under the whole control
+ *   a press              :active flattens both, so the button goes DOWN
+ *
+ * The press state is not decoration. Without it the raise is a picture of a
+ * button; with it the control answers the pointer, which is the difference
+ * between projection and a bevel someone drew on.
  */
 
 .btn {
@@ -185,19 +201,50 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   padding: 6px 12px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--panel), var(--btn-face));
+  box-shadow: var(--btn-shadow);
   font-size: 13px;
 }
 
-.btn:hover { background: var(--bg); }
+.btn:hover { background: linear-gradient(180deg, var(--btn-face), var(--btn-face-hover)); }
+
+/* Pressed: the ramp collapses to its darkest stop and the lift goes. No
+   transform, so nothing beside it moves — the shadow leaving IS the travel. */
+.btn:active:not([disabled]) {
+  background: var(--btn-face-hover);
+  box-shadow: none;
+}
 
 .btn-sm { min-height: 24px; padding: 4px 10px; font-size: 12px; }
 
-/* --panel on --accent measures 4.83:1. */
-.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
-.btn-primary:hover { background: var(--accent); }
+/* ICON-ONLY, wherever it appears: the `⋯`, Desk, the desk's back arrow, and
+   the rename pair. No text to pad around, so .btn-sm's 10px sides would make a
+   glyph rattle in a wide box. Keyed on the attribute the views set exactly
+   when they drop a label for a tooltip, so an icon-only button cannot arrive
+   shaped like a text one with the word missing. */
+.btn[data-tooltip] { padding-inline: 6px; }
 
-.btn-quiet { border-color: transparent; color: var(--muted); }
+/* --panel measures 4.83:1 on --accent and 6.36:1 on --accent-deep, so the
+   label clears AA at every row of the ramp — see tokens.css. */
+.btn-primary {
+  background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+  border-color: var(--accent-deep);
+  color: var(--panel);
+}
+
+.btn-primary:hover { background: var(--accent-deep); }
+.btn-primary:active:not([disabled]) { background: var(--accent-deep); box-shadow: none; }
+
+/* Deliberately NOT raised: a quiet button is one that should not look like it
+   projects, so it drops the face and the lift with the border. */
+.btn-quiet {
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.btn-quiet:hover { background: var(--bg); }
 
 /* --accent on --panel measures 4.83:1, and 4.51:1 on --bg. The 24px minimum
    base.css gives every button is deliberately left alone: a link-styled button
@@ -207,10 +254,69 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   padding: 0;
   border: 0;
   background: none;
+  box-shadow: none;
   color: var(--accent);
   font-size: 13px;
 }
 
 .btn-link:hover { background: none; text-decoration: underline; }
+.btn-link:active:not([disabled]) { background: none; box-shadow: none; }
 
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── Tooltip ───
+ *
+ * One attribute, every icon-only control: `data-tooltip="Pause the AI runtime"`
+ * paints a small bubble under the control on hover and on keyboard focus. It
+ * exists because this round stripped the text off four controls — Pause, Desk,
+ * the office link and the thread-list gear — and a glyph on its own is a guess
+ * until you click it.
+ *
+ * It is NOT the accessible name. Every control that carries this also carries
+ * `aria-label` with the SAME string, and aria-label wins the name computation
+ * outright — so a screen reader never hears the bubble, and a browser that does
+ * expose ::after content cannot double the name up. The bubble is for the
+ * sighted pointer and keyboard operator; the label is for everyone.
+ *
+ * RIGHT-ALIGNED, and that is a derivation rather than a default. Every call
+ * site sits at the right edge of a surface that clips: the rail is 220px wide
+ * and .app-roster hides its overflow, and .app-context sets overflow-y, which
+ * makes the browser compute overflow-x as auto too. A centred bubble on a
+ * control 6px from that edge would be cut in half. A left-edge call site can
+ * add its own alignment when there is one — there is not one yet.
+ *
+ * CSS only, no JS: the string is already on the element for the label, and a
+ * measuring script would need a viewport this codebase's fake DOM cannot
+ * supply. z-index 45 clears the mobile tab bar (40) and the menu (30); every
+ * overlay above it builds its own stacking context, so a tooltip on a control
+ * inside a modal still paints over that modal's own content.
+ *
+ * base.css flattens the fade under prefers-reduced-motion, so there is no
+ * second opt-out here. */
+
+[data-tooltip] { position: relative; }
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 6px);
+  right: 0;
+  padding: 4px 8px;
+  border-radius: var(--r);
+  /* --panel on --ink measures 15.45:1. */
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  /* Never a hover target of its own: a bubble that swallowed the pointer would
+     flicker against the control that opened it. */
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after { opacity: 1; }

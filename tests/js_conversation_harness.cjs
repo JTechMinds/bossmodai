@@ -281,15 +281,23 @@ async function main() {
     if (!chromeAvatarNodeIsStable) throw new Error("a repaint rebuilt an unchanged avatar");
 
     // The Desk action names its glyph; the source hands over a NAME, and the
-    // view is the only thing that builds an element from it.
+    // view is the only thing that builds an element from it. It is icon-only,
+    // so what used to be its visible text is now its accessible name AND the
+    // tooltip — one string in both places, which is the property that keeps a
+    // glyph from being unnameable to one kind of operator or the other.
     const deskBtn = conversation.element.querySelector("#conversation-desk-toggle");
     if (!deskBtn) throw new Error("an injected openDesk must produce the Desk action");
     const glyph = deskBtn.querySelector("i");
     const chromeActionCarriesItsIcon = Boolean(glyph)
         && glyph.getAttribute("data-lucide") === "lamp-desk"
-        && deskBtn.textContent.includes("Desk");
+        && deskBtn.getAttribute("aria-label") === "Desk"
+        && deskBtn.getAttribute("data-tooltip") === "Desk"
+        && !deskBtn.textContent.includes("Desk");
     if (!chromeActionCarriesItsIcon) {
-        throw new Error(`the Desk action must carry its glyph: ${deskBtn.textContent}`);
+        throw new Error(
+            "the Desk action must be an icon that names itself: "
+            + `${deskBtn.getAttribute("aria-label")} / ${deskBtn.textContent}`,
+        );
     }
 
     // A thread has no one face, so it gets the group glyph rather than nothing.
@@ -311,9 +319,12 @@ async function main() {
         throw new Error("the receipts switch must not sit in the header row");
     }
 
+    // `More actions`, not `View options`: the panel holds the source's
+    // `slot: 'menu'` actions as well as the surface's preferences now.
     const dots = conversation.element.querySelector("#conversation-view-options");
-    if (!dots) throw new Error("the header must offer a view-options menu");
-    if (dots.getAttribute("aria-label") !== "View options") {
+    if (!dots) throw new Error("the header must offer an overflow menu");
+    if (dots.getAttribute("aria-label") !== "More actions"
+        || dots.getAttribute("data-tooltip") !== "More actions") {
         throw new Error(`icon-only needs its own name, got "${dots.getAttribute("aria-label")}"`);
     }
     if (dots.getAttribute("aria-expanded") !== "false") {
@@ -393,12 +404,44 @@ async function main() {
         .querySelector(".conversation-actions")
         .querySelectorAll("button")
         .map((btn) => btn.textContent || btn.getAttribute("aria-label") || "")
-        .filter((name) => name && name !== "View options");
+        .filter((name) => name && name !== "More actions");
+    // `3 participants` sits at the END of the row with the actions now — a
+    // fact about the room, where a long name cannot shove it.
+    const subtitleIsWithTheActions = () => Boolean(conversation.element
+        .querySelector(".conversation-actions")
+        .querySelector(".conversation-subtitle"));
+    /**
+     * The overflow panel's action labels, with the panel opened and shut again.
+     *
+     * Archive and Reopen moved behind the `⋯`: rare and irreversible-looking,
+     * so they do not hold a permanent seat beside the title. Reading them means
+     * opening the panel, which is the point — the row is clean at rest.
+     */
+    const menuActionNames = async () => {
+        const dotsBtn = conversation.element.querySelector("#conversation-view-options");
+        if (!dotsBtn) return null;
+        await dotsBtn.dispatchClick();
+        const open = conversation.element.querySelector(".menu");
+        const names = open
+            ? open.querySelector(".menu-actions").querySelectorAll("button")
+                .map((btn) => btn.textContent)
+            : [];
+        await dotsBtn.dispatchClick();
+        return names.join("|");
+    };
+    // The rename pair moved BESIDE the title — the thing they act on. They sat
+    // at the far right of the header for a while, which meant crossing the bar
+    // to answer a question it was asking on the left.
     const RENAME_IDS = ["conversation-title-cancel", "conversation-title-save"];
     const renameButtons = () => conversation.element
-        .querySelector(".conversation-actions")
+        .querySelector(".conversation-title-actions")
         .querySelectorAll("button")
         .filter((btn) => RENAME_IDS.includes(btn.getAttribute("id")));
+    const renameSlotNames = () => conversation.element
+        .querySelector(".conversation-title-actions")
+        .querySelectorAll("button")
+        .map((btn) => btn.textContent || btn.getAttribute("aria-label") || "")
+        .filter((name) => name);
     const errorLine = () => conversation.element.querySelector(".composer-error").textContent;
     const press = (node, key) => (node.listeners.keydown || []).forEach((fn) => fn({
         key, preventDefault() {}, stopPropagation() {},
@@ -412,8 +455,14 @@ async function main() {
         throw new Error("a control that looks like a heading needs its own name");
     }
     if (titleInput().value !== "Standup") throw new Error("the title must show the name");
-    if (actionLabels().join("|") !== "Archive") {
-        throw new Error(`at rest the row is Archive alone, got ${actionLabels().join("|")}`);
+    // At rest the row is the `⋯` and nothing else — Archive was the only thing
+    // ever in it, and it is behind the menu now.
+    if (actionLabels().join("|") !== "") {
+        throw new Error(`at rest the row carries no text action, got ${actionLabels().join("|")}`);
+    }
+    const archiveLivesInTheMenu = await menuActionNames() === "Archive";
+    if (!archiveLivesInTheMenu) {
+        throw new Error(`Archive must be behind the \`⋯\`, got ${await menuActionNames()}`);
     }
     const renameActionsAbsentAtRest = renameButtons().length === 0;
     if (!renameActionsAbsentAtRest) {
@@ -428,15 +477,19 @@ async function main() {
         throw new Error(`Enter must open edit mode and take focus, got `
             + `${titleInput().getAttribute("data-editing")}`);
     }
-    // The pair joins the row Archive is in, through the same descriptor.
-    // Round four replaced the word `Save` with a green check and added the
-    // red cross beside it — the operator's ask, and until then Esc cancelled
-    // and nothing said so.
+    // The pair joins the action row through the same descriptor every other
+    // action uses. Round four replaced the word `Save` with a green check and
+    // added the red cross beside it — the operator's ask, and until then Esc
+    // cancelled and nothing said so. Archive used to share this row and is
+    // behind the `⋯` now, so the pair is the whole of it while a rename is open.
+    // Beside the TITLE, and nowhere near the action row at the other end.
     const saveActionAppearsBesideArchive =
-        actionNames().join("|") === "Cancel rename|Save name|Archive"
+        renameSlotNames().join("|") === "Cancel rename|Save name"
+        && actionNames().join("|") === ""
         && Boolean(conversation.element.querySelector("#conversation-title-save"));
     if (!saveActionAppearsBesideArchive) {
-        throw new Error(`the rename pair must join the action row, got ${actionNames().join("|")}`);
+        throw new Error(`the rename pair must sit beside the title, got `
+            + `${renameSlotNames().join("|")} / ${actionNames().join("|")}`);
     }
     // Icon-only, so each carries its own accessible name: colour is not the
     // only carrier (SC 1.4.1) and the two shapes differ as well as the hues.
@@ -461,7 +514,7 @@ async function main() {
     const escapeCancelsRenameWithoutSaving = titleInput().value === "Standup"
         && titleInput().getAttribute("data-editing") === "false"
         && renamePayloads.length === patchesBeforeEscape
-        && actionLabels().join("|") === "Archive";
+        && actionLabels().join("|") === "";
     if (!escapeCancelsRenameWithoutSaving) {
         throw new Error(`Escape must discard the draft and send nothing, got `
             + `"${titleInput().value}" after ${renamePayloads.length} patches`);
@@ -482,7 +535,7 @@ async function main() {
         && titleInput().getAttribute("data-editing") === "false"
         && renamePayloads.length === patchesBeforeCancel
         && renameButtons().length === 0
-        && actionNames().join("|") === "Archive";
+        && renameSlotNames().join("|") === "";
     if (!cancelActionRestoresLikeEsc) {
         throw new Error(`the cancel control must restore like Esc, got `
             + `"${titleInput().value}" after ${renamePayloads.length} patches`);
@@ -498,7 +551,7 @@ async function main() {
     const renamePatchesTheChannel = renamePayloads.length === patchesBeforeEscape + 1
         && renamePayloads[renamePayloads.length - 1].name === "Release triage"
         && titleInput().getAttribute("data-editing") === "false"
-        && actionLabels().join("|") === "Archive";
+        && actionLabels().join("|") === "";
     if (!renamePatchesTheChannel) {
         throw new Error(`the rename must PATCH and then close, got `
             + `${JSON.stringify(renamePayloads)} editing `
@@ -524,7 +577,7 @@ async function main() {
     const failedRenameReportsError = errorLine().includes(RENAME_FAILURE);
     const failedRenameKeepsDraft = titleInput().value === "Doomed name";
     const failedRenameStaysInEditMode = titleInput().getAttribute("data-editing") === "true"
-        && actionNames().join("|") === "Cancel rename|Save name|Archive";
+        && renameSlotNames().join("|") === "Cancel rename|Save name";
     if (!failedRenameReportsError) {
         throw new Error(`a failed rename must say so, got "${errorLine()}"`);
     }
@@ -546,7 +599,7 @@ async function main() {
     await conversation.open("t3", "thread");
     const renameDoesNotFollowASwitch = titleInput().value === "Design sync"
         && titleInput().getAttribute("data-editing") === "false"
-        && actionLabels().join("|") === "Archive"
+        && actionLabels().join("|") === ""
         && renamePayloads.length === patchesBeforeSwitch;
     if (!renameDoesNotFollowASwitch) {
         throw new Error(`a switch must drop the rename, got "${titleInput().value}"`
@@ -621,6 +674,8 @@ async function main() {
         chromeAvatarNodeIsStable,
         chromeActionCarriesItsIcon,
         chromeGroupGlyphForThreads,
+        archiveLivesInTheMenu,
+        subtitleIsWithTheActions: subtitleIsWithTheActions(),
         headerHasNoReceiptsSwitch,
         receiptsToggleReachableFromMenu,
         receiptsPreferencePersists,

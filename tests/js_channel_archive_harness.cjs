@@ -9,6 +9,13 @@
  *   sameButton              a switch rebinds the action on the same node
  *   keepShellSwitchEnabled  ... and leaves it enabled
  *   archiveHandoffEnabled   an archive never strands a disabled control
+ *
+ * A later round moved Archive and Reopen behind the header's `⋯` (the source
+ * marks them `slot: 'menu'`), so reaching either one means opening that panel
+ * first. Every property above survives the move unchanged — the node is still
+ * reused across switches, still disabled while a request is in flight, and
+ * still re-enabled by an abort — because all that changed is which parent
+ * conversation/chrome.js appends it to.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -92,11 +99,29 @@ async function settle() {
     for (let i = 0; i < 8; i += 1) await tick();
 }
 
-function archiveBtn() {
+/**
+ * Open the header's overflow panel, if it is not already open.
+ *
+ * A conversation switch closes it (chrome.reset) and so does picking anything
+ * in it, which is the behaviour the operator wants and the reason every reach
+ * for Archive below goes through here rather than caching a node.
+ *
+ * @returns {Promise<object>} The `⋯` button.
+ */
+async function openMenu() {
+    const dots = conversation.element.querySelector("#conversation-view-options");
+    if (!dots) throw new Error("the header must offer the overflow menu");
+    if (dots.getAttribute("aria-expanded") !== "true") await dots.dispatchClick();
+    return dots;
+}
+
+async function archiveBtn() {
+    await openMenu();
     return conversation.element.querySelector("#channel-archive-btn");
 }
 
-function reopenBtn() {
+async function reopenBtn() {
+    await openMenu();
     return conversation.element.querySelector("#channel-reopen-btn");
 }
 
@@ -107,27 +132,29 @@ function assertEnabled(btn, label) {
 
 async function main() {
     await conversation.open("a", "thread");
-    const first = archiveBtn();
+    const first = await archiveBtn();
     assertEnabled(first, "initial A");
 
     // ─── sameButton / keepShellSwitchEnabled ───
     await conversation.open("b", "thread");
-    if (archiveBtn() !== first) {
+    if (await archiveBtn() !== first) {
         throw new Error("a keep-shell switch must rebind the same Archive node");
     }
-    assertEnabled(archiveBtn(), "switch A→B");
+    assertEnabled(await archiveBtn(), "switch A→B");
 
     await conversation.open("a", "thread");
-    if (archiveBtn() !== first) {
+    if (await archiveBtn() !== first) {
         throw new Error("switching back must still be the same Archive node");
     }
-    assertEnabled(archiveBtn(), "switch B→A");
-    const sameButton = archiveBtn() === first;
-    const keepShellSwitchEnabled = sameButton && first.disabled === false;
+    assertEnabled(await archiveBtn(), "switch B→A");
+    const sameButton = await archiveBtn() === first && first.disabled === false;
+    const keepShellSwitchEnabled = sameButton;
 
     // ─── archiveHandoffEnabled ───
-    // The whole real path: the button opens the accessible modal, the modal's
-    // Archive resolves the choice, and the chrome swaps in place.
+    // The whole real path: the panel is open, the row in it puts the panel away
+    // and opens the accessible modal, the modal's Archive resolves the choice,
+    // and the chrome swaps in place.
+    await openMenu();
     void first.dispatchClick();
     await settle();
     if (first.disabled !== true) throw new Error("Archive must disable while in flight");
@@ -137,22 +164,22 @@ async function main() {
     await settle();
 
     if (threads.a.status !== "archived") throw new Error("the confirm must archive the thread");
-    if (archiveBtn()) throw new Error("an archived thread must not still offer Archive");
-    assertEnabled(reopenBtn(), "after archive");
+    if (await archiveBtn()) throw new Error("an archived thread must not still offer Archive");
+    assertEnabled(await reopenBtn(), "after archive");
 
     // Handing back to a live thread leaves a usable Archive, not a stranded one.
     await conversation.open("b", "thread");
-    assertEnabled(archiveBtn(), "archive A → land on B");
-    if (reopenBtn()) throw new Error("a live thread must not offer Reopen");
-    const archiveHandoffEnabled = archiveBtn().disabled === false;
+    assertEnabled(await archiveBtn(), "archive A → land on B");
+    if (await reopenBtn()) throw new Error("a live thread must not offer Reopen");
+    const archiveHandoffEnabled = (await archiveBtn()).disabled === false;
 
     // An aborted archive also re-enables, rather than wedging the control.
-    void archiveBtn().dispatchClick();
+    void (await archiveBtn()).dispatchClick();
     await settle();
     await documentStub.body.querySelector("#channel-archive-back").dispatchClick();
     await settle();
     if (threads.b.status !== "active") throw new Error("Cancel must abort the archive");
-    assertEnabled(archiveBtn(), "aborted archive");
+    assertEnabled(await archiveBtn(), "aborted archive");
 
     conversation.destroy();
 

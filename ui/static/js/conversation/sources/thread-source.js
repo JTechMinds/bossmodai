@@ -236,6 +236,14 @@ const BossModThreadSource = (() => {
          * editable in place. A sealed room does not: archiving seals it against
          * writes, and renaming it is a write. Reopen is the way back.
          *
+         * Both sit behind the header's `⋯` (`slot: 'menu'`) rather than in the
+         * action row. Archiving is irreversible-looking, rare, and the only
+         * thing a thread's header could ever offer — so it spent every visit
+         * proposing itself. Reopen goes with it rather than being promoted on
+         * its own: the two are one control in two states, and splitting them
+         * across the row and the menu would move a button the operator had just
+         * learned where to find.
+         *
          * @returns {{title: string, subtitle: string, actions: object[],
          *            onRename?: (name: string) => Promise<void>}}
          */
@@ -246,8 +254,20 @@ const BossModThreadSource = (() => {
                 subtitle: `${members().length} participants`,
                 onRename: archived ? null : renameThread,
                 actions: [archived
-                    ? { id: 'channel-reopen-btn', label: 'Reopen', onSelect: reopenThread }
-                    : { id: 'channel-archive-btn', label: 'Archive', onSelect: archiveThread }],
+                    ? {
+                        id: 'channel-reopen-btn',
+                        label: 'Reopen',
+                        icon: 'archive-restore',
+                        slot: 'menu',
+                        onSelect: reopenThread,
+                    }
+                    : {
+                        id: 'channel-archive-btn',
+                        label: 'Archive',
+                        icon: 'archive',
+                        slot: 'menu',
+                        onSelect: archiveThread,
+                    }],
             };
         }
 

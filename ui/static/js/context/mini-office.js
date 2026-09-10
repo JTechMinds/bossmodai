@@ -2,8 +2,16 @@
  * BossMod AI — the office summary in the context column.
  *
  * A DOM room summary, not a second canvas renderer. It answers "who is around
- * and who needs me", and hands off to the Office place for the map and to
- * Metrics for the numbers.
+ * and who needs me", and hands off to the Office place for the map.
+ *
+ * It used to hand off to Metrics as well, with an `Open metrics` link under a
+ * line reading `3 on the floor · 3 need you`. Both are gone. The link was a
+ * second front door to a place the header nav has carried on every screen
+ * since the nav was built, and the sentence was the THIRD statement of a fact
+ * already on screen twice: the bell's badge counts what needs the operator,
+ * and the seats in this very panel carry a ping each. Counting the roster back
+ * to someone looking at a picture of it is not news. The panel ends on the
+ * rooms now.
  *
  * The room set is the FLOOR PLAN and the occupancy is the ROSTER. Those are
  * two different questions and this used to answer both with one: it grouped by
@@ -32,6 +40,9 @@ const BossModMiniOffice = (() => {
 
     /** A room with nobody in it is still a room, and says which it is. */
     const EMPTY_ROOM_COPY = 'Empty';
+
+    /** The map link's accessible name and its tooltip: one string, never two. */
+    const OPEN_OFFICE_LABEL = 'Open the office';
 
     /**
      * What the operator is told when the floor plan will not load.
@@ -82,7 +93,6 @@ const BossModMiniOffice = (() => {
         let floor = null;
 
         const roomsEl = h('div', { class: 'mini-office-rooms' });
-        const statEl = h('p', { class: 'mini-office-stat' });
         // Empty until there is something to say; `.context-error:empty` keeps
         // an empty alert from painting a bordered box around nothing.
         const mapErrorEl = h('p', { class: 'context-error', role: 'alert' });
@@ -95,19 +105,25 @@ const BossModMiniOffice = (() => {
                 // healthy is the footer's job, and two indicators that can
                 // disagree are worse than one.
                 h('span', { class: 'context-meta' }, 'live'),
+                // The whole panel is a picture of the floor, so the way to the
+                // full one is a map rather than the word `Open` — which named
+                // the verb and left the operator to guess the noun. `label` is
+                // spent twice, as the accessible name and as the tooltip a
+                // pointer gets, so the two cannot drift apart.
                 h('button', {
-                    class: 'btn-link context-head-link',
+                    class: 'context-head-link',
                     type: 'button',
+                    'aria-label': OPEN_OFFICE_LABEL,
+                    'data-tooltip': OPEN_OFFICE_LABEL,
                     onclick: () => navigate('office'),
-                }, 'Open')),
+                }, h('i', { 'data-lucide': 'map', 'aria-hidden': 'true' }))),
             mapErrorEl,
-            roomsEl,
-            statEl,
-            h('button', {
-                class: 'btn-link',
-                type: 'button',
-                onclick: () => navigate('metrics'),
-            }, 'Open metrics'));
+            roomsEl);
+        // The head's glyph is the only lucide placeholder in this column, and
+        // nothing else mounted here paints — so this view paints its OWN
+        // subtree rather than sweeping the document for a node it built. It is
+        // built once and never replaced, so once is enough.
+        BossModIcons.paint(element, 'mini-office');
 
         /**
          * Group the roster by room name, unplaced agents last.
@@ -187,13 +203,11 @@ const BossModMiniOffice = (() => {
 
             if (!loaded) {
                 roomsEl.append(h('p', { class: 'context-skeleton' }, 'Loading the floor…'));
-                statEl.textContent = '';
                 return;
             }
             if (roster.length === 0) {
                 roomsEl.append(h('p', { class: 'context-empty' },
                     'Nobody is on the roster yet. Add an agent from the rail and they will take a desk.'));
-                statEl.textContent = '';
                 return;
             }
 
@@ -214,11 +228,6 @@ const BossModMiniOffice = (() => {
                         : h('div', { class: 'mini-office-seats' },
                             room.agents.map((agent) => seat(agent, needy)))));
             });
-
-            const wanted = roster.filter((agent) => needy.has(agent.id)).length;
-            statEl.textContent = wanted === 0
-                ? `${roster.length} on the floor · nobody needs you`
-                : `${roster.length} on the floor · ${wanted} need${wanted === 1 ? 's' : ''} you`;
         }
 
         /**

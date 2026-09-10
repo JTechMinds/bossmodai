@@ -397,6 +397,117 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 
+/* An ACTION inside a menu, and its group.
+ *
+ * The conversation header's `⋯` holds two kinds of thing — actions the source
+ * put there (`slot: 'menu'`) and view preferences the surface owns — so the
+ * actions get a parent of their own that conversation/chrome.js can refill
+ * while the panel is open. The panel's own 8px gap separates the two groups,
+ * so this adds no margin: two rules setting the same gap is how the spacing
+ * inside a panel and the spacing between its halves drift apart.
+ *
+ * The row is a full-width target rather than a bordered button. A `.btn` in
+ * here would be a box inside a box, and the label is what the operator reads
+ * — the glyph only tells them which row they are on. --ink on --panel is
+ * 15.45:1 and the hover ground is the same --bg every other row in the app
+ * uses, so a menu row and a roster row behave the same way under the pointer.
+ * base.css already carries the 24px target floor (SC 2.5.8). */
+
+.menu-actions { display: flex; flex-direction: column; gap: 2px; }
+
+.menu-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--r);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.menu-action:hover:not(:disabled) { background: var(--bg); }
+
+/* Decorative, and it inherits the row's ink rather than carrying a colour of
+   its own — 14px, so the glyph stays subordinate to the label the way it does
+   in the place nav. */
+.menu-action svg { width: 14px; height: 14px; flex: none; }
+
+/* An action already in flight. Same treatment .btn[disabled] carries, so a
+   dead control reads the same wherever it is. */
+.menu-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* A LABELLED SETTING inside a menu, and the segmented control that answers it.
+ *
+ * The rail's thread list was a row that renamed itself — `View archives`, then
+ * `View active threads` once you were there. Correct, and too quiet: a control
+ * whose only statement of the current state is which words it is currently
+ * wearing makes you read it to find out where you are. A segment shows both
+ * options at once and fills the one you are on, so the answer is a shape
+ * rather than a sentence.
+ *
+ * The caption is a real <p> with an id, and the group points at it with
+ * aria-labelledby rather than repeating itself in an aria-label — one string
+ * on screen and in the accessibility tree, never two that can drift.
+ *
+ * These pills live in the MENU rather than in the rail. That is what the last
+ * round was actually about: the choice is `Active` almost every time it is
+ * looked at, so it does not earn a permanent row of a 220px column — but once
+ * the operator has opened the menu to change it, it should be unmissable. */
+
+.menu-group { display: flex; flex-direction: column; gap: 6px; }
+
+.menu-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.menu-segment {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.menu-segment-option {
+  flex: 1 1 0;
+  padding: 4px 10px;
+  border-radius: var(--r);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.menu-segment-option:hover { color: var(--ink); }
+
+/* Filled with the surface, not with accent. Two pills where one is a solid
+   blue block reads as a primary action rather than as which list you are
+   looking at — --ink on --bg measures 15.45:1 and says it more quietly. */
+.menu-segment-option[aria-pressed="true"] {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* The rail's THREADS view menu. Same clip, a different answer: this one hangs
+   off a row near the TOP of the rail, so `top: 100%` lands it inside the
+   scroll area rather than below the window and it can stay absolute. What it
+   cannot keep is the 220px floor — the rail is exactly 220px wide, so a panel
+   with that minimum would be sliced by .app-roster's hidden overflow. It takes
+   the width of the header row it hangs off instead, which also lines its edges
+   up with the section title and the `+` above it. */
+.menu[data-menu="thread-view"] {
+  min-width: 0;
+  width: 100%;
+  right: 0;
+}
+
 /* The rail's Add agent menu. Its row sits at the FOOT of a column that clips
    its own overflow, so this variant is placed against the viewport: an
    absolutely positioned panel would be cut off by that clip, and the
@@ -428,23 +539,29 @@
   background: var(--panel);
   font-size: 14px;
   font-weight: 500;
-  color: var(--accent);
+  color: var(--hint);
   text-align: left;
 }
 
-/* Decorative, and it inherits the row's ink — including the --blue-ink hover
-   correction below, so the mark never keeps a colour the label has left. It
-   does not shrink: the label wraps before the icon gives up a pixel. */
+/* Decorative, and it inherits the row's ink, so the mark never keeps a colour
+   the label has left. It does not shrink: the label wraps before the icon
+   gives up a pixel. */
 .add-agent-choice svg {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
 }
 
-/* Hover swaps the ground to --accent-bg, where the resting --accent measures
-   only 4.19:1 and fails AA — --blue-ink is 6.86:1 there. The same correction
-   .roster-hire carries, which is the point: one control, one behaviour. */
-.add-agent-choice:hover { background: var(--accent-bg); color: var(--blue-ink); }
+/* The same pair .roster-hire wears, which is the point and always was: one
+   control, one behaviour — a menu whose rows are louder than the row that
+   opened it reads as a different control.
+
+   That coupling is why this rule changed when the rail's did. Both were accent
+   on an --accent-bg hover, which needed a --blue-ink correction because the
+   resting --accent measures only 4.19:1 on that tint. Neither is blue now, so
+   the correction has nothing left to correct and goes with it: --hint is
+   4.83:1 on --panel and --ink is 15.45:1 on --bg, both clear without help. */
+.add-agent-choice:hover { background: var(--bg); color: var(--ink); }
 
 /* ─── Popover ───
    Anchored under the header, not centred: it belongs to the bell. */

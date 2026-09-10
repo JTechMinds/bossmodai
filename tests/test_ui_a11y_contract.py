@@ -25,6 +25,7 @@ HARNESS_MODULES = [
     SHELL / "header.js",
     SHELL / "roster-people.js",
     SHELL / "thread-create.js",
+    SHELL / "thread-view-menu.js",
     SHELL / "roster-threads.js",
     SHELL / "roster.js",
     SHELL / "footer.js",

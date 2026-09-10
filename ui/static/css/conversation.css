@@ -18,37 +18,55 @@
   background: var(--panel);
 }
 
-/* The same 48px row as the app header: one rhythm line across the window,
-   rather than each surface's bar being whatever its padding added up to. */
+/* --bar, the same row as the app header and the rail's search: one rhythm line
+   across the window, rather than each surface's bar being whatever its padding
+   added up to. */
 .conversation-chrome {
   position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: var(--bar);
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
-/* The `⋯` opens the view-options menu, which core/overlays.js positions
-   against the header above. Icon-only, so its accessible name is its label;
-   composes .btn.btn-sm, so it is the same height as the action beside it. */
-.conversation-view-options { padding-inline: 8px; color: var(--muted); }
+/* The `⋯` opens the overflow menu — the source's `slot: 'menu'` actions over the
+   surface's view options — which core/overlays.js positions against the header
+   above. Icon-only, so its accessible name is its label; composes .btn.btn-sm,
+   so it is the same height as the action beside it. */
+.conversation-view-options { color: var(--muted); }
 .conversation-view-options:hover { color: var(--ink); }
+
+/* The icon-only shape is controls.css's `.btn[data-tooltip]` now — the desk's
+   back arrow wanted the same thing, and a second surface asking for a rule is
+   the signal it belongs to the primitive rather than to either caller. */
 
 .chat-place-body { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 
 .conversation-avatar { display: flex; flex: none; }
 
-/* Name and role on one baseline: two stacked lines made a 48px bar impossible
-   and gave a role the same weight as a name. */
+/* The name, and the two controls that confirm an edit to it. Centred rather
+   than baselined: the second slot holds buttons, and a glyph has no baseline
+   to share with the text beside it. */
 .conversation-identity {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+/* Empty out of edit mode, and it collapses rather than holding a gap open, so
+   the header at rest is the name and nothing beside it. */
+.conversation-title-actions:empty { display: none; }
+
+.conversation-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
 }
 
 .conversation-title { margin: 0; font-size: 15px; font-weight: 600; }
@@ -62,9 +80,19 @@
    The border is RESERVED and transparent rather than absent (round three said
    `border: 0`): the border and padding together occupy exactly what the
    negative margin gives back, so the two rules below can turn the hairline on
-   without moving a pixel of text. */
+   without moving a pixel of text.
+
+   FIXED WIDTH, and that is the point of it. The field used to set its own
+   `size` from its value on every paint, so the header re-flowed on every
+   keystroke — and the check and cross that confirm the edit sit right beside
+   it now, so they moved with it. 24ch is about as much of a room's name as is
+   worth reading at a glance; the cap is 120 characters (the server's), and
+   anything past the box scrolls inside it while editing and ellipsises at
+   rest, which is what a text field does everywhere else. `max-width` keeps it
+   from claiming more than the header has when the window is narrow. */
 .conversation-title-edit {
-  min-width: 0;
+  width: 24ch;
+  max-width: 100%;
   padding: 0 4px;
   margin: -1px -5px;
   border: 1px dotted transparent;
@@ -72,17 +100,19 @@
   background: transparent;
   font: inherit;
   color: inherit;
+  text-overflow: ellipsis;
   cursor: text;
 }
 
-/* Editing changes the TEXT, not the ground. A filled --accent-bg block under
-   base.css's 2px accent ring is what the operator called jarring; they asked
-   for sleek, which is a soft blue and at most a thin dotted grey. --accent on
-   --panel measures 4.83:1, and the hairline is --line-control at 3.10:1 —
-   a control boundary, which is what it now is (SC 1.4.11). */
+/* Editing turns the hairline on and changes NOTHING else. It was a soft blue
+   as well; the text going blue while you type it was the last accent in this
+   row and it read as a state the title had entered rather than as a field you
+   were in. The dotted --line-control border is the whole of the state now —
+   3.10:1 on --panel, a real control boundary (SC 1.4.11) — and the same
+   texture and token the field's focus indicator uses, because they are the
+   same event told twice. */
 .conversation-title-edit[data-editing="true"] {
   border: 1px dotted var(--line-control);
-  color: var(--accent);
 }
 
 /* base.css's global 2px accent outline is REPLACED here, never removed
@@ -95,8 +125,12 @@
   border-color: var(--line-control);
 }
 
+/* A fact about the room, at the END of the row with the actions rather than
+   directly after the name. It used to be shoved by a long title, and the space
+   it held beside the name is where the rename's confirm and cancel now live —
+   next to the thing they act on. */
 .conversation-subtitle {
-  margin: 0;
+  margin: 0 4px 0 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -437,56 +471,108 @@
 
 /* ─── Composer ─── */
 
+/* --dock at rest, which is what 12 + 38 + 12 already added up to. Declaring it
+   makes the relationship with the rail's `Add agent` row a rule rather than a
+   coincidence between two paddings: the two bands rest on one line across the
+   window. The composer is the half that GROWS, so it is the half the token was
+   derived from, and a multi-line draft breaking the alignment is a transient
+   the operator is causing on purpose. */
 .composer {
   flex: 0 0 auto;
-  padding: 12px 16px;
+  min-height: var(--dock);
+  padding: 10px 16px;
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
 
 .composer-row { display: flex; align-items: center; gap: 8px; }
 
+/* Typed onto the transcript, not into a box under it. The grey fill and the
+   --line-control border are both gone: .composer already ends the transcript
+   with a hairline, and a second bordered rectangle inside that band was the
+   heaviest shape on the screen — sitting under a column of soft bubbles.
+ *
+ * Zero horizontal padding is the point rather than a saving. .composer insets
+ * 16px and .transcript insets 16px, so with no padding of its own the caret
+ * starts on exactly the same left edge as every message above it: what you
+ * type lines up with what you sent.
+ *
+ * The placeholder is what identifies the field (SC 1.4.11 asks that a control
+ * be identifiable, not that it be boxed) and --hint measures 4.83:1 on
+ * --panel, so it clears AA as text in its own right. base.css's accent focus
+ * ring is deliberately NOT replaced here: a borderless field that showed
+ * nothing on focus would be the one control on the screen a keyboard operator
+ * could lose (SC 2.4.7). */
 .composer-input {
   flex: 1 1 auto;
-  min-height: 38px;
+  min-height: 32px;
   max-height: 160px;
-  padding: 8px 12px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--bg);
+  padding: 6px 0;
+  border: 0;
+  background: none;
   color: var(--ink);
   resize: none;
   overflow-y: auto;
+  /* The focus hairline arrives rather than appearing. See :focus-visible. */
+  transition: box-shadow 0.15s ease;
+}
+
+.composer-input::placeholder { color: var(--hint); }
+
+/* base.css's 2px accent ring drew a box around the one field whose whole point
+   is that it has none — and it fires on a mouse click too, because a browser
+   always treats a text field as needing a focus indicator. So the indicator is
+   REPLACED, never removed (SC 2.4.7): an underline, inset so it costs no
+   layout and cannot move the row the send button is centred in.
+
+   A HAIRLINE, and the quietest one that is still legal. The colour cannot be
+   the lever: --line-control is 3.10:1 on --panel and 3:1 is the floor
+   SC 1.4.11 sets for a focus indicator, which is exactly why tokens.css
+   reserves this token for borders that ARE the affordance. Fading it does not
+   help either — the same grey at 60% composites to 1.87:1 and at 40% to
+   1.49:1, both well under. So WEIGHT is the lever: 1px rather than 2, which
+   halves the mark without touching the ratio, plus a short fade so it arrives
+   rather than appearing. (WCAG 2.2's ≥2px rule is SC 2.4.13 Focus Appearance,
+   which is AAA; AA asks that the indicator be visible and clear 3:1, and a 1px
+   hairline at 3.10:1 does both.)
+
+   base.css flattens the fade under prefers-reduced-motion, so there is no
+   second opt-out here.
+   .roster-search is spelled the same way. */
+.composer-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -1px 0 var(--line-control);
 }
 
 .composer-input:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* Two icon buttons on the same geometry, one on each side of the field. Send
-   is accent ink rather than a filled blue box: the field's own border is the
-   boundary that matters in this row, and a solid block beside it read as a
-   second, more important input. 38px, comfortably over the 24px floor
-   (SC 2.5.8); --accent on --panel measures 4.83:1. */
-.composer-send,
-.composer-assign {
+/* Send, alone on its side of the row now the clipboard has gone.
+ *
+ * GREY at rest, --ink under the pointer: the same quiet pair every other
+ * frameless glyph in the app wears. It was the last accent mark in a band the
+ * whole redesign was spent quieting, and it is not the primary send path —
+ * Enter is, which the placeholder says in the field beside it. What is left is
+ * a control that answers when you reach for it rather than one that asks to be
+ * looked at. --muted measures 6.54:1 on --panel.
+ *
+ * 32px, matching .header-icon-btn, so the window has ONE icon-target size.
+ * Still comfortably over the 24px floor (SC 2.5.8), and 6px shorter than the
+ * band it used to set the height of. */
+.composer-send {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--r);
   background: none;
+  color: var(--muted);
 }
 
-.composer-send { color: var(--accent); }
-.composer-assign { color: var(--muted); }
+.composer-send:hover:not(:disabled) { background: var(--bg); color: var(--ink); }
 
-.composer-send:hover:not(:disabled),
-.composer-assign:hover:not(:disabled) { background: var(--bg); }
-.composer-assign:hover:not(:disabled) { color: var(--ink); }
-
-.composer-send:disabled,
-.composer-assign:disabled { opacity: 0.5; cursor: not-allowed; }
+.composer-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .composer-error {
   margin: 8px 0 0;

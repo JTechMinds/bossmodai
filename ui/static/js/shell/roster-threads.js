@@ -15,10 +15,19 @@
  * Split out of shell/roster.js in Phase 2B, before the needs surfaces added
  * anything else to a file that had already passed the ~300-line guideline; the
  * creation half was split out of THIS file for the same reason.
+ *
+ * WHICH LIST is shell/thread-view-menu.js — the header row's `⋯`, the panel
+ * behind it, and the segment inside that. A third owner of the same header
+ * row, and a third job: reading a list, making one, and choosing which one.
+ * That half owns no state, so `threadFilter` below is still the one answer to
+ * "which list is showing" and the segment is written from it.
+ *
+ * The pair of `Active` / `Archived` pills used to sit permanently under this
+ * header. They cost a row of a 220px rail to answer a question that is
+ * `Active` almost every visit; behind the `⋯` they cost no height at all.
  */
 const BossModRosterThreads = (() => {
     const { h, clear } = BossModDom;
-
 
     /**
      * Build the Threads section.
@@ -77,25 +86,18 @@ const BossModRosterThreads = (() => {
         let threadFilter = 'active';
 
         const threadList = h('ul', { class: 'roster-threads' });
+
         // Archiving a thread is reversible, so the archived list has to stay
         // reachable — otherwise "seals the room" would read as "deletes it".
-        const filterActive = h('button', {
-            class: 'roster-thread-filter',
-            id: 'channels-filter-active',
-            type: 'button',
-            onclick: () => setThreadFilter('active'),
-        }, 'Active');
-        const filterArchived = h('button', {
-            class: 'roster-thread-filter',
-            id: 'channels-filter-archived',
-            type: 'button',
-            onclick: () => setThreadFilter('archived'),
-        }, 'Archived');
-        const threadFilters = h('div', {
-            class: 'roster-thread-filters',
-            role: 'group',
-            'aria-label': 'Thread list filter',
-        }, filterActive, filterArchived);
+        // The control is the header row's `⋯`; this half owns only the answer
+        // it reports back. `getContainer` is a thunk because the row it hangs
+        // off cannot be built until the button exists to go in it.
+        const view = BossModThreadViewMenu.createThreadViewMenu({
+            getContainer: () => head,
+            getStatus: () => threadFilter,
+            onSelect: setThreadFilter,
+        });
+
         // The creation half. It owns the header row's middle slot, its
         // action group, and the POST; showing what came back is this half's
         // job, which is what onCreated hands over.
@@ -115,15 +117,17 @@ const BossModRosterThreads = (() => {
             },
         });
 
-        // Three slots on one row: the label, what the mode is saying, and the
-        // controls for it. Select mode adds no row of its own.
-        const element = h('section', { class: 'roster-section' },
-            h('div', { class: 'roster-section-head' },
-                h('h2', { class: 'roster-section-title' }, 'Threads'),
-                create.middle,
-                create.actions),
-            threadFilters,
-            threadList);
+        // Four slots on one row: the label, what the mode is saying, the
+        // controls for it, and the view gear. Select mode adds no row of its
+        // own, and the gear sits OUTSIDE create.actions on purpose — that group
+        // is emptied and refilled on every mode swap, and a control that
+        // survives the swap must not live in the node being cleared.
+        const head = h('div', { class: 'roster-section-head' },
+            h('h2', { class: 'roster-section-title' }, 'Threads'),
+            create.middle,
+            create.actions,
+            view.button);
+        const element = h('section', { class: 'roster-section' }, head, threadList);
 
         /** Threads live in the store too: boot validates a restored thread against them. */
         function threads() {
@@ -179,9 +183,19 @@ const BossModRosterThreads = (() => {
             });
         }
 
+        /**
+         * Tell the view menu which list is showing.
+         *
+         * The filter changes from three directions — the segment itself, a
+         * fresh thread landing, and a live `channel_updated` pulling the rail
+         * back to Active — and only the first is an operator action, so the
+         * control is written FROM this half's state rather than the state
+         * being read off the control.
+         *
+         * @returns {void}
+         */
         function applyThreadFilter() {
-            filterActive.setAttribute('aria-pressed', String(threadFilter === 'active'));
-            filterArchived.setAttribute('aria-pressed', String(threadFilter === 'archived'));
+            view.applyStatus();
         }
 
         /**
@@ -265,6 +279,7 @@ const BossModRosterThreads = (() => {
              */
             destroy() {
                 disposers.splice(0).forEach((off) => off());
+                view.destroy();
                 // The creation half owns a document listener of its own.
                 create.destroy();
             },
