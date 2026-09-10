@@ -77,7 +77,8 @@ global.document = {
     get activeElement() { return activeElement; },
 };
 global.window = { document: global.document };
-global.lucide = { createIcons() {} };
+const { installIconsStub } = require("./js_icons_stub.cjs");
+installIconsStub();
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);

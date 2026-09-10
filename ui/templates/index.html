@@ -49,6 +49,10 @@
     <link rel="stylesheet" href="{{ static_url('css/conversation.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/context.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/overlays.css') }}">
+    <!-- The marketplace takeover. AFTER overlays.css and not merged into it:
+         every .market-* rule lives inside .modal-panel[data-size="takeover"],
+         so it must be able to override the overlay primitives it rides on. -->
+    <link rel="stylesheet" href="{{ static_url('css/marketplace.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
 </head>
 <body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden">
@@ -105,6 +109,10 @@
     <script src="{{ static_url('js/core/specialty.js') }}"></script>
 
     <script src="{{ static_url('js/core/dom.js') }}"></script>
+    <!-- The one icon painter, over the vendored lucide bundle loaded in the
+         head. Every surface below paints through it, so it loads ahead of all
+         of them. -->
+    <script src="{{ static_url('js/core/icons.js') }}"></script>
     <!-- The shared controls build nodes through dom.js, so they load after it
          and before every surface that mounts one. -->
     <script src="{{ static_url('js/core/avatar.js') }}"></script>
@@ -210,16 +218,54 @@
          viewer. Both must already be defined, so this block loads last before
          the shell boots. -->
     <script src="{{ static_url('js/context/agent-api.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-templates-api.js') }}"></script>
+
+    <!-- Marketplace: the takeover that installs agent templates. It reads the
+         catalog through agent-api.js and the library through
+         agent-templates-api.js, and context/agent-edit.js opens it, so it
+         loads INSIDE this block rather than before it — after the two clients
+         it calls, before the dialog that calls it.
+
+         Six files, in dependency order and no cycle between them: what the
+         app says about packs it will not offer first (both views spend it),
+         then the pure catalog-and-library projection, then the tabbed reader
+         for one pack's sections, then the detail view that frames it and owns
+         the confirm strip BOTH views spend, then the browse view that hands
+         one pack over to it, then the state module that drives the pair. -->
+    <script src="{{ static_url('js/marketplace/marketplace-withheld.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/marketplace-items.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/marketplace-sections.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/marketplace-detail.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/marketplace-view.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/marketplace.js') }}"></script>
+
     <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-advanced.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-connections.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-bindings.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-hydrate.js') }}"></script>
-    <script src="{{ static_url('js/context/agent-form-catalog.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form.js') }}"></script>
     <script src="{{ static_url('js/context/agent-submit.js') }}"></script>
     <script src="{{ static_url('js/context/agent-recovery.js') }}"></script>
+
+    <!-- Add agent, in dependency order: where the quick layout puts the AI
+         question, then the form's save wiring, then the two halves of the
+         create dialog's steps, then the dialog's pinned footer, then the
+         dialog that swaps between them. agent-quick-connection.js leads
+         because the save wiring's refusal ASKS it which shape the form's
+         connection question is in, and the copy that refusal picks has to name
+         a control the operator can reach. The picker reads the local library
+         through agent-templates-api.js and the quick layout rewrites the form
+         agent-form.js built, so both load after those and before agent-edit.js
+         calls them. agent-dialog-footer.js owns the primary the save wiring is
+         handed, and agent-edit.js is what hands it over. -->
+    <script src="{{ static_url('js/context/agent-quick-connection.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-save.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-template-picker.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-quick.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-dialog-footer.js') }}"></script>
+
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
     <script src="{{ static_url('js/context/desk-files.js') }}"></script>
@@ -267,6 +313,10 @@
     <script src="{{ static_url('js/places/log/diagnostic-detail.js') }}"></script>
     <script src="{{ static_url('js/places/log/log-place.js') }}"></script>
 
+
+    <!-- The rail's Add agent menu opens either the marketplace or the create
+         dialog, so it loads after both rather than with the rest of shell/. -->
+    <script src="{{ static_url('js/shell/add-agent-menu.js') }}"></script>
 
     <!-- Boots last: every module it wires must already be defined. -->
     <script src="{{ static_url('js/shell/shell.js') }}"></script>

@@ -24,6 +24,15 @@ const BossModAgentRecovery = (() => {
     /**
      * Add the one feedback line the whole editor reports through.
      *
+     * A LIVE REGION, and a focus target. Everything this line says is a status
+     * message the operator did not ask for — a save in flight, a save refused,
+     * a form that cannot save at all — so it is announced where it changes
+     * (WCAG 2.2 SC 4.1.3) rather than only being visible. `tabindex="-1"` is
+     * the second half of that: context/agent-dialog-footer.js hands the
+     * keyboard to this line whenever it takes the primary away, because
+     * disabling the button the operator is standing on drops focus to <body>
+     * and the reason it was withheld is exactly what they need next.
+     *
      * @param {HTMLElement} form  The line is appended after the actions row.
      * @returns {{element: HTMLElement, say: (tone: string, text: string) => void,
      *            hide: () => void}}
@@ -34,6 +43,12 @@ const BossModAgentRecovery = (() => {
         const element = document.createElement('div');
         element.id = 'agent-save-feedback';
         element.className = 'hidden mt-3 p-3 rounded-lg text-sm';
+        element.setAttribute('role', 'status');
+        element.setAttribute('aria-live', 'polite');
+        // The whole line is one message; a partial read of a changed sentence
+        // is worse than hearing it again.
+        element.setAttribute('aria-atomic', 'true');
+        element.setAttribute('tabindex', '-1');
         form.appendChild(element);
         return {
             element,
@@ -72,7 +87,12 @@ const BossModAgentRecovery = (() => {
      * Wire Clear Chat History and Reset Runtime.
      *
      * @param {object} deps
-     * @param {HTMLElement} deps.container
+     * @param {HTMLElement} deps.form  The `<form>` the two buttons live in —
+     *   never the host it is published into. Publication MOVES the form out of
+     *   that host and empties it, so a host-rooted lookup finds nothing (see
+     *   the header of context/agent-form.js). Named `form` rather than
+     *   `container` for exactly that reason: a parameter that invites a host
+     *   is how the wrong node gets passed again.
      * @param {() => string|null} deps.agentId  Read at click time, not bound
      *   at wiring time: the form is re-rendered for a different agent without
      *   rebuilding these handlers.
@@ -82,8 +102,8 @@ const BossModAgentRecovery = (() => {
      * @returns {void}
      */
     function bindRecoveryTools(deps) {
-        const { container, agentId, feedback, onSave } = deps || {};
-        if (!container) throw new Error('[agent-recovery] deps.container is required');
+        const { form, agentId, feedback, onSave } = deps || {};
+        if (!form) throw new Error('[agent-recovery] deps.form is required');
         if (typeof agentId !== 'function') throw new Error('[agent-recovery] deps.agentId is required');
         if (!feedback) throw new Error('[agent-recovery] deps.feedback is required');
 
@@ -105,7 +125,7 @@ const BossModAgentRecovery = (() => {
             });
         }
 
-        bind(container.querySelector('#btn-clear-chat-history'), {
+        bind(form.querySelector('#btn-clear-chat-history'), {
             title: 'Clear this chat history?',
             body: "This permanently deletes this agent's direct chat history with the human operator. Completed work, artifacts, and diagnostics are preserved.",
             confirmLabel: 'Clear chat history',
@@ -114,7 +134,7 @@ const BossModAgentRecovery = (() => {
             failed: 'Clear chat failed — check console for details',
         }, BossModAgentApi.apiClearChatHistory);
 
-        bind(container.querySelector('#btn-reset-runtime'), {
+        bind(form.querySelector('#btn-reset-runtime'), {
             title: 'Reset this agent runtime?',
             body: 'This forcibly resets the agent runtime, clears queued triggers, and may block the active task. Completed work history is preserved.',
             confirmLabel: 'Reset runtime',

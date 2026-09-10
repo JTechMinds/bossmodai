@@ -89,7 +89,8 @@ global.document = {
 };
 global.window = { document: global.document };
 let iconPasses = 0;
-global.lucide = { createIcons() { iconPasses += 1; } };
+const { installIconsStub } = require("./js_icons_stub.cjs");
+installIconsStub(() => { iconPasses += 1; });
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);

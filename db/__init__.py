@@ -38,6 +38,13 @@ from db.agent_prompt_history_policies import (
     get_agent_prompt_history_policy,
     update_agent_prompt_history_policy,
 )
+from db.agent_templates import (
+    delete_agent_template,
+    find_agent_template,
+    get_agent_template,
+    list_agent_templates,
+    upsert_agent_template,
+)
 from db.artifacts import (
     build_artifact_title,
     get_artifact,
@@ -316,6 +323,11 @@ __all__ = [
     "build_artifact_title",
     "create_agent_prompt_history_policy",
     "ensure_agent_prompt_history_policy",
+    "delete_agent_template",
+    "find_agent_template",
+    "get_agent_template",
+    "list_agent_templates",
+    "upsert_agent_template",
     "get_artifact",
     "get_artifact_by_absolute_path",
     "get_agent_cli_state",

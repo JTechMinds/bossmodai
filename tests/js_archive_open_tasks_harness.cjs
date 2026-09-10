@@ -13,8 +13,8 @@ const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
-global.lucide = { createIcons() {} };
-global.window.lucide = global.lucide;
+const { installIconsStub } = require("./js_icons_stub.cjs");
+installIconsStub();
 
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,

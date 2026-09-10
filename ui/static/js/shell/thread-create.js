@@ -158,7 +158,7 @@ const BossModThreadCreate = (() => {
             // The departing control is gone from the document; leaving focus
             // where it was would drop the keyboard on the body.
             if (hadFocus) (selecting ? cancelSelect : newThread).focus();
-            lucide.createIcons();
+            BossModIcons.paintDocument('thread-create');
         }
 
         /**

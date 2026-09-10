@@ -174,9 +174,9 @@ const BossModAgentFormFields = (() => {
      * The PRIMARY is not here. It was, at the bottom of a form tall enough to
      * scroll, while the dialog's Cancel sat pinned and obvious — and the
      * operator could not find it. It is now `#agent-form-submit` in the
-     * dialog's pinned row (context/agent-edit.js), submitting this form from
-     * outside it through the HTML `form` attribute, so the form's validation
-     * and its submit handler are unchanged.
+     * dialog's pinned row (context/agent-dialog-footer.js), submitting this
+     * form from outside it through the HTML `form` attribute, so the form's
+     * validation and its submit handler are unchanged.
      *
      * Delete stays. It is destructive and belongs away from the primary, not
      * beside it, which is why it did not travel with it.

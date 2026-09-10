@@ -1,7 +1,9 @@
 # Agent packs
 
 Packs are YAML files in a GitHub repository, contributed by pull request.
-There is no custom store backend, module marketplace, or storefront UI.
+There is no custom store backend: the catalog is that repo. The app
+browses it read-only in a marketplace view and keeps what it installs in
+a local template library.
 
 Each pack file is a hire-contract template: specialty, description, and
 what done looks like. Optional personality and tools hints may be
@@ -94,8 +96,34 @@ packs/
   should fail when they drift.
 
 The app reads `catalog.yaml` first at the pinned commit or tag, then
-fetches the pack file from that index row. It does not browse or render
-a storefront.
+fetches the pack file from that index row. `GET /api/agent-packs`
+returns that index at the pin as browse cards; each card carries the
+fields, the labeled sections and the content hash read from the one pack
+fetch it already made. Nothing is mirrored or hosted locally.
+
+Each listed pack goes through the same parse and senior-quality gate that
+install runs, so a card in `categories` is always installable. A row that
+is not read, or that is read and fails either check, is withheld — absent
+from `categories` and from the category counts — and reported in
+`withheld` as
+`{ "id", "path", "category", "title", "kind", "code", "message" }`, so a
+catalog maintainer sees what their own repo shipped instead of watching a
+pack vanish.
+
+`kind` is the fact, and it is decided by which call failed rather than by
+reading `code` back:
+
+- `"refused"` — the pack file was read and this app rejected its content
+  (`pack_quality`, `invalid_yaml`, `invalid_schema`, `missing_field`,
+  `unsupported_kind`, `dangerous_key`, `pack_too_large`). The maintainer
+  has to change the pack.
+- `"unavailable"` — the pack file could not be read at all
+  (`fetch_failed`). Nothing is known about its content; the move is to
+  retry.
+
+Both stay out of the grid, because you cannot install what you cannot
+read. A catalog whose every pack is invalid is an empty `categories` plus
+a full `withheld`, not an error.
 
 ## Pin
 
@@ -118,6 +146,30 @@ Catalog body (resolves through `catalog.yaml`):
 Path is accepted only when that path is listed in the index at the pin.
 GitHub URL body:
 `{ "url": "https://github.com/owner/repo/blob/<sha>/packs/engineering/code-auditor.agent.yaml" }`.
+
+## Template library
+
+Installing writes one `agent_templates` row: a local, pinned snapshot of
+the pack file — specialty, description, what done looks like, hints,
+author, the commit it was read at, and the sha256 of its canonical YAML.
+That row is what pre-fills the create-agent form. Installing still never
+creates an agent.
+
+`GET /api/agent-templates` lists installed rows; it is a local read with
+no fetch, and each row carries its description and done bar split into
+their labeled sections. `POST /api/agent-templates` installs one by
+catalog `id` or by GitHub `url`, through the same `import_pack` pipeline
+as above — pin validation, the allowlist, the trust gate, senior
+quality, and the refusal of `agent_id` are inherited unchanged, and
+there is no second import path. Re-installing updates the row instead of
+duplicating it. `DELETE /api/agent-templates/{id}` removes one row;
+agents already created from it are untouched, because a template is a
+snapshot and not a live link.
+
+Staleness is decided by comparing content hashes, never commit SHAs: the
+catalog pin is repo-wide, so a SHA comparison would mark every installed
+template stale on any pin bump, including packs whose file never
+changed.
 
 ## Trust
 

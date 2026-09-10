@@ -1,175 +1,57 @@
 /**
- * BossMod AI — hire and edit, in one centred dialog.
+ * BossMod AI — create and edit, in one centred dialog.
  *
- * Phase 4 finished the split spec 2 planned: agent-panel.js is gone and its
- * 825 lines are eight modules under context/. What lands here is the entry
- * point the column already called plus the orchestration `renderInline` always
- * did — the in-flight submit gate and the save and delete paths. The form
- * itself is context/agent-form.js, its fields are context/agent-fields.js,
- * context/agent-form-fields.js and context/agent-form-advanced.js, its
- * per-field behaviours are context/agent-form-bindings.js, what the server is
- * told is context/agent-submit.js, the feedback line and the two destructive
- * tools are context/agent-recovery.js, and every request is
- * context/agent-api.js.
+ * The entry point the column already called, and the dialog around the form
+ * rather than the form itself: what the operator is asked FIRST, which footer
+ * each step gets, and where a save or a delete leaves them. Building the form
+ * and saving through it is context/agent-form-save.js, which this hosts and
+ * calls but does not re-export — nothing outside reached it through here, and
+ * a second name for one function is a seam that is not there. The marketplace
+ * is js/marketplace/. What it owns beyond the dialog is the wiring the
+ * dock-era host did: a successful CREATE closes the form and opens the new
+ * agent's conversation and desk, and a delete falls the column back to the
+ * office.
  *
- * What this module owns beyond that is the wiring the dock-era host used to
- * do: after a successful CREATE the form closes and the new agent becomes the
- * open conversation, and after a delete the column falls back to the office.
+ * ONE DIALOG AT A TIME, and its state is per render. The rail's Add agent row
+ * is reachable while a desk's Edit dialog is up, so a second dialog would
+ * rewrite the first one's identity and turn an edit into a create. Both flows
+ * are core/overlays.js's wide modal — one trap, one Esc, the title and the
+ * dismissal pinned outside a body that scrolls.
  *
- * ONE DIALOG AT A TIME, and its state is per render. Which agent the form is
- * for lived on the module while the column could only ever host one form; the
- * rail's Hire row is reachable from anywhere now, so a second dialog would
- * have rewritten the first one's identity and turned an edit into a create.
+ * CREATE IS TWO STEPS OVER ONE BODY: the template picker, then the form,
+ * swapped with `hidden`. The form is built on the first pick and rebuilt only
+ * when the picked template CHANGES, so a draft survives Back and re-picking
+ * the same cell and no "discard your draft?" prompt has to exist. A second
+ * stacked dialog for step two was rejected for the reason above.
  *
- * BOTH FLOWS ARE THE SAME DIALOG. Hiring used to be a context-column mode
- * (`contextMode: 'desk'` with no `deskAgentId`) and editing swapped the desk
- * panel out in place, so one form had two hosts, two ways in, and one shared
- * column ~320px wide to render a two-column connection matrix in. It is now
- * core/overlays.js's wide modal — centred in the viewport, wide enough for the
- * form, with the title and the dismissal pinned outside a body that scrolls.
+ * The footer is PER STEP, and it is context/agent-dialog-footer.js's — the row
+ * itself, the Back that has to outlive a click, and the state of the primary
+ * inside it. This says which step is on screen; that says what the row holds.
  *
- * The dialog's action row holds Cancel and the PRIMARY, in that order. Round
- * three left the primary at the bottom of the scroll because a submit button
- * moved out of its form stops submitting it; the operator then could not find
- * `Create Agent` at all. `<button type="submit" form="agent-form">` is the
- * standard answer — it submits that form from anywhere in the document, so
- * the form's constraint validation and its submit handler (and through it the
- * seed-legibility colour clamp) are exactly as they were. Enter in a text
- * field still submits, because the form is still a form.
- *
- * DELETE did not travel with it. It is destructive and belongs away from the
- * primary, so it stays in the form body where context/agent-form-fields.js
- * builds it.
+ * `Browse marketplace` CLOSES this dialog and the takeover reopens it on step
+ * one. Never both at once — two focus traps over one task is exactly what the
+ * one-dialog guard exists to prevent.
  */
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
+    const HYDRATE = BossModAgentFormHydrate;
+    const QUICK = BossModAgentFormQuick;
+    const FOOTER = BossModAgentDialogFooter;
+    // The form's own wiring — building it, saving it, deleting through it — is
+    // context/agent-form-save.js. Named here because this module hosts it.
+    const { renderInline } = BossModAgentFormSave;
 
     const HIRE_TITLE = 'Add agent';
     const EDIT_TITLE = 'Edit role';
+    // A failed render is recoverable in both flows, and differently in each:
+    // step one is still mounted with its list, and an edit has to be reopened.
+    // Neither is "refresh the page", which is what this said before step two.
+    const FAILED_COPY = 'The agent editor failed to load.';
+    const FAILED_BACK = 'Go back and pick again.';
+    const FAILED_CLOSE = 'Close this dialog and open it again to retry.';
 
-    /**
-     * The open dialog, or null. One at a time: two stacked wide modals fight
-     * over Escape and the focus trap, and the second one to open would be the
-     * only one the keyboard could reach.
-     */
+    /** The open dialog, or null. One at a time — see the header. */
     let openDialog = null;
-
-    /**
-     * Render the form into `container` and own everything that happens after.
-     *
-     * @param {HTMLElement} container
-     * @param {object|null} agent      null to hire.
-     * @param {(saved?: object) => void} onSave    Called with the saved agent
-     *   after a create/update, and with nothing after a recovery action, which
-     *   saves nothing about the agent itself.
-     * @param {() => void} onDelete
-     * @returns {Promise<void>} Rejects only if the form itself cannot render;
-     *   a failed SAVE becomes the in-form feedback and the draft is kept.
-     */
-    async function renderInline(container, agent, onSave, onDelete) {
-        // Per render, not per module. Which agent this form is for, and whether
-        // it creates or updates, belong to THIS form: as module state a second
-        // form would rewrite the first one's identity, and an edit already open
-        // would start saving as a create.
-        let isCreating = !agent;
-        let currentAgentId = agent?.id || null;
-        if (agent?.id) {
-            const full = await BossModAgentApi.fetchAgent(agent.id);
-            if (full) {
-                agent = { ...agent, ...full };
-            }
-        }
-
-        await BossModAgentForm.buildFormHTML(container, agent);
-
-        const form = container.querySelector('#agent-form');
-        const deleteBtn = container.querySelector('#btn-delete-agent');
-
-        // Fetch connections for submit resolution
-        let connections = [];
-        try {
-            const res = await apiFetch('/api/connections');
-            connections = await res.json();
-        } catch { /* empty */ }
-
-        const RECOVERY = BossModAgentRecovery;
-        const feedback = RECOVERY.createFeedback(form);
-        const say = (tone, text) => feedback.say(tone, text);
-        RECOVERY.bindRecoveryTools({
-            container,
-            agentId: () => currentAgentId,
-            feedback,
-            onSave: () => { if (onSave) onSave(); },
-        });
-
-        // Pinned in the dialog's action row, OUTSIDE the form it submits, so
-        // it is not reachable from `container`. The id is document-unique —
-        // exactly one element owns it — which is what makes this the lookup
-        // rather than a search. A caller that renders the form without a
-        // dialog gets null and no busy label; the save itself is the form's.
-        const submitBtn = document.querySelector('#agent-form-submit');
-        const hireSubmit = BossModGates.createInFlightGate();
-
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (hireSubmit.busy()) return;
-
-            await hireSubmit.run(async () => {
-                if (submitBtn) {
-                    submitBtn.disabled = true;
-                    submitBtn.textContent = isCreating ? 'Creating…' : 'Saving…';
-                }
-                say('busy', 'Saving...');
-
-                let savedAgent = null;
-                try {
-                    const { agentData, promptHistoryPolicy } = await BossModAgentSubmit.buildSubmitData(form, connections);
-                    if (isCreating) {
-                        savedAgent = await BossModAgentApi.apiCreateAgent(agentData);
-                    } else {
-                        savedAgent = await BossModAgentApi.apiUpdateAgent(currentAgentId, agentData);
-                    }
-
-                    try {
-                        await BossModAgentApi.apiUpdatePromptHistoryPolicy(savedAgent.id, promptHistoryPolicy);
-                    } catch (policyErr) {
-                        console.error('[agent-edit] Prompt history policy save failed:', policyErr);
-                        say('warn', 'Agent saved, but AI history settings failed to save.');
-                        if (onSave) onSave(savedAgent);
-                        return;
-                    }
-
-                    say('ok', 'Saved successfully');
-                    setTimeout(() => feedback.hide(), 3000);
-                    if (onSave) onSave(savedAgent);
-                } catch (err) {
-                    console.error('[agent-edit] Save failed:', err);
-                    say('bad', err?.message || 'Save failed — check console for details');
-                } finally {
-                    if (submitBtn && (!isCreating || !savedAgent)) {
-                        submitBtn.disabled = false;
-                        submitBtn.textContent = isCreating ? 'Create Agent' : 'Save Changes';
-                    }
-                }
-            });
-        });
-
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', () => {
-                if (!currentAgentId) return;
-                RECOVERY.confirmDestructive(
-                    'Delete this agent?', 'This cannot be undone.', 'Delete agent',
-                    () => {
-                        void BossModAgentApi.apiDeleteAgent(currentAgentId)
-                            .then(() => { if (onDelete) onDelete(); })
-                            .catch((err) => {
-                                console.error('[agent-edit] Delete failed:', err);
-                                say('bad', err?.message || 'Delete failed — check console for details');
-                            });
-                    });
-            });
-        }
-    }
 
     /**
      * Open the agent form as a centred dialog.
@@ -177,24 +59,23 @@ const BossModAgentEdit = (() => {
      * @param {object} deps
      * @param {object} deps.store        Application store.
      * @param {object|null} [deps.agent] The roster row to edit, or null/absent
-     *   to hire. Both open the same dialog; only the title and whether the
-     *   form offers Delete differ.
-     * @param {() => void} [deps.onClosed]  Called once after the dialog
-     *   closes, however it closed — a save, a delete, Cancel, or Esc. The desk
-     *   uses it to repaint from what the save changed; the rail needs nothing.
-     * @returns {{ close: () => void }} So a host that is being torn down can
-     *   take its dialog with it.
-     * @throws {Error} When store is missing. The form writes the new agent
-     *   into the store on a create, so a dialog without one would save an
-     *   agent the operator is then never shown.
+     *   to create. Editing is one step and the full form; creating is the
+     *   picker first.
+     * @param {() => void} [deps.onClosed]  Called once after the dialog closes,
+     *   however it closed — a save, a delete, Cancel, or Esc. It does NOT fire
+     *   when the dialog stands down for the marketplace: the flow has not ended
+     *   there, and the dialog the takeover reopens carries the same callback.
+     * @returns {{ close: () => void }} So a host being torn down can take its
+     *   dialog with it.
+     * @throws {Error} When store is missing. The form writes the new agent into
+     *   the store on a create, so a dialog without one would save an agent the
+     *   operator is then never shown.
      */
     function openAgentModal(deps) {
         const { store, agent, onClosed } = deps || {};
         if (!store) throw new Error('[agent-edit] deps.store is required');
-        // The operator already has one open — the rail's Hire row is reachable
-        // while a desk's Edit dialog is up. Handing back the open one is the
-        // only answer that does not either stack two traps or throw away a
-        // draft nobody asked to discard.
+        // Handing back the open one is the only answer that neither stacks two
+        // traps nor throws away a draft nobody asked to discard.
         if (openDialog) return openDialog;
 
         // Captured now: the form reports a save without saying which kind it
@@ -202,40 +83,119 @@ const BossModAgentEdit = (() => {
         // conversation. Editing must leave them where they were.
         const wasCreating = !agent;
         let destroyed = false;
+        /** Which template the form on screen holds; `null` is Blank, and the
+         *  sentinel is "no form built yet". */
+        let builtFor;
+        let step = null;
+        // Set by Browse marketplace so the takeover opens from onClose, once
+        // this dialog has released its trap and put focus back. Opening it from
+        // the action itself would mount a second trap over a live one.
+        let browsing = false;
 
         const formEl = h('div', { class: 'agent-form-host' });
-        let modalBody = formEl;
-        let bindCatalogForm = null;
+        let picker = null;
+        let body = formEl;
         if (wasCreating) {
-            const add = BossModAgentFormCatalog.createAddBody(formEl);
-            modalBody = add.body;
-            bindCatalogForm = add.bindForm;
+            picker = BossModAgentTemplatePicker.createPicker({
+                onPick: (template) => { void pickTemplate(template).catch(failed); },
+                onBrowse: () => browse(),
+            });
+            formEl.hidden = true;
+            body = h('div', { class: 'agent-add-body' }, picker.element, formEl);
         }
+
+        // What the pinned row offers, and what its primary is allowed to say,
+        // is one owner's — scoped to THIS dialog, so a build that outlives its
+        // own cannot repaint the next one's button.
+        const chrome = {
+            creating: wasCreating,
+            onBack: () => showStep('picker'),
+            onBrowse: () => browse(),
+        };
+
         const modal = BossModOverlays.createModal({
             title: wasCreating ? HIRE_TITLE : EDIT_TITLE,
-            body: modalBody,
-            // The variant, not a second modal: same trap, same Esc, same
-            // focus restoration, more room and a body that scrolls.
+            // The variant, not a second modal: same trap, same Esc, same focus
+            // restoration, more room and a body that scrolls.
+            body,
             size: 'wide',
-            // Both pinned outside the scroll, Cancel then the primary. The
-            // primary carries `form`, so it submits the form it is not inside
-            // and does NOT close the dialog itself — a save the form refuses
-            // has to leave the operator's draft on screen to fix.
-            actions: [
-                { label: 'Cancel', tone: 'quiet' },
-                {
-                    label: wasCreating ? 'Create Agent' : 'Save Changes',
-                    tone: 'primary',
-                    id: 'agent-form-submit',
-                    form: 'agent-form',
-                },
-            ],
+            actions: FOOTER.actionsFor(wasCreating ? 'picker' : 'form', chrome),
             onClose: () => {
                 destroyed = true;
                 openDialog = null;
+                if (browsing) {
+                    browsing = false;
+                    BossModMarketplace.open({
+                        onClosed: () => { openAgentModal({ store, agent, onClosed }); },
+                    });
+                    return;
+                }
                 if (onClosed) onClosed();
             },
         });
+
+        const footer = FOOTER.createFooter(modal, chrome);
+        const { primary } = footer;
+
+        /** Stand down for the takeover. close() is idempotent, so the action
+         *  row's own close after this one is a no-op. */
+        function browse() {
+            browsing = true;
+            modal.close();
+        }
+
+        /**
+         * Swap between the picker and the form.
+         *
+         * The footer rebuilds in place, destroying whichever button held focus
+         * — in BOTH directions — and createModal only places focus on mount.
+         * So the swap places it again: the Find box on the way back, and the
+         * Name input once its caller has built the form.
+         *
+         * @param {'picker'|'form'} next
+         * @returns {void}
+         */
+        function showStep(next) {
+            if (step === next) return;
+            step = next;
+            picker.element.hidden = next === 'form';
+            formEl.hidden = next !== 'form';
+            footer.show(next);
+            if (next !== 'form') picker.focus();
+        }
+
+        /**
+         * A cell was picked. The form is rebuilt only for a DIFFERENT pick, so
+         * Back and re-picking the same cell keep the draft; picking another
+         * template replaces its fields wholesale and is meant to lose it.
+         *
+         * ONE PICK OWNS THE DIALOG: renderInline answers whether this build is
+         * still the one being waited for, and a pick that lost writes nothing —
+         * no form, no chip, no `builtFor`, no focus. `builtFor` records only a
+         * build that LANDED and is on screen, so a lost pick retries, not no-ops.
+         *
+         * @param {object|null} template  null is Blank.
+         * @returns {Promise<void>}
+         */
+        async function pickTemplate(template) {
+            const key = template ? template.id : null;
+            // The panel swaps FIRST, so the pick is acknowledged while the form
+            // loads rather than after it. The primary that swap pins is
+            // withheld by renderInline until the form it submits is on screen.
+            showStep('form');
+            if (key !== builtFor) {
+                builtFor = undefined;
+                const landed = await renderInline({ container: formEl, agent: null, primary, onSave, onDelete });
+                if (!landed || step !== 'form') return;
+                builtFor = key;
+                if (template) {
+                    HYDRATE.applyHireFields(formEl, QUICK.templateFields(template));
+                    QUICK.applyQuickLayout(formEl, template);
+                }
+            }
+            const name = formEl.querySelector('input[name="name"]');
+            if (name) name.focus();
+        }
 
         /**
          * A save landed. `savedAgent` is absent for the recovery tools (clear
@@ -267,21 +227,48 @@ const BossModAgentEdit = (() => {
             modal.close();
         }
 
-        // renderInline resolves after the form is in the DOM; a failure is the
-        // operator's to see, not the console's alone.
-        void renderInline(formEl, agent || null, onSave, onDelete)
-            .then(() => { if (bindCatalogForm) bindCatalogForm(formEl); })
-            .catch((err) => {
-                console.error('[agent-edit] the agent form failed to render', err);
-                if (destroyed) return;
-                clear(formEl);
-                formEl.append(h('p', { class: 'context-error', role: 'alert' },
-                    'The agent editor failed to load. Refresh the page and try again.'));
-            });
+        /**
+         * A form that cannot render is the operator's to see, not the console's
+         * alone. Nothing stays recorded as built, so the next pick is a retry.
+         *
+         * ONLY ON THE STEP THAT ASKED FOR IT, which `pickTemplate` checks and
+         * this did not. Back is live while a build runs, so a build can fail
+         * after the operator has left it: the error paragraph then went into
+         * the hidden form host where nobody could read it, and "repairing the
+         * footer" took `Browse marketplace` off the picker — the only door out
+         * of an empty library — and put back a Back that led to the step
+         * already on screen, then gave it focus. On the picker there is
+         * nothing to repair and nothing to say; the build is recorded as not
+         * built and picking again rebuilds.
+         *
+         * Where it does repair, the FOOTER is repaired with the body — the
+         * primary submits `#agent-form` by id and the host no longer holds
+         * one, so a row left as it was would offer a button that does nothing
+         * at all and says nothing about why. What that leaves is
+         * context/agent-dialog-footer.js's `recovery()`.
+         *
+         * @param {Error} err
+         * @returns {void}
+         */
+        function failed(err) {
+            console.error('[agent-edit] the agent form failed to render', err);
+            builtFor = undefined;
+            if (destroyed) return;
+            if (wasCreating && step !== 'form') return;
+            clear(formEl);
+            formEl.append(h('p', { class: 'context-error', role: 'alert' },
+                `${FAILED_COPY} ${wasCreating ? FAILED_BACK : FAILED_CLOSE}`));
+            footer.recovery();
+        }
+
+        // The picker owns its own loading, empty, failed and ready states, so
+        // step one has nothing to await.
+        if (wasCreating) void picker.refresh();
+        else void renderInline({ container: formEl, agent: agent || null, primary, onSave, onDelete }).catch(failed);
 
         openDialog = { close: () => modal.close() };
         return openDialog;
     }
 
-    return { openAgentModal, renderInline };
+    return { openAgentModal };
 })();

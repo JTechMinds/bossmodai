@@ -104,15 +104,22 @@ const BossModShell = (() => {
             bus,
             apiFetch,
             navigate,
-            // Hiring is the same centred dialog editing is, opened over
-            // whatever the operator is looking at. Chat first, because a
-            // successful hire opens the new agent's conversation and their
-            // desk — the same reason roster.js navigates before it selects.
+            // The row opens a MENU, not the dialog: the create form stopped
+            // being the only door when templates got a library. Chat first,
+            // because a successful create opens the new agent's conversation.
             onHire: () => {
                 if (store.getState().place !== 'chat') navigate('chat');
-                BossModAgentEdit.openAgentModal({ store });
+                addAgent.toggle();
             },
         });
+        // The two doors live in shell/add-agent-menu.js; what the shell owns
+        // is finding the row they hang off, once, after the rail is built.
+        const hireRow = rosterElement.querySelector('.roster-hire');
+        if (!hireRow) throw new Error('[shell] the roster has no Add agent row');
+        const addAgent = BossModAddAgentMenu.createAddAgentMenu({
+            anchor: hireRow, container: rosterElement, store,
+        });
+
         BossModFooter.mount(requireElement('app-footer'), { store, bus });
         BossModBanners.mount({
             store,

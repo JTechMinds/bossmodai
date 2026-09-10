@@ -179,6 +179,125 @@ def test_avatar_create_builds_one_node_two_ways() -> None:
     assert payload["handlerlessButtonThrows"] is True
 
 
+def test_a_two_word_name_earns_two_initials_and_a_third_word_earns_none() -> None:
+    """One letter is enough for a face; a category is read by its mark alone.
+
+    `initial` answers for a person, who has their name printed beside them.
+    A thing identified by its mark across a grid — the catalog's categories —
+    needs the letters that tell `Data Analyst` from `Design`. The cap is the
+    other half of the rule: a third word gets no third letter, because the
+    circle is sized for a face and controls.css sets type for a pair and for
+    nothing wider.
+
+    A hyphen is INSIDE a word here. This module also draws people, and
+    `Jean-Luc Picard` is JP.
+    """
+    payload = _avatar_payload()
+    got = payload["initials"]
+    assert got["oneWord"] == "E"
+    assert got["twoWords"] == "DA"
+    assert got["threeWords"] == "SD", "a third word must not earn a third letter"
+    assert got["hyphenIsOneWord"] == "JP"
+    assert got["padded"] == "PD", "runs of whitespace are one boundary, not several"
+    # An unnamed thing gets the same `?` a nameless agent gets — never an empty
+    # circle, which identifies nothing at all.
+    assert got["nameless"] == "?"
+    assert got["absent"] == "?"
+    # The max is a parameter, and asking for no letters is a caller bug.
+    assert got["explicitMaxOne"] == "D"
+    assert payload["maxBelowOneThrows"] is True
+
+    # The cap is written once and read by both halves of the rule.
+    avatar = _read(JS / "core/avatar.js")
+    assert "const MAX_INITIALS = 2;" in avatar
+    assert "MAX_INITIALS," in avatar.rsplit("return {", 1)[-1]
+
+
+def test_two_initials_get_the_smaller_type_size_in_the_same_circle() -> None:
+    """`DA` at the one-letter size overruns the circle it is centred in.
+
+    A capital on this stack covers about 0.72em, so a pair spans ~1.45em where
+    a single letter spans ~0.72em, and the widest flat string a circle of
+    diameter D holds is the side of its inscribed square, 0.707D. At `chip`
+    that ceiling is 9.9px and an unreduced pair measures 11.6px.
+
+    The correction is a MODIFIER in the stylesheet that owns `.avatar`, not an
+    inline style: geometry is CSS's, and an inline font-size would have to be
+    computed per size in JS. `create` adds the class from the glyph it was
+    handed, so no caller has to remember to ask for it.
+    """
+    payload = _avatar_payload()
+    assert payload["duoText"] == "DA"
+    assert payload["duoClass"] == "avatar avatar-lg avatar-duo"
+    # A single letter must NOT be shrunk: every existing caller renders one.
+    assert payload["soloClass"] == "avatar avatar-lg"
+    # A glyph the circle cannot hold, and one that is not there at all, both
+    # render a mark nobody can read. Loud at construction, never on screen.
+    assert payload["overlongTextThrows"] is True
+    assert payload["blankTextThrows"] is True
+
+    css = _read(CSS / "controls.css")
+    # One rule per size, because each size declares its own font-size and a
+    # single-class rule could carry only one value.
+    for size, px in (("chip", 6), ("sm", 8), ("md", 9), ("lg", 12)):
+        rule = f".avatar-{size}.avatar-duo"
+        assert f"{rule} " in css or f"{rule}{{" in css, rule
+        block = css.split(rule, 1)[1].split("}", 1)[0]
+        assert f"font-size: {px}px" in block, block
+        # font-size ONLY: .avatar's em-based optical lift has to keep scaling.
+        assert "padding" not in block and "width" not in block, block
+
+
+def test_a_derived_seed_is_stable_spread_and_measured() -> None:
+    """An open-ended set has no stored colour, and must not get a lookup table.
+
+    The catalog's categories are whatever `packs/<category>/` a contributor
+    adds, so a colour per known category is a table that goes stale the first
+    time someone adds one. `seedFor` derives the seed from the KEY instead and
+    hands it to the same `tintFor` every stored colour goes through — one
+    contrast routine in the module, not two.
+
+    The family is swept the way the palette is: by measuring every colour it
+    can produce with this file's own copy of the WCAG formula. All 360 hues
+    already clear AA on their own tint, so the darkening loop never runs and
+    the hue derived is the hue painted.
+    """
+    payload = _avatar_payload()
+    assert payload["seedFamilySize"] == 360, "the whole hue circle, not a slice"
+    assert payload["seedsMeetAA"] is True, (
+        f"worst derived pair {payload['seedWorstHex']} at {payload['seedWorstRatio']}:1"
+    )
+    assert payload["seedWorstRatio"] >= 4.5
+    assert payload["seedsNeverDarken"] is True, (
+        "a darkened seed is a hue bent toward its neighbours"
+    )
+    # A derived colour is one this app would equally accept as an agent's, so
+    # there is no second class of colour here.
+    assert payload["seedsAreOfficeLegible"] is True
+
+    # Deterministic, and the same category however it was typed.
+    assert payload["seedIsStable"] is True
+    assert payload["seedIgnoresCaseAndSpace"] is True
+    assert payload["twoKeysTwoSeeds"] is True
+    # No key is a real state and answers with the pair the module already keeps
+    # for an agent with no colour — never an empty circle.
+    assert payload["seedForNothing"] is True
+    assert payload["keylessPair"] == {"bg": "var(--line)", "ink": "var(--muted)"}
+    assert payload["neutralRatio"] >= 4.5, payload["neutralRatio"]
+    # ...and the harness measured the tokens those two names actually resolve to.
+    tokens = _read(CSS / "tokens.css")
+    assert "--line: #e6e8ec;" in tokens
+    assert "--muted: #565e6b;" in tokens
+
+    # The derivation is traceable from the module, not only from this test.
+    avatar = _read(JS / "core/avatar.js")
+    assert "const SEED_SATURATION = 0.70;" in avatar
+    assert "const SEED_LIGHTNESS = 0.24;" in avatar
+    # It goes through tintFor rather than around it.
+    seed = avatar.split("function seedFor(key) {", 1)[1].split("\n    }", 1)[0]
+    assert "contrast(" not in seed and "AA_RATIO" not in seed
+
+
 # Every surface that draws a person. Each one used to derive its own initial
 # and paint its own circle; five of them disagreed about the geometry.
 AVATAR_CALL_SITES = (

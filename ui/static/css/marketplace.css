@@ -1,0 +1,795 @@
+/* ─── Marketplace ───
+
+   The agent marketplace, moved out of overlays.css: that file owns the overlay
+   PRIMITIVES — the modal, the menu, the popover, the toast — and this is a
+   full-screen browsing-and-reading surface that merely rides one of them. Every
+   rule here lives inside .modal-panel[data-size="takeover"], so this sheet is
+   linked AFTER overlays.css and the cascade order is load-bearing.
+
+   TWO VIEWS, one at a time, and the panel is the same size for both. Browse is
+   a rail of filters beside a card grid; picking a card replaces both with the
+   detail view of one pack. The third column this used to have could not hold a
+   hire contract — mission, both scopes, handoff, the done bar and its fail
+   examples — without clipping it.
+
+   .market-body and .market-detail are each the ONE scroller of their view, and
+   the header above the grid is pinned by the column it sits in rather than by
+   `position: sticky`. The browse view nests no second scrollbar: two over one
+   card grid is how a grid ends up unreachable by wheel. The detail view has
+   exactly one nested scroller and it is deliberate — the section panel, which
+   holds a body that can run to hundreds of words beside a list that must stay
+   on screen to change it. Its own box, so the wheel over the list still moves
+   the view and the wheel over the read still moves the read.
+
+   Every colour is tokens.css's, and text on a tint uses that tint's *-ink pair:
+   --ok-ink on --ok-bg, --amber-ink on --amber, --alert-ink on --alert-bg, and
+   --blue-ink on --accent-bg (where --accent itself measures 4.19:1 and fails
+   AA). Selection is that last tint — the app's one selection convention, the
+   same one .roster-hire:hover and the rail's live row already carry — rather
+   than the heavy blue edge a border plus an inset rule used to paint. */
+
+/* NO FOOTER. A full-screen takeover carries its controls in its own top-right
+   corner — `‹` and `✕` — which is what the detail view already did while the
+   modal drew a second `Close` under it. createModal still builds the action row
+   it was handed, so the empty one is taken out of the flow along with the gap
+   .modal-body keeps for it — moved onto the row, so a takeover that ever does
+   hand up actions gets its footer and the same gap back without touching
+   this. */
+.modal-panel[data-size="takeover"] .modal-actions:empty { display: none; }
+.modal-panel[data-size="takeover"] .modal-body { margin-bottom: 0; }
+.modal-panel[data-size="takeover"] .modal-actions:not(:empty) { margin-top: 16px; }
+
+/* Fills the body it was given, so the scroll belongs to whichever view is up
+   rather than to the dialog. */
+.market-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ─── Browse: the header ─── */
+
+/* Outside the scroller, so the filter and the URL door stay reachable from the
+   bottom of a long grid without overlapping it — and the row this grows when
+   "Install from URL" opens costs the rail below it nothing. */
+.market-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.market-find-row { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; }
+
+.market-find-label,
+.market-url-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+.market-find,
+.market-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.market-url-toggle {
+  min-height: 24px;
+  padding: 5px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.market-url-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue-ink);
+}
+
+/* Full-width so it wraps under the filter rather than squeezing it. An inline
+   row, never a nested dialog: a second focus trap over the takeover is the
+   failure this surface is shaped to avoid. */
+.market-url-row {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+
+/* What an install just said, and the trust question one can raise. Outside the
+   scroller for the same reason the header is: an answer the operator has
+   scrolled away from is one they cannot give. */
+.market-messages { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+
+/* ─── Browse: the rail and the grid ─── */
+
+.market-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+/* `0`, and it is exact: this is the top of .market-body, which is the element
+   that scrolls. */
+.market-rail { position: sticky; top: 0; }
+
+/* The rail holds two kinds of row and used to run them together in one flat
+   list: `All` and `Installed` are SCOPES, the rest are the catalog's own
+   categories, and read as `All 5 / Installed 0 / Engineering 3 / Product 2`
+   they claimed the catalog had four buckets. Two groups, each under its own
+   heading — and the heading is the roster rail's, not a new one: `PEOPLE` and
+   `THREADS` already say "these rows are a set" in this app. */
+.market-rail-group + .market-rail-group { margin-top: 18px; }
+
+/* Same size, weight, tracking and ink as .roster-section-title. --hint
+   measures 4.83:1 on --panel, which is the ground the takeover paints. The
+   left margin is the rows' own 8px of padding, so the heading starts on the
+   same edge as the labels under it. */
+.market-rail-title {
+  margin: 0 0 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.market-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.market-rail-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* SC 2.5.8: every target clears 24x24. */
+  min-height: 24px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+}
+
+.market-rail-item:hover { background: var(--line); }
+
+.market-rail-item[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--blue-ink);
+}
+
+.market-rail-count { font-size: 11px; color: var(--hint); }
+/* Hovering swaps the ground to --line, where --hint measures 3.94:1 and fails
+   AA; --muted is 5.33:1 there. Declared BEFORE the aria-current rule so the
+   selected row's --blue-ink still wins at equal specificity. */
+.market-rail-item:hover .market-rail-count { color: var(--muted); }
+.market-rail-item[aria-current="true"] .market-rail-count { color: var(--blue-ink); }
+
+.market-grid { min-width: 0; }
+
+/* Auto-filled rather than a fixed two-up: the detail pane no longer takes a
+   third of the panel, so the grid gets three columns at full width and folds
+   to one on a narrow window without a breakpoint per step. */
+.market-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+/* A card is a decision, so it is given room to be read: 16px of padding and an
+   8px rhythm, against the 10px/12px/6px it was cramped into. */
+.market-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  text-align: left;
+}
+
+.market-card:hover { border-color: var(--line-strong); background: var(--bg); }
+
+/* The app's selection convention: a TINT, not an edge. --blue-ink measures
+   6.86:1 on --accent-bg, so every line of the card is re-inked rather than
+   left at a colour that was only ever measured against --panel. */
+.market-card[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.market-card[aria-current="true"] .market-card-title,
+.market-card[aria-current="true"] .market-card-specialty,
+.market-card[aria-current="true"] .market-card-intro,
+.market-card[aria-current="true"] .market-card-desc,
+.market-card[aria-current="true"] .market-card-author { color: var(--blue-ink); }
+
+/* Four bands, four jobs: the name, what kind of pack it is, what it does, and
+   who wrote it. The old 13/12/11 had no step big enough to read as a hierarchy
+   at a glance, and the second band said the first one again on nearly every
+   pack in the catalog. */
+
+/* The first band is now the MARK and the name, the pair the detail hero opens
+   with. `center`, not `flex-start`: a pack title is a name and runs to one line
+   on almost every card, so the bubble sits against the block rather than being
+   pinned to the top of a box it is nearly as tall as. `min-width: 0` on the
+   name is what lets a long title wrap inside the flex row instead of forcing
+   the card wider than its grid track. */
+.market-card-head { display: flex; align-items: center; gap: 10px; }
+
+.market-card-title {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+/* The category, and the specialty when the pack has one that is not just its
+   own name again. One row rather than two stacked lines: they are both answers
+   to "what kind of thing is this", and the card owes the mission the space. */
+.market-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Light blue, and it is the app's blue: --blue-ink on --accent-bg measures
+   6.86:1, where --accent on the same tint is 4.19 and fails. A chip rather than
+   a line, because the category is a bucket the grid can be filtered to and not
+   a sentence about this pack. */
+.market-card-category {
+  padding: 2px 8px;
+  border-radius: var(--r);
+  background: var(--accent-bg);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--blue-ink);
+}
+
+/* A selected card is already --accent-bg, so the chip steps to the deeper tint
+   of the same family rather than disappearing into its own ground. --blue-ink
+   on --blue measures 6.39:1. */
+.market-card[aria-current="true"] .market-card-category { background: var(--blue); }
+
+.market-card-specialty {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--hint);
+}
+
+/* The author's lead-in, when the pack's description carries prose before its
+   first heading. Subordinate to the mission it sits above — this is the kicker,
+   the mission is the summary — and clamped on its OWN two lines, so a pack that
+   has one costs the card two lines instead of eating the mission's three. */
+.market-card-intro {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hint);
+}
+
+/* Three lines, then an ellipsis: the whole mission is one click away. */
+.market-card-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* An installed row whose catalog entry is gone, or has gone bad. Said on the
+   CARD and not only in the notice below the grid: whoever is reading this row
+   already has agents built from that pack. It carries its own tint pair, so a
+   selected card does not have to re-ink it along with everything else. */
+.market-card-note {
+  padding: 4px 8px;
+  border-radius: var(--r);
+  background: var(--amber);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--amber-ink);
+}
+
+.market-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.market-card-author { font-size: 11px; color: var(--hint); }
+
+/* A STATE, not a control — and only ever painted for a state that has
+   something to say. An uninstalled card carries no chip at all. */
+.market-card-state {
+  padding: 2px 8px;
+  border-radius: var(--r);
+  background: var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.market-card[data-installed] { border-color: var(--line-strong); }
+.market-card[data-installed="installed"] .market-card-state { background: var(--ok-bg); color: var(--ok-ink); }
+.market-card[data-installed="update"] .market-card-state { background: var(--amber); color: var(--amber-ink); }
+
+.market-status { margin: 0; font-size: 13px; color: var(--muted); }
+.market-failed { margin: 0 0 8px; font-size: 13px; color: var(--alert); }
+
+/* ─── Browse: the rows the grid would not show ───
+
+   UNDER the grid and deliberately quiet. The packs above it loaded fine, so
+   this is not a failure of the read and must not be dressed as one: the panel's
+   own ground with a rule above it, never the red an error box paints. The rows
+   themselves take --amber on --amber-ink — the pair this sheet already spends
+   on "something to attend to that is not an error" — because each one is a
+   file in the operator's OWN catalog repo that this app would not offer. */
+.market-withheld {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.market-withheld-head { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.market-withheld-sum { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.market-withheld-group { margin-bottom: 12px; }
+
+.market-withheld-kind {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.market-withheld-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.market-withheld-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+.market-withheld-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.market-withheld-title { font-weight: 600; }
+.market-withheld-where { font-size: 11px; }
+
+/* The file the maintainer opens. It WRAPS: a pack path is longer than a narrow
+   grid column, and a horizontal scrollbar inside a notice is a trap. */
+.market-withheld-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.market-withheld-why { margin: 0; font-size: 11px; line-height: 1.5; }
+
+/* ─── The detail view ─── */
+
+/* The whole surface, and its own scroller. Its bar sticks to the top of it at
+   `0` — exact for the same reason the rail's is.
+   A COLUMN, so the section reader at the bottom can be handed the height the
+   description above it did not use; without that the panel has no height to
+   scroll inside and the two-column read is as tall as whichever section happens
+   to be open. This stays the view's scroller for the case that height runs out
+   — a short window, a long lead-in — rather than clipping the read. */
+.market-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-right: 4px;
+}
+
+.market-detail-bar {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.market-detail-back,
+.market-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+/* --accent measures 4.19:1 on --accent-bg and fails AA; --blue-ink is 6.86:1
+   there. The same correction .roster-hire and .add-agent-choice carry. */
+.market-detail-back:hover,
+.market-close:hover { background: var(--accent-bg); color: var(--blue-ink); }
+
+/* Icon-only now: the word `Back` is gone and `aria-label` carries the whole
+   name. A chevron is narrower than a word, so the target is squared up rather
+   than left at whatever the glyph happens to measure (SC 2.5.8). */
+.market-detail-back {
+  justify-content: center;
+  min-width: 32px;
+  padding-inline: 6px;
+}
+
+.market-detail-back-mark { font-size: 18px; line-height: 1; }
+
+/* The takeover's one exit, top-right of whichever view is up. Both views build
+   it from the same builder, so it is styled once and not per view. */
+.market-close { font-size: 14px; color: var(--muted); }
+
+/* WHO on the left, WHAT IT COSTS on the right, on one line at the top of the
+   read: the mark, the name and everything that identifies the pack, against the
+   one action the view exists to offer. The name used to sit BELOW this row,
+   which put the button on a line of its own above the thing it acts on.
+   `flex-start`, so a two-line title does not drag the button down the page. */
+.market-detail-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.market-detail-ident { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.market-detail-names { min-width: 0; }
+
+.market-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.market-detail-title { margin: 0 0 4px; font-size: 22px; line-height: 1.25; color: var(--ink); }
+
+.market-detail-specialty {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.market-detail-by { margin: 0; font-size: 12px; color: var(--hint); }
+.market-detail-author { color: var(--accent); text-decoration: underline; }
+
+/* The author's lead-in, above the mission and below the byline: the prose a
+   description carries before its first heading. Real content that the surface
+   used to drop on the floor — it is not an alternative to the mission and does
+   not replace it, so both are drawn, in the order they are read. Muted and a
+   step down, so the mission stays the paragraph the eye lands on. */
+.market-detail-intro {
+  max-width: 78ch;
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+/* The lead paragraph: the pack's mission, set larger than the sections under
+   it and measured so a 1180px panel does not hand the eye a 150-character
+   line to track back from. */
+.market-detail-lead {
+  max-width: 78ch;
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+/* ─── The detail view: the pack's contract ───
+
+   The ONE rule this view draws, and the only one it is allowed. Above it: who
+   the pack is and what it is for. Below it: what it undertakes to do, a section
+   at a time. Every section used to carry a rule of its own — six lines down one
+   page, fencing the read into strips instead of giving it a shape. */
+.market-detail-rule {
+  /* It carries no content, so it is the one child of the column that flex
+     would be free to squeeze to nothing. */
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 20px 0;
+  border: 0;
+  background: var(--line);
+}
+
+/* The list beside the panel.
+   `start`, not `stretch`: the panel used to be stretched to the row and read
+   as a full-height grey slab with one line of text at the top of it. It sizes
+   to its section now, and carries its own ceiling instead.
+   The ROW still takes the column's leftover height — `flex: 1 1 auto`, and
+   that is deliberate. Both columns start at the top of it, so the panel
+   growing or shrinking cannot move the list the pointer is choosing from; and
+   because the row absorbs the slack rather than collapsing onto its content,
+   .market-detail's scroll height does not change with the section either, so
+   a view scrolled to its end cannot be clamped upward under a resting
+   pointer. The panel's ceiling is what keeps that true on a short window. */
+.market-detail-read {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+/* `align-self: start` is the load-bearing half of the no-jank rule above: it
+   pins the list to the top of the row whatever the panel beside it is doing. */
+.market-section-list { display: flex; flex-direction: column; gap: 4px; align-self: start; }
+
+/* Name over subtitle: the name says which section it is, the line under it says
+   what reading it will tell you. One tab stop for the whole list — the roving
+   tabindex is in marketplace-sections.js — so Tab crosses the reader in two
+   stops, the list and the panel, and the arrows move inside it. */
+.market-section-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  /* SC 2.5.8: every target clears 24x24. */
+  min-height: 24px;
+  /* Six rows of two lines each were packed into 7px of padding and a 1px gap;
+     they get room to be read as rows now rather than as a block of text. */
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+}
+
+/* Hover is the affordance, not yet the selection: the pointer has to rest here
+   for 120ms before the panel changes, and this is what says the entry is live
+   in the meantime. */
+.market-section-tab:hover { background: var(--line); }
+
+/* Selected: the app's one selection convention, the same tint the rail's live
+   row and a read card carry. Both lines are re-inked — --hint on --accent-bg
+   measures 4.19:1 and fails — and this rule follows :hover so a hovered
+   selection does not fall back to the neutral ground. */
+.market-section-tab[aria-selected="true"] {
+  background: var(--accent-bg);
+  color: var(--blue-ink);
+}
+
+/* 500, not 600. The name shouted at its own subtitle: two lines a step apart
+   in size and a step apart in ink already read as a name over a description,
+   and the extra weight only made the list heavier than the pack text it picks
+   from. The hierarchy is carried by ink and size, the way the rest of this
+   sheet carries it. */
+.market-section-name { font-size: 13px; font-weight: 500; }
+
+/* 12px rather than 11px, for the same reason: an 11px line under a 13px bold
+   one is a caption, and this is the half of the row that says what reading the
+   section will tell you.
+   --muted, not --hint: this line sits on three different grounds — the panel,
+   the --line hover, the --accent-bg selection — and --hint clears AA on only
+   the first of them (4.83, then 3.94, then 4.19). --muted measures 6.54 / 5.33
+   / 5.67. */
+.market-section-sub { font-size: 12px; line-height: 1.45; color: var(--muted); }
+
+.market-section-tab[aria-selected="true"] .market-section-sub { color: var(--blue-ink); }
+
+/* The read itself, on the app's own ground rather than the panel's white, so
+   the section that is up reads as a held card and not as the rest of the page.
+   It scrolls ALONE: a long handoff must not push the list that picks it off the
+   bottom of the view.
+   A CEILING, not a height: the box is as tall as the section in it and scrolls
+   only once a section genuinely runs past this. 52vh keeps it inside the room
+   the detail column has left on every window this takeover opens at, which is
+   what stops a change of section from lengthening the view. */
+.market-section-panel {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  background: var(--bg);
+}
+
+/* The one surface on this screen that is READ rather than scanned, and it was
+   set like UI chrome: 13px, the size of the list beside it, run the full width
+   of an 1180px takeover. Body prose now — a step above the 13px around it and
+   at the app's own reading size (conversation.css sets a message at the 14px
+   base), a line-height loose enough for a section that runs to hundreds of
+   words rather than the two or three lines the paragraphs above it run to, and
+   a measure that ends the line before the eye has to hunt for the next one. */
+.market-detail-text {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink);
+  white-space: pre-line;
+}
+
+/* One chip per tool. A `·` between them would be CSS-generated content, which
+   a screen reader announces as a character with no meaning; a list of chips
+   says the same thing and says it once. */
+.market-detail-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.market-detail-tools li {
+  padding: 2px 8px;
+  border-radius: var(--r);
+  background: var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Installed is a FACT about the pack, so it reads on the byline beside the
+   author and the pin rather than filling the hero's primary slot: the biggest
+   element on the screen must not be the one thing that cannot be pressed. Same
+   tint pair the card's own chip carries, at the byline's size. */
+.market-detail-installed {
+  padding: 1px 8px;
+  border-radius: var(--r);
+  background: var(--ok-bg);
+  font-weight: 600;
+  color: var(--ok-ink);
+}
+
+/* The same fact the card carries, in the view where the pack is actually read.
+   Under the byline, above the pack's own prose: it is about this install, not
+   about the pack's contents. */
+.market-detail-note {
+  margin: 0 0 16px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--amber);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--amber-ink);
+}
+
+/* ─── Shared: messages, questions, buttons ─── */
+
+.market-error {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+  font-size: 12px;
+  color: var(--alert-ink);
+}
+
+.market-notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--ok-mark);
+  border-radius: var(--r);
+  background: var(--ok-bg);
+  font-size: 12px;
+  color: var(--ok-ink);
+}
+
+.market-messages .market-error,
+.market-messages .market-notice { margin: 0; }
+
+/* A question, not a failure — amber rather than the red an error box uses, so
+   the two are not read as the same event. */
+.market-confirm {
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--amber);
+}
+
+.market-messages .market-confirm { margin: 0; }
+
+.market-confirm-text { margin: 0 0 8px; font-size: 12px; color: var(--amber-ink); }
+.market-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.market-action {
+  min-height: 24px;
+  padding: 5px 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* The detail's primary. Prominent by SIZE as well as by fill: it is the one
+   thing the whole view exists to offer. */
+.market-action-lead { min-height: 34px; padding: 8px 22px; font-size: 13px; }
+
+.market-action.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); }
+.market-action.danger { border-color: var(--alert); background: var(--alert); color: var(--panel); }
+.market-action:disabled { opacity: 0.55; pointer-events: none; }
+
+/* ─── Narrow ───
+
+   No pushed view any more: the detail is a view swap at every width, so the
+   only thing a narrow window changes is that the rail stops being a column
+   beside the grid and the section labels stop being a column beside their
+   bodies. */
+@media (max-width: 700px) {
+  .market-body { grid-template-columns: minmax(0, 1fr); }
+  .market-rail { position: static; }
+  .market-rail-list { flex-direction: row; flex-wrap: wrap; }
+  .market-rail-item { width: auto; }
+  /* The section list stops being a column beside the panel and becomes the row
+     above it. Still a vertical tab list to the keyboard — the arrows that move
+     it are Up and Down at every width, because the list is the same list. */
+  .market-detail-read { grid-template-columns: minmax(0, 1fr); }
+  .market-section-list { flex-direction: row; flex-wrap: wrap; }
+  .market-section-tab { width: auto; }
+  .market-detail-title { font-size: 19px; }
+}

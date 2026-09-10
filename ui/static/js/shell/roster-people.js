@@ -221,7 +221,7 @@ const BossModRosterPeople = (() => {
             const paused = store.getState().runtimePaused === true;
             const needy = agentsWithNeeds();
             visible.forEach((agent) => list.append(personRow(agent, paused, needy)));
-            lucide.createIcons();
+            BossModIcons.paintDocument('roster-people');
         }
 
         /** Show the checkboxes. From the Threads half's `New thread`. @returns {void} */

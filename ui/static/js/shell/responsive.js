@@ -118,7 +118,7 @@ const BossModResponsive = (() => {
 
         headerEl.prepend(menuButton);
         headerEl.append(deskButton);
-        if (window.lucide) lucide.createIcons({ nodes: [headerEl] });
+        BossModIcons.paint(headerEl, 'responsive');
 
         // The Desk button is offered on Chat alone, because Chat is the only
         // place with a context column to open (spec 3.1). A button that opens

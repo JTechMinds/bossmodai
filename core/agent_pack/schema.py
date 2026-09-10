@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from core.agent_loop.role_contracts import suggest_finish_line
+from core.agent_loop.specialty import suggest_finish_line
 from core.agent_pack.sections import (
     DESCRIPTION_SECTION_KEYS,
     compose_labeled_description,

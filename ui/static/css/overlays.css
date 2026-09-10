@@ -7,11 +7,11 @@
    palette colour — the same treatment conversation.css already uses. */
 
 /* ─── Modal ───
-   Two sizes, one implementation (core/overlays.js). Both are centred in the
-   viewport by the same transform; `wide` only changes how much room the panel
-   is allowed to take. The panel is a flex column so the BODY is the part that
-   scrolls — the title and the action row stay put, which is the whole reason a
-   tall form can live in here at all. */
+   Three sizes, one implementation (core/overlays.js). All are centred in the
+   viewport by the same transform; `wide` and `takeover` only change how much
+   room the panel is allowed to take. The panel is a flex column so the BODY is
+   the part that scrolls — the title and the action row stay put, which is the
+   whole reason a tall form can live in here at all. */
 
 /* The scrim, between the app and the panel. Until round four there was none,
    so the dialog floated over a live page and clicks reached the controls
@@ -53,6 +53,26 @@
   max-height: calc(100vh - 48px);
 }
 
+/* The takeover: a surface for browsing and reading, where `wide`'s 760px would
+   put a rail of filters and a card grid in one column. 1180px is where that pairing
+   stops being cramped without the eye having to travel the whole of a wide
+   monitor. It is still a PANEL, not a page — the 24px it keeps on each edge is
+   what leaves the scrim visible, so the operator can see there is an app behind
+   this and that Esc belongs to the thing on top. Same flex column as the other
+   two, so the body is still the only part that scrolls. */
+.modal-panel[data-size="takeover"] {
+  width: min(1180px, calc(100vw - 48px));
+  /* HEIGHT, not just a ceiling. With only max-height the panel was as tall as
+     the one "Loading…" line the catalog puts up while it fetches, and then
+     jumped to full height the moment the cards landed — a surface that pops
+     cropped and grows under the pointer. Fixing it in CSS rather than by
+     measuring in JS keeps geometry where overlays.js says it belongs, and it
+     is the same number the ceiling already was, so loading, ready, empty and
+     failed all occupy one box. */
+  height: calc(100vh - 48px);
+  max-height: calc(100vh - 48px);
+}
+
 .modal-title { flex: 0 0 auto; margin: 0 0 8px; font-size: 16px; }
 
 /* min-height: 0 is what actually lets a flex child scroll — without it the
@@ -68,9 +88,28 @@
 /* Pinned below the scroller, not inside it. */
 .modal-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
 
-/* The form the wide variant carries is the app's own ink on the app's own
-   ground, not the muted body copy a confirm dialog wants. */
-.modal-panel[data-size="wide"] .modal-body { color: var(--ink); }
+/* .modal-body's muted colour is a CONFIRM dialog's: two lines of question
+   above two buttons. The form the wide variant carries and the catalog the
+   takeover carries are both the app's own ink on the app's own ground, so the
+   override belongs to both sizes — patching colour onto each .market-* class
+   instead would leave every class added later inheriting the wrong one. */
+.modal-panel[data-size="wide"] .modal-body,
+.modal-panel[data-size="takeover"] .modal-body { color: var(--ink); }
+
+/* The takeover's body is a COLUMN, and the part that scrolls is inside it.
+   Every other size lets .modal-body scroll its whole content. The takeover
+   cannot: its header stays put while the grid moves under it, and the rail and
+   the detail pane stick to the top of whatever is actually scrolling — so the
+   scroller has to be the row below the header rather than the body around it.
+   Pinning them by LAYOUT is what leaves no offset to guess; the number that
+   used to be guessed was wrong the moment "Install from URL" wrapped a second
+   row into the header. min-height: 0 is again what lets a flex child shrink
+   instead of pushing the panel past the viewport. */
+.modal-panel[data-size="takeover"] .modal-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .modal-action {
   padding: 6px 14px;
@@ -89,38 +128,96 @@
    the Tailwind `disabled:` pair on the old in-form button carried. */
 .modal-action:disabled { opacity: 0.55; pointer-events: none; }
 
-/* ─── Add agent: browse door ───
-   Lives in the same wide dialog as the thin-shell form. Doors are two
-   quiet chips; pack cards are catalog rows, not a storefront. Author
-   names become accent links only when pack_author.url is set. */
+/* ─── Add agent: the two steps ───
+   One body, two children, one on screen at a time. The step that is away is
+   put away with the `hidden` PROPERTY — and the UA's `[hidden] { display:
+   none }` is a plain declaration that .picker-body's own `display: grid`
+   outranks, so this guard is what actually hides it. It covers every
+   conditional row inside the dialog too, which is why it is one rule here
+   rather than a :not([hidden]) on each. */
 
 .agent-add-body { display: flex; flex-direction: column; gap: 12px; }
+.agent-add-body [hidden] { display: none !important; }
 
-.agent-add-doors { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Step 1. Blank gets its own column so it reads as a peer of the templates
+   rather than the fallback underneath them. */
+.picker-body {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
 
-.agent-add-door {
-  min-height: 24px;
-  padding: 6px 12px;
-  border: 1px solid var(--line-control);
+@media (max-width: 620px) {
+  .picker-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Every cell is a real button: picking one IS the choice, and there is no
+   confirm step for a keyboard to have to reach. */
+.picker-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--panel);
-  font-weight: 500;
+  text-align: left;
+}
+
+.picker-cell:hover { border-color: var(--line-strong); background: var(--bg); }
+
+.picker-cell-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.picker-cell-sub { font-size: 12px; color: var(--muted); }
+
+/* The one cell that is always offered carries the stronger border: it is the
+   only affordance on the panel when the library is empty. */
+.picker-blank { border-color: var(--line-control); }
+.picker-blank:hover { border-color: var(--accent); }
+
+.picker-list { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.picker-find-row { display: flex; align-items: center; gap: 8px; }
+.picker-find-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+.picker-find {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--bg);
   color: var(--ink);
 }
 
-.agent-add-door[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-bg);
-  color: var(--blue-ink);
+.picker-category + .picker-category { margin-top: 14px; }
+
+.picker-category-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hint);
 }
 
-.pack-catalog-status {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
+.picker-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.agent-add-retry {
+@media (max-width: 760px) {
+  .picker-cards { grid-template-columns: minmax(0, 1fr); }
+}
+
+.picker-status { margin: 0; font-size: 13px; color: var(--muted); }
+/* A library that could not be READ is not an empty one, and must not look
+   like it. */
+.picker-status[role="alert"] { color: var(--alert); }
+
+.picker-action {
   margin-top: 8px;
   min-height: 24px;
   padding: 4px 10px;
@@ -132,68 +229,94 @@
   color: var(--ink);
 }
 
-.pack-category + .pack-category { margin-top: 14px; }
+.picker-action:hover { border-color: var(--accent); color: var(--accent); }
 
-.pack-category-title {
-  margin: 0 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--hint);
-}
+/* ─── Add agent: step 2, from a template ───
+   Name and one connection in front; everything the template answered behind
+   the disclosure. The chip is the provenance and the way back out of it. */
 
-.pack-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-@media (max-width: 520px) {
-  .pack-cards { grid-template-columns: repeat(1, minmax(0, 1fr)); }
-}
-
-.pack-card {
+.quick-provenance {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 6px 10px;
+  border-radius: var(--r);
+  background: var(--accent-bg);
+  /* Ink on a tint takes that tint's pair: --accent measures 4.19 here. */
+  color: var(--blue-ink);
+  font-size: 12px;
+}
+
+.quick-provenance-mark { flex: 0 0 auto; }
+.quick-provenance-text { flex: 1 1 auto; min-width: 0; }
+
+.quick-provenance-clear {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--blue-ink);
+}
+
+.quick-provenance-clear:hover { background: var(--panel); }
+
+.quick-ai { margin: 12px 0; }
+
+.quick-ai-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.quick-ai-hint { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+
+/* The select context/agent-quick-connection.js builds when Settings holds no
+   connection. It is the form's own control rather than a lifted one, so it
+   takes its appearance from the tokens the rest of this file spends instead of
+   the Tailwind utilities the form's markup carries. */
+.quick-ai-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
   border-radius: var(--r);
   background: var(--bg);
-}
-
-.pack-card-pick {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font-weight: 600;
   font-size: 13px;
   color: var(--ink);
-  text-align: left;
 }
 
-.pack-card-pick:hover { color: var(--accent); }
+/* Above the disclosure, so a collapsed one is visibly not empty. */
+.quick-summary { margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
 
-.pack-author-link {
-  font-size: 12px;
-  color: var(--accent);
-  text-decoration: underline;
+.quick-disclosure {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
 }
 
-.pack-author-plain { font-size: 12px; color: var(--muted); }
-
-.pack-from-banner,
-.pack-tools-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
+.quick-disclosure-summary {
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
 }
 
-.pack-browse.hidden,
-.pack-from-banner.hidden,
-.pack-tools-hint.hidden { display: none; }
+.quick-disclosure-summary:hover { color: var(--accent); }
+
+.quick-disclosure-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
 
 /* ─── The agent form's AI Connections matrix ───
    Only ever rendered inside the wide dialog above, which is why it is here and
@@ -236,6 +359,21 @@
   text-overflow: ellipsis;
 }
 
+/* context/agent-form.js's notice for a dependency read that FAILED, at the top
+   of the form it degraded. Amber rather than the alert red the save's own
+   refusal paints: the form works and can still be saved — what is wrong is
+   that one of its lists is empty for a reason the empty state under it cannot
+   say. --amber-ink on --amber is the pair tests/test_ui_tokens.py measures. */
+.form-degraded {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-ink);
+  border-radius: var(--r);
+  background: var(--amber);
+  font-size: 12px;
+  color: var(--amber-ink);
+}
+
 /* ─── Menu ───
    A small panel hanging off the control that opened it, positioned against its
    container rather than by measuring the anchor in JavaScript. Non-modal: the
@@ -258,6 +396,55 @@
   background: var(--panel);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
+
+/* The rail's Add agent menu. Its row sits at the FOOT of a column that clips
+   its own overflow, so this variant is placed against the viewport: an
+   absolutely positioned panel would be cut off by that clip, and the
+   `top: 100%` above would put it below the bottom of the window. */
+.menu[data-menu="add-agent"] {
+  position: fixed;
+  top: auto;
+  right: auto;
+  left: 12px;
+  bottom: 58px;
+  min-width: 0;
+  width: min(260px, calc(100vw - 24px));
+}
+
+/* The doors read as the row that opens them. .roster-hire is --accent at
+   weight 500 and inherits base.css's 14px; these were --ink at 13px, so the
+   control and the two things it offers looked like two different controls.
+
+   An icon, then the label — the shape .roster-hire itself has. Both rows carry
+   one, so the two labels start on the same left edge; a row whose mark was a
+   character typed into the label (`+ Add Agent`) or hung off the end of it
+   (`Browse Marketplace →`) could not line up with anything. */
+.add-agent-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+  text-align: left;
+}
+
+/* Decorative, and it inherits the row's ink — including the --blue-ink hover
+   correction below, so the mark never keeps a colour the label has left. It
+   does not shrink: the label wraps before the icon gives up a pixel. */
+.add-agent-choice svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+/* Hover swaps the ground to --accent-bg, where the resting --accent measures
+   only 4.19:1 and fails AA — --blue-ink is 6.86:1 there. The same correction
+   .roster-hire carries, which is the point: one control, one behaviour. */
+.add-agent-choice:hover { background: var(--accent-bg); color: var(--blue-ink); }
 
 /* ─── Popover ───
    Anchored under the header, not centred: it belongs to the bell. */

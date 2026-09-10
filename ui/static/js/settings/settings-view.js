@@ -77,7 +77,7 @@ const SettingsView = (() => {
             btn.addEventListener('click', () => switchSection(btn.dataset.section));
         });
 
-        if (window.lucide) lucide.createIcons({ nodes: [nav] });
+        BossModIcons.paint(nav, 'settings-view.renderNav');
     }
 
     function navButton(item) {

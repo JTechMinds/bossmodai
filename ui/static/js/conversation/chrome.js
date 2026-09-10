@@ -235,7 +235,7 @@ const BossModConversationChrome = (() => {
             // Appended last on every pass, so the `⋯` stays at the end of the
             // row however the actions before it churn.
             if (menuButton) actionsEl.append(menuButton);
-            lucide.createIcons();
+            BossModIcons.paintDocument('conversation-chrome');
         }
 
         return {

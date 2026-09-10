@@ -128,6 +128,22 @@ class FakeEl {
         this.attrs.class = String(value);
     }
 
+    /**
+     * The attributes, in document order, as a real element reports them.
+     *
+     * `Array.from(el.attributes)` over a NamedNodeMap yields Attr nodes with
+     * `name` and `value` — the shape core/icons.js reads to carry a
+     * placeholder's classes and id onto the SVG that replaces it.
+     */
+    get attributes() {
+        return Object.entries(this.attrs).map(([name, value]) => ({ name, value }));
+    }
+
+    /** Real DOM name for the link this fake stores as `parent`. */
+    get parentNode() {
+        return this.parent;
+    }
+
     getAttribute(name) {
         return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null;
     }
@@ -216,6 +232,31 @@ class FakeEl {
         this.children = [];
         this._text = "";
         this.append(...nodes);
+    }
+
+    /**
+     * Swap one child for another, in place.
+     *
+     * Position matters: an icon painted into the middle of a button has to
+     * come back in the middle of it, so this splices rather than appends.
+     *
+     * @param {object} node  The replacement.
+     * @param {object} old  The child to replace.
+     * @returns {object} `old`, as the real DOM returns it.
+     * @throws {Error} When `old` is not a child of this element — the real DOM
+     *   throws NotFoundError, and a fake that appended instead would hide the
+     *   bug that got it here.
+     */
+    replaceChild(node, old) {
+        const at = this.children.indexOf(old);
+        if (at === -1) throw new Error("[fake-dom] replaceChild: node is not a child");
+        if (node.parent) {
+            node.parent.children = node.parent.children.filter((child) => child !== node);
+        }
+        node.parent = this;
+        this.children[at] = node;
+        old.parent = null;
+        return old;
     }
 
     remove() {
@@ -409,6 +450,17 @@ function installDom() {
         body,
         createElement(tag) {
             const el = new FakeEl(tag);
+            el.ownerDocument = documentStub;
+            return el;
+        },
+        /**
+         * The SVG-namespace constructor. An icon built with createElement in
+         * the HTML namespace parses but never renders, which is why lucide's
+         * own builder uses this one and why the fake has to answer it.
+         */
+        createElementNS(namespace, tag) {
+            const el = new FakeEl(tag);
+            el.namespaceURI = String(namespace);
             el.ownerDocument = documentStub;
             return el;
         },

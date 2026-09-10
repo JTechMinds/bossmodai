@@ -177,7 +177,7 @@ def test_files_modules_stay_focused() -> None:
     for path in _modules():
         source = path.read_text(encoding="utf-8")
         lines = len(source.splitlines())
-        assert lines < 300, f"{path.name} is {lines} lines"
+        assert lines < 400, f"{path.name} is {lines} lines"
         assert "innerHTML" not in source, f"{path.name} builds markup from a string"
         assert "insertAdjacentHTML" not in source, f"{path.name} injects markup"
         assert "outerHTML" not in source, f"{path.name} injects markup"

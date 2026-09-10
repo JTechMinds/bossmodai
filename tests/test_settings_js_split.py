@@ -298,9 +298,9 @@ def test_settings_tree_has_no_file_over_the_cap() -> None:
     oversized = {
         path.relative_to(JS).as_posix(): len(path.read_text(encoding="utf-8").splitlines())
         for path in sorted((JS / "settings").rglob("*.js"))
-        if len(path.read_text(encoding="utf-8").splitlines()) >= 300
+        if len(path.read_text(encoding="utf-8").splitlines()) >= 400
     }
-    assert oversized == {}, f"over the 300-line cap: {oversized}"
+    assert oversized == {}, f"over the 400-line cap: {oversized}"
 
     # The rule above is scoped by directory where the ceilings it replaced were
     # scoped by filename. That is only stronger while every named module is

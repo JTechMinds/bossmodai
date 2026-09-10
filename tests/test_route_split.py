@@ -48,6 +48,9 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/pack", "export_agent_pack"),
     (("GET",), "/api/agent-packs", "list_agent_packs"),
     (("POST",), "/api/agent-packs/import", "import_agent_pack"),
+    (("GET",), "/api/agent-templates", "list_agent_templates"),
+    (("POST",), "/api/agent-templates", "install_agent_template"),
+    (("DELETE",), "/api/agent-templates/{template_id}", "uninstall_agent_template"),
     (("GET",), "/api/agents/{agent_id}/messages", "get_agent_messages"),
     (("GET",), "/api/agents/{agent_id}/notifications", "get_agent_notifications"),
     (("GET",), "/api/agents/{agent_id}/triggers", "get_agent_triggers"),
@@ -123,7 +126,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 99
+    assert len(got) == 102
 
 
 def test_from_api_routes_import_router_still_works() -> None:

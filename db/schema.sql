@@ -703,3 +703,34 @@ CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_status
 
 CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_agent
     ON cli_approval_requests (agent_id, status);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Agent templates — locally-installed, pinned snapshots of agent packs
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS agent_templates (
+    id                   VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    source               VARCHAR NOT NULL CHECK (source IN ('catalog', 'url')),
+    pack_id              VARCHAR,
+    source_url           TEXT,
+    category             VARCHAR NOT NULL,
+    title                VARCHAR NOT NULL,
+    specialty            TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    what_done_looks_like TEXT NOT NULL,
+    personality_hint     VARCHAR,
+    tools_hint           TEXT NOT NULL DEFAULT '[]',
+    author_name          VARCHAR,
+    author_url           TEXT,
+    commit_sha           VARCHAR NOT NULL,
+    content_hash         VARCHAR NOT NULL,
+    installed_at         TIMESTAMP DEFAULT current_timestamp,
+    updated_at           TIMESTAMP DEFAULT current_timestamp
+);
+
+-- Uniqueness is per natural key, and the two keys are mutually exclusive:
+-- a catalog install is keyed by pack_id, a URL install by source_url.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_pack
+    ON agent_templates(pack_id) WHERE pack_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_url
+    ON agent_templates(source_url) WHERE pack_id IS NULL;

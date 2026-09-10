@@ -21,13 +21,13 @@ const BossModCliPolicyShared = (() => {
     let agentsFetched = false;
 
     /**
-     * Re-run Lucide over one subtree.
+     * Paint one tab's subtree, and only that subtree.
      *
      * @param {Element} root  The subtree whose `data-lucide` placeholders to replace.
-     * @returns {void}
+     * @returns {number} How many placeholders were replaced.
      */
     function icons(root) {
-        if (window.lucide) lucide.createIcons({ nodes: [root] });
+        return BossModIcons.paint(root, 'cli-policy');
     }
 
     /**

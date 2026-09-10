@@ -24,16 +24,23 @@ from core.agent_pack.schema import (
 )
 from core.agent_pack.quality import validate_pack_quality
 from core.agent_pack.service import (
+    WITHHELD_REFUSED,
+    WITHHELD_UNAVAILABLE,
     CatalogListResult,
     PackImportRequest,
     PackImportResult,
+    WithheldPack,
+    describe_pack,
     export_pack,
     import_pack,
     list_catalog,
+    pack_content_hash,
 )
 
 __all__ = [
     "ALLOWLIST_SETTING",
+    "WITHHELD_REFUSED",
+    "WITHHELD_UNAVAILABLE",
     "CATALOG_INDEX_PATH",
     "CATALOG_PATH_SETTING",
     "CATALOG_PIN_SETTING",
@@ -53,10 +60,13 @@ __all__ = [
     "PackImportResult",
     "PackLocation",
     "PackSource",
+    "WithheldPack",
     "confirm_token_for",
+    "describe_pack",
     "export_pack",
     "import_pack",
     "list_catalog",
+    "pack_content_hash",
     "parse_pack_yaml",
     "validate_pack_quality",
 ]

@@ -1,37 +1,38 @@
 /**
- * BossMod AI — apply a pack import onto the Add agent form.
+ * BossMod AI — write an installed template's fields onto the create form.
  *
- * Catalog browse and Advanced URL import both land here. The fields a
- * pack may fill are Specialty, Description, What-done, personality
- * hint, and tools hints. Name, Color, and AI connections are never
- * written. Import never sends agent_id, so a live hire cannot be
- * overwritten from this path.
+ * One function, and it is the module's whole job. The pack-import half went
+ * with the catalog door: browsing, importing and the trust prompt are the
+ * marketplace's now, and what reaches the form is a row from the local
+ * template library — never an import response, a ref or a URL.
+ *
+ * The fields a template may fill are Specialty, Description, What-done and the
+ * personality hint. NAME, COLOUR and the AI connections are never written:
+ * they are the operator's answers, and a template that could overwrite them
+ * would discard a draft the operator had already started.
  */
 const BossModAgentFormHydrate = (() => {
 
     /**
-     * @param {string} sha
-     * @returns {string}
-     */
-    function shortSha(sha) {
-        return String(sha || '').replace(/[^0-9a-f]/gi, '').slice(0, 7);
-    }
-
-    /**
-     * @param {string} title
-     * @param {string} sha
-     * @returns {string}
-     */
-    function fromPackLine(title, sha) {
-        return `From pack: ${title} · pinned ${shortSha(sha)}`;
-    }
-
-    /**
-     * Fill specialty / description / what-done. Leaves name, color, and
-     * connection selects untouched.
+     * Fill specialty / description / what-done, and match the personality by
+     * its visible name when the template names one.
+     *
+     * Also the way a template is UNDONE: called with the empty shape it clears
+     * exactly the fields a template can write — ALL FOUR of them, which is why
+     * the provenance chip's dismissal needs nothing of its own. The personality
+     * is therefore written on every call, not only when a hint is given: a
+     * field that is only ever set is a field no dismissal can clear, and
+     * "Remove template" used to leave the template's personality selected on an
+     * otherwise emptied form.
+     *
+     * A hint no configured personality answers to leaves the form's own "No
+     * personality" rather than a half-applied template, and says so on the
+     * console: the operator is choosing from what Settings holds, and silently
+     * keeping a stale selection would be a template half-written.
      *
      * @param {HTMLElement} formRoot
-     * @param {object} fields
+     * @param {{role?: string, description?: string, done_fail_bar?: string,
+     *   personality_hint?: string|null}} fields
      * @returns {void}
      */
     function applyHireFields(formRoot, fields) {
@@ -42,105 +43,21 @@ const BossModAgentFormHydrate = (() => {
         if (description) description.value = fields.description || '';
         if (done) done.value = fields.done_fail_bar || '';
         const hint = fields.personality_hint;
+        // Absent entirely when Settings holds no personality — the form renders
+        // its own link to Settings there instead of a dropdown.
         const personality = formRoot.querySelector('select[name="personality_id"]');
-        if (hint && personality) {
-            const options = personality.options
-                ? Array.from(personality.options)
-                : Array.from(personality.children || []).filter((node) => node.tagName === 'OPTION');
-            const match = options.find((option) => (
-                String(option.textContent || '').trim() === String(hint).trim()
-            ));
-            if (match) {
-                personality.value = match.value || match.getAttribute('value') || '';
-            }
+        if (!personality) return;
+        const options = personality.options
+            ? Array.from(personality.options)
+            : Array.from(personality.children || []).filter((node) => node.tagName === 'OPTION');
+        const match = hint ? options.find((option) => (
+            String(option.textContent || '').trim() === String(hint).trim()
+        )) : null;
+        if (hint && !match) {
+            console.warn('[hydrate] no personality is configured under the name the template gives:', hint);
         }
+        personality.value = match ? (match.value || match.getAttribute('value') || '') : '';
     }
 
-    /**
-     * @param {HTMLElement} formRoot
-     * @param {object} imported
-     * @param {{title: string, banner: HTMLElement, toolsHint: HTMLElement}} view
-     * @returns {void}
-     */
-    function applyImport(formRoot, imported, view) {
-        const fields = imported.hire_fields || {};
-        applyHireFields(formRoot, fields);
-        const sha = (imported.pin && imported.pin.commit_sha) || '';
-        view.banner.classList.remove('hidden');
-        view.banner.textContent = fromPackLine(view.title, sha);
-        const tools = Array.isArray(fields.tools_hint) ? fields.tools_hint : [];
-        if (tools.length) {
-            view.toolsHint.classList.remove('hidden');
-            view.toolsHint.textContent = `Tools hint: ${tools.join(', ')}`;
-        } else {
-            view.toolsHint.classList.add('hidden');
-            view.toolsHint.textContent = '';
-        }
-        const advanced = formRoot.querySelector('#advanced-content');
-        const chevron = formRoot.querySelector('#advanced-chevron');
-        if (advanced && advanced.classList.contains('hidden')) {
-            advanced.classList.remove('hidden');
-            if (chevron) chevron.style.transform = 'rotate(90deg)';
-        }
-    }
-
-    /**
-     * Advanced URL import. Confirm only when the repo is not allowlisted.
-     *
-     * @param {HTMLElement} formRoot
-     * @param {{banner: HTMLElement, toolsHint: HTMLElement}} view
-     * @returns {void}
-     */
-    function bindUrlImport(formRoot, view) {
-        const button = formRoot.querySelector('#btn-import-pack-url');
-        const input = formRoot.querySelector('#pack-url-input');
-        const status = formRoot.querySelector('#pack-url-import-status');
-        if (!button || !input) return;
-
-        async function run(confirm) {
-            const url = String(input.value || '').trim();
-            if (!url) return;
-            if (status) {
-                status.classList.remove('hidden');
-                status.textContent = 'Importing…';
-            }
-            try {
-                const imported = await BossModAgentApi.importPack(
-                    confirm ? { url, confirm: true } : { url },
-                );
-                const title = (imported.catalog && imported.catalog.title)
-                    || (imported.hire_fields && imported.hire_fields.role)
-                    || 'pack';
-                applyImport(formRoot, imported, { title, ...view });
-                if (status) status.classList.add('hidden');
-            } catch (err) {
-                if (err && err.code === 'trust_required') {
-                    if (status) status.classList.add('hidden');
-                    BossModOverlays.createModal({
-                        title: 'Trust this pack URL?',
-                        body: 'This repo is not on the allowlist. Import only if the source is trusted.',
-                        actions: [
-                            { label: 'Import anyway', tone: 'danger', onSelect: () => { void run(true); } },
-                            { label: 'Cancel', tone: 'quiet' },
-                        ],
-                    });
-                    return;
-                }
-                if (status) {
-                    status.classList.remove('hidden');
-                    status.textContent = err?.message || 'Pack import failed.';
-                }
-            }
-        }
-
-        button.addEventListener('click', () => { void run(false); });
-    }
-
-    return {
-        shortSha,
-        fromPackLine,
-        applyHireFields,
-        applyImport,
-        bindUrlImport,
-    };
+    return { applyHireFields };
 })();

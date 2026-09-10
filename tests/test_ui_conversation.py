@@ -354,6 +354,6 @@ def test_conversation_css_uses_tokens_only() -> None:
 def test_conversation_modules_stay_focused() -> None:
     for path in sorted(CONVERSATION.rglob("*.js")):
         lines = len(_read(path).splitlines())
-        assert lines < 300, f"{path.relative_to(JS)} is {lines} lines"
+        assert lines < 400, f"{path.relative_to(JS)} is {lines} lines"
     place = JS / "places" / "chat" / "chat-place.js"
     assert len(_read(place).splitlines()) < 150

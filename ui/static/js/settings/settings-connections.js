@@ -88,7 +88,7 @@ const ConnectionsSection = (() => {
         }
 
         container.innerHTML = html;
-        if (window.lucide) lucide.createIcons({ nodes: [container] });
+        BossModIcons.paint(container, 'settings-connections');
 
         // Bind events
         const addBtn = document.getElementById('btn-add-connection');

@@ -7,18 +7,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from api.routes.agent_pack_support import catalog_pin, catalog_settings, http_error
 from core import config
 from core.agent_pack import (
-    ALLOWLIST_SETTING,
-    CATALOG_PATH_SETTING,
-    CATALOG_PIN_SETTING,
-    CATALOG_REPO_SETTING,
-    DEFAULT_CATALOG_PATH,
-    DEFAULT_CATALOG_PIN,
-    DEFAULT_CATALOG_REPO,
     GitHubPackSource,
     CatalogListResult,
     PackImportRequest,
+    describe_pack,
     export_pack,
     import_pack,
     list_catalog,
@@ -47,22 +42,6 @@ class AgentPackImportBody(BaseModel):
     agent_id: str | None = Field(default=None, description="Rejected if set; import never patches a hire.")
 
 
-def _http_error(exc: AgentPackError) -> HTTPException:
-    return HTTPException(exc.status, {"code": exc.code, "message": str(exc)})
-
-
-def _catalog_settings() -> tuple[str, str, str | None, str]:
-    catalog_repo = config.get(CATALOG_REPO_SETTING) or DEFAULT_CATALOG_REPO
-    catalog_path = config.get(CATALOG_PATH_SETTING) or DEFAULT_CATALOG_PATH
-    extra = config.get(ALLOWLIST_SETTING)
-    secret = db.ensure_local_api_token()
-    return catalog_repo, catalog_path, extra, secret
-
-
-def _catalog_pin(requested: str | None = None) -> str:
-    return (requested or "").strip() or config.get(CATALOG_PIN_SETTING) or DEFAULT_CATALOG_PIN
-
-
 def _group_categories(result: CatalogListResult) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     order: list[str] = []
@@ -80,10 +59,71 @@ def _group_categories(result: CatalogListResult) -> list[dict[str, Any]]:
         }
         if card.specialty:
             payload["specialty"] = card.specialty
+        if card.description:
+            payload["description"] = card.description
+        if card.what_done_looks_like:
+            payload["what_done_looks_like"] = card.what_done_looks_like
+        if card.description is not None and card.what_done_looks_like is not None:
+            # Grouping needs no filter of its own: `list_catalog` withholds
+            # every row that failed the parse-and-quality gate, so a card that
+            # reaches here always carries both strings. The split is done here,
+            # with the parser the quality gate uses, rather than left to the
+            # reader.
+            payload["sections"] = describe_pack(
+                card.description, card.what_done_looks_like
+            )
+        if card.tools_hint:
+            payload["tools_hint"] = list(card.tools_hint)
+        if card.content_hash:
+            # The marketplace compares this against the installed template's
+            # hash to decide between "Installed" and "Update available".
+            payload["content_hash"] = card.content_hash
         if card.pack_author:
             payload["pack_author"] = card.pack_author
         grouped[entry.category].append(payload)
     return [{"id": category, "packs": grouped[category]} for category in order]
+
+
+def _withheld_payload(result: CatalogListResult) -> list[dict[str, str]]:
+    """The catalog rows the app listed in its index but will not offer.
+
+    The operator owns the catalog repo, so this is the signal that their own
+    repo shipped something this app will not show: without it they would merge
+    a PR, never see the pack in the grid, and get no reason why.
+
+    ONE list with an explicit ``kind`` rather than a ``refused`` list beside an
+    ``unavailable`` one — see ``CatalogListResult`` for why. ``kind`` is the
+    fact the reader acts on: a refusal names what to fix in the pack, an
+    unavailability says only that the file could not be read and the move is to
+    retry. ``code`` stays alongside it as the precise cause, but no consumer
+    should be classifying transport-versus-content out of it.
+
+    ``path`` and ``category`` are published, not just logged. A maintainer told
+    ``code-auditor: pack_quality`` still has to go and find the file, and this
+    payload is flat while ``categories`` is grouped — so without ``category``
+    the one derivation the grid's own shape invites, "which category lost a
+    pack", cannot be made at all.
+
+    Args:
+        result: The list result whose ``withheld`` rows are being reported.
+
+    Returns:
+        One ``{"id", "path", "category", "title", "kind", "code", "message"}``
+        mapping per withheld row, in catalog order. Empty when every listed
+        pack was read and passed the gate.
+    """
+    return [
+        {
+            "id": row.id,
+            "path": row.path,
+            "category": row.category,
+            "title": row.title,
+            "kind": row.kind,
+            "code": row.code,
+            "message": row.message,
+        }
+        for row in result.withheld
+    ]
 
 
 def _pin_payload(location: PackLocation) -> dict[str, Any]:
@@ -100,29 +140,46 @@ def _pin_payload(location: PackLocation) -> dict[str, Any]:
 
 @router.get("/agent-packs")
 def list_agent_packs(ref: str | None = None) -> dict[str, Any]:
-    """List catalog packs at the pinned commit for the Add agent browse door.
+    """List catalog packs at the pinned commit for the marketplace's browse list.
 
-    Does not hire. Pick still goes through ``POST /api/agent-packs/import``.
+    Does not hire and does not install. Picking a pack goes through
+    ``POST /api/agent-templates``, which snapshots it into the local template
+    library the Add agent picker reads. No UI path reaches
+    ``POST /api/agent-packs/import`` any more; that route stays a documented
+    API surface with tests of its own.
+
+    ``categories`` carries only packs that were read AND passed the same gate
+    install runs — ``list_catalog`` withholds the rest — so a listed card is
+    always installable and the category counts are counts of installable packs.
+    ``withheld`` reports what did not make it, one
+    ``{"id", "path", "category", "title", "kind", "code", "message"}`` row
+    each, so a catalog maintainer can see that their own repo shipped a pack
+    this app will not show instead of watching it vanish. ``kind`` separates
+    the two reasons that are not the same reason: ``"refused"`` (read and
+    rejected — fix the pack) from ``"unavailable"`` (never read — retry). A
+    catalog whose every pack is invalid is an empty ``categories`` plus a full
+    ``withheld`` — not an error.
     """
-    catalog_repo, _catalog_path, _extra, _secret = _catalog_settings()
-    pin = _catalog_pin(ref)
+    catalog_repo, _catalog_path, _extra, _secret = catalog_settings()
+    pin = catalog_pin(ref)
     try:
         result = list_catalog(source=_SOURCE, catalog_repo=catalog_repo, ref=pin)
     except AgentPackError as exc:
-        raise _http_error(exc) from exc
+        raise http_error(exc) from exc
     return {
         "repo": result.repo,
         "ref": result.requested_ref,
         "commit_sha": result.commit_sha,
         "pin_short": result.commit_sha[:7],
         "categories": _group_categories(result),
+        "withheld": _withheld_payload(result),
     }
 
 
 @router.post("/agent-packs/import")
 def import_agent_pack(body: AgentPackImportBody) -> dict[str, Any]:
     """Fetch a pinned pack and return hire-form fields. Does not hire."""
-    catalog_repo, catalog_path, extra, secret = _catalog_settings()
+    catalog_repo, catalog_path, extra, secret = catalog_settings()
     try:
         result = import_pack(
             PackImportRequest(
@@ -141,7 +198,7 @@ def import_agent_pack(body: AgentPackImportBody) -> dict[str, Any]:
             confirm_secret=secret,
         )
     except AgentPackError as exc:
-        raise _http_error(exc) from exc
+        raise http_error(exc) from exc
     payload: dict[str, Any] = {
         "pack": result.pack.as_dict(),
         "hire_fields": result.hire_fields,
@@ -173,7 +230,7 @@ def export_agent_pack(agent_id: str) -> dict[str, Any]:
             company_url=config.get("company_url"),
         )
     except AgentPackError as exc:
-        raise _http_error(exc) from exc
+        raise http_error(exc) from exc
     return {
         "pack": pack.as_dict(),
         "yaml": pack.to_yaml(),

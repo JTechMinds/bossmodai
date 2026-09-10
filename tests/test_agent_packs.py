@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,8 +20,11 @@ from core.agent_pack import (
     DEFAULT_CATALOG_PATH,
     DEFAULT_CATALOG_PIN,
     DEFAULT_CATALOG_REPO,
+    WITHHELD_REFUSED,
+    WITHHELD_UNAVAILABLE,
     PackImportRequest,
     confirm_token_for,
+    describe_pack,
     export_pack,
     import_pack,
     list_catalog,
@@ -59,6 +63,8 @@ tools_hint:
   - work
 extra_credit: ignored on purpose
 """
+
+UNPARSEABLE_PACK = "specialty: [unclosed\n"
 
 VALID_PACK = """
 schema: bossmod.agent_pack/v1
@@ -1101,6 +1107,359 @@ def test_api_list_catalog_default_pin_and_empty_and_fail(
     denied = fail_client.get("/api/agent-packs", headers=_headers())
     assert denied.status_code == 400
     assert denied.json()["detail"]["code"] == "pin_unresolved"
+
+
+def test_list_catalog_withholds_a_pack_that_fails_quality(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Browse offers what install accepts, so a thin pack is offered by neither.
+
+    The gate runs at the source: the thin pack is not a card at all, rather
+    than a card whose only outcome is an error on Install. It comes back in
+    ``withheld`` with the code install would have raised, and the refusal is
+    logged — the operator owns the catalog repo, and a pack that merely
+    vanished is a pack that stays broken.
+    """
+    source = _catalog_source(THIN_PACK)  # the thin pack sits at AUDITOR_PATH
+    with caplog.at_level(logging.WARNING, logger="core.agent_pack.service"):
+        result = list_catalog(
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            ref=PINNED_SHA,
+        )
+
+    assert [card.entry.id for card in result.packs] == ["feature-planner"]
+    assert [row.id for row in result.withheld] == ["code-auditor"]
+    refused = result.withheld[0]
+    assert refused.code == "pack_quality"
+    assert refused.path == AUDITOR_PATH
+    assert refused.title == "Code Auditor"
+    assert refused.message == (
+        "Pack description is missing required sections: "
+        "Mission, In scope, Out of scope, Handoff."
+    )
+
+    # The gate is pure over the parse the list already ran: one ref resolve,
+    # one index read, one read per listed pack — the same fetches as before.
+    assert len(source.resolve_calls) == 1
+    assert [call[2] for call in source.fetch_calls] == [
+        CATALOG_INDEX_PATH,
+        AUDITOR_PATH,
+        PLANNER_PATH,
+    ]
+
+    warning = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warning) == 1
+    assert "code-auditor" in warning[0].getMessage()
+    assert "pack_quality" in warning[0].getMessage()
+
+
+def test_list_catalog_withholds_a_pack_that_does_not_parse(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A row whose file is not a pack is refused the same way, with its own code.
+
+    It used to be listed as a bare index row with no fields under it. There is
+    no such card any more: the two failures differ only in the ``code`` the
+    maintainer is handed.
+    """
+    source = _catalog_source(UNPARSEABLE_PACK, pack_path=PLANNER_PATH)
+    with caplog.at_level(logging.WARNING, logger="core.agent_pack.service"):
+        result = list_catalog(
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            ref=PINNED_SHA,
+        )
+
+    assert [card.entry.id for card in result.packs] == ["code-auditor"]
+    assert [(row.id, row.code) for row in result.withheld] == [
+        ("feature-planner", "invalid_yaml")
+    ]
+    assert result.withheld[0].path == PLANNER_PATH
+    assert result.withheld[0].message == "Pack YAML is not valid data."
+    assert [call[2] for call in source.fetch_calls] == [
+        CATALOG_INDEX_PATH,
+        AUDITOR_PATH,
+        PLANNER_PATH,
+    ]
+    assert "feature-planner" in caplog.text
+
+
+def test_api_withheld_packs_leave_the_grid_and_are_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused pack is absent from the grid AND from the category totals.
+
+    Categories are grouped from the offered set, so an "All N" built from these
+    rows counts installable packs only. The fact is not lost with the card:
+    ``withheld`` names it, with the reason.
+    """
+    source = _catalog_source(THIN_PACK)
+    client = _client(monkeypatch, source)
+    listed = client.get("/api/agent-packs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+
+    # engineering held exactly one row and it did not survive the gate, so the
+    # category is gone rather than present and empty.
+    assert [category["id"] for category in body["categories"]] == ["product"]
+    assert sum(len(category["packs"]) for category in body["categories"]) == 1
+    assert body["categories"][0]["packs"][0]["id"] == "feature-planner"
+    assert body["withheld"] == [
+        {
+            "id": "code-auditor",
+            "path": "packs/engineering/code-auditor.agent.yaml",
+            "category": "engineering",
+            "title": "Code Auditor",
+            "kind": "refused",
+            "code": "pack_quality",
+            "message": (
+                "Pack description is missing required sections: "
+                "Mission, In scope, Out of scope, Handoff."
+            ),
+        }
+    ]
+    assert db.list_agents() == []
+
+
+def _unreadable_planner_source() -> FakePackSource:
+    """A catalog whose auditor row is thin and whose planner file is not there.
+
+    One source, two different failures: the auditor is READ and refused by the
+    quality gate, the planner cannot be fetched at all. ``FakePackSource``
+    raises ``fetch_failed`` for a file it does not hold, which is the code
+    ``GitHubPackSource.fetch_file`` raises for a 404 and for a 502 alike.
+    """
+    source = _catalog_source(THIN_PACK)  # the thin pack sits at AUDITOR_PATH
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    del source.files[(owner.lower(), repo.lower(), PLANNER_PATH, PINNED_SHA.lower())]
+    return source
+
+
+def test_list_catalog_tells_a_refused_pack_apart_from_an_unreadable_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Content rejection and transport failure are not the same fact.
+
+    Both leave the grid — you cannot install what you cannot read — but only
+    one of them is an accusation. A pack the gate refused is a file the
+    maintainer has to change; a pack that never arrived says nothing at all
+    about its content, and the operator's move is to retry. One try block
+    around the fetch AND the parse reported a GitHub 502 as "your pack is
+    broken", so the two calls are caught separately and the kind is decided by
+    WHICH ONE failed rather than by reading the code back out of the error.
+    """
+    source = _unreadable_planner_source()
+    with caplog.at_level(logging.WARNING, logger="core.agent_pack.service"):
+        result = list_catalog(
+            source=source,
+            catalog_repo=DEFAULT_CATALOG_REPO,
+            ref=PINNED_SHA,
+        )
+
+    assert result.packs == ()
+    assert [(row.id, row.kind, row.code) for row in result.withheld] == [
+        ("code-auditor", WITHHELD_REFUSED, "pack_quality"),
+        ("feature-planner", WITHHELD_UNAVAILABLE, "fetch_failed"),
+    ]
+    # The file and the category the maintainer has to go to, for both kinds.
+    assert [(row.path, row.category) for row in result.withheld] == [
+        (AUDITOR_PATH, "engineering"),
+        (PLANNER_PATH, "product"),
+    ]
+    # Verbatim, and never rewritten into the other kind's language.
+    refused, unavailable = result.withheld
+    assert refused.message == (
+        "Pack description is missing required sections: "
+        "Mission, In scope, Out of scope, Handoff."
+    )
+    assert unavailable.message == "missing file"
+
+    # Both are logged, and the log line says which kind it was.
+    warnings = [record.getMessage() for record in caplog.records
+                if record.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert WITHHELD_REFUSED in warnings[0] and "code-auditor" in warnings[0]
+    assert WITHHELD_UNAVAILABLE in warnings[1] and "feature-planner" in warnings[1]
+
+
+def test_api_withheld_rows_publish_the_file_the_category_and_the_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A maintainer told ``code-auditor: pack_quality`` still has to find the file.
+
+    ``path`` was captured and then dropped on the way out, and ``category``
+    was never captured at all — and this payload is FLAT while ``categories``
+    is grouped, so without it "which category lost a pack" cannot be derived
+    from the response at all. Both are published now, for both kinds.
+
+    ``kind`` is the discriminator, in ONE list rather than two: the headline
+    an operator reads is how many rows are missing from the grid in front of
+    them, and that is one length here.
+    """
+    source = _unreadable_planner_source()
+    client = _client(monkeypatch, source)
+    listed = client.get("/api/agent-packs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+
+    assert body["categories"] == []
+    assert body["withheld"] == [
+        {
+            "id": "code-auditor",
+            "path": AUDITOR_PATH,
+            "category": "engineering",
+            "title": "Code Auditor",
+            "kind": "refused",
+            "code": "pack_quality",
+            "message": (
+                "Pack description is missing required sections: "
+                "Mission, In scope, Out of scope, Handoff."
+            ),
+        },
+        {
+            "id": "feature-planner",
+            "path": PLANNER_PATH,
+            "category": "product",
+            "title": "Feature Planner",
+            "kind": "unavailable",
+            "code": "fetch_failed",
+            "message": "missing file",
+        },
+    ]
+    # A per-category count of what went missing, which is the one derivation
+    # the grid's own shape invites and the flat list could not answer before.
+    assert sorted(row["category"] for row in body["withheld"]) == [
+        "engineering",
+        "product",
+    ]
+    assert db.list_agents() == []
+
+
+def test_api_catalog_of_only_invalid_packs_is_an_empty_grid_not_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every pack refused is still a served catalog: nothing to install, and why.
+
+    The index itself parsed, so there is nothing to raise about; the browse
+    door answers with an empty grid and a full withheld list rather than a 400
+    that would tell the operator nothing about which pack broke.
+    """
+    source = _catalog_source(THIN_PACK)
+    owner, repo = DEFAULT_CATALOG_REPO.split("/", 1)
+    for ref, sha in (
+        (PINNED_SHA, PINNED_SHA),
+        ("v1.0.0", TAG_SHA),
+        (DEFAULT_CATALOG_PIN, PINNED_SHA),
+    ):
+        source.add(
+            owner=owner,
+            repo=repo,
+            path=PLANNER_PATH,
+            ref=ref,
+            sha=sha,
+            yaml_text=UNPARSEABLE_PACK,
+        )
+    client = _client(monkeypatch, source)
+    listed = client.get("/api/agent-packs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+
+    assert body["categories"] == []
+    assert [(row["id"], row["code"]) for row in body["withheld"]] == [
+        ("code-auditor", "pack_quality"),
+        ("feature-planner", "invalid_yaml"),
+    ]
+    assert body["commit_sha"] == PINNED_SHA
+    assert db.list_agents() == []
+
+
+def test_describe_pack_splits_every_required_section() -> None:
+    """A quality-valid pack is structure, and the server is what reads it."""
+    pack = parse_pack_yaml(AUDITOR_PACK)
+    validate_pack_quality(pack)
+    parsed = describe_pack(pack.description, pack.what_done_looks_like)
+    assert set(parsed) == {"description", "done"}
+    assert set(parsed["description"]) == {
+        "preamble",
+        "mission",
+        "in_scope",
+        "out_of_scope",
+        "handoff",
+    }
+    assert set(parsed["done"]) == {"preamble", "fail_examples"}
+    # The whole description is sections, so there is no lead-in before them.
+    assert parsed["description"]["preamble"] == ""
+    assert parsed["description"]["mission"].startswith("Reviews claims")
+    assert "pull requests" in parsed["description"]["in_scope"]
+    assert "credential hunting" in parsed["description"]["out_of_scope"]
+    assert parsed["description"]["handoff"].startswith("The operator")
+    # Labels are consumed, not echoed back inside the body.
+    for body in parsed["description"].values():
+        assert not str(body).startswith("Mission:")
+    assert parsed["done"]["preamble"].startswith("A checkable allow/deny exists")
+    assert "vibe check" in parsed["done"]["fail_examples"]
+    assert "Fail examples" not in parsed["done"]["preamble"]
+
+
+def test_describe_pack_keeps_a_preamble_and_nulls_what_is_absent() -> None:
+    """Partial structure is reported as partial — never patched up."""
+    partial = describe_pack(
+        "Reads the room first.\nMission: Ships the smallest correct change.\n"
+        "Handoff: The operator gets the diff.",
+        "A named diff exists.",
+    )
+    assert partial["description"]["preamble"] == "Reads the room first."
+    assert partial["description"]["mission"] == "Ships the smallest correct change."
+    assert partial["description"]["handoff"] == "The operator gets the diff."
+    assert partial["description"]["in_scope"] is None
+    assert partial["description"]["out_of_scope"] is None
+    assert partial["done"]["preamble"] == "A named diff exists."
+    assert partial["done"]["fail_examples"] is None
+
+    # A thin pack carries no heading at all. Every section is None and the text
+    # survives whole as the preamble; nothing is invented to fill the shape.
+    thin = parse_pack_yaml(THIN_PACK)
+    unlabeled = describe_pack(thin.description, thin.what_done_looks_like)
+    assert unlabeled["description"]["preamble"] == thin.description.strip()
+    assert all(
+        unlabeled["description"][key] is None
+        for key in ("mission", "in_scope", "out_of_scope", "handoff")
+    )
+    assert unlabeled["done"]["fail_examples"] is None
+
+    empty = describe_pack("", "")
+    assert empty["description"]["preamble"] == ""
+    assert empty["done"]["preamble"] == ""
+    assert empty["description"]["mission"] is None
+
+
+def test_api_cards_carry_sections_done_and_tools_at_no_extra_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The card gains parsed structure out of the parse it already ran."""
+    source = _catalog_source()
+    client = _client(monkeypatch, source)
+    listed = client.get("/api/agent-packs", headers=_headers())
+    assert listed.status_code == 200, listed.text
+    card = listed.json()["categories"][0]["packs"][0]
+    assert card["id"] == "code-auditor"
+    assert card["what_done_looks_like"].startswith("A checkable allow/deny exists")
+    assert card["tools_hint"] == ["work"]
+    assert card["sections"] == describe_pack(
+        card["description"], card["what_done_looks_like"]
+    )
+    assert card["sections"]["description"]["mission"].startswith("Reviews claims")
+    assert card["sections"]["done"]["fail_examples"].endswith("evidence attached.")
+
+    # The parsed form is a view of a fetch that already happened: one ref
+    # resolve, one index read, one read per listed pack, and nothing more.
+    assert len(source.resolve_calls) == 1
+    assert [call[2] for call in source.fetch_calls] == [
+        CATALOG_INDEX_PATH,
+        AUDITOR_PATH,
+        PLANNER_PATH,
+    ]
 
 
 def test_catalog_import_by_listed_path_and_unknown_id() -> None:

@@ -71,7 +71,7 @@ const PersonalitiesSection = (() => {
         }
 
         container.innerHTML = html;
-        if (window.lucide) lucide.createIcons({ nodes: [container] });
+        BossModIcons.paint(container, 'settings-personalities');
 
         const addBtn = document.getElementById('btn-add-personality');
         if (addBtn) addBtn.addEventListener('click', () => renderForm(null));

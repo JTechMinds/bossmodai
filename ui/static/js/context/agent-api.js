@@ -149,27 +149,6 @@ const BossModAgentApi = (() => {
         return res.json();
     }
 
-    /**
-     * Hydrate hire-form fields from a pinned pack. Never sends agent_id.
-     *
-     * @param {object} body  Catalog `{id, ref}` or `{url}` (plus confirm).
-     * @returns {Promise<object>}
-     */
-    async function importPack(body) {
-        const payload = { ...body };
-        delete payload.agent_id;
-        const res = await apiFetch('/api/agent-packs/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-            const { error } = await packFailure(res, 'Pack import failed.');
-            throw error;
-        }
-        return res.json();
-    }
-
     return {
         fetchAgent,
         apiCreateAgent,
@@ -180,6 +159,5 @@ const BossModAgentApi = (() => {
         apiClearChatHistory,
         apiResetRuntime,
         fetchCatalog,
-        importPack,
     };
 })();

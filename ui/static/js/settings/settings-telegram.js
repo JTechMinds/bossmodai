@@ -157,7 +157,7 @@ const TelegramSection = (() => {
             </div>`;
 
         el.innerHTML = html;
-        if (window.lucide) lucide.createIcons({ nodes: [el] });
+        BossModIcons.paint(el, 'settings-telegram');
 
         // ─── Toggle handler ───
         document.getElementById('btn-toggle-telegram').addEventListener('click', async (e) => {

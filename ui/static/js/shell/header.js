@@ -238,7 +238,7 @@ const BossModHeader = (() => {
             errorEl, bellLive, bell, pause, gear));
 
         function paintIcons() {
-            lucide.createIcons();
+            BossModIcons.paintDocument('header');
         }
 
         // ─── Company name ───

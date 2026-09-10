@@ -108,11 +108,17 @@ def test_casual_hire_shows_color_under_description() -> None:
 
 
 def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
-    # Re-pointed by Phase 4's split: the gate and the submit ordering are
-    # context/agent-edit.js's, the two markup ids and the disabled styling are
-    # the field groups', and the duplicate-name binding is agent-form.js's.
-    # Every assertion below is the one that was here before.
-    panel = _read("context/agent-edit.js")
+    # Re-pointed three times: Phase 4 split agent-panel.js, the two-step create
+    # dialog split the FORM'S WIRING out of context/agent-edit.js into
+    # context/agent-form-save.js, and the third audit gave the pinned primary
+    # ONE owner in context/agent-dialog-footer.js — it had three, and each of
+    # them reached it with a document-wide lookup. So the descriptor and the
+    # busy word are read off that owner now instead of off the dialog and the
+    # save wiring. Every assertion below is the one that was here before; only
+    # the file each fact lives in has moved.
+    panel = _read("context/agent-form-save.js")
+    footer = _read("context/agent-dialog-footer.js")
+    dialog = _read("context/agent-edit.js")
     markup = _form_markup()
     gates = _read("core/gates.js")
     assert "createInFlightGate()" in gates
@@ -121,13 +127,18 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
     # Round four pinned the primary in the DIALOG's action row, outside the
     # form it submits, because the operator could not find it at the bottom of
     # a scrolling form. The id this pins and the disabled styling moved with
-    # it — the id onto the dialog's action descriptor, the styling onto
+    # it — the id onto the pinned row's action descriptor, the styling onto
     # `.modal-action:disabled`, which is what the Tailwind pair carried.
-    assert "id: 'agent-form-submit'" in panel
-    assert "form: 'agent-form'" in panel
+    assert "const ID = 'agent-form-submit';" in footer
+    assert "const FORM_ID = 'agent-form';" in footer
+    assert "id: ID, form: FORM_ID," in footer
+    # ...and the dialog is what asks that row for its actions, rather than
+    # describing a second primary of its own.
+    assert "FOOTER.actionsFor(wasCreating ? 'picker' : 'form', chrome)" in dialog
+    assert "agent-form-submit" not in dialog
     overlays_css = (ROOT / "ui" / "static" / "css" / "overlays.css").read_text(encoding="utf-8")
     assert "pointer-events: none" in overlays_css
-    assert "Creating…" in panel
+    assert "busy: 'Creating…'" in footer
     assert "id=\"agent-name-duplicate-warn\"" in markup
     assert "bindDuplicateNameWarning" in _read("context/agent-form.js")
     assert "function bindDuplicateNameWarning(" in _read("context/agent-form-bindings.js")
@@ -136,7 +147,12 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
     )[0]
     assert "hireSubmit.run(" in submit
     assert submit.index("if (hireSubmit.busy()) return;") < submit.index("hireSubmit.run(")
-    assert submit.index("submitBtn.disabled = true") < submit.index("apiCreateAgent")
+    # The busy label is painted before the request goes out, and it is painted
+    # through THIS render's claim — a save that is no longer the form on screen
+    # may not move the button at all.
+    assert submit.index("primary.saving(token, feedback.element)") < submit.index(
+        "apiCreateAgent"
+    )
 
 
 def test_successful_create_dismisses_hire_form() -> None:
@@ -148,7 +164,7 @@ def test_successful_create_dismisses_hire_form() -> None:
     """
     source = _read("context/agent-edit.js")
     # Phase 4 split agent-panel.js away; renderInline is this module's own now.
-    assert "void renderInline(formEl, agent || null, onSave, onDelete)" in source
+    assert "void renderInline({ container: formEl, agent: agent || null, primary, onSave, onDelete })" in source
     # Captured at construction, before any save can land.
     assert "const wasCreating = !agent;" in source
     on_save = source.split("function onSave(savedAgent) {", 1)[1].split(

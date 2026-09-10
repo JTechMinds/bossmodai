@@ -60,7 +60,8 @@ global.document = {
     activeElement: null,
 };
 global.window = { document: global.document };
-global.lucide = { createIcons() {} };
+const { installIconsStub } = require("./js_icons_stub.cjs");
+installIconsStub();
 
 const [
     dom, avatar, store, bus, format, agentStatus, overlayFocus, overlays, rowMeta, places, header,

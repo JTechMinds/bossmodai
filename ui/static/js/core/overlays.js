@@ -12,50 +12,27 @@
  * drifted apart once already. That module holds the keyboard rule; this one
  * holds the three shapes that obey it.
  *
- * The modal has two SIZES and one implementation: a confirm dialog and the
- * agent form differ in geometry, not in contract, so the difference is an
- * attribute the stylesheet reads rather than a second function. It also owns
- * the BACKDROP that blocks the page — built and removed with the panel,
- * because a scrim that outlives its dialog leaves the app unclickable.
+ * The modal has THREE SIZES and one implementation: a confirm dialog, the
+ * agent form and a full-screen takeover differ in geometry, not in contract,
+ * so the difference is an attribute the stylesheet reads rather than three
+ * functions. It also owns the BACKDROP that blocks the page — built and
+ * removed with the panel: a scrim outliving its dialog bricks the app.
  */
 const BossModOverlays = (() => {
-    const { h } = BossModDom;
+    const { h, clear } = BossModDom;
     // The trap and the tab-order selector are core/overlay-focus.js's: one
     // rule, three overlays, and no room left in this file to keep it here.
     const { FOCUSABLE, trapKeydown } = BossModOverlayFocus;
 
     /**
-     * Open a modal dialog.
-     *
-     * @param {object} options
-     * @param {string} options.title
-     * @param {string|HTMLElement} options.body
-     * @param {Array<{label: string, tone?: string, id?: string, form?: string,
-     *   onSelect?: () => void}>} options.actions
-     *   Rendered left to right. The LAST receives focus on open when — and
-     *   only when — the body has nothing focusable in it: that is the safe
-     *   choice in a confirm dialog, and it is wrong in a form one, where the
-     *   primary is now the last action and focusing it means Enter submits an
-     *   empty form. See the focus line at the end of this function. `id` names
-     *   the button, so a caller whose buttons are already named (and selected
-     *   by name in tests) keeps those names. `form` is the id of a form THIS
-     *   BUTTON SUBMITS from outside it — how a form's primary can be pinned
-     *   above a scrolling body — and such an action does not close the dialog,
-     *   because the form's own handler and validation own the outcome.
-     * @param {() => void} [options.onClose] Called after close, however it
-     *   closed — and after the chosen action's onSelect, so a caller can treat
-     *   it as "dismissed" when no choice was recorded.
-     * @param {'default'|'wide'} [options.size='default'] Geometry only.
-     *   'wide' is broad enough for a form and bounded by the viewport, with a
-     *   scrolling BODY and the title and action row pinned outside it. The
-     *   trap, Esc and focus restoration below are unchanged by it.
-     * @returns {{ close: () => void, element: HTMLElement }}
+     * Fill an action row with buttons, replacing whatever it held: one
+     * implementation for construction and for setActions(), so the `form` and
+     * close semantics documented on createModal's `actions` cannot drift.
+     * @returns {HTMLElement[]} The buttons, in render order.
      */
-    function createModal({ title, body, actions, onClose, size }) {
-        const previouslyFocused = document.activeElement;
+    function renderActions(actionRow, actions, close) {
         const buttons = [];
-
-        const actionRow = h('div', { class: 'modal-actions' });
+        clear(actionRow);
         (actions || []).forEach((action) => {
             // A `form` makes this that form's submit button from outside it,
             // and it must NOT close: a refused save keeps the draft on screen.
@@ -78,13 +55,63 @@ const BossModOverlays = (() => {
             buttons.push(btn);
             actionRow.append(btn);
         });
+        return buttons;
+    }
+
+    /**
+     * Open a modal dialog.
+     *
+     * @param {object} options
+     * @param {string} options.title
+     * @param {string|HTMLElement} options.body
+     * @param {Array<{label: string, tone?: string, id?: string, form?: string,
+     *   onSelect?: () => void}>} options.actions
+     *   Rendered left to right. The LAST receives focus on open when — and
+     *   only when — the body has nothing focusable in it: that is the safe
+     *   choice in a confirm dialog, and it is wrong in a form one, where the
+     *   primary is now the last action and focusing it means Enter submits an
+     *   empty form. See the focus line at the end of this function. `id` names
+     *   the button, so a caller whose buttons are already named (and selected
+     *   by name in tests) keeps those names. `form` is the id of a form THIS
+     *   BUTTON SUBMITS from outside it — how a form's primary can be pinned
+     *   above a scrolling body — and such an action does not close the dialog,
+     *   because the form's own handler and validation own the outcome.
+     * @param {() => void} [options.onClose] Called after close, however it
+     *   closed — and after the chosen action's onSelect, so a caller can treat
+     *   it as "dismissed" when no choice was recorded.
+     * @param {'default'|'wide'|'takeover'} [options.size='default'] Geometry
+     *   only. 'wide' is broad enough for a form; 'takeover' is the near
+     *   full-screen variant a browse-and-read surface needs. Both keep the
+     *   scrolling BODY with title and actions pinned outside it, and neither
+     *   touches the trap, Esc or focus restoration. Anything else is default.
+     * @returns {{ close: () => void, element: HTMLElement,
+     *   setActions: (actions: Array<object>) => void }} `setActions` rebuilds
+     *   the action row IN PLACE — same node, same panel, same trap — because a
+     *   two-step dialog needs a footer per step, step one has no form for a
+     *   `form:` primary to submit, and a second stacked dialog would be a
+     *   second focus trap over one task. The trap re-reads the panel on every
+     *   Tab so it finds the new buttons; the button that held focus may be one
+     *   just removed, so placing focus after a swap is the caller's.
+     */
+    function createModal({ title, body, actions, onClose, size }) {
+        const previouslyFocused = document.activeElement;
+        const buttons = [];
+
+        const actionRow = h('div', { class: 'modal-actions' });
+        // Refilled, never replaced: the focus fallback at the end of this
+        // function closes over `buttons`, and a fresh array would strand it.
+        function setActions(nextActions) {
+            buttons.length = 0;
+            buttons.push(...renderActions(actionRow, nextActions, close));
+        }
+        setActions(actions);
 
         const bodyNode = h('div', { class: 'modal-body' }, body);
 
         const element = h('div', {
             class: 'modal-panel',
             // Read by the stylesheet, never by script: geometry is CSS's.
-            'data-size': size === 'wide' ? 'wide' : 'default',
+            'data-size': size === 'wide' || size === 'takeover' ? size : 'default',
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': title,
@@ -126,7 +153,7 @@ const BossModOverlays = (() => {
         if (bodyStops.length) bodyStops[0].focus();
         else if (buttons.length) buttons[buttons.length - 1].focus();
 
-        return { close, element };
+        return { close, element, setActions };
     }
 
     /**

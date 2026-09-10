@@ -141,16 +141,21 @@ CONTEXT_MODULES = [
     JS / "context" / "desk-tasks.js",
     JS / "context" / "desk-actions.js",
     JS / "context" / "agent-api.js",
+    JS / "context" / "agent-templates-api.js",
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
     JS / "context" / "agent-form-connections.js",
     JS / "context" / "agent-form-bindings.js",
     JS / "context" / "agent-form-hydrate.js",
-    JS / "context" / "agent-form-catalog.js",
     JS / "context" / "agent-form.js",
     JS / "context" / "agent-submit.js",
     JS / "context" / "agent-recovery.js",
+    JS / "context" / "agent-form-save.js",
+    JS / "context" / "agent-template-picker.js",
+    JS / "context" / "agent-quick-connection.js",
+    JS / "context" / "agent-form-quick.js",
+    JS / "context" / "agent-dialog-footer.js",
     JS / "context" / "agent-edit.js",
     JS / "context" / "desk-panel.js",
     JS / "context" / "context-column.js",
@@ -171,7 +176,10 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     the standard answer and this is it.
     """
     payload = _agent_dialog_payload()
-    assert payload["pinnedActions"] == ["Cancel", "Create Agent"]
+    # The create dialog carries a footer per step now. Step one has no form,
+    # so it has no primary either; step two pins Back, Cancel and the primary.
+    assert payload["stepOnePinned"] == ["Browse marketplace", "Cancel"]
+    assert payload["stepTwoPinned"] == ["Back", "Cancel", "Create Agent"]
     assert payload["editPinnedActions"] == ["Cancel", "Save Changes"]
     # It submits the form it is no longer inside.
     assert payload["primaryCarriesFormAttribute"] == "agent-form"

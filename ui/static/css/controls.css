@@ -57,6 +57,28 @@
 .avatar-md   { width: 26px; height: 26px; font-size: 11px; }
 .avatar-lg   { width: 40px; height: 40px; font-size: 15px; }
 
+/* TWO initials in a circle sized for one — `DA`, where a person's avatar
+ * carries `D`. Not decoration: a two-word category is one thing with two
+ * words in its name, and its mark says so.
+ *
+ * The reduction is DERIVED, not eyeballed. A capital on this stack covers
+ * about 0.72em, so a pair spans ~1.45em against a single letter's ~0.72em, and
+ * the widest string a circle of diameter D can hold flat is the side of the
+ * square it inscribes, D / sqrt(2) = 0.707D. At `chip` that ceiling is 9.9px
+ * and an unreduced pair measures 11.6px — it touches the edge. Scaling type to
+ * 0.8 brings every size back inside it (8.7px of 9.9 at chip, 17.4px of 28.3
+ * at lg) while keeping the smallest pair at 6px rather than the 4px an exact
+ * optical match to one letter would demand.
+ *
+ * Compound selectors rather than a bare `.avatar-duo`: the four sizes each
+ * declare their own font-size, so one single-class rule could only carry one
+ * value and would win by source order rather than by being more specific.
+ * font-size ONLY, so .avatar's em-based optical lift still scales with it. */
+.avatar-chip.avatar-duo { font-size: 6px; }
+.avatar-sm.avatar-duo   { font-size: 8px; }
+.avatar-md.avatar-duo   { font-size: 9px; }
+.avatar-lg.avatar-duo   { font-size: 12px; }
+
 /* A conversation with no one face. --muted on --bg measures 6.10:1, so the
    glyph is readable rather than a smudge. */
 .avatar-group { background: var(--bg); color: var(--muted); }

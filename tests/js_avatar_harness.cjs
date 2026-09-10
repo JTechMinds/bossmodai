@@ -140,6 +140,55 @@ function threw(build) {
     }
 }
 
+// ─── 5. One letter for a face, two for a thing with two words in its name ───
+
+const INITIALS = {
+    oneWord: BossModAvatar.initials("Engineering"),
+    twoWords: BossModAvatar.initials("Data Analyst"),
+    // The cap is the point: a third word gets no third letter.
+    threeWords: BossModAvatar.initials("Senior Data Analyst"),
+    // A hyphen is INSIDE a word: this module also draws people.
+    hyphenIsOneWord: BossModAvatar.initials("Jean-Luc Picard"),
+    padded: BossModAvatar.initials("   product   design   "),
+    nameless: BossModAvatar.initials(""),
+    absent: BossModAvatar.initials(null),
+    explicitMaxOne: BossModAvatar.initials("Data Analyst", 1),
+};
+
+// The pair needs the smaller type size, and a single letter must not get it.
+const duoNode = BossModAvatar.create({
+    name: null, text: "DA", color: "#125768", size: "lg",
+});
+const soloNode = BossModAvatar.create({
+    name: null, text: "E", color: "#125768", size: "lg",
+});
+
+// ─── 6. The derived seed: stable, spread over the whole circle, and AA ───
+//
+// `seedFor` has no palette to enumerate, so the family is swept by asking it
+// for enough keys to reach every hue it can produce, then measuring each pair
+// with this file's own copy of the WCAG formula. --line/--muted below are the
+// two tokens the module names for a thing with no key at all; tests/
+// test_ui_visual_parity.py checks those hexes are still what tokens.css says.
+
+const SEEDS = new Set();
+for (let index = 0; index < 20000; index += 1) SEEDS.add(BossModAvatar.seedFor(`k-${index}`));
+let seedWorst = 21;
+let seedWorstHex = null;
+let seedDrift = 0;
+let seedIllegible = 0;
+for (const seed of SEEDS) {
+    const { bg, ink } = BossModAvatar.tintFor(seed);
+    const ratio = contrast(bg, ink);
+    if (ratio < seedWorst) {
+        seedWorst = ratio;
+        seedWorstHex = seed;
+    }
+    // The seed is the ink: nothing was darkened, so the hue derived is painted.
+    if (String(ink).toLowerCase() !== String(seed).toLowerCase()) seedDrift += 1;
+    if (!BossModAvatar.isSeedLegible(seed)) seedIllegible += 1;
+}
+
 process.stdout.write(JSON.stringify({
     ok: true,
 
@@ -166,6 +215,37 @@ process.stdout.write(JSON.stringify({
     malformedIsNeutral: malformed.bg === "var(--line)",
     malformedLogs: errorsAfterMalformed === 1 && errors[0].includes("[avatar]"),
     absentColourIsSilent: errorsAfterNull === errorsAfterMalformed,
+
+    initials: INITIALS,
+    maxBelowOneThrows: threw(() => BossModAvatar.initials("Data Analyst", 0)),
+
+    duoClass: duoNode.getAttribute("class"),
+    duoText: duoNode.textContent,
+    soloClass: soloNode.getAttribute("class"),
+    // A glyph the circle cannot hold, and a glyph that is not there at all:
+    // both render a mark nobody can read, so both fail at construction.
+    overlongTextThrows: threw(() => BossModAvatar.create({
+        name: null, text: "DAX", color: null, size: "lg",
+    })),
+    blankTextThrows: threw(() => BossModAvatar.create({
+        name: null, text: "", color: null, size: "lg",
+    })),
+
+    seedFamilySize: SEEDS.size,
+    seedWorstRatio: Number(seedWorst.toFixed(2)),
+    seedWorstHex,
+    seedsMeetAA: seedWorst >= 4.5,
+    seedsNeverDarken: seedDrift === 0,
+    seedsAreOfficeLegible: seedIllegible === 0,
+    seedIsStable: BossModAvatar.seedFor("engineering") === BossModAvatar.seedFor("engineering"),
+    seedIgnoresCaseAndSpace:
+        BossModAvatar.seedFor("  Engineering ") === BossModAvatar.seedFor("engineering"),
+    seedForNothing: BossModAvatar.seedFor("") === null && BossModAvatar.seedFor(null) === null,
+    twoKeysTwoSeeds:
+        BossModAvatar.seedFor("engineering") !== BossModAvatar.seedFor("product-design"),
+    // What a thing with NO key renders as: the neutral pair, measured.
+    keylessPair: BossModAvatar.tintFor(BossModAvatar.seedFor("")),
+    neutralRatio: Number(contrast("#e6e8ec", "#565e6b").toFixed(2)),
 
     decorativeTag: decorative.tagName,
     decorativeHidden: decorative.getAttribute("aria-hidden") === "true",

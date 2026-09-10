@@ -172,7 +172,7 @@ const BossModRoster = (() => {
         disposers.push(() => threads.destroy());
 
         threads.applySelection();
-        lucide.createIcons();
+        BossModIcons.paintDocument('roster');
         void loadPeople();
         void threads.refresh();
 

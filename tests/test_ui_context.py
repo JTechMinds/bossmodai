@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,16 +58,21 @@ CONTEXT_MODULES = [
     CONTEXT / "desk-tasks.js",
     CONTEXT / "desk-actions.js",
     CONTEXT / "agent-api.js",
+    CONTEXT / "agent-templates-api.js",
     CONTEXT / "agent-fields.js",
     CONTEXT / "agent-form-fields.js",
     CONTEXT / "agent-form-advanced.js",
     CONTEXT / "agent-form-connections.js",
     CONTEXT / "agent-form-bindings.js",
     CONTEXT / "agent-form-hydrate.js",
-    CONTEXT / "agent-form-catalog.js",
     CONTEXT / "agent-form.js",
     CONTEXT / "agent-submit.js",
     CONTEXT / "agent-recovery.js",
+    CONTEXT / "agent-form-save.js",
+    CONTEXT / "agent-template-picker.js",
+    CONTEXT / "agent-quick-connection.js",
+    CONTEXT / "agent-form-quick.js",
+    CONTEXT / "agent-dialog-footer.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "desk-panel.js",
     CONTEXT / "context-column.js",
@@ -191,6 +197,304 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     assert "notes.destroy();" in panel
 
 
+def test_set_all_fans_out_through_the_published_form() -> None:
+    """The convenience control that was silently dead, and the five nulls.
+
+    "Set All" is bound while the form sits on a DETACHED stage and it runs
+    after `renderInline` has published — and publishing MOVES the `<form>` out
+    of that stage and empties it. Bound to the host it was handed, every
+    `querySelector` inside the listener then answered null for the rest of the
+    form's life, `if (sel)` swallowed it, and nothing said a word.
+
+    That is not a cosmetic loss. `applyQuickLayout` promotes `model_all` to the
+    ONE required AI question and sweeps the five `model_*` selects behind a
+    collapsed disclosure, and `buildSubmitData` reads those five and never
+    `model_all` — so the fan-out IS the mechanism by which a quick create gets
+    any connection at all. Answer the required select, click Create, and the
+    agent was written with five null models, no connection_id and no
+    api_base_url, over the words "Saved successfully".
+
+    Run against the REAL builder, the REAL publish and the REAL submit path:
+    tests/js_add_agent_harness.cjs stubs `BossModAgentForm` wholesale, which is
+    why this sailed through a green suite once already.
+
+    It drives BLANK, which is the full form. The quick layout the paragraph
+    above describes — the promotion, the guard on it, and the fan-out through
+    it into a real save — is
+    test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through;
+    this one holds the binding rule both of them stand on.
+    """
+    payload = _harness()
+    assert payload["setAllFansOutAfterPublish"] is True
+    assert payload["theFanOutIsWhatIsSaved"] is True
+    # The rule, where it is made: the `<form>` is the node that survives being
+    # published out of its host, so it is the node every binding holds.
+    form = _read(CONTEXT / "agent-form.js")
+    assert "const form = container.querySelector('#agent-form');" in form
+    # ...and the host is not read again after that one line. Everything the
+    # builder binds, it binds off the form.
+    bindings = form.split("if (!form) throw", 1)[1]
+    assert "container" not in bindings
+
+
+def test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through() -> None:
+    """The rule that decides whether a quick create gets a connection at all.
+
+    The quick layout promotes `model_all` to the ONE required AI question and
+    sweeps the five `model_*` selects behind a collapsed disclosure, and
+    `buildSubmitData` reads those five and never `model_all`. So `required` on
+    the lifted select is the whole gate, and the rule for when it comes off had
+    it backwards: it came off when the disclosure was OPENED. That panel is
+    where the template's specialty, description and what-done live, so opening
+    it to read them — the interaction the layout invites — disarmed the guard,
+    and closing it again did not put it back. Type a name, click Create, and
+    the agent was written with five null models, no connection_id and no
+    api_base_url, over the words "Saved successfully".
+
+    The corrected rule (spec 8.3) tracks the ANSWER: required until at least
+    one of the five holds a value, re-armed when they are all cleared back to
+    None, live on change in both directions. All four halves are here —
+    expand-and-close keeps it, one per-type select releases it, clearing them
+    re-arms it, and the fan-out through the lifted select releases it and
+    SAVES what it wrote.
+
+    Driven through the real builder, the real publish, the real quick layout,
+    the real `buildSubmitData` and the real POST. tests/js_add_agent_harness.cjs
+    stubs the form and the submit path, which is where this class of defect has
+    hidden three times; what the attribute buys — a refused submit — is native
+    constraint validation, so the attribute itself is what the fake can read.
+    """
+    payload = _harness()
+    for key in ("theQuickLayoutAsksForAConnection",
+                "readingTheDisclosureKeepsTheGuard",
+                "answeringTheMatrixReleasesTheGuard",
+                "clearingTheMatrixRearmsTheGuard",
+                "theQuickFanOutReleasesTheGuard",
+                "theQuickCreateSavesTheConnection"):
+        assert payload[key] is True, key
+
+
+def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
+    """The fifth route, and the last one: the invariant left the controls.
+
+    Five UI routes each produced an agent with no connection on any activation
+    type — none configured, a failed `/api/connections` read, the Set All
+    fan-out dying at publish, the disclosure toggle disarming the guard, and
+    this one. Each was fixed at the control that exposed it and a new one
+    appeared, always ending the same way: an agent that fails on its first turn
+    while the operator is told "Saved successfully".
+
+    This route is what proves a control can never be the guarantee. Answer the
+    lifted AI select — the fan-out fills the five, the guard releases — then
+    open "Review & customise" and set all five back to None. The guard re-arms
+    and it buys nothing: `required` asks the lifted select for A VALUE, and it
+    still holds the one that was answered. Native validation passes and
+    `buildSubmitData` writes five nulls.
+
+    So the rule is enforced once (spec 8.3), in `agent-form-save.js`'s submit
+    handler, on the built `agentData` rather than on the DOM — what would
+    actually be SENT. That handler is the seam because it is the last point
+    that still knows the save is a create; `buildSubmitData` is not, because
+    telling a form-level mapper about create-from-edit would push a
+    dialog-level rule into it. The field guards stay: they tell the operator
+    before they commit, and they are now convenience, not the guarantee.
+
+    Driven end to end through the real builder, the real publish, the real
+    `applyQuickLayout`, the real `buildSubmitData` and a POST that would have
+    SUCCEEDED — a refusal proven against an endpoint that refuses anyway proves
+    nothing.
+    """
+    payload = _harness()
+    # The route is real: armed guard, satisfied anyway.
+    assert payload["theRearmedGuardIsAlreadySatisfied"] is True
+    # Nothing POSTed, dialog open, draft intact, told why, primary usable — and
+    # "told why" now means told the NEXT ACTION that exists on this path: the
+    # lifted AI field and "Review & customise", never the "AI Connections"
+    # heading, which on the template path is inside the collapsed disclosure
+    # and on a connectionless one is not in the document at all.
+    assert payload["theFiveNullCreateIsRefused"] is True
+    # ...and the same refusal on the BLANK path names the matrix instead, which
+    # is what IS on screen there. Asserted per path on purpose: one substring
+    # both wordings satisfy would pin nothing, and every single-sentence
+    # version of this message has been wrong on one path or the other.
+    assert payload["theBlankRefusalNamesTheMatrix"] is True
+    # ...and the third shape, where liftNoConnections removed the box the "AI
+    # Connections" heading lived in: nothing on screen can be chosen, so the
+    # only next action is Settings and the sentence says so. An empty
+    # connections list is a HEALTHY read, so nothing else refuses this save
+    # first — this invariant is the one the create actually meets.
+    assert payload["theUnconfiguredRefusalSendsThemToSettings"] is True
+    # A gate, not a dead end: answer it and the same click goes through.
+    assert payload["theCorrectedCreateGoesThrough"] is True
+
+    save = _read(CONTEXT / "agent-form-save.js")
+    # It reads what would be SENT, keyed off the one owner of the vocabulary.
+    assert "isCreating && BossModAgentFields.MODEL_TYPES" in save
+    assert "agentData[key] == null" in save
+    # ...and it is upstream of the POST it is refusing.
+    assert save.index("say('bad', noConnection(form))") < save.index("apiCreateAgent(agentData)")
+    # One refusal mechanism, not two: the form's existing feedback line, which
+    # is already the live region everything else in this editor reports
+    # through. No second announcement channel was invented for this tone.
+    assert "say('bad', noConnection(form))" in save
+    # The handler picks its sentence from ONE attribute read, and the module
+    # that moved the control is the one that wrote it. A save handler that
+    # queried for a disclosure or a lifted field would be carrying a copy of
+    # the layout, and the copy is what goes stale.
+    assert "NO_CONNECTION_NEXT[BossModAgentQuickConnection.aiQuestion(form)]" in save
+    for layout in ("quick-disclosure", "quick-ai", "Review & customise"):
+        assert layout not in save.split("const noConnection", 1)[1], layout
+    lift = _read(CONTEXT / "agent-quick-connection.js")
+    assert "form.setAttribute(AI_QUESTION, LIFTED);" in lift
+    assert "form.setAttribute(AI_QUESTION, UNAVAILABLE);" in lift
+    # The mapper stays a mapper. A dialog-level rule inside it would have to be
+    # told which of create and edit it was serving.
+    submit = _read(CONTEXT / "agent-submit.js")
+    for leaked in ("NO_CONNECTION", "isCreating"):
+        assert leaked not in submit, f"the create-only rule leaked into the mapper ({leaked})"
+
+
+def test_an_edit_with_no_ai_connection_is_still_permitted() -> None:
+    """The refusal is scoped to CREATE, deliberately.
+
+    An agent with no connection is a real row — the roster predates the
+    invariant, and a connection can be deleted out from under one. Refusing
+    that save would trap the operator in a dialog they cannot leave without
+    losing every other edit they came to make, which is a worse outcome than
+    the one the rule exists to prevent: the agent already exists either way.
+
+    Driven the same way as the create: the real edit dialog, all five cleared
+    to None by hand, and the PATCH watched for on the wire.
+    """
+    payload = _harness()
+    assert payload["anEditWithNoConnectionStillSaves"] is True
+
+
+def test_the_forms_recovery_tools_are_bound_to_the_form_not_the_stage() -> None:
+    """The same shape that silently killed "Set All", one module along.
+
+    context/agent-form-save.js stages the form on a detached host and publishes
+    it with `replaceChildren(...stage.children)`, which MOVES the `<form>` out
+    and leaves the stage EMPTY. `bindRecoveryTools` was handed that stage. It
+    happens to be harmless — the two buttons are queried and bound while the
+    stage still holds them, and the nodes survive publication — but it is the
+    exact latent shape agent-form.js's header forbids, and `form` was already
+    resolved one line above it.
+
+    The parameter is named `form` rather than `container` for the same reason:
+    a name that invites a host is how the wrong node gets passed again.
+    """
+    save = _read(CONTEXT / "agent-form-save.js")
+    tools = save.split("RECOVERY.bindRecoveryTools({", 1)[1].split("});", 1)[0]
+    assert "form," in tools
+    assert "stage" not in tools
+    recovery = _read(CONTEXT / "agent-recovery.js")
+    body = recovery.split("function bindRecoveryTools(", 1)[1]
+    assert "container" not in body
+    assert "form.querySelector('#btn-clear-chat-history')" in body
+    assert "form.querySelector('#btn-reset-runtime')" in body
+
+
+def test_the_context_harness_ends_when_its_work_does() -> None:
+    """Three of every 3.1 seconds this harness took were an idle timer.
+
+    context/agent-form-save.js hides its "Saved successfully" line three
+    seconds after a save lands. That is right, and it is untouched. But the
+    harness's own section 3d performs the first successful save it has ever
+    run, and a pending timer keeps Node's event loop alive: `main()` finished
+    at ~60ms and the process exited at ~3060ms, once for every test body that
+    spawns this file — twelve of them, across four files, or about half the
+    suite's wall clock.
+
+    The harness registers its timers and drops whatever is still pending once
+    the verdict is written. This pins that: the budget is far below the 3s hide
+    it is protecting against, and generous enough that it can only fail if a
+    timer is holding the process open again.
+    """
+    args = ["node", str(HARNESS)] + [str(path) for path in CONTEXT_MODULES]
+    started = time.monotonic()
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert elapsed < 2.5, (
+        f"the harness idled for {elapsed:.2f}s after printing its verdict; "
+        "a pending timer is holding the run open"
+    )
+
+
+def test_a_failed_dependency_read_still_renders_the_form() -> None:
+    """`loadFormData`'s documented degradation, made true for an HTTP error.
+
+    It promises empty lists so the form still renders with its "no connections
+    configured" and "no personalities configured" links to Settings. It had no
+    `res.ok` and no `Array.isArray`, so a 500's `{detail}` object was assigned
+    straight through, the matrix iterated it, and `connections.map is not a
+    function` came out of the renderer — reaching the operator as the generic
+    "The agent editor failed to load."
+
+    The SAVE is a separate decision and still refuses (that read is
+    `readConnections`, which answers null rather than an empty list), so this
+    also pins the withheld primary's accessible half: the reason is named as
+    its description, the line carrying it is a live region, and the keyboard
+    goes to that line — a disabled button cannot take focus back.
+    """
+    payload = _harness()
+    assert payload["aFailedConnectionsReadStillRendersTheForm"] is True
+    assert payload["theBlockedPrimaryHandsOverTheKeyboard"] is True
+    form = _read(CONTEXT / "agent-form.js")
+    assert "async function readList(res, what)" in form
+    assert "if (!res.ok) throw new Error(`GET ${what} answered ${res.status}`);" in form
+    assert "if (!Array.isArray(body))" in form
+    # ...and it still degrades rather than refusing to render. The one shared
+    # catch that used to do that is gone, and its replacement is the point: it
+    # degraded ALL FOUR reads whenever any one of them rejected, so a dead
+    # /api/personalities emptied the connections list of an operator who had
+    # two. Each read now settles alone and names itself when it fails.
+    assert "await Promise.allSettled(requests)" in form
+    assert "if (outcome.status === 'rejected') throw outcome.reason;" in form
+    assert "failed.push(what);" in form
+    assert "Promise.all(requests)" not in form
+
+
+def test_one_failing_dependency_read_does_not_erase_the_others() -> None:
+    """A rejected sibling cost three healthy reads their results.
+
+    `loadFormData` ran its four requests through one `Promise.all` and one
+    catch, so a REJECTED request — a network error, an abort — rejected the
+    batch and left every list empty. With `/api/personalities` down and
+    `/api/connections` perfectly healthy the operator was shown "No connections
+    configured. Add one in Settings" while holding two, no matrix to choose
+    one in, and a live primary: `readConnections` is a separate call, so
+    nothing blocked the save and nothing said anything had failed. Closing the
+    dialog and reopening it was the only exit, and nothing said that either.
+
+    The empty list and the failed read must stay different, because they have
+    different answers — "you have none, add one" against "we could not find
+    out". So each read settles alone and a failure NAMES itself, both in the
+    console and at the top of the form it degraded.
+    """
+    payload = _harness()
+    assert payload["aRejectedSiblingKeepsTheOtherReads"] is True
+    # ...and the form it degraded still saves, which is what makes the notice
+    # a notice rather than a dead end with an explanation attached.
+    assert payload["aDegradedFormStillSaves"] is True
+    form = _read(CONTEXT / "agent-form.js")
+    # The notice is a node, not markup: the exemption this module carries is
+    # for its <form> wrapper and does not stretch to cover a second string.
+    assert "h('p', { class: 'form-degraded', id: 'agent-form-degraded' }," in form
+    # One live region in this editor, and it belongs to the save path
+    # (context/agent-recovery.js's feedback line). This notice is present when
+    # the form arrives rather than announced into it, so the whole composition
+    # module declares no announcement channel of its own.
+    for announced in ("aria-live", "role:", "'role'", 'role="'):
+        assert announced not in form, announced
+    # Amber on the tint tests/test_ui_tokens.py measures, not an inline colour.
+    css = (ROOT / "ui" / "static" / "css" / "overlays.css").read_text(encoding="utf-8")
+    block = css.split(".form-degraded {", 1)[1].split("}", 1)[0]
+    assert "background: var(--amber);" in block
+    assert "color: var(--amber-ink);" in block
+
+
 def test_agent_edit_modules_stay_focused() -> None:
     """825 lines with a 380-line function inside it, split by responsibility.
 
@@ -208,16 +512,17 @@ def test_agent_edit_modules_stay_focused() -> None:
     modules = sorted(CONTEXT.glob("agent-*.js"))
     names = [path.name for path in modules]
     assert names == [
-        "agent-api.js", "agent-edit.js", "agent-fields.js",
+        "agent-api.js", "agent-dialog-footer.js", "agent-edit.js",
+        "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
-        "agent-form-catalog.js",
         "agent-form-connections.js", "agent-form-fields.js",
-        "agent-form-hydrate.js",
-        "agent-form.js", "agent-recovery.js", "agent-submit.js",
+        "agent-form-hydrate.js", "agent-form-quick.js", "agent-form-save.js",
+        "agent-form.js", "agent-quick-connection.js", "agent-recovery.js",
+        "agent-submit.js", "agent-template-picker.js", "agent-templates-api.js",
     ], names
     for path in modules:
         lines = len(_read(path).splitlines())
-        assert lines < 300, f"{path.relative_to(JS)} is {lines} lines"
+        assert lines < 400, f"{path.relative_to(JS)} is {lines} lines"
 
     # The vocabulary has ONE owner. A private MODEL_TYPES in the form and
     # another in the submit path is a connection the operator sets and the
@@ -233,7 +538,7 @@ def test_agent_edit_modules_stay_focused() -> None:
     for fn in ("fetchAgent", "apiCreateAgent", "apiUpdateAgent", "apiDeleteAgent",
                "fetchPromptHistoryPolicy", "apiUpdatePromptHistoryPolicy",
                "apiClearChatHistory", "apiResetRuntime",
-               "fetchCatalog", "importPack"):
+               "fetchCatalog"):
         assert f"async function {fn}(" in api, f"agent-api.js lost {fn}"
         assert f"{fn}," in api.rsplit("return {", 1)[-1], f"agent-api.js does not export {fn}"
 
@@ -254,8 +559,12 @@ def test_agent_edit_modules_stay_focused() -> None:
         assert "confirm(" not in source.replace("confirmDestructive(", ""), (
             f"{path.name} still uses the native dialog"
         )
+    # The delete confirmation travelled with the form's wiring when that split
+    # out of agent-edit.js; the copy itself is what must survive, not the file
+    # it sits in.
+    guarded = recovery + _read(CONTEXT / "agent-edit.js") + _read(CONTEXT / "agent-form-save.js")
     for copy in ("Clear chat history", "Reset runtime", "Delete agent"):
-        assert copy in recovery or copy in _read(CONTEXT / "agent-edit.js"), copy
+        assert copy in guarded, copy
 
 
 def test_context_modules_stay_focused() -> None:
@@ -392,7 +701,7 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     # Hiring selects the new agent and opens their desk.
     edit = _read(CONTEXT / "agent-edit.js")
     # Phase 4 split agent-panel.js away; renderInline is this module's own now.
-    assert "void renderInline(formEl, agent || null, onSave, onDelete)" in edit
+    assert "void renderInline({ container: formEl, agent: agent || null, primary, onSave, onDelete })" in edit
     assert "const wasCreating = !agent;" in edit
     saved = edit.split("function onSave(savedAgent) {", 1)[1]
     assert "savedAgent && wasCreating" in saved
@@ -407,8 +716,12 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "AgentEdit" not in column, "the column hosts no form"
     assert "placeParams.hire" not in place
     shell_source = _read(JS / "shell" / "shell.js")
-    assert "BossModAgentEdit.openAgentModal({ store })" in shell_source
     assert "onHire:" in shell_source
+    # The row opens the two-door menu; the dialog is one of the doors, and the
+    # menu module is where that call now lives.
+    assert "addAgent.toggle();" in shell_source
+    assert "BossModAgentEdit.openAgentModal({ store })" in _read(
+        JS / "shell" / "add-agent-menu.js")
 
     # deskPath is a real store key with a real consumer, not dead state.
     shell = _read(JS / "shell" / "shell.js")

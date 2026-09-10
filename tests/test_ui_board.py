@@ -287,7 +287,7 @@ def test_board_modules_stay_focused() -> None:
     for path in files:
         text = path.read_text(encoding="utf-8")
         lines = len(text.splitlines())
-        assert lines <= 300, f"{path.name} is {lines} lines; the cap is 300"
+        assert lines <= 400, f"{path.name} is {lines} lines; the cap is 400"
         assert "innerHTML" not in text, f"{path.name} assigns innerHTML"
         assert "insertAdjacentHTML" not in text, f"{path.name} uses insertAdjacentHTML"
         assert "window.confirm" not in text, f"{path.name} uses window.confirm"

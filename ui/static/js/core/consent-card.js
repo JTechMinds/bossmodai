@@ -170,7 +170,7 @@ const BossModConsentCard = (() => {
             container.replaceChildren();
             renderHostPathConsentCard(container, updated, api);
             collapseRelatedConsentCards(container, updated);
-            if (window.lucide) lucide.createIcons({ nodes: [container] });
+            BossModIcons.paint(container, 'consent-card');
         } catch (err) {
             Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
             const note = document.createElement('div');
