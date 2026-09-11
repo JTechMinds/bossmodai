@@ -13,6 +13,7 @@
  */
 const BossModDiagnosticDetail = (() => {
     const { h, clear } = BossModDom;
+    const SHAPE = BossModLogShape;
 
     const COPY_OK_MS = 1500;
 
@@ -93,8 +94,22 @@ const BossModDiagnosticDetail = (() => {
         return list;
     }
 
+    function replyText(data) {
+        const stepPayloads = Array.isArray(data && data.steps)
+            ? data.steps.flatMap((step) => [step.raw_response, step.parsed_action])
+            : [];
+        return SHAPE.extractReply(
+            data && data.reply,
+            data && data.raw_response,
+            data && data.parsed_action,
+            ...stepPayloads,
+        );
+    }
+
     function traceStep(step) {
+        const stepReply = SHAPE.extractReply(step.raw_response, step.parsed_action);
         const blocks = [
+            stepReply ? section('Reply', stepReply) : null,
             step.context_snapshot ? section('Prompt Delta', formatJson(step.context_snapshot)) : null,
             step.raw_response ? section('Raw Response', String(step.raw_response)) : null,
             step.parsed_action ? section('Parsed Action', formatJson(step.parsed_action)) : null,
@@ -121,6 +136,8 @@ const BossModDiagnosticDetail = (() => {
      */
     function detailSections(data) {
         const out = [];
+        const reply = replyText(data);
+        if (reply) out.push(section('Reply', reply));
         if (data.trigger_data) out.push(section('Trigger', formatJson(data.trigger_data)));
         if (Array.isArray(data.steps) && data.steps.length) {
             out.push(h('section', { class: 'log-trace' },

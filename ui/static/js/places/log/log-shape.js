@@ -59,8 +59,14 @@ const BossModLogShape = (() => {
         social: 'Social',
     });
 
-    /** Longest trigger preview shown on a collapsed row. */
+    /** Longest reply (or trigger) preview shown on a collapsed row. */
     const PREVIEW_CHARS = 120;
+
+    /** Activity titles that hide the transcript behind a canned status line. */
+    const CANNED_REPLY_ACTIVITY = /answered the request\s*$/;
+
+    /** Closest-turn window when pairing a canned activity row to a diagnostic. */
+    const ACTIVITY_TURN_MATCH_MS = 120000;
 
     /**
      * @param {string} source
@@ -119,6 +125,138 @@ const BossModLogShape = (() => {
     function clip(text) {
         const value = String(text || '');
         return value.length > PREVIEW_CHARS ? `${value.slice(0, PREVIEW_CHARS - 3)}...` : value;
+    }
+
+    /**
+     * Collapsed-row preview: flatten whitespace, then clip to PREVIEW_CHARS.
+     *
+     * @param {string} text
+     * @returns {string}
+     */
+    function previewText(text) {
+        const value = String(text || '').replace(/\s+/g, ' ').trim();
+        return clip(value);
+    }
+
+    function parseJsonish(raw) {
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+        if (typeof raw !== 'string') return null;
+        let text = raw.trim();
+        if (!text) return null;
+        if (text.startsWith('```')) {
+            text = text.split('\n')
+                .filter((line) => !line.trim().startsWith('```'))
+                .join('\n').trim();
+        }
+        try {
+            const parsed = JSON.parse(text);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch (err) {
+            const start = text.indexOf('{');
+            const end = text.lastIndexOf('}');
+            if (start < 0 || end <= start) return null;
+            try {
+                const parsed = JSON.parse(text.slice(start, end + 1));
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+            } catch (inner) {
+                return null;
+            }
+        }
+    }
+
+    function replyFrom(raw) {
+        const parsed = parseJsonish(raw);
+        if (!parsed) return '';
+        for (const key of ['msg', 'reply']) {
+            if (typeof parsed[key] === 'string' && parsed[key].trim()) return parsed[key];
+        }
+        if (parsed.data && typeof parsed.data === 'object' && typeof parsed.data.msg === 'string'
+            && parsed.data.msg.trim()) {
+            return parsed.data.msg;
+        }
+        for (const key of ['content', 'followUpMessage']) {
+            if (typeof parsed[key] === 'string' && parsed[key].trim()) return parsed[key];
+        }
+        return '';
+    }
+
+    /**
+     * The model-facing ``msg`` from one or more diagnostic payloads.
+     *
+     * A bare string that is already the reply (the summary field) is returned
+     * as-is. JSON blobs are probed for ``msg``, then ``reply``, then
+     * ``data.msg``. Trigger payloads are never passed in.
+     *
+     * @param {...(string|object|null|undefined)} payloads
+     * @returns {string}
+     */
+    function extractReply(...payloads) {
+        for (const raw of payloads) {
+            if (raw == null || raw === '') continue;
+            if (typeof raw === 'string') {
+                const fromJson = replyFrom(raw);
+                if (fromJson) return fromJson;
+                // Summary rows carry the extracted reply as a plain string.
+                // JSON that failed to yield a msg must not become the preview.
+                const trimmed = raw.trim();
+                if (trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('[')
+                    && !trimmed.startsWith('```')) {
+                    return raw;
+                }
+                continue;
+            }
+            const text = replyFrom(raw);
+            if (text) return text;
+        }
+        return '';
+    }
+
+    /**
+     * Activity rows whose title is only "X answered the request".
+     *
+     * @param {object} row  A LogRow.
+     * @returns {boolean}
+     */
+    function isCannedReplyActivity(row) {
+        return CANNED_REPLY_ACTIVITY.test(String(row && row.text || ''));
+    }
+
+    /**
+     * Point canned activity rows at the matching diagnostic so expand shows Reply.
+     *
+     * Mutates the activity rows in place. Each diagnostic is used at most once.
+     *
+     * @param {object[]} activityRows
+     * @param {object[]} diagnosticRows
+     * @returns {object[]} the same activityRows array.
+     */
+    function linkActivityRows(activityRows, diagnosticRows) {
+        const unused = (diagnosticRows || []).filter((row) => row && row.diagnosticId);
+        const taken = new Set();
+        (activityRows || []).forEach((row) => {
+            if (!isCannedReplyActivity(row)) return;
+            let best = null;
+            let bestDelta = Infinity;
+            unused.forEach((diag) => {
+                if (taken.has(diag.key)) return;
+                if (row.agentName && diag.agentName && row.agentName !== diag.agentName) return;
+                const delta = Math.abs(Date.parse(row.at || '') - Date.parse(diag.at || ''));
+                if (Number.isNaN(delta) || delta > ACTIVITY_TURN_MATCH_MS) return;
+                if (delta < bestDelta) {
+                    best = diag;
+                    bestDelta = delta;
+                }
+            });
+            if (!best) return;
+            taken.add(best.key);
+            row.diagnosticId = best.diagnosticId;
+            row.expandable = true;
+            if (!row.facts.some((entry) => entry.label === 'Turn')) {
+                const turn = fact('Turn', best.diagnosticId);
+                if (turn) row.facts.push(turn);
+            }
+        });
+        return activityRows;
     }
 
     function fact(label, value) {
@@ -190,7 +328,9 @@ const BossModLogShape = (() => {
         }
         const id = String(row.id);
         const error = typeof row.error === 'string' ? row.error.trim() : '';
-        const preview = triggerPreview(row.trigger_data);
+        const reply = extractReply(row.reply);
+        const heading = `${triggerLabel(row.trigger_type)} → ${row.action_name || row.status || 'turn'}`;
+        const preview = previewText(reply) || triggerPreview(row.trigger_data);
         const facts = [
             fact('Source', sourceLabel('diagnostic')),
             fact('Trigger', triggerLabel(row.trigger_type)),
@@ -209,8 +349,9 @@ const BossModLogShape = (() => {
             agentId: row.agent_id == null ? '' : String(row.agent_id),
             agentName: String(row.agent_name || 'System'),
             type: error ? 'error' : 'agent',
-            text: `${triggerLabel(row.trigger_type)} → ${row.action_name || row.status || 'turn'}`,
-            meta: [row.model || 'no model', `${row.duration_ms || 0}ms`,
+            text: preview || heading,
+            meta: [preview && preview !== heading ? heading : '',
+                row.model || 'no model', `${row.duration_ms || 0}ms`,
                 `${row.total_tokens || 0} tok`, error ? `— ${clip(error)}` : '']
                 .filter(Boolean).join(' · '),
             active: false,
@@ -226,5 +367,7 @@ const BossModLogShape = (() => {
     return {
         TYPES, fromActivity, fromDiagnostic,
         sourceLabel, triggerLabel, triggerPreview, formatMeta,
+        extractReply, previewText, linkActivityRows, isCannedReplyActivity,
+        PREVIEW_CHARS,
     };
 })();

@@ -306,7 +306,13 @@ from db.ai_personalities import (
 )
 
 # Diagnostics
-from db.diagnostics import create_diagnostic, get_diagnostic, get_diagnostic_steps, get_diagnostics
+from db.diagnostics import (
+    create_diagnostic,
+    extract_reply,
+    get_diagnostic,
+    get_diagnostic_steps,
+    get_diagnostics,
+)
 
 # World state + spatial
 from db.world import get_nearby_agents, get_world_state
@@ -530,6 +536,7 @@ __all__ = [
     "update_personality",
     # Diagnostics
     "create_diagnostic",
+    "extract_reply",
     "get_diagnostic",
     "get_diagnostic_steps",
     "get_diagnostics",

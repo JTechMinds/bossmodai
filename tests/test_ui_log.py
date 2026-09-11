@@ -7,7 +7,9 @@ The tests that matter most here are the ones that stop them becoming two again.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +21,7 @@ HTML = ROOT / "ui" / "templates" / "index.html"
 WIRE_KEYS = (
     "agent_name", "agent_id", "created_at", "timestamp", "is_active",
     "trigger_type", "trigger_data", "action_name", "total_tokens", "duration_ms",
+    "reply",
 )
 
 
@@ -107,8 +110,14 @@ def test_diagnostic_expands_in_place_not_in_a_second_view() -> None:
     assert "'Execution Trace'" in detail
     assert "'Trigger'" in detail
     assert "'Context Sent'" in detail
+    assert "'Reply'" in detail
+    assert "section('Reply'" in detail
     assert "'Raw Response'" in detail
     assert "'Parsed Action'" in detail
+    # Reply is the top section; the JSON dig stays available under it.
+    reply_at = detail.index("section('Reply'")
+    assert reply_at < detail.index("section('Raw Response'")
+    assert reply_at < detail.index("section('Parsed Action'")
     assert "'Execution Result'" in detail
     assert "section('Error'" in detail
     assert "'aria-expanded': 'true'" in detail
@@ -258,8 +267,60 @@ def test_log_modules_stay_focused() -> None:
     scripts = re.findall(r"static_url\('([^']+\.js)'\)", HTML.read_text(encoding="utf-8"))
     for earlier, later in (
         ("js/places/log/log-shape.js", "js/places/log/log-source.js"),
+        ("js/places/log/log-shape.js", "js/places/log/diagnostic-detail.js"),
         ("js/places/log/log-row.js", "js/places/log/log-place.js"),
         ("js/places/log/log-filters.js", "js/places/log/log-place.js"),
         ("js/places/log/diagnostic-detail.js", "js/places/log/log-place.js"),
     ):
         assert scripts.index(earlier) < scripts.index(later), f"{earlier} must load before {later}"
+
+
+def test_log_reply_transcript_is_wired() -> None:
+    """Operators diagnose from the model ``msg``, not a canned status line.
+
+    The collapsed row previews the first ~120 characters of that reply. A
+    canned activity title ("answered the request") is pointed at the matching
+    diagnostic so expand reaches the same Reply section.
+    """
+    shape = _read("log-shape.js")
+    assert "const PREVIEW_CHARS = 120;" in shape
+    assert "function extractReply(" in shape
+    assert "function previewText(" in shape
+    assert "function linkActivityRows(" in shape
+    assert "answered the request" in shape
+    assert "extractReply(row.reply)" in shape
+
+    source = _read("log-source.js")
+    assert "function relink()" in source
+    assert "SHAPE.linkActivityRows(activityRows, diagnosticRows)" in source
+    assert "relink();" in source.split("function rows() {", 1)[1]
+
+    detail = _read("diagnostic-detail.js")
+    assert "function replyText(data)" in detail
+    assert "SHAPE.extractReply(" in detail
+    assert "if (reply) out.push(section('Reply', reply));" in detail
+
+
+def test_log_reply_transcript_behaves() -> None:
+    """Behaviour: Reply shows msg; preview clips ~120; activity expand reaches it."""
+    harness = Path(__file__).resolve().parent / "js_log_harness.cjs"
+    result = subprocess.run(
+        [
+            "node",
+            str(harness),
+            str(JS / "core" / "dom.js"),
+            str(LOG / "log-shape.js"),
+            str(LOG / "diagnostic-detail.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "replyShowsMsg": True,
+        "previewTruncates": True,
+        "activityReachesReply": True,
+    }

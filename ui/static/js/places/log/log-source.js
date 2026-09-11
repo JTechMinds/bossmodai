@@ -46,6 +46,10 @@ const BossModLogSource = (() => {
         let more = false;
         let lastError = '';
 
+        function relink() {
+            SHAPE.linkActivityRows(activityRows, diagnosticRows);
+        }
+
         function announce() {
             const list = rows();
             for (const fn of Array.from(listeners)) fn(list);
@@ -60,6 +64,7 @@ const BossModLogSource = (() => {
          * @returns {object[]}
          */
         function rows() {
+            relink();
             const seen = new Set();
             return activityRows.concat(diagnosticRows)
                 .filter((row) => {
