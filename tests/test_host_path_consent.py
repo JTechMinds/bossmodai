@@ -26,7 +26,11 @@ from core.agent_loop.notifications import (
     project_chat_notifications,
 )
 from core.agent_loop.prompt_history import build_prompt_history_view
-from core.agent_loop.runtime_core import format_runtime_core_block, preview_runtime_core
+from core.agent_loop.runtime_core import (
+    AUDIENCE_SOFT_JUDGMENT,
+    format_runtime_core_block,
+    preview_runtime_core,
+)
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_path_consent import (
     is_verbal_host_access_ask,
@@ -123,10 +127,12 @@ def test_runtime_core_is_compact_and_skips_description() -> None:
     assert "do not ask the operator for verbal yes/no" in block
     assert "stop and ask in chat" not in block
     assert "Empty done is rejected" in block
+    assert AUDIENCE_SOFT_JUDGMENT in block
     assert "Never put this quality bar" not in block
     assert "DRY" not in block
     preview = preview_runtime_core(name="Pat", role="Auditor")
     assert "You are Pat (Auditor)." in preview
+    assert AUDIENCE_SOFT_JUDGMENT in preview
 
 
 def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,6 +142,7 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     assert "request_host_access" in contents
     assert "do not ask the operator for verbal yes/no" in contents
     assert "stop and ask in chat" not in contents
+    assert AUDIENCE_SOFT_JUDGMENT in contents
     client = _api_client(monkeypatch)
     response = client.get(
         "/api/runtime/core",
@@ -144,6 +151,45 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert response.status_code == 200
     assert "You are Sam (Engineer)." in response.json()["runtime_core"]
+    assert AUDIENCE_SOFT_JUDGMENT in response.json()["runtime_core"]
+
+
+def test_injected_core_includes_audience_soft_judgment() -> None:
+    writer = db.create_agent("Core Writer", role="Writer", desk_x=1, desk_y=1)
+    auditor = db.create_agent("Core Auditor", role="Auditor", desk_x=2, desk_y=1)
+    writer_state = db.get_agent_state(writer.id)
+    auditor_state = db.get_agent_state(auditor.id)
+    assert writer_state is not None
+    assert auditor_state is not None
+    trigger = {
+        "type": "channel_message",
+        "source_channel": "channel",
+        "content": "Please draft the release notes.",
+        "from_name": "Human Operator",
+    }
+    for agent, state in ((writer, writer_state), (auditor, auditor_state)):
+        context = context_builder.build_context(
+            context_builder.TurnContext(
+                agent=agent,
+                state=state,
+                trigger=trigger,
+                conversation_history=[],
+                prompt_notifications=[],
+                reference_materials=[],
+                contract_kind="decision",
+            )
+        )
+        core_msgs = [
+            str(message.get("content") or "")
+            for message in context
+            if str(message.get("content") or "").startswith("# Runtime core")
+        ]
+        assert core_msgs
+        assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
+        joined = "\n".join(str(message.get("content") or "") for message in context)
+        assert AUDIENCE_SOFT_JUDGMENT in joined
+        assert "@" not in AUDIENCE_SOFT_JUDGMENT
+        assert "router" not in core_msgs[0].lower()
 
 
 def test_allow_once_is_turn_scoped(tmp_path: Path) -> None:

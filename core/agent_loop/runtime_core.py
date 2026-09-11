@@ -2,7 +2,9 @@
 
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
-identity, desk/``/me``, allowed tools, host-path consent, and checkable done.
+identity, desk/``/me``, allowed tools, host-path consent, checkable done,
+and audience soft-judgment. Fan-out still wakes every member; this is not
+a router and does not require @.
 """
 
 from __future__ import annotations
@@ -28,6 +30,11 @@ ALLOWED_TOOLS = (
 )
 
 _RUNTIME_CORE_TITLE = "# Runtime core"
+
+AUDIENCE_SOFT_JUDGMENT = (
+    "Before you reply, decide if you're the intended audience. "
+    "If someone else's specialty clearly fits, stay quiet or post one short pass."
+)
 
 
 def preview_runtime_core(
@@ -75,7 +82,8 @@ def format_runtime_core_block(agent: Agent) -> str:
         "for verbal yes/no. Do not invent access or claim the file exists.\n"
         "Done: complete only with a checkable claim "
         "(artifact path, tests evidence, or allow/deny proof). "
-        "Empty done is rejected. Do not fake done."
+        "Empty done is rejected. Do not fake done.\n"
+        f"{AUDIENCE_SOFT_JUDGMENT}"
     )
 
 

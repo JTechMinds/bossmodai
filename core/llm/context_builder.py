@@ -43,7 +43,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("description", "Casual hire description of what this agent does"),
     ("done_fail_bar", "Hire finish line / done/fail bar — what good and failure look like"),
     ("role_contract", "Formatted role-contract block (specialty + description + done/fail bar + hard rules)"),
-    ("runtime_core", "Shared runtime core (identity, desk, tools, host-path consent, checkable done)"),
+    ("runtime_core", "Shared runtime core (identity, desk, tools, host-path consent, checkable done, audience soft-judgment)"),
     ("personality", "Rendered personality prompt text"),
     ("current_date_time", "Current local date/time string for this turn"),
     ("current_time.iso_local", "Current local time in ISO-8601 format"),
