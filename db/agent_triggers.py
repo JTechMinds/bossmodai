@@ -148,6 +148,46 @@ def delete_queued_triggers(
     return deleted
 
 
+def _trigger_payload(raw: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def list_claimed_agent_ids_for_round(round_id: str) -> set[str]:
+    """Return agents with a claimed trigger still bound to one response round."""
+    token = (round_id or "").strip()
+    if not token:
+        return set()
+    claimed: set[str] = set()
+    for row in query("SELECT agent_id, payload FROM agent_triggers WHERE status = 'claimed'"):
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("round_id") or "").strip() == token:
+            claimed.add(str(row["agent_id"]))
+    return claimed
+
+
+def delete_queued_triggers_for_round(round_id: str) -> int:
+    """Delete queued (not claimed) triggers bound to one response round."""
+    token = (round_id or "").strip()
+    if not token:
+        return 0
+    rows = query("SELECT id, payload FROM agent_triggers WHERE status = 'queued'")
+    deleted = 0
+    for row in rows:
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("round_id") or "").strip() != token:
+            continue
+        execute(
+            "DELETE FROM agent_triggers WHERE id = $1 AND status = 'queued'",
+            [row["id"]],
+        )
+        deleted += 1
+    return deleted
+
+
 def delete_queued_triggers_for_channel(channel_id: str) -> int:
     """Delete queued triggers bound to one origin thread so archived rooms stay quiet."""
     token = (channel_id or "").strip()
@@ -156,13 +196,7 @@ def delete_queued_triggers_for_channel(channel_id: str) -> int:
     rows = query("SELECT id, payload FROM agent_triggers WHERE status = 'queued'")
     deleted = 0
     for row in rows:
-        raw = row.get("payload")
-        try:
-            payload = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        except (json.JSONDecodeError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            continue
+        payload = _trigger_payload(row.get("payload"))
         bound = str(payload.get("channel_id") or "").strip()
         if bound != token:
             continue

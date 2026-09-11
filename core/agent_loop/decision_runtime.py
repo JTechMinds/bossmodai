@@ -19,6 +19,7 @@ from core.agent_loop.decision_replies import (
     _attach_reply_artifacts,
     _prepare_shared_response_trigger,
 )
+from core.agent_loop.thread_supersede import supersede_stale_thread_turn
 from core.agent_loop.next_owner import maybe_next_owner_nudge
 from core.agent_loop.decision_resume import (
     _complete_assignment_if_present,
@@ -55,6 +56,9 @@ def apply_decision(
     active_work = activity_runtime.get_active_work_activity(agent.id)
 
     if decision.decision in {"answer", "clarify"}:
+        skipped = supersede_stale_thread_turn(agent, trigger, will_post=True)
+        if skipped is not None:
+            return skipped
         from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
 
         if is_verbal_host_access_ask(decision.reply):
@@ -73,6 +77,10 @@ def apply_decision(
     trigger = _prepare_shared_response_trigger(agent, trigger, decision, result)
     if trigger is None:
         return result
+
+    skipped = supersede_stale_thread_turn(agent, trigger, will_post=True)
+    if skipped is not None:
+        return skipped
 
     if decision.decision == "observe":
         result["detail"] = f"{agent.name} chose to observe"

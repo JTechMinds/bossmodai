@@ -12,6 +12,7 @@ from typing import Any
 
 import db
 from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.agent_loop.thread_supersede import cancel_queued_older_thread_rounds
 from core.models.message import HUMAN_SENDER_ID
 
 
@@ -95,6 +96,10 @@ async def route_human_channel_message(
     if not members:
         raise ValueError("Channel has no members")
 
+    cancel_queued_older_thread_rounds(
+        channel_id=channel_id,
+        keep_source_message_id=message.id,
+    )
     trigger_requests = start_channel_peer_round(
         channel_id=channel_id,
         message_id=message.id,

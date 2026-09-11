@@ -5,7 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from core.models import Channel, ChannelArchivedError, ChannelMember, ChannelMessage
+from core.models import (
+    Channel,
+    ChannelArchivedError,
+    ChannelMember,
+    ChannelMessage,
+    THREAD_STALE_SKIP_KIND,
+    THREAD_STALE_SKIP_LINE,
+)
 from db.connection import transaction
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
@@ -400,6 +407,22 @@ def get_formatted_channel_messages(channel_id: str, *, limit: int = 80) -> list[
     ]
 
 
+def get_channel_message(message_id: str) -> ChannelMessage | None:
+    """Return one channel message by id."""
+    token = (message_id or "").strip()
+    if not token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages
+        WHERE id = $1
+        """,
+        [token],
+        ChannelMessage,
+    )
+
+
 def get_latest_channel_message(channel_id: str) -> ChannelMessage | None:
     """Return the newest channel message, if any."""
     return fetch_one(
@@ -411,5 +434,78 @@ def get_latest_channel_message(channel_id: str) -> ChannelMessage | None:
         LIMIT 1
         """,
         [channel_id],
+        ChannelMessage,
+    )
+
+
+def get_later_human_channel_message(
+    channel_id: str,
+    after_message_id: str,
+) -> ChannelMessage | None:
+    """Return the newest human message posted after one transcript row.
+
+    Order is ``created_at`` then SQLite ``rowid`` so two humans in the same
+    second still count as a tip move. Agent and system lines do not move the
+    human tip — peers can still answer the same wake.
+    """
+    channel_token = (channel_id or "").strip()
+    after_token = (after_message_id or "").strip()
+    if not channel_token or not after_token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages AS newer
+        WHERE newer.channel_id = $1
+          AND newer.author_type = 'human'
+          AND newer.id != $2
+          AND EXISTS (
+              SELECT 1
+              FROM channel_messages AS wake
+              WHERE wake.id = $2
+                AND (
+                    newer.created_at > wake.created_at
+                    OR (newer.created_at = wake.created_at AND newer.rowid > wake.rowid)
+                )
+          )
+        ORDER BY newer.created_at DESC, newer.rowid DESC
+        LIMIT 1
+        """,
+        [channel_token, after_token],
+        ChannelMessage,
+    )
+
+
+def find_thread_skip_line_after(
+    *,
+    channel_id: str,
+    after_message_id: str,
+) -> ChannelMessage | None:
+    """Return the collapsed stale-skip system line posted after one tip, if any."""
+    channel_token = (channel_id or "").strip()
+    after_token = (after_message_id or "").strip()
+    if not channel_token or not after_token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages AS skip
+        WHERE skip.channel_id = $1
+          AND skip.author_type = 'system'
+          AND skip.notification_kind = $3
+          AND skip.content = $4
+          AND EXISTS (
+              SELECT 1
+              FROM channel_messages AS tip
+              WHERE tip.id = $2
+                AND (
+                    skip.created_at > tip.created_at
+                    OR (skip.created_at = tip.created_at AND skip.rowid > tip.rowid)
+                )
+          )
+        ORDER BY skip.created_at ASC, skip.rowid ASC
+        LIMIT 1
+        """,
+        [channel_token, after_token, THREAD_STALE_SKIP_KIND, THREAD_STALE_SKIP_LINE],
         ChannelMessage,
     )

@@ -20,6 +20,28 @@ def get_channel_response_round(round_id: str) -> ChannelResponseRound | None:
     return shared.get_round(_SCHEMA, round_id)
 
 
+def list_channel_response_rounds(
+    channel_id: str,
+    *,
+    status: str | None = None,
+) -> list[ChannelResponseRound]:
+    """Return response rounds for one thread, newest first."""
+    return shared.list_rounds_for_parent(_SCHEMA, channel_id, status=status)
+
+
+def get_channel_response_round_for_source(
+    *,
+    channel_id: str,
+    source_message_id: str,
+) -> ChannelResponseRound | None:
+    """Return the newest round stamped with one thread tip, if any."""
+    return shared.get_round_for_source(
+        _SCHEMA,
+        parent_id=channel_id,
+        source_message_id=source_message_id,
+    )
+
+
 def update_channel_response_round(
     round_id: str,
     *,

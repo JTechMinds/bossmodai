@@ -14,6 +14,8 @@ ChannelAuthorType = Literal["human", "agent", "system"]
 
 THREAD_ARCHIVED_CONSENT_DENY = "Access denied — thread archived"
 THREAD_ARCHIVED_CANCEL_LINE = "Thread archived — open work cancelled"
+THREAD_STALE_SKIP_LINE = "Skipped — newer message in thread"
+THREAD_STALE_SKIP_KIND = "thread_superseded"
 
 
 class ChannelArchivedError(ValueError):

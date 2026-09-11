@@ -612,11 +612,11 @@ def test_the_pack_client_is_the_catalog_read_and_nothing_else() -> None:
     assert "/api/agent-packs" in api
 
 
-def test_catalog_pin_is_dcc94ca() -> None:
+def test_catalog_pin_is_8a0d68a() -> None:
     github = _read(ROOT / "core" / "agent_pack" / "github.py")
-    assert 'DEFAULT_CATALOG_PIN = "dcc94ca"' in github
+    assert 'DEFAULT_CATALOG_PIN = "8a0d68a"' in github
     settings = _read(ROOT / "db" / "settings.py")
-    assert '("agent_pack_catalog_pin", "dcc94ca", "agent_packs")' in settings
+    assert '("agent_pack_catalog_pin", "8a0d68a", "agent_packs")' in settings
 
 
 def test_both_menu_doors_are_an_icon_and_a_label() -> None:
