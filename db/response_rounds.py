@@ -81,6 +81,57 @@ def get_round(schema: ResponseRoundSchema, round_id: str) -> Any | None:
     )
 
 
+def list_rounds_for_parent(
+    schema: ResponseRoundSchema,
+    parent_id: str,
+    *,
+    status: str | None = None,
+) -> list[Any]:
+    """Return response rounds for one parent, newest first."""
+    token = (parent_id or "").strip()
+    if not token:
+        return []
+    conditions = [f"{schema.parent_fk} = $1"]
+    params: list[Any] = [token]
+    if status is not None:
+        params.append(status)
+        conditions.append(f"status = ${len(params)}")
+    return fetch_all(
+        f"""
+        SELECT {schema.round_columns}
+        FROM {schema.rounds_table}
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC, id DESC
+        """,
+        params,
+        schema.round_model,
+    )
+
+
+def get_round_for_source(
+    schema: ResponseRoundSchema,
+    *,
+    parent_id: str,
+    source_message_id: str,
+) -> Any | None:
+    """Return the newest round stamped with one source message, if any."""
+    parent_token = (parent_id or "").strip()
+    source_token = (source_message_id or "").strip()
+    if not parent_token or not source_token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {schema.round_columns}
+        FROM {schema.rounds_table}
+        WHERE {schema.parent_fk} = $1 AND source_message_id = $2
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        [parent_token, source_token],
+        schema.round_model,
+    )
+
+
 def update_round(
     schema: ResponseRoundSchema,
     round_id: str,

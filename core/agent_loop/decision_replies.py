@@ -18,6 +18,7 @@ from core.agent_loop.message_delivery import (
     resolve_peer_message_type,
     source_channel_for_message_type,
 )
+from core.agent_loop.thread_supersede import supersede_stale_thread_turn
 from core.agent_loop.task_roles import task_assignment_reply_target
 from core.models import Agent, AgentState
 from core.models.channel import ChannelArchivedError
@@ -127,6 +128,14 @@ def _persist_reply(
             }
         }
     elif trigger_type == "channel_response":
+        skipped = supersede_stale_thread_turn(agent, trigger, will_post=True)
+        if skipped is not None:
+            artifacts: dict[str, Any] = {
+                "trigger_requests": skipped.get("trigger_requests") or [],
+            }
+            if skipped.get("channel_message"):
+                artifacts["channel_message"] = skipped["channel_message"]
+            return artifacts
         channel_id = trigger.get("channel_id")
         if not isinstance(channel_id, str) or not channel_id.strip():
             return {}

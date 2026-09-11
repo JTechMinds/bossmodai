@@ -29,6 +29,8 @@ from core.models.channel import (
     ChannelMessage,
     THREAD_ARCHIVED_CANCEL_LINE,
     THREAD_ARCHIVED_CONSENT_DENY,
+    THREAD_STALE_SKIP_KIND,
+    THREAD_STALE_SKIP_LINE,
 )
 from core.models.channel_response import ChannelResponseCandidate, ChannelResponseRound
 from core.models.meeting_response import MeetingResponseCandidate, MeetingResponseRound
@@ -82,6 +84,8 @@ __all__ = [
     "ChannelMessage",
     "THREAD_ARCHIVED_CANCEL_LINE",
     "THREAD_ARCHIVED_CONSENT_DENY",
+    "THREAD_STALE_SKIP_KIND",
+    "THREAD_STALE_SKIP_LINE",
     "ChannelResponseCandidate",
     "ChannelResponseRound",
     "MeetingResponseCandidate",
