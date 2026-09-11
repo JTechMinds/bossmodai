@@ -196,14 +196,11 @@ const BossModLogShape = (() => {
             if (typeof raw === 'string') {
                 const fromJson = replyFrom(raw);
                 if (fromJson) return fromJson;
-                // Summary rows carry the extracted reply as a plain string.
-                // JSON that failed to yield a msg must not become the preview.
-                const trimmed = raw.trim();
-                if (trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('[')
-                    && !trimmed.startsWith('```')) {
-                    return raw;
-                }
-                continue;
+                // A JSON object without msg is a blob, not the transcript.
+                // Anything else — including prose that starts with '{' — is
+                // the already-extracted reply field.
+                if (parseJsonish(raw)) continue;
+                return raw;
             }
             const text = replyFrom(raw);
             if (text) return text;
@@ -328,7 +325,7 @@ const BossModLogShape = (() => {
         }
         const id = String(row.id);
         const error = typeof row.error === 'string' ? row.error.trim() : '';
-        const reply = extractReply(row.reply);
+        const reply = typeof row.reply === 'string' ? row.reply : extractReply(row.reply);
         const heading = `${triggerLabel(row.trigger_type)} → ${row.action_name || row.status || 'turn'}`;
         const preview = previewText(reply) || triggerPreview(row.trigger_data);
         const facts = [

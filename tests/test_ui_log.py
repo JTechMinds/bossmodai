@@ -288,7 +288,7 @@ def test_log_reply_transcript_is_wired() -> None:
     assert "function previewText(" in shape
     assert "function linkActivityRows(" in shape
     assert "answered the request" in shape
-    assert "extractReply(row.reply)" in shape
+    assert "typeof row.reply === 'string' ? row.reply : extractReply(row.reply)" in shape
 
     source = _read("log-source.js")
     assert "function relink()" in source

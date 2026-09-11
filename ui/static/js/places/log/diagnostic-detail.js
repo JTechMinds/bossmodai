@@ -95,13 +95,13 @@ const BossModDiagnosticDetail = (() => {
     }
 
     function replyText(data) {
-        const stepPayloads = Array.isArray(data && data.steps)
+        if (typeof data.reply === 'string' && data.reply.trim()) return data.reply;
+        const stepPayloads = Array.isArray(data.steps)
             ? data.steps.flatMap((step) => [step.raw_response, step.parsed_action])
             : [];
         return SHAPE.extractReply(
-            data && data.reply,
-            data && data.raw_response,
-            data && data.parsed_action,
+            data.raw_response,
+            data.parsed_action,
             ...stepPayloads,
         );
     }
