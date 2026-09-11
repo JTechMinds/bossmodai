@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,85 @@ _SUMMARY_COLUMNS = (
     "model_source, action_name, prompt_tokens, completion_tokens, "
     "total_tokens, error, duration_ms, created_at"
 )
+
+# List reads these only to pull `msg` onto the summary, then drops them.
+_REPLY_SOURCE_COLUMNS = "parsed_action, raw_response"
+
+
+def extract_reply(*payloads: Any) -> str:
+    """Return the model-facing ``msg`` text from diagnostic payloads.
+
+    Decision turns store it as top-level ``msg`` (raw) / ``reply`` (parsed).
+    Execution turns store it as ``data.msg`` (raw) or the remapped
+    ``content`` / ``followUpMessage`` fields. The first non-empty win is the
+    transcript operators need; trigger payloads are never passed in.
+    """
+    for raw in payloads:
+        text = _reply_from_payload(raw)
+        if text:
+            return text
+    return ""
+
+
+def _reply_from_payload(raw: Any) -> str:
+    """Pull ``msg`` (or its parsed aliases) from one JSON object or string."""
+    parsed = _parse_jsonish(raw)
+    if parsed is None:
+        return ""
+    for key in ("msg", "reply"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    data = parsed.get("data")
+    if isinstance(data, dict):
+        nested = data.get("msg")
+        if isinstance(nested, str) and nested.strip():
+            return nested
+    for key in ("content", "followUpMessage"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _parse_jsonish(raw: Any) -> dict[str, Any] | None:
+    """Parse a diagnostic blob into an object, or None when it is not JSON."""
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = "\n".join(
+            line for line in text.split("\n") if not line.strip().startswith("```")
+        ).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start < 0 or end <= start:
+            return None
+        try:
+            parsed = json.loads(text[start:end])
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _attach_reply(row: dict[str, Any], *payloads: Any) -> dict[str, Any]:
+    """Set ``reply`` on a diagnostic row from the given payloads."""
+    row["reply"] = extract_reply(*payloads)
+    return row
+
+
+def _summary_with_reply(row: dict[str, Any]) -> dict[str, Any]:
+    """Decorate a list/create row and strip the blobs used only for ``reply``."""
+    parsed = row.pop("parsed_action", None)
+    raw = row.pop("raw_response", None)
+    return _attach_reply(row, raw, parsed)
 
 # All columns for single-entry detail
 _ALL_COLUMNS = (
@@ -69,7 +149,11 @@ def create_diagnostic(
     if steps:
         _create_diagnostic_steps(row["id"], steps)
     _auto_purge()
-    return row
+    step_payloads: list[Any] = []
+    for step in steps or []:
+        step_payloads.append(step.get("raw_response"))
+        step_payloads.append(step.get("parsed_action"))
+    return _attach_reply(row, raw_response, parsed_action, *step_payloads)
 
 
 def get_diagnostics(
@@ -78,16 +162,18 @@ def get_diagnostics(
 ) -> list[dict[str, Any]]:
     """Return recent diagnostic summaries (no blobs), newest first."""
     if agent_id:
-        return query(
-            f"SELECT {_SUMMARY_COLUMNS} FROM diagnostics "
+        rows = query(
+            f"SELECT {_SUMMARY_COLUMNS}, {_REPLY_SOURCE_COLUMNS} FROM diagnostics "
             "WHERE agent_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
             [agent_id, limit],
         )
-    return query(
-        f"SELECT {_SUMMARY_COLUMNS} FROM diagnostics "
-        "ORDER BY created_at DESC, id DESC LIMIT $1",
-        [limit],
-    )
+    else:
+        rows = query(
+            f"SELECT {_SUMMARY_COLUMNS}, {_REPLY_SOURCE_COLUMNS} FROM diagnostics "
+            "ORDER BY created_at DESC, id DESC LIMIT $1",
+            [limit],
+        )
+    return [_summary_with_reply(row) for row in rows]
 
 
 def get_diagnostic(diagnostic_id: str) -> dict[str, Any] | None:
@@ -99,7 +185,16 @@ def get_diagnostic(diagnostic_id: str) -> dict[str, Any] | None:
     if not entry:
         return None
     entry["steps"] = get_diagnostic_steps(diagnostic_id)
-    return entry
+    step_payloads: list[Any] = []
+    for step in entry["steps"]:
+        step_payloads.append(step.get("raw_response"))
+        step_payloads.append(step.get("parsed_action"))
+    return _attach_reply(
+        entry,
+        entry.get("raw_response"),
+        entry.get("parsed_action"),
+        *step_payloads,
+    )
 
 
 def get_diagnostic_steps(diagnostic_id: str) -> list[dict[str, Any]]:
