@@ -129,8 +129,11 @@ const NAMES = [
     "BossModAgentFormBindings", "BossModAgentFormHydrate",
     "BossModAgentForm",
     "BossModAgentSubmit", "BossModAgentRecovery", "BossModAgentFormSave",
-    "BossModAgentTemplatePicker", "BossModAgentQuickConnection",
-    "BossModAgentFormQuick", "BossModAgentDialogFooter",
+    // The picker draws the local library with the marketplace's own card and
+    // rail builders, so its dependencies load ahead of it.
+    "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
+    "BossModAgentTemplatePicker",
+    "BossModAgentFormTemplate", "BossModAgentDialogFooter",
     "BossModAgentEdit", "BossModDeskPanel",
     "BossModContextColumn", "BossModChatPlace",
 ];
@@ -218,6 +221,17 @@ const TEMPLATES = [{
     author_name: "JTech Minds", author_url: "https://github.com/JTechMinds",
     commit_sha: "aa11bb2ccccccccccccccccccccccccccccccccc", content_hash: "hash-1",
     installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
+    // See the note in tests/js_add_agent_harness.cjs: `sections` is a computed
+    // field the server derives on every read, so a row without one is a shape
+    // the API cannot return. All-null is what describe_pack answers for prose
+    // carrying no recognised heading, which is what this is.
+    sections: {
+        description: {
+            preamble: "Reads a diff and reports what is not true.", mission: null,
+            in_scope: null, out_of_scope: null, handoff: null,
+        },
+        done: { preamble: "A checkable allow/deny exists.", fail_examples: null },
+    },
 }];
 
 // What GET /api/connections answers the agent form with. TWO, so "Set All"
@@ -764,19 +778,29 @@ async function main() {
             + `${hire && hire.getAttribute("aria-label")} `
             + `form ${Boolean(hire && hire.querySelector("#agent-form"))}`);
     }
+    // The marketplace door LEADS the row and the dismissal ends it: the two
+    // are at opposite ends rather than side by side, which is what stopped
+    // `Browse marketplace` reading as a second Cancel. It sat in the picker's
+    // header for one round and read as part of the filter instead.
     const stepOnePinned = pinnedNamesIn(hire);
     if (stepOnePinned.join("|") !== "Browse marketplace|Cancel") {
-        throw new Error(`step one offers the marketplace and Cancel, got `
+        throw new Error(`step one leads with the marketplace door, got `
             + stepOnePinned.join("|"));
+    }
+    if (!hire.querySelector("#agent-add-browse")) {
+        throw new Error("step one lost its door to the marketplace");
     }
 
     // Picking Blank builds the form in the same body and swaps the footer.
     await hire.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const stepTwoPinned = pinnedNamesIn(hire);
-    if (stepTwoPinned.join("|") !== "Back|Cancel|Create Agent") {
-        throw new Error(`step two pins Back, Cancel and the primary, got `
+    if (stepTwoPinned.join("|") !== "Cancel|Create Agent") {
+        throw new Error(`step two pins Cancel and the primary, got `
             + stepTwoPinned.join("|"));
+    }
+    if (!hire.querySelector("#agent-add-back")) {
+        throw new Error("step two lost the back chevron above its form");
     }
     if (!hire.querySelector("#agent-form")) {
         throw new Error("picking a cell must build the form in the same dialog");
@@ -788,8 +812,11 @@ async function main() {
     // round three left this one at the bottom of the scroll. `form="agent-form"`
     // is the standard answer, and this proves the CLICK rather than the markup:
     // the button is outside the form and the form's own handler still runs.
+    // By ID, not by position: the row was [Back, Cancel, primary] and Back has
+    // since moved into the step's body, so an index here silently pointed at
+    // `undefined` rather than failing on what it meant to check.
     const primary = hire.querySelectorAll(".modal-actions")[0]
-        .querySelectorAll("button")[2];
+        .querySelector("#agent-form-submit");
     const primaryCarriesFormAttribute = primary.getAttribute("form");
     const primaryIsSubmitType = primary.getAttribute("type") === "submit";
     if (!primaryIsSubmitType || primaryCarriesFormAttribute !== "agent-form") {
@@ -827,16 +854,24 @@ async function main() {
 
     // Cancel is the SECOND action on step two: the first is Back, which must
     // leave the dialog open with the draft in it.
-    const stepTwoButtons = hire.querySelectorAll(".modal-actions")[0]
-        .querySelectorAll("button");
-    await stepTwoButtons[0].dispatchClick();
+    // Back is the body's chevron now, not a footer button — so this clicks
+    // the control the operator actually sees at the top-left of step two.
+    await hire.querySelector("#agent-add-back").dispatchClick();
     await drain();
     if (modals().length !== 1) throw new Error("Back must not close the dialog");
+    // Returning to step one is proven by the row swapping back to the
+    // marketplace-door-plus-dismissal pair AND by the picker being on screen.
     if (pinnedNamesIn(hire).join("|") !== "Browse marketplace|Cancel") {
         throw new Error("Back must return to step one");
     }
+    if (!hire.querySelector("#agent-pick-blank")) {
+        throw new Error("Back must put the picker back on screen");
+    }
+    // BY NAME, like every other dismissal in this harness: step one's row
+    // leads with `Browse marketplace` now, so `[0]` opened the marketplace
+    // instead of closing the dialog.
     await hire.querySelectorAll(".modal-actions")[0]
-        .querySelectorAll("button")[1].dispatchClick();
+        .querySelectorAll("button").find((b) => b.textContent === "Cancel").dispatchClick();
     await drain();
     if (modals().length !== 0) throw new Error("the hire dialog must close");
     store.setState({ contextMode: "office" });
@@ -1035,60 +1070,75 @@ async function main() {
     await card.dispatchClick();
     await drain();
     const quickForm = quickDialog.querySelector("#agent-form");
-    const lifted = quickForm.querySelector('select[name="model_all"]');
-    const disclosure = quickForm.querySelector(".quick-disclosure");
-    if (!lifted || !disclosure) {
-        throw new Error("picking a template must rearrange the form into its quick state");
+    const templateSetAll = quickForm.querySelector('select[name="model_all"]');
+    const advanced = quickForm.querySelector("#advanced-content");
+    const advancedToggle = quickForm.querySelector("#advanced-toggle");
+    if (!templateSetAll || !advanced || !advancedToggle) {
+        throw new Error("picking a template must build the full form");
     }
-    // The fake has no <details> behaviour and dispatches nothing on its own,
-    // so a toggle is spelled out: the attribute, then whatever is listening
-    // for it. With the old rule that listener is what disarmed the guard.
-    const toggle = async (open) => {
-        if (open) disclosure.setAttribute("open", "");
-        else disclosure.removeAttribute("open");
-        for (const fn of [...(disclosure.listeners.toggle || [])]) await fn({ target: disclosure });
+    // The only disclosure left is Advanced, and it is the same shape of trap:
+    // a panel the operator opens to READ, which must not be mistaken for an
+    // answer. The fake dispatches nothing on its own, so the click is spelled
+    // out and whatever is listening for it is run.
+    const toggle = async () => {
+        for (const fn of [...(advancedToggle.listeners.click || [])]) await fn({ target: advancedToggle });
     };
     const answer = async (control, value) => {
         control.value = value;
         for (const fn of [...(control.listeners.change || [])]) await fn({ target: control });
     };
 
-    const theQuickLayoutAsksForAConnection = lifted.hasAttribute("required")
-        && Boolean(quickDialog.querySelector(".quick-provenance-text"))
-        // ...and the five it writes to really are behind the panel, which is
-        // what makes the lifted select the only visible answer.
-        && disclosure.querySelector('select[name="model_work"]') !== null
+    const theTemplateFormAsksForAConnection = templateSetAll.hasAttribute("required")
+        && Boolean(quickDialog.querySelector(".template-chip-text"))
         && quickForm.querySelector('input[name="role"]').value === "Reviews claims";
-    if (!theQuickLayoutAsksForAConnection) {
-        throw new Error("a picked template must leave one required AI question in front");
+    if (!theTemplateFormAsksForAConnection) {
+        throw new Error("a picked template must leave a required AI question in front");
     }
 
-    // Opened to read what the template answered, then closed again. Nothing
-    // else touched — this is the invited interaction, and it used to be
-    // accepted as the operator's answer to a question they were never asked.
-    await toggle(true);
-    await toggle(false);
-    const readingTheDisclosureKeepsTheGuard = lifted.hasAttribute("required");
+    // THE REDESIGN'S OWN PROPERTY, and the reason the layout above is gone:
+    // the five selects and the colour swatches are on screen, not swept behind
+    // a disclosure. `.quick-disclosure` used to hold both, so a template's
+    // connection matrix and its colour were the two things the operator could
+    // not see at the moment they created the agent.
+    const nothingIsHiddenFromATemplate =
+        MODEL_KEYS.every((key) => {
+            const select = quickForm.querySelector(`select[name="${key}"]`);
+            return Boolean(select) && advanced.querySelector(`select[name="${key}"]`) === null;
+        })
+        && quickForm.querySelectorAll('input[name="agent-color"]').length > 0
+        && advanced.querySelectorAll('input[name="agent-color"]').length === 0
+        && quickForm.querySelector(".quick-disclosure") === null;
+    if (!nothingIsHiddenFromATemplate) {
+        throw new Error("a template must not hide the matrix or the colour");
+    }
+
+    // Opened to read what is behind it, then closed again. Nothing else
+    // touched — this is the invited interaction, and it used to be accepted as
+    // the operator's answer to a question they were never asked.
+    await toggle();
+    await toggle();
+    const readingTheDisclosureKeepsTheGuard = templateSetAll.hasAttribute("required");
 
     // An answer in the matrix is what releases it — any one of the five, so
     // an operator setting them by hand is not blocked by the select above.
     await answer(quickForm.querySelector('select[name="model_reasoning"]'), "c1");
-    const answeringTheMatrixReleasesTheGuard = !lifted.hasAttribute("required");
+    const answeringTheMatrixReleasesTheGuard = !templateSetAll.hasAttribute("required");
     // ...and clearing them all back to None re-arms it. Live in both
     // directions, which a one-way flip could never be.
     await answer(quickForm.querySelector('select[name="model_reasoning"]'), "");
-    const clearingTheMatrixRearmsTheGuard = lifted.hasAttribute("required");
+    const clearingTheMatrixRearmsTheGuard = templateSetAll.hasAttribute("required");
 
-    // The fan-out path: answering the lifted select itself writes the five
-    // FROM SCRIPT, which fires no change event of their own — so this is also
-    // the proof that the guard sees a programmatic answer.
-    await answer(lifted, "c2");
+    // The fan-out path: answering "Set All" itself writes the five FROM
+    // SCRIPT, which fires no change event of their own — so this is also the
+    // proof that the guard sees a programmatic answer, and that it is bound
+    // after the fan-out rather than before it.
+    await answer(templateSetAll, "c2");
     const fannedOutInQuick = MODEL_KEYS.map(
         (key) => quickForm.querySelector(`select[name="${key}"]`).value);
     const theQuickFanOutReleasesTheGuard = fannedOutInQuick.every((value) => value === "c2")
-        && !lifted.hasAttribute("required");
+        && !templateSetAll.hasAttribute("required");
     if (!theQuickFanOutReleasesTheGuard) {
-        throw new Error(`the lifted select must reach all five, got `
+        throw new Error(`"Set All" must reach all five, got `
             + JSON.stringify(fannedOutInQuick));
     }
     // ...and what it wrote is what the server is told. This is the assertion
@@ -1116,16 +1166,22 @@ async function main() {
 
     // ─── 3g. The fifth route: refused at the create, not at a control ───
     //
-    // Answer the lifted AI select — the fan-out fills the five and the guard
-    // releases — then open "Review & customise" and put all five back to None.
-    // The guard re-arms, and it changes nothing: the control it sits on was
-    // ANSWERED and still holds that answer, so `required` is satisfied, native
-    // validation passes, and buildSubmitData writes five nulls over "Saved
-    // successfully". That is the fifth UI route to a connectionless agent; each
-    // of the four before it was fixed at the control that exposed it and a new
-    // one appeared. So the invariant moved to what would actually be SENT
-    // (spec 8.3), and this drives the route end to end against it: real
-    // builder, real publish, real applyQuickLayout, real buildSubmitData.
+    // Answer "Set All" — the fan-out fills the five and the guard releases —
+    // then put all five back to None by hand. The guard re-arms, and it
+    // changes nothing: the control it sits on was ANSWERED and still holds
+    // that answer, so `required` is satisfied, native validation passes, and
+    // buildSubmitData writes five nulls over "Saved successfully". That is the
+    // fifth UI route to a connectionless agent; each of the four before it was
+    // fixed at the control that exposed it and a new one appeared. So the
+    // invariant moved to what would actually be SENT (spec 8.3), and this
+    // drives the route end to end against it: real builder, real publish, real
+    // buildSubmitData.
+    //
+    // The route is unchanged by the redesign, and that is the point of keeping
+    // it here: the guard is a cheaper gate on a control that CAN be left
+    // holding a stale answer, so the check on what is sent is what actually
+    // closes the hole. Only the step that used to open a disclosure is gone —
+    // the five are on screen now, so clearing them needs no panel opened.
     //
     // The POST is left SUCCEEDING for this section on purpose. A refusal proven
     // against an endpoint that refuses anyway proves nothing.
@@ -1137,25 +1193,22 @@ async function main() {
     await refusal.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const refusedForm = refusal.querySelector("#agent-form");
-    const refusedLifted = refusedForm.querySelector('select[name="model_all"]');
-    const refusedPanel = refusedForm.querySelector(".quick-disclosure");
-    if (!refusedLifted || !refusedPanel) {
-        throw new Error("the template pick must produce the quick layout again");
+    const refusedSetAll = refusedForm.querySelector('select[name="model_all"]');
+    if (!refusedSetAll) {
+        throw new Error("the template pick must produce the full form again");
     }
-    await answer(refusedLifted, "c2");
-    refusedPanel.setAttribute("open", "");
-    for (const fn of [...(refusedPanel.listeners.toggle || [])]) await fn({ target: refusedPanel });
+    await answer(refusedSetAll, "c2");
     for (const key of MODEL_KEYS) {
         await answer(refusedForm.querySelector(`select[name="${key}"]`), "");
     }
     // The hole, spelled out before it is closed: the guard is armed again and
-    // the submit still passes validation, because `required` asks the lifted
+    // the submit still passes validation, because `required` asks the Set All
     // select for A VALUE and it has one.
-    const theRearmedGuardIsAlreadySatisfied = refusedLifted.hasAttribute("required")
-        && refusedLifted.value === "c2";
+    const theRearmedGuardIsAlreadySatisfied = refusedSetAll.hasAttribute("required")
+        && refusedSetAll.value === "c2";
     if (!theRearmedGuardIsAlreadySatisfied) {
         throw new Error(`the route under test needs an armed-but-satisfied guard, got `
-            + `required ${refusedLifted.hasAttribute("required")} value ${refusedLifted.value}`);
+            + `required ${refusedSetAll.hasAttribute("required")} value ${refusedSetAll.value}`);
     }
     refusedForm.querySelector('input[name="name"]').value = "Connectionless";
     refusedForm.querySelector('input[name="role"]').value = "Edited by hand";
@@ -1165,21 +1218,19 @@ async function main() {
     const refusalLine = refusal.querySelector("#agent-save-feedback");
     const theFiveNullCreateIsRefused = creates.length === 0
         && modals().length === 1
-        // Told what is missing, and where to answer it ON THIS PATH. The two
-        // controls named are the two the quick layout leaves reachable: the
-        // lifted AI field beside Name, and the disclosure the matrix went
-        // behind. "AI Connections" is NOT one of them — that heading is inside
-        // the collapsed disclosure here, and with no connection configured
-        // liftNoConnections removes the box that carried it outright. A
-        // refusal naming a control the operator cannot see is a dead end
-        // wearing the clothes of a gate, so this pins the absence too.
+        // Told what is missing, and where to answer it ON THIS PATH. The
+        // control named is the one the operator can actually see and reach —
+        // the AI Connections section, which is on screen in both create paths
+        // now. A refusal naming a control the operator cannot see is a dead
+        // end wearing the clothes of a gate, which is why the sentence is
+        // chosen from the form's own recorded shape rather than written once.
         && refusalLine.textContent.includes("no AI connection")
-        && refusalLine.textContent.includes("Choose one in the AI field above")
-        && refusalLine.textContent.includes("Review & customise")
-        && !refusalLine.textContent.includes("AI Connections")
-        // Settings is not this operator's next action either: they have two
-        // connections configured, which is why the lifted field has a select.
-        && !refusalLine.textContent.includes("Settings")
+        && refusalLine.textContent.includes("Choose one under AI Connections")
+        // The other shape's sentence must NOT appear: this operator has two
+        // connections configured, so "add a connection in Settings" is not
+        // their next action — it is the tail of the same sentence, offered
+        // only as the alternative, and never the whole instruction.
+        && !refusalLine.textContent.includes("Add a connection in Settings;")
         // Announced where it changes: the one live region the editor reports
         // through, unchanged — a refusal does not get a second mechanism.
         && refusalLine.getAttribute("role") === "status"
@@ -1196,7 +1247,7 @@ async function main() {
             + `disabled ${refusedPrimary.disabled}, line "${refusalLine.textContent}"`);
     }
     // A gate, not a dead end: answer it and the same click goes through.
-    await answer(refusedLifted, "c2");
+    await answer(refusedSetAll, "c2");
     await documentStub.querySelector("#agent-form-submit").dispatchClick();
     await drain();
     const theCorrectedCreateGoesThrough = creates.length === 1
@@ -1221,8 +1272,12 @@ async function main() {
     await blank.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const blankForm = blank.querySelector("#agent-form");
+    // The matrix in place, and every one of the five the save reads on screen
+    // — not a class that no longer exists, which any form would satisfy.
     if (!blankForm.querySelector('select[name="model_all"]')
-        || blankForm.querySelector(".quick-disclosure")) {
+        || !MODEL_KEYS.every((key) => Boolean(blankForm.querySelector(`select[name="${key}"]`)))
+        || blankForm.querySelector("#advanced-content")
+            .querySelector('select[name="model_work"]')) {
         throw new Error("Blank must give the full form, with the matrix in place");
     }
     blankForm.querySelector('input[name="name"]').value = "Blank and connectionless";
@@ -1251,15 +1306,15 @@ async function main() {
         .querySelectorAll("button").find((b) => b.textContent === "Cancel").dispatchClick();
     await drain();
 
-    // ...and the third shape: a template picked with NOTHING configured. The
-    // matrix built a link to Settings and no select, liftNoConnections brought
-    // that link up beside Name and removed the box the "AI Connections"
-    // heading lived in — so that heading is not in the document at all here,
-    // and the two controls the template path names do not exist either. The
-    // operator's only next action is Settings, and the field in front of them
-    // is the one that links there. An empty list is a HEALTHY read, so the
-    // save is not blocked by CONNECTIONS_FAILED and this invariant is what the
-    // create meets.
+    // ...and the OTHER shape: a template picked with NOTHING configured. The
+    // matrix renders its link to Settings and no select at all, so there is no
+    // control a `required` could sit on — the guard arms nothing, and it says
+    // so rather than inventing a stand-in. A stand-in is what used to be here:
+    // an unanswerable `required` select that wrote to nothing, whose only job
+    // was to make native validation refuse. The refusal is now made where it
+    // can be EXPLAINED — the dialog withholds its primary before the operator
+    // can reach it, and the reason is in the live region the button points at.
+    // An empty list is a HEALTHY read, so this is not CONNECTIONS_FAILED.
     connectionsEmpty = true;
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
@@ -1268,24 +1323,50 @@ async function main() {
     await bare.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const bareForm = bare.querySelector("#agent-form");
-    if (bareForm.querySelector('select[name="model_all"]').value !== ""
-        || !bareForm.querySelector(".quick-disclosure")) {
-        throw new Error("a template with no connections must give the unanswerable shape");
+    if (bareForm.querySelector('select[name="model_all"]')) {
+        throw new Error("with nothing configured the matrix must offer no select");
     }
-    bareForm.querySelector('input[name="name"]').value = "Nothing to answer with";
-    await documentStub.querySelector("#agent-form-submit").dispatchClick();
-    await drain();
+    if (!bareForm.querySelector("#btn-goto-connections")) {
+        throw new Error("the unconfigured matrix must link to Settings");
+    }
+    const barePrimary = documentStub.querySelector("#agent-form-submit");
     const bareLine = bare.querySelector("#agent-save-feedback");
+    const theUnconfiguredCreateIsWithheldNotOffered = creates.length === 0
+        // Refused BEFORE the click, which the unanswerable select could never
+        // do: it let the operator fill the whole form and press Create first.
+        && barePrimary.disabled === true
+        // ...and never silently. The withheld button names the line that says
+        // why, which is the contract the failed-read path already uses.
+        && barePrimary.getAttribute("aria-describedby") === "agent-save-feedback"
+        && bareLine.textContent.includes("No AI connection is configured")
+        && bareLine.textContent.includes("Add one in Settings")
+        // The reachable control is named, and it is the one on screen.
+        && bareLine.textContent.includes("AI Connections section links there")
+        // NOT the failed-read sentence: this read landed, and telling the
+        // operator to reopen the dialog would send them round a loop that
+        // cannot fix it.
+        && !bareLine.textContent.includes("Couldn’t read");
+    if (!theUnconfiguredCreateIsWithheldNotOffered) {
+        throw new Error(`an unconfigured create must be withheld with a reason, got `
+            + `${creates.length} creates, disabled ${barePrimary.disabled}, `
+            + `line "${bareLine.textContent}"`);
+    }
+    // And the save path refuses it too, if it is ever reached another way —
+    // `requestSubmit()` does not consult a disabled button. Same live region,
+    // and the sentence chosen for THIS shape: Settings, not a matrix that is
+    // not there.
+    bareForm.querySelector('input[name="name"]').value = "Nothing to answer with";
+    for (const fn of [...(bareForm.listeners.submit || [])]) {
+        await fn({ preventDefault() {}, target: bareForm });
+    }
+    await drain();
     const theUnconfiguredRefusalSendsThemToSettings = creates.length === 0
         && modals().length === 1
         && bareLine.textContent.includes("no AI connection")
         && bareLine.textContent.includes("Add a connection in Settings")
-        && bareLine.textContent.includes("the AI field above links there")
-        // Neither of the other two shapes' controls: the heading was removed
-        // with its box, and there is nothing under the disclosure to choose.
-        && !bareLine.textContent.includes("AI Connections")
-        && !bareLine.textContent.includes("Review & customise")
-        && !bareLine.textContent.includes("Choose one");
+        && bareLine.textContent.includes("AI Connections section links there")
+        // Not the matrix shape's sentence: there is no matrix to choose in.
+        && !bareLine.textContent.includes("Choose one under");
     if (!theUnconfiguredRefusalSendsThemToSettings) {
         throw new Error(`an unconfigured refusal must send them to Settings, got `
             + `${creates.length} creates, line "${bareLine.textContent}"`);
@@ -1389,7 +1470,8 @@ async function main() {
         theFanOutIsWhatIsSaved,
         aFailedConnectionsReadStillRendersTheForm,
         theBlockedPrimaryHandsOverTheKeyboard,
-        theQuickLayoutAsksForAConnection,
+        theTemplateFormAsksForAConnection,
+        nothingIsHiddenFromATemplate,
         readingTheDisclosureKeepsTheGuard,
         answeringTheMatrixReleasesTheGuard,
         clearingTheMatrixRearmsTheGuard,
@@ -1398,6 +1480,7 @@ async function main() {
         theRearmedGuardIsAlreadySatisfied,
         theFiveNullCreateIsRefused,
         theBlankRefusalNamesTheMatrix,
+        theUnconfiguredCreateIsWithheldNotOffered,
         theUnconfiguredRefusalSendsThemToSettings,
         theCorrectedCreateGoesThrough,
         aRejectedSiblingKeepsTheOtherReads,

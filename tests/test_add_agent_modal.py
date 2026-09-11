@@ -30,12 +30,17 @@ HARNESS_MODULES = [
     CONTEXT / "agent-api.js",
     CONTEXT / "agent-templates-api.js",
     CONTEXT / "agent-fields.js",
+    CONTEXT / "agent-form-connections.js",
+    CONTEXT / "agent-form-bindings.js",
     CONTEXT / "agent-form-hydrate.js",
     CONTEXT / "agent-recovery.js",
     CONTEXT / "agent-form-save.js",
+    JS / "core" / "avatar.js",
+    JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
     CONTEXT / "agent-template-picker.js",
-    CONTEXT / "agent-quick-connection.js",
-    CONTEXT / "agent-form-quick.js",
+    CONTEXT / "agent-form-template.js",
     CONTEXT / "agent-dialog-footer.js",
     CONTEXT / "agent-edit.js",
     JS / "shell" / "add-agent-menu.js",
@@ -63,21 +68,31 @@ def test_picker_states_two_steps_and_the_quick_layout() -> None:
     corrected form of the third. It used to read `expandingClearsRequired`, and
     that rule is gone: see
     test_the_connection_guard_tracks_the_answer_not_the_disclosure.
+
+    `templateHidesNothing` and `blankAndTemplateRenderTheSameSections` are the
+    fourth, and they are what the two-layout design cost: a template used to
+    sweep the role contract and the whole connection matrix behind a collapsed
+    disclosure, so the colour swatches and the five selects — the two things an
+    operator most needs before creating an agent — were exactly what the
+    template path hid, and the blank path did not. One form now, either way.
     """
     payload = _harness()
     for key in (
-        # Step 1 — the picker's four states.
-        "emptyState", "failedThenRetry", "categories",
-        "filterHidesEmptyCategory", "noMatchCopy",
+        # Step 1 — the picker's states, and the rail it narrows with.
+        "emptyState", "failedThenRetry", "categories", "cardsPrintTheAuthorName",
+        "railNarrowsTheGridAndKeepsFocus", "railReturnsToAll",
+        "filterNarrowsTheGrid", "noMatchCopy",
         # Step 1 — the footer, and the door to the marketplace.
         "noCreateOnStepOne", "browseClosesAndReopens",
-        # Step 2 — what a template fills, and what it must never fill.
+        "backLeadsTheTitleRowAndNotStepOne", "backShowsOnStepTwo",
+        # Step 2 — what a template fills, what it must never fill, and what it
+        # is no longer allowed to hide.
         "stepTwoFooter", "provenanceChip", "hydrated", "operatorFieldsUntouched",
-        "connectionLifted", "reviewHidesWhatTheTemplateAnswered",
+        "connectionOnScreen", "templateHidesNothing",
         "summaryNamesTheTools", "focusLandsOnName", "expandingAloneKeepsTheGuard",
         # Back, the chip's dismissal, and Blank.
         "backKeepsTheDraft", "chipClearsTemplateOnly", "blankIsThePlainForm",
-        "closes",
+        "blankAndTemplateRenderTheSameSections", "closes",
         # The roster row's own two doors.
         "bothMenuDoorsCarryALucideIcon", "neitherMenuDoorCarriesATrailingArrow",
         "theMarketplaceDoorIsBlocksAndNotTheOfficesIcon",
@@ -117,54 +132,79 @@ def test_the_connection_guard_tracks_the_answer_not_the_disclosure() -> None:
                 "clearingThemAllRearmsTheGuard"):
         assert payload[key] is True, key
     # One rule, one owner: the module that sets `required` is the module that
-    # decides when it comes off. The layout above it has no say — a listener on
-    # the disclosure is exactly what the old rule was.
-    lift = _read(CONTEXT / "agent-quick-connection.js")
-    assert "function armGuard(form, select)" in lift
-    quick = _read(CONTEXT / "agent-form-quick.js")
-    assert "addEventListener('toggle'" not in quick
-    assert "removeAttribute('required')" not in quick
-    # ...and the guard reads the five keys the SAVE reads, never the lifted
-    # select's own value: a "Set All" that stopped reaching them must leave the
+    # decides when it comes off. The layout has no say — a listener on a
+    # disclosure is exactly what the old rule was. The owner is a BINDING now
+    # (context/agent-form-bindings.js), because the control it sits on is the
+    # form's own visible "Set All" rather than one lifted out of the matrix.
+    bindings = _read(CONTEXT / "agent-form-bindings.js")
+    assert "function bindConnectionGuard(form, options)" in bindings
+    template = _read(CONTEXT / "agent-form-template.js")
+    assert "addEventListener" not in template
+    assert "removeAttribute('required')" not in template
+    assert "setAttribute('required'" not in template
+    # ...and the guard reads the five keys the SAVE reads, never the "Set All"
+    # select's own value: a fan-out that stopped reaching them must leave the
     # submit refused rather than answered.
-    guard = lift.split("function armGuard(form, select) {", 1)[1]
+    guard = bindings.split("function bindConnectionGuard(form, options) {", 1)[1]
     assert "BossModAgentFields.MODEL_TYPES" in guard
-    assert "matrix.some((sel) => sel.value)" in guard
+    assert "matrix.some((select) => select.value)" in guard
+    # CREATE only, on the same reasoning the save-time refusal carries: an
+    # existing agent may already have none, and refusing that save would trap
+    # the operator in a dialog they cannot leave with their other edits.
+    assert "if (!options || !options.creating) return;" in guard
+    # ...and it is bound AFTER the fan-out that writes the five from script,
+    # which fires no change event of its own.
+    form_js = _read(CONTEXT / "agent-form.js")
+    assert form_js.index("select[name=\"model_all\"]") < form_js.index(
+        "BINDINGS.bindConnectionGuard(form, { creating: !agent });")
 
 
 def test_no_configured_connection_is_said_in_front_and_refused() -> None:
     """The state that could create an agent that fails on its first turn.
 
     With nothing configured the matrix renders a link to Settings and no select
-    at all, so the quick layout had nothing to lift: no AI field was added, no
-    `required` was set, and the sweep filed the one sentence explaining any of
-    it inside the COLLAPSED disclosure. Add agent → template → name → Create
-    then wrote five null `model_*` columns without a word.
+    at all. The quick layout had nothing to lift, so no `required` was set and
+    the sweep filed the one sentence explaining any of it inside the COLLAPSED
+    disclosure: Add agent → template → name → Create wrote five null `model_*`
+    columns without a word.
 
-    The block is native constraint validation on a required select with nothing
-    to select — the mechanism the populated case already uses — rather than
-    bespoke logic disabling the dialog's primary, and the message that explains
-    it is joined to that control by `aria-describedby`.
+    A stand-in `required` select then stood here — unanswerable on purpose, so
+    native validation would refuse the submit. It has been withdrawn, and the
+    reason is that it was a control the operator could not answer and that
+    wrote to nothing: it let them fill the whole form before stopping them, and
+    the browser's own "please select an item" is not an explanation.
+
+    The block is now made where it can be EXPLAINED. The dialog withholds its
+    primary the moment the form lands (`primary.blocked`, the same mechanism a
+    failed connections read already uses), the reason goes in the one live
+    region the editor reports through, and the button names it with
+    `aria-describedby`. The save-time refusal still stands behind it.
     """
     payload = _harness()
     for key in ("noConnectionsIsToldInFront", "noConnectionsBlocksCreate",
                 "noConnectionsStaysBlockedAfterTheChipGoes"):
         assert payload[key] is True, key
-    # The shape is one module's, and it names the rule it exists for.
-    lift = _read(CONTEXT / "agent-quick-connection.js")
-    assert "function liftNoConnections(" in lift
-    assert "#btn-goto-connections" in lift
-    assert "required: true" in lift
-    # Never disabled: a disabled control is exempt from validation, and the
-    # submit would go through.
-    assert "disabled" not in lift.split("function liftNoConnections(", 1)[1]
-    # And the pair reads as ONE thing. The stand-in select's only option sat
-    # directly above the matrix's notice saying almost the same sentence, so
-    # the state was reported twice; the option is the placeholder now and the
-    # notice is the explanation.
-    assert "aiNone: '— None available —'" in lift
-    assert "No connection configured" not in lift
-    assert "No connections configured." in _read(CONTEXT / "agent-form-connections.js")
+    # The shape is one module's — the one that RENDERS it — and it names the
+    # rule it exists for.
+    conn = _read(CONTEXT / "agent-form-connections.js")
+    assert "function connectionsSection(agent, connections)" in conn
+    assert 'id="btn-goto-connections"' in conn
+    assert "const noConnections = connections.length === 0;" in conn
+    # No stand-in control: the empty shape offers the link to Settings and
+    # nothing that pretends to be answerable.
+    assert "required" not in conn
+    # The withhold is the dialog's, and it tells the two empty answers apart:
+    # a read that did not land, and a read that landed on nothing.
+    save = _read(CONTEXT / "agent-form-save.js")
+    assert "if (staged.connections === null) {" in save
+    assert "} else if (!agent && !staged.connections.length) {" in save
+    assert "primary.blocked(token, staged.feedback.element, heldTheKeyboard);" in save
+    # ONE sentence for the state, not two. The stand-in select's only option
+    # ("— None available —") sat directly above the matrix's own notice saying
+    # almost the same thing, so an operator with nothing configured was told so
+    # twice in two different voices. The notice is the whole explanation now.
+    assert "No connections configured." in conn
+    assert "None available" not in conn
 
 
 def test_a_failed_form_render_leaves_a_footer_that_can_recover() -> None:
@@ -298,10 +338,10 @@ def test_remove_template_undoes_the_personality_too() -> None:
     same mapping that writes it, so a field added to one cannot be missed here.
     """
     assert _harness()["chipClearsThePersonalityToo"] is True
-    quick = _read(CONTEXT / "agent-form-quick.js")
-    assert "function clearedFields()" in quick
-    assert "return templateFields({});" in quick
-    assert "applyHireFields(formRoot, clearedFields())" in quick
+    template = _read(CONTEXT / "agent-form-template.js")
+    assert "function clearedFields()" in template
+    assert "return templateFields({});" in template
+    assert "applyHireFields(formRoot, clearedFields())" in template
 
 
 def test_the_primary_is_disabled_for_as_long_as_the_save_runs() -> None:
@@ -491,17 +531,32 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     assert not (CONTEXT / "agent-form-catalog.js").exists()
     index = _read(ROOT / "ui" / "templates" / "index.html")
     assert "agent-form-catalog.js" not in index
-    for module in ("agent-template-picker.js", "agent-form-quick.js",
+    for module in ("agent-template-picker.js", "agent-form-template.js",
                    "agent-form-save.js", "shell/add-agent-menu.js"):
         assert module in index, module
-    # Load order: the picker and the quick layout are called by the dialog.
+    # ...and the two modules the one-layout redesign retired are gone from disk
+    # as well as from the page. A parallel layout left loadable is a parallel
+    # layout that comes back.
+    assert not (CONTEXT / "agent-form-quick.js").exists()
+    assert not (CONTEXT / "agent-quick-connection.js").exists()
+    assert "agent-form-quick.js" not in index
+    assert "agent-quick-connection.js" not in index
+
+    # Load order: the picker and the template marker are called by the dialog.
     def at(name: str) -> int:
         return index.index(f"static_url('js/{name}')")
 
     assert at("context/agent-template-picker.js") < at("context/agent-edit.js")
-    assert at("context/agent-form-quick.js") < at("context/agent-edit.js")
-    assert at("context/agent-quick-connection.js") < at("context/agent-form-quick.js")
+    assert at("context/agent-form-template.js") < at("context/agent-edit.js")
     assert at("context/agent-templates-api.js") < at("context/agent-template-picker.js")
+    # The picker draws the library with the marketplace's own two builders.
+    assert at("marketplace/pack-card.js") < at("context/agent-template-picker.js")
+    assert at("marketplace/filter-rail.js") < at("context/agent-template-picker.js")
+    assert at("marketplace/marketplace-items.js") < at("marketplace/pack-card.js")
+    assert at("core/avatar.js") < at("marketplace/pack-card.js")
+    # ...and the shape vocabulary the refusal reads back is rendered by the
+    # connections module, which loads with the rest of the field groups.
+    assert at("context/agent-form-connections.js") < at("context/agent-form-save.js")
     assert at("context/agent-edit.js") < at("shell/add-agent-menu.js")
 
     joined = "\n".join(_read(p) for p in sorted(CONTEXT.glob("agent-*.js")))
@@ -516,7 +571,7 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     assert "function applyHireFields(" in hydrate
     assert hydrate.rsplit("return {", 1)[-1].strip().startswith("applyHireFields }")
     # shortSha moved to the module that renders the pinned SHA on the chip.
-    assert "function shortSha(" in _read(CONTEXT / "agent-form-quick.js")
+    assert "function shortSha(" in _read(CONTEXT / "agent-form-template.js")
     assert "shortSha" not in hydrate
 
 
@@ -526,8 +581,8 @@ def test_a_template_can_never_write_name_colour_or_a_connection() -> None:
     `templateFields` is the one place that maps an AgentTemplate row onto form
     field names, so a field it cannot name is a field a template cannot fill.
     """
-    quick = _read(CONTEXT / "agent-form-quick.js")
-    mapping = quick.split("function templateFields(template) {", 1)[1].split("}", 1)[0]
+    template = _read(CONTEXT / "agent-form-template.js")
+    mapping = template.split("function templateFields(template) {", 1)[1].split("}", 1)[0]
     assert "template.specialty" in mapping
     assert "template.description" in mapping
     assert "template.what_done_looks_like" in mapping

@@ -189,6 +189,46 @@ const BossModMarketplaceItems = (() => {
     }
 
     /**
+     * One INSTALLED row, projected into the item shape both surfaces render.
+     *
+     * Split out of `allItems` when the Add agent picker became a second reader
+     * of the local library. That picker lists templates and nothing else — no
+     * catalog, no refs, no trust — so it needs this half of the projection
+     * without the catalog half around it, and a private copy in the picker is
+     * how the grid and the picker come to disagree about what a pack is called
+     * or whether it has a specialty worth printing.
+     *
+     * What it deliberately does NOT decide is anything CATALOG-relative:
+     * `state`, `inCatalog` and `catalogStatus` are answers about how this row
+     * stands against a catalog listing, and a caller holding no catalog has no
+     * business inventing them. `allItems` adds those three.
+     *
+     * @param {object} row  An `AgentTemplate` row.
+     * @returns {object} `key` is what selection is held by, prefixed `tpl:` so
+     *   it cannot collide with a catalog card's; `intro` and `mission` are the
+     *   two paragraphs every view opens with, either null when absent;
+     *   `specialty` is `''` when it only echoes the title.
+     * @throws {Error} Through `parsed`, when the row carries no parsed
+     *   `sections`. An installed row derives them from two NOT NULL columns, so
+     *   their absence is a broken payload and is said out loud rather than
+     *   drawn as a blank card.
+     */
+    function templateItem(row) {
+        return {
+            key: `tpl:${row.id}`,
+            title: row.title,
+            specialty: distinctSpecialty(row.title, row.specialty),
+            description: row.description || '',
+            author: row.author_name ? { name: row.author_name, url: row.author_url } : null,
+            packId: row.pack_id || null,
+            template: row,
+            commitSha: row.commit_sha || '',
+            category: row.category,
+            ...parsed(row),
+        };
+    }
+
+    /**
      * Every item the catalog and the library together can show.
      *
      * @param {object} state  Reads `categories`, `installedByPackId`,
@@ -220,19 +260,10 @@ const BossModMarketplaceItems = (() => {
             };
         }));
         return cards.concat(state.installedExtras.map((row) => ({
-            key: `tpl:${row.id}`,
-            title: row.title,
-            specialty: distinctSpecialty(row.title, row.specialty),
-            description: row.description || '',
-            author: row.author_name ? { name: row.author_name, url: row.author_url } : null,
-            packId: row.pack_id || null,
-            template: row,
+            ...templateItem(row),
             state: 'installed',
-            commitSha: row.commit_sha || '',
-            category: row.category,
             inCatalog: false,
             catalogStatus: extraStatus(row, state.withheldByPackId),
-            ...parsed(row),
         })));
     }
 
@@ -300,5 +331,8 @@ const BossModMarketplaceItems = (() => {
         };
     }
 
-    return { cardState, categoryLabel, allItems, visible, indexInstalled };
+    return {
+        cardState, categoryLabel, distinctSpecialty, openingText, templateItem,
+        allItems, visible, indexInstalled,
+    };
 })();

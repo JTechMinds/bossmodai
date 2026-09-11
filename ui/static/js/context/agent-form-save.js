@@ -34,18 +34,32 @@ const BossModAgentFormSave = (() => {
         + 'cannot save: the agent would be created with none. Close this dialog '
         + 'and open it again to retry.';
 
-    // Said when a CREATE would write five null connections, worded per LAYOUT:
-    // no one sentence is true everywhere, because the quick layout sweeps "AI
-    // Connections" behind a collapsed disclosure and, with none to configure,
-    // removes the box that carried it. The form is asked which shape it is in.
+    // Said when a CREATE would write five null connections, worded per SHAPE:
+    // one sentence is not true of both, because a form built with nothing
+    // configured has no matrix to point at — it renders a link to Settings
+    // where the selects would be. The form is asked which shape it is in, and
+    // the module that RENDERED that shape is the one that answers.
+    //
+    // Two entries, down from three. The third was for a layout that lifted one
+    // select out of the matrix and swept the rest behind a disclosure; nothing
+    // is lifted or swept now, so there is no third place the question can be.
     const NO_CONNECTION_NEXT = Object.freeze({
         matrix: 'Choose one under AI Connections, or add a connection in Settings if you have none.',
-        lifted: 'Choose one in the AI field above, or under Review & customise.',
-        unavailable: 'Add a connection in Settings; the AI field above links there.',
+        unavailable: 'Add a connection in Settings; the AI Connections section links there.',
     });
     const noConnection = (form) => 'This agent has no AI connection, so it would fail on its first turn. '
-        + NO_CONNECTION_NEXT[BossModAgentQuickConnection.aiQuestion(form)]
+        + NO_CONNECTION_NEXT[BossModAgentFormConnections.aiQuestion(form)]
         + ' Nothing was saved; your draft is still here.';
+
+    // Said when a CREATE is opened with nothing to choose from at all. Not the
+    // same failure as CONNECTIONS_FAILED: that one is a read that did not
+    // land, and this is a read that landed on an empty list. The operator can
+    // act on this one — the section's own link goes to Settings — so it names
+    // the fix rather than a retry.
+    const NO_CONNECTIONS_CONFIGURED = 'No AI connection is configured, so this '
+        + 'form cannot create an agent: it would fail on its first turn. Add one '
+        + 'in Settings — the AI Connections section links there — then reopen '
+        + 'this dialog.';
 
     /**
      * The connections the SUBMIT path resolves the operator's choice against.
@@ -56,9 +70,11 @@ const BossModAgentFormSave = (() => {
      * one decides what the agent is SAVED with, and there an empty list is
      * indistinguishable from "the operator has none": buildSubmitData would
      * write null for all five model types and the save would report success —
-     * exactly the connectionless agent context/agent-quick-connection.js's
-     * unanswerable required select exists to refuse, reached through a second
-     * door. So a failure is `null`, and null blocks the save.
+     * exactly the connectionless agent the whole dialog is shaped to refuse,
+     * reached through a second door. So a failure is `null`, and null blocks
+     * the save. An EMPTY list is a third answer and not this one: it means the
+     * read landed and the operator has none configured, which `renderInline`
+     * withholds the primary for.
      *
      * `res.ok` is part of that read: an error response carries a `{detail}`
      * object, and iterating one throws inside the save instead of here.
@@ -283,14 +299,28 @@ const BossModAgentFormSave = (() => {
         if (!primary.holds(token)) return false;
 
         container.replaceChildren(...staged.stage.children);
-        if (staged.connections) {
-            primary.ready(token, heldTheKeyboard);
-        } else {
+        // THREE ANSWERS, not two, and the middle one is new. `null` is a read
+        // that did not land; `[]` is a read that landed on an empty Settings.
+        // They were the same branch once — both fell through to "ready" unless
+        // the read had failed — and an operator with no connection configured
+        // was handed a live `Create Agent` over a form whose matrix was a link
+        // to Settings. The agent that made would have failed on its first turn.
+        //
+        // CREATE ONLY for the empty case: an existing agent may already have no
+        // connection, and withholding the primary there would trap the operator
+        // in a dialog they cannot leave with their other edits — the same scope
+        // the submit handler's own refusal carries.
+        if (staged.connections === null) {
             staged.feedback.say('bad', CONNECTIONS_FAILED);
             // Withheld WITH a reason, and the keyboard goes to the reason: the
             // button cannot take it back while it is disabled, and a dialog
             // that opens with focus on its primary would otherwise strand it.
             primary.blocked(token, staged.feedback.element, heldTheKeyboard);
+        } else if (!agent && !staged.connections.length) {
+            staged.feedback.say('bad', NO_CONNECTIONS_CONFIGURED);
+            primary.blocked(token, staged.feedback.element, heldTheKeyboard);
+        } else {
+            primary.ready(token, heldTheKeyboard);
         }
         return true;
     }

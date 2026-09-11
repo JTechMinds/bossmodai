@@ -184,16 +184,37 @@ const BossModAgentForm = (() => {
             connections, personalities, roster, promptHistoryPolicy, failed,
         } = await loadFormData(agent);
 
+        // TWO COLUMNS, ONE FORM, and the same one whichever door was used.
+        // Identity on the left, what the agent thinks with on the right, the
+        // optional rest across the bottom. Picking a template used to sweep
+        // everything from the role contract down behind a collapsed disclosure,
+        // so the colour swatches and the whole connection matrix — the two
+        // things an operator most needs to see before creating an agent — were
+        // exactly what the template path hid. A template prefills these fields
+        // now and adds a provenance chip above them; it changes nothing else.
+        //
+        // The section wrappers are HERE rather than inside each field group:
+        // Identity spans two of them (`nameField` and `roleContractCard`), and
+        // a <section> opened in one function and closed in another is a shape
+        // no reader can check. Composition is the assembler's job, which is
+        // what this module is.
         container.innerHTML = `
-        <form id="agent-form" class="space-y-4">
-            ${BossModAgentFormFields.nameField(agent)}
-            ${BossModAgentFormFields.roleContractCard(agent, roster)}
-            ${BossModAgentFormConnections.connectionsSection(agent, connections)}
-            ${BossModAgentFormAdvanced.advancedSection(agent, {
-                personalities, roster, promptHistoryPolicy,
-            })}
-            ${BossModAgentFormFields.statusAndRecovery(agent)}
-            ${BossModAgentFormFields.actionsRow(agent)}
+        <form id="agent-form">
+            <div class="agent-form-grid">
+                <section class="form-section">
+                    <h3 class="form-section-title">Identity</h3>
+                    ${BossModAgentFormFields.nameField(agent)}
+                    ${BossModAgentFormFields.roleContractCard(agent, roster)}
+                </section>
+                ${BossModAgentFormConnections.connectionsSection(agent, connections)}
+                <div class="agent-form-wide">
+                    ${BossModAgentFormAdvanced.advancedSection(agent, {
+                        personalities, roster, promptHistoryPolicy,
+                    })}
+                    ${BossModAgentFormFields.statusAndRecovery(agent)}
+                    ${BossModAgentFormFields.actionsRow(agent)}
+                </div>
+            </div>
         </form>
         `;
 
@@ -220,11 +241,21 @@ const BossModAgentForm = (() => {
         const gotoPers = form.querySelector('#btn-goto-personalities');
         if (gotoPers) gotoPers.addEventListener('click', gotoSettings);
 
+        // WHICH SHAPE the connections section just rendered, written onto the
+        // form for context/agent-form-save.js's refusal to read back. Set from
+        // the same list the section was built from, immediately after it was
+        // built, so the attribute and the markup cannot disagree — and by
+        // agent-form-connections.js's own helper, so the vocabulary has one
+        // owner. See that module's header for why the refusal has to ask.
+        form.setAttribute(
+            BossModAgentFormConnections.AI_QUESTION,
+            BossModAgentFormConnections.shapeFor(connections),
+        );
+
         // "Set All" connection convenience dropdown. Re-queried on each change
-        // rather than captured, because context/agent-form-quick.js MOVES the
-        // five selects into its disclosure — the nodes survive, their place in
-        // the tree does not. The root it searches is the form for the reason
-        // in the header.
+        // rather than captured: the nodes survive any rearrangement, their
+        // place in the tree may not. The root it searches is the form for the
+        // reason in the header.
         const setAllSelect = form.querySelector('select[name="model_all"]');
         if (setAllSelect) {
             setAllSelect.addEventListener('change', () => {
@@ -258,6 +289,15 @@ const BossModAgentForm = (() => {
         BINDINGS.bindFinishLineSuggestion(form, agent);
         BINDINGS.bindRuntimeCorePreview(form, agent);
         BINDINGS.bindDuplicateNameWarning(form, roster, agent);
+        BINDINGS.bindColorSwatchInitial(form);
+        BINDINGS.bindDescriptionAutoGrow(form);
+        // LAST, and after the "Set All" fan-out above it — the ordering is
+        // load-bearing. The fan-out writes the five per-type selects FROM
+        // SCRIPT, and a value assigned that way fires no change event of its
+        // own, so the guard has to be registered after it to read the five
+        // once they have been written. Registered the other way round it would
+        // simply stay armed one interaction longer, which is the safe side.
+        BINDINGS.bindConnectionGuard(form, { creating: !agent });
     }
 
     return { buildFormHTML, loadFormData };

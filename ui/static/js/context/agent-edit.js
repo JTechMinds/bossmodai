@@ -35,13 +35,15 @@
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
     const HYDRATE = BossModAgentFormHydrate;
-    const QUICK = BossModAgentFormQuick;
+    const TEMPLATE = BossModAgentFormTemplate;
     const FOOTER = BossModAgentDialogFooter;
     // The form's own wiring — building it, saving it, deleting through it — is
     // context/agent-form-save.js. Named here because this module hosts it.
     const { renderInline } = BossModAgentFormSave;
 
     const HIRE_TITLE = 'Add agent';
+    /** The back chevron's accessible name, and its tooltip. */
+    const BACK_LABEL = 'Back to the template picker';
     const EDIT_TITLE = 'Edit role';
     // A failed render is recoverable in both flows, and differently in each:
     // step one is still mounted with its list, and an edit has to be reopened.
@@ -95,11 +97,29 @@ const BossModAgentEdit = (() => {
         const formEl = h('div', { class: 'agent-form-host' });
         let picker = null;
         let body = formEl;
+        /** The title row's Back, on a create. Null on an edit, which has one
+         *  step and nothing to go back to. */
+        let backBtn = null;
         if (wasCreating) {
             picker = BossModAgentTemplatePicker.createPicker({
                 onPick: (template) => { void pickTemplate(template).catch(failed); },
+                // Still handed over: the picker's EMPTY state carries its own
+                // door, in the middle of the panel where a first-run operator
+                // with nothing installed is actually looking. What left the
+                // picker is the header button beside the filter.
                 onBrowse: () => browse(),
             });
+            // ON THE TITLE ROW — `‹ Add agent` reads as one heading. It spent a
+            // round as a bordered square floating in the band between the title
+            // and the first card, aligned to neither and filling nothing. The
+            // row is also OUTSIDE the body, so a build that fails and empties
+            // the form host cannot take the way back with it.
+            backBtn = h('button', {
+                class: 'btn btn-sm step-back', type: 'button', id: 'agent-add-back',
+                'aria-label': BACK_LABEL, 'data-tooltip': BACK_LABEL,
+                onclick: () => showStep('picker'),
+            }, h('i', { 'data-lucide': 'chevron-left', 'aria-hidden': 'true' }));
+            backBtn.hidden = true;
             formEl.hidden = true;
             body = h('div', { class: 'agent-add-body' }, picker.element, formEl);
         }
@@ -107,9 +127,9 @@ const BossModAgentEdit = (() => {
         // What the pinned row offers, and what its primary is allowed to say,
         // is one owner's — scoped to THIS dialog, so a build that outlives its
         // own cannot repaint the next one's button.
+        //
         const chrome = {
             creating: wasCreating,
-            onBack: () => showStep('picker'),
             onBrowse: () => browse(),
         };
 
@@ -118,6 +138,9 @@ const BossModAgentEdit = (() => {
             // The variant, not a second modal: same trap, same Esc, same focus
             // restoration, more room and a body that scrolls.
             body,
+            // `‹ Add agent`: the chevron sits on the title row, not in the
+            // body and not in the footer.
+            lead: backBtn,
             size: 'wide',
             actions: FOOTER.actionsFor(wasCreating ? 'picker' : 'form', chrome),
             onClose: () => {
@@ -133,6 +156,11 @@ const BossModAgentEdit = (() => {
                 if (onClosed) onClosed();
             },
         });
+
+        // The chevron is a lucide placeholder until the panel is mounted, and
+        // createModal has just mounted it. Scoped to this panel, never the
+        // document: painting wider would rebuild every icon in the shell.
+        if (backBtn) BossModIcons.paint(modal.element, 'agent-edit.back');
 
         const footer = FOOTER.createFooter(modal, chrome);
         const { primary } = footer;
@@ -160,6 +188,9 @@ const BossModAgentEdit = (() => {
             step = next;
             picker.element.hidden = next === 'form';
             formEl.hidden = next !== 'form';
+            // Step one has nowhere to go back TO, so the chevron is not drawn
+            // there — a live control that does nothing is worse than no control.
+            backBtn.hidden = next !== 'form';
             footer.show(next);
             if (next !== 'form') picker.focus();
         }
@@ -189,8 +220,8 @@ const BossModAgentEdit = (() => {
                 if (!landed || step !== 'form') return;
                 builtFor = key;
                 if (template) {
-                    HYDRATE.applyHireFields(formEl, QUICK.templateFields(template));
-                    QUICK.applyQuickLayout(formEl, template);
+                    HYDRATE.applyHireFields(formEl, TEMPLATE.templateFields(template));
+                    TEMPLATE.applyTemplate(formEl, template);
                 }
             }
             const name = formEl.querySelector('input[name="name"]');
@@ -259,6 +290,10 @@ const BossModAgentEdit = (() => {
             formEl.append(h('p', { class: 'context-error', role: 'alert' },
                 `${FAILED_COPY} ${wasCreating ? FAILED_BACK : FAILED_CLOSE}`));
             footer.recovery();
+            // The row's rebuild took the keyboard; on a create the way out is
+            // the body's own chevron, which the failure did not touch, so it
+            // takes focus back from the dismissal footer.recovery() lit.
+            if (backBtn) backBtn.focus();
         }
 
         // The picker owns its own loading, empty, failed and ready states, so

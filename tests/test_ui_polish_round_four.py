@@ -153,9 +153,11 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-submit.js",
     JS / "context" / "agent-recovery.js",
     JS / "context" / "agent-form-save.js",
+    JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
     JS / "context" / "agent-template-picker.js",
-    JS / "context" / "agent-quick-connection.js",
-    JS / "context" / "agent-form-quick.js",
+    JS / "context" / "agent-form-template.js",
     JS / "context" / "agent-dialog-footer.js",
     JS / "context" / "agent-edit.js",
     JS / "context" / "desk-panel.js",
@@ -177,10 +179,18 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     the standard answer and this is it.
     """
     payload = _agent_dialog_payload()
-    # The create dialog carries a footer per step now. Step one has no form,
-    # so it has no primary either; step two pins Back, Cancel and the primary.
+    # The create dialog carries a footer per step now. Step one has no form, so
+    # it has no primary either; it LEADS with the marketplace door and ends with
+    # the dismissal, which the row's own rule pushes to opposite ends — side by
+    # side they read as two ways to leave, and beside the filter box (where the
+    # door sat for one round) it read as part of the filter.
+    #
+    # Step two no longer pins Back: it is the chevron at the top-left of the
+    # step's body, which is where .desk-back and the marketplace detail's `‹`
+    # already are. Its presence there is pinned in the harness and in
+    # tests/test_add_agent_modal.py.
     assert payload["stepOnePinned"] == ["Browse marketplace", "Cancel"]
-    assert payload["stepTwoPinned"] == ["Back", "Cancel", "Create Agent"]
+    assert payload["stepTwoPinned"] == ["Cancel", "Create Agent"]
     assert payload["editPinnedActions"] == ["Cancel", "Save Changes"]
     # It submits the form it is no longer inside.
     assert payload["primaryCarriesFormAttribute"] == "agent-form"

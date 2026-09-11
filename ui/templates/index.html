@@ -239,14 +239,25 @@
          loads INSIDE this block rather than before it — after the two clients
          it calls, before the dialog that calls it.
 
-         Six files, in dependency order and no cycle between them: what the
+         Eight files, in dependency order and no cycle between them: what the
          app says about packs it will not offer first (both views spend it),
-         then the pure catalog-and-library projection, then the tabbed reader
-         for one pack's sections, then the detail view that frames it and owns
-         the confirm strip BOTH views spend, then the browse view that hands
-         one pack over to it, then the state module that drives the pair. -->
+         then the pure catalog-and-library projection, then the two builders
+         the marketplace shares with the Add agent picker — the pack card and
+         the filter rail, which read that projection and so follow it — then
+         the tabbed reader for one pack's sections, then the detail view that
+         frames it and owns the confirm strip BOTH views spend, then the browse
+         view that hands one pack over to it, then the state module that drives
+         the pair.
+
+         pack-card.js and filter-rail.js load HERE rather than beside the
+         picker that also spends them: they build on core/avatar.js and
+         marketplace-items.js, marketplace-detail.js re-exports the mark from
+         the first of them, and context/agent-template-picker.js is a hundred
+         lines further down this file. -->
     <script src="{{ static_url('js/marketplace/marketplace-withheld.js') }}"></script>
     <script src="{{ static_url('js/marketplace/marketplace-items.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/pack-card.js') }}"></script>
+    <script src="{{ static_url('js/marketplace/filter-rail.js') }}"></script>
     <script src="{{ static_url('js/marketplace/marketplace-sections.js') }}"></script>
     <script src="{{ static_url('js/marketplace/marketplace-detail.js') }}"></script>
     <script src="{{ static_url('js/marketplace/marketplace-view.js') }}"></script>
@@ -262,21 +273,24 @@
     <script src="{{ static_url('js/context/agent-submit.js') }}"></script>
     <script src="{{ static_url('js/context/agent-recovery.js') }}"></script>
 
-    <!-- Add agent, in dependency order: where the quick layout puts the AI
-         question, then the form's save wiring, then the two halves of the
-         create dialog's steps, then the dialog's pinned footer, then the
-         dialog that swaps between them. agent-quick-connection.js leads
-         because the save wiring's refusal ASKS it which shape the form's
-         connection question is in, and the copy that refusal picks has to name
-         a control the operator can reach. The picker reads the local library
-         through agent-templates-api.js and the quick layout rewrites the form
-         agent-form.js built, so both load after those and before agent-edit.js
-         calls them. agent-dialog-footer.js owns the primary the save wiring is
-         handed, and agent-edit.js is what hands it over. -->
-    <script src="{{ static_url('js/context/agent-quick-connection.js') }}"></script>
+    <!-- Add agent, in dependency order: the form's save wiring, then the two
+         halves of the create dialog's steps, then the dialog's pinned footer,
+         then the dialog that swaps between them.
+
+         The picker reads the local library through agent-templates-api.js and
+         draws it with the two builders the marketplace block above already
+         defined, so it loads after both. agent-form-template.js only marks the
+         form agent-form.js built, and agent-dialog-footer.js owns the primary
+         the save wiring is handed — agent-edit.js is what hands it over, so it
+         loads last.
+
+         The module that used to lead this block is gone: the save wiring's
+         refusal still ASKS which shape the form's connection question is in,
+         but the answer now comes from agent-form-connections.js, which RENDERS
+         those two shapes and is loaded with the rest of the field groups. -->
     <script src="{{ static_url('js/context/agent-form-save.js') }}"></script>
     <script src="{{ static_url('js/context/agent-template-picker.js') }}"></script>
-    <script src="{{ static_url('js/context/agent-form-quick.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-form-template.js') }}"></script>
     <script src="{{ static_url('js/context/agent-dialog-footer.js') }}"></script>
 
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>

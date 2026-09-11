@@ -18,11 +18,11 @@
 
   --accent: #2d6be5;        /* 4.51 on --bg  (was #2f6fed at 4.24 — failed) */
   --accent-bg: #e8effd;
-  /* The bottom stop of a primary button's gradient. DARKER than --accent on
-     purpose: a lighter stop would thin the white label's contrast at one end
-     of the button, and this way the pair only improves it — --panel measures
-     4.83:1 on --accent and 6.36:1 here, so the worst row of the gradient is
-     still the flat colour's. */
+  /* A primary button's border, its hover and its press. DARKER than --accent
+     on purpose: the flat face needs an edge that reads against the panel, and
+     the same value is what the control darkens to under the pointer. --panel
+     measures 4.83:1 on --accent and 6.36:1 here, so the white label clears AA
+     at rest and improves on press. */
   --accent-deep: #2559c4;
 
   --alert: #d03737;         /* 4.57 on --bg  (was #d93a3a at 4.24 — failed) */
@@ -55,22 +55,25 @@
   --office-grid: rgba(0, 0, 0, 0.04);
   --office-shadow: rgba(0, 0, 0, 0.15);
 
-  /* A BUTTON'S FACE. Fifteen call sites share .btn and it was one flat fill,
-     which reads as a rectangle of border rather than as something pressable —
-     the operator's word for it was "noise". These are the two stops of its
-     gradient and the lift under it.
+  /* A BUTTON'S FACE. Fifteen call sites share .btn.
+   *
+   * FLAT, and soft. This was a top-lit gradient over a 1px lift, which reads as
+   * a moulded plastic button rather than as a surface — the look this app is
+   * not going for. A button is now one quiet grey fill that darkens a step on
+   * hover and another on press; the travel is the FILL changing, not a shadow
+   * leaving, so nothing under the pointer moves.
    *
    * They do NOT carry the identification job (SC 1.4.11): --btn-face measures
-   * 1.06:1 against --panel, and no fill this light could reach 3:1. The border
-   * is still --line-control at 3.10:1 and is still what says "control". The
-   * gradient and the shadow are what say "raised", which is a different
-   * question and the one that was unanswered.
+   * 1.09:1 against --panel, and no fill this soft could reach 3:1. The border
+   * is --line-control at 3.10:1 and is still what says "control" — which is why
+   * a borderless Apple-style button is not available to us here.
    *
-   * --ink measures 13.9:1 on --btn-face and --muted 5.71:1, so a label and an
-   * icon-only glyph both still clear AA at the darkest point of the ramp. */
-  --btn-face: #f2f4f7;
-  --btn-face-hover: #e7eaef;
-  --btn-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+   * Measured on the two ends of the ramp, so a label and an icon-only glyph
+   * clear AA wherever the pointer is: --ink is 15.21:1 on --btn-face and
+   * 12.92:1 on --btn-face-active; --muted is 6.01:1 and 5.11:1. */
+  --btn-face: #f5f5f7;
+  --btn-face-hover: #ececf0;
+  --btn-face-active: #e2e3e8;
 
   --r: 8px;
   --r-lg: 12px;   /* Cards and panels. --r is for controls and small chrome. */

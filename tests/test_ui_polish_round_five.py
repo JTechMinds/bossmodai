@@ -154,17 +154,26 @@ def _column_steps(css: str) -> list[tuple[int, int]]:
     ]
 
 
-def test_the_matrix_is_a_three_column_grid() -> None:
+def test_the_matrix_is_a_two_column_grid() -> None:
     """Five activation types rendered as five full-width rows.
 
     Each `<select>` spanned ~600px to display the word `None` and the block
     cost ~264px of a dialog that already scrolls.
 
-    The plan asked for `payload["matrixColumns"] == 3` off the markup builder.
-    The count is read from the stylesheet instead: overlays.css is the only
-    thing that lays the grid out, and a builder that also named a column count
-    would be a second source of truth for a number it does not own. The
-    property — three columns — is asserted, on the value that actually applies.
+    The plan asked for `payload["matrixColumns"]` off the markup builder. The
+    count is read from the stylesheet instead: overlays.css is the only thing
+    that lays the grid out, and a builder that also named a column count would
+    be a second source of truth for a number it does not own. The property is
+    asserted on the value that actually applies.
+
+    TWO, down from three, and the governing number is unchanged: it is the
+    per-select WIDTH, not the column count. The matrix spanned a whole 760px
+    dialog when three columns gave it ~225px each. It now sits in the
+    right-hand column of the form grid — ~450px of a 960px panel — where three
+    would give ~140px, which truncates a connection label at ~18 characters and
+    real ones already exceed that. That is the same measurement that rejected
+    five columns across the full width. Two gives ~215px: the width three had
+    before, so no label clips that did not clip already.
     """
     payload = _agent_form_payload()
     # Still five activation types, still one Set All. Both of these PASSED
@@ -176,12 +185,12 @@ def test_the_matrix_is_a_three_column_grid() -> None:
     assert payload["setAllIsOutsideTheGrid"] is True
 
     css = _read(CSS / "overlays.css")
-    assert _grid_columns(css) == 3
-    # Which is the whole point: five selects across three columns is TWO rows
-    # where five full-width rows cost five.
+    assert _grid_columns(css) == 2
+    # Which is the whole point: five selects across two columns is THREE rows
+    # where five full-width rows cost five, in a column half the width.
     activation_types = len(payload["matrixSelectNames"]) - 1
     assert activation_types == 5, payload["matrixSelectNames"]
-    assert -(-activation_types // _grid_columns(css)) == 2
+    assert -(-activation_types // _grid_columns(css)) == 3
 
     # Labels above, and associated — not bare spans. A form control whose label
     # is a `<span>` beside it is a screen-reader dead end.
@@ -205,19 +214,28 @@ def test_a_long_connection_name_stays_recoverable() -> None:
 
 
 def test_the_grid_collapses_before_it_crushes() -> None:
-    """The dialog is `min(760px, calc(100vw - 32px))`, so its width follows the
-    window's. Three columns crush on a small one."""
+    """The dialog is `min(960px, calc(100vw - 32px))`, so its width follows the
+    window's. Two columns in a half-width track crush on a small one.
+
+    The property is unchanged — the grid must collapse before a select becomes
+    unreadable — and the step count follows the base. It was 3 -> 2 -> 1 while
+    the matrix spanned the whole dialog; the base is 2 now, so there is one
+    step left to take.
+    """
     css = _read(CSS / "overlays.css")
     assert "grid-template-columns" in _rule(css, ".connection-grid")
     assert "@media (max-width:" in css
-    # To two, then to one. A single query dropping straight to one column would
-    # satisfy the line above and still crush at 700px.
     steps = _column_steps(css)
-    assert [columns for _, columns in steps] == [2, 1], steps
-    # Widest breakpoint first: two equal-specificity queries are resolved by
-    # source order, so the narrower one has to come last to ever apply.
-    widths = [width for width, _ in steps]
-    assert widths == sorted(widths, reverse=True), steps
+    assert [columns for _, columns in steps] == [1], steps
+    # ...and it collapses at the SAME width the form itself does, so the matrix
+    # never sits two-up in a column that has already gone full width.
+    assert steps[0][0] == 900, steps
+    form_grid_steps = [
+        width for width, block in re.findall(
+            r"@media \(max-width: (\d+)px\) \{(.*?)\}\s*\}", css, re.S)
+        if ".agent-form-grid" in block
+    ]
+    assert form_grid_steps == ["900"], form_grid_steps
 
 
 def test_the_matrix_kept_every_behaviour() -> None:

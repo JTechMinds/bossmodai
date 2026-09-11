@@ -70,9 +70,11 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-submit.js",
     CONTEXT / "agent-recovery.js",
     CONTEXT / "agent-form-save.js",
+    JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
     CONTEXT / "agent-template-picker.js",
-    CONTEXT / "agent-quick-connection.js",
-    CONTEXT / "agent-form-quick.js",
+    CONTEXT / "agent-form-template.js",
     CONTEXT / "agent-dialog-footer.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "desk-panel.js",
@@ -207,11 +209,11 @@ def test_set_all_fans_out_through_the_published_form() -> None:
     `querySelector` inside the listener then answered null for the rest of the
     form's life, `if (sel)` swallowed it, and nothing said a word.
 
-    That is not a cosmetic loss. `applyQuickLayout` promotes `model_all` to the
-    ONE required AI question and sweeps the five `model_*` selects behind a
-    collapsed disclosure, and `buildSubmitData` reads those five and never
-    `model_all` — so the fan-out IS the mechanism by which a quick create gets
-    any connection at all. Answer the required select, click Create, and the
+    That is not a cosmetic loss. `model_all` is the required AI question until
+    the matrix has been answered, and `buildSubmitData` reads the five
+    `model_*` selects and never `model_all` — so the fan-out IS the mechanism
+    by which answering that one control gives the agent any connection at all.
+    Answer the required select, click Create, and the
     agent was written with five null models, no connection_id and no
     api_base_url, over the words "Saved successfully".
 
@@ -244,35 +246,47 @@ def test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through()
     The quick layout promotes `model_all` to the ONE required AI question and
     sweeps the five `model_*` selects behind a collapsed disclosure, and
     `buildSubmitData` reads those five and never `model_all`. So `required` on
-    the lifted select is the whole gate, and the rule for when it comes off had
-    it backwards: it came off when the disclosure was OPENED. That panel is
-    where the template's specialty, description and what-done live, so opening
-    it to read them — the interaction the layout invites — disarmed the guard,
-    and closing it again did not put it back. Type a name, click Create, and
-    the agent was written with five null models, no connection_id and no
+    that select is the cheap gate, and the rule for when it comes off had it
+    backwards: it came off when a disclosure was OPENED. That panel was where a
+    template's specialty, description and what-done lived, so opening it to
+    read them — the interaction the layout invited — disarmed the guard, and
+    closing it again did not put it back. Type a name, click Create, and the
+    agent was written with five null models, no connection_id and no
     api_base_url, over the words "Saved successfully".
 
     The corrected rule (spec 8.3) tracks the ANSWER: required until at least
     one of the five holds a value, re-armed when they are all cleared back to
     None, live on change in both directions. All four halves are here —
-    expand-and-close keeps it, one per-type select releases it, clearing them
-    re-arms it, and the fan-out through the lifted select releases it and
-    SAVES what it wrote.
+    open-and-close keeps it, one per-type select releases it, clearing them
+    re-arms it, and the fan-out through "Set All" releases it and SAVES what it
+    wrote.
 
-    Driven through the real builder, the real publish, the real quick layout,
-    the real `buildSubmitData` and the real POST. tests/js_add_agent_harness.cjs
-    stubs the form and the submit path, which is where this class of defect has
+    The layout that made the original defect reachable is gone: nothing a
+    template fills is hidden any more, so the two paths are one form and the
+    guard sits on a control that is always on screen. The open-and-close half
+    is kept and re-pointed at the one disclosure that remains (Advanced),
+    because the property it pins is not about any particular panel — a panel
+    toggle is not an answer.
+
+    Driven through the real builder, the real publish, the real
+    `buildSubmitData` and the real POST. tests/js_add_agent_harness.cjs stubs
+    the form and the submit path, which is where this class of defect has
     hidden three times; what the attribute buys — a refused submit — is native
     constraint validation, so the attribute itself is what the fake can read.
     """
     payload = _harness()
-    for key in ("theQuickLayoutAsksForAConnection",
+    for key in ("theTemplateFormAsksForAConnection",
                 "readingTheDisclosureKeepsTheGuard",
                 "answeringTheMatrixReleasesTheGuard",
                 "clearingTheMatrixRearmsTheGuard",
                 "theQuickFanOutReleasesTheGuard",
                 "theQuickCreateSavesTheConnection"):
         assert payload[key] is True, key
+    # ...and the layout that made this defect possible is gone with it: a
+    # template no longer hides the five selects or the colour swatches behind
+    # anything. The guard is on the visible "Set All" now, and the panel the
+    # old rule watched (Advanced) is not where any template field lives.
+    assert payload["nothingIsHiddenFromATemplate"] is True
 
 
 def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
@@ -301,9 +315,8 @@ def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
     before they commit, and they are now convenience, not the guarantee.
 
     Driven end to end through the real builder, the real publish, the real
-    `applyQuickLayout`, the real `buildSubmitData` and a POST that would have
-    SUCCEEDED — a refusal proven against an endpoint that refuses anyway proves
-    nothing.
+    `buildSubmitData` and a POST that would have SUCCEEDED — a refusal proven
+    against an endpoint that refuses anyway proves nothing.
     """
     payload = _harness()
     # The route is real: armed guard, satisfied anyway.
@@ -319,12 +332,18 @@ def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
     # both wordings satisfy would pin nothing, and every single-sentence
     # version of this message has been wrong on one path or the other.
     assert payload["theBlankRefusalNamesTheMatrix"] is True
-    # ...and the third shape, where liftNoConnections removed the box the "AI
-    # Connections" heading lived in: nothing on screen can be chosen, so the
-    # only next action is Settings and the sentence says so. An empty
-    # connections list is a HEALTHY read, so nothing else refuses this save
-    # first — this invariant is the one the create actually meets.
+    # ...and the other shape, where the matrix renders a link to Settings and
+    # no select at all: nothing on screen can be chosen, so the only next
+    # action is Settings and the sentence says so. An empty connections list is
+    # a HEALTHY read, so nothing else refuses this save first — this invariant
+    # is the one the create actually meets.
     assert payload["theUnconfiguredRefusalSendsThemToSettings"] is True
+    # ...and it is refused EARLIER than that now: with nothing to choose from,
+    # the dialog withholds its primary the moment the form lands and names the
+    # line that says why. The unanswerable stand-in select this replaces let
+    # the operator fill the whole form before native validation stopped them,
+    # and it wrote to nothing.
+    assert payload["theUnconfiguredCreateIsWithheldNotOffered"] is True
     # A gate, not a dead end: answer it and the same click goes through.
     assert payload["theCorrectedCreateGoesThrough"] is True
 
@@ -339,15 +358,28 @@ def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
     # through. No second announcement channel was invented for this tone.
     assert "say('bad', noConnection(form))" in save
     # The handler picks its sentence from ONE attribute read, and the module
-    # that moved the control is the one that wrote it. A save handler that
-    # queried for a disclosure or a lifted field would be carrying a copy of
-    # the layout, and the copy is what goes stale.
-    assert "NO_CONNECTION_NEXT[BossModAgentQuickConnection.aiQuestion(form)]" in save
-    for layout in ("quick-disclosure", "quick-ai", "Review & customise"):
+    # that RENDERS the two shapes is the one that names them. A save handler
+    # that queried for a section or a select would be carrying a copy of the
+    # layout, and the copy is what goes stale.
+    assert "NO_CONNECTION_NEXT[BossModAgentFormConnections.aiQuestion(form)]" in save
+    # No class, id or section name from either layout below this point: the
+    # handler must not be able to name a control, only to ask which shape the
+    # form is in. (The old three are in the list too — a re-point that silently
+    # dropped them would let the stale vocabulary back in.)
+    for layout in ("quick-disclosure", "quick-ai", "Review & customise",
+                   "connection-grid", "form-section", "agent-form-grid"):
         assert layout not in save.split("const noConnection", 1)[1], layout
-    lift = _read(CONTEXT / "agent-quick-connection.js")
-    assert "form.setAttribute(AI_QUESTION, LIFTED);" in lift
-    assert "form.setAttribute(AI_QUESTION, UNAVAILABLE);" in lift
+    # The vocabulary has one owner: the module that builds both shapes decides
+    # which was built and answers for it later.
+    conn = _read(CONTEXT / "agent-form-connections.js")
+    assert "function shapeFor(connections)" in conn
+    assert "function aiQuestion(form)" in conn
+    assert "return (connections || []).length ? MATRIX : UNAVAILABLE;" in conn
+    # ...and the assembler writes it from the SAME list the section was built
+    # from, so the attribute and the markup cannot disagree.
+    form_js = _read(CONTEXT / "agent-form.js")
+    assert "BossModAgentFormConnections.AI_QUESTION," in form_js
+    assert "BossModAgentFormConnections.shapeFor(connections)," in form_js
     # The mapper stays a mapper. A dialog-level rule inside it would have to be
     # told which of create and edit it was serving.
     submit = _read(CONTEXT / "agent-submit.js")
@@ -517,8 +549,8 @@ def test_agent_edit_modules_stay_focused() -> None:
         "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
         "agent-form-connections.js", "agent-form-fields.js",
-        "agent-form-hydrate.js", "agent-form-quick.js", "agent-form-save.js",
-        "agent-form.js", "agent-quick-connection.js", "agent-recovery.js",
+        "agent-form-hydrate.js", "agent-form-save.js",
+        "agent-form-template.js", "agent-form.js", "agent-recovery.js",
         "agent-submit.js", "agent-template-picker.js", "agent-templates-api.js",
     ], names
     for path in modules:

@@ -65,40 +65,20 @@ const BossModMarketplaceDetail = (() => {
     /**
      * The bubble that says which FAMILY a pack belongs to.
      *
-     * Here, and spent by both views, for the reason `confirmStrip` and
-     * `dismissButton` are: the card and the hero must identify a pack the same
-     * way, and two builders is how they come to differ. It is the roster's own
-     * avatar — a template is an agent nobody has hired yet, and this app has
-     * one bubble.
+     * The BUILDER moved to marketplace/pack-card.js when the Add agent picker
+     * became a third caller — the grid, this hero and the picker must identify
+     * a pack the same way, and the module that owns the card is where the mark
+     * that leads it belongs. Re-exported here rather than re-pointed at every
+     * call site: this module's `dismissButton` and `confirmStrip` are already
+     * the pair both views reach through, and one of the three names moving
+     * would be the only thing that changed.
      *
-     * The COLOUR is derived from the slug, not the label: the slug is the
-     * stable half, so Engineering is one colour in the grid, in the read, and
-     * after a restart, whatever the labeller does. The LETTERS come from the
-     * label, so the mark and the word beside it cut the name at the same
-     * boundaries — `Data Analyst` is `DA`, and a third word gets no third
-     * letter.
-     *
-     * Decorative, and it may only stay that way because every surface that
-     * draws it also prints the category as a WORD — the card's chip, the
-     * hero's byline. A coloured `E` is not the word "Engineering", and colour
-     * alone may not carry it (SC 1.4.1). The word is also why the bubble is
-     * `aria-hidden`: announcing both would say the same thing twice.
-     *
-     * @param {string|null} slug  The catalog's category id. Untrusted text: it
-     *   reaches the document only as `h()`'s text node, never as markup.
+     * @param {string|null} slug  The catalog's category id.
      * @param {'chip'|'sm'|'md'|'lg'} size
-     * @returns {HTMLElement} For a row with NO category — which both routes
-     *   should always send, so it is a defect rather than a state — the neutral
-     *   grey circle carrying `?`, the same answer the module already gives a
-     *   nameless agent. Never an empty circle.
+     * @returns {HTMLElement}
      */
     function categoryMark(slug, size) {
-        return BossModAvatar.create({
-            name: null,
-            text: BossModAvatar.initials(ITEMS.categoryLabel(slug)),
-            color: BossModAvatar.seedFor(slug),
-            size,
-        });
+        return BossModPackCard.categoryMark(slug, size);
     }
 
     /**

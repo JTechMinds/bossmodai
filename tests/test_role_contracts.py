@@ -246,8 +246,11 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "A named draft or document exists. Empty done does not count." in specialty_js
     assert panel.index('name="name"') < panel.index('name="role"')
     assert panel.index('name="role"') < panel.index('name="description"')
-    assert panel.index('name="description"') < panel.index(">Color</label>")
-    assert panel.index(">Color</label>") < panel.index("Advanced")
+    # `<legend>`, not `<label>`: Color is a radio GROUP, and the heading over
+    # one is a legend inside its fieldset. It was a <label> pointing at no
+    # control at all — the marker moved, the ordering property did not.
+    assert panel.index('name="description"') < panel.index(">Color</legend>")
+    assert panel.index(">Color</legend>") < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
     assert panel.index('name="done_fail_bar"') < panel.index('name="personality_id"')
     assert panel.index("Advanced") < panel.index("Desk Assignment")

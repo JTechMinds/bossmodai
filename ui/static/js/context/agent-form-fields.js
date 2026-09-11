@@ -38,15 +38,13 @@ const BossModAgentFormFields = (() => {
     function nameField(agent) {
         return `
         <!-- Name -->
-        <div>
-            <label class="block text-sm font-medium mb-1">Name</label>
-            <input type="text" name="name" required
+        <div class="field">
+            <label class="field-label" for="agent-name">Agent Name</label>
+            <input type="text" name="name" id="agent-name" required
                    value="${BossModFormat.escapeAttribute(agent?.name || '')}"
                    placeholder="e.g. PM Agent"
-                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                          focus:border-bm-accent">
-            <p id="agent-name-duplicate-warn" class="hidden text-xs text-amber-800 mt-1">
+                   class="field-input">
+            <p id="agent-name-duplicate-warn" class="hidden field-warn">
                 An agent with this name already exists. You can still create another.
             </p>
         </div>`;
@@ -68,7 +66,14 @@ const BossModAgentFormFields = (() => {
         // it showed the seed, while every surface renders the pale tint that
         // core/avatar.js derives from it. Showing the derived pair means a
         // custom hex previews its true rendered appearance before it is saved.
-        const previewInitial = BossModFormat.escapeHtml(BossModAvatar.initial(agent?.name));
+        // EMPTY while the agent has no name, and never `?`. BossModAvatar's
+        // `?` is right on a roster row — a nameless agent still has to be
+        // identifiable there — and wrong here, where eight swatches rendered
+        // eight question marks on every create and read as a broken control
+        // rather than as a colour preview. The glyph is filled in live from the
+        // Name field by bindColorSwatchInitial (context/agent-form-bindings.js).
+        const previewInitial = agent?.name
+            ? BossModFormat.escapeHtml(BossModAvatar.initial(agent.name)) : '';
         // An agent hired before the palette changed holds a colour no swatch
         // offers. Without a swatch to match it no radio is checked, and
         // agent-submit.js's `formData.get('agent-color') || FALLBACK_COLOR`
@@ -80,46 +85,47 @@ const BossModAgentFormFields = (() => {
         const swatches = known
             ? FIELDS.AGENT_COLORS
             : [{ value: defaultColor, name: 'Current' }, ...FIELDS.AGENT_COLORS];
+        // `.visually-hidden`, NOT `display: none`. The radio used to carry
+        // Tailwind's `hidden`, which takes an input out of the tab order
+        // entirely — so the colour picker could not be reached or operated by
+        // keyboard at all, and no arrow key moved through the group. base.css's
+        // helper hides it from sight while leaving it focusable, which is also
+        // what makes the `:checked +` rule below able to paint the swatch.
         const colorOptions = swatches.map(c => {
             const selected = defaultColor === c.value;
             const tint = BossModAvatar.tintFor(c.value);
-            return `<label class="flex items-center gap-2 cursor-pointer">
+            return `<label class="color-choice">
                 <input type="radio" name="agent-color" value="${BossModFormat.escapeAttribute(c.value)}"
                        ${selected ? 'checked' : ''}
-                       class="hidden peer">
-                <span class="avatar avatar-md border-2 peer-checked:border-slate-800 border-transparent
-                             transition-all" aria-hidden="true"
+                       class="visually-hidden">
+                <span class="avatar avatar-md" aria-hidden="true"
                       style="background:${BossModFormat.escapeAttribute(tint.bg)};color:${BossModFormat.escapeAttribute(tint.ink)}">${previewInitial}</span>
-                <span class="text-sm">${c.name}</span>
+                <span class="color-choice-name">${c.name}</span>
             </label>`;
         }).join('');
         return `
-        <div id="role-contract-card" class="space-y-3">
-            <div>
-                <label class="block text-sm font-medium mb-1">Specialty</label>
-                <input type="text" name="role"
+        <div id="role-contract-card" class="role-contract">
+            <div class="field">
+                <label class="field-label" for="agent-role">Specialty</label>
+                <input type="text" name="role" id="agent-role"
                        value="${BossModFormat.escapeAttribute(agent?.role || '')}"
                        placeholder="e.g. Writer, Auditor, Engineer"
                        maxlength="120"
-                       class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                              bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                              focus:border-bm-accent">
+                       class="field-input">
             </div>
-            <div>
-                <label class="block text-sm font-medium mb-1">Description</label>
-                <textarea name="description" rows="3" maxlength="1000"
+            <div class="field">
+                <label class="field-label" for="agent-description">Description</label>
+                <textarea name="description" id="agent-description" rows="3" maxlength="1000"
                           placeholder="e.g. Writes first drafts and short status notes."
-                          class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                 bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                 focus:border-bm-accent">${BossModFormat.escapeHtml(agent?.description || '')}</textarea>
-                <p class="text-xs text-bm-muted mt-1">
+                          class="field-textarea">${BossModFormat.escapeHtml(agent?.description || '')}</textarea>
+                <p class="field-hint">
                     What this agent does. We’ll suggest what done looks like from the specialty.
                 </p>
             </div>
-            <div>
-                <label class="block text-sm font-medium mb-1">Color</label>
-                <div class="flex flex-wrap gap-3 mt-1">${colorOptions}</div>
-            </div>
+            <fieldset class="field color-field">
+                <legend class="field-label">Color</legend>
+                <div class="color-choices">${colorOptions}</div>
+            </fieldset>
         </div>`;
     }
 
@@ -133,39 +139,33 @@ const BossModAgentFormFields = (() => {
         return `
         <!-- Status (read-only for existing agents) -->
         ${agent ? `
-        <div class="pt-2 border-t border-bm-border">
-            <div class="flex items-center justify-between text-sm">
-                <span class="text-bm-muted">Status</span>
-                <span id="agent-runtime-status-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
-                             ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusClasses(agent.status || 'idle', agent.currentActivityKind))}">
-                    <span id="agent-runtime-status-dot" class="w-1.5 h-1.5 rounded-full ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusDot(agent.status || 'idle', agent.currentActivityKind))}"></span>
-                    <span id="agent-runtime-status-label">${BossModAgentStatus.getStatusLabel(agent.status || 'idle', agent.currentActivityKind)}</span>
-                </span>
-            </div>
+        <div class="agent-runtime-row">
+            <span class="field-hint">Status</span>
+            <span id="agent-runtime-status-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium
+                         ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusClasses(agent.status || 'idle', agent.currentActivityKind))}">
+                <span id="agent-runtime-status-dot" class="w-1.5 h-1.5 rounded-full ${BossModFormat.escapeAttribute(BossModAgentStatus.getStatusDot(agent.status || 'idle', agent.currentActivityKind))}"></span>
+                <span id="agent-runtime-status-label">${BossModAgentStatus.getStatusLabel(agent.status || 'idle', agent.currentActivityKind)}</span>
+            </span>
         </div>
 
-        <div class="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-3">
+        <section class="form-section danger-section">
             <div>
-                <h3 class="text-sm font-semibold text-amber-900">Recovery Tools</h3>
-                <p class="text-xs text-amber-800 mt-1">These actions are destructive and cannot be undone.</p>
+                <h3 class="danger-title">Recovery Tools</h3>
+                <p class="danger-hint">These actions are destructive and cannot be undone.</p>
             </div>
-            <div class="flex flex-wrap gap-2">
-                <button type="button" id="btn-clear-chat-history"
-                        class="px-3 py-1.5 border border-amber-300 text-amber-900 rounded-lg
-                               hover:bg-amber-100 transition-colors text-sm font-medium">
+            <div class="danger-actions">
+                <button type="button" id="btn-clear-chat-history" class="btn btn-sm">
                     Clear Chat History
                 </button>
-                <button type="button" id="btn-reset-runtime"
-                        class="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg
-                               hover:bg-red-50 transition-colors text-sm font-medium">
+                <button type="button" id="btn-reset-runtime" class="btn btn-sm btn-danger">
                     Reset Runtime
                 </button>
             </div>
-            <div class="text-xs text-amber-900 space-y-1">
+            <div class="danger-notes">
                 <p><strong>Clear Chat History</strong> deletes only the direct human chat thread for this agent.</p>
                 <p><strong>Reset Runtime</strong> cancels active work, clears queued triggers, resets the agent to idle, and may block the active task.</p>
             </div>
-        </div>` : ''}`;
+        </section>` : ''}`;
     }
 
     /**
@@ -188,10 +188,8 @@ const BossModAgentFormFields = (() => {
         if (!agent) return '';
         return `
         <!-- Actions -->
-        <div class="flex gap-2 pt-2">
-            <button type="button" id="btn-delete-agent"
-                    class="px-4 py-2 border border-red-300 text-red-600 rounded-lg
-                           hover:bg-red-50 transition-colors text-sm font-medium">
+        <div class="agent-form-actions">
+            <button type="button" id="btn-delete-agent" class="btn btn-danger">
                 Delete
             </button>
         </div>`;

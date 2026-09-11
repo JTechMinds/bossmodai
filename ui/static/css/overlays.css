@@ -46,10 +46,26 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 }
 
-/* Wide enough for the agent form's two-column matrix, and never wider than the
-   window. A dialog squeezed into a column is what this replaced. */
+/* The agent dialog, and the only caller of this size. Two numbers, each doing a
+   job the 760px/max-height pair it replaces could not.
+
+   960px, up from 760. This size now carries TWO layouts: step one is a filter
+   rail beside a card grid, which is the pairing the takeover exists for and
+   which 760px puts in one column; step two is the form in two columns, and its
+   right-hand column holds the connection matrix, which needs ~215px per select
+   before a real connection label clips (see .connection-grid below). 960 is
+   160px of rail plus a two-up grid on step one, and 2 x ~450px on step two.
+
+   HEIGHT, not just a ceiling — the same fix, for the same reason, that the
+   takeover already carries. With only max-height the panel was as tall as
+   whichever step was on screen: the picker is short, the form is tall, and the
+   swap between them resized the dialog under the pointer. One box for both
+   steps, and for the edit flow that shares this size. `min()` so a short
+   viewport still gets a panel that fits inside it rather than one clipped by
+   it. */
 .modal-panel[data-size="wide"] {
-  width: min(760px, calc(100vw - 32px));
+  width: min(960px, calc(100vw - 32px));
+  height: min(700px, calc(100vh - 48px));
   max-height: calc(100vh - 48px);
 }
 
@@ -73,7 +89,27 @@
   max-height: calc(100vh - 48px);
 }
 
+/* The title row. A dialog with a `lead` control puts it here, on the heading's
+   own line, so `‹ Add agent` reads as one thing — the chevron spent a round as
+   a bordered square in the band below, aligned to nothing and filling nothing.
+   The margin moves to the ROW so the two shapes leave the same gap under them. */
+.modal-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .modal-title { flex: 0 0 auto; margin: 0 0 8px; font-size: 16px; }
+.modal-head .modal-title { margin: 0; }
+
+/* The lead control is put away with the `hidden` PROPERTY, and `.btn` sets
+   `display: inline-flex` — an author declaration, which outranks the UA's
+   `[hidden] { display: none }` outright. Without this the step-one dialog
+   showed a Back chevron that had nowhere to go back to. Same guard, and same
+   reason, as .agent-add-body's below. */
+.modal-head [hidden] { display: none !important; }
 
 /* min-height: 0 is what actually lets a flex child scroll — without it the
    body grows to its content and the panel overflows the viewport instead. */
@@ -105,137 +141,227 @@
    used to be guessed was wrong the moment "Install from URL" wrapped a second
    row into the header. min-height: 0 is again what lets a flex child shrink
    instead of pushing the panel past the viewport. */
-.modal-panel[data-size="takeover"] .modal-body {
+.modal-panel[data-size="takeover"] .modal-body,
+/* The wide dialog joined it when step 1 grew a pinned header over a scrolling
+   card grid. Same reasoning: the part that scrolls has to be INSIDE the body
+   rather than the body itself, or the header scrolls away with the grid and a
+   second scrollbar wraps the one that is already there. Step 2's scroller is
+   .agent-form-host, step 1's is .picker-body, and both are flex children of
+   this. */
+.modal-panel[data-size="wide"] .modal-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
+/* The dialog's own buttons wear the app's button face, flat — the same fill
+   .btn carries, so Cancel in a footer and Try again in a panel are one control
+   and not two that nearly agree. */
 .modal-action {
   padding: 6px 14px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
+  background: var(--btn-face);
   font-weight: 500;
 }
 
+.modal-action:hover { background: var(--btn-face-hover); }
+.modal-action:active:not([disabled]) { background: var(--btn-face-active); }
+
 .modal-action.danger { border-color: var(--alert); background: var(--alert); color: var(--panel); }
-.modal-action.quiet { background: var(--panel); color: var(--ink); }
+.modal-action.quiet { color: var(--ink); }
 /* A form dialog's primary, pinned beside the dismissal. Same treatment the
    needs popover's primary already has, so the two read as one control. */
-.modal-action.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); }
+.modal-action.primary { border-color: var(--accent-deep); background: var(--accent); color: var(--panel); }
+.modal-action.primary:hover,
+.modal-action.primary:active:not([disabled]) { background: var(--accent-deep); }
 
 /* The in-flight submit gate disables it while a save is running; this is what
    the Tailwind `disabled:` pair on the old in-form button carried. */
 .modal-action:disabled { opacity: 0.55; pointer-events: none; }
 
+/* THE ROW'S LEFT END. .modal-actions is `justify-content: flex-end`, so an
+   auto margin on the first child is what splits the row in two: everything
+   that takes the operator somewhere else on the left, everything that ends the
+   task on the right. Step one's `Browse marketplace` is the only one so far —
+   it read as a second Cancel while it sat against one, and as part of the
+   filter while it sat beside the search box. */
+#agent-add-browse { margin-right: auto; }
+
 /* ─── Add agent: the two steps ───
    One body, two children, one on screen at a time. The step that is away is
    put away with the `hidden` PROPERTY — and the UA's `[hidden] { display:
-   none }` is a plain declaration that .picker-body's own `display: grid`
-   outranks, so this guard is what actually hides it. It covers every
-   conditional row inside the dialog too, which is why it is one rule here
-   rather than a :not([hidden]) on each. */
+   none }` is a plain declaration that .picker's own `display: flex` outranks,
+   so this guard is what actually hides it. It covers every conditional row
+   inside the dialog too, which is why it is one rule here rather than a
+   :not([hidden]) on each.
 
-.agent-add-body { display: flex; flex-direction: column; gap: 12px; }
-.agent-add-body [hidden] { display: none !important; }
+   FILLS the dialog body rather than sitting inside it at its content height.
+   The panel is a fixed box now (see .modal-panel[data-size="wide"]) and both
+   steps have to occupy the whole of it, or the shorter one floats in a
+   half-empty dialog — which, before the height was fixed, is what made the
+   panel resize on every step swap. */
 
-/* Step 1. Blank gets its own column so it reads as a peer of the templates
-   rather than the fallback underneath them. */
-.picker-body {
-  display: grid;
-  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-@media (max-width: 620px) {
-  .picker-body { grid-template-columns: minmax(0, 1fr); }
-}
-
-/* Every cell is a real button: picking one IS the choice, and there is no
-   confirm step for a keyboard to have to reach. */
-.picker-cell {
+.agent-add-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--panel);
-  text-align: left;
-}
-
-.picker-cell:hover { border-color: var(--line-strong); background: var(--bg); }
-
-.picker-cell-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-.picker-cell-sub { font-size: 12px; color: var(--muted); }
-
-/* The one cell that is always offered carries the stronger border: it is the
-   only affordance on the panel when the library is empty. */
-.picker-blank { border-color: var(--line-control); }
-.picker-blank:hover { border-color: var(--accent); }
-
-.picker-list { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-
-.picker-find-row { display: flex; align-items: center; gap: 8px; }
-.picker-find-label { font-size: 12px; font-weight: 600; color: var(--muted); }
-
-.picker-find {
   flex: 1 1 auto;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--bg);
-  color: var(--ink);
+  min-height: 0;
+  gap: 12px;
 }
 
-.picker-category + .picker-category { margin-top: 14px; }
+.agent-add-body [hidden] { display: none !important; }
 
-.picker-category-title {
-  margin: 0 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--hint);
+/* Step 1 — the picker, organised the way the marketplace takeover is: a header
+   that stays put, a rail of filters, and a card grid that scrolls under them.
+   The classes the rail and the cards themselves wear are marketplace.css's,
+   because they are the same builders (marketplace/pack-card.js,
+   marketplace/filter-rail.js); what is here is the FRAME around them, which is
+   this dialog's and not the takeover's. */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
 }
 
+/* Outside the scroller, so the filter and the door to the marketplace stay
+   reachable from the bottom of a long grid — the same reasoning, and the same
+   treatment, as .market-head. */
+.picker-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.picker-find-row { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; }
+.picker-head .field-label { flex: 0 0 auto; }
+
+/* The ONE scroller of this step. Two over one card grid is how a grid ends up
+   unreachable by wheel, which is why the grid inside it nests none. */
+.picker-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+/* A rail is only drawn when there is something to narrow — a library that is
+   loading, empty or unreadable has no filters worth offering — and the grid
+   takes the whole width when there is not. Written as an attribute the builder
+   sets rather than an :empty/:has selector, so the rule holds on the WebKit the
+   Tauri shell renders in without depending on either. */
+.picker-body[data-rail="none"] { grid-template-columns: minmax(0, 1fr); }
+
+/* `0`, and it is exact: this is the top of .picker-body, which is what
+   scrolls. */
+.picker-rail-host { position: sticky; top: 0; }
+
+.picker-grid { min-width: 0; }
+
+/* Auto-filled on the same rhythm as the marketplace's grid, one step narrower:
+   this panel is 960px against the takeover's 1180, so 240px is what keeps two
+   cards per row at full width and folds to one on a narrow window without a
+   breakpoint per step. */
 .picker-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
 }
 
-@media (max-width: 760px) {
-  .picker-cards { grid-template-columns: minmax(0, 1fr); }
+/* The cell that is offered in EVERY state, including the two where there is
+   nothing else on the grid. Dashed rather than solid: the same edge .avatar-
+   empty draws around the seat nobody is in yet, which is the mark inside it. */
+.picker-blank {
+  border-style: dashed;
+  border-color: var(--line-control);
+  background: var(--bg);
 }
 
+.picker-blank:hover { border-style: dashed; border-color: var(--accent); }
+
+/* Under the cards, never instead of them: Blank is on the grid in every one of
+   these states, so the line explains what is MISSING beside it rather than
+   standing in for the whole step. */
+.picker-status-host { margin-top: 12px; }
 .picker-status { margin: 0; font-size: 13px; color: var(--muted); }
+
 /* A library that could not be READ is not an empty one, and must not look
    like it. */
 .picker-status[role="alert"] { color: var(--alert); }
 
-.picker-action {
-  margin-top: 8px;
-  min-height: 24px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink);
+.picker-action { margin-top: 8px; }
+
+/* ─── The agent form: step 2, and the edit dialog ───
+
+   ONE LAYOUT, whichever door was used. Picking a template used to sweep
+   everything from the role contract down behind a collapsed "Review &
+   customise" disclosure and lift one connection select out of the matrix, so
+   the template path and the blank path were two different forms — different
+   fields, different order, different controls — over one submit handler. The
+   colour swatches and the whole connection matrix were the two things the
+   sweep hid, and they are the two an operator most needs to see. Nothing is
+   hidden now; a template adds a provenance chip and prefills, and that is the
+   only difference between the two paths. */
+
+/* The host both flows publish the form into, and the scroller of step 2 — the
+   dialog body above it is a flex column that does not scroll (see the wide
+   .modal-body rule), because step 1 pins a header over its own scroller and a
+   second scrollbar around it is how a card grid ends up unreachable by wheel. */
+.agent-form-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* The fold lands wherever the content puts it, and with no room under the
+     last card it landed flush ON a card's border — which reads as a panel that
+     has been cut off rather than one that scrolls. */
+  padding-bottom: 8px;
 }
 
-.picker-action:hover { border-color: var(--accent); color: var(--accent); }
+/* Two columns at the panel's full width, one below it. The split is by
+   SUBJECT, not by length: who the agent is on the left, what it thinks with on
+   the right, and the optional rest across the bottom. It also buys the matrix
+   the width it needs — at 960px each column is ~450px, which is where
+   .connection-grid's two selects per row land at ~215px each, the same width
+   they had across the whole of the old 760px dialog.
 
-/* ─── Add agent: step 2, from a template ───
-   Name and one connection in front; everything the template answered behind
-   the disclosure. The chip is the provenance and the way back out of it. */
+   The breakpoint is the panel's own: below 900px the dialog is
+   calc(100vw - 32px) and the two columns would each be too narrow for a
+   connection label, so the form becomes one column and the matrix follows it
+   (see .connection-grid). */
+.agent-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* STRETCH, which is the grid's own default and was overridden to `start`.
+     The two cards hold different amounts, so `start` ended them on different
+     lines and left a ragged step across the middle of the dialog — the dead
+     band under the shorter one read as a layout that had failed to fill. */
+  align-items: stretch;
+  gap: 12px;
+}
 
-.quick-provenance {
+@media (max-width: 900px) {
+  .agent-form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Full width under the two columns: Advanced is a disclosure that opens onto
+   five more fields, and a disclosure that widens its own column when opened
+   would move the section beside it. */
+.agent-form-wide { grid-column: 1 / -1; }
+
+/* The provenance chip: what this form was filled from, and the control that
+   undoes it. Above the grid and full width — it is a fact about the whole
+   form, not about either column. */
+.template-chip {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -248,10 +374,10 @@
   font-size: 12px;
 }
 
-.quick-provenance-mark { flex: 0 0 auto; }
-.quick-provenance-text { flex: 1 1 auto; min-width: 0; }
+.template-chip-mark { flex: 0 0 auto; }
+.template-chip-text { flex: 1 1 auto; min-width: 0; }
 
-.quick-provenance-clear {
+.template-chip-clear {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
@@ -261,61 +387,197 @@
   color: var(--blue-ink);
 }
 
-.quick-provenance-clear:hover { background: var(--panel); }
+.template-chip-clear:hover { background: var(--panel); }
 
-.quick-ai { margin: 12px 0; }
+/* The one template fact with no field of its own to live in. Directly under
+   the chip, because it is the rest of that same sentence. */
+.template-tools { margin: -6px 0 12px; font-size: 12px; color: var(--muted); }
 
-.quick-ai-label {
-  display: block;
-  margin-bottom: 4px;
+/* Specialty, description and colour, stacked inside the Identity section. */
+.role-contract { display: flex; flex-direction: column; gap: 12px; }
+
+/* A <fieldset> is the element for a labelled GROUP of controls, and the colour
+   swatches are a radio group — the heading used to be a <label> pointing at
+   nothing at all. The UA's own fieldset chrome is reset because .form-section
+   already draws the box this sits inside. */
+.color-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.color-field > .field-label { padding: 0; }
+
+.color-choices { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* The whole row is the target: the radio itself is visually hidden (and NOT
+   display:none — see the note in context/agent-form-fields.js), so the label
+   is what the pointer and the 24px minimum target (SC 2.5.8) land on. */
+.color-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.color-choice-name { font-size: 13px; color: var(--ink); }
+
+/* Which swatch is chosen, said with a ring rather than with colour: the
+   swatches ARE colours, so a colour cannot be what distinguishes the selected
+   one (SC 1.4.1). --ink on the palest tint in the set measures over 12:1. */
+.color-choice .avatar { border: 2px solid transparent; }
+.color-choice input:checked + .avatar { border-color: var(--ink); }
+
+/* base.css paints :focus-visible on the control itself, and this control is
+   the hidden input — so the ring has to be moved onto the thing that is
+   actually on screen, or keyboard focus in the group would be invisible. */
+.color-choice input:focus-visible + .avatar {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── The edit dialog's own two blocks ───
+   Neither is ever drawn while hiring: there is no runtime to report and
+   nothing to delete yet. They are here rather than in the create flow's
+   section above because the dialog is one dialog and this is the half of it
+   only an existing agent sees. */
+
+.agent-runtime-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
   font-size: 13px;
-  font-weight: 500;
-  color: var(--ink);
 }
 
-.quick-ai-hint { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+/* The destructive group. Amber, and every value a token: it carried raw
+   Tailwind palette classes (amber-50/200/300/800/900, red-300/700) while every
+   other surface in this dialog resolved through tokens.css, which is two
+   colour systems inside one form. --amber-ink measures 7.15:1 on --amber. */
+.danger-section { border-color: var(--amber-ink); background: var(--amber); }
+.danger-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--amber-ink); }
+.danger-hint { margin: 4px 0 0; font-size: 12px; color: var(--amber-ink); }
+.danger-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* The select context/agent-quick-connection.js builds when Settings holds no
-   connection. It is the form's own control rather than a lifted one, so it
-   takes its appearance from the tokens the rest of this file spends instead of
-   the Tailwind utilities the form's markup carries. */
-.quick-ai-select {
-  width: 100%;
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--bg);
-  font-size: 13px;
-  color: var(--ink);
+.danger-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--amber-ink);
 }
 
-/* Above the disclosure, so a collapsed one is visibly not empty. */
-.quick-summary { margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
+.danger-notes p { margin: 0; }
 
-.quick-disclosure {
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--panel);
-}
+/* The two buttons sit ON the amber tint, where .btn's --panel-to--btn-face
+   ramp would read as two unrelated chips dropped on a coloured card. */
+.danger-actions .btn { background: var(--panel); }
+.danger-actions .btn:hover { background: var(--btn-face); }
 
-.quick-disclosure-summary {
+.agent-form-actions { display: flex; gap: 8px; padding-top: 8px; }
+
+/* ─── The one line the whole editor reports through ───
+   context/agent-recovery.js's live region: a save in flight, a save refused, a
+   form that cannot save at all. Four tones, each an ink-on-tint pair tokens.css
+   has already measured — text on a tint takes that tint's *-ink, never the
+   flat colour, which fails on it. `.hidden` is Tailwind's display:none and
+   still wins, so a hidden line paints nothing whichever tone it last held. */
+
+.save-feedback {
+  margin-top: 12px;
   padding: 10px 12px;
-  border-radius: var(--r-lg);
+  border: 1px solid transparent;
+  border-radius: var(--r);
   font-size: 13px;
-  font-weight: 600;
+}
+
+/* Neutral: something is happening and nothing has gone wrong yet. */
+.save-feedback-busy {
+  border-color: var(--line);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+/* --ok-ink measures 7.03:1 on --ok-bg. */
+.save-feedback-ok {
+  border-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+
+/* --amber-ink measures 7.15:1 on --amber. */
+.save-feedback-warn {
+  border-color: var(--amber-ink);
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+/* --alert-ink measures 5.86:1 on --alert-bg. */
+.save-feedback-bad {
+  border-color: var(--alert-line);
+  background: var(--alert-bg);
+  color: var(--alert-ink);
+}
+
+/* ─── Advanced ───
+   A disclosure, collapsed by default, spanning both columns of the form grid.
+   Its own section box, so what is behind it reads as one group rather than as
+   loose fields that happen to be last. */
+
+.advanced-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.advanced-toggle > span:first-child { display: flex; flex-direction: column; gap: 4px; }
+.advanced-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+
+/* Rotated to 90deg by context/agent-form.js when the panel opens. */
+.advanced-chevron { flex: 0 0 auto; width: 16px; height: 16px; color: var(--muted); }
+.advanced-chevron svg { width: 16px; height: 16px; }
+
+.advanced-content { display: flex; flex-direction: column; gap: 12px; }
+.advanced-content.hidden { display: none; }
+
+/* The label and the control that fills it in, on one line. */
+.advanced-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.advanced-subtitle { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--ink); }
+
+.advanced-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: 13px;
   color: var(--ink);
   cursor: pointer;
 }
 
-.quick-disclosure-summary:hover { color: var(--accent); }
-
-.quick-disclosure-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 0 12px 12px;
+/* What the agent is actually told every turn. Monospace because it is a
+   verbatim prompt, and wrapped because it has no horizontal scroller of its
+   own inside a dialog that already has one direction of overflow. */
+.runtime-core-preview {
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ─── The agent form's AI Connections matrix ───
@@ -325,25 +587,28 @@
 
    Five activation types used to be five full-width rows — ~264px of a dialog
    that already scrolls, spent so five selects could display the word `None`.
-   Three columns puts them in two rows. Five across was rejected: at the
-   dialog's 760px that is ~140px per select, which truncates a connection label
-   at ~18 characters, and real ones already exceed that. */
+   Columns put them in two or three rows instead.
+
+   TWO, not the three this carried while the matrix spanned a whole 760px
+   dialog. It now sits in the right-hand column of .agent-form-grid, which is
+   ~450px of a 960px panel, and the per-select width is what actually governs:
+   three across that column is ~140px, which truncates a connection label at
+   ~18 characters and real ones already exceed that — the same measurement that
+   rejected five across the full width before. Two gives ~215px, which is what
+   three across the old dialog gave, so no label clips that did not clip
+   already. */
 
 .connection-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 12px;
 }
 
-/* The dialog is min(760px, calc(100vw - 32px)), so its width follows the
-   window's and three columns crush on a small one. Two, then one — and the
-   wider query comes FIRST, because two rules of equal specificity are settled
-   by source order and a narrower one placed above would never apply. */
-@media (max-width: 760px) {
-  .connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 520px) {
+/* At 900px the form itself drops to one column (.agent-form-grid), so the
+   matrix gets the panel's full width back and could hold two comfortably —
+   but the panel is calc(100vw - 32px) by then and still shrinking, so this is
+   the point where one column per select is what keeps a label readable. */
+@media (max-width: 900px) {
   .connection-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
 }
 

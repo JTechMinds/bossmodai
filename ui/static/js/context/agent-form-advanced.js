@@ -43,125 +43,109 @@ const BossModAgentFormAdvanced = (() => {
             ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
             : '';
         return `
-        <div class="border border-bm-border rounded-lg p-3 bg-white">
-            <button type="button" id="advanced-toggle"
-                    class="w-full flex items-center justify-between text-left">
-                <div>
-                    <h3 class="text-sm font-semibold">Advanced</h3>
-                    <p class="text-xs text-bm-muted mt-1">
+        <section class="form-section">
+            <button type="button" id="advanced-toggle" class="advanced-toggle">
+                <span>
+                    <span class="advanced-title">Advanced</span>
+                    <span class="field-hint">
                         Optional: what done looks like, runtime core, prompt template, and desk.
-                    </p>
-                </div>
-                <i data-lucide="chevron-right" class="w-4 h-4 text-bm-muted shrink-0 transition-transform" id="advanced-chevron"></i>
+                    </span>
+                </span>
+                <i data-lucide="chevron-right" class="advanced-chevron" id="advanced-chevron"></i>
             </button>
-            <div id="advanced-content" class="hidden mt-3 space-y-3">
-                <div>
-                    <div class="flex items-center justify-between gap-2 mb-1">
-                        <label class="block text-sm font-medium">What “done” looks like</label>
-                        <button type="button" id="btn-suggest-finish-line"
-                                class="text-xs text-bm-accent hover:underline shrink-0">
+            <div id="advanced-content" class="hidden advanced-content">
+                <div class="field">
+                    <div class="advanced-field-head">
+                        <label class="field-label" for="agent-done-fail-bar">What “done” looks like</label>
+                        <button type="button" id="btn-suggest-finish-line" class="btn-link">
                             Suggest
                         </button>
                     </div>
-                    <input type="text" name="done_fail_bar"
+                    <input type="text" name="done_fail_bar" id="agent-done-fail-bar"
                            value="${BossModFormat.escapeAttribute(agent?.done_fail_bar || '')}"
                            placeholder="Suggested from specialty. Editable."
                            maxlength="500"
-                           class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                  focus:border-bm-accent">
-                    <p class="text-xs text-bm-muted mt-1">
+                           class="field-input">
+                    <p class="field-hint">
                         Optional. We’ll suggest one from the specialty; edit anytime.
                     </p>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1">Runtime core</label>
-                    <pre id="runtime-core-preview"
-                         class="runtime-core-preview text-xs whitespace-pre-wrap font-mono
-                                px-3 py-2 border border-bm-border rounded-lg bg-bm-bg text-bm-text"></pre>
-                    <p class="text-xs text-bm-muted mt-1">
+                <div class="field">
+                    <span class="field-label">Runtime core</span>
+                    <pre id="runtime-core-preview" class="runtime-core-preview"></pre>
+                    <p class="field-hint">
                         Shared every turn. Not a hire novel — specialty quality bars stay in Description.
                     </p>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1">Personality</label>
+                <div class="field">
+                    <label class="field-label" for="agent-personality">Personality</label>
                     ${noPersonalities
-                        ? `<p class="text-xs text-bm-muted mb-1.5">No personalities configured.
-                             <button type="button" id="btn-goto-personalities" class="text-bm-accent hover:underline">Add one in Settings</button></p>`
-                        : `<p class="text-xs text-bm-muted mb-1.5">Optional. Copies a prompt template into this agent; leave empty to keep the default.</p>
-                           <select name="personality_id"
-                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                          focus:border-bm-accent">
+                        ? `<p class="field-hint">No personalities configured.
+                             <button type="button" id="btn-goto-personalities" class="btn-link">Add one in Settings</button></p>`
+                        : `<p class="field-hint">Optional. Copies a prompt template into this agent; leave empty to keep the default.</p>
+                           <select name="personality_id" id="agent-personality" class="field-select">
                                <option value="">No personality</option>
                                ${personalityOptions}
                            </select>`
                     }
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1">Desk Assignment</label>
-                    <select name="desk"
-                            class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                   bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                   focus:border-bm-accent">
+                <div class="field">
+                    <label class="field-label" for="agent-desk">Desk Assignment</label>
+                    <select name="desk" id="agent-desk" class="field-select">
                         <option value="" ${selectedDesk ? '' : 'selected'}>Unassigned</option>
                         ${deskOptions}
                     </select>
                     ${noFreeDesk
-                        ? `<p class="text-xs text-amber-800 mt-1">No empty desk is free. This agent will stay unassigned.</p>`
-                        : `<p class="text-xs text-bm-muted mt-1">An empty desk is selected when one is free.</p>`}
+                        ? `<p class="field-warn">No empty desk is free. This agent will stay unassigned.</p>`
+                        : `<p class="field-hint">An empty desk is selected when one is free.</p>`}
                 </div>
                 <div>
-                    <h4 class="text-xs font-semibold text-bm-text">AI History</h4>
-                    <p class="text-xs text-bm-muted mt-1 mb-2">
+                    <h4 class="advanced-subtitle">AI History</h4>
+                    <p class="field-hint">
                         Controls the backend view used for model-visible conversation history.
                     </p>
                 </div>
-                <div class="grid grid-cols-1 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium mb-1">Last N History Items</label>
+                <div class="field-row">
+                    <div class="field">
+                        <label class="field-label field-label-sm" for="agent-history-last-n">Last N History Items</label>
                         <input type="number"
                                min="0"
                                max="500"
                                name="prompt_history_last_n"
+                               id="agent-history-last-n"
                                value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                               class="field-input">
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1">Max History Tokens</label>
+                    <div class="field">
+                        <label class="field-label field-label-sm" for="agent-history-max-tokens">Max History Tokens</label>
                         <input type="number"
                                min="0"
                                max="50000"
                                name="prompt_history_max_tokens"
+                               id="agent-history-max-tokens"
                                value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                               class="field-input">
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1">Earliest Allowed Timestamp</label>
-                        <input type="datetime-local"
-                               name="prompt_history_earliest_ts"
-                               value="${BossModFormat.escapeAttribute(earliestAllowedValue)}"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
-                        <p class="text-[11px] text-bm-muted mt-1">
-                            Leave empty to allow older history. Set this to make the agent ignore anything before a cutoff.
-                        </p>
-                    </div>
-                    <label class="inline-flex items-center gap-2 text-sm text-bm-text cursor-pointer">
-                        <input type="checkbox"
-                               name="prompt_history_include_notifications"
-                               class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30"
-                               ${promptHistoryPolicy.include_notifications ? 'checked' : ''}>
-                        <span>Include prompt-visible runtime notifications</span>
-                    </label>
                 </div>
+                <div class="field">
+                    <label class="field-label field-label-sm" for="agent-history-earliest">Earliest Allowed Timestamp</label>
+                    <input type="datetime-local"
+                           name="prompt_history_earliest_ts"
+                           id="agent-history-earliest"
+                           value="${BossModFormat.escapeAttribute(earliestAllowedValue)}"
+                           class="field-input">
+                    <p class="field-hint">
+                        Leave empty to allow older history. Set this to make the agent ignore anything before a cutoff.
+                    </p>
+                </div>
+                <label class="advanced-check">
+                    <input type="checkbox"
+                           name="prompt_history_include_notifications"
+                           ${promptHistoryPolicy.include_notifications ? 'checked' : ''}>
+                    <span>Include prompt-visible runtime notifications</span>
+                </label>
             </div>
-        </div>`;
+        </section>`;
     }
 
     return { advancedSection };

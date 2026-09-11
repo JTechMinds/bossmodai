@@ -79,6 +79,11 @@ const BossModOverlays = (() => {
      * @param {() => void} [options.onClose] Called after close, however it
      *   closed — and after the chosen action's onSelect, so a caller can treat
      *   it as "dismissed" when no choice was recorded.
+     * @param {HTMLElement} [options.lead] A control to sit on the TITLE ROW,
+     *   before the heading — a step dialog's Back, and nothing else so far. It
+     *   belongs to the caller, which keeps it and may hide it per step; this
+     *   only decides where it renders. Without one the heading is the row, as
+     *   it was, so a confirm dialog's markup is unchanged.
      * @param {'default'|'wide'|'takeover'} [options.size='default'] Geometry
      *   only. 'wide' is broad enough for a form; 'takeover' is the near
      *   full-screen variant a browse-and-read surface needs. Both keep the
@@ -93,7 +98,7 @@ const BossModOverlays = (() => {
      *   Tab so it finds the new buttons; the button that held focus may be one
      *   just removed, so placing focus after a swap is the caller's.
      */
-    function createModal({ title, body, actions, onClose, size }) {
+    function createModal({ title, body, actions, onClose, size, lead }) {
         const previouslyFocused = document.activeElement;
         const buttons = [];
 
@@ -116,7 +121,12 @@ const BossModOverlays = (() => {
             'aria-modal': 'true',
             'aria-label': title,
         },
-            h('h2', { class: 'modal-title' }, title),
+            // The heading alone when there is no lead, so nothing that does
+            // not need the row pays for it.
+            lead
+                ? h('div', { class: 'modal-head' },
+                    lead, h('h2', { class: 'modal-title' }, title))
+                : h('h2', { class: 'modal-title' }, title),
             bodyNode,
             actionRow);
 

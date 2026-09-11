@@ -33,6 +33,8 @@ HARNESS_MODULES = [
     JS / "context" / "agent-templates-api.js",
     JS / "marketplace" / "marketplace-withheld.js",
     JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
@@ -44,6 +46,8 @@ MARKETPLACE_MODULES = [
     JS / "marketplace" / "marketplace.js",
     JS / "marketplace" / "marketplace-withheld.js",
     JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
@@ -57,6 +61,8 @@ READERS = ("marketplace-view.js", "marketplace-sections.js", "marketplace-detail
 INDEX_MODULES = (
     "js/marketplace/marketplace-withheld.js",
     "js/marketplace/marketplace-items.js",
+    "js/marketplace/pack-card.js",
+    "js/marketplace/filter-rail.js",
     "js/marketplace/marketplace-sections.js",
     "js/marketplace/marketplace-detail.js",
     "js/marketplace/marketplace-view.js",
@@ -196,9 +202,15 @@ def test_the_rail_hands_focus_back_after_the_rebuild_it_causes() -> None:
     payload = _harness()
     assert payload["railClickKeepsFocus"] is True
     assert payload["railReturnsToAllWithFocus"] is True
+    # The rail builder is marketplace/filter-rail.js's — shared with the Add
+    # agent picker — so the numbering and the handed-back selector are pinned
+    # there. `idPrefix` is what keeps these rows named `market-rail-N`, which is
+    # the selector render()'s focusRequest carries.
+    rail = _read(JS / "marketplace" / "filter-rail.js")
+    assert "id: `${config.idPrefix}-${at}`" in rail
+    assert "config.onSelect(row.id, `#${config.idPrefix}-${at}`)" in rail
     view = _read(JS / "marketplace" / "marketplace-view.js")
-    assert "id: `market-rail-${at}`" in view
-    assert "handlers.onCategory(row.id, `#market-rail-${at}`)" in view
+    assert "idPrefix: 'market-rail'," in view
     state = _read(JS / "marketplace" / "marketplace.js")
     assert "onCategory(id, focus)" in state
     assert "state.focusRequest = focus || null;" in state
@@ -269,8 +281,12 @@ def test_the_card_chip_is_a_state_and_never_a_control() -> None:
     assert "install:" not in chip, "an uninstalled card must have no chip"
     assert "installed: 'Installed'" in chip
     assert "update: 'Update available'" in chip
-    # And it is a <span>, inside the one button the card already is.
-    assert "h('span', { class: 'market-card-state' }, chip)" in view
+    # And it is a <span>, inside the one button the card already is. The card
+    # anatomy is marketplace/pack-card.js's now — shared with the Add agent
+    # picker — so the element is pinned there and the STATE that earns it here.
+    assert "chip: STATE_CHIP[item.state] || null," in view
+    card = _read(JS / "marketplace" / "pack-card.js")
+    assert "h('span', { class: 'market-card-state' }, view.chip)" in card
 
 
 def test_the_card_leads_with_the_category_and_never_its_own_title_twice() -> None:
@@ -300,8 +316,12 @@ def test_the_card_leads_with_the_category_and_never_its_own_title_twice() -> Non
     view = _code(JS / "marketplace" / "marketplace-view.js")
     # One title-caser, spent by the rail row and the card alike.
     assert view.count("function categoryLabel(") == 1
-    assert "const category = categoryLabel(item.category);" in view
-    assert "h('span', { class: 'market-card-category' }, category)" in view
+    # The card derives it through the same single definition in the projection,
+    # which is what stops a slug reading two ways on one screen.
+    card = _code(JS / "marketplace" / "pack-card.js")
+    assert card.count("function categoryLabel(") == 0
+    assert "const category = ITEMS.categoryLabel(view.category);" in card
+    assert "h('span', { class: 'market-card-category' }, category)" in card
     # Light blue, and it is the pair this codebase has already measured: text on
     # a tint takes that tint's ink, never --accent, which fails on it.
     css = _read(CSS)
@@ -347,28 +367,32 @@ def test_a_pack_wears_its_categorys_bubble_in_both_views() -> None:
     ):
         assert payload[key] is True, key
 
-    # ONE builder, on the seam that already carries the two parts both views
-    # spend. The browse view cannot own it — the detail view loads first and
-    # calling back into it would be a cycle.
+    # ONE builder, and it now sits with the CARD the mark leads — the Add
+    # agent picker draws that same card, so the module both grids share is the
+    # seam that carries it. The detail view re-exports it rather than each call
+    # site re-pointing: `dismissButton` and `confirmStrip` are already the pair
+    # both views reach through it for.
+    card = _code(JS / "marketplace" / "pack-card.js")
+    assert "function categoryMark(slug, size) {" in card
+    assert "categoryMark," in card.rsplit("return {", 1)[-1]
+    assert "categoryMark(view.category, 'md')" in card
     detail = _code(JS / "marketplace" / "marketplace-detail.js")
-    assert "function categoryMark(slug, size) {" in detail
     assert "categoryMark," in detail.rsplit("return {", 1)[-1]
     assert "categoryMark(item.category, 'lg')" in detail
-    view = _code(JS / "marketplace" / "marketplace-view.js")
-    assert "DETAIL.categoryMark(item.category, 'md')" in view
+    assert "BossModPackCard.categoryMark(slug, size)" in detail
     # ...and nothing here paints a second bubble of its own.
     builders = {
         path.name: _code(path).count("BossModAvatar.create(")
         for path in sorted((JS / "marketplace").glob("*.js"))
     }
     assert sum(builders.values()) == 1, builders
-    assert builders["marketplace-detail.js"] == 1, builders
+    assert builders["pack-card.js"] == 1, builders
 
     # The colour is DERIVED from the slug through the shared tint, never a
     # colour per known category: `packs/<category>/` is whatever a contributor
     # adds, so a table would go stale on the first one.
-    assert "BossModAvatar.seedFor(slug)" in detail
-    assert "BossModAvatar.initials(ITEMS.categoryLabel(slug))" in detail
+    assert "BossModAvatar.seedFor(slug)" in card
+    assert "BossModAvatar.initials(ITEMS.categoryLabel(slug))" in card
     for path in sorted((JS / "marketplace").glob("*.js")):
         code = _code(path)
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b", code), f"hardcoded colour in {path.name}"
@@ -945,7 +969,7 @@ def test_remote_data_never_reaches_a_markup_string_path() -> None:
 
 
 def test_every_marketplace_module_stays_a_module() -> None:
-    """Six files, one concern each, and none of them near the 400-line cap.
+    """Eight files, one concern each, and none of them near the 400-line cap.
 
     The redesign did not fit in two. The split is at real seams rather than at
     a line count: what the app says about packs it will not offer calls only
@@ -964,6 +988,18 @@ def test_every_marketplace_module_stays_a_module() -> None:
     straight back to the state module. Keyboard, hover intent and a roving
     tabindex inside the file that also builds a byline would be two subjects in
     one place, and it is what pushed the detail view over its budget.
+
+    pack-card.js and filter-rail.js are the seventh and eighth, and the seam
+    that created them is a SECOND SURFACE rather than a line count: the Add
+    agent dialog's first step lists the local template library, which is the
+    same rows this takeover lists under `Installed`, narrowed the same two ways
+    and read by the same eye. Two builders is how a card comes to mean one
+    thing in the takeover and another in the dialog — which is exactly what had
+    already happened, the picker printing a title and an echoed specialty while
+    the card a screen away carried the mark, the category, the occasion to hire
+    and the mission. Both are pure builders over the projection: they take a
+    row's derived fields and hand back a node, and neither knows what a catalog
+    or a template library is.
     """
     sizes = {
         path.name: len(_read(path).splitlines())
@@ -972,6 +1008,7 @@ def test_every_marketplace_module_stays_a_module() -> None:
     assert set(sizes) == {
         "marketplace.js", "marketplace-items.js", "marketplace-withheld.js",
         "marketplace-sections.js", "marketplace-detail.js", "marketplace-view.js",
+        "pack-card.js", "filter-rail.js",
     }, sizes
     assert all(size < 400 for size in sizes.values()), sizes
     # The projection is pure: no DOM, no fetch, no state mutation.
@@ -1019,9 +1056,12 @@ def test_the_marketplace_owns_its_own_stylesheet() -> None:
     assert "─── Marketplace ───" not in overlays
     assert ".market-card" not in overlays
     assert ".market-detail" not in overlays
-    # The two blocks that genuinely belong to the dialog stay put.
+    # The two blocks that genuinely belong to the dialog stay put. The second
+    # is no longer "from a template": the template path and the blank path
+    # render one form, so the block is the agent form's rather than one
+    # layout's.
     assert "─── Add agent: the two steps ───" in overlays
-    assert "─── Add agent: step 2, from a template ───" in overlays
+    assert "─── The agent form: step 2, and the edit dialog ───" in overlays
     html = _read(HTML)
     assert "static_url('css/marketplace.css')" in html
     assert html.index("css/overlays.css") < html.index("css/marketplace.css")
@@ -1067,14 +1107,18 @@ def test_the_takeover_body_carries_the_apps_ink() -> None:
         '.modal-panel[data-size="takeover"] .modal-body { color: var(--ink); }'
     ) in css
     # And the takeover's body is the column whose CHILD scrolls, which is what
-    # makes both views' `top: 0` exact rather than measured.
+    # makes both views' `top: 0` exact rather than measured. The wide dialog
+    # joined the same rule when the Add agent picker grew a pinned header over
+    # a scrolling card grid — same reasoning, same declarations, one block.
+    body_rule = css.split(".modal-action {", 1)[0]
+    assert '.modal-panel[data-size="takeover"] .modal-body,' in body_rule
+    assert '.modal-panel[data-size="wide"] .modal-body {' in body_rule
     assert (
-        '.modal-panel[data-size="takeover"] .modal-body {\n'
         "  display: flex;\n"
         "  flex-direction: column;\n"
         "  overflow: hidden;\n"
         "}"
-    ) in css
+    ) in body_rule
     assert "top: 58px" not in css
 
 
@@ -1137,15 +1181,23 @@ def test_the_rail_groups_scopes_apart_from_the_catalogs_categories() -> None:
         "railClickKeepsFocus", "railReturnsToAllWithFocus",
     ):
         assert payload[key] is True, key
+    rail = _read(JS / "marketplace" / "filter-rail.js")
+    assert "function railGroup(id, group, from, config)" in rail
+    assert "h('h3', { class: 'market-rail-title', id }, group.title)," in rail
+    assert "h('ul', { class: 'market-rail-list', 'aria-labelledby': id }," in rail
+    assert "group.rows.map((row, at) => railRow(row, from + at, config))" in rail
+    # Drawn only when there is something to put under it. The rule moved into
+    # the shared builder with the rail: `createRail` drops a group with no rows
+    # rather than heading an empty list, so no caller can re-introduce it.
+    assert 'filter((group) => (group.rows || []).length)' in rail
     view = _read(JS / "marketplace" / "marketplace-view.js")
-    assert "function railGroup(id, title, rows, from, state, handlers)" in view
-    assert "h('h3', { class: 'market-rail-title', id }, title)," in view
-    assert "h('ul', { class: 'market-rail-list', 'aria-labelledby': id }," in view
-    assert "railRow(row, from + at, state, handlers)" in view
     assert "scopeGroup: 'Show'," in view
     assert "categoryGroup: 'Categories'," in view
-    # Drawn only when there is something to put under it.
-    assert "categories.length" in view.split("function rail(state, handlers)", 1)[1]
+    # ...and this view still decides WHICH two groups it has and what counts
+    # they carry, which is the half that is the catalog's and not the rail's.
+    groups = view.split("function rail(state, handlers)", 1)[1]
+    assert "title: COPY.scopeGroup," in groups
+    assert "title: COPY.categoryGroup," in groups
     # The heading is the roster rail's, character for character on every
     # property that makes it read as one: a second small-caps treatment on one
     # screen is two conventions for one idea.

@@ -28,6 +28,9 @@ const BossModMarketplaceView = (() => {
     const ITEMS = BossModMarketplaceItems;
     const DETAIL = BossModMarketplaceDetail;
     const WITHHELD = BossModMarketplaceWithheld;
+    // The card anatomy and the filter rail, both shared with the Add agent
+    // picker — see marketplace/pack-card.js and marketplace/filter-rail.js.
+    const PACK_CARD = BossModPackCard;
 
     const COPY = Object.freeze({
         find: 'Find agents',
@@ -79,13 +82,13 @@ const BossModMarketplaceView = (() => {
     // that the modal footer is gone, so it is never conditional.
     function head(state, handlers) {
         const find = h('input', {
-            class: 'market-find', id: 'market-find', type: 'search',
+            class: 'market-find field-input', id: 'market-find', type: 'search',
             placeholder: COPY.findHint,
             oninput: (event) => handlers.onQuery(event.target.value),
         });
         find.value = state.query;
         const url = h('input', {
-            class: 'market-url-input', id: 'market-url', type: 'url',
+            class: 'market-url-input field-input', id: 'market-url', type: 'url',
             placeholder: 'https://github.com/owner/repo/blob/<sha>/packs/name.yaml',
             oninput: (event) => handlers.onUrlChange(event.target.value),
         });
@@ -93,7 +96,7 @@ const BossModMarketplaceView = (() => {
         const busy = state.busyId === 'url';
         return h('div', { class: 'market-head' },
             h('div', { class: 'market-find-row' },
-                h('label', { class: 'market-find-label', for: 'market-find' }, COPY.find),
+                h('label', { class: 'field-label', for: 'market-find' }, COPY.find),
                 find),
             h('button', {
                 class: 'market-url-toggle', id: 'market-url-toggle', type: 'button',
@@ -102,7 +105,7 @@ const BossModMarketplaceView = (() => {
             }, COPY.urlToggle),
             DETAIL.dismissButton(handlers),
             state.urlOpen ? h('div', { class: 'market-url-row' },
-                h('label', { class: 'market-url-label', for: 'market-url' }, COPY.urlLabel),
+                h('label', { class: 'field-label', for: 'market-url' }, COPY.urlLabel),
                 url,
                 h('button', {
                     class: 'market-action primary', id: 'market-url-install',
@@ -134,113 +137,73 @@ const BossModMarketplaceView = (() => {
             }) : null);
     }
 
-    // One row of the rail. `at` is its index across the WHOLE rail rather than
-    // within its group: the id is what render() hands focus back to after the
-    // click that destroyed the button, and a per-group number would name two
-    // different rows.
-    function railRow(row, at, state, handlers) {
-        return h('li', {},
-            h('button', {
-                class: 'market-rail-item', type: 'button', id: `market-rail-${at}`,
-                'aria-current': state.category === row.id ? 'true' : null,
-                onclick: () => handlers.onCategory(row.id, `#market-rail-${at}`),
-            },
-            h('span', { class: 'market-rail-label' }, row.label),
-            h('span', { class: 'market-rail-count' }, String(row.count))));
-    }
-
-    // A heading over a list, which is the treatment the roster rail already
-    // gives `PEOPLE` and `THREADS` — one vocabulary for "these rows are a set"
-    // rather than a second one invented here. Real structure and not a gap:
-    // the list is NAMED by its heading, so a row announces which group it
-    // belongs to. Every row stays a plain button, so the rail is still as many
-    // tab stops as it has rows and Tab crosses both groups in order.
-    function railGroup(id, title, rows, from, state, handlers) {
-        return h('div', { class: 'market-rail-group' },
-            h('h3', { class: 'market-rail-title', id }, title),
-            h('ul', { class: 'market-rail-list', 'aria-labelledby': id },
-                rows.map((row, at) => railRow(row, from + at, state, handlers))));
-    }
-
     // Two groups, because one flat list said the catalog had four buckets and
     // one of them was the operator's own library. `All` and `Installed` are
     // SCOPES — which packs are on the table — and the rest are the catalog's
     // categories; they answer different questions and now look it.
+    //
+    // The rail itself is marketplace/filter-rail.js's — the Add agent picker
+    // narrows the same rows the same two ways, and one builder is what stops
+    // the two rails drifting. This view still rebuilds wholesale on every
+    // render and hands focus back by id, so it builds a fresh rail each time
+    // and never calls the returned `select()`; the picker, which does not
+    // rebuild, is what that half is for. `idPrefix` keeps the row ids
+    // `market-rail-N`, which is what render()'s focusRequest names.
     function rail(state, handlers) {
         const total = state.categories.reduce((n, group) => n + (group.packs || []).length, 0);
-        const scopes = [
-            { id: 'all', label: COPY.all, count: total },
-            { id: 'installed', label: COPY.installed, count: state.templates.length },
-        ];
         const categories = state.categories.map((group) => ({
             id: group.id, label: categoryLabel(group.id), count: (group.packs || []).length,
         }));
-        return h('nav', { class: 'market-rail', 'aria-label': COPY.railLabel },
-            railGroup('market-rail-scope', COPY.scopeGroup, scopes, 0, state, handlers),
-            // Drawn only when the catalog has categories to put under it: a
-            // failed read clears them, and a heading over no rows claims a
-            // group that is not there.
-            categories.length
-                ? railGroup('market-rail-category', COPY.categoryGroup, categories,
-                    scopes.length, state, handlers)
-                : null);
+        return BossModFilterRail.createRail({
+            label: COPY.railLabel,
+            idPrefix: 'market-rail',
+            current: state.category,
+            onSelect: (id, focus) => handlers.onCategory(id, focus),
+            groups: [
+                {
+                    id: 'scope',
+                    title: COPY.scopeGroup,
+                    rows: [
+                        { id: 'all', label: COPY.all, count: total },
+                        { id: 'installed', label: COPY.installed, count: state.templates.length },
+                    ],
+                },
+                // Drawn only when the catalog has categories to put under it: a
+                // failed read clears them, and createRail drops a group with no
+                // rows rather than heading an empty list.
+                { id: 'category', title: COPY.categoryGroup, rows: categories },
+            ],
+        }).element;
     }
 
-    // One button, phrasing content only — a control inside a control is not a
-    // thing, which is why the author is plain here and a link in the detail.
-    // `aria-current`, not `aria-pressed`: the card is not a toggle, it opens a
-    // view, and the mark it keeps afterwards says "this is the one you were
-    // reading" — the same word, and the same tint, the rail's live row uses.
-    // The body is the projection's two opening paragraphs — the author's
-    // lead-in, then the mission — never the raw string they were cut from:
-    // "Mission: …" on a card is a parser's output, not a summary. Each is
-    // clamped on its own, so a pack with a lead-in costs the card two lines
-    // rather than pushing its mission off the bottom of the one clamp.
+    // One catalog item, as a card. The ANATOMY — the mark, the name, the
+    // category chip, the two opening paragraphs, the footer — is
+    // marketplace/pack-card.js's, because the Add agent picker draws the same
+    // card over the same rows and two builders is how the two come to differ.
+    // What stays here is the half that is this view's: which of the three
+    // states earns a chip, what the withheld notice says, and what selection
+    // means in a grid that also owns a detail view.
     //
-    // Mark and name, then WHAT KIND, then what it does, then who wrote it. The
-    // line under the name used to be the specialty and read "Code Auditor" under
-    // "Code Auditor" on nearly every pack in the catalog — the projection drops
-    // that echo, and the category takes the row it was wasting. It is the one
-    // fact the grid sorts by that the card never showed, and it is title-cased
-    // by the same helper the rail's rows are: one derivation, so a slug cannot
-    // read two ways on one screen. Both routes always send a category, so an
-    // empty label means an empty string, and an empty chip is a blue box that
-    // says nothing.
+    // A card's chip is a STATE, never a control — an uninstalled card carries
+    // none, so `Install` cannot sit there inviting a click that does nothing.
     function card(item, state, handlers, at) {
         const id = `market-card-${at}`;
-        const chip = STATE_CHIP[item.state] || null;
-        const note = WITHHELD.installedNote(item.catalogStatus);
-        const author = item.author && item.author.name ? item.author.name : null;
-        const category = categoryLabel(item.category);
-        return h('button', {
-            class: 'market-card', type: 'button', id,
-            'data-pack-id': item.packId || null,
-            'data-installed': item.state === 'install' ? null : item.state,
-            'aria-current': state.selectedId === item.key ? 'true' : null,
-            onclick: () => handlers.onSelect(item.key, `#${id}`),
-        },
-        // The mark LEADS, the way it leads the detail hero: same builder, same
-        // bubble, so a pack is identified the same way in the grid and in the
-        // read. It does not replace the chip below it — a coloured `E` is a
-        // scanning aid, not the word "Engineering", and colour may not be the
-        // only carrier of a fact (SC 1.4.1). The two are on different bands
-        // doing different jobs, so neither reads as the other said twice.
-        h('span', { class: 'market-card-head' },
-            DETAIL.categoryMark(item.category, 'md'),
-            h('span', { class: 'market-card-title' }, item.title)),
-        category || item.specialty ? h('span', { class: 'market-card-meta' },
-            category ? h('span', { class: 'market-card-category' }, category) : null,
-            item.specialty
-                ? h('span', { class: 'market-card-specialty' }, item.specialty) : null) : null,
-        item.intro ? h('span', { class: 'market-card-intro' }, item.intro) : null,
-        item.mission ? h('span', { class: 'market-card-desc' }, item.mission) : null,
-        // An installed row with no card behind it: gone from the repo, or
-        // still listed and now refused. Two different facts, and the operator
-        // is running agents built from this one either way.
-        note ? h('span', { class: 'market-card-note' }, note) : null,
-        author || chip ? h('span', { class: 'market-card-foot' },
-            author ? h('span', { class: 'market-card-author' }, author) : null,
-            chip ? h('span', { class: 'market-card-state' }, chip) : null) : null);
+        return PACK_CARD.packCard({
+            title: item.title,
+            category: item.category,
+            specialty: item.specialty,
+            intro: item.intro,
+            mission: item.mission,
+            note: WITHHELD.installedNote(item.catalogStatus),
+            author: item.author,
+            chip: STATE_CHIP[item.state] || null,
+            packId: item.packId || null,
+            installedState: item.state === 'install' ? null : item.state,
+        }, {
+            id,
+            selected: state.selectedId === item.key,
+            onSelect: () => handlers.onSelect(item.key, `#${id}`),
+        });
     }
 
     // Loading, failed and empty are three different answers and look it: a

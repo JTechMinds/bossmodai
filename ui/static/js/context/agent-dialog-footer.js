@@ -67,6 +67,18 @@ const BossModAgentDialogFooter = (() => {
     /**
      * The actions one step offers, left to right.
      *
+     * `Browse marketplace` is step one's LEAD action: in the row, but pushed to
+     * the left edge by `#agent-add-browse`'s own rule, away from the dismissal
+     * on the right. It sat beside the filter box in the picker's header for one
+     * round and read as part of the filter — "find a template" and "browse the
+     * marketplace" are not the same errand, and putting them on one line said
+     * they were. The row's two ends are the app's own division: what takes you
+     * somewhere else on the left, what ends the task on the right.
+     *
+     * BACK IS NOT HERE. It is the chevron at the top-left of step two's body
+     * (context/agent-edit.js), which is where every other back control in this
+     * app lives — the desk's, and the marketplace detail's.
+     *
      * @param {'picker'|'form'} step
      * @param {{creating: boolean, onBrowse: () => void}} chrome
      * @returns {Array<object>} core/overlays.js action descriptors. The
@@ -82,27 +94,12 @@ const BossModAgentDialogFooter = (() => {
             }];
         }
         return [
-            { label: 'Browse marketplace', tone: 'quiet', onSelect: () => chrome.onBrowse() },
+            {
+                label: 'Browse marketplace', tone: 'quiet', id: 'agent-add-browse',
+                onSelect: () => chrome.onBrowse(),
+            },
             CANCEL,
         ];
-    }
-
-    /**
-     * Put Back at the head of the row, and hand it back so a caller can place
-     * focus on it.
-     *
-     * @param {object} modal
-     * @param {() => void} onBack
-     * @returns {HTMLElement}
-     */
-    function insertBack(modal, onBack) {
-        const row = modal.element.querySelector('.modal-actions');
-        const back = h('button', {
-            class: 'modal-action quiet', type: 'button', id: 'agent-add-back',
-            onclick: () => onBack(),
-        }, 'Back');
-        row.insertBefore(back, row.children[0] || null);
-        return back;
     }
 
     /**
@@ -217,7 +214,7 @@ const BossModAgentDialogFooter = (() => {
      * @param {object} modal  From core/overlays.js. Needed for its `element`
      *   and `setActions`, which is why this is built after the dialog while
      *   `actionsFor` — the row it opens with — is a plain function.
-     * @param {{creating: boolean, onBack: () => void, onBrowse: () => void}} chrome
+     * @param {{creating: boolean, onBack: () => void}} chrome
      * @returns {{show: (step: string) => void, recovery: () => void,
      *   primary: object}}
      * @throws {Error} Without a modal: a footer that could not scope its
@@ -230,7 +227,6 @@ const BossModAgentDialogFooter = (() => {
             /** Swap the row for `step`. setActions rebuilds it in place. */
             show(step) {
                 modal.setActions(actionsFor(step, chrome));
-                if (step === 'form' && chrome.creating) insertBack(modal, chrome.onBack);
                 // The button in that row is a new one and knows nothing, so
                 // the state its current render is holding is put back on it.
                 primary.repaint();
@@ -238,16 +234,15 @@ const BossModAgentDialogFooter = (() => {
             /**
              * What is left when the form could not render: the primary submits
              * `#agent-form` by id and the host no longer holds one, so the row
-             * keeps only the recovery that exists — Back to the picker on a
-             * create, the dismissal on an edit — and takes the focus that
-             * rebuilding it destroyed.
+             * keeps only the dismissal, and takes the focus that rebuilding it
+             * destroyed. Back is not rebuilt here because it is not in this
+             * row: it is the body's own chevron and survives the failure, so
+             * a create still has its way back — context/agent-edit.js is what
+             * puts the keyboard on it.
              */
             recovery() {
                 modal.setActions([CANCEL]);
-                const row = modal.element.querySelector('.modal-actions');
-                (chrome.creating
-                    ? insertBack(modal, chrome.onBack)
-                    : row.children[0]).focus();
+                modal.element.querySelector('.modal-actions').children[0].focus();
             },
             primary,
         };

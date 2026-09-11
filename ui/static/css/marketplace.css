@@ -67,32 +67,28 @@
 
 .market-find-row { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; }
 
-.market-find-label,
-.market-url-label { font-size: 12px; font-weight: 600; color: var(--muted); }
-
+/* APPEARANCE IS `.field-input`'s (controls.css) — the app's one text-control
+   rule, which the agent form and the Add agent picker also spend. This block
+   used to redeclare all of it and differed in exactly one declaration, a
+   --panel ground against the shared --bg, so the same search box read as two
+   different controls depending on which surface it was on. What is left here
+   is the only thing that is this layout's business: how the control flexes
+   inside its row. */
 .market-find,
-.market-url-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  font-size: 13px;
-  color: var(--ink);
-}
+.market-url-input { flex: 1 1 auto; }
 
 .market-url-toggle {
   min-height: 24px;
   padding: 5px 12px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
-  background: var(--panel);
+  background: var(--btn-face);
   font-size: 12px;
   font-weight: 500;
   color: var(--ink);
 }
+
+.market-url-toggle:hover { background: var(--btn-face-hover); }
 
 .market-url-toggle[aria-expanded="true"] {
   border-color: var(--accent);
@@ -760,7 +756,7 @@
   padding: 5px 12px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
-  background: var(--panel);
+  background: var(--btn-face);
   font-size: 12px;
   font-weight: 500;
   color: var(--ink);

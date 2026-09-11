@@ -177,20 +177,15 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
  * button's edge is an affordance rather than a separator. That border is what
  * satisfies SC 1.4.11, and it is why the face below cannot be asked to.
  *
- * RAISED, not flat. One flat fill inside one crisp border reads as a drawn
- * rectangle rather than as something that will move when pressed — the
- * operator called the icon-only ones "flat and noisy", and flat was the whole
- * of it. Three declarations answer that and they are the same three on every
- * call site, which is what makes this the shared vocabulary rather than a look
- * two surfaces happen to share:
+ * FLAT, and one soft grey. It was a top-lit gradient over a 1px lift for a
+ * round, which is a moulded-plastic button and not the surface this app wants.
+ * What answers the pointer now is the FILL: --btn-face at rest, one step down
+ * on hover, another on press. Nothing moves, and nothing is drawn to look
+ * raised.
  *
- *   a top-lit gradient   --panel down to --btn-face
- *   a lift               --btn-shadow, 1px of it, under the whole control
- *   a press              :active flattens both, so the button goes DOWN
- *
- * The press state is not decoration. Without it the raise is a picture of a
- * button; with it the control answers the pointer, which is the difference
- * between projection and a bevel someone drew on.
+ * The press state is not decoration — without it the control does not answer
+ * the pointer at all — but it is a colour change rather than a shadow leaving,
+ * so a button never shifts the layout around it.
  */
 
 .btn {
@@ -201,19 +196,15 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   padding: 6px 12px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
-  background: linear-gradient(180deg, var(--panel), var(--btn-face));
-  box-shadow: var(--btn-shadow);
+  background: var(--btn-face);
   font-size: 13px;
 }
 
-.btn:hover { background: linear-gradient(180deg, var(--btn-face), var(--btn-face-hover)); }
+.btn:hover { background: var(--btn-face-hover); }
 
-/* Pressed: the ramp collapses to its darkest stop and the lift goes. No
-   transform, so nothing beside it moves — the shadow leaving IS the travel. */
-.btn:active:not([disabled]) {
-  background: var(--btn-face-hover);
-  box-shadow: none;
-}
+/* Pressed: one more step down the same ramp. No transform and no shadow, so
+   nothing beside it moves — the fill darkening IS the travel. */
+.btn:active:not([disabled]) { background: var(--btn-face-active); }
 
 .btn-sm { min-height: 24px; padding: 4px 10px; font-size: 12px; }
 
@@ -227,20 +218,32 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* --panel measures 4.83:1 on --accent and 6.36:1 on --accent-deep, so the
    label clears AA at every row of the ramp — see tokens.css. */
 .btn-primary {
-  background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+  background: var(--accent);
   border-color: var(--accent-deep);
   color: var(--panel);
 }
 
 .btn-primary:hover { background: var(--accent-deep); }
-.btn-primary:active:not([disabled]) { background: var(--accent-deep); box-shadow: none; }
+.btn-primary:active:not([disabled]) { background: var(--accent-deep); }
+
+/* A destructive control. Outlined rather than filled: `.modal-action.danger`
+   is the SOLID red one, and it is the button that confirms a deletion after it
+   has been asked for. These are the ones that ASK — Delete, Reset Runtime —
+   and a wall of solid red beside a form's own fields reads as an error state
+   rather than as an action available on it. --alert measures 4.57:1 on --bg
+   and 4.86:1 on --panel, so the label clears AA at both stops of the ramp the
+   face keeps from .btn. */
+.btn-danger { border-color: var(--alert); color: var(--alert); }
+
+/* The tint the confirmed action already paints, at hover strength only. */
+.btn-danger:hover { background: var(--alert-bg); border-color: var(--alert); }
+.btn-danger:active:not([disabled]) { background: var(--alert-bg); box-shadow: none; }
 
 /* Deliberately NOT raised: a quiet button is one that should not look like it
    projects, so it drops the face and the lift with the border. */
 .btn-quiet {
   border-color: transparent;
   background: none;
-  box-shadow: none;
   color: var(--muted);
 }
 
@@ -254,15 +257,152 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   padding: 0;
   border: 0;
   background: none;
-  box-shadow: none;
   color: var(--accent);
   font-size: 13px;
 }
 
 .btn-link:hover { background: none; text-decoration: underline; }
-.btn-link:active:not([disabled]) { background: none; box-shadow: none; }
+.btn-link:active:not([disabled]) { background: none; }
 
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── Field ───
+ *
+ * The shared FORM vocabulary, and the reason it exists: the agent form carried
+ * this six-line Tailwind class blob on ten controls —
+ *
+ *   w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-bm-bg
+ *   focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent
+ *
+ * — while the marketplace and the picker each hand-authored a near-copy of the
+ * same control from tokens. Four definitions of one input, and they did not
+ * agree.
+ *
+ * They disagreed on the ONE declaration that is not cosmetic. Tailwind's
+ * `bm-border` mirrors --line, which measures 1.42:1 on --panel; tokens.css
+ * reserves --line-control (3.10:1) for "interactive borders that are the sole
+ * affordance of a control" precisely because SC 1.4.11 asks 3:1 of exactly this
+ * edge. An input whose only boundary is --line is an input you cannot locate,
+ * so every field in the agent form was under the non-text contrast floor. The
+ * border here is --line-control, which is what makes this a fix rather than a
+ * tidy-up.
+ *
+ * --bg rather than --panel for the fill: these sit on --panel (the dialog, the
+ * takeover, a settings card), so a filled control reads as one at a glance
+ * instead of relying on the border alone. --ink measures 14.5:1 on --bg.
+ *
+ * base.css already paints :focus-visible with a 2px --accent outline on every
+ * control in the app, so there is no focus ring declared here — a second one
+ * would be the Tailwind `focus:ring` this replaces, drawn twice.
+ */
+
+/* The label/control/hint stack. `gap` rather than margins on the children, so
+   a field with no hint does not carry a trailing one. */
+.field { display: flex; flex-direction: column; gap: 4px; }
+
+.field-label { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+/* A label over a control inside a grid of them — the connection matrix's five.
+   Smaller and quieter than a section's own fields, because the reading order
+   there is the section title first and these are its rows. --muted measures
+   6.10:1 on --bg. */
+.field-label-sm { font-size: 12px; font-weight: 400; color: var(--muted); }
+
+/* The separator inside a section, between a control that writes to others and
+   the others it writes to. Decorative, so --line and not --line-control. */
+.form-rule { width: 100%; height: 1px; margin: 0; border: 0; background: var(--line); }
+
+/* --muted measures 6.10:1 on --bg and 5.71:1 on --panel. */
+.field-hint { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* An advisory a field raises about its own value — today, the duplicate-name
+   notice. Amber and not red, because nothing is refused: the operator may
+   proceed, and the copy says so. --amber-ink measures 7.15:1 on --panel. */
+.field-warn { margin: 0; font-size: 12px; color: var(--amber-ink); }
+
+/* One rule, three elements. Split into three selectors rather than one
+   `.field-input` on every tag because a <select> and a <textarea> each need one
+   declaration the others must not have — see the two rules below. */
+.field-input,
+.field-select,
+.field-textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--bg);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+/* A textarea is prose, not a line: it needs room to open on and the operator's
+   own control over how much. `vertical` only — horizontal resize would drag it
+   out of whatever grid cell it was placed in. */
+.field-textarea {
+  min-height: 68px;
+  padding: 8px 10px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+/* Connection and personality labels are arbitrary operator input and the
+   columns they sit in are narrow, so the visible text can clip. Truncation is
+   acceptable only because it stays RECOVERABLE: the option carries the full
+   label in a `title`, and the native popup is not bounded by the control's
+   width. */
+.field-select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two fields on one row, one below the fold it saves. Collapses whole rather
+   than letting a label wrap under its own control — the dialog's width follows
+   the window's, and 200px of Specialty is not a field. */
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  .field-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ─── Form section ───
+ *
+ * A titled group of fields. The agent form was a flat run of eleven controls
+ * with no structure above the field level, which is what let "the layout for a
+ * template" and "the layout for a blank" drift into two different forms — there
+ * was no unit either of them had to keep.
+ *
+ * The card treatment is the app's existing one: --r-lg and --line, the same
+ * .desk-note and .market-card already carry. Nothing new is invented here.
+ */
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+/* Same size, weight, tracking and ink as .market-rail-title and
+   .roster-section-title — one way of saying "these belong together" across the
+   app rather than a third invented for this dialog. --hint measures 4.83:1 on
+   --panel. */
+.form-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
 
 /* ─── Tooltip ───
  *

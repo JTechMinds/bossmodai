@@ -29,9 +29,15 @@ const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus",
     "BossModOverlayFocus", "BossModOverlays", "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
+    // The two the fake form leans on rather than reimplementing: the shape
+    // vocabulary the refusal reads back, and the connection guard itself.
+    "BossModAgentFormConnections", "BossModAgentFormBindings",
     "BossModAgentFormHydrate", "BossModAgentRecovery", "BossModAgentFormSave",
-    "BossModAgentTemplatePicker", "BossModAgentQuickConnection",
-    "BossModAgentFormQuick", "BossModAgentDialogFooter",
+    // The picker draws the local library with the marketplace's own card and
+    // rail builders, so its dependencies load ahead of it.
+    "BossModAvatar", "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
+    "BossModAgentTemplatePicker",
+    "BossModAgentFormTemplate", "BossModAgentDialogFooter",
     "BossModAgentEdit", "BossModAddAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
@@ -47,8 +53,27 @@ const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
 
 const PIN = "aa11bb2ccccccccccccccccccccccccccccccccc";
 
+// `sections` is a COMPUTED field on the real AgentTemplate model — the server
+// derives it from `description` and `what_done_looks_like` through
+// describe_pack on every read, so no row the API can return is ever without
+// one. The fixture carried none, which made it a shape the API cannot produce;
+// marketplace-items.js's projection refuses such a row by design (a card drawn
+// from a broken payload is worse than one that says it could not be read), so
+// the omission surfaced the moment the picker started using that projection.
+// These are the all-`None` sections describe_pack returns for text carrying no
+// recognised heading, which is what this prose is.
+function sectionsFor(row) {
+    return {
+        description: {
+            preamble: row.description, mission: null, in_scope: null,
+            out_of_scope: null, handoff: null,
+        },
+        done: { preamble: row.what_done_looks_like, fail_examples: null },
+    };
+}
+
 function template(overrides) {
-    return Object.assign({
+    const row = Object.assign({
         id: "t1", source: "catalog", pack_id: "code-auditor", source_url: null,
         category: "engineering", title: "Code Auditor",
         specialty: "Reviews claims",
@@ -59,6 +84,10 @@ function template(overrides) {
         commit_sha: PIN, content_hash: "hash-1",
         installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     }, overrides);
+    // Derived AFTER the overrides, so a fixture that changes the description
+    // cannot leave the parsed halves describing the old one.
+    return Object.assign(row, { sections: sectionsFor(row) }, overrides.sections
+        ? { sections: overrides.sections } : {});
 }
 
 const TEMPLATES = [
@@ -88,9 +117,9 @@ function select(name, id, options) {
  */
 function buildConnections() {
     if (connectionMode === "none") {
-        return h("div", {},
-            h("label", { class: "block" }, "AI Connections"),
-            h("p", { class: "text-xs" }, "No connections configured. ",
+        return h("section", { class: "form-section" },
+            h("h3", { class: "form-section-title" }, "AI Connections"),
+            h("p", { class: "field-hint" }, "No connections configured. ",
                 h("button", { type: "button", id: "btn-goto-connections" },
                     "Add one in Settings")));
     }
@@ -105,12 +134,12 @@ function buildConnections() {
         ...global.BossModAgentFields.MODEL_TYPES.map((type) => select(
             type.key, `agent-connection-${type.key}`,
             [["", "None"], ["c1", "Local (llama)"]])));
-    return h("div", {},
-        h("label", { class: "block" }, "AI Connections"),
-        h("div", {},
+    return h("section", { class: "form-section" },
+        h("h3", { class: "form-section-title" }, "AI Connections"),
+        h("div", { class: "field" },
             h("label", { for: "agent-connection-model_all" }, "Set All"),
             allSelect),
-        h("hr", {}),
+        h("hr", { class: "form-rule" }),
         matrix);
 }
 
@@ -128,13 +157,53 @@ function buildForm() {
     const personality = h("select", { name: "personality_id" });
     personality.append(h("option", { value: "" }, "No personality"),
         h("option", { value: "p1" }, "Software Engineer"));
-    const advanced = h("div", {},
-        h("button", { type: "button", id: "advanced-toggle" }, "Advanced"),
-        h("div", { id: "advanced-content", class: "hidden" }, done, personality));
+    const advancedContent = h("div", { id: "advanced-content", class: "hidden" },
+        done, personality);
+    const advancedToggle = h("button", { type: "button", id: "advanced-toggle" }, "Advanced");
+    // The real disclosure toggles `.hidden` on click (context/agent-form.js).
+    // Reproduced here because section 6 opens and closes it to prove that a
+    // panel toggle is not an answer to the connection question.
+    advancedToggle.addEventListener("click", () => {
+        advancedContent.classList.toggle("hidden");
+    });
+    const advanced = h("div", {}, advancedToggle, advancedContent);
 
-    return h("form", { id: "agent-form" },
-        h("div", {}, h("label", {}, "Name"), name),
-        card, connections, advanced);
+    const form = h("form", { id: "agent-form" },
+        h("div", { class: "form-section" },
+            h("h3", { class: "form-section-title" }, "Identity"),
+            h("div", {}, h("label", {}, "Name"), name),
+            card),
+        connections, advanced);
+
+    // WHAT agent-form.js BINDS, reproduced in the same order, because the two
+    // things it binds to this markup are the subject of section 6 and neither
+    // lives in a module this stub could skip:
+    //
+    //   1. the "Set All" fan-out, which writes the five FROM SCRIPT;
+    //   2. bindConnectionGuard, AFTER it, so the guard reads the five once the
+    //      fan-out has written them — a script-assigned value fires no change
+    //      event, so the order is load-bearing and is asserted in
+    //      tests/test_add_agent_modal.py.
+    //
+    // The guard is the REAL module (context/agent-form-bindings.js). A stub of
+    // it would be a stub of the rule under test.
+    const setAll = form.querySelector('select[name="model_all"]');
+    if (setAll) {
+        setAll.addEventListener("change", () => {
+            if (!setAll.value) return;
+            global.BossModAgentFields.MODEL_TYPES.forEach((type) => {
+                const control = form.querySelector(`select[name="${type.key}"]`);
+                if (control) control.value = setAll.value;
+            });
+        });
+    }
+    form.setAttribute(
+        global.BossModAgentFormConnections.AI_QUESTION,
+        global.BossModAgentFormConnections.shapeFor(
+            connectionMode === "none" ? [] : CONNECTIONS),
+    );
+    global.BossModAgentFormBindings.bindConnectionGuard(form, { creating: true });
+    return form;
 }
 
 // ─── Stubs the dialog reaches for ───
@@ -193,7 +262,12 @@ global.apiFetch = (url, init) => {
     if (String(url) === "/api/connections") {
         if (connectionsApiMode === "reject") return Promise.reject(new Error("offline"));
         if (connectionsApiMode === "error") return jsonResponse({ detail: "boom" }, 500);
-        return jsonResponse(CONNECTIONS);
+        // ONE endpoint feeds both reads in the real app — the form's own
+        // (loadFormData) and the submit path's (readConnections) — so
+        // `connectionMode` has to move both or the fixture is a state the
+        // server cannot produce: a form saying "none configured" over a list
+        // that holds two.
+        return jsonResponse(connectionMode === "none" ? [] : CONNECTIONS);
     }
     return jsonResponse([]);
 };
@@ -258,18 +332,6 @@ async function type(input, value) {
     for (const fn of [...(input.listeners.input || [])]) await fn({ target: input });
 }
 
-/** The fake has no <details> behaviour, so opening one is spelled out. */
-async function expand(details) {
-    details.setAttribute("open", "");
-    for (const fn of [...(details.listeners.toggle || [])]) await fn({ target: details });
-}
-
-/** ...and closing it again, which is half of "I opened it to read it". */
-async function collapse(details) {
-    details.removeAttribute("open");
-    for (const fn of [...(details.listeners.toggle || [])]) await fn({ target: details });
-}
-
 /** Answer one connection select the way an operator does. */
 async function choose(control, value) {
     control.value = value;
@@ -313,7 +375,7 @@ async function close() {
 
 /** The chip's line, or "" while no template is on screen. */
 function chipText() {
-    const node = find(".quick-provenance-text");
+    const node = find(".template-chip-text");
     return node ? node.textContent : "";
 }
 
@@ -360,8 +422,25 @@ async function main() {
     verdict.emptyState = dialog().textContent.includes("No templates installed yet.")
         && Boolean(find("#agent-pick-blank"))
         && Boolean(find("#agent-template-browse"));
-    // The primary belongs to a form, and step one has none.
+    // The primary belongs to a form, and step one has none. The footer is
+    // dismissal alone now — `Browse marketplace` is a control in the picker's
+    // the LEAD of the row, pushed to its left edge by a rule of its own, with
+    // the dismissal at the other end — side by side they read as two ways to
+    // leave, and beside the filter box they read as part of the filter.
+    // BACK IS ON THE TITLE ROW — `‹ Add agent` — and it is not drawn on step
+    // one, which has nowhere to go back to. It spent a round as a bordered
+    // square floating in the band under the title, aligned to nothing, and a
+    // round before that as a footer action beside Cancel.
+    verdict.backLeadsTheTitleRowAndNotStepOne =
+        Boolean(dialog().querySelector(".modal-head"))
+        && Boolean(find("#agent-add-back"))
+        && find("#agent-add-back").hidden === true
+        // In the head, never in the body or the row: the body is emptied by a
+        // failed build and the row is rebuilt on every step swap.
+        && Boolean(dialog().querySelector(".modal-head").querySelector("#agent-add-back"))
+        && footer().querySelector("#agent-add-back") === null;
     verdict.noCreateOnStepOne = footerNames().join("|") === "Browse marketplace|Cancel"
+        && Boolean(find("#agent-add-browse"))
         && documentStub.querySelector("#agent-form-submit") === null
         && find("#agent-form") === null;
 
@@ -375,6 +454,7 @@ async function main() {
     verdict.browseClosesAndReopens = closedForMarketplace
         && dialogs().length === 1
         && footerNames().join("|") === "Browse marketplace|Cancel"
+        && Boolean(find("#agent-add-browse"))
         && cards().length === 2;
     await close();
 
@@ -395,23 +475,87 @@ async function main() {
     verdict.retryPlacesFocus = retryKeptFocus
         && documentStub.activeElement === find("#agent-template-find");
 
-    // ─── 4. Category grouping, and a filter that drops what it empties ───
-    verdict.categories = dialog().querySelectorAll(".picker-category-title")
-        .map((node) => node.textContent).join("|") === "Engineering|Product Design";
+    // ─── 4. The rail of categories, and the filter that narrows the grid ───
+    //
+    // The categories are RAIL ROWS now, not headings inside the card grid —
+    // the same organisation the marketplace takeover uses over the same rows,
+    // built by the same module. Two groups, because `All` is a scope and the
+    // rest are the catalog's own buckets; a flat list of three claimed the
+    // library had three categories when it has two.
+    const railLabels = () => dialog().querySelectorAll(".market-rail-label")
+        .map((node) => node.textContent).join("|");
+    const cardTitles = () => cards()
+        .map((node) => node.querySelector(".market-card-title").textContent).join("|");
+    // THE AUTHOR IS A NAME, not the object it is carried in. The projection
+    // puts `{name, url}` on an item, the card prints the name, and for one
+    // round the unwrap lived in the marketplace's caller instead of in the
+    // shared builder — so the marketplace printed "JTech Minds" and this
+    // picker, handing the same item to the same builder, printed
+    // "[object Object]" under every card. A shape known to the projection and
+    // to the renderer must not have to be known by everything in between.
+    const cardAuthors = () => cards()
+        .map((node) => {
+            const foot = node.querySelector(".market-card-author");
+            return foot ? foot.textContent : "";
+        }).join("|");
+    // Both halves: the row that HAS an author prints the name, and the row
+    // whose `author_name` is null prints no footer author at all rather than
+    // an empty band.
+    verdict.cardsPrintTheAuthorName = cardAuthors() === "JTech Minds|"
+        && !cardAuthors().includes("object Object");
+    verdict.categories = railLabels() === "All|Engineering|Product Design"
+        && dialog().querySelectorAll(".market-rail-title")
+            .map((node) => node.textContent).join("|") === "Show|Categories"
+        // Counted, so the rail says how much is behind each row.
+        && dialog().querySelectorAll(".market-rail-count")
+            .map((node) => node.textContent).join("|") === "2|1|1";
+
+    // A rail row narrows the grid, and the row that was clicked keeps the
+    // keyboard — the rail repaints its live mark in place rather than being
+    // rebuilt, which is what the marketplace needs focus-restoration code for.
+    const engineering = dialog().querySelectorAll(".market-rail-item")
+        .find((node) => node.querySelector(".market-rail-label").textContent === "Engineering");
+    await engineering.dispatchClick();
+    await drain();
+    // The row SURVIVES ITS OWN CLICK — same node, still in the document, with
+    // the live mark moved onto it. That is what lets focus stay where the
+    // operator put it without any code to put it back: the rail repaints
+    // `aria-current` in place rather than being rebuilt. (Node identity is the
+    // property to assert here, not `activeElement`: the fake DOM does not move
+    // focus on a dispatched click, so reading it back would be asserting the
+    // fake rather than the rail.)
+    verdict.railNarrowsTheGridAndKeepsFocus = cardTitles() === "Code Auditor"
+        && engineering.getAttribute("aria-current") === "true"
+        && dialog().querySelectorAll(".market-rail-item").includes(engineering);
+    const all = dialog().querySelectorAll(".market-rail-item")
+        .find((node) => node.querySelector(".market-rail-label").textContent === "All");
+    await all.dispatchClick();
+    await drain();
+    verdict.railReturnsToAll = cards().length === 2
+        && engineering.getAttribute("aria-current") === null;
+
     await type(find("#agent-template-find"), "diff");
-    verdict.filterHidesEmptyCategory = cards().length === 1
-        && cards()[0].getAttribute("data-template-id") === "t1"
-        && dialog().querySelectorAll(".picker-category-title").length === 1;
+    verdict.filterNarrowsTheGrid = cardTitles() === "Code Auditor"
+        // The rail counts the LIBRARY, not the filter — the same rule the
+        // marketplace's rail follows, so a count never moves under a keystroke.
+        && railLabels() === "All|Engineering|Product Design";
     await type(find("#agent-template-find"), "zzz");
     verdict.noMatchCopy = dialog().textContent.includes("No template matches “zzz”.")
-        && cards().length === 0;
+        && cards().length === 0
+        // Blank is offered in EVERY state, including this one: it is the one
+        // affordance that always works, so it is never filtered away.
+        && Boolean(find("#agent-pick-blank"));
     await type(find("#agent-template-find"), "");
 
-    // ─── 5. Picking a template: two visible fields, everything else behind one ───
+    // ─── 5. Picking a template: the SAME form, prefilled and marked ───
     await cards()[0].dispatchClick();
     await drain();
-    verdict.stepTwoFooter = footerNames().join("|") === "Back|Cancel|Create Agent";
-    verdict.provenanceChip = find(".quick-provenance-text").textContent
+    verdict.backShowsOnStepTwo = find("#agent-add-back").hidden === false;
+    verdict.stepTwoFooter = footerNames().join("|") === "Cancel|Create Agent"
+        // Back left the row for the top-left of the step body, which is
+        // where every other back control in this app lives.
+        && Boolean(find("#agent-add-back"));
+    verdict.provenanceChip = find(".template-chip-text").textContent
         === "Code Auditor · JTech Minds · pinned aa11bb2";
 
     const form = find("#agent-form");
@@ -428,50 +572,69 @@ async function main() {
         && field('select[name="model_work"]').value === ""
         && field('input[name="name"]').getAttribute("placeholder") === "e.g. Code Auditor";
 
-    // The connection question is beside Name, and answering it is required
-    // while the matrix it writes to is out of sight.
-    const all = field('select[name="model_all"]');
-    verdict.connectionLifted = form.children[2].className === "quick-ai"
-        && form.children[2].querySelector('select[name="model_all"]') === all
-        && form.querySelector(".quick-ai-label").textContent === "AI"
-        && all.hasAttribute("required")
-        && form.querySelector("hr") === null;
-    const disclosure = form.querySelector(".quick-disclosure");
-    verdict.reviewHidesWhatTheTemplateAnswered = Boolean(disclosure)
-        && disclosure.querySelector("#role-contract-card") !== null
-        && disclosure.querySelector("#advanced-content") !== null
-        && disclosure.querySelector(".connection-grid") !== null;
+    // THE CONNECTION QUESTION IS ON SCREEN, in the matrix, and it is required
+    // until it is answered. It used to be a single select LIFTED out beside
+    // Name with the matrix swept behind a disclosure — so the five selects the
+    // save actually reads, and the colour swatches, were the two things a
+    // template hid.
+    const setAll = field('select[name="model_all"]');
+    verdict.connectionOnScreen = Boolean(setAll)
+        && setAll.hasAttribute("required")
+        && Boolean(form.querySelector(".connection-grid"))
+        // Every one of the five the submit path reads, and none of them behind
+        // the one disclosure that is left.
+        && global.BossModAgentFields.MODEL_TYPES.every((type) => {
+            const select = form.querySelector(`select[name="${type.key}"]`);
+            return Boolean(select)
+                && form.querySelector("#advanced-content").querySelector(
+                    `select[name="${type.key}"]`) === null;
+        });
+    // ONE LAYOUT: nothing a template answered is hidden, and the disclosure
+    // that used to hold it does not exist.
+    verdict.templateHidesNothing = form.querySelector(".quick-disclosure") === null
+        && form.querySelector("#role-contract-card") !== null
+        && form.querySelectorAll('input[name="agent-color"]').length > 0
+        && form.querySelector("#advanced-content").querySelectorAll(
+            'input[name="agent-color"]').length === 0;
     // The tool hints the pack declares are part of the decision being made
-    // here, so the line above the disclosure carries them.
-    verdict.summaryNamesTheTools = form.querySelector(".quick-summary").textContent
-        === "Reviews claims · Reads a diff and reports what is not true · Tools: work · Blue";
+    // here, and they are the one template fact with no field to live in — so
+    // the chip carries them and everything else is a visible field now.
+    verdict.summaryNamesTheTools = form.querySelector(".template-tools").textContent
+        === "Tools: work";
     verdict.focusLandsOnName = documentStub.activeElement === field('input[name="name"]');
+    // Kept for section 9, which proves Blank renders exactly these.
+    const templateSections = form.querySelectorAll(".form-section-title")
+        .map((node) => node.textContent).join("|");
 
-    // ─── 6. The connection guard tracks the ANSWER, not the disclosure ───
+    // ─── 6. The connection guard tracks the ANSWER, not a disclosure ───
     //
-    // Opening this panel used to drop `required` from the lifted select, one
-    // way and for good — and the panel is where the template's specialty,
-    // description and what-done live, so opening it to READ them disarmed the
+    // Opening a panel used to drop `required` from the lifted select, one way
+    // and for good — and that panel was where the template's specialty,
+    // description and what-done lived, so opening it to READ them disarmed the
     // guard and Create wrote five null connections over "Saved successfully".
-    // What relaxes it now is an answer in the matrix, and only that.
-    await expand(disclosure);
-    await collapse(disclosure);
-    verdict.expandingAloneKeepsTheGuard = all.hasAttribute("required");
+    // What relaxes it is an answer in the matrix, and only that.
+    //
+    // Re-pointed at Advanced, the one disclosure that remains. The property is
+    // not about any particular panel: a panel toggle is not an answer.
+    const advancedToggle = form.querySelector("#advanced-toggle");
+    await advancedToggle.dispatchClick();
+    await advancedToggle.dispatchClick();
+    verdict.expandingAloneKeepsTheGuard = setAll.hasAttribute("required");
     // Any ONE of the five is an answer: the operator setting the matrix by
     // hand must not be blocked by the convenience select above it.
     const perType = global.BossModAgentFields.MODEL_TYPES
         .map((type) => form.querySelector(`select[name="${type.key}"]`));
     await choose(perType[1], "c1");
-    verdict.answeringOneTypeReleasesTheGuard = !all.hasAttribute("required");
+    verdict.answeringOneTypeReleasesTheGuard = !setAll.hasAttribute("required");
     // ...and clearing them all back to None re-arms it. A live check in both
     // directions, which is what a one-way flip could never be.
     await choose(perType[1], "");
-    verdict.clearingThemAllRearmsTheGuard = all.hasAttribute("required")
+    verdict.clearingThemAllRearmsTheGuard = setAll.hasAttribute("required")
         && perType.every((sel) => sel.value === "");
 
     // ─── 7. Back keeps the draft, and returns focus to the Find box ───
     await type(field('input[name="name"]'), "Mine");
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     const backedOut = dialogs().length === 1
         && footerNames().join("|") === "Browse marketplace|Cancel"
@@ -480,7 +643,7 @@ async function main() {
     await drain();
     verdict.backKeepsTheDraft = backedOut
         && find("#agent-form").querySelector('input[name="name"]').value === "Mine"
-        && dialog().querySelectorAll(".quick-provenance").length === 1;
+        && dialog().querySelectorAll(".template-chip").length === 1;
 
     // ─── 8. Dismissing the chip drops to blank without touching the draft ───
     await find("#quick-provenance-clear").dispatchClick();
@@ -491,27 +654,46 @@ async function main() {
         && after.querySelector('input[name="done_fail_bar"]').value === ""
         && after.querySelector('input[name="name"]').value === "Mine"
         && after.querySelector('input[name="name"]').getAttribute("placeholder") === "e.g. PM Agent"
-        && after.querySelector(".quick-provenance") === null
-        && after.querySelector(".quick-summary") === null
-        && after.querySelector(".quick-disclosure").hasAttribute("open")
-        && !after.querySelector('select[name="model_all"]').hasAttribute("required");
+        && after.querySelector(".template-chip") === null
+        && after.querySelector(".template-tools") === null
+        // The GUARD is untouched by Remove template, and that is the change
+        // this pins: it tracks whether the matrix has been answered, and
+        // dropping a template answers nothing. It used to be released here,
+        // which meant "Remove template" quietly re-opened the route to a
+        // connectionless agent. The five are still at None, so it stays armed.
+        && after.querySelector('select[name="model_all"]').hasAttribute("required");
     // Every field the template wrote, including the one applyHireFields only
     // ever set: a personality left selected under a cleared form is a template
     // that Remove template did not remove.
     verdict.chipClearsThePersonalityToo =
         after.querySelector('select[name="personality_id"]').value === "";
 
-    // ─── 9. Picking Blank builds the plain form, and only then ───
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    // ─── 9. Blank builds the SAME form, minus the chip ───
+    //
+    // This is the property the whole redesign is for: the two create paths
+    // differ by a provenance chip and four prefilled values, and by nothing
+    // else. It used to be the opposite — Blank got the plain form, a template
+    // got a rearranged one — so the operator met two different dialogs
+    // depending on which cell they clicked.
+    await find("#agent-add-back").dispatchClick();
     await drain();
     await find("#agent-pick-blank").dispatchClick();
     await drain();
     const blank = find("#agent-form");
-    verdict.blankIsThePlainForm = blank.querySelector(".quick-provenance") === null
-        && blank.querySelector(".quick-disclosure") === null
+    const sectionsOf = (root) => root.querySelectorAll(".form-section-title")
+        .map((node) => node.textContent).join("|");
+    verdict.blankIsThePlainForm = blank.querySelector(".template-chip") === null
+        && blank.querySelector(".template-tools") === null
         && blank.querySelector("#role-contract-card") !== null
-        && blank.querySelector('select[name="model_all"]').hasAttribute("required") === false
-        && footerNames().join("|") === "Back|Cancel|Create Agent";
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && Boolean(find("#agent-add-back"));
+    // Same sections, same order, whichever cell was picked — and the guard is
+    // armed on BOTH, because an agent with no connection fails on its first
+    // turn however it was created. Blank used to carry no guard at all.
+    verdict.blankAndTemplateRenderTheSameSections =
+        sectionsOf(blank) === "Identity|AI Connections"
+        && sectionsOf(blank) === templateSections
+        && blank.querySelector('select[name="model_all"]').hasAttribute("required") === true;
     await close();
     verdict.closes = dialogs().length === 0;
 
@@ -521,33 +703,32 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     const bare = find("#agent-form");
-    const aiField = bare.querySelector(".quick-ai");
-    const standIn = bare.querySelector('select[name="model_all"]');
-    const options = standIn ? standIn.querySelectorAll("option") : [];
-    verdict.noConnectionsIsToldInFront = Boolean(aiField) && Boolean(standIn)
-        // The matrix's link to Settings comes UP, not behind the disclosure.
-        && aiField.querySelector("#btn-goto-connections") !== null
-        && bare.querySelector(".quick-disclosure")
-            .querySelector("#btn-goto-connections") === null
-        // And what it explains is joined to the control it explains.
-        && standIn.getAttribute("aria-describedby") === "quick-ai-none"
-        && aiField.querySelector("#quick-ai-none") !== null;
-    // Native constraint validation, the same mechanism the populated case
-    // uses: a required select with nothing to select refuses the submit.
-    verdict.noConnectionsBlocksCreate = Boolean(standIn)
-        && standIn.hasAttribute("required")
-        && !standIn.hasAttribute("disabled")
-        && options.length === 1
-        && options[0].getAttribute("value") === "";
-    // Expanding is not an answer anywhere, and here there is nothing that
-    // could answer: no five selects, so the block stays through both the
-    // disclosure and the chip's dismissal.
-    await expand(bare.querySelector(".quick-disclosure"));
+    const barePrimary = documentStub.querySelector("#agent-form-submit");
+    const bareLine = dialog().querySelector("#agent-save-feedback");
+    // The section renders its link to Settings and NO select — there is
+    // nothing to choose, so there is no control to make required. A stand-in
+    // `required` select that wrote to nothing used to stand here: it was a
+    // control the operator could not answer, and it let them fill the whole
+    // form before native validation stopped them.
+    verdict.noConnectionsIsToldInFront =
+        bare.querySelector('select[name="model_all"]') === null
+        && bare.querySelector("#btn-goto-connections") !== null
+        // On screen, not behind the one disclosure that is left.
+        && bare.querySelector("#advanced-content")
+            .querySelector("#btn-goto-connections") === null;
+    // Refused BEFORE the click, and never silently: the withheld primary names
+    // the live region that says why.
+    verdict.noConnectionsBlocksCreate = barePrimary.disabled === true
+        && barePrimary.getAttribute("aria-describedby") === "agent-save-feedback"
+        && bareLine.textContent.includes("No AI connection is configured")
+        && bareLine.textContent.includes("Add one in Settings");
+    // Dropping the template answers nothing, so the block stays. There are no
+    // five selects here that could ever answer it.
     await find("#quick-provenance-clear").dispatchClick();
     await drain();
-    const stillBlocked = find('select[name="model_all"]');
-    verdict.noConnectionsStaysBlockedAfterTheChipGoes = Boolean(stillBlocked)
-        && stillBlocked.hasAttribute("required");
+    verdict.noConnectionsStaysBlockedAfterTheChipGoes =
+        documentStub.querySelector("#agent-form-submit").disabled === true
+        && find("#agent-form").querySelector('select[name="model_all"]') === null;
     await close();
     connectionMode = "ready";
 
@@ -559,7 +740,7 @@ async function main() {
     verdict.failedRenderDropsTheDeadPrimary =
         dialog().textContent.includes("The agent editor failed to load.")
         && dialog().textContent.includes("Go back and pick again.")
-        && footerNames().join("|") === "Back|Cancel"
+        && footerNames().join("|") === "Cancel"
         // The primary submits #agent-form by id, and there is no longer one.
         && documentStub.querySelector("#agent-form-submit") === null
         && find("#agent-form") === null
@@ -570,7 +751,8 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     verdict.pickingAgainAfterAFailedRenderRetries = Boolean(find("#agent-form"))
-        && footerNames().join("|") === "Back|Cancel|Create Agent";
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && Boolean(find("#agent-add-back"));
     await close();
 
     // ─── 12. The primary is disabled for as long as the save is running ───
@@ -613,7 +795,7 @@ async function main() {
     // section exists to test — and a `building()` that stopped disabling
     // would then still read as passing.
     await answerAi();
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     let releaseBuild;
     nextBuildHold = new Promise((resolve) => { releaseBuild = resolve; });
@@ -649,7 +831,7 @@ async function main() {
     nextBuildHold = new Promise((resolve) => { releaseFirst = resolve; });
     await cards()[0].dispatchClick();
     await drain();
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     await cards()[1].dispatchClick();
     await drain();
@@ -658,18 +840,18 @@ async function main() {
     await drain();
     verdict.aSupersededBuildNeverLands = showedTheSecond
         && chipText().startsWith("Feature Planner")
-        && dialog().querySelectorAll(".quick-provenance").length === 1
+        && dialog().querySelectorAll(".template-chip").length === 1
         && find('input[name="role"]').value === "Plans features";
     // What is recorded as built is what is on screen, so re-picking that cell
     // is the no-op it claims to be...
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     await cards()[1].dispatchClick();
     await drain();
     verdict.theRecordedBuildIsTheOneOnScreen = chipText().startsWith("Feature Planner")
         && find('input[name="role"]').value === "Plans features";
     // ...and the pick whose build lost rebuilds rather than reading as built.
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     await cards()[0].dispatchClick();
     await drain();
@@ -704,7 +886,7 @@ async function main() {
     holdCreate = new Promise((resolve) => { releaseRefusal = resolve; });
     const refusedSave = documentStub.querySelector("#agent-form-submit").dispatchClick();
     await drain();
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     let releaseSecond;
     nextBuildHold = new Promise((resolve) => { releaseSecond = resolve; });
@@ -768,7 +950,7 @@ async function main() {
     nextBuildHold = new Promise((resolve) => { releaseDoomed = resolve; });
     await cards()[0].dispatchClick();
     await drain();
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     formMode = "fail";
     releaseDoomed();
@@ -776,6 +958,10 @@ async function main() {
     formMode = "ready";
     verdict.aBuildFailingAfterBackLeavesThePickerAlone =
         footerNames().join("|") === "Browse marketplace|Cancel"
+        // The door out of an empty library is still there — it leads step
+        // one's row, and a failure that rewrote step one would take it with
+        // the rest of the picker.
+        && Boolean(find("#agent-add-browse"))
         && !dialog().textContent.includes("The agent editor failed to load.")
         && cards().length === 2
         && documentStub.activeElement === find("#agent-template-find");
@@ -783,7 +969,8 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     verdict.pickingAgainAfterABuriedFailureRetries = Boolean(find("#agent-form"))
-        && footerNames().join("|") === "Back|Cancel|Create Agent";
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && Boolean(find("#agent-add-back"));
     await close();
 
     // ─── 19. The keyboard, while the primary is taken away and given back ───
@@ -834,7 +1021,7 @@ async function main() {
     await open();
     await cards()[0].dispatchClick();
     await drain();
-    await footer().querySelectorAll("button")[0].dispatchClick();
+    await find("#agent-add-back").dispatchClick();
     await drain();
     await cards()[0].dispatchClick();
     await drain();

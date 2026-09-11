@@ -799,48 +799,71 @@ def test_select_mode_is_proven_on_the_built_rail() -> None:
     assert payload["selectionClearsAfterCreate"] is True
 
 
-def test_one_button_vocabulary_and_it_projects() -> None:
-    """The operator's words: the icon buttons "feel flat and noisy", and the ask
-    was a reusable style with "a bit more projection".
+def test_one_button_vocabulary_and_it_is_flat() -> None:
+    """One button vocabulary, and it is FLAT.
 
-    Flat was the whole of it — one fill inside one crisp border reads as a drawn
-    rectangle, not as something that will move when pressed. Three declarations
-    answer it, and they live on `.btn` so every call site gets the same one
-    rather than two surfaces agreeing by hand.
+    It was a top-lit gradient over a 1px lift for a round — a moulded-plastic
+    button, which is not the surface this app wants. The operator's call: flat,
+    one soft grey, nothing drawn to look raised.
 
-    The PRESS is the half that makes it a control rather than a bevel someone
-    drew: :active collapses the ramp and drops the lift, so the button goes down
-    under the pointer. Without it the raise is a picture of a button.
+    What answers the pointer is now the FILL, on a three-step ramp — rest,
+    hover, press. That matters as much as the flatness: a control that does not
+    change under the pointer is a picture of a button. And because the travel is
+    colour rather than a shadow appearing and leaving, a button never shifts the
+    layout around it.
+
+    The border is untouched and load-bearing: --btn-face measures 1.09:1 against
+    --panel, so no fill this soft can carry the identification job (SC 1.4.11)
+    and --line-control at 3.10:1 still does. That is exactly why a borderless
+    Apple-style button is not available here, and the comment in tokens.css says
+    so, so the next person to reach for one finds the reason.
     """
     controls = _read(CSS / "controls.css")
     tokens = _read(CSS / "tokens.css")
-    for token in ("--btn-face:", "--btn-face-hover:", "--btn-shadow:"):
+    # Three steps, and the shadow token is GONE rather than set to none: a
+    # token nothing spends is a token the next raise gets rebuilt from.
+    for token in ("--btn-face:", "--btn-face-hover:", "--btn-face-active:"):
         assert token in tokens, token
+    assert "--btn-shadow" not in tokens, "the lift's token outlived the lift"
+    assert "--btn-shadow" not in controls
 
     btn = controls.split(".btn {", 1)[1].split("}", 1)[0]
-    assert "linear-gradient(180deg, var(--panel), var(--btn-face))" in btn
-    assert "box-shadow: var(--btn-shadow)" in btn
-    # The border still carries the identification job (SC 1.4.11) — no fill this
-    # light could: --btn-face measures 1.06:1 against --panel.
+    assert "background: var(--btn-face);" in btn
+    assert "linear-gradient" not in btn, "the gradient came back"
+    assert "box-shadow" not in btn, "the lift came back"
+    # The border still carries the identification job (SC 1.4.11).
     assert "border: 1px solid var(--line-control)" in btn
 
+    # The ramp is three DISTINCT steps in the one order that reads as pressure.
+    hover = controls.split(".btn:hover {", 1)[1].split("}", 1)[0]
     press = controls.split(".btn:active:not([disabled]) {", 1)[1].split("}", 1)[0]
-    assert "box-shadow: none" in press
-    assert "background: var(--btn-face-hover)" in press
+    assert "background: var(--btn-face-hover);" in hover
+    assert "background: var(--btn-face-active);" in press
+    assert "box-shadow" not in press, "nothing to drop — there is no lift"
+    faces = [
+        re.search(rf"{name}: (#[0-9a-f]{{6}});", tokens).group(1)
+        for name in ("--btn-face", "--btn-face-hover", "--btn-face-active")
+    ]
+    assert len(set(faces)) == 3, f"the ramp has to move on every step: {faces}"
 
-    # The primary ramp only ever improves the white label's contrast: --panel is
-    # 4.83:1 on --accent and 6.36:1 on --accent-deep, so the worst row of the
-    # gradient is the flat colour it replaced.
+    # The primary is flat too, and its darker stop is now the border and the
+    # press rather than the bottom of a gradient. --panel is 4.83:1 on --accent
+    # and 6.36:1 on --accent-deep, so the label clears AA at both.
     assert "--accent-deep: #2559c4;" in tokens
     primary = controls.split(".btn-primary {", 1)[1].split("}", 1)[0]
-    assert "linear-gradient(180deg, var(--accent), var(--accent-deep))" in primary
+    assert "background: var(--accent);" in primary
+    assert "linear-gradient" not in primary
 
-    # The two variants that are meant to be flat opt out of all three rather
-    # than inheriting a raise they then have to fight.
+    # The two variants meant to carry no face at all still opt out.
     for flat in (".btn-quiet {", ".btn-link {"):
         body = controls.split(flat, 1)[1].split("}", 1)[0]
-        assert "box-shadow: none" in body, flat
         assert "background: none" in body, flat
+
+    # And the dialog's own row wears the same face, so Cancel in a footer and
+    # Try again in a panel are one control rather than two that nearly agree.
+    overlays = _read(CSS / "overlays.css")
+    action = overlays.split(".modal-action {", 1)[1].split("}", 1)[0]
+    assert "background: var(--btn-face);" in action
 
     # ICON-ONLY is one rule on the primitive, not one per surface. It moved here
     # the moment a second surface — the desk's back arrow — wanted it.

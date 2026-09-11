@@ -17,6 +17,10 @@ const NAMES = [
     "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModMarketplaceWithheld", "BossModMarketplaceItems",
+    // The card anatomy and the filter rail the takeover shares with the Add
+    // agent picker. They read marketplace-items.js's projection, so they load
+    // after it and before the two views that spend them.
+    "BossModPackCard", "BossModFilterRail",
     "BossModMarketplaceSections", "BossModMarketplaceDetail",
     "BossModMarketplaceView", "BossModMarketplace",
 ];

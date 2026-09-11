@@ -13,12 +13,19 @@
  */
 const BossModAgentRecovery = (() => {
 
-    /** Feedback tones, and the utility classes each one paints. */
+    /**
+     * Feedback tones. The class each one paints is `.save-feedback-<tone>` in
+     * overlays.css, where the tint/ink pair comes from tokens.css and is the
+     * measured one — this used to paint raw Tailwind palette utilities
+     * (slate-50, emerald-50/200/700, amber-50/200/800, red-50/200/700) inside a
+     * dialog whose every other surface resolved through tokens, which is two
+     * colour systems in one form and no contrast measured on either.
+     */
     const TONES = Object.freeze({
-        busy: 'bg-slate-50 border border-bm-border text-bm-muted',
-        ok: 'bg-emerald-50 border border-emerald-200 text-emerald-700',
-        warn: 'bg-amber-50 border border-amber-200 text-amber-800',
-        bad: 'bg-red-50 border border-red-200 text-red-700',
+        busy: 'save-feedback-busy',
+        ok: 'save-feedback-ok',
+        warn: 'save-feedback-warn',
+        bad: 'save-feedback-bad',
     });
 
     /**
@@ -42,7 +49,7 @@ const BossModAgentRecovery = (() => {
     function createFeedback(form) {
         const element = document.createElement('div');
         element.id = 'agent-save-feedback';
-        element.className = 'hidden mt-3 p-3 rounded-lg text-sm';
+        element.className = 'hidden save-feedback';
         element.setAttribute('role', 'status');
         element.setAttribute('aria-live', 'polite');
         // The whole line is one message; a partial read of a changed sentence
@@ -54,10 +61,10 @@ const BossModAgentRecovery = (() => {
             element,
             say(tone, text) {
                 if (!TONES[tone]) throw new Error(`[agent-recovery] unknown tone "${tone}"`);
-                element.className = `mt-3 p-3 rounded-lg text-sm ${TONES[tone]}`;
+                element.className = `save-feedback ${TONES[tone]}`;
                 element.textContent = text;
             },
-            hide() { element.className = 'hidden'; },
+            hide() { element.className = 'hidden save-feedback'; },
         };
     }
 

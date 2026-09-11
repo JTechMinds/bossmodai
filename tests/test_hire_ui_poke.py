@@ -97,10 +97,16 @@ def _api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def test_casual_hire_shows_color_under_description() -> None:
     panel = _form_markup()
     assert 'name="description"' in panel
-    assert ">Color</label>" in panel
-    assert panel.index('name="description"') < panel.index(">Color</label>")
-    assert panel.index(">Color</label>") < panel.index('id="advanced-toggle"')
-    assert panel.index(">Color</label>") < panel.index('name="done_fail_bar"')
+    # `<legend>`, not `<label>`: Color is a radio GROUP, and the heading over
+    # one is a legend inside its fieldset. It was a <label> pointing at no
+    # control at all — the marker moved, the ordering property did not.
+    # `<legend>`, not `<label>`: Color is a radio GROUP, and the heading over
+    # one is a legend inside its fieldset. It was a <label> pointing at no
+    # control at all — the marker moved, the ordering property did not.
+    assert ">Color</legend>" in panel
+    assert panel.index('name="description"') < panel.index(">Color</legend>")
+    assert panel.index(">Color</legend>") < panel.index('id="advanced-toggle"')
+    assert panel.index(">Color</legend>") < panel.index('name="done_fail_bar"')
     assert panel.index('id="advanced-toggle"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
     assert "runtime core, prompt template, and desk" in panel
