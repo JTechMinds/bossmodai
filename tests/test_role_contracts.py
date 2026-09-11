@@ -27,6 +27,7 @@ from core.agent_loop.role_contracts import (
     specialty_family,
     suggest_finish_line,
 )
+from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT
 from core.llm import context_preview
 from db.unified_feed import classify_category
 from core.bm_cli.virtual_fs import resolve_cli_path
@@ -841,6 +842,8 @@ def test_preview_bundle_injects_role_contract() -> None:
     assert "request_host_access" in core_msgs[0]
     assert "do not ask the operator for verbal yes/no" in core_msgs[0]
     assert "stop and ask in chat" not in core_msgs[0]
+    assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
+    assert AUDIENCE_SOFT_JUDGMENT in contents
 
 
 def test_world_feedback_is_a_task_feed_event() -> None:
