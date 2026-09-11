@@ -121,7 +121,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Agent packs (catalog browse + import; no store backend) ──
     ("agent_pack_catalog_repo", "JTechMinds/BossMod_AgentMP", "agent_packs"),
     ("agent_pack_catalog_path", "packs", "agent_packs"),
-    ("agent_pack_catalog_pin", "dcc94ca", "agent_packs"),
+    ("agent_pack_catalog_pin", "8a0d68a", "agent_packs"),
     ("agent_pack_url_allowlist", "", "agent_packs"),
 
     # ── System prompt template (advanced) ──
@@ -140,8 +140,8 @@ _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
 
 
 # Prior shipped defaults. Bumped on init when the stored pin is still one of
-# these so Browse picks up catalog ``summary`` without overwriting a custom pin.
-_PREVIOUS_DEFAULT_CATALOG_PINS = frozenset({"3c1e0a6"})
+# these so Browse picks up the seven-pack catalog without overwriting a custom pin.
+_PREVIOUS_DEFAULT_CATALOG_PINS = frozenset({"3c1e0a6", "dcc94ca"})
 
 
 def seed_defaults() -> None:

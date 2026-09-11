@@ -1182,11 +1182,12 @@ def test_seeded_catalog_settings_exist() -> None:
     assert config.get("agent_pack_catalog_path") == DEFAULT_CATALOG_PATH
     assert config.get("agent_pack_catalog_pin") == DEFAULT_CATALOG_PIN
     assert config.get("agent_pack_url_allowlist") is None
-    assert DEFAULT_CATALOG_PIN == "dcc94ca"
+    assert DEFAULT_CATALOG_PIN == "8a0d68a"
 
 
-def test_previous_default_catalog_pin_is_bumped() -> None:
-    db.set_setting("agent_pack_catalog_pin", "3c1e0a6", "agent_packs")
+@pytest.mark.parametrize("previous_pin", ["3c1e0a6", "dcc94ca"])
+def test_previous_default_catalog_pin_is_bumped(previous_pin: str) -> None:
+    db.set_setting("agent_pack_catalog_pin", previous_pin, "agent_packs")
     from db.settings import seed_defaults
 
     seed_defaults()
