@@ -101,4 +101,13 @@
    * the two icon-only targets in the window are now one size. */
   --bar: 48px;
   --dock: 52px;
+
+  /* The third horizontal, and the only one that is not always there: below
+   * 768px the place nav leaves the header and becomes a fixed bottom bar, so
+   * every frame that scrolls under it has to pad for it and the bar itself is
+   * sized by it. Derived rather than chosen — a 48px item, comfortably over
+   * the 24px floor (SC 2.5.8), inside 4px of nav padding top and bottom.
+   * It is a token for the reason --bar above is one: this was three copies of
+   * the same number, and three copies are how they drift apart. */
+  --tabbar: 56px;
 }

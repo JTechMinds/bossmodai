@@ -25,18 +25,22 @@ const SettingsView = (() => {
 
     // ─── Open / Close ───
 
+    /**
+     * Which frame is on screen is one fact with one owner: `data-view` on <body>.
+     * shell.css reads it; nothing in JS touches `display` or the panels' classes.
+     *
+     * @param {'app'|'settings'} view
+     */
+    function setView(view) {
+        document.body.dataset.view = view;
+    }
+
     function open(sectionId, options) {
         if (typeof sectionId === 'string' && sectionId) {
             activeSection = sectionId;
         }
         sectionOptions = options && typeof options === 'object' ? options : null;
-        const mainLayout = document.getElementById('main-layout');
-        const settingsLayout = document.getElementById('settings-layout');
-        const mobileSheet = document.getElementById('mobile-sheet');
-
-        mainLayout.classList.add('hidden');
-        settingsLayout.classList.remove('hidden');
-        if (mobileSheet) mobileSheet.classList.add('hidden');
+        setView('settings');
         isOpen = true;
 
         renderNav();
@@ -44,13 +48,7 @@ const SettingsView = (() => {
     }
 
     function close() {
-        const mainLayout = document.getElementById('main-layout');
-        const settingsLayout = document.getElementById('settings-layout');
-        const mobileSheet = document.getElementById('mobile-sheet');
-
-        settingsLayout.classList.add('hidden');
-        mainLayout.classList.remove('hidden');
-        if (mobileSheet) mobileSheet.classList.remove('hidden');
+        setView('app');
         isOpen = false;
         // Model availability moved from app.js to shell/banners.js; connecting
         // or removing a model here is the one change the banner cannot learn

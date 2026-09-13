@@ -29,6 +29,14 @@
   --rail: 56px;
 }
 
+/* ─── The Settings takeover ───
+   Which frame is on screen is one fact, so one attribute carries it and both
+   rules read it. Written as `body[…] #id` — (1,1,1) — on purpose: #main-layout
+   above owns `display`, and neither a class nor a bare attribute selector can
+   outrank an id. This shape also survives a future #main-layout[data-*] rule. */
+body[data-view="app"] #settings-layout { display: none; }
+body[data-view="settings"] #main-layout { display: none; }
+
 .app-place {
   min-width: 0;
   overflow: auto;
@@ -583,8 +591,14 @@
   #main-layout[data-context="on"] {
     grid-template-columns: minmax(0, 1fr);
     /* Room for the fixed tab bar, so the last row of a place is reachable. */
-    padding-bottom: 56px;
+    padding-bottom: var(--tabbar);
   }
+
+  /* The takeover replaces the grid above rather than living inside it, so it
+     needs the same runway: the place nav is `position: fixed` at this width and
+     the takeover's last row would sit under it. Same token as the grid above
+     and as the bar itself, so there is nothing here to keep in step by hand. */
+  #settings-layout { padding-bottom: var(--tabbar); }
 
   #main-layout > .app-roster { display: none; }
 
@@ -606,7 +620,7 @@
     display: flex;
     justify-content: stretch;
     gap: 0;
-    min-height: 56px;
+    min-height: var(--tabbar);
     padding: 4px;
     border-top: 1px solid var(--line);
     background: var(--panel);

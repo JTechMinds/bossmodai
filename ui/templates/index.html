@@ -62,7 +62,7 @@
     <link rel="stylesheet" href="{{ static_url('css/marketplace.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
 </head>
-<body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden">
+<body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden" data-view="app">
 
     <!-- ═══════════════ HEADER ═══════════════ -->
     <!-- Brand, place nav, bell, Pause, and gear are rendered by shell/header.js. -->
@@ -87,8 +87,12 @@
         — chat Send stays disabled until a connection exists.
     </div>
 
-    <!-- ═══════════════ SETTINGS VIEW (full-screen takeover, hidden by default) ═══════════════ -->
-    <div id="settings-layout" class="flex-1 flex overflow-hidden hidden">
+    <!-- ═══════════════ SETTINGS VIEW (full-screen takeover) ═══════════════ -->
+    <!-- No `hidden` class: which of the two frames is on screen is <body>'s
+         data-view and shell.css reads it, so a second switch here would be a
+         second source of truth. The served markup already says "app" and
+         shell.css is linked in <head>, so the first paint is correct. -->
+    <div id="settings-layout" class="flex-1 flex overflow-hidden">
         <!-- Settings nav -->
         <div class="w-56 shrink-0 bg-bm-surface border-r border-bm-border p-3 overflow-y-auto">
             <div id="settings-nav" class="space-y-1"></div>

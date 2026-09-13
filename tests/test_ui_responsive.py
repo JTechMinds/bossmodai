@@ -57,6 +57,20 @@ def _media_block(css: str, query: str) -> str:
     raise AssertionError(f"unterminated @media {query}")
 
 
+def _resolve_tokens(css: str) -> str:
+    """Inline every `var(--x)` that tokens.css defines, as a number.
+
+    The scan below reads sizes off the stylesheet, so a dimension moved into
+    tokens.css would otherwise drop out of it — the rule would still be there
+    and the floor would simply stop being checked. Resolving first is what
+    keeps the net as wide as `test_touch_targets_meet_the_minimum` says it is.
+    """
+    tokens = dict(re.findall(
+        r"--([\w-]+)\s*:\s*([^;]+);", (CSS / "tokens.css").read_text(encoding="utf-8")))
+    return re.sub(r"var\(--([\w-]+)\)",
+                  lambda match: tokens.get(match.group(1), match.group(0)).strip(), css)
+
+
 def _harness() -> dict:
     result = subprocess.run(
         ["node", str(HARNESS)] + [str(path) for path in HARNESS_MODULES],
@@ -161,7 +175,7 @@ def test_touch_targets_meet_the_minimum() -> None:
     inside the <768px block sets is checked, so a later tweak has to defend
     itself rather than slip through.
     """
-    narrow = _media_block(_shell_css(), BREAKPOINTS[1])
+    narrow = _resolve_tokens(_media_block(_shell_css(), BREAKPOINTS[1]))
     sized = re.findall(r"\b(min-width|min-height|width|height)\s*:\s*([0-9.]+)px", narrow)
     assert sized, "the narrow layout sets no sizes at all"
     for prop, value in sized:
