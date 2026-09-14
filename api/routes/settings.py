@@ -159,6 +159,22 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
     return serialize_connection(conn)
 
 
+@router.post("/connections/{connection_id}/duplicate", status_code=201)
+async def duplicate_connection(connection_id: str):
+    """Copy a connection server-side and return the copy, redacted as usual.
+
+    There is no request body because there is nothing the caller could send:
+    the API key is the one field a copy must carry and the one field the
+    browser has never had — responses only ever expose ``has_api_key`` and the
+    last four. A client-side duplicate would have to re-ask for the key or
+    write a keyless row, so the copy is made where the key already is.
+    """
+    conn = db.duplicate_connection(connection_id)
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+    return serialize_connection(conn)
+
+
 @router.delete("/connections/{connection_id}", status_code=204)
 async def delete_connection(connection_id: str):
     if not db.delete_connection(connection_id):

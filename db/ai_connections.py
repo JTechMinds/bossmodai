@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from core.models import AIConnection
@@ -141,3 +141,74 @@ def delete_connection(connection_id: str) -> bool:
         return False
     execute("DELETE FROM ai_connections WHERE id = $1", [connection_id])
     return True
+
+
+def _copy_name(source_name: str, taken: Collection[str]) -> str:
+    """Derive a free name for a copy: "X (copy)", then "X (copy 2)", ...
+
+    ``taken`` is a parameter rather than a ``list_connections()`` call inside,
+    which makes this a pure function of its two inputs: the numbering rule is
+    pinned by a test with no database, and the caller keeps the one read it
+    already needs. The first free suffix wins, so a deleted "(copy 2)" is
+    reused instead of being climbed past.
+
+    ``ai_connections.name`` has no ``UNIQUE`` constraint — two rows may share a
+    name and nothing breaks. This is for the operator's eyes, not for
+    correctness, which is why a collision picks the next number rather than
+    raising.
+
+    Args:
+        source_name: The name being copied from, verbatim.
+        taken: The names already in use. Membership is all that is read, so a
+            set is the cheap thing to pass.
+
+    Returns:
+        A name not in ``taken``.
+    """
+    candidate = f"{source_name} (copy)"
+    suffix = 2
+    while candidate in taken:
+        candidate = f"{source_name} (copy {suffix})"
+        suffix += 1
+    return candidate
+
+
+def duplicate_connection(connection_id: str) -> AIConnection | None:
+    """Copy a connection — base URL, API key, model and extra_body — under a new name.
+
+    The operator duplicates to change one field (usually ``extra_body``: the
+    same provider and key, a different thinking mode), so every field is
+    carried verbatim and the edit form is where the difference is made.
+
+    This is glue on purpose. ``get_connection_by_id`` already decrypts and
+    ``create_connection`` already encrypts, so going through both means there is
+    exactly one place a key is unwrapped and one place it is wrapped. Its own
+    INSERT would be a second encryption path that looks right until the day the
+    wrapping changes under it — the bug ``restore_connections`` documents at
+    length. The new row therefore also takes its ``id`` and ``created_at`` from
+    the INSERT defaults: a copy is a new connection, where a restore is the
+    same one coming back.
+
+    Args:
+        connection_id: The connection to copy from.
+
+    Returns:
+        The newly created copy, or ``None`` when ``connection_id`` matches no
+        row — the same shape ``get_connection_by_id`` and ``update_connection``
+        return, so a route can map it to a 404 the same way.
+
+    Failure modes:
+        Propagates ``sqlite3.Error`` from the read or the insert, and the
+        ``RuntimeError`` ``create_connection`` raises if the new row cannot be
+        read back. Nothing is written when the source is missing.
+    """
+    source = get_connection_by_id(connection_id)
+    if source is None:
+        return None
+    return create_connection(
+        name=_copy_name(source.name, {conn.name for conn in list_connections()}),
+        api_base_url=source.api_base_url,
+        api_key=source.api_key,
+        model=source.model,
+        extra_body=source.extra_body,
+    )

@@ -2,7 +2,7 @@
  * BossMod AI — Settings → AI Connections, the connection list.
  *
  * Reads `/api/connections` and renders one card per provider connection, with
- * the edit and delete actions. Creating and editing one is
+ * the edit, duplicate and delete actions. Creating and editing one is
  * settings-connections-form.js: this file reads, that file writes, which is
  * the seam the file was split at in Phase 3C.
  *
@@ -75,6 +75,11 @@ const ConnectionsSection = (() => {
                                     title="Edit">
                                 <i data-lucide="pencil" class="w-4 h-4 text-bm-muted"></i>
                             </button>
+                            <button data-duplicate-conn="${BossModFormat.escapeAttribute(conn.id)}"
+                                    class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                                    title="Duplicate">
+                                <i data-lucide="copy" class="w-4 h-4 text-bm-muted"></i>
+                            </button>
                             <button data-delete-conn="${BossModFormat.escapeAttribute(conn.id)}"
                                     class="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
                                     title="Delete">
@@ -105,6 +110,36 @@ const ConnectionsSection = (() => {
                     return;
                 }
                 openForm(await res.json());
+            });
+        });
+
+        container.querySelectorAll('[data-duplicate-conn]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                // apiFetchOk for the mutation, as every other write in the
+                // settings tree does; the catch is what turns its throw into
+                // the same answer Edit gives above, because a detected failure
+                // that does nothing leaves the operator clicking a button that
+                // never replies. Parsing happens past the catch so a bad body
+                // cannot be reported as a failed duplicate.
+                let res;
+                try {
+                    res = await apiFetchOk(
+                        `/api/connections/${btn.dataset.duplicateConn}/duplicate`,
+                        { method: 'POST' },
+                    );
+                } catch {
+                    showRowError(container, 'This connection could not be duplicated.');
+                    return;
+                }
+                const created = await res.json();
+                // The copy is identical to its source, so the list alone would
+                // leave the operator hunting for which row is new. Repaint so
+                // the copy exists behind the form, then open it: the rename and
+                // the one field they came to change are the point of the copy.
+                await renderList();
+                openForm(created);
+                // No refreshModelAvailability() here, unlike Delete: a copy of a
+                // connection cannot change whether a usable model exists.
             });
         });
 

@@ -290,6 +290,7 @@ from db.activities import (
 from db.ai_connections import (
     create_connection,
     delete_connection,
+    duplicate_connection,
     get_connection_by_id,
     list_connections,
     restore_connections,
@@ -525,6 +526,7 @@ __all__ = [
     # AI Connections
     "create_connection",
     "delete_connection",
+    "duplicate_connection",
     "get_connection_by_id",
     "list_connections",
     "restore_connections",

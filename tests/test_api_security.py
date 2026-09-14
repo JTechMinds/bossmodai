@@ -104,6 +104,38 @@ def test_settings_and_connections_redact_secrets() -> None:
     assert created.json()["api_key_last4"] == "zz99"
 
 
+def test_duplicate_connection_returns_a_redacted_copy() -> None:
+    """The copy carries the key server-side and still never ships it.
+
+    Duplicating is the one write that moves a stored API key from one row to
+    another without the operator re-typing it, so it is also the one write that
+    could hand the plaintext back in its 201 body.
+    """
+    conn = db.create_connection(
+        name="Duplicate Source",
+        api_base_url="https://api.example.test/v1",
+        api_key=CONNECTION_KEY,
+        model="demo-model",
+    )
+
+    client = _client()
+    headers = _auth_headers()
+
+    copied = client.post(f"/api/connections/{conn.id}/duplicate", headers=headers)
+    assert copied.status_code == 201
+    assert CONNECTION_KEY not in copied.text
+    assert "SECRETVALUE" not in copied.text
+    body = copied.json()
+    assert body["id"] != conn.id
+    assert body["name"] == "Duplicate Source (copy)"
+    assert body["has_api_key"] is True
+    assert body["api_key_last4"] == "abcd"
+    assert "api_key" not in body
+
+    missing = client.post("/api/connections/no-such-connection/duplicate", headers=headers)
+    assert missing.status_code == 404
+
+
 def test_unauthenticated_destructive_route_is_rejected() -> None:
     client = _client()
     res = client.post("/api/settings/reseed")

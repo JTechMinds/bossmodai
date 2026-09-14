@@ -105,6 +105,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/connections/{connection_id}", "get_connection"),
     (("POST",), "/api/connections", "create_connection"),
     (("PATCH",), "/api/connections/{connection_id}", "update_connection"),
+    (("POST",), "/api/connections/{connection_id}/duplicate", "duplicate_connection"),
     (("DELETE",), "/api/connections/{connection_id}", "delete_connection"),
     (("POST",), "/api/connections/test", "test_connection"),
     (("GET",), "/api/personalities", "list_personalities"),
@@ -126,7 +127,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 102
+    assert len(got) == 103
 
 
 def test_from_api_routes_import_router_still_works() -> None:
