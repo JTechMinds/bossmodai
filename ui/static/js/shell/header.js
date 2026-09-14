@@ -258,9 +258,16 @@ const BossModHeader = (() => {
             type: 'button',
             // A toggle: the gear both opens and closes the Settings takeover,
             // so its name stays neutral rather than lying in one direction.
+            // `aria-expanded` is where the direction is told instead, the same
+            // way the rail toggle above tells it.
             'aria-label': 'Settings',
+            'aria-expanded': 'false',
             onclick: () => openSettings(),
         }, h('i', { 'data-lucide': 'settings', 'aria-hidden': 'true' }));
+
+        function applyGear(open) {
+            gear.setAttribute('aria-expanded', open === true ? 'true' : 'false');
+        }
 
         el.append(railToggle, brand, nav, h('div', { class: 'header-actions' },
             errorEl, bellLive, bell, pause, gear));
@@ -300,6 +307,7 @@ const BossModHeader = (() => {
         applyNeeds(state.needs);
         applyPaused(state.runtimePaused);
         applyRail(state.railCollapsed);
+        applyGear(state.settingsOpen);
         paintIcons();
         void loadCompanyName();
 
@@ -310,6 +318,10 @@ const BossModHeader = (() => {
         // rail state AFTER the header mounts, and a toggle that announces
         // "expanded" beside a collapsed rail is worse than one with no state.
         disposers.push(store.subscribe((s) => s.railCollapsed, applyRail));
+        // Subscribed for the same reason: two other modules open a settings
+        // section directly, so the click is not the only way the takeover
+        // opens and a gear told only by its own handler would lie.
+        disposers.push(store.subscribe((s) => s.settingsOpen, applyGear));
 
         return () => { disposers.splice(0).forEach((off) => off()); };
     }

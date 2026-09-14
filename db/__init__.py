@@ -292,6 +292,7 @@ from db.ai_connections import (
     delete_connection,
     get_connection_by_id,
     list_connections,
+    restore_connections,
     update_connection,
 )
 
@@ -526,6 +527,7 @@ __all__ = [
     "delete_connection",
     "get_connection_by_id",
     "list_connections",
+    "restore_connections",
     "update_connection",
     # AI Personalities
     "create_personality",

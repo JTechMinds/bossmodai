@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from core.models import AIConnection
@@ -9,6 +10,12 @@ from db.crud import build_update, execute, fetch_all, fetch_one, insert_returnin
 from db.secret_store import decrypt_secret, encrypt_secret
 
 _COLUMNS = "id, name, api_base_url, api_key, model, extra_body, created_at"
+
+# The same names as a sequence. `restore_connections` writes a full row, so it
+# needs the column list and its values to stay in step; reading both off this
+# makes reordering _COLUMNS reorder them together instead of silently pairing
+# each value with its neighbour's column.
+_COLUMN_NAMES = tuple(column.strip() for column in _COLUMNS.split(","))
 
 _VALID_COLUMNS = {"name", "api_base_url", "api_key", "model", "extra_body"}
 
@@ -66,6 +73,57 @@ def list_connections() -> list[AIConnection]:
         )
         if (decrypted := _decrypt_connection(connection)) is not None
     ]
+
+
+def restore_connections(connections: Sequence[AIConnection]) -> int:
+    """Re-insert connections captured before the database was recreated.
+
+    The application reseed deletes the database file and rebuilds it from the
+    schema; a provider's base URL and API key are the one thing an operator
+    cannot get back from inside the app afterwards, so the reseed carries them
+    across. ``id`` and ``created_at`` are written as given rather than
+    regenerated: nothing references connection ids (agents name models, not
+    connections), so this buys honesty — the same connections, not copies of
+    them — not referential integrity.
+
+    Args:
+        connections: Rows as ``list_connections`` returned them, so each
+            ``api_key`` is plaintext. Keys are re-wrapped through the same
+            ``encrypt_secret`` path ``create_connection`` uses; there is no
+            second encryption scheme and the data key survives the reset.
+
+    Returns:
+        The number of rows inserted. An empty sequence inserts nothing and
+        returns ``0``.
+
+    Failure modes:
+        Raises ``sqlite3.Error`` if the schema is not there yet or an ``id``
+        is already taken — so this must run after ``init_db()`` has rebuilt
+        the schema and against a table that does not already hold these rows.
+        It is deliberately not defensive: a reseed that silently dropped a key
+        it could not write back would be worse than one that fails.
+    """
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(_COLUMN_NAMES)))
+    restored = 0
+    for connection in connections:
+        # Keyed by column name, then read out in _COLUMN_NAMES order: a column
+        # this misses raises KeyError rather than shifting every later value one
+        # place to the left, which SQLite would accept without complaint.
+        values = {
+            "id": connection.id,
+            "name": connection.name,
+            "api_base_url": connection.api_base_url,
+            "api_key": encrypt_secret(connection.api_key),
+            "model": connection.model,
+            "extra_body": connection.extra_body,
+            "created_at": connection.created_at,
+        }
+        execute(
+            f"INSERT INTO ai_connections ({_COLUMNS}) VALUES ({placeholders})",
+            [values[column] for column in _COLUMN_NAMES],
+        )
+        restored += 1
+    return restored
 
 
 def update_connection(connection_id: str, **fields: Any) -> AIConnection | None:

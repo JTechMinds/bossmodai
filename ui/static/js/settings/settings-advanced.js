@@ -69,7 +69,7 @@ const AdvancedSystemSection = (() => {
                     <div class="flex items-center justify-between">
                         <div>
                             <h3 class="text-sm font-semibold">Recreate Application DB</h3>
-                            <p class="text-xs text-bm-muted mt-0.5">Brand-new-app reset. Rebuild the entire database from the current schema and seed data. <strong class="text-red-600">This clears all agent Desk files (/me).</strong> Projects (/projects) are preserved.</p>
+                            <p class="text-xs text-bm-muted mt-0.5">Brand-new-app reset. Rebuild the entire database from the current schema and seed data. <strong class="text-red-600">This clears all agent Desk files (/me).</strong> Projects (/projects) and saved AI connections are preserved.</p>
                         </div>
                         <button id="btn-reseed-application"
                                 class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg
@@ -185,7 +185,7 @@ const AdvancedSystemSection = (() => {
         });
 
         document.getElementById('btn-reseed-application').addEventListener('click', async () => {
-            if (!confirm('Recreate the entire application database from the current schema? This deletes agents, tasks, chat history, diagnostics, runtime state, and clears agent Desk files (/me). Project files (/projects) are preserved.')) return;
+            if (!confirm('Recreate the entire application database from the current schema? This deletes agents, tasks, chat history, diagnostics, runtime state, and clears agent Desk files (/me). Project files (/projects) and saved AI connections are preserved.')) return;
             try {
                 const res = await apiFetch('/api/settings/reseed-application', { method: 'POST' });
                 if (!res.ok) throw new Error();

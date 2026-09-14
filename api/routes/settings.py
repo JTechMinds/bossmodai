@@ -55,13 +55,14 @@ async def reseed_settings():
 async def reseed_application():
     """Recreate the brand-new application database from the current schema.
 
-    This clears DB state and agent desk workspaces (/me). Shared project files (/projects) are preserved.
+    This clears DB state and agent desk workspaces (/me). Shared project files
+    (/projects) and saved AI connections are preserved.
     """
     await runtime_services.reseed_application_data()
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
         event="application_reseeded",
-        detail="Application data reseeded from the current schema defaults (project files preserved)",
+        detail="Application data reseeded from the current schema defaults (project files and AI connections preserved)",
     )
     return {"status": "ok", "detail": "Application database recreated from current schema defaults"}
 

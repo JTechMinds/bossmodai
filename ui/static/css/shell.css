@@ -37,6 +37,37 @@
 body[data-view="app"] #settings-layout { display: none; }
 body[data-view="settings"] #main-layout { display: none; }
 
+/* ─── The takeover's own bar ───
+   A full-screen view that hides the frame has to say where it is and carry
+   the way out itself; marketplace.js states the same rule for its takeover.
+   --bar is the line the app header, the conversation chrome and the rail's
+   search row all end on, so this sits ON that rhythm rather than near it. */
+.settings-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--bar);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* 15px/600 is .conversation-title's size: the two things that name the
+   surface you are looking at should not be two different sizes. */
+.settings-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+
+/* min-height: 0 is what actually lets the two columns scroll — without it the
+   body grows to its content and the takeover overflows instead. Same fix, and
+   the same reason, as .modal-body in overlays.css. */
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
 .app-place {
   min-width: 0;
   overflow: auto;

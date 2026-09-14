@@ -34,6 +34,7 @@ const BossModShell = (() => {
         threads: [],
         rosterQuery: '',
         railCollapsed: false,
+        settingsOpen: false,
         runtimePaused: false,
         hasUsableModel: false,
         connection: 'connecting',
@@ -89,6 +90,13 @@ const BossModShell = (() => {
             if (SettingsView.isOpen()) SettingsView.close();
         }
 
+        // The gear announces whether the takeover is open, and it cannot learn
+        // that from its own click: context/agent-form.js and places/files/
+        // host-roots.js both open a section directly. SettingsView notifies
+        // from the one place every door funnels through, so the store cannot
+        // drift from what is on screen.
+        SettingsView.onViewChange((open) => store.setState({ settingsOpen: open }));
+
         // The frame is mounted for the lifetime of the page and never swapped,
         // so these disposers are deliberately not retained. Only places — which
         // the shell does swap — need their subscriptions drained.
@@ -137,6 +145,9 @@ const BossModShell = (() => {
             onEscape: closeSettings,
         });
         requireElement('no-model-banner-settings').addEventListener('click', toggleSettings);
+        // The third door out of the takeover. Same function as the gear and
+        // Escape, so the three cannot disagree about what closing means.
+        requireElement('settings-dismiss').addEventListener('click', closeSettings);
         // Below 1200px the grid sheds a column; these are the buttons that
         // open what it shed (spec 10). Mounted after the header so they can be
         // inserted into it.

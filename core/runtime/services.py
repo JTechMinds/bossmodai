@@ -96,10 +96,26 @@ class RuntimeServices:
             await self._stop_unlocked()
 
     async def reseed_application_data(self) -> None:
-        """Recreate the application database from the current schema and restart services."""
+        """Recreate the application database from the current schema and restart services.
+
+        AI connections are carried across: a base URL and an API key are the one
+        thing the operator cannot get back from inside the app. Everything else —
+        agents, tasks, chat history, personalities — is what the reseed is for.
+
+        The capture has to happen here rather than inside ``reset_database()``,
+        which stays dumb and keeps meaning "recreate the file", and it has to
+        happen before it: afterwards the rows are gone and the connection closed.
+        Restoring lands after the schema is rebuilt and before ``config.reload()``
+        so the runtime boots with the connections already in place. Nothing
+        guards the capture — a reseed that could not read the keys must fail with
+        the old database still on disk rather than destroy them.
+        """
         async with self._guard():
             await self._stop_unlocked()
+            preserved = db.list_connections()
             db.reset_database()
+            restored = db.restore_connections(preserved)
+            logger.info("Application reseeded; %d AI connection(s) preserved", restored)
             config.reload()
             await self._start_unlocked()
 

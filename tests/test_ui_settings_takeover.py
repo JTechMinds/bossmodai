@@ -294,3 +294,86 @@ def test_open_and_close_write_the_view_and_nothing_else() -> None:
     assert payload["closeRefreshesModelAvailability"] is True
     assert payload["optionsReachTheSection"] is True
     assert payload["optionsAreOneShot"] is True
+    assert payload["listenerSeesOpen"] is True
+    assert payload["listenerSeesClose"] is True
+    assert payload["disposerStopsTheListener"] is True
+
+
+def test_the_takeover_carries_its_own_title_and_exit() -> None:
+    """A full-screen view that hides the frame says where it is and offers the
+    way out in itself.
+
+    marketplace.js states the rule for its own takeover — it "carries its exit
+    in its own top-right corner" — and Settings was the one surface in the app
+    obeying neither half of it. The gear and Escape both worked; both were
+    invisible, which is not the same as being available.
+    """
+    html = HTML.read_text(encoding="utf-8")
+
+    layout = re.search(r'<div id="settings-layout"[^>]*class="([^"]*)"', html)
+    assert layout, 'index.html no longer declares id="settings-layout"'
+    assert "flex-col" in layout.group(1).split(), (
+        "the takeover must stack its bar above its two columns"
+    )
+
+    title = re.search(r'<h2 class="settings-title">([^<]+)</h2>', html)
+    assert title, "the takeover declares no title, so it never says where you are"
+    assert title.group(1).strip() == "Settings"
+
+    dismiss = re.search(r"<button[^>]*id=\"settings-dismiss\"[^>]*>", html, re.S)
+    assert dismiss, "the takeover carries no visible exit"
+    assert 'aria-label="Close settings"' in dismiss.group(0), dismiss.group(0)
+    assert 'type="button"' in dismiss.group(0), dismiss.group(0)
+
+
+def test_the_exit_shares_the_gear_and_escape_entry_point() -> None:
+    """Three doors out, one function behind them.
+
+    shell.js already says the gear and Escape share an entry point "so they
+    cannot disagree". The ✕ is the third door and goes through the same one
+    rather than reaching for SettingsView.close() on its own.
+    """
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    wiring = re.search(
+        r"requireElement\('settings-dismiss'\)\s*\.addEventListener\('click',\s*(\w+)\)",
+        shell)
+    assert wiring, "shell.js never wires #settings-dismiss to anything"
+    assert wiring.group(1) == "closeSettings", (
+        f"the ✕ calls {wiring.group(1)} rather than the shared closeSettings"
+    )
+
+
+def test_the_gear_reports_whether_the_takeover_is_open() -> None:
+    """The rail toggle already announces its state; the gear did not.
+
+    So a screen reader could not tell Settings was open — the same invisibility
+    the ✕ fixes for sighted users. The state is subscribed rather than set on
+    click because two other modules open the takeover directly.
+    """
+    header = (JS / "shell" / "header.js").read_text(encoding="utf-8")
+    gear = re.search(r"class:\s*'header-icon-btn header-gear'.*?\}\)", header, re.S)
+    assert gear, "header.js no longer builds the gear"
+    assert "aria-expanded" in gear.group(0), "the gear reports no open/closed state"
+    assert re.search(r"store\.subscribe\(\(s\) => s\.settingsOpen", header), (
+        "the gear's state is set once rather than kept in step with the store"
+    )
+
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    assert "settingsOpen: false" in shell, "the store carries no settingsOpen"
+    assert "SettingsView.onViewChange(" in shell, (
+        "nothing projects the takeover's state onto the store, so it will drift"
+    )
+
+
+def test_the_takeover_bar_sits_on_the_apps_rhythm_line() -> None:
+    """--bar is the line the header, the conversation chrome and the rail's
+    search row all end on. A settings bar NEAR that line rather than on it is
+    exactly the drift --bar was introduced to stop.
+    """
+    css = _shell_css()
+    assert "var(--bar)" in _declarations(css, ".settings-head"), (
+        "the takeover's bar is not sized by --bar"
+    )
+    assert re.search(r"min-height:\s*0", _declarations(css, ".settings-body")), (
+        "without min-height: 0 the columns grow past the takeover instead of scrolling"
+    )

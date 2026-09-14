@@ -5,9 +5,10 @@
  * Whether the takeover is VISIBLE is the cascade's answer and is asserted from
  * shell.css, because a fake DOM has no cascade to ask. What a fake DOM can
  * prove is the half JS still owns: that open() and close() write that one
- * attribute and nothing else, that `isOpen()` agrees with what they wrote, and
- * that the section options an opener hands in reach the section once and are
- * then gone.
+ * attribute and nothing else, that `isOpen()` agrees with what they wrote, that
+ * the section options an opener hands in reach the section once and are then
+ * gone, and that every transition reaches an onViewChange listener — which is
+ * how the header's gear knows what it is announcing.
  */
 const fs = require("fs");
 const { FakeEl, installDom } = require("./js_fake_dom.cjs");
@@ -108,6 +109,11 @@ async function main() {
         throw new Error("something set data-view before open() was ever called");
     }
 
+    // The header's gear is told the takeover's state rather than deducing it
+    // from its own click, so what a listener sees has to be every transition.
+    const seen = [];
+    const stopWatching = SettingsView.onViewChange((open) => { seen.push(open); });
+
     // ─── 2. Opening writes 'settings' and renders the default section ───
 
     SettingsView.open();
@@ -116,6 +122,8 @@ async function main() {
         throw new Error(`open() left data-view at ${documentStub.body.dataset.view}`);
     }
     if (SettingsView.isOpen() !== true) throw new Error("open() must report isOpen()");
+    const listenerSeesOpen = seen.length === 1 && seen[0] === true;
+    if (!listenerSeesOpen) throw new Error(`after open() a listener saw ${JSON.stringify(seen)}`);
     const rendersTheDefaultSection = callsFor("ConnectionsSection").length === 1;
     if (!rendersTheDefaultSection) {
         throw new Error(`Connections rendered ${callsFor("ConnectionsSection").length} times`);
@@ -136,6 +144,8 @@ async function main() {
         throw new Error(`close() left data-view at ${documentStub.body.dataset.view}`);
     }
     if (SettingsView.isOpen() !== false) throw new Error("close() must report isOpen()");
+    const listenerSeesClose = seen.length === 2 && seen[1] === false;
+    if (!listenerSeesClose) throw new Error(`after close() a listener saw ${JSON.stringify(seen)}`);
     const closeRefreshesModelAvailability = refreshCount === 1;
     if (!closeRefreshesModelAvailability) {
         throw new Error(`refreshModelAvailability ran ${refreshCount} times`);
@@ -166,9 +176,25 @@ async function main() {
         throw new Error(`re-entering switchSection got ${JSON.stringify(spent.map((c) => c.options))}`);
     }
 
+    // ─── 5. The disposer actually detaches ───
+    //
+    // The frame never unmounts, so nothing in the app calls this today. It is
+    // the contract onViewChange returns, and a disposer that does not dispose
+    // is worse than none: the leak only shows up under a second listener.
+    if (seen.length !== 3) throw new Error(`re-opening pushed ${seen.length} transitions`);
+    stopWatching();
+    SettingsView.close();
+    const disposerStopsTheListener = seen.length === 3;
+    if (!disposerStopsTheListener) {
+        throw new Error(`a disposed listener still saw ${JSON.stringify(seen)}`);
+    }
+
     process.stdout.write(JSON.stringify({
         ok: true,
         noViewBeforeOpen,
+        listenerSeesOpen,
+        listenerSeesClose,
+        disposerStopsTheListener,
         openSetsTheView,
         rendersTheDefaultSection,
         closeSetsTheView,

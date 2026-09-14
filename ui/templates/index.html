@@ -92,13 +92,27 @@
          data-view and shell.css reads it, so a second switch here would be a
          second source of truth. The served markup already says "app" and
          shell.css is linked in <head>, so the first paint is correct. -->
-    <div id="settings-layout" class="flex-1 flex overflow-hidden">
-        <!-- Settings nav -->
-        <div class="w-56 shrink-0 bg-bm-surface border-r border-bm-border p-3 overflow-y-auto">
-            <div id="settings-nav" class="space-y-1"></div>
+    <div id="settings-layout" class="flex-1 flex flex-col overflow-hidden">
+        <!-- The takeover's own bar. A full-screen view that hides the frame has
+             to say where it is and carry the way out itself — the rule
+             marketplace.js states for its own takeover, and the one Settings
+             obeyed neither half of. The gear and Escape still close it; this is
+             the door you can see. -->
+        <div class="settings-head">
+            <h2 class="settings-title">Settings</h2>
+            <button type="button" id="settings-dismiss" class="header-icon-btn"
+                    aria-label="Close settings">
+                <i data-lucide="x" aria-hidden="true"></i>
+            </button>
         </div>
-        <!-- Settings content -->
-        <div id="settings-content" class="flex-1 overflow-y-auto p-6 bg-bm-bg"></div>
+        <div class="settings-body">
+            <!-- Settings nav -->
+            <div class="w-56 shrink-0 bg-bm-surface border-r border-bm-border p-3 overflow-y-auto">
+                <div id="settings-nav" class="space-y-1"></div>
+            </div>
+            <!-- Settings content -->
+            <div id="settings-content" class="flex-1 overflow-y-auto p-6 bg-bm-bg"></div>
+        </div>
     </div>
 
     <!-- ═══════════════ MAIN LAYOUT ═══════════════ -->

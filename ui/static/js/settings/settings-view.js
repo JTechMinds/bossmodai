@@ -25,6 +25,28 @@ const SettingsView = (() => {
 
     // ─── Open / Close ───
 
+    const viewListeners = [];
+
+    /**
+     * Subscribe to the takeover opening and closing.
+     *
+     * The header's gear announces the state it toggles, and it cannot learn it
+     * from the click: two other modules open a section directly. Notifying
+     * from `setView` is what makes the answer true for every door — the gear,
+     * Escape, the bar's exit, and both direct openers — rather than for the
+     * one that happens to run.
+     *
+     * @param {(open: boolean) => void} fn
+     * @returns {() => void} disposer
+     */
+    function onViewChange(fn) {
+        viewListeners.push(fn);
+        return () => {
+            const at = viewListeners.indexOf(fn);
+            if (at !== -1) viewListeners.splice(at, 1);
+        };
+    }
+
     /**
      * Which frame is on screen is one fact with one owner: `data-view` on <body>.
      * shell.css reads it; nothing in JS touches `display` or the panels' classes.
@@ -33,6 +55,8 @@ const SettingsView = (() => {
      */
     function setView(view) {
         document.body.dataset.view = view;
+        const open = view === 'settings';
+        for (const listener of viewListeners) listener(open);
     }
 
     function open(sectionId, options) {
@@ -127,5 +151,5 @@ const SettingsView = (() => {
         }
     }
 
-    return { open, close, isOpen: () => isOpen };
+    return { open, close, isOpen: () => isOpen, onViewChange };
 })();
