@@ -28,6 +28,7 @@ from core.agent_loop.notifications import (
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.runtime_core import (
     AUDIENCE_SOFT_JUDGMENT,
+    CHAT_FORMATTING,
     format_runtime_core_block,
     preview_runtime_core,
 )
@@ -132,11 +133,13 @@ def test_runtime_core_is_compact_and_skips_description() -> None:
     assert "stop and ask in chat" not in block
     assert "Empty done is rejected" in block
     assert AUDIENCE_SOFT_JUDGMENT in block
+    assert CHAT_FORMATTING in block
     assert "Never put this quality bar" not in block
     assert "DRY" not in block
     preview = preview_runtime_core(name="Pat", role="Auditor")
     assert "You are Pat (Auditor)." in preview
     assert AUDIENCE_SOFT_JUDGMENT in preview
+    assert CHAT_FORMATTING in preview
 
 
 def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,6 +150,7 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     assert "do not ask the operator for verbal yes/no" in contents
     assert "stop and ask in chat" not in contents
     assert AUDIENCE_SOFT_JUDGMENT in contents
+    assert CHAT_FORMATTING in contents
     client = _api_client(monkeypatch)
     response = client.get(
         "/api/runtime/core",
@@ -156,6 +160,7 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     assert response.status_code == 200
     assert "You are Sam (Engineer)." in response.json()["runtime_core"]
     assert AUDIENCE_SOFT_JUDGMENT in response.json()["runtime_core"]
+    assert CHAT_FORMATTING in response.json()["runtime_core"]
 
 
 def test_injected_core_includes_audience_soft_judgment() -> None:
@@ -190,10 +195,57 @@ def test_injected_core_includes_audience_soft_judgment() -> None:
         ]
         assert core_msgs
         assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
+        assert CHAT_FORMATTING in core_msgs[0]
         joined = "\n".join(str(message.get("content") or "") for message in context)
         assert AUDIENCE_SOFT_JUDGMENT in joined
+        assert CHAT_FORMATTING in joined
         assert "@" not in AUDIENCE_SOFT_JUDGMENT
         assert "router" not in core_msgs[0].lower()
+
+
+def test_injected_core_includes_chat_formatting() -> None:
+    locked = (
+        "Chat replies: use short paragraphs with real newlines. "
+        "Use markdown lists for plans and steps. "
+        "Prefer readable formatting over one dense brick. "
+        "No hard length limit."
+    )
+    assert CHAT_FORMATTING == locked
+    assert "No hard length limit" in CHAT_FORMATTING
+    assert "word limit" not in CHAT_FORMATTING.lower()
+    assert "character limit" not in CHAT_FORMATTING.lower()
+    writer = db.create_agent("Core Writer", role="Writer", desk_x=1, desk_y=1)
+    writer_state = db.get_agent_state(writer.id)
+    assert writer_state is not None
+    context = context_builder.build_context(
+        context_builder.TurnContext(
+            agent=writer,
+            state=writer_state,
+            trigger={
+                "type": "channel_message",
+                "source_channel": "channel",
+                "content": "Please draft the release notes.",
+                "from_name": "Human Operator",
+            },
+            conversation_history=[],
+            prompt_notifications=[],
+            reference_materials=[],
+            contract_kind="decision",
+        )
+    )
+    core_msgs = [
+        str(message.get("content") or "")
+        for message in context
+        if str(message.get("content") or "").startswith("# Runtime core")
+    ]
+    assert core_msgs
+    assert CHAT_FORMATTING in core_msgs[0]
+    assert "No hard length limit" in core_msgs[0]
+    lowered = core_msgs[0].lower()
+    assert "word limit" not in lowered
+    assert "character limit" not in lowered
+    assert "max words" not in lowered
+    assert "keep replies under" not in lowered
 
 
 def test_allow_once_is_turn_scoped(tmp_path: Path) -> None:

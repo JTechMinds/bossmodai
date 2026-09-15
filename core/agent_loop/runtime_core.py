@@ -3,8 +3,8 @@
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
 identity, desk/``/me``, allowed tools, host-path consent, checkable done,
-and audience soft-judgment. Fan-out still wakes every member; this is not
-a router and does not require @.
+audience soft-judgment, and chat formatting. Fan-out still wakes every
+member; this is not a router and does not require @.
 """
 
 from __future__ import annotations
@@ -34,6 +34,13 @@ _RUNTIME_CORE_TITLE = "# Runtime core"
 AUDIENCE_SOFT_JUDGMENT = (
     "Before you reply, decide if you're the intended audience. "
     "If someone else's specialty clearly fits, stay quiet or post one short pass."
+)
+
+CHAT_FORMATTING = (
+    "Chat replies: use short paragraphs with real newlines. "
+    "Use markdown lists for plans and steps. "
+    "Prefer readable formatting over one dense brick. "
+    "No hard length limit."
 )
 
 
@@ -87,7 +94,8 @@ def format_runtime_core_block(agent: Agent) -> str:
         "Thread-origin work: Done must point at a path peers can open "
         "(project/docs/ or a host path under the shared grant). "
         "/me is desk-private scratch, not a handoff.\n"
-        f"{AUDIENCE_SOFT_JUDGMENT}"
+        f"{AUDIENCE_SOFT_JUDGMENT}\n"
+        f"{CHAT_FORMATTING}"
     )
 
 

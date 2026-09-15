@@ -27,7 +27,7 @@ from core.agent_loop.role_contracts import (
     specialty_family,
     suggest_finish_line,
 )
-from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT
+from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT, CHAT_FORMATTING
 from core.llm import context_preview
 from db.unified_feed import classify_category
 from core.bm_cli.virtual_fs import resolve_cli_path
@@ -914,6 +914,8 @@ def test_preview_bundle_injects_role_contract() -> None:
     assert "stop and ask in chat" not in core_msgs[0]
     assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
     assert AUDIENCE_SOFT_JUDGMENT in contents
+    assert CHAT_FORMATTING in core_msgs[0]
+    assert CHAT_FORMATTING in contents
 
 
 def test_world_feedback_is_a_task_feed_event() -> None:
