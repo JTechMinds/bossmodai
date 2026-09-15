@@ -14,6 +14,7 @@ from core.bm_cli.document_tools import (
     replace_markdown_section_body,
     render_markdown_outline_entries,
 )
+from core.bm_cli.host_path_consent import looks_like_command_flag
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
@@ -75,9 +76,11 @@ def handle_cd(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
 
 def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
     """List entries in the current or target virtual directory."""
-    if len(parsed.args) > 1:
+    path_args = [str(arg).strip() for arg in parsed.args if not looks_like_command_flag(str(arg))]
+    if len(path_args) > 1:
         return error_result(parsed.raw, '"ls" accepts at most one path argument.', cwd=context.cwd)
-    target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0] if parsed.args else None)
+    target_arg = path_args[0] if path_args else None
+    target = resolve_cli_path(context.agent.storage_key, context.cwd, target_arg)
     if target.mount == "root" and target.real_path is None:
         entries = virtual_root_entries()
         lines = [f"- {entry}" for entry in entries]
@@ -90,7 +93,7 @@ def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
             cwd=context.cwd,
         )
     if not target.exists or target.real_path is None:
-        return error_result(parsed.raw, f"Path not found: {parsed.args[0] if parsed.args else context.cwd}", cwd=context.cwd)
+        return error_result(parsed.raw, f"Path not found: {target_arg if target_arg else context.cwd}", cwd=context.cwd)
     if target.real_path.is_file():
         entry_name = Path(target.virtual_path).name
         return success_result(

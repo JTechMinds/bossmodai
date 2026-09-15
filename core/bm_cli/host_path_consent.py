@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,6 +28,8 @@ from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND, HostPathCon
 ConsentDecision = Literal["allow_once", "always_allow", "deny"]
 
 _ABS_PATH_TOKEN = re.compile(r"(?<![\w])/[A-Za-z0-9._~+-]+(?:/[A-Za-z0-9._~+-]+)+")
+# Trailing CLI flags glued onto a host path, e.g. ``-la``, ``--help``, ``-v``.
+_COMMAND_FLAG_TOKEN = re.compile(r"^-{1,2}(?!-)[A-Za-z0-9][A-Za-z0-9_=,.-]*$")
 _VERBAL_ACCESS_ASK = re.compile(
     r"(?i)(?:"
     r"please confirm|"
@@ -123,10 +126,76 @@ def verbal_host_access_steer(agent: Agent) -> dict[str, Any]:
     }
 
 
+def looks_like_command_flag(token: str) -> bool:
+    """Return True when *token* is a CLI flag, not a path segment."""
+    text = (token or "").strip()
+    if not text or text in {".", "..", "-"}:
+        return False
+    return _COMMAND_FLAG_TOKEN.fullmatch(text) is not None
+
+
+def strip_command_junk_from_host_path(raw_path: str) -> str:
+    """Drop trailing CLI flags glued onto a host path with spaces or slashes.
+
+    ``/dir/-la`` and ``/dir -la`` both reduce to ``/dir`` when ``-la`` is not a
+    real directory (or file). Existing paths whose names look like flags are
+    kept, so a real folder named ``-la`` can still be granted.
+    """
+    token = (raw_path or "").replace("\\", "/").strip()
+    if not token:
+        return token
+    pieces = token.split()
+    while len(pieces) > 1 and looks_like_command_flag(pieces[-1]):
+        pieces.pop()
+    token = " ".join(pieces).strip()
+    if not token:
+        return token
+
+    path = Path(token).expanduser()
+    while looks_like_command_flag(path.name):
+        try:
+            if path.exists():
+                break
+        except OSError:
+            break
+        parent = path.parent
+        if parent == path:
+            break
+        path = parent
+    return str(path)
+
+
+def resolve_consent_host_path(raw_path: str) -> tuple[str, Path] | None:
+    """Sanitize CLI junk and return ``(ask_path, grant_root)`` for a real directory.
+
+    The grant root is always an existing directory that ``validate_host_root``
+    accepts. The ask path is that folder, or an existing file under it. Returns
+    ``None`` when the input cannot be reduced to a grantable directory — never
+    a flag fragment such as ``/-la``.
+    """
+    token = strip_command_junk_from_host_path(raw_path)
+    if not token:
+        return None
+    grant_root = grantable_host_root(token)
+    if grant_root is None:
+        return None
+    canonical = canonical_host_path(token)
+    return _consent_ask_path(canonical, grant_root), grant_root
+
+
+def _consent_ask_path(canonical: str, grant_root: Path) -> str:
+    """Prefer an existing file or folder; otherwise ask for the grant folder."""
+    target = Path(canonical)
+    try:
+        if target.exists() and (target.is_file() or target.is_dir()):
+            return canonical
+    except OSError:
+        pass
+    return str(grant_root)
+
+
 def canonical_host_path(raw_path: str) -> str:
     """Return a stable absolute path string for pending/denied matching."""
-    from pathlib import Path
-
     token = (raw_path or "").strip()
     if not token:
         return token
@@ -158,14 +227,14 @@ def request_host_path_access(
 
     Already-allowlisted paths return success with no card. Denied system
     trees, the filesystem root, and paths with no grantable directory stay
-    hard-denied with no card. Pending cards are reused.
+    hard-denied with no card. Trailing CLI flags are stripped before the
+    card so Always-allow never targets junk such as ``/-la``. Pending cards
+    are reused.
     """
     label = (command or "").strip() or _REQUEST_HOST_ACCESS_COMMAND
-    token = (raw_path or "").strip()
+    token = strip_command_junk_from_host_path((raw_path or "").strip())
     if not token:
         return error_result(label, "request_host_access requires a non-empty path", cwd=cwd, executor="virtual")
-
-    from pathlib import Path
 
     path_obj = Path(token).expanduser()
     if not path_obj.is_absolute():
@@ -188,22 +257,22 @@ def request_host_path_access(
         )
     if not looks_like_named_absolute_path(token):
         return error_result(label, denial_message(token), cwd=cwd, executor="virtual")
-    if _path_already_allowlisted(agent, token, task_id):
-        resolved = canonical_host_path(token)
+
+    resolved = resolve_consent_host_path(token)
+    if resolved is None:
+        return error_result(label, denial_message(token), cwd=cwd, executor="virtual")
+    path, grant_root = resolved
+
+    if _path_already_allowlisted(agent, path, task_id):
         return success_result(
             command=label,
-            detail=f"Host path {resolved!r} is already allowed. Use cli on that path.",
+            detail=f"Host path {path!r} is already allowed. Use cli on that path.",
             kind="host_path_already_allowed",
-            data={"path": resolved, "already_allowed": True},
-            sections=[("HOST PATH", [f"{resolved} is already on the allowlist. Use cli."])],
+            data={"path": path, "already_allowed": True},
+            sections=[("HOST PATH", [f"{path} is already on the allowlist. Use cli."])],
             cwd=cwd,
             executor="virtual",
         )
-
-    path = canonical_host_path(token)
-    grant_root = grantable_host_root(token)
-    if grant_root is None:
-        return error_result(label, denial_message(token), cwd=cwd, executor="virtual")
 
     denied = db.find_denied_for_scope(agent.id, path, task_id=task_id)
     if denied is not None:
@@ -294,8 +363,6 @@ def handle_named_path_consent(
 
 def _path_already_allowlisted(agent: Agent, raw_path: str, task_id: str | None) -> bool:
     """Return True when the named path is already inside an allowed host root."""
-    from pathlib import Path
-
     token = host_path_consent_scope.set(ConsentScope(agent_id=agent.id, task_id=task_id))
     try:
         resolved = Path(raw_path).expanduser().resolve()
@@ -352,6 +419,7 @@ async def resume_host_path_consent(
         return updated
 
     if decision == "allow_once":
+        grant_root = _require_grantable_directory(existing)
         updated = db.resolve_consent_request(
             request_id,
             status="allowed_once",
@@ -362,7 +430,7 @@ async def resume_host_path_consent(
             return None
         db.create_once_grant(
             agent_id=updated.agent_id,
-            root=updated.grant_root,
+            root=str(grant_root),
             consent_id=updated.id,
             task_id=updated.task_id,
         )
@@ -380,12 +448,11 @@ async def resume_host_path_consent(
     if decision != "always_allow":
         raise ValueError(f"Unsupported consent decision: {decision}")
 
-    from core.bm_cli.host_roots import validate_host_root
     from core import config
 
-    validate_host_root(existing.grant_root)
+    grant_root = _require_grantable_directory(existing)
     current = _current_host_root_setting()
-    merged = normalize_host_root_setting("\n".join([current, existing.grant_root]))
+    merged = normalize_host_root_setting("\n".join([current, str(grant_root)]))
     db.set_setting(SETTING_KEY, merged, SETTING_CATEGORY)
     config.reload()
     updated = db.resolve_consent_request(
@@ -415,6 +482,17 @@ async def resume_host_path_consent(
             follow_through=False,
         )
     return updated
+
+
+def _require_grantable_directory(existing: HostPathConsentRequest) -> Path:
+    """Return the real directory this card may grant. Never a flag fragment."""
+    from core.bm_cli.host_roots import validate_host_root
+
+    for candidate in (existing.grant_root, existing.path):
+        resolved = resolve_consent_host_path(candidate)
+        if resolved is not None:
+            return validate_host_root(str(resolved[1]))
+    return validate_host_root(existing.grant_root)
 
 
 def _current_host_root_setting() -> str:
@@ -511,7 +589,7 @@ async def _resolve_scope_waiters(
         if once_grant:
             db.create_once_grant(
                 agent_id=other.agent_id,
-                root=other.grant_root,
+                root=str(_require_grantable_directory(other)),
                 consent_id=other.id,
                 task_id=other.task_id,
             )

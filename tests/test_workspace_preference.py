@@ -114,6 +114,26 @@ def test_card_fires_on_named_host_path_write(tmp_path: Path) -> None:
     assert "original" in read.prompt_content
 
 
+def test_workspace_preference_strips_glued_ls_flags(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("original\n", encoding="utf-8")
+    _allow_host(host)
+    agent, state = _agent_and_state()
+
+    paused = execute_bm_cli(agent, state, f"write {host}/-la", content="junk\n")
+    assert paused.consent_required is True
+    card = (paused.data or {}).get("host_path_consent") or {}
+    assert card["kind"] == WORKSPACE_PREFERENCE_KIND
+    assert card["path"] == str(host.resolve())
+    assert card["grant_root"] == str(host.resolve())
+    assert "/-la" not in card["path"]
+    assert "/-la" not in card["grant_root"]
+    assert not (host / "-la").exists()
+    assert fixture.read_text(encoding="utf-8") == "original\n"
+
+
 def test_cancel_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     host = tmp_path / "cancel-root"
     host.mkdir()

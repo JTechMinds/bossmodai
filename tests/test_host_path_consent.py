@@ -34,8 +34,11 @@ from core.agent_loop.runtime_core import (
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_path_consent import (
     is_verbal_host_access_ask,
+    looks_like_command_flag,
     request_host_path_access,
+    resolve_consent_host_path,
     resume_host_path_consent,
+    strip_command_junk_from_host_path,
 )
 from core.llm import context_builder
 from core.llm.client import LLMResponse
@@ -1245,3 +1248,159 @@ def test_contracts_forbid_verbal_host_access_asks() -> None:
         assert "stop and ask in chat" not in text
         assert "request_host_access" in text
         assert "verbal yes/no" in text
+
+
+def test_strip_command_junk_from_slash_and_space_flags(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    glued = str(host / "-la")
+    spaced = f"{host} -la"
+    assert looks_like_command_flag("-la") is True
+    assert looks_like_command_flag("--help") is True
+    assert looks_like_command_flag("llm_helper") is False
+    assert strip_command_junk_from_host_path(glued) == str(host)
+    assert strip_command_junk_from_host_path(spaced) == str(host)
+    assert strip_command_junk_from_host_path(str(host)) == str(host)
+
+    real_flag_dir = host / "-la"
+    real_flag_dir.mkdir()
+    assert strip_command_junk_from_host_path(str(real_flag_dir)) == str(real_flag_dir)
+
+
+def test_resolve_consent_host_path_asks_for_real_directory(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    resolved = resolve_consent_host_path(str(host / "-la"))
+    assert resolved is not None
+    ask_path, grant_root = resolved
+    assert ask_path == str(host.resolve())
+    assert grant_root == host.resolve()
+    assert ask_path.endswith("llm_helper")
+    assert "/-la" not in ask_path
+    assert grant_root.name != "-la"
+
+    spaced = resolve_consent_host_path(f"{host} -la --help")
+    assert spaced is not None
+    assert spaced[0] == str(host.resolve())
+    assert spaced[1] == host.resolve()
+
+    fixture = host / "note.txt"
+    fixture.write_text("ok\n", encoding="utf-8")
+    file_resolved = resolve_consent_host_path(str(fixture))
+    assert file_resolved is not None
+    assert file_resolved[0] == str(fixture.resolve())
+    assert file_resolved[1] == host.resolve()
+
+    assert resolve_consent_host_path("/-la") is None
+    assert resolve_consent_host_path("/-la --help") is None
+
+
+def test_consent_card_strips_glued_ls_flags(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    (host / "readme.md").write_text("notes\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+
+    glued = request_host_path_access(
+        agent=agent,
+        raw_path=str(host / "-la"),
+        reason="Need to list the project",
+        command=f"ls {host}/-la",
+        cwd="/me",
+    )
+    assert glued.consent_required is True
+    card = (glued.data or {}).get("host_path_consent") or {}
+    assert card["path"] == str(host.resolve())
+    assert card["grant_root"] == str(host.resolve())
+    assert card["path"].endswith("llm_helper")
+    assert not card["path"].endswith("/-la")
+    assert card["grant_root"].endswith("llm_helper")
+    assert "/-la" not in card["path"]
+    assert "/-la" not in card["grant_root"]
+
+    spaced = request_host_path_access(
+        agent=agent,
+        raw_path=f"{host} -la",
+        reason="Need to list the project",
+        command=f"ls {host} -la",
+        cwd="/me",
+    )
+    assert spaced.consent_required is True
+    assert spaced.consent_request_id == glued.consent_request_id
+    spaced_card = (spaced.data or {}).get("host_path_consent") or {}
+    assert spaced_card["path"] == str(host.resolve())
+    assert spaced_card["grant_root"] == str(host.resolve())
+
+    listed = execute_bm_cli(agent, state, f"ls {host} -la")
+    assert listed.consent_required is True
+    ls_card = (listed.data or {}).get("host_path_consent") or {}
+    assert ls_card["path"] == str(host.resolve())
+    assert "/-la" not in ls_card["path"]
+    assert "/-la" not in (ls_card.get("grant_root") or "")
+
+    glued_cli = execute_bm_cli(agent, state, f"ls {host}/-la")
+    assert glued_cli.consent_required is True
+    glued_cli_card = (glued_cli.data or {}).get("host_path_consent") or {}
+    assert glued_cli_card["path"] == str(host.resolve())
+    assert not glued_cli_card["path"].endswith("/-la")
+
+
+def test_always_allow_never_grants_flag_junk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+
+    first = request_host_path_access(
+        agent=agent,
+        raw_path=str(host / "-la"),
+        reason="Need durable access",
+        cwd="/me",
+    )
+    assert first.consent_required is True
+    request_id = first.consent_request_id
+    assert request_id
+    card = (first.data or {}).get("host_path_consent") or {}
+    assert card["grant_root"] == str(host.resolve())
+
+    response = client.post(f"/api/host-path-consent/{request_id}/always-allow", headers=_headers())
+    assert response.status_code == 200
+    setting = next(item for item in db.get_settings() if item.key == "workspace_host_roots")
+    roots = setting.value.splitlines()
+    assert str(host.resolve()) in roots
+    assert not any(root.endswith("/-la") or root.endswith("-la") for root in roots)
+    listed = execute_bm_cli(agent, state, f"ls {host}")
+    assert listed.ok is True
+
+
+def test_slash_la_alone_is_rejected_without_a_card() -> None:
+    agent, _state = _agent_and_state()
+    denied = request_host_path_access(
+        agent=agent,
+        raw_path="/-la",
+        reason="Junk path",
+    )
+    assert denied.ok is False
+    assert denied.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    payload = (denied.detail or "") + denied.prompt_content
+    assert "outside the allowed workspace roots" in payload
+
+
+def test_existing_directory_named_like_a_flag_can_still_be_granted(tmp_path: Path) -> None:
+    host = tmp_path / "-la"
+    host.mkdir()
+    agent, _state = _agent_and_state()
+    result = request_host_path_access(
+        agent=agent,
+        raw_path=str(host),
+        reason="Need the oddly named folder",
+    )
+    assert result.consent_required is True
+    card = (result.data or {}).get("host_path_consent") or {}
+    assert card["path"] == str(host.resolve())
+    assert card["grant_root"] == str(host.resolve())
+    assert Path(card["grant_root"]).is_dir()
