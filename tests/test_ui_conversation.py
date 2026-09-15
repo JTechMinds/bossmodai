@@ -273,8 +273,14 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "ctx.openDeliverable" in source
     assert "data-desk-path" in source
     assert "typeof ctx.openDeliverable === 'function'" in source
-    assert "}, 'open')" in source
+    assert "class: 'note-link'" in source
+    assert "note-action" not in source
+    assert "}, 'open')" not in source
     assert "'Open in Desk'" not in source
+    assert "const TASK_GLYPH = 'list-todo'" in source
+    assert "const DOC_GLYPH = 'file-text'" in source
+    assert "function originFileOpenPath(message)" in source
+    assert "if (verb !== 'Done') return ''" in source
     # The path is recorded whether or not anything can act on it, so nothing
     # is lost between the phase that reads it and the phase that opens it.
     note = source.split("if (message.kind === 'note') {", 1)[1]
@@ -299,13 +305,19 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "taskId: raw.task_id || null" in agent
     assert "navigate('board', { taskId })" in source
     assert "const cardCtx = { api, navigate, openDesk };" in controller
+    css = (CSS / "conversation.css").read_text(encoding="utf-8")
+    assert ".note-glyph" in css
+    assert ".note-link" in css
+    assert "note-action" not in css
+    assert "color: var(--accent);" in css.split(".note-link {", 1)[1].split("}", 1)[0]
 
 
 def test_done_link_harness() -> None:
-    """Origin Done with an openable path tints and opens; prose-only has no chip.
+    """Origin Done tints and links the claim path; prose-only has no chrome.
 
-    Created/Accepted open the bound Board task on the same path blocked needs
-    use. A Created line must not invent a document chip.
+    Created/Accepted use the Board task glyph and blue-link the one-liner.
+    Done uses the doc glyph and blue-links the path only. No Open pill.
+    A Created line must not invent a document link.
     """
     result = subprocess.run(
         [
@@ -325,24 +337,51 @@ def test_done_link_harness() -> None:
         "openableHasTint": True,
         "openableTone": "ok",
         "openablePath": "/projects/review.md",
-        "openableChip": "open",
+        "openableKind": "file",
+        "openableGlyph": "file-text",
+        "openableGlyphOnLeft": True,
+        "openableHasOpenPill": False,
+        "openableLink": "/projects/review.md",
+        "openableLinkClass": "note-link",
+        "openableText": "Jimothy Done — /projects/review.md",
         "opened": [{"path": "/projects/review.md", "agentId": "agent-1"}],
         "proseHasTint": False,
-        "proseHasChip": False,
+        "proseHasLink": False,
+        "proseHasGlyph": False,
+        "proseHasOpenPill": False,
         "prosePath": "",
-        "noOpenerHasChip": False,
+        "noOpenerHasLink": False,
+        "noOpenerHasGlyph": False,
         "noOpenerKeepsPath": True,
         "createdHasTint": False,
-        "createdChip": "open",
+        "createdKind": "task",
+        "createdGlyph": "list-todo",
+        "createdGlyphOnLeft": True,
+        "createdHasOpenPill": False,
+        "createdLink": "Jimothy Created: Share review findings",
         "createdTaskId": "task-1",
         "createdPath": "",
         "acceptedHasTint": False,
-        "acceptedChip": "open",
+        "acceptedKind": "task",
+        "acceptedGlyph": "list-todo",
+        "acceptedHasOpenPill": False,
+        "acceptedLink": "Jimothy Accepted: Share review findings",
         "acceptedTaskId": "task-1",
-        "createdNoTaskHasChip": False,
+        "createdNoTaskHasLink": False,
+        "createdNoTaskHasGlyph": False,
         "createdFakeDocHasTint": False,
+        "createdFakeDocKind": "task",
+        "createdFakeDocGlyph": "list-todo",
         "createdFakeDocOpensFile": False,
-        "createdNoNavigateHasChip": False,
+        "createdPathNoTaskHasLink": False,
+        "createdPathNoTaskHasGlyph": False,
+        "createdPathNoTaskKind": "",
+        "createdPathNoTaskOpensFile": False,
+        "createdNoNavigateHasLink": False,
+        "writingHasLink": False,
+        "writingHasGlyph": False,
+        "writingKind": "",
+        "writingOpensFile": False,
         "navigated": [
             {"place": "board", "params": {"taskId": "task-1"}},
             {"place": "board", "params": {"taskId": "task-1"}},

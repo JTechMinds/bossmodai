@@ -59,8 +59,8 @@ def openable_done_claim_path(
 ) -> str | None:
     """Return a Done claim path only when peers can open it.
 
-    Tests/proof tails are not paths. A path must be absolute so the open chip
-    can use the same file-open path as other deliverables.
+    Tests/proof tails are not paths. A path must be absolute so the Done doc
+    link can use the same file-open path as other deliverables.
     """
     payload = claim if isinstance(claim, dict) else {}
     claim_type = str(payload.get("type") or "").strip().lower()

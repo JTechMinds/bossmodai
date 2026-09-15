@@ -375,12 +375,15 @@
   text-align: center;
 }
 
-/* ─── Notes: a centred hairline plus the receipt ─── */
+/* ─── Notes: a centred hairline plus the receipt ───
+   Quiet chrome: glyph on the left, blue link on the text. No Open pill.
+   Task glyph → Board (Created/Accepted). Doc glyph → artifact (Done path). */
 
 .note {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 6px 0;
   border-top: 1px solid var(--line);
@@ -389,17 +392,25 @@
   text-align: center;
 }
 
-.note-text { margin: 0; }
-
-.note-action {
-  padding: 3px 10px;
-  border: 1px solid var(--line-control);
-  border-radius: var(--r);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 500;
+.note-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
 }
+
+.note-text {
+  margin: 0;
+  min-width: 0;
+}
+
+.note-link {
+  color: var(--accent);
+  font: inherit;
+  text-align: inherit;
+}
+
+.note-link:hover { text-decoration: underline; }
 
 /* Green Done: the origin one-liner tints only when the claim path opens. */
 .note.note-ok {
@@ -413,10 +424,9 @@
 
 .note.note-ok .note-text { color: var(--ok-ink); }
 
-.note.note-ok .note-action {
-  border-color: var(--ok);
-  color: var(--ok-ink);
-}
+.note.note-ok .note-glyph { color: var(--ok-ink); }
+
+.note.note-ok .note-link { color: var(--accent); }
 
 /* ─── Host-path consent ─── */
 

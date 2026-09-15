@@ -38,6 +38,11 @@ const BossModEventCards = (() => {
         done: 'ok',
     });
 
+    /** Board place glyph. Created/Accepted open the bound task. */
+    const TASK_GLYPH = 'list-todo';
+    /** Deliverable glyph. Done links the claim path, and only the path. */
+    const DOC_GLYPH = 'file-text';
+
     /**
      * Debra's locked status verb, after an optional `{Name} ` prefix.
      * @param {string} text
@@ -63,6 +68,49 @@ const BossModEventCards = (() => {
     }
 
     /**
+     * Done is the only origin line that opens a document. A path on Created,
+     * Accepted, or Writing is not a deliverable and must not become a doc link.
+     *
+     * @param {object} message
+     * @returns {string}
+     */
+    function originFileOpenPath(message) {
+        const verb = originStatusVerb(message && message.text);
+        if (verb !== 'Done') return '';
+        return String((message && message.deskPath) || '').trim();
+    }
+
+    function originGlyph(name) {
+        return h('i', {
+            class: 'note-glyph',
+            'data-lucide': name,
+            'aria-hidden': 'true',
+        });
+    }
+
+    function originLink(label, onclick) {
+        return h('button', {
+            class: 'note-link',
+            type: 'button',
+            onclick,
+        }, label);
+    }
+
+    /**
+     * Paint the note glyph when the vendored set is actually loaded.
+     * The Node harness has no lucide bundle; the placeholder is the assertion.
+     *
+     * @param {HTMLElement} note
+     */
+    function paintOriginGlyph(note) {
+        if (typeof BossModIcons === 'undefined' || typeof BossModIcons.paint !== 'function') return;
+        const lucide = typeof window === 'undefined' ? undefined : window.lucide;
+        if (!lucide || !lucide.icons) return;
+        if (!note.querySelector('[data-lucide]')) return;
+        BossModIcons.paint(note, 'event-cards');
+    }
+
+    /**
      * Build one event card.
      *
      * @param {object} message  A normalised Message with `kind !== 'message'`.
@@ -72,12 +120,13 @@ const BossModEventCards = (() => {
      * @param {(path: string) => void} [ctx.openDesk]  Optional (spec 4.1). Desk
      *   chrome fallback when the deliverable opener is not loaded.
      * @param {(path: string, agentId?: string) => (void|Promise<void>)} [ctx.openDeliverable]
-     *   Same file-open path Board deliverable cards use. The open chip renders
-     *   only when this or openDesk is injected — a control that renders but
-     *   does nothing is worse than one that is absent.
+     *   Same file-open path Board deliverable cards use. The Done path link
+     *   renders only when this or openDesk is injected — a control that
+     *   renders but does nothing is worse than one that is absent.
      * @param {(placeId: string, params?: object) => void} [ctx.navigate]
      *   Same Board open path blocked needs use: `navigate('board', { taskId })`.
-     *   Created/Accepted notes render a task-open chip only when this arrives.
+     *   Created/Accepted notes render a task glyph and blue-link text only
+     *   when this arrives.
      * @returns {HTMLElement}
      * @throws {Error} When ctx is missing, on a kind with no renderer, on a
      *   `request` or `event` with no card, or on an `event` whose tone has no
@@ -102,41 +151,52 @@ const BossModEventCards = (() => {
         if (message.kind === 'note') {
             const deskPath = String(message.deskPath || '').trim();
             const taskId = originTaskOpenId(message);
+            const filePath = originFileOpenPath(message);
+            const text = String(message.text || '');
             // Recorded even when nothing can act on it, so the path is never
             // lost between the phase that reads it and the phase that opens it.
-            const openableFile = Boolean(deskPath) && !taskId;
+            const openableFile = Boolean(filePath);
             const note = h('div', {
                 class: openableFile ? 'note note-ok' : 'note',
                 'data-desk-path': deskPath,
                 'data-task-id': taskId,
                 'data-tone': openableFile ? 'ok' : null,
-            },
-                h('p', { class: 'note-text' }, String(message.text || '')));
+            });
             const canOpenFile = openableFile && (
                 typeof ctx.openDeliverable === 'function'
                 || typeof ctx.openDesk === 'function'
             );
             const canOpenTask = Boolean(taskId) && typeof ctx.navigate === 'function';
-            if (canOpenTask) {
-                note.append(h('button', {
-                    class: 'note-action',
-                    type: 'button',
-                    onclick: () => { ctx.navigate('board', { taskId }); },
-                }, 'open'));
-            } else if (canOpenFile) {
+            const openKind = canOpenTask ? 'task' : (canOpenFile ? 'file' : '');
+            if (openKind) note.setAttribute('data-open-kind', openKind);
+            if (openKind === 'task') {
+                note.append(
+                    originGlyph(TASK_GLYPH),
+                    h('p', { class: 'note-text' }, originLink(text, () => {
+                        ctx.navigate('board', { taskId });
+                    })),
+                );
+            } else if (openKind === 'file') {
                 const agentId = String(message.authorAgentId || ctx.agentId || '');
-                note.append(h('button', {
-                    class: 'note-action',
-                    type: 'button',
-                    onclick: () => {
-                        if (typeof ctx.openDeliverable === 'function') {
-                            void ctx.openDeliverable(deskPath, agentId);
-                            return;
-                        }
-                        ctx.openDesk(deskPath);
-                    },
-                }, 'open'));
+                const at = text.lastIndexOf(filePath);
+                const prefix = at >= 0 ? text.slice(0, at) : '';
+                const label = at >= 0 ? filePath : text;
+                note.append(
+                    originGlyph(DOC_GLYPH),
+                    h('p', { class: 'note-text' },
+                        prefix || null,
+                        originLink(label, () => {
+                            if (typeof ctx.openDeliverable === 'function') {
+                                void ctx.openDeliverable(filePath, agentId);
+                                return;
+                            }
+                            ctx.openDesk(filePath);
+                        })),
+                );
+            } else {
+                note.append(h('p', { class: 'note-text' }, text));
             }
+            paintOriginGlyph(note);
             return note;
         }
 
