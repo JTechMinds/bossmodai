@@ -170,7 +170,7 @@ def test_cancel_tasks_and_archive_denies_pending_consent(monkeypatch: pytest.Mon
     assert resolved.as_card()["decision_note"] == THREAD_ARCHIVED_CONSENT_DENY
     contents = [item.content for item in db.list_channel_messages(channel.id)]
     assert THREAD_ARCHIVED_CANCEL_LINE in contents
-    assert "Cancelled — Operator cancelled" in contents
+    assert f"{agent.name} Cancelled — Operator cancelled" in contents
     open_activities = [
         item for item in db.list_activities(task_id=creation.task.id, limit=20) if item.status in {"active", "paused"}
     ]

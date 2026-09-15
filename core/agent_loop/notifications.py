@@ -424,17 +424,19 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
     ]
 
     if kind == "completion":
-        from core.agent_loop.task_origin_mirrors import format_done_claim_label, openable_done_claim_path
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line, openable_done_claim_path
 
         claim = payload.get("done_claim") if isinstance(payload.get("done_claim"), dict) else None
         fallback_path = deliverable_paths[0] if len(deliverable_paths) == 1 else None
-        claim_label = format_done_claim_label(
-            claim=claim,
-            path=fallback_path,
-        )
         return ChatNotification(
             kind="completion",
-            content=f"Done — {claim_label}",
+            content=format_origin_status_line(
+                kind="completion",
+                agent=agent,
+                task={"title": task_title},
+                path=fallback_path,
+                claim=claim,
+            ),
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,

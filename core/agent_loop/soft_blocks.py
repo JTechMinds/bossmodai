@@ -18,6 +18,7 @@ from core.agent_loop.next_owner import (
 )
 from core.agent_loop.task_origin_mirrors import (
     attach_operator_status_line,
+    named_origin_line,
     persist_unbound_status_line,
 )
 from core.models import Agent
@@ -170,7 +171,7 @@ def _attach_unbound_line(
 ) -> None:
     posted = persist_unbound_status_line(
         agent=agent,
-        content=content,
+        content=named_origin_line(agent, content),
         kind=kind,
         channel_id=_channel_id(None, trigger),
     )

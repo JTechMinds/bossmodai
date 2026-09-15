@@ -41,10 +41,13 @@ _EXEMPT_NOTIFICATION_KINDS = frozenset(
     }
 )
 
-# Locked origin-thread one-liners (Created/Accepted/Writing/…).
+# Locked origin-thread one-liners ({Name} Created/Accepted/Writing/…).
+_STATUS_VERB = (
+    r"Created|Accepted|Writing|Waiting|Stalled|Declined|Rerouted|"
+    r"Cancelled|Done|Blocked|Busy"
+)
 _SYSTEM_ONE_LINER = re.compile(
-    r"^(Created|Accepted|Writing|Waiting|Stalled|Declined|Rerouted|"
-    r"Cancelled|Done|Blocked|Busy)\b"
+    rf"^(?:[A-Z][\w.-]*(?: [A-Z][\w.-]*)? )?(?:{_STATUS_VERB})\b"
 )
 # Explicit park-the-ball language. Conservative: only these phrases count.
 _PARK_BALL = re.compile(
@@ -162,7 +165,7 @@ def has_next_owner_tag(
 
 
 def is_system_one_liner(text: str | None) -> bool:
-    """Return True for Created/Accepted/Writing/… mirror lines."""
+    """Return True for {Name} Created/Accepted/Writing/… mirror lines."""
     return bool(_SYSTEM_ONE_LINER.match((text or "").strip()))
 
 

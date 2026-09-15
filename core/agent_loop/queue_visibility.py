@@ -2,7 +2,7 @@
 
 One agent has one turn queue. When that agent is working and more turns
 wait behind the current one, the origin thread (or Focus/DM) shows Debra's
-locked line ``Busy — {N} queued``. Depth changes replace the same line.
+locked line ``{Name} Busy — {N} queued``. Depth changes replace the same line.
 Empty queue or idle clears it. No heartbeat; no parallel execution.
 """
 
@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 import db
 from core.agent_loop import activity_runtime
-from core.agent_loop.task_origin_mirrors import origin_thread_target
+from core.agent_loop.task_origin_mirrors import named_origin_line, origin_thread_target
 from core.models import Agent
 from core.models.channel import ChannelArchivedError
 
@@ -27,9 +27,12 @@ BUSY_QUEUED_PREFIX = "Busy — "
 VisibilityTarget = Literal["channel", "chat"]
 
 
-def format_busy_queued_line(depth: int) -> str:
+def format_busy_queued_line(depth: int, *, agent: Agent | None = None) -> str:
     """Return Debra's locked backlog one-liner."""
-    return f"{BUSY_QUEUED_PREFIX}{max(int(depth), 0)} queued"
+    line = f"{BUSY_QUEUED_PREFIX}{max(int(depth), 0)} queued"
+    if agent is None:
+        return line
+    return named_origin_line(agent, line)
 
 
 def waiting_queue_depth(agent_id: str) -> int:
@@ -79,7 +82,7 @@ def sync_queue_visibility(agent_id: str) -> dict[str, Any]:
         return _clear_lines(agent)
 
     target, channel_id = resolve_visibility_target(agent_id)
-    content = format_busy_queued_line(depth)
+    content = format_busy_queued_line(depth, agent=agent)
     if target == "channel" and channel_id:
         posted = _upsert_channel_line(agent, channel_id, content)
         if posted:

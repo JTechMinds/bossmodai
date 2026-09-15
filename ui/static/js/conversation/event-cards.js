@@ -39,6 +39,17 @@ const BossModEventCards = (() => {
     });
 
     /**
+     * Debra's locked status verb, after an optional `{Name} ` prefix.
+     * @param {string} text
+     * @returns {string}
+     */
+    function originStatusVerb(text) {
+        const match = /^(?:[A-Z][\w.-]*(?: [A-Z][\w.-]*)? )?(Created|Accepted|Writing|Waiting|Stalled|Declined|Rerouted|Cancelled|Done|Blocked|Busy)\b/
+            .exec(String(text || '').trim());
+        return match ? match[1] : '';
+    }
+
+    /**
      * Created/Accepted open the bound Board task. Documents stay on Done.
      * A Created line must not grow a desk path just to look clickable.
      *
@@ -46,8 +57,8 @@ const BossModEventCards = (() => {
      * @returns {string}
      */
     function originTaskOpenId(message) {
-        const text = String((message && message.text) || '').trim();
-        if (!text.startsWith('Created:') && !text.startsWith('Accepted:')) return '';
+        const verb = originStatusVerb(message && message.text);
+        if (verb !== 'Created' && verb !== 'Accepted') return '';
         return String((message && message.taskId) || '').trim();
     }
 

@@ -97,12 +97,13 @@ async def test_waiting_without_task_is_a_soft_blocked_one_liner() -> None:
     assert first["feedback_code"] == WAITING_WITHOUT_TASK_CODE
     assert first["detail"] == WAITING_WITHOUT_TASK_LINE
     assert second["event"] == "world_feedback"
+    expected = f"{gerry.name} {WAITING_WITHOUT_TASK_LINE}"
     lines = [
         item.content
         for item in db.list_channel_messages(channel.id)
-        if item.author_type == "system" and (item.content or "").strip() == WAITING_WITHOUT_TASK_LINE
+        if item.author_type == "system" and (item.content or "").strip() == expected
     ]
-    assert lines == [WAITING_WITHOUT_TASK_LINE]
+    assert lines == [expected]
 
 
 def test_no_progress_blocks_and_tags_next_owner() -> None:
@@ -134,7 +135,8 @@ def test_no_progress_blocks_and_tags_next_owner() -> None:
     assert refreshed.status == "blocked"
     messages = db.list_channel_messages(channel.id)
     assert any(
-        NO_PROGRESS_LINE in (item.content or "") and "@Debra" in (item.content or "")
+        (item.content or "").startswith(f"{gerry.name} {NO_PROGRESS_LINE}")
+        and "@Debra" in (item.content or "")
         for item in messages
     )
 
@@ -145,4 +147,4 @@ def test_no_progress_without_task_posts_blocked_line() -> None:
     assert result["event"] == "status_changed"
     assert NO_PROGRESS_LINE in result["detail"]
     notes = db.list_notifications(agent_id=gerry.id, limit=8)
-    assert any(NO_PROGRESS_LINE in (note.content or "") for note in notes)
+    assert any((note.content or "").startswith(f"{gerry.name} {NO_PROGRESS_LINE}") for note in notes)

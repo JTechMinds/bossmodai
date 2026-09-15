@@ -57,6 +57,10 @@ def _enqueue(agent_id: str, *, content: str = "follow up", channel_id: str | Non
     )
 
 
+def _busy_line(agent, depth: int) -> str:
+    return f"{agent.name} Busy — {depth} queued"
+
+
 def _busy_chat_lines(agent_id: str) -> list[str]:
     return [
         item.content
@@ -66,9 +70,12 @@ def _busy_chat_lines(agent_id: str) -> list[str]:
 
 
 def test_locked_busy_copy() -> None:
+    agent = _agent()
     assert format_busy_queued_line(1) == "Busy — 1 queued"
-    assert format_busy_queued_line(3) == "Busy — 3 queued"
+    assert format_busy_queued_line(1, agent=agent) == "Ada Busy — 1 queued"
+    assert format_busy_queued_line(3, agent=agent) == "Ada Busy — 3 queued"
     assert is_system_one_liner("Busy — 2 queued")
+    assert is_system_one_liner("Ada Busy — 2 queued")
     assert not is_system_one_liner("I am busy with the report.")
 
 
@@ -94,23 +101,23 @@ def test_increment_decrement_clear_on_focus() -> None:
     first = sync_queue_visibility(agent.id)
     assert first["action"] == "upsert"
     assert first["target"] == "chat"
-    assert first["content"] == "Busy — 1 queued"
-    assert _busy_chat_lines(agent.id) == ["Busy — 1 queued"]
+    assert first["content"] == _busy_line(agent, 1)
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 1)]
     first_id = first["message_id"]
 
     third = _enqueue(agent.id, content="third")
     incremented = sync_queue_visibility(agent.id)
     assert incremented["action"] == "upsert"
-    assert incremented["content"] == "Busy — 2 queued"
+    assert incremented["content"] == _busy_line(agent, 2)
     assert incremented["message_id"] == first_id
-    assert _busy_chat_lines(agent.id) == ["Busy — 2 queued"]
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 2)]
 
     execute("DELETE FROM agent_triggers WHERE id = $1 AND status = 'queued'", [third.id])
     decremented = sync_queue_visibility(agent.id)
     assert decremented["action"] == "upsert"
-    assert decremented["content"] == "Busy — 1 queued"
+    assert decremented["content"] == _busy_line(agent, 1)
     assert decremented["message_id"] == first_id
-    assert _busy_chat_lines(agent.id) == ["Busy — 1 queued"]
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 1)]
     assert second.id
 
     db.delete_queued_triggers(agent.id, trigger_types=["human_chat"])
@@ -126,7 +133,7 @@ def test_clear_when_agent_goes_idle() -> None:
     assert claimed is not None
     _enqueue(agent.id, content="second")
     sync_queue_visibility(agent.id)
-    assert _busy_chat_lines(agent.id) == ["Busy — 1 queued"]
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 1)]
 
     db.complete_agent_trigger(current.id, claim_generation=claimed.claim_generation)
     db.delete_queued_triggers(agent.id)
@@ -146,7 +153,7 @@ def test_same_depth_does_not_repost() -> None:
     again = sync_queue_visibility(agent.id)
     assert again["action"] == "noop"
     assert again["message_id"] == first["message_id"]
-    assert _busy_chat_lines(agent.id) == ["Busy — 1 queued"]
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 1)]
 
 
 def test_channel_origin_gets_the_busy_line() -> None:
@@ -161,25 +168,25 @@ def test_channel_origin_gets_the_busy_line() -> None:
     assert posted["action"] == "upsert"
     assert posted["target"] == "channel"
     assert posted["channel_id"] == channel.id
-    assert posted["content"] == "Busy — 1 queued"
+    assert posted["content"] == _busy_line(agent, 1)
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert contents.count("Busy — 1 queued") == 1
+    assert contents.count(_busy_line(agent, 1)) == 1
     assert _busy_chat_lines(agent.id) == []
 
     _enqueue(agent.id, content="third", channel_id=channel.id)
     updated = sync_queue_visibility(agent.id)
-    assert updated["content"] == "Busy — 2 queued"
+    assert updated["content"] == _busy_line(agent, 2)
     assert updated["message_id"] == posted["message_id"]
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert contents.count("Busy — 2 queued") == 1
-    assert "Busy — 1 queued" not in contents
+    assert contents.count(_busy_line(agent, 2)) == 1
+    assert _busy_line(agent, 1) not in contents
 
     db.delete_queued_triggers(agent.id)
     cleared = sync_queue_visibility(agent.id)
     assert cleared["action"] == "clear"
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert "Busy — 2 queued" not in contents
-    assert "Busy — 1 queued" not in contents
+    assert _busy_line(agent, 2) not in contents
+    assert _busy_line(agent, 1) not in contents
 
 
 def test_channel_task_origin_wins_over_focus_queue() -> None:
@@ -209,7 +216,7 @@ def test_channel_task_origin_wins_over_focus_queue() -> None:
     posted = sync_queue_visibility(agent.id)
     assert posted["target"] == "channel"
     assert posted["channel_id"] == channel.id
-    assert posted["content"] == "Busy — 1 queued"
+    assert posted["content"] == _busy_line(agent, 1)
 
 
 def test_one_agent_one_queue_no_parallel_slots() -> None:
@@ -226,4 +233,4 @@ def test_one_agent_one_queue_no_parallel_slots() -> None:
     sync_queue_visibility(agent.id)
     assert waiting_queue_depth(agent.id) == 1
     assert len(db.list_agent_triggers(agent.id, status="claimed")) == 1
-    assert _busy_chat_lines(agent.id) == ["Busy — 1 queued"]
+    assert _busy_chat_lines(agent.id) == [_busy_line(agent, 1)]

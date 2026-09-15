@@ -35,15 +35,15 @@ function chip(el) {
 }
 
 const openable = global.BossModEventCards.renderEventCard(
-    note("Done — /projects/review.md", "/projects/review.md"),
+    note("Jimothy Done — /projects/review.md", "/projects/review.md"),
     ctx,
 );
 const prose = global.BossModEventCards.renderEventCard(
-    note("Blocked — checkable claim missing", ""),
+    note("Jimothy Blocked — checkable claim missing", ""),
     ctx,
 );
 const noOpener = global.BossModEventCards.renderEventCard(
-    note("Done — /projects/review.md", "/projects/review.md"),
+    note("Jimothy Done — /projects/review.md", "/projects/review.md"),
     { api: ctx.api },
 );
 
@@ -51,23 +51,23 @@ const openBtn = chip(openable);
 if (openBtn) openBtn.click();
 
 const created = global.BossModEventCards.renderEventCard(
-    note("Created: Share review findings", "", { taskId: "task-1" }),
+    note("Jimothy Created: Share review findings", "", { taskId: "task-1" }),
     ctx,
 );
 const accepted = global.BossModEventCards.renderEventCard(
-    note("Accepted: Share review findings", "", { taskId: "task-1" }),
+    note("Jimothy Accepted: Share review findings", "", { taskId: "task-1" }),
     ctx,
 );
 const createdNoTask = global.BossModEventCards.renderEventCard(
-    note("Created: Share review findings", ""),
+    note("Jimothy Created: Share review findings", ""),
     ctx,
 );
 const createdFakeDoc = global.BossModEventCards.renderEventCard(
-    note("Created: Share review findings", "/invented.md", { taskId: "task-1" }),
+    note("Jimothy Created: Share review findings", "/invented.md", { taskId: "task-1" }),
     ctx,
 );
 const createdNoNavigate = global.BossModEventCards.renderEventCard(
-    note("Created: Share review findings", "", { taskId: "task-1" }),
+    note("Jimothy Created: Share review findings", "", { taskId: "task-1" }),
     { api: ctx.api, openDeliverable: ctx.openDeliverable },
 );
 
