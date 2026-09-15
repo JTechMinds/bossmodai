@@ -92,24 +92,25 @@ def finish_blocked_origin(
     content: str,
     mention: str | None,
 ) -> None:
-    """Wake the tagged next owner and run the quieter-GH Auto GH gate."""
+    """Wake the tagged next owner. Persist reads ``auto_github_issue``."""
     from core.agent_loop import activity_runtime
-    from core.agent_loop.auto_github import maybe_open_auto_github_issue
 
     posted = bool(result.get("origin_status_messages"))
     origin_line = content if posted else None
     wakes = wake_mentioned_next_owner(agent=agent, content=content, posted=result)
     if wakes:
         result.setdefault("trigger_requests", []).extend(wakes)
-    decision = maybe_open_auto_github_issue(
+    result["auto_github_issue"] = should_open_auto_github_issue(
         origin_line=origin_line,
         next_owner=mention,
-        title=content,
-        body=content,
-        task_id=activity_runtime.get_active_task_id(agent.id),
     )
-    result["auto_github"] = decision
-    result["auto_github_issue"] = bool(decision.get("opened"))
+    result["auto_github"] = {
+        "title": content,
+        "body": content,
+        "task_id": activity_runtime.get_active_task_id(agent.id),
+        "origin_line": origin_line,
+        "next_owner": mention,
+    }
 
 
 def surface_blocked_origin(

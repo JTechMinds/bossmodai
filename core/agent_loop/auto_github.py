@@ -1,9 +1,10 @@
 """Auto GitHub issue opener for blocked work with no next owner.
 
 Last-resort escalation. The opener is :func:`open_auto_github_issue`.
-:func:`maybe_open_auto_github_issue` reads the quieter-GH gate first and
-skips when an origin line or ``@NextOwner`` already names the handoff.
-Opening then is a #44-style duplicate.
+Blocked-origin writes ``result["auto_github_issue"]``. The persist path
+:func:`persist_auto_github_from_result` is what **reads** that flag.
+When it is not True — origin line or ``@NextOwner`` already names the
+handoff — the opener does not run. Opening then is a #44-style duplicate.
 """
 
 from __future__ import annotations
@@ -35,8 +36,8 @@ def open_auto_github_issue(
 ) -> dict[str, Any]:
     """Open one Auto GH issue. Does not consult the quieter-GH gate.
 
-    Callers that must honor next-owner / origin-line skip go through
-    :func:`maybe_open_auto_github_issue`.
+    The persist path must read ``result["auto_github_issue"]`` first via
+    :func:`persist_auto_github_from_result`. Direct calls skip that flag.
     """
     number = len(_opened) + 1
     issue = {
@@ -67,8 +68,31 @@ def maybe_open_auto_github_issue(
     body: str,
     task_id: str | None = None,
 ) -> dict[str, Any]:
-    """Read the quieter-GH gate, then open or skip."""
+    """Skip the opener when an origin line or next owner is already named."""
     if not should_open_auto_github_issue(origin_line=origin_line, next_owner=next_owner):
         return {"opened": False, "reason": "next_owner_or_origin_line"}
     issue = open_auto_github_issue(title=title, body=body, task_id=task_id)
     return {"opened": True, "issue": issue}
+
+
+def persist_auto_github_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Honor ``result["auto_github_issue"]``. Open only when that flag is True.
+
+    A False flag — named ``@NextOwner`` or a posted origin line — stops
+    the opener. No #44-style duplicate.
+    """
+    if result.get("auto_github_issue") is not True:
+        return None
+    spec = result.get("auto_github") if isinstance(result.get("auto_github"), dict) else {}
+    title = str(spec.get("title") or result.get("detail") or "Blocked")
+    body = str(spec.get("body") or title)
+    decision = maybe_open_auto_github_issue(
+        origin_line=spec.get("origin_line"),
+        next_owner=spec.get("next_owner"),
+        title=title,
+        body=body,
+        task_id=spec.get("task_id"),
+    )
+    result["auto_github"] = {**spec, **decision}
+    result["auto_github_issue"] = bool(decision.get("opened"))
+    return decision

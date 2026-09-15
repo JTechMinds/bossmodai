@@ -24,7 +24,6 @@ from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.auto_github import (
     AUTO_GH_EVENT_PREFIX,
     list_opened_auto_github_issues,
-    maybe_open_auto_github_issue,
     reset_opened_auto_github_issues,
 )
 from core.agent_loop.blocked_origin import (
@@ -146,7 +145,7 @@ def test_no_progress_origin_wakes_tagged_next_owner() -> None:
 def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """3. Auto GH does not open when @NextOwner is already on the Blocked line."""
+    """3. Persist reads the flag and does not open Auto GH when @NextOwner is named."""
     opener_calls: list[dict] = []
 
     def _capture_open(**kwargs):
@@ -170,7 +169,7 @@ def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
         for item in db.list_channel_messages(channel.id)
     )
     assert result["auto_github_issue"] is False
-    assert result["auto_github"]["opened"] is False
+    persist_result_triggers(result)
     assert opener_calls == []
     assert list_opened_auto_github_issues() == []
     events = db.list_task_events(creation.task.id)
@@ -180,26 +179,35 @@ def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
 
 
 def test_auto_github_opens_only_when_no_owner_and_no_origin_line() -> None:
-    """3. Auto GH opener runs only when there is no origin line and no next owner."""
+    """3. Persist reads auto_github_issue; opener runs only when the flag is True."""
     assert should_open_auto_github_issue(origin_line=None, next_owner=None) is True
-    skipped = maybe_open_auto_github_issue(
-        origin_line="Jim Blocked — no progress. @Debra",
-        next_owner="@Debra",
-        title="Blocked — no progress. @Debra",
-        body="Blocked — no progress. @Debra",
+    persist_result_triggers(
+        {
+            "auto_github_issue": False,
+            "auto_github": {
+                "title": "Blocked — no progress. @Debra",
+                "body": "Blocked — no progress. @Debra",
+                "origin_line": "Jim Blocked — no progress. @Debra",
+                "next_owner": "@Debra",
+            },
+        }
     )
-    assert skipped["opened"] is False
     assert list_opened_auto_github_issues() == []
 
-    opened = maybe_open_auto_github_issue(
-        origin_line=None,
-        next_owner=None,
-        title="Blocked — no progress",
-        body="Blocked — no progress",
-    )
-    assert opened["opened"] is True
-    assert opened["issue"]["number"] == 1
-    assert list_opened_auto_github_issues() == [opened["issue"]]
+    opened_result = {
+        "auto_github_issue": True,
+        "auto_github": {
+            "title": "Blocked — no progress",
+            "body": "Blocked — no progress",
+            "origin_line": None,
+            "next_owner": None,
+        },
+    }
+    persist_result_triggers(opened_result)
+    assert opened_result["auto_github"]["opened"] is True
+    assert opened_result["auto_github"]["issue"]["number"] == 1
+    assert opened_result["auto_github_issue"] is True
+    assert list_opened_auto_github_issues() == [opened_result["auto_github"]["issue"]]
 
 
 @pytest.mark.asyncio

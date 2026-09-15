@@ -88,6 +88,9 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
     This is the same persist the dispatcher uses after a successful turn, so
     tests and live scenarios can enqueue assign/deliver follow-ups without
     inventing a second queue.
+
+    Also reads ``result["auto_github_issue"]``. Auto GH opens only when that
+    flag is True. A named next owner or origin line leaves it False.
     """
     persisted: list[Any] = []
     seen: set[str] = set()
@@ -118,8 +121,10 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
             )
         )
         seen.add(agent_id)
+    from core.agent_loop.auto_github import persist_auto_github_from_result
     from core.agent_loop.queue_visibility import schedule_queue_visibility
 
+    persist_auto_github_from_result(result)
     for queued_agent_id in seen:
         schedule_queue_visibility(queued_agent_id)
     return persisted
