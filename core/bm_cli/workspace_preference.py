@@ -15,7 +15,7 @@ from typing import Any, Literal
 import db
 from core.bm_cli.filesystem import agent_artifact_dir, slugify_name
 from core.bm_cli.host_roots import (
-    grantable_host_root,
+    denial_message,
     is_within_roots,
     looks_like_named_absolute_path,
     named_path_roots,
@@ -24,6 +24,8 @@ from core.bm_cli.host_path_consent import (
     _clean_channel_id,
     _enqueue_resume,
     canonical_host_path,
+    looks_like_command_flag,
+    resolve_consent_host_path,
 )
 from core.bm_cli.results import consent_required_result, error_result, success_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
@@ -139,6 +141,8 @@ def named_host_path_from_command(parsed: ParsedCliCommand) -> str | None:
     """Return the first named absolute host path in a parsed CLI command."""
     for arg in parsed.args:
         token = str(arg).strip()
+        if looks_like_command_flag(token):
+            continue
         if looks_like_named_absolute_path(token):
             return token
     return None
@@ -159,17 +163,20 @@ def maybe_pause_for_workspace_preference(
     raw_path = named_host_path_from_command(parsed)
     if not raw_path:
         return None
-    if not _host_path_is_allowlisted(agent, raw_path, task_id):
+    resolved = resolve_consent_host_path(raw_path)
+    check_path = resolved[0] if resolved is not None else raw_path
+    if not _host_path_is_allowlisted(agent, check_path, task_id) and not _host_path_is_allowlisted(
+        agent, raw_path, task_id
+    ):
         return None
-    path = canonical_host_path(raw_path)
-    grant_root = grantable_host_root(raw_path)
-    if grant_root is None:
-        grant_root = Path(path if Path(path).is_dir() else str(Path(path).parent))
-    prior = db.find_workspace_preference_for_scope(agent.id, canonical_host_path(raw_path), task_id=task_id)
+    if resolved is None:
+        return None
+    path, grant_root = resolved
+    prior = db.find_workspace_preference_for_scope(agent.id, path, task_id=task_id)
     if prior is None:
         prior = _resolved_preference_for_write(
             agent_id=agent.id,
-            path=canonical_host_path(raw_path),
+            path=path,
             grant_root=str(grant_root),
             task_id=task_id,
         )
@@ -197,10 +204,15 @@ def request_workspace_preference(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Open the workspace-preference card, or apply a prior explicit choice."""
-    path = canonical_host_path(raw_path)
-    grant_root = grantable_host_root(raw_path)
-    if grant_root is None:
-        grant_root = Path(path if Path(path).is_dir() else str(Path(path).parent))
+    resolved = resolve_consent_host_path(raw_path)
+    if resolved is None:
+        return error_result(
+            command,
+            denial_message(raw_path),
+            cwd=cwd,
+            executor="virtual",
+        )
+    path, grant_root = resolved
 
     prior = _resolved_preference_for_write(
         agent_id=agent.id,

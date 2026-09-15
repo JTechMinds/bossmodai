@@ -37,7 +37,7 @@ from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
-from core.bm_cli.host_path_consent import handle_named_path_consent
+from core.bm_cli.host_path_consent import handle_named_path_consent, looks_like_command_flag
 from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
@@ -594,6 +594,8 @@ def _named_path_from_command(parsed: ParsedCliCommand) -> str | None:
     """Return the first user-named absolute path in a parsed CLI command."""
     for arg in parsed.args:
         token = str(arg).strip()
+        if looks_like_command_flag(token):
+            continue
         if looks_like_named_absolute_path(token) or (
             token.startswith("/")
             and not token.startswith("/me")

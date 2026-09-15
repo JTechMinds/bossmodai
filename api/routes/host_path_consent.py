@@ -12,11 +12,14 @@ router = APIRouter()
 @router.post("/host-path-consent/{request_id}/allow-once")
 async def allow_once_host_path(request_id: str):
     """Grant the requested root for this turn or task only."""
-    request = await resume_host_path_consent(
-        request_id,
-        decision="allow_once",
-        services=runtime_services,
-    )
+    try:
+        request = await resume_host_path_consent(
+            request_id,
+            decision="allow_once",
+            services=runtime_services,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if request is None:
         raise HTTPException(404, "Consent request not found or already resolved")
     await manager.broadcast_activity(
@@ -29,11 +32,14 @@ async def allow_once_host_path(request_id: str):
 @router.post("/host-path-consent/{request_id}/always-allow")
 async def always_allow_host_path(request_id: str):
     """Add the grant root to the operator host-roots allowlist."""
-    request = await resume_host_path_consent(
-        request_id,
-        decision="always_allow",
-        services=runtime_services,
-    )
+    try:
+        request = await resume_host_path_consent(
+            request_id,
+            decision="always_allow",
+            services=runtime_services,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if request is None:
         raise HTTPException(404, "Consent request not found or already resolved")
     await manager.broadcast_activity(
