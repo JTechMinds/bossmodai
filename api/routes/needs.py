@@ -31,9 +31,24 @@ def _agent_name(agent_id: str | None, cache: dict[str, str]) -> str:
 
 
 def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
+    from core.bm_cli.host_roots import offers_always_allow_grant
+
     items = []
     for request in db.list_consent_requests(status="pending", limit=MAX_LIMIT):
         name = _agent_name(request.agent_id, cache)
+        actions = [
+            {"label": "Allow once", "method": "POST", "tone": "primary",
+             "href": f"/api/host-path-consent/{request.id}/allow-once"},
+        ]
+        if offers_always_allow_grant(request.grant_root):
+            actions.append(
+                {"label": "Always allow (for all agents)", "method": "POST", "tone": "default",
+                 "href": f"/api/host-path-consent/{request.id}/always-allow"},
+            )
+        actions.append(
+            {"label": "Deny", "method": "POST", "tone": "quiet",
+             "href": f"/api/host-path-consent/{request.id}/deny"},
+        )
         items.append({
             "id": request.id,
             "kind": "consent",
@@ -46,14 +61,7 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             # request did not originate in a thread it is None and the agent's
             # own conversation is the right place to show it.
             "conversation_id": request.channel_id or request.agent_id,
-            "actions": [
-                {"label": "Allow once", "method": "POST", "tone": "primary",
-                 "href": f"/api/host-path-consent/{request.id}/allow-once"},
-                {"label": "Always allow (for all agents)", "method": "POST", "tone": "default",
-                 "href": f"/api/host-path-consent/{request.id}/always-allow"},
-                {"label": "Deny", "method": "POST", "tone": "quiet",
-                 "href": f"/api/host-path-consent/{request.id}/deny"},
-            ],
+            "actions": actions,
         })
     return items
 

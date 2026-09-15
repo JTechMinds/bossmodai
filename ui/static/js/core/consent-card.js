@@ -99,7 +99,11 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         const buttons = workspace ? workspacePreferenceActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
-            { label: 'Always allow (for all agents)', path: 'always-allow' },
+            {
+                label: 'Always allow (for all agents)',
+                path: 'always-allow',
+                hidden: card.always_allow === false,
+            },
             { label: 'Deny', path: 'deny' },
         ];
         buttons.forEach((item) => {

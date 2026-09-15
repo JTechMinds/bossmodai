@@ -43,6 +43,8 @@ class HostPathConsentRequest(BaseModel):
     def as_card(self) -> dict[str, Any]:
         """Operator-facing card payload for chat / WebSocket."""
         kind = (self.card_kind or "host_path").strip() or "host_path"
+        from core.bm_cli.host_roots import offers_always_allow_grant
+
         card: dict[str, Any] = {
             "id": self.id,
             "agent_id": self.agent_id,
@@ -51,6 +53,7 @@ class HostPathConsentRequest(BaseModel):
             "reason": self.reason,
             "kind": kind,
             "status": self.status,
+            "always_allow": offers_always_allow_grant(self.grant_root),
         }
         if self.channel_id:
             card["channel_id"] = self.channel_id
