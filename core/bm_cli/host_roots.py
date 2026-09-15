@@ -449,7 +449,13 @@ def _usable_project_dir(path: Path) -> Path | None:
 
 
 def _project_dir_from_original(original: Path, walked: Path) -> Path | None:
-    """Find an existing project directory named in *original*."""
+    """Find an existing project directory named in *original*.
+
+    Only a folder that looks like a project counts: a child of a project
+    container (``Desktop/Projects/<name>``), a folder sitting directly on
+    Desktop, or a ``.git`` root. Ancestors of ``$HOME`` / Desktop are
+    ignored so junk like ``…/ds/nothing`` cannot grant ``tmp`` or home.
+    """
     parts = original.parts
     for index, part in enumerate(parts[:-1]):
         if part not in _PROJECT_CONTAINER_NAMES:
@@ -460,21 +466,27 @@ def _project_dir_from_original(original: Path, walked: Path) -> Path | None:
             return usable
 
     current = original
-    prefixes: list[Path] = []
     while current != current.parent:
-        prefixes.append(current)
+        if _looks_like_project_dir(current):
+            usable = _usable_project_dir(current)
+            if usable is not None:
+                return usable
         current = current.parent
-    for candidate in prefixes:
-        usable = _usable_project_dir(candidate)
-        if usable is not None:
-            return usable
 
     skip_names = set(_PROJECT_CONTAINER_NAMES) | set(_BROAD_FOLDER_NAMES) | {"/", "", "home", "Users"}
     try:
         skip_names.add(user_home().name)
     except OSError:
         pass
-    names = [part for part in parts if part not in skip_names]
+    names: list[str] = []
+    after_anchor = False
+    for part in parts:
+        if part in _BROAD_FOLDER_NAMES or part in _PROJECT_CONTAINER_NAMES:
+            after_anchor = True
+            continue
+        if not after_anchor or part in skip_names:
+            continue
+        names.append(part)
     search_roots: list[Path] = [walked]
     try:
         home = user_home()
@@ -495,6 +507,8 @@ def _project_dir_from_original(original: Path, walked: Path) -> Path | None:
         containers = [resolved_root] if is_project_container(resolved_root) else [
             resolved_root / name for name in ("Projects", "projects", "repos", "code", "dev")
         ]
+        if resolved_root.name in _BROAD_FOLDER_NAMES:
+            containers.append(resolved_root)
         for container in containers:
             if not container.is_dir():
                 continue
@@ -503,6 +517,26 @@ def _project_dir_from_original(original: Path, walked: Path) -> Path | None:
                 if usable is not None:
                     return usable
     return None
+
+
+def _looks_like_project_dir(path: Path) -> bool:
+    """Return True when *path* is a project folder, not a home/tmp ancestor."""
+    try:
+        if not path.exists() or not path.is_dir():
+            return False
+    except OSError:
+        return False
+    if is_broad_user_root(path) or is_project_container(path):
+        return False
+    parent = path.parent
+    if is_project_container(parent) or parent.name in _BROAD_FOLDER_NAMES:
+        return True
+    try:
+        if (path / ".git").exists():
+            return True
+    except OSError:
+        return False
+    return False
 
 
 def _live_host_root_setting() -> str | None:
