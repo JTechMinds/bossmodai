@@ -77,6 +77,7 @@ const BossModAgentSource = (() => {
                 key: isQueue ? `queue-visibility:${agentId}` : String(raw.id || raw.message_id || '').trim(),
                 author: raw.from || 'agent',
                 authorName: raw.from_name || '',
+                authorAgentId: raw.author_agent_id || agentId,
                 showAuthor: false,
                 text,
                 createdAt: raw.created_at || '',
@@ -185,7 +186,7 @@ const BossModAgentSource = (() => {
          * `ctx.openDesk` is an optional, documented capability (spec 4.1), and
          * the action renders only when it is injected. A control that renders
          * but does nothing is worse than one that is absent, which is the same
-         * rule event-cards.js follows for "Open in Desk".
+         * rule event-cards.js follows for the Done open chip.
          *
          * @returns {{title: string, subtitle: string, avatar: object, actions: object[]}}
          */

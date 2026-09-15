@@ -20,7 +20,7 @@ _CHANNEL_COLUMNS = "id, name, kind, status, created_by, created_at, updated_at, 
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
 _MESSAGE_COLUMNS = (
     "id, channel_id, author_type, author_agent_id, author_name, content, "
-    "source_channel, notification_kind, consent_id, created_at"
+    "source_channel, notification_kind, consent_id, desk_path, created_at"
 )
 
 
@@ -279,6 +279,7 @@ def create_channel_message(
     author_agent_id: str | None = None,
     notification_kind: str | None = None,
     consent_id: str | None = None,
+    desk_path: str | None = None,
 ) -> ChannelMessage:
     """Append one message to the shared channel transcript."""
     if is_channel_archived(channel_id):
@@ -287,9 +288,9 @@ def create_channel_message(
         f"""
         INSERT INTO channel_messages (
             channel_id, author_type, author_agent_id, author_name, content,
-            source_channel, notification_kind, consent_id, created_at
+            source_channel, notification_kind, consent_id, desk_path, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING {_MESSAGE_COLUMNS}
         """,
         [
@@ -301,6 +302,7 @@ def create_channel_message(
             source_channel,
             notification_kind,
             consent_id,
+            (desk_path or "").strip() or None,
             datetime.now(timezone.utc),
         ],
         ChannelMessage,

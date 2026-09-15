@@ -45,10 +45,12 @@ const BossModEventCards = (() => {
      * @param {object} ctx  Conversation capabilities.
      * @param {Function} ctx.api  Authenticated fetch helper; a consent card
      *   cannot resolve without it.
-     * @param {(path: string) => void} [ctx.openDesk]  Optional (spec 4.1). The
-     *   "Open in Desk" affordance renders only when it is injected — a control
-     *   that renders but does nothing is worse than one that is absent. Phase
-     *   2B supplies it with the context column.
+     * @param {(path: string) => void} [ctx.openDesk]  Optional (spec 4.1). Desk
+     *   chrome fallback when the deliverable opener is not loaded.
+     * @param {(path: string, agentId?: string) => (void|Promise<void>)} [ctx.openDeliverable]
+     *   Same file-open path Board deliverable cards use. The open chip renders
+     *   only when this or openDesk is injected — a control that renders but
+     *   does nothing is worse than one that is absent.
      * @returns {HTMLElement}
      * @throws {Error} When ctx is missing, on a kind with no renderer, on a
      *   `request` or `event` with no card, or on an `event` whose tone has no
@@ -71,17 +73,31 @@ const BossModEventCards = (() => {
         }
 
         if (message.kind === 'note') {
-            const deskPath = String(message.deskPath || '');
+            const deskPath = String(message.deskPath || '').trim();
             // Recorded even when nothing can act on it, so the path is never
             // lost between the phase that reads it and the phase that opens it.
-            const note = h('div', { class: 'note', 'data-desk-path': deskPath },
+            const openable = Boolean(deskPath);
+            const note = h('div', {
+                class: openable ? 'note note-ok' : 'note',
+                'data-desk-path': deskPath,
+                'data-tone': openable ? 'ok' : null,
+            },
                 h('p', { class: 'note-text' }, String(message.text || '')));
-            if (deskPath && typeof ctx.openDesk === 'function') {
+            const canOpen = typeof ctx.openDeliverable === 'function'
+                || typeof ctx.openDesk === 'function';
+            if (openable && canOpen) {
+                const agentId = String(message.authorAgentId || ctx.agentId || '');
                 note.append(h('button', {
                     class: 'note-action',
                     type: 'button',
-                    onclick: () => ctx.openDesk(deskPath),
-                }, 'Open in Desk'));
+                    onclick: () => {
+                        if (typeof ctx.openDeliverable === 'function') {
+                            void ctx.openDeliverable(deskPath, agentId);
+                            return;
+                        }
+                        ctx.openDesk(deskPath);
+                    },
+                }, 'open'));
             }
             return note;
         }

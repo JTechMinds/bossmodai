@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS channel_messages (
     source_channel   VARCHAR NOT NULL,
     notification_kind VARCHAR,
     consent_id       VARCHAR,
+    desk_path        VARCHAR,
     created_at       TIMESTAMP DEFAULT current_timestamp
 );
 

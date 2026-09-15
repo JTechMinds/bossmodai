@@ -80,6 +80,25 @@ def _complete_human_round(channel_id: str, member_ids: list[str]) -> Any:
     return refreshed
 
 
+def _record_log_tool_evidence(agent_id: str) -> None:
+    db.create_bm_cli_event(
+        agent_id=agent_id,
+        command="cat /projects/review.md",
+        content_present=False,
+        executor="virtual",
+        cwd_before="/",
+        cwd_after="/",
+        policy_tier="read",
+        decision="allowed",
+        exit_code=0,
+        result_kind="read",
+        stdout_preview="ok",
+        stderr_preview=None,
+        changed_paths=None,
+        trigger_type="activity_resumed",
+    )
+
+
 def _channel_task(*, assignee_id: str, channel_id: str):
     return create_or_bind_task(
         title="Share review findings",
@@ -233,6 +252,7 @@ async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
     activity_runtime.activate_work_activity(jimothy.id, creation.task)
     state = db.get_agent_state(jimothy.id)
     assert state is not None
+    _record_log_tool_evidence(jimothy.id)
 
     completed = await execute_action(
         {
@@ -301,6 +321,7 @@ async def test_non_channel_task_complete_does_not_open_channel_round() -> None:
     activity_runtime.activate_work_activity(jimothy.id, creation.task)
     state = db.get_agent_state(jimothy.id)
     assert state is not None
+    _record_log_tool_evidence(jimothy.id)
 
     completed = await execute_action(
         {

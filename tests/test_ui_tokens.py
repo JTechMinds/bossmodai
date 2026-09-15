@@ -127,6 +127,7 @@ TINTED_SURFACES = (
     TintedSurface("conversation.css", ".event-card.tone-alert", "alert-bg", "event-card"),
     TintedSurface("conversation.css", ".event-card.tone-amber", "amber", "event-card"),
     TintedSurface("conversation.css", ".event-card.tone-ok", "ok-bg", "event-card"),
+    TintedSurface("conversation.css", ".note.note-ok", "ok-bg", "note"),
 )
 
 # The colour every element starts from: `html, body` in base.css.

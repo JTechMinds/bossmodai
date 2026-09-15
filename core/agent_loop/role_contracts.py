@@ -12,6 +12,11 @@ from typing import Any, Literal
 
 from core.agent_loop.deliverables import get_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.shared_handoff import peer_invisible_handoff_error
+from core.agent_loop.tool_evidence import (
+    MISSING_TOOL_EVIDENCE_CODE,
+    has_log_tool_evidence,
+    missing_tool_evidence_message,
+)
 # Re-exported, not merely used: the pure specialty/finish-line half of this
 # module now lives in core.agent_loop.specialty so core.agent_pack can reach
 # suggest_finish_line without importing this module (and, through it, db).
@@ -217,9 +222,10 @@ def format_role_contract_block(agent: Agent) -> str:
     )
     auditor = is_auditor_specialty(agent.role)
     clear_line = (
-        "Auditor CLEAR only against a checkable claim; empty done is not a CLEAR."
+        "Auditor CLEAR only against a checkable claim; empty done is not a CLEAR. "
+        "A chat assertion is not a CLEAR."
         if auditor
-        else "Empty done is rejected."
+        else "Empty done is rejected. A chat assertion is not a claim."
     )
     description_line = f"Description: {description}\n" if description else ""
     return (
@@ -392,6 +398,16 @@ def resolve_done_claim(
             "event": "world_feedback",
             "detail": f"{kind} claims require non-empty evidence (data.claim.ev).",
             "agent_name": agent.name,
+        }
+    if not has_log_tool_evidence(agent.id):
+        return None, {
+            "event": "world_feedback",
+            "feedback_code": MISSING_TOOL_EVIDENCE_CODE,
+            "detail": missing_tool_evidence_message(
+                auditor=is_auditor_specialty(agent.role),
+            ),
+            "agent_name": agent.name,
+            "origin_status_kind": "blocked_claim",
         }
     return parsed, None
 
