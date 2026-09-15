@@ -54,6 +54,15 @@ def test_handler_modules_importable() -> None:
     assert callable(task_followups._append_task_follow_up_message)
 
 
+def test_task_follow_up_trigger_bound_and_turn_path_imports() -> None:
+    from core.agent_loop import actions_tasks, execution_turn
+    from core.agent_loop.activity_scheduler import build_task_follow_up_trigger
+
+    assert actions_tasks.build_task_follow_up_trigger is build_task_follow_up_trigger
+    assert callable(execution_turn._run_execution_turn)
+    assert _ACTION_HANDLERS["taskMessage"] is actions_tasks._handle_task_message
+
+
 def test_parse_action_compact_idle_and_done() -> None:
     idle = parse_action('{"act":"idle","th":"nothing to do"}')
     assert idle["action"] == "idle"
