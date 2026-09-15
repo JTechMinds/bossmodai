@@ -401,6 +401,23 @@
   font-weight: 500;
 }
 
+/* Green Done: the origin one-liner tints only when the claim path opens. */
+.note.note-ok {
+  padding: 8px 12px;
+  border: 1px solid var(--ok-mark);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--r);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+
+.note.note-ok .note-text { color: var(--ok-ink); }
+
+.note.note-ok .note-action {
+  border-color: var(--ok);
+  color: var(--ok-ink);
+}
+
 /* ─── Host-path consent ─── */
 
 .host-path-consent-card {

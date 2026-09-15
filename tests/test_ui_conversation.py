@@ -270,15 +270,16 @@ def test_conversation_harness() -> None:
 def test_event_cards_render_desk_action_only_when_injected() -> None:
     """A control that renders but does nothing is worse than one that is absent."""
     source = _read(CONVERSATION / "event-cards.js")
-    assert "ctx.openDesk" in source
+    assert "ctx.openDeliverable" in source
     assert "data-desk-path" in source
-    assert "typeof ctx.openDesk === 'function'" in source
-    assert "'Open in Desk'" in source
+    assert "typeof ctx.openDeliverable === 'function'" in source
+    assert "}, 'open')" in source
+    assert "'Open in Desk'" not in source
     # The path is recorded whether or not anything can act on it, so nothing
     # is lost between the phase that reads it and the phase that opens it.
     note = source.split("if (message.kind === 'note') {", 1)[1]
     assert note.index("'data-desk-path': deskPath") < note.index(
-        "typeof ctx.openDesk === 'function'"
+        "typeof ctx.openDeliverable === 'function'"
     )
     # Phase 2A did not inject it; Phase 2B does, with the context column. The
     # assertion is inverted rather than deleted: it was correct for 2A and is
@@ -287,6 +288,42 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     place = _read(JS / "places" / "chat" / "chat-place.js")
     assert "openDesk:" in place, "Phase 2B injects openDesk from the Chat place"
     assert "BossModContextColumn.openDeskFrom(" in place
+    controller = _read(CONVERSATION / "conversation.js")
+    assert "openDeliverable" in controller
+    assert "BossModTaskDeliverables.openDeliverablePath" in controller
+    thread = _read(SOURCES / "thread-source.js")
+    assert "deskPath: raw.desk_path || null" in thread
+    assert "isSystem || isQueue" in thread
+
+
+def test_done_link_harness() -> None:
+    """Origin Done with an openable path tints and opens; prose-only has no chip."""
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parent / "js_done_link_harness.cjs"),
+            str(JS / "core" / "dom.js"),
+            str(CONVERSATION / "event-cards.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "openableHasTint": True,
+        "openableTone": "ok",
+        "openablePath": "/projects/review.md",
+        "openableChip": "open",
+        "opened": [{"path": "/projects/review.md", "agentId": "agent-1"}],
+        "proseHasTint": False,
+        "proseHasChip": False,
+        "prosePath": "",
+        "noOpenerHasChip": False,
+        "noOpenerKeepsPath": True,
+    }
 
 
 def test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it() -> None:

@@ -52,6 +52,26 @@ def short_reason(text: str | None, *, fallback: str = "") -> str:
     return note
 
 
+def openable_done_claim_path(
+    *,
+    claim: dict[str, Any] | None = None,
+    path: str | None = None,
+) -> str | None:
+    """Return a Done claim path only when peers can open it.
+
+    Tests/proof tails are not paths. A path must be absolute so the open chip
+    can use the same file-open path as other deliverables.
+    """
+    payload = claim if isinstance(claim, dict) else {}
+    claim_type = str(payload.get("type") or "").strip().lower()
+    if claim_type in {"tests", "proof"}:
+        return None
+    claim_path = str(payload.get("path") or path or "").strip()
+    if claim_path.startswith("/"):
+        return claim_path
+    return None
+
+
 def format_done_claim_label(
     *,
     claim: dict[str, Any] | None = None,
@@ -158,7 +178,14 @@ def mirror_origin_status(
         target_name=target_name,
         claim=claim,
     )
-    return persist_origin_status_line(task=task, agent=agent, content=content, kind=kind)
+    desk_path = openable_done_claim_path(claim=claim, path=path) if kind == "completion" else None
+    return persist_origin_status_line(
+        task=task,
+        agent=agent,
+        content=content,
+        kind=kind,
+        desk_path=desk_path,
+    )
 
 
 def persist_unbound_status_line(
@@ -218,12 +245,15 @@ def persist_origin_status_line(
     agent: Agent,
     content: str,
     kind: str,
+    desk_path: str | None = None,
 ) -> dict[str, Any]:
     """Persist one system status line on the origin thread. No peer wake."""
     text = (content or "").strip()
     target = origin_thread_target(task)
     if not text or target is None:
         return {}
+    notice_kind = "completion" if kind == "completion" else "task_update"
+    open_path = (desk_path or "").strip() or None
     if target == "channel":
         channel_id = str(task.notification_channel_id).strip()
         if db.is_channel_archived(channel_id):
@@ -239,12 +269,13 @@ def persist_origin_status_line(
         notification = persist_channel_notification(
             agent,
             ChatNotification(
-                kind="task_update",
+                kind=notice_kind,
                 content=text,
                 source_channel="channel",
                 policy=str(getattr(task, "notification_policy", None) or "completion_blocked"),
                 prompt_visibility=False,
                 task_id=getattr(task, "id", None),
+                desk_path=open_path,
                 channel_id=channel_id,
             ),
         )
@@ -257,12 +288,13 @@ def persist_origin_status_line(
     chat_message = persist_chat_notification(
         agent,
         ChatNotification(
-            kind="task_update",
+            kind=notice_kind,
             content=text,
             source_channel=str(getattr(task, "source_channel", None) or "chat"),
             policy=str(getattr(task, "notification_policy", None) or "completion_blocked"),
             prompt_visibility=False,
             task_id=getattr(task, "id", None),
+            desk_path=open_path,
         ),
     )
     return {"chat_message": chat_message}

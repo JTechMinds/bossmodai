@@ -72,18 +72,20 @@ const BossModThreadSource = (() => {
         function toMessage(raw) {
             const consent = BossModConsentCard.isHostPathConsentMessage(raw) && raw.host_path_consent;
             const isQueue = raw.notification_kind === 'queue_visibility';
+            const isSystem = raw.author_type === 'system';
             const text = raw.content || '';
             const queueKey = raw.author_name || raw.author_agent_id || '';
             return {
                 key: isQueue ? `queue-visibility:${queueKey}` : String(raw.message_id || raw.id || '').trim(),
                 author: raw.author_type || 'agent',
                 authorName: raw.author_name || 'Unknown',
+                authorAgentId: raw.author_agent_id || null,
                 showAuthor: true,
                 text,
                 createdAt: raw.created_at || '',
-                kind: consent ? 'request' : (isQueue ? 'note' : 'message'),
+                kind: consent ? 'request' : (isSystem || isQueue ? 'note' : 'message'),
                 card: raw.host_path_consent || null,
-                deskPath: null,
+                deskPath: raw.desk_path || null,
                 systemReceipt: false,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),

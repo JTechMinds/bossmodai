@@ -122,9 +122,11 @@ async def emit_chat_notifications(
                 content=channel_notification["content"],
                 author_type=channel_notification["author_type"],
                 author_name=channel_notification["author_name"],
+                author_agent_id=channel_notification.get("author_agent_id"),
                 message_id=channel_notification.get("message_id"),
                 created_at=channel_notification.get("created_at"),
                 notification_kind=channel_notification.get("notification_kind"),
+                desk_path=channel_notification.get("desk_path"),
                 host_path_consent=channel_notification.get("host_path_consent"),
             )
             continue
@@ -160,9 +162,11 @@ async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Age
                 content=extra["content"],
                 author_type=extra.get("author_type") or "system",
                 author_name=extra.get("author_name") or agent.name,
+                author_agent_id=extra.get("author_agent_id"),
                 message_id=extra.get("message_id"),
                 created_at=extra.get("created_at"),
                 notification_kind=extra.get("notification_kind"),
+                desk_path=extra.get("desk_path"),
             )
             continue
         if extra.get("agent_id"):
@@ -201,6 +205,7 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             notification_id=stored.id,
             target_kind="desk",
             target_path=notification.desk_path,
+            label="open",
         )
     if notification.consent_id:
         db.create_notification_link(
@@ -262,8 +267,10 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
             author_name=agent.name,
             content=notification.content,
             source_channel=notification.source_channel,
+            author_agent_id=agent.id,
             notification_kind=notification.kind,
             consent_id=notification.consent_id,
+            desk_path=notification.desk_path,
         )
     except ChannelArchivedError:
         return {}
@@ -272,9 +279,11 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "content": message.content,
         "author_type": message.author_type,
         "author_name": message.author_name,
+        "author_agent_id": message.author_agent_id,
         "message_id": message.id,
         "created_at": message.created_at,
         "notification_kind": notification.kind,
+        "desk_path": getattr(message, "desk_path", None) or notification.desk_path,
         "host_path_consent": (
             db.get_consent_request(notification.consent_id).as_card()
             if notification.consent_id and db.get_consent_request(notification.consent_id)
@@ -408,12 +417,13 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
     ]
 
     if kind == "completion":
-        from core.agent_loop.task_origin_mirrors import format_done_claim_label
+        from core.agent_loop.task_origin_mirrors import format_done_claim_label, openable_done_claim_path
 
         claim = payload.get("done_claim") if isinstance(payload.get("done_claim"), dict) else None
+        fallback_path = deliverable_paths[0] if len(deliverable_paths) == 1 else None
         claim_label = format_done_claim_label(
             claim=claim,
-            path=deliverable_paths[0] if len(deliverable_paths) == 1 else None,
+            path=fallback_path,
         )
         return ChatNotification(
             kind="completion",
@@ -422,7 +432,7 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,
             task_id=payload.get("task_id"),
-            desk_path=deliverable_paths[0] if len(deliverable_paths) == 1 else None,
+            desk_path=openable_done_claim_path(claim=claim, path=fallback_path),
             channel_id=payload.get("channel_id"),
         )
 

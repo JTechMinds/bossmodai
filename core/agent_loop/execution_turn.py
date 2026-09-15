@@ -464,6 +464,7 @@ async def _run_execution_turn(
                 message_type=chat_message.get("message_type"),
                 message_id=chat_message.get("message_id"),
                 created_at=chat_message.get("created_at"),
+                notification_kind=chat_message.get("notification_kind"),
                 desk_path=chat_message.get("desk_path"),
             )
         meeting_message = result.get("meeting_message")
@@ -487,6 +488,8 @@ async def _run_execution_turn(
                 author_agent_id=channel_message.get("author_agent_id"),
                 message_id=channel_message.get("message_id"),
                 created_at=channel_message.get("created_at"),
+                notification_kind=channel_message.get("notification_kind"),
+                desk_path=channel_message.get("desk_path"),
             )
         await broadcast_origin_status_messages(result, agent=agent)
 

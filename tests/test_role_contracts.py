@@ -51,6 +51,25 @@ def teardown_function() -> None:
     db.close_connection()
 
 
+def _record_log_tool_evidence(agent_id: str) -> None:
+    db.create_bm_cli_event(
+        agent_id=agent_id,
+        command="cat /me/note.md",
+        content_present=False,
+        executor="virtual",
+        cwd_before="/",
+        cwd_after="/",
+        policy_tier="read",
+        decision="allowed",
+        exit_code=0,
+        result_kind="read",
+        stdout_preview="ok",
+        stderr_preview=None,
+        changed_paths=None,
+        trigger_type="activity_resumed",
+    )
+
+
 def _headers() -> dict[str, str]:
     return {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
 
@@ -700,6 +719,7 @@ async def test_complete_with_tests_claim_succeeds() -> None:
     assert state is not None
     creation = _bind_task(agent.id, title="Write a note")
     activate_work_activity(agent.id, creation.task)
+    _record_log_tool_evidence(agent.id)
 
     result = await execute_action(
         {
@@ -715,6 +735,56 @@ async def test_complete_with_tests_claim_succeeds() -> None:
     refreshed = db.get_task(creation.task.id)
     assert refreshed is not None
     assert refreshed.status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_complete_reviewed_without_log_tool_evidence_is_rejected() -> None:
+    agent = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    creation = _bind_task(agent.id, title="Review the package")
+    activate_work_activity(agent.id, creation.task)
+
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Reviewed the codebase.",
+            "doneClaim": {"type": "proof", "ev": "reviewed the codebase"},
+        },
+        agent,
+        state,
+    )
+    assert result["event"] == "world_feedback"
+    assert "tool evidence" in result["detail"].lower()
+    assert "chat assertion" in result["detail"].lower()
+    refreshed = db.get_task(creation.task.id)
+    assert refreshed is not None
+    assert refreshed.status != "complete"
+
+
+@pytest.mark.asyncio
+async def test_auditor_clear_reviewed_without_log_tool_evidence_is_rejected() -> None:
+    agent = db.create_agent("Hugh", role="Auditor", desk_x=1, desk_y=1)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    creation = _bind_task(agent.id, title="Review the package")
+    activate_work_activity(agent.id, creation.task)
+
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Reviewed the codebase.",
+            "doneClaim": {"type": "proof", "ev": "reviewed the codebase"},
+        },
+        agent,
+        state,
+    )
+    assert result["event"] == "world_feedback"
+    assert "clear" in result["detail"].lower()
+    assert "tool evidence" in result["detail"].lower()
+    refreshed = db.get_task(creation.task.id)
+    assert refreshed is not None
+    assert refreshed.status != "complete"
 
 
 @pytest.mark.asyncio

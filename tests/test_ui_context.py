@@ -703,13 +703,7 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
 
 
 def test_desk_toggle_and_open_desk_are_injected() -> None:
-    """The Desk toggle and the capability behind it ship together.
-
-    `ctx.openDesk` is an optional, documented capability (spec 4.1). The agent
-    source renders the toggle only when it is injected, and Phase 2B is the
-    phase that injects it — the same rule event-cards.js follows for its
-    "Open in Desk" affordance.
-    """
+    """The Desk toggle and the capability behind it ship together."""
     source = _read(CONVERSATION / "sources" / "agent-source.js")
     assert "typeof ctx.openDesk === 'function'" in source
     assert "id: 'conversation-desk-toggle'" in source

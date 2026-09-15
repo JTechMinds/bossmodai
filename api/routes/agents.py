@@ -812,6 +812,7 @@ def _serialize_channel_message(item) -> dict[str, object]:
         "source_channel": item.source_channel,
         "notification_kind": getattr(item, "notification_kind", None),
         "host_path_consent": consent_card,
+        "desk_path": getattr(item, "desk_path", None),
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 

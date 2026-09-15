@@ -27,8 +27,10 @@ from core.agent_loop.notifications import emit_chat_notifications, project_chat_
 from core.agent_loop.task_origin_mirrors import (
     format_done_claim_label,
     format_origin_status_line,
+    openable_done_claim_path,
     persist_origin_status_line,
 )
+from core.bm_cli.virtual_fs import resolve_cli_path
 from core.agent_loop.turn_helpers import _build_managed_writer_progress_reporter
 from core.agent_loop.watchdog import TaskWatchdog
 from core.bm_cli.managed_writer import ManagedWriteProgress
@@ -110,6 +112,33 @@ def _chat_task(*, assignee_id: str, title: str = "Write the weekly report"):
         audit_author_name="Human Operator",
         audit_author_type="human",
     )
+
+
+def _record_log_tool_evidence(agent_id: str) -> None:
+    db.create_bm_cli_event(
+        agent_id=agent_id,
+        command="cat /projects/review.md",
+        content_present=False,
+        executor="virtual",
+        cwd_before="/",
+        cwd_after="/",
+        policy_tier="read",
+        decision="allowed",
+        exit_code=0,
+        result_kind="read",
+        stdout_preview="ok",
+        stderr_preview=None,
+        changed_paths=None,
+        trigger_type="activity_resumed",
+    )
+
+
+def _write_virtual(storage_key: str, virtual_path: str, content: str) -> str:
+    resolved = resolve_cli_path(storage_key, "/", virtual_path)
+    assert resolved.real_path is not None
+    resolved.real_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved.real_path.write_text(content, encoding="utf-8")
+    return resolved.virtual_path
 
 
 def _round_count(channel_id: str) -> int:
@@ -445,6 +474,7 @@ async def test_waiting_and_complete_claim_project_origin_cards() -> None:
     activity_runtime.activate_work_activity(jimothy.id, db.get_task(creation.task.id))
     state = db.get_agent_state(jimothy.id)
     assert state is not None
+    _record_log_tool_evidence(jimothy.id)
     completed = await execute_action(
         {
             "action": "complete",
@@ -740,6 +770,9 @@ def test_locked_operator_copy() -> None:
         kind="completion", agent=agent, task=task, claim={"type": "artifact", "path": "/me/review.md"}
     ) == "Done — /me/review.md"
     assert format_done_claim_label(claim={"type": "tests", "evidence": "pytest -q"}) == "pytest -q"
+    assert openable_done_claim_path(claim={"type": "artifact", "path": "/projects/review.md"}) == "/projects/review.md"
+    assert openable_done_claim_path(claim={"type": "proof", "evidence": "reviewed the codebase"}) is None
+    assert openable_done_claim_path(claim={"type": "tests", "evidence": "pytest -q"}) is None
 
 
 def test_decline_posts_locked_origin_line() -> None:
@@ -827,6 +860,77 @@ async def test_empty_done_posts_blocked_claim_line() -> None:
     assert "Blocked — checkable claim missing" in contents
     events = db.list_task_events(creation.task.id)
     assert any(event.content == "Blocked — checkable claim missing" for event in events)
+    blocked = [item for item in db.list_channel_messages(channel.id) if item.content == "Blocked — checkable claim missing"]
+    assert blocked
+    assert all(not getattr(item, "desk_path", None) for item in blocked)
+
+
+@pytest.mark.asyncio
+async def test_artifact_done_posts_openable_path_on_origin() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    path = _write_virtual(jimothy.storage_key, "/projects/review.md", "findings")
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Review note is on the shared path.",
+            "followUpMessage": "Done — path is openable.",
+            "doneClaim": {"type": "artifact", "path": path},
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    posted = result.get("channel_message") or {}
+    assert posted.get("content") == f"Done — {path}"
+    assert posted.get("desk_path") == path
+    rows = [item for item in db.list_channel_messages(channel.id) if (item.content or "").startswith("Done — ")]
+    assert rows
+    assert rows[-1].desk_path == path
+    notes = project_chat_notifications(
+        agent=jimothy,
+        trigger={"type": "activity_resumed", "source_channel": "channel", "channel_id": channel.id},
+        active_activity=None,
+        action={"action": "complete"},
+        result=result,
+    )
+    assert notes
+    assert notes[0].desk_path == path
+
+
+@pytest.mark.asyncio
+async def test_proof_done_without_tool_evidence_is_rejected() -> None:
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Review", member_agent_ids=[jimothy.id], created_by=HUMAN_SENDER_ID)
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Reviewed the codebase.",
+            "followUpMessage": "Looks good.",
+            "doneClaim": {"type": "proof", "ev": "reviewed the codebase"},
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "world_feedback"
+    assert "tool evidence" in result["detail"].lower()
+    assert "chat assertion" in result["detail"].lower()
+    refreshed = db.get_task(creation.task.id)
+    assert refreshed is not None
+    assert refreshed.status != "complete"
+    contents = [item.content for item in db.list_channel_messages(channel.id)]
+    assert "Blocked — checkable claim missing" in contents
+    assert all(not getattr(item, "desk_path", None) for item in db.list_channel_messages(channel.id))
 
 
 @pytest.mark.asyncio

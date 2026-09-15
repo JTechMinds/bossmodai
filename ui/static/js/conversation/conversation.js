@@ -49,6 +49,16 @@ const BossModConversation = (() => {
         const disposers = [];
         const cardCtx = { api, navigate, openDesk };
 
+        function openDeliverable(path, agentId) {
+            if (typeof BossModTaskDeliverables !== 'undefined'
+                && typeof BossModTaskDeliverables.openDeliverablePath === 'function') {
+                return BossModTaskDeliverables.openDeliverablePath(api, path, agentId || '');
+            }
+            if (typeof openDesk === 'function') openDesk(path);
+            return undefined;
+        }
+        cardCtx.openDeliverable = openDeliverable;
+
         let source = null;
         let unsubscribe = null;
         let currentId = null;
@@ -226,6 +236,7 @@ const BossModConversation = (() => {
             disposeSource();
             currentId = id;
             currentKind = kind;
+            cardCtx.agentId = kind === 'agent' ? id : null;
             source = buildSource(id, kind);
             pendingLive = [];
             unsubscribe = source.subscribe(handlers);
