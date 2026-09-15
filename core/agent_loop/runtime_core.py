@@ -2,15 +2,17 @@
 
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
-identity, desk/``/me``, allowed tools, host-path consent, checkable done,
-audience soft-judgment, and chat formatting. Fan-out still wakes every
-member; this is not a router and does not require @.
+identity, desk/``/me``, allowed tools, host-path consent, workspace
+preference, checkable done, audience soft-judgment, and chat formatting.
+Fan-out still wakes every member; this is not a router and does not
+require @.
 """
 
 from __future__ import annotations
 
 from core.bm_cli.host_roots import configured_host_roots
 from core.models import Agent
+from core.models.host_path_consent import HostPathConsentRequest
 
 ALLOWED_TOOLS = (
     "cli",
@@ -43,6 +45,12 @@ CHAT_FORMATTING = (
     "No hard length limit."
 )
 
+LOCKED_WORKSPACE_COPY_STEER = (
+    "Once the operator chooses Branch or workspace-copy, that preference stays locked for the task. "
+    "Stay on the clone. Do not recommend editing the live host tree. "
+    "Do not park @Operator to reopen it unless the operator explicitly overrides."
+)
+
 
 def preview_runtime_core(
     *,
@@ -66,7 +74,7 @@ def preview_runtime_core(
     return format_runtime_core_block(agent)
 
 
-def format_runtime_core_block(agent: Agent) -> str:
+def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> str:
     """Render the shared runtime core the model must follow on every turn."""
     name = (agent.name or "").strip() or "Unnamed agent"
     specialty = (agent.role or "").strip() or "unspecified"
@@ -78,6 +86,8 @@ def format_runtime_core_block(agent: Agent) -> str:
         else "no extra host roots until the operator consents on the in-chat card"
     )
     tools = ", ".join(ALLOWED_TOOLS)
+    dest_line = _locked_copy_dest_lines(agent, task_id=task_id)
+    dest_suffix = f"{dest_line}\n" if dest_line else ""
     return (
         f"{_RUNTIME_CORE_TITLE}\n"
         f"You are {name} ({specialty}).\n"
@@ -94,8 +104,64 @@ def format_runtime_core_block(agent: Agent) -> str:
         "Thread-origin work: Done must point at a path peers can open "
         "(project/docs/ or a host path under the shared grant). "
         "/me is desk-private scratch, not a handoff.\n"
+        f"{LOCKED_WORKSPACE_COPY_STEER}\n"
+        f"{dest_suffix}"
         f"{AUDIENCE_SOFT_JUDGMENT}\n"
         f"{CHAT_FORMATTING}"
+    )
+
+
+def workspace_preference_context(
+    *,
+    agent_id: str,
+    task_id: str | None = None,
+) -> dict[str, str]:
+    """Return locked Branch/workspace-copy facts for prompt workspace context."""
+    rows = locked_workspace_copies_for_turn(agent_id, task_id)
+    if not rows:
+        return {"preference": "", "clone_dest": ""}
+    row = rows[0]
+    return {
+        "preference": row.status,
+        "clone_dest": (row.clone_dest or "").strip(),
+    }
+
+
+def locked_workspace_copies_for_turn(
+    agent_id: str,
+    task_id: str | None = None,
+) -> list[HostPathConsentRequest]:
+    """Return cloned/branched preferences for this agent and/or current task."""
+    token = (agent_id or "").strip()
+    if not token or token == "preview":
+        return []
+    import db
+
+    seen: set[str] = set()
+    rows: list[HostPathConsentRequest] = []
+    for row in db.list_locked_workspace_copies(agent_id=token, limit=20):
+        if row.id not in seen:
+            seen.add(row.id)
+            rows.append(row)
+    task_token = (task_id or "").strip()
+    if task_token:
+        for row in db.list_locked_workspace_copies(task_id=task_token, limit=20):
+            if row.id not in seen:
+                seen.add(row.id)
+                rows.append(row)
+    return rows
+
+
+def _locked_copy_dest_lines(agent: Agent, *, task_id: str | None) -> str:
+    rows = locked_workspace_copies_for_turn(agent.id, task_id)
+    if not rows:
+        return ""
+    return "\n".join(
+        (
+            f"Locked workspace copy for {row.path}: work at "
+            f"{(row.clone_dest or '').strip() or '/me'}. Host writes stay blocked."
+        )
+        for row in rows
     )
 
 

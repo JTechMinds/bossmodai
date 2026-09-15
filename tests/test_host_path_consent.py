@@ -29,6 +29,7 @@ from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.runtime_core import (
     AUDIENCE_SOFT_JUDGMENT,
     CHAT_FORMATTING,
+    LOCKED_WORKSPACE_COPY_STEER,
     format_runtime_core_block,
     preview_runtime_core,
 )
@@ -132,12 +133,14 @@ def test_runtime_core_is_compact_and_skips_description() -> None:
     assert "do not ask the operator for verbal yes/no" in block
     assert "stop and ask in chat" not in block
     assert "Empty done is rejected" in block
+    assert LOCKED_WORKSPACE_COPY_STEER in block
     assert AUDIENCE_SOFT_JUDGMENT in block
     assert CHAT_FORMATTING in block
     assert "Never put this quality bar" not in block
     assert "DRY" not in block
     preview = preview_runtime_core(name="Pat", role="Auditor")
     assert "You are Pat (Auditor)." in preview
+    assert LOCKED_WORKSPACE_COPY_STEER in preview
     assert AUDIENCE_SOFT_JUDGMENT in preview
     assert CHAT_FORMATTING in preview
 
@@ -149,6 +152,7 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     assert "request_host_access" in contents
     assert "do not ask the operator for verbal yes/no" in contents
     assert "stop and ask in chat" not in contents
+    assert LOCKED_WORKSPACE_COPY_STEER in contents
     assert AUDIENCE_SOFT_JUDGMENT in contents
     assert CHAT_FORMATTING in contents
     client = _api_client(monkeypatch)
@@ -159,6 +163,7 @@ def test_preview_and_api_inject_runtime_core(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert response.status_code == 200
     assert "You are Sam (Engineer)." in response.json()["runtime_core"]
+    assert LOCKED_WORKSPACE_COPY_STEER in response.json()["runtime_core"]
     assert AUDIENCE_SOFT_JUDGMENT in response.json()["runtime_core"]
     assert CHAT_FORMATTING in response.json()["runtime_core"]
 

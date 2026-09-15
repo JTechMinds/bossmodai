@@ -15,7 +15,7 @@ from core import config
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
-from core.agent_loop.runtime_core import format_runtime_core_block
+from core.agent_loop.runtime_core import format_runtime_core_block, workspace_preference_context
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
@@ -107,6 +107,8 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("workspace.default_save_root", "Preferred default save root for new files in this turn"),
     ("workspace.project_root", "Relevant shared project folder when present"),
     ("workspace.host_roots", "Operator-configured extra host roots for named absolute paths"),
+    ("workspace.preference", "Locked workspace preference when Branch/workspace-copy is already chosen (cloned or branched)"),
+    ("workspace.clone_dest", "Agent workspace copy path when Branch/workspace-copy is locked"),
     ("conversation.speaker_name", "Conversation speaker display name"),
     ("conversation.speaker_type", "Conversation speaker type"),
     ("conversation.speaker_id", "Conversation speaker runtime id"),
@@ -154,7 +156,12 @@ def build_context(
 
     messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "system", "content": format_role_contract_block(turn.agent)})
-    messages.append({"role": "system", "content": format_runtime_core_block(turn.agent)})
+    messages.append(
+        {
+            "role": "system",
+            "content": format_runtime_core_block(turn.agent, task_id=_turn_task_id(turn)),
+        }
+    )
     messages.append(
         {
             "role": "system",
@@ -242,14 +249,15 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     activity = _activity_context(turn.current_activity)
     task = _task_context(turn.current_task)
     cli_cwd = _current_cli_cwd(turn.agent.id)
-    workspace = _workspace_context(cli_cwd, turn.current_task)
+    task_id = _task_id(turn.current_task)
+    workspace = _workspace_context(cli_cwd, turn.current_task, agent_id=turn.agent.id)
     return {
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
         "description": turn.agent.description or "",
         "done_fail_bar": turn.agent.done_fail_bar or "",
         "role_contract": format_role_contract_block(turn.agent),
-        "runtime_core": format_runtime_core_block(turn.agent),
+        "runtime_core": format_runtime_core_block(turn.agent, task_id=task_id),
         "personality": "",
         "current_date_time": current_time["value"],
         "current_time": current_time,
@@ -300,19 +308,41 @@ def _current_cli_cwd(agent_id: str) -> str:
     return cli_state.cwd if cli_state is not None else "/me"
 
 
-def _workspace_context(cli_cwd: str, task: dict[str, Any] | None) -> dict[str, str]:
+def _turn_task_id(turn: TurnContext) -> str | None:
+    """Return the current task id for one turn, if any."""
+    return _task_id(turn.current_task)
+
+
+def _task_id(task: dict[str, Any] | None) -> str | None:
+    """Return a stripped task id from a current-task payload."""
+    token = str((task or {}).get("id") or "").strip()
+    return token or None
+
+
+def _workspace_context(
+    cli_cwd: str,
+    task: dict[str, Any] | None,
+    *,
+    agent_id: str | None = None,
+) -> dict[str, str]:
     """Return compact workspace defaults for prompt rendering."""
     from core.bm_cli.host_roots import configured_host_roots
 
     project_root = _workspace_project_root(cli_cwd, task)
     default_save_root = cli_cwd if project_root and cli_cwd.startswith(project_root) else (project_root or "/me")
     host_roots = [str(root) for root in configured_host_roots()]
+    preference = workspace_preference_context(
+        agent_id=agent_id or "",
+        task_id=_task_id(task),
+    )
     return {
         "personal_root": "/me",
         "projects_root": "/projects",
         "default_save_root": default_save_root,
         "project_root": project_root,
         "host_roots": ", ".join(host_roots),
+        "preference": preference["preference"],
+        "clone_dest": preference["clone_dest"],
     }
 
 

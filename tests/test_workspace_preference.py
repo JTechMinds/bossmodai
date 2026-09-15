@@ -17,7 +17,13 @@ from api.routes import router
 from core import config
 from core.bm_cli.runtime import execute_bm_cli
 from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
+from core.agent_loop.runtime_core import (
+    LOCKED_WORKSPACE_COPY_STEER,
+    format_runtime_core_block,
+    workspace_preference_context,
+)
 from core.bm_cli.filesystem import agent_artifact_dir
+from core.llm import context_builder
 from core.models.host_path_consent import (
     WORKSPACE_PREFERENCE_BODY,
     WORKSPACE_PREFERENCE_KIND,
@@ -329,3 +335,127 @@ def test_nested_preference_does_not_post_a_second_card(tmp_path: Path) -> None:
         },
     )
     assert second_notes == []
+
+
+def _lock_workspace_copy(
+    agent_id: str,
+    *,
+    path: str,
+    dest: str,
+    status: str = "branched",
+    task_id: str | None = None,
+):
+    pending = db.create_consent_request(
+        agent_id=agent_id,
+        path=path,
+        grant_root=path,
+        reason=WORKSPACE_PREFERENCE_BODY,
+        card_kind=WORKSPACE_PREFERENCE_KIND,
+        is_git=status == "branched",
+        task_id=task_id,
+    )
+    updated = db.resolve_consent_request(pending.id, status=status, clone_dest=dest)
+    assert updated is not None
+    return updated
+
+
+def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> None:
+    agent, state = _agent_and_state()
+    host_path = "/home/operator/Projects/sample_repo"
+    dest = "/me/host-work/sample_repo"
+    task = db.create_task("Harness", assigned_to=agent.id)
+    task_id = task.id
+    _lock_workspace_copy(agent.id, path=host_path, dest=dest, task_id=task_id)
+
+    block = format_runtime_core_block(agent, task_id=task_id)
+    assert LOCKED_WORKSPACE_COPY_STEER in block
+    assert "Stay on the clone" in block
+    assert "Do not recommend editing the live host tree" in block
+    assert "Do not park @Operator to reopen" in block
+    assert f"Locked workspace copy for {host_path}: work at {dest}." in block
+    assert "Host writes stay blocked." in block
+    assert "work directly in the host tree" not in block.lower()
+
+    preference = workspace_preference_context(agent_id=agent.id, task_id=task_id)
+    assert preference["preference"] == "branched"
+    assert preference["clone_dest"] == dest
+
+    context = context_builder.build_context(
+        context_builder.TurnContext(
+            agent=agent,
+            state=state,
+            trigger={
+                "type": "channel_message",
+                "source_channel": "channel",
+                "content": "Where should the working tree live?",
+                "from_name": "Human Operator",
+            },
+            conversation_history=[],
+            prompt_notifications=[],
+            reference_materials=[],
+            current_task={
+                "id": task_id,
+                "title": "Harness",
+                "status": "open",
+                "description": "Validate the test harness.",
+            },
+            contract_kind="decision",
+        )
+    )
+    core_msgs = [
+        str(message.get("content") or "")
+        for message in context
+        if str(message.get("content") or "").startswith("# Runtime core")
+    ]
+    assert core_msgs
+    assert LOCKED_WORKSPACE_COPY_STEER in core_msgs[0]
+    assert dest in core_msgs[0]
+    assert "Do not park @Operator to reopen" in core_msgs[0]
+
+
+def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() -> None:
+    writer, _ = _agent_and_state()
+    lead = db.create_agent("Lead Clerk", role="Coordinator")
+    host_path = "/home/operator/Projects/sample_repo"
+    dest = "/me/host-work/sample_repo"
+    task = db.create_task("Harness", assigned_to=writer.id)
+    task_id = task.id
+    _lock_workspace_copy(writer.id, path=host_path, dest=dest, task_id=task_id)
+
+    block = format_runtime_core_block(lead, task_id=task_id)
+    assert LOCKED_WORKSPACE_COPY_STEER in block
+    assert dest in block
+    assert "Do not recommend editing the live host tree" in block
+    assert "Do not park @Operator to reopen" in block
+
+
+def test_runtime_core_does_not_inject_clone_dest_for_edit_host() -> None:
+    agent, _ = _agent_and_state()
+    host_path = "/home/operator/Projects/sample_repo"
+    _lock_workspace_copy(
+        agent.id,
+        path=host_path,
+        dest="/me/host-work/unused",
+        status="edit_host",
+    )
+    block = format_runtime_core_block(agent)
+    assert LOCKED_WORKSPACE_COPY_STEER in block
+    assert "/me/host-work/unused" not in block
+    assert f"Locked workspace copy for {host_path}" not in block
+    preference = workspace_preference_context(agent_id=agent.id)
+    assert preference["preference"] == ""
+    assert preference["clone_dest"] == ""
+
+
+def test_runtime_core_steers_off_host_direct_when_clone_locked() -> None:
+    agent, _ = _agent_and_state()
+    host_path = "/home/operator/Projects/sample_repo"
+    dest = "/me/host-work/sample_repo"
+    _lock_workspace_copy(agent.id, path=host_path, dest=dest, status="cloned")
+    block = format_runtime_core_block(agent)
+    assert LOCKED_WORKSPACE_COPY_STEER in block
+    assert dest in block
+    assert "Do not recommend editing the live host tree" in block
+    preference = workspace_preference_context(agent_id=agent.id)
+    assert preference["preference"] == "cloned"
+    assert preference["clone_dest"] == dest
