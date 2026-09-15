@@ -129,7 +129,7 @@ const BossModRosterPeople = (() => {
 
         function agentsWithNeeds() {
             return new Set(store.getState().needs
-                .filter(BossModNeedShape.isOpenFocusNeed)
+                .filter((need) => BossModNeedShape.isOpenFocusNeed(need))
                 .map((need) => need.agentId));
         }
 
