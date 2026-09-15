@@ -17,6 +17,9 @@ from core.models.message import HUMAN_SENDER_ID
 OriginThread = Literal["channel", "chat"]
 
 _BLOCKED_CLAIM_LINE = "Blocked — checkable claim missing"
+_BLOCKED_HANDOFF_LINE = "Blocked — handoff needs a shared path"
+_BLOCKED_NO_TASK_LINE = "Blocked — wait needs an active task"
+_BLOCKED_NO_PROGRESS_LINE = "Blocked — no progress"
 
 
 OPERATOR_CANCEL_REASON = "Operator cancelled"
@@ -116,6 +119,17 @@ def format_origin_status_line(
         return f"Cancelled — {note}" if note else "Cancelled"
     if kind == "blocked_claim":
         return _BLOCKED_CLAIM_LINE
+    if kind == "blocked_peer_handoff":
+        return _BLOCKED_HANDOFF_LINE
+    if kind == "blocked_no_task":
+        return _BLOCKED_NO_TASK_LINE
+    if kind == "blocked_no_progress":
+        tag = (target_name or "").strip()
+        if note and note.startswith(_BLOCKED_NO_PROGRESS_LINE):
+            return note
+        if tag:
+            return f"{_BLOCKED_NO_PROGRESS_LINE}. {tag}"
+        return _BLOCKED_NO_PROGRESS_LINE
     if kind == "completion":
         label = format_done_claim_label(claim=claim, path=path, evidence=reason)
         return f"Done — {label}"
@@ -145,6 +159,57 @@ def mirror_origin_status(
         claim=claim,
     )
     return persist_origin_status_line(task=task, agent=agent, content=content, kind=kind)
+
+
+def persist_unbound_status_line(
+    *,
+    agent: Agent,
+    content: str,
+    kind: str,
+    channel_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist a locked one-liner when no task is bound. Dedupes the same line."""
+    text = (content or "").strip()
+    if not text:
+        return {}
+    _ = kind
+    scoped = (channel_id or "").strip() or None
+    if scoped:
+        if db.is_channel_archived(scoped):
+            return {}
+        recent = db.list_channel_messages(scoped, limit=8)
+        if any(
+            item.author_type == "system" and (item.content or "").strip() == text
+            for item in recent
+        ):
+            return {}
+        notification = persist_channel_notification(
+            agent,
+            ChatNotification(
+                kind="task_update",
+                content=text,
+                source_channel="channel",
+                policy="completion_blocked",
+                prompt_visibility=False,
+                channel_id=scoped,
+            ),
+        )
+        if not notification:
+            return {}
+        return {"channel_message": notification}
+    if _chat_already_has_line(agent.id, None, text):
+        return {}
+    chat_message = persist_chat_notification(
+        agent,
+        ChatNotification(
+            kind="task_update",
+            content=text,
+            source_channel="chat",
+            policy="completion_blocked",
+            prompt_visibility=False,
+        ),
+    )
+    return {"chat_message": chat_message}
 
 
 def persist_origin_status_line(

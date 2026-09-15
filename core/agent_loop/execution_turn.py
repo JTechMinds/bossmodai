@@ -12,6 +12,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
+from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.liveness import record_action_liveness
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
@@ -541,16 +542,32 @@ async def _run_execution_turn(
                 start=start,
             )
 
-        # Guardian no-progress check
+        # Guardian no-progress: block + @ next owner, not diagnostic spam.
         violation = check_no_progress(agent, action_count)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            result = {
-                "event": "guardian_violation",
-                "detail": f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
-                "agent_name": agent.name,
-            }
-            await manager.broadcast_activity(**result)
+            result = apply_no_progress_block(agent, trigger)
+            await manager.broadcast_activity(
+                event=result.get("event") or "status_changed",
+                detail=result.get("detail") or "",
+                agent_name=agent.name,
+            )
+            result.pop("channel_message", None)
+            result.pop("chat_message", None)
+            await broadcast_origin_status_messages(result, agent=agent)
+            step_traces.append(
+                _build_step_trace(
+                    step_index=action_count,
+                    context_snapshot=prompt_delta,
+                    raw_response=last_response_content,
+                    action=action,
+                    result=result,
+                    prompt_tokens=step_prompt_tokens,
+                    completion_tokens=step_completion_tokens,
+                    total_tokens=step_total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                )
+            )
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -559,29 +576,15 @@ async def _run_execution_turn(
                 model=model,
                 model_source=model_source,
                 initial_context_json=initial_context_json,
-                outcome=TurnOutcome.failure(
+                outcome=TurnOutcome.success(
                     result=result,
-                    error=f"Guardian [{violation.rule}]: {violation.detail}",
                     action=action,
                     action_summary=_summarize_action_chain(executed_actions, action_name),
                     raw_response=last_response_content,
                     prompt_tokens=total_prompt_tokens,
                     completion_tokens=total_completion_tokens,
                     total_tokens=total_tokens,
-                    steps=step_traces + [
-                        _build_step_trace(
-                            step_index=action_count,
-                            context_snapshot=prompt_delta,
-                            raw_response=last_response_content,
-                            action=action,
-                            result=result,
-                            prompt_tokens=step_prompt_tokens,
-                            completion_tokens=step_completion_tokens,
-                            total_tokens=step_total_tokens,
-                            duration_ms=int((time.monotonic() - step_started) * 1000),
-                            error=f"Guardian [{violation.rule}]: {violation.detail}",
-                        ),
-                    ],
+                    steps=step_traces,
                 ),
                 start=start,
             )
@@ -603,6 +606,8 @@ async def _run_execution_turn(
         # Terminal lifecycle actions only end the turn when they succeeded.
         # Validation-style feedback (for example missing deliverables before
         # `done`) should keep the same turn alive so the model can correct it.
+        if action_name == "waiting" and result.get("event") != "status_changed":
+            break
         if action_name in TERMINAL_ACTIONS and result.get("event") not in {"world_feedback", "agent_error"}:
             break
 

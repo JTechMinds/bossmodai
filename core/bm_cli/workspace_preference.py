@@ -35,7 +35,73 @@ from core.models.host_path_consent import (
     HostPathConsentRequest,
 )
 
-WorkspaceDecision = Literal["clone", "branch", "edit_host", "cancel"]
+def workspace_preference_scopes_match(
+    existing: HostPathConsentRequest,
+    *,
+    path: str,
+    grant_root: str,
+) -> bool:
+    """Return True when a new write is nested under the same preference grant."""
+    if (existing.grant_root or "").strip() and (existing.grant_root or "").strip() == (grant_root or "").strip():
+        return True
+    return _nested_host_paths(existing.path, path) or _nested_host_paths(
+        existing.grant_root, path
+    ) or _nested_host_paths(existing.grant_root, grant_root)
+
+
+def _nested_host_paths(left: str | None, right: str | None) -> bool:
+    a = canonical_host_path(left or "")
+    b = canonical_host_path(right or "")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    prefix_a = a.rstrip("/") + "/"
+    prefix_b = b.rstrip("/") + "/"
+    return b.startswith(prefix_a) or a.startswith(prefix_b)
+
+
+def _resolved_preference_for_write(
+    *,
+    agent_id: str,
+    path: str,
+    grant_root: str,
+    task_id: str | None,
+) -> HostPathConsentRequest | None:
+    exact = db.find_workspace_preference_for_scope(agent_id, path, task_id=task_id)
+    if exact is not None:
+        return exact
+    for row in db.list_consent_requests(agent_id=agent_id, limit=80):
+        if (row.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
+            continue
+        if row.status not in {"edit_host", "cloned", "branched", "denied"}:
+            continue
+        if task_id:
+            if row.task_id != task_id:
+                continue
+        elif row.task_id:
+            continue
+        if workspace_preference_scopes_match(row, path=path, grant_root=grant_root):
+            return row
+    return None
+
+
+def _pending_preference_for_write(
+    *,
+    agent_id: str,
+    path: str,
+    grant_root: str,
+) -> HostPathConsentRequest | None:
+    exact = db.find_pending_workspace_preference(agent_id, path)
+    if exact is not None:
+        return exact
+    for row in db.list_consent_requests(agent_id=agent_id, status="pending", limit=80):
+        if (row.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
+            continue
+        if workspace_preference_scopes_match(row, path=path, grant_root=grant_root):
+            return row
+    return None
+
 
 MUTATING_CLI_COMMANDS = frozenset({
     "write",
@@ -95,7 +161,18 @@ def maybe_pause_for_workspace_preference(
         return None
     if not _host_path_is_allowlisted(agent, raw_path, task_id):
         return None
+    path = canonical_host_path(raw_path)
+    grant_root = grantable_host_root(raw_path)
+    if grant_root is None:
+        grant_root = Path(path if Path(path).is_dir() else str(Path(path).parent))
     prior = db.find_workspace_preference_for_scope(agent.id, canonical_host_path(raw_path), task_id=task_id)
+    if prior is None:
+        prior = _resolved_preference_for_write(
+            agent_id=agent.id,
+            path=canonical_host_path(raw_path),
+            grant_root=str(grant_root),
+            task_id=task_id,
+        )
     if prior is not None and prior.status == "edit_host":
         return None
     return request_workspace_preference(
@@ -125,7 +202,12 @@ def request_workspace_preference(
     if grant_root is None:
         grant_root = Path(path if Path(path).is_dir() else str(Path(path).parent))
 
-    prior = db.find_workspace_preference_for_scope(agent.id, path, task_id=task_id)
+    prior = _resolved_preference_for_write(
+        agent_id=agent.id,
+        path=path,
+        grant_root=str(grant_root),
+        task_id=task_id,
+    )
     if prior is not None and prior.status != "edit_host":
         return _result_for_resolved_preference(prior, command=command, cwd=cwd)
 
@@ -135,7 +217,11 @@ def request_workspace_preference(
 
         return error_result(command, THREAD_ARCHIVED_CONSENT_DENY, cwd=cwd, executor="virtual")
 
-    pending = db.find_pending_workspace_preference(agent.id, path)
+    pending = _pending_preference_for_write(
+        agent_id=agent.id,
+        path=path,
+        grant_root=str(grant_root),
+    )
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending

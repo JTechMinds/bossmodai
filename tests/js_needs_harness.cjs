@@ -227,6 +227,47 @@ async function main() {
     }
     const errorNeedFromDiagnostic = true;
 
+    // ─── 4b. Identical error cards collapse to one live card plus a count ───
+    for (let i = 0; i < 3; i += 1) {
+        bus.publish("diagnostic", {
+            id: `timeout-${i}`, agent_id: "a2", agent_name: "Laura", status: "success",
+            error: "LLM call timed out after 120s",
+            created_at: `2026-09-07T11:0${i}:00Z`,
+        });
+    }
+    await drain();
+    const timeoutNeeds = store.getState().needs.filter((item) => (
+        item.kind === "error" && item.sub === "LLM call timed out after 120s" && item.agentId === "a2"
+    ));
+    if (timeoutNeeds.length !== 1) {
+        throw new Error(`identical timeouts must be one live card, got ${timeoutNeeds.length}`);
+    }
+    if (timeoutNeeds[0].count !== 3) {
+        throw new Error(`timeout card count must be 3, got ${timeoutNeeds[0].count}`);
+    }
+    if (!String(timeoutNeeds[0].title).includes("×3")) {
+        throw new Error(`timeout card title must carry the count, got ${timeoutNeeds[0].title}`);
+    }
+    bus.publish("diagnostic", {
+        id: "timeout-jim", agent_id: "a1", agent_name: "Jim", status: "success",
+        error: "LLM call timed out after 120s", created_at: "2026-09-07T11:10:00Z",
+    });
+    await drain();
+    const jimTimeouts = store.getState().needs.filter((item) => (
+        item.kind === "error" && item.sub === "LLM call timed out after 120s" && item.agentId === "a1"
+    ));
+    if (jimTimeouts.length !== 1 || jimTimeouts[0].count !== 1) {
+        throw new Error("identical copy on a different agent must stay a separate card");
+    }
+    await needs.resolve(timeoutNeeds[0], timeoutNeeds[0].actions[0]);
+    await drain();
+    if (store.getState().needs.some((item) => (
+        item.sub === "LLM call timed out after 120s" && item.agentId === "a2"
+    ))) {
+        throw new Error("acknowledging the live timeout card must clear the grouped copies");
+    }
+    const identicalErrorCardsCoalesce = true;
+
     // ─── 5. A failed resolution puts the need back ───
     // A dropped failure leaves the operator believing they approved something
     // they did not.
@@ -711,6 +752,7 @@ async function main() {
         restoresOnFailedResolve,
         keepsQueueOnFailedRefresh,
         errorNeedFromDiagnostic,
+        identicalErrorCardsCoalesce,
         ignoresUnknownActivity,
         popoverShowsResolutionFailure,
         barToggleNeverHidesTheBell,

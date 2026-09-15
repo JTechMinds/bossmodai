@@ -8,6 +8,7 @@ from typing import Any, Literal
 import db
 from core.models import Activity, Agent
 from core.models.channel import ChannelArchivedError
+from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
 
 NotificationKind = Literal[
     "receipt",
@@ -306,16 +307,18 @@ def _build_consent_notification(
         if bound is not None:
             card = bound.as_card()
     grant_root = str(card.get("grant_root") or "").strip()
+    path = str(card.get("path") or "host path")
     # Host-path waiters coalesce per grant root. Workspace preference is a
     # different question (clone / branch / edit-host / cancel) and must not
-    # be swallowed by an unrelated host-path card on the same root.
-    if (
-        card.get("kind") != "workspace_preference"
-        and grant_root
-        and _grant_root_already_has_card(grant_root, channel_id, consent_id)
-    ):
+    # be swallowed by an unrelated host-path card on the same root — but two
+    # nested preference writes under one grant share one card.
+    if card.get("kind") == WORKSPACE_PREFERENCE_KIND:
+        if _workspace_preference_card_already_open(
+            grant_root, path, channel_id, consent_id
+        ):
+            return None
+    elif grant_root and _grant_root_already_has_card(grant_root, channel_id, consent_id):
         return None
-    path = str(card.get("path") or "host path")
     reason = str(card.get("reason") or "").strip()
     if card.get("kind") == "workspace_preference":
         content = f"{agent.name} needs a workspace preference for {path}."
@@ -560,6 +563,34 @@ def _grant_root_already_has_card(
     """Return True when another waiter in this scope already opened the card."""
     for sibling in db.list_pending_for_grant_root_scope(grant_root, channel_id):
         if sibling.id == consent_id:
+            continue
+        if db.has_consent_notification(sibling.id):
+            return True
+    return False
+
+
+def _workspace_preference_card_already_open(
+    grant_root: str,
+    path: str,
+    channel_id: str | None,
+    consent_id: str,
+) -> bool:
+    """Return True when a nested preference write already has a live card."""
+    from core.bm_cli.workspace_preference import workspace_preference_scopes_match
+
+    current = db.get_consent_request(consent_id)
+    agent_id = current.agent_id if current is not None else None
+    pending = db.list_consent_requests(agent_id=agent_id, status="pending", limit=80)
+    for sibling in pending:
+        if sibling.id == consent_id:
+            continue
+        if (sibling.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
+            continue
+        if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
+            continue
+        if not workspace_preference_scopes_match(
+            sibling, path=path, grant_root=grant_root
+        ):
             continue
         if db.has_consent_notification(sibling.id):
             return True

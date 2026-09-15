@@ -82,7 +82,10 @@ def format_runtime_core_block(agent: Agent) -> str:
         "for verbal yes/no. Do not invent access or claim the file exists.\n"
         "Done: complete only with a checkable claim "
         "(artifact path, tests evidence, or allow/deny proof). "
-        "Empty done is rejected. Do not fake done.\n"
+        "Empty done is rejected. Do not fake done. "
+        "Thread-origin work: Done must point at a path peers can open "
+        "(project/docs/ or a host path under the shared grant). "
+        "/me is desk-private scratch, not a handoff.\n"
         f"{AUDIENCE_SOFT_JUDGMENT}"
     )
 

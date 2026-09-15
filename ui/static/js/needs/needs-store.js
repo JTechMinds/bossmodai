@@ -13,7 +13,7 @@
  * failed approval would look like a granted one.
  */
 const BossModNeeds = (() => {
-    const { ACTIVITY_TRIGGERS, normalise, normaliseDiagnostic } = BossModNeedShape;
+    const { ACTIVITY_TRIGGERS, coalesceKey, coalesceNeeds, normalise, normaliseDiagnostic } = BossModNeedShape;
 
     const NEEDS_URL = '/api/needs';
 
@@ -92,7 +92,7 @@ const BossModNeeds = (() => {
          *   one of them now carries an error the operator must see.
          */
         function publish(next, force) {
-            const nextSignature = next.map((item) => `${item.id}:${item.kind}`).sort().join('|');
+            const nextSignature = next.map((item) => `${coalesceKey(item)}:${item.kind}:${item.count || 1}`).sort().join('|');
             if (!force && nextSignature === signature) return;
             signature = nextSignature;
             current = next;
@@ -104,8 +104,8 @@ const BossModNeeds = (() => {
         function notifyArrivals(next) {
             const arrivals = baselinePending
                 ? []
-                : next.filter((item) => !knownIds.has(item.id));
-            knownIds = new Set(next.map((item) => item.id));
+                : next.filter((item) => !knownIds.has(coalesceKey(item)));
+            knownIds = new Set(next.map((item) => coalesceKey(item)));
             if (arrivals.length === 0) return;
             for (const fn of Array.from(arrivalListeners)) {
                 try {
@@ -128,7 +128,7 @@ const BossModNeeds = (() => {
                 return true;
             });
             deduped.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-            publish(deduped, false);
+            publish(coalesceNeeds(deduped), false);
             // Cleared here rather than inside publish: an unchanged signature
             // returns early, and a baseline that never became a real snapshot
             // would swallow the next genuine arrival.
@@ -209,7 +209,8 @@ const BossModNeeds = (() => {
             // it, so nothing else would ever clear it. Reading the diagnostic
             // is the acknowledgement, and a queue entry that can never leave is
             // worse than one dismissed by being read.
-            errorNeeds.delete(need.id);
+            const ids = (need.groupedIds && need.groupedIds.length) ? need.groupedIds : [need.id];
+            ids.forEach((id) => errorNeeds.delete(id));
             await refresh();
         }
 

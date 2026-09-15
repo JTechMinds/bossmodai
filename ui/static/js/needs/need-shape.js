@@ -239,5 +239,60 @@ const BossModNeedShape = (() => {
         return need;
     }
 
-    return { ACTIVITY_TRIGGERS, KIND_TARGETS, normalise, normaliseDiagnostic, targetFor };
+    /**
+     * Identity used to coalesce identical live error cards.
+     *
+     * Errors are grouped by the agent that hit them and the message the
+     * operator sees. Other kinds stay one-id-one-need.
+     *
+     * @param {Need} need
+     * @returns {string}
+     */
+    function coalesceKey(need) {
+        if (!need) return '';
+        if (need.kind !== 'error') return String(need.id || '');
+        return `error:${need.agentId || ''}:${need.sub || ''}`;
+    }
+
+    /**
+     * Collapse identical error needs into one live card plus a count.
+     *
+     * Diagnostics stay individual in the log. Focus must not drown in three
+     * copies of "LLM call timed out after 120s".
+     *
+     * @param {Need[]} needs
+     * @returns {Need[]}
+     */
+    function coalesceNeeds(needs) {
+        const list = Array.isArray(needs) ? needs : [];
+        const others = [];
+        const groups = new Map();
+        list.forEach((need) => {
+            if (!need || need.kind !== 'error') {
+                others.push(need);
+                return;
+            }
+            const key = coalesceKey(need);
+            const existing = groups.get(key);
+            if (!existing) {
+                groups.set(key, Object.assign({}, need, {
+                    count: 1,
+                    groupedIds: [need.id],
+                }));
+                return;
+            }
+            const incomingIsNewer = String(need.createdAt || '')
+                .localeCompare(String(existing.createdAt || '')) >= 0;
+            const live = incomingIsNewer ? need : existing;
+            const count = (existing.count || 1) + 1;
+            const groupedIds = (existing.groupedIds || [existing.id]).concat([need.id]);
+            const title = count > 1
+                ? `${live.agentName} hit an error ×${count}`
+                : live.title;
+            groups.set(key, Object.assign({}, live, { count, groupedIds, title }));
+        });
+        return others.concat(Array.from(groups.values()));
+    }
+
+    return { ACTIVITY_TRIGGERS, KIND_TARGETS, coalesceKey, coalesceNeeds, normalise, normaliseDiagnostic, targetFor };
 })();

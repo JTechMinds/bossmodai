@@ -29,6 +29,8 @@ def validate_action_for_turn(
         return '"work" requires an active task bound by the runtime'
 
     if action_name in _TASK_STATE_ACTIONS and not active_task_id:
+        if action_name == "waiting":
+            return None
         return f'"{action_name}" requires an active task'
 
     if action_name == "work" and active_activity_kind not in {"work"}:
@@ -38,6 +40,8 @@ def validate_action_for_turn(
         return f'"{action_name}" is only valid while a meeting commitment is active'
 
     if action_name in _TASK_STATE_ACTIONS and active_activity_kind != "work":
+        if action_name == "waiting" and not active_task_id:
+            return None
         return f'"{action_name}" is only valid while a work commitment is active'
 
     return None

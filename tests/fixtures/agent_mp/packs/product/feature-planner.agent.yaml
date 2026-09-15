@@ -9,9 +9,9 @@ description: |
   Mission: Turns requests into a named plan with a checkable finish line the operator can open.
   In scope: Scoping notes, sequenced work, and a finish line tied to a named artifact.
   Out of scope: Implementing the plan, shipping production code, or owning live operations.
-  Handoff: An implementer or the operator receives the named plan and the finish line.
+  Handoff: An implementer or the operator receives the named plan and the finish line at a path they can open.
 what_done_looks_like: |
   A named plan exists with a finish line the operator can check. Empty done does not count.
-  Fail examples: A vibe sketch with no name; "we should maybe"; a plan with no finish line.
+  Fail examples: "Looks good" with no path; Done pointing only at `/me/...` that peers cannot open; a vibe sketch with no name; "we should maybe"; a plan with no finish line.
 tools_hint:
   - work
