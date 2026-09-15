@@ -206,8 +206,19 @@ def _build_step_trace(
         "error": error,
     }
 
-def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
+def _cli_result_to_turn_result(
+    agent: Agent,
+    cli_result,
+    trigger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Convert one BossMod CLI result into the standard turn-local action result."""
+    from core.agent_loop.blocked_origin import (
+        HOST_DENY_KIND,
+        HOST_DENY_WHY,
+        is_host_deny_result,
+        surface_blocked_origin,
+    )
+
     result = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
         "detail": cli_result.detail,
@@ -216,6 +227,14 @@ def _cli_result_to_turn_result(agent: Agent, cli_result) -> dict[str, Any]:
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": True,
     }
+    if is_host_deny_result(cli_result):
+        surface_blocked_origin(
+            result,
+            agent=agent,
+            trigger=trigger,
+            why=HOST_DENY_WHY,
+            kind=HOST_DENY_KIND,
+        )
     cli_data = cli_result.data or {}
     if cli_data.get("managed_writer_attempted") or cli_data.get("managed_writer_used"):
         call_count = int(cli_data.get("managed_calls") or cli_data.get("managed_chunks") or 0)

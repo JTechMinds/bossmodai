@@ -34,7 +34,7 @@ async def _handle_bm_cli(
         trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
         channel_id=channel_id,
     )
-    return _cli_action_result(agent, cli_result, command=command)
+    return _cli_action_result(agent, cli_result, command=command, trigger=trigger)
 
 
 async def _handle_request_host_access(
@@ -57,7 +57,9 @@ async def _handle_request_host_access(
         task_id=task_id,
         channel_id=channel_id,
     )
-    result = _cli_action_result(agent, cli_result, command="request_host_access")
+    result = _cli_action_result(
+        agent, cli_result, command="request_host_access", trigger=trigger
+    )
     if cli_result.ok and not cli_result.consent_required:
         result["event"] = "host_path_already_allowed"
     return result
@@ -68,8 +70,16 @@ def _cli_action_result(
     cli_result: BossModCliResult,
     *,
     command: str,
+    trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Map a CLI / host-access result onto the execution-turn payload."""
+    from core.agent_loop.blocked_origin import (
+        HOST_DENY_KIND,
+        HOST_DENY_WHY,
+        is_host_deny_result,
+        surface_blocked_origin,
+    )
+
     result = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
         "detail": cli_result.detail,
@@ -80,6 +90,16 @@ def _cli_action_result(
             cli_result.approval_required or cli_result.consent_required
         ),
     }
+    if is_host_deny_result(cli_result):
+        # Origin thread still gets Blocked — host deny. @NextOwner.
+        # suppress_*_broadcast must not bury that why.
+        surface_blocked_origin(
+            result,
+            agent=agent,
+            trigger=trigger,
+            why=HOST_DENY_WHY,
+            kind=HOST_DENY_KIND,
+        )
     if cli_result.approval_required:
         result["approval_required"] = True
         result["approval_request_id"] = cli_result.approval_request_id

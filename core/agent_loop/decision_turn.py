@@ -313,7 +313,7 @@ async def _run_decision_turn(
                 )
 
             cli_turn_result = {
-                **_cli_result_to_turn_result(agent, cli_result),
+                **_cli_result_to_turn_result(agent, cli_result, trigger=trigger),
                 "command": cli_result.command,
             }
             step_traces.append(

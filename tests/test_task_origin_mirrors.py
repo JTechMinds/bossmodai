@@ -868,6 +868,12 @@ def test_locked_operator_copy() -> None:
     assert format_origin_status_line(kind="cancelled", agent=agent, task=task, reason="Operator stopped it") == _named(agent, "Cancelled — Operator stopped it")
     assert format_origin_status_line(kind="blocked_claim", agent=agent, task=task) == _named(agent, "Blocked — checkable claim missing")
     assert format_origin_status_line(
+        kind="blocked_no_progress", agent=agent, task=task, target_name="@Bea"
+    ) == _named(agent, "Blocked — no progress. @Bea")
+    assert format_origin_status_line(
+        kind="blocked_host_deny", agent=agent, task=task, target_name="@Bea"
+    ) == _named(agent, "Blocked — host deny. @Bea")
+    assert format_origin_status_line(
         kind="completion", agent=agent, task=task, claim={"type": "artifact", "path": "/me/review.md"}
     ) == _named(agent, "Done — /me/review.md")
     created = format_origin_status_line(kind="created", agent=agent, task=task)

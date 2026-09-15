@@ -299,6 +299,7 @@ def request_host_path_access(
             ),
             cwd=cwd,
             executor="virtual",
+            kind="host_deny",
         )
 
     origin_channel = _clean_channel_id(channel_id)
