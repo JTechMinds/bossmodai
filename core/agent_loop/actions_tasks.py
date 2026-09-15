@@ -15,7 +15,10 @@ from core.agent_loop.actions_shared import (
     _resolve_agent_by_id,
     _task_is_human_visible,
 )
-from core.agent_loop.activity_scheduler import build_task_assigned_trigger
+from core.agent_loop.activity_scheduler import (
+    build_task_assigned_trigger,
+    build_task_follow_up_trigger,
+)
 from core.agent_loop.task_followups import (
     _append_task_stakeholder_reports,
     _task_message_attention_kind,
