@@ -77,14 +77,14 @@ const BossModEventCards = (() => {
             // Recorded even when nothing can act on it, so the path is never
             // lost between the phase that reads it and the phase that opens it.
             const openable = Boolean(deskPath);
-            const canOpen = typeof ctx.openDeliverable === 'function'
-                || typeof ctx.openDesk === 'function';
             const note = h('div', {
                 class: openable ? 'note note-ok' : 'note',
                 'data-desk-path': deskPath,
                 'data-tone': openable ? 'ok' : null,
             },
                 h('p', { class: 'note-text' }, String(message.text || '')));
+            const canOpen = typeof ctx.openDeliverable === 'function'
+                || typeof ctx.openDesk === 'function';
             if (openable && canOpen) {
                 const agentId = String(message.authorAgentId || ctx.agentId || '');
                 note.append(h('button', {

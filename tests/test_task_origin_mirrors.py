@@ -879,18 +879,28 @@ async def test_artifact_done_posts_openable_path_on_origin() -> None:
         {
             "action": "complete",
             "summary": "Review note is on the shared path.",
-            "followUpMessage": "Done — path is openable.",
+            "followUpMessage": "Review note is on the shared path.",
             "doneClaim": {"type": "artifact", "path": path},
         },
         jimothy,
         state,
     )
     assert result["event"] == "status_changed"
-    posted = result.get("channel_message") or {}
-    assert posted.get("content") == f"Done — {path}"
-    assert posted.get("desk_path") == path
-    rows = [item for item in db.list_channel_messages(channel.id) if (item.content or "").startswith("Done — ")]
+    origin = [
+        item
+        for item in result.get("origin_status_messages") or []
+        if (item.get("content") or "").startswith("Done — ")
+    ]
+    assert origin
+    assert origin[-1].get("content") == f"Done — {path}"
+    assert origin[-1].get("desk_path") == path
+    rows = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.author_type == "system" and (item.content or "").startswith("Done — ")
+    ]
     assert rows
+    assert rows[-1].content == f"Done — {path}"
     assert rows[-1].desk_path == path
     notes = project_chat_notifications(
         agent=jimothy,
@@ -900,6 +910,7 @@ async def test_artifact_done_posts_openable_path_on_origin() -> None:
         result=result,
     )
     assert notes
+    assert notes[0].content == f"Done — {path}"
     assert notes[0].desk_path == path
 
 
