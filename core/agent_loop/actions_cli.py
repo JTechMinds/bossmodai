@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.agent_loop.activity_runtime import get_active_task_id
+from core.agent_loop.task_origins import consent_origin_channel_id
 from core.bm_cli import execute_bm_cli
 from core.bm_cli.host_path_consent import request_host_path_access
 from core.bm_cli.session import get_cli_cwd
@@ -24,11 +25,7 @@ async def _handle_bm_cli(
     """Run a bounded BossMod CLI query and return a turn-local result."""
     command = str(action.get("command") or "").strip()
     content = action.get("content")
-    channel_id = None
-    if isinstance(trigger, dict):
-        raw = trigger.get("channel_id")
-        if isinstance(raw, str) and raw.strip():
-            channel_id = raw.strip()
+    channel_id = consent_origin_channel_id(trigger, task_id=get_active_task_id(agent.id))
     cli_result = execute_bm_cli(
         agent,
         state,
@@ -50,17 +47,14 @@ async def _handle_request_host_access(
     del state
     path = str(action.get("path") or "").strip()
     reason = str(action.get("reason") or "").strip()
-    channel_id = None
-    if isinstance(trigger, dict):
-        raw = trigger.get("channel_id")
-        if isinstance(raw, str) and raw.strip():
-            channel_id = raw.strip()
+    task_id = get_active_task_id(agent.id)
+    channel_id = consent_origin_channel_id(trigger, task_id=task_id)
     cli_result = request_host_path_access(
         agent=agent,
         raw_path=path,
         reason=reason,
         cwd=get_cli_cwd(agent.id),
-        task_id=get_active_task_id(agent.id),
+        task_id=task_id,
         channel_id=channel_id,
     )
     result = _cli_action_result(agent, cli_result, command="request_host_access")

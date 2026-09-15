@@ -7,6 +7,7 @@ from typing import Any
 import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.policies import get_trigger_policy
+from core.agent_loop.task_origins import stamp_origin_channel_payload
 from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
 from core.tasking.resolution import OPEN_TASK_STATUSES
@@ -140,7 +141,7 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     """Build the durable trigger used to present a pending task assignment."""
     sender = task_assignment_sender(task)
 
-    return {
+    spec = {
         "agent_id": task.assigned_to,
         "trigger_type": "task_assigned",
         "source_channel": "work",
@@ -158,6 +159,8 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "notification_channel_id": task.notification_channel_id,
         },
     }
+    stamp_origin_channel_payload(spec["payload"], task)
+    return spec
 
 
 def build_task_follow_up_trigger(
@@ -186,6 +189,7 @@ def build_task_follow_up_trigger(
     }
     if source_task_event_id:
         payload["source_task_event_id"] = source_task_event_id
+    stamp_origin_channel_payload(payload, task)
     return {
         "agent_id": recipient_agent_id,
         "trigger_type": "task_follow_up",
@@ -225,6 +229,7 @@ def build_task_update_trigger(
     }
     if source_task_event_id:
         payload["source_task_event_id"] = source_task_event_id
+    stamp_origin_channel_payload(payload, task)
     return {
         "agent_id": recipient_agent_id,
         "trigger_type": "task_update",
@@ -247,6 +252,7 @@ def build_activity_resume_trigger(activity: Activity, *, reason: str) -> dict[st
         if task:
             payload["task_title"] = task.title
             payload["task_description"] = task.description or ""
+            stamp_origin_channel_payload(payload, task)
     return {
         "agent_id": activity.agent_id,
         "trigger_type": "activity_resumed",
@@ -258,18 +264,20 @@ def build_activity_resume_trigger(activity: Activity, *, reason: str) -> dict[st
 
 def build_task_resume_trigger(task: Task, *, reason: str) -> dict[str, Any]:
     """Build a resume trigger for an open task when no active work activity is bound."""
+    payload: dict[str, Any] = {
+        "content": reason,
+        "activity_kind": "work",
+        "activity_title": task.title,
+        "task_title": task.title,
+        "task_description": task.description or "",
+    }
+    stamp_origin_channel_payload(payload, task)
     return {
         "agent_id": task.assigned_to,
         "trigger_type": "activity_resumed",
         "source_channel": "work",
         "task_id": task.id,
-        "payload": {
-            "content": reason,
-            "activity_kind": "work",
-            "activity_title": task.title,
-            "task_title": task.title,
-            "task_description": task.description or "",
-        },
+        "payload": payload,
     }
 
 

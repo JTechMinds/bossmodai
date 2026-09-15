@@ -22,6 +22,7 @@ from core.agent_loop.execution_turn import _run_execution_turn
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.prompt_history import build_prompt_history_view
+from core.agent_loop.task_origins import stamp_trigger_origin_channel
 from core.agent_loop.turn_context import (
     _COMMUNICATION_TRIGGER_TYPES,
     _contract_kind_for_trigger,
@@ -65,6 +66,7 @@ async def run_turn(
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
 
     trigger_type = trigger.get("type", "unknown")
+    stamp_trigger_origin_channel(trigger, task_id=activity_runtime.get_active_task_id(agent.id))
     policy = get_trigger_policy(trigger_type)
 
     # 1. Determine activation mode
