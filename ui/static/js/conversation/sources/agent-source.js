@@ -187,7 +187,7 @@ const BossModAgentSource = (() => {
          * `ctx.openDesk` is an optional, documented capability (spec 4.1), and
          * the action renders only when it is injected. A control that renders
          * but does nothing is worse than one that is absent, which is the same
-         * rule event-cards.js follows for the Done open chip.
+         * rule event-cards.js follows for the origin note link.
          *
          * @returns {{title: string, subtitle: string, avatar: object, actions: object[]}}
          */

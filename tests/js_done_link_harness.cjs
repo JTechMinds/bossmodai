@@ -1,6 +1,7 @@
 /**
  * Node harness: origin one-liner chrome.
- * Done opens a real file. Created/Accepted open the bound Board task.
+ * Quiet chrome: glyph on the left, blue-link text. No Open pill.
+ * Done opens a real file (path only). Created/Accepted open the bound Board task.
  * Invoked by tests/test_ui_conversation.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -30,8 +31,42 @@ function note(text, deskPath, extra) {
     }, extra || {});
 }
 
-function chip(el) {
-    return (el.children || []).find((child) => child.tagName === "BUTTON") || null;
+function walk(el, pred, found) {
+    found = found || [];
+    if (!el || el.nodeType !== 1) return found;
+    if (pred(el)) found.push(el);
+    for (const child of el.children || []) walk(child, pred, found);
+    return found;
+}
+
+function glyph(el) {
+    const icon = walk(el, (node) => Boolean(node.getAttribute && node.getAttribute("data-lucide")))[0];
+    return icon ? icon.getAttribute("data-lucide") : "";
+}
+
+function glyphOnLeft(el) {
+    const first = (el.children || []).find((child) => child && child.nodeType === 1);
+    return Boolean(first && first.getAttribute && first.getAttribute("data-lucide"));
+}
+
+function link(el) {
+    return walk(el, (node) => (
+        node.tagName === "BUTTON" && String(node.className || "").split(/\s+/).includes("note-link")
+    ))[0] || null;
+}
+
+function hasOpenPill(el) {
+    return walk(el, (node) => (
+        node.tagName === "BUTTON"
+        && String(node.textContent || "").trim().toLowerCase() === "open"
+    )).length > 0;
+}
+
+function textOf(el) {
+    const p = walk(el, (node) => (
+        node.tagName === "P" && String(node.className || "").split(/\s+/).includes("note-text")
+    ))[0];
+    return p ? String(p.textContent || "") : "";
 }
 
 const openable = global.BossModEventCards.renderEventCard(
@@ -47,8 +82,8 @@ const noOpener = global.BossModEventCards.renderEventCard(
     { api: ctx.api },
 );
 
-const openBtn = chip(openable);
-if (openBtn) openBtn.click();
+const openLink = link(openable);
+if (openLink) openLink.click();
 
 const created = global.BossModEventCards.renderEventCard(
     note("Jimothy Created: Share review findings", "", { taskId: "task-1" }),
@@ -66,41 +101,80 @@ const createdFakeDoc = global.BossModEventCards.renderEventCard(
     note("Jimothy Created: Share review findings", "/invented.md", { taskId: "task-1" }),
     ctx,
 );
+const createdPathNoTask = global.BossModEventCards.renderEventCard(
+    note("Jimothy Created: Share review findings", "/invented.md"),
+    ctx,
+);
 const createdNoNavigate = global.BossModEventCards.renderEventCard(
     note("Jimothy Created: Share review findings", "", { taskId: "task-1" }),
     { api: ctx.api, openDeliverable: ctx.openDeliverable },
 );
+const writing = global.BossModEventCards.renderEventCard(
+    note("Jimothy Writing /tmp/out.md", "/tmp/out.md"),
+    ctx,
+);
 
-const createdBtn = chip(created);
-if (createdBtn) createdBtn.click();
-const acceptedBtn = chip(accepted);
-if (acceptedBtn) acceptedBtn.click();
-const fakeDocBtn = chip(createdFakeDoc);
-if (fakeDocBtn) fakeDocBtn.click();
+const createdLink = link(created);
+if (createdLink) createdLink.click();
+const acceptedLink = link(accepted);
+if (acceptedLink) acceptedLink.click();
+const fakeDocLink = link(createdFakeDoc);
+if (fakeDocLink) fakeDocLink.click();
+const createdPathNoTaskLink = link(createdPathNoTask);
+if (createdPathNoTaskLink) createdPathNoTaskLink.click();
+const writingLink = link(writing);
+if (writingLink) writingLink.click();
 
 const payload = {
     ok: true,
     openableHasTint: String(openable.className || "").includes("note-ok"),
     openableTone: openable.getAttribute("data-tone"),
     openablePath: openable.getAttribute("data-desk-path"),
-    openableChip: openBtn ? String(openBtn.textContent || "") : "",
+    openableKind: openable.getAttribute("data-open-kind"),
+    openableGlyph: glyph(openable),
+    openableGlyphOnLeft: glyphOnLeft(openable),
+    openableHasOpenPill: hasOpenPill(openable),
+    openableLink: openLink ? String(openLink.textContent || "") : "",
+    openableLinkClass: openLink ? String(openLink.className || "") : "",
+    openableText: textOf(openable),
     opened,
     proseHasTint: String(prose.className || "").includes("note-ok"),
-    proseHasChip: Boolean(chip(prose)),
+    proseHasLink: Boolean(link(prose)),
+    proseHasGlyph: Boolean(glyph(prose)),
+    proseHasOpenPill: hasOpenPill(prose),
     prosePath: prose.getAttribute("data-desk-path"),
-    noOpenerHasChip: Boolean(chip(noOpener)),
+    noOpenerHasLink: Boolean(link(noOpener)),
+    noOpenerHasGlyph: Boolean(glyph(noOpener)),
     noOpenerKeepsPath: noOpener.getAttribute("data-desk-path") === "/projects/review.md",
     createdHasTint: String(created.className || "").includes("note-ok"),
-    createdChip: createdBtn ? String(createdBtn.textContent || "") : "",
+    createdKind: created.getAttribute("data-open-kind"),
+    createdGlyph: glyph(created),
+    createdGlyphOnLeft: glyphOnLeft(created),
+    createdHasOpenPill: hasOpenPill(created),
+    createdLink: createdLink ? String(createdLink.textContent || "") : "",
     createdTaskId: created.getAttribute("data-task-id"),
     createdPath: created.getAttribute("data-desk-path"),
     acceptedHasTint: String(accepted.className || "").includes("note-ok"),
-    acceptedChip: acceptedBtn ? String(acceptedBtn.textContent || "") : "",
+    acceptedKind: accepted.getAttribute("data-open-kind"),
+    acceptedGlyph: glyph(accepted),
+    acceptedHasOpenPill: hasOpenPill(accepted),
+    acceptedLink: acceptedLink ? String(acceptedLink.textContent || "") : "",
     acceptedTaskId: accepted.getAttribute("data-task-id"),
-    createdNoTaskHasChip: Boolean(chip(createdNoTask)),
+    createdNoTaskHasLink: Boolean(link(createdNoTask)),
+    createdNoTaskHasGlyph: Boolean(glyph(createdNoTask)),
     createdFakeDocHasTint: String(createdFakeDoc.className || "").includes("note-ok"),
+    createdFakeDocKind: createdFakeDoc.getAttribute("data-open-kind"),
+    createdFakeDocGlyph: glyph(createdFakeDoc),
     createdFakeDocOpensFile: opened.some((item) => item.path === "/invented.md"),
-    createdNoNavigateHasChip: Boolean(chip(createdNoNavigate)),
+    createdPathNoTaskHasLink: Boolean(createdPathNoTaskLink),
+    createdPathNoTaskHasGlyph: Boolean(glyph(createdPathNoTask)),
+    createdPathNoTaskKind: createdPathNoTask.getAttribute("data-open-kind") || "",
+    createdPathNoTaskOpensFile: opened.some((item) => item.path === "/invented.md"),
+    createdNoNavigateHasLink: Boolean(link(createdNoNavigate)),
+    writingHasLink: Boolean(writingLink),
+    writingHasGlyph: Boolean(glyph(writing)),
+    writingKind: writing.getAttribute("data-open-kind") || "",
+    writingOpensFile: opened.some((item) => item.path === "/tmp/out.md"),
     navigated,
 };
 
