@@ -38,11 +38,6 @@ const BossModEventCards = (() => {
         done: 'ok',
     });
 
-    /** Board place glyph. Created/Accepted open the bound task. */
-    const TASK_GLYPH = 'list-todo';
-    /** Deliverable glyph. Done links the claim path, and only the path. */
-    const DOC_GLYPH = 'file-text';
-
     /**
      * Debra's locked status verb, after an optional `{Name} ` prefix.
      * @param {string} text
@@ -80,10 +75,17 @@ const BossModEventCards = (() => {
         return String((message && message.deskPath) || '').trim();
     }
 
-    function originGlyph(name) {
+    function originGlyph(kind) {
+        if (kind === 'task') {
+            return h('i', {
+                class: 'note-glyph',
+                'data-lucide': 'list-todo',
+                'aria-hidden': 'true',
+            });
+        }
         return h('i', {
             class: 'note-glyph',
-            'data-lucide': name,
+            'data-lucide': 'file-text',
             'aria-hidden': 'true',
         });
     }
@@ -97,15 +99,13 @@ const BossModEventCards = (() => {
     }
 
     /**
-     * Paint the note glyph when the vendored set is actually loaded.
-     * The Node harness has no lucide bundle; the placeholder is the assertion.
+     * Paint the note glyph through the one icon painter.
+     * The Node harness does not load it; the placeholder is the assertion.
      *
      * @param {HTMLElement} note
      */
     function paintOriginGlyph(note) {
         if (typeof BossModIcons === 'undefined' || typeof BossModIcons.paint !== 'function') return;
-        const lucide = typeof window === 'undefined' ? undefined : window.lucide;
-        if (!lucide || !lucide.icons) return;
         if (!note.querySelector('[data-lucide]')) return;
         BossModIcons.paint(note, 'event-cards');
     }
@@ -171,7 +171,7 @@ const BossModEventCards = (() => {
             if (openKind) note.setAttribute('data-open-kind', openKind);
             if (openKind === 'task') {
                 note.append(
-                    originGlyph(TASK_GLYPH),
+                    originGlyph('task'),
                     h('p', { class: 'note-text' }, originLink(text, () => {
                         ctx.navigate('board', { taskId });
                     })),
@@ -182,7 +182,7 @@ const BossModEventCards = (() => {
                 const prefix = at >= 0 ? text.slice(0, at) : '';
                 const label = at >= 0 ? filePath : text;
                 note.append(
-                    originGlyph(DOC_GLYPH),
+                    originGlyph('file'),
                     h('p', { class: 'note-text' },
                         prefix || null,
                         originLink(label, () => {

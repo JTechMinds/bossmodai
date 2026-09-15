@@ -426,7 +426,9 @@
 
 .note.note-ok .note-glyph { color: var(--ok-ink); }
 
-.note.note-ok .note-link { color: var(--accent); }
+/* --accent is 4.29 on --ok-bg. --blue-ink is the same navy .msg-human
+   links use on their tint, and it clears AA here. */
+.note.note-ok .note-link { color: var(--blue-ink); }
 
 /* ─── Host-path consent ─── */
 

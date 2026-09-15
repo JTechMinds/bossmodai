@@ -277,8 +277,8 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "note-action" not in source
     assert "}, 'open')" not in source
     assert "'Open in Desk'" not in source
-    assert "const TASK_GLYPH = 'list-todo'" in source
-    assert "const DOC_GLYPH = 'file-text'" in source
+    assert "'data-lucide': 'list-todo'" in source
+    assert "'data-lucide': 'file-text'" in source
     assert "function originFileOpenPath(message)" in source
     assert "if (verb !== 'Done') return ''" in source
     # The path is recorded whether or not anything can act on it, so nothing
