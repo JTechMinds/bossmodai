@@ -18,7 +18,7 @@ installIconsStub();
 
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
-    overlayFocusPath, overlaysPath, formatPath, rowMetaPath, archivePath, threadSourcePath,
+    overlayFocusPath, overlaysPath, formatPath, needShapePath, rowMetaPath, archivePath, threadSourcePath,
     rosterPeoplePath, threadCreatePath, threadViewMenuPath, rosterThreadsPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -33,6 +33,7 @@ load(overlayFocusPath, "BossModOverlayFocus");
 load(overlaysPath, "BossModOverlays");
 // Both rails render their last-activity column through these two.
 load(formatPath, "BossModFormat");
+load(needShapePath, "BossModNeedShape");
 load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");

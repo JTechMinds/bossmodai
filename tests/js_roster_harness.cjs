@@ -89,19 +89,23 @@ eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModB
 // nothing about what it says.
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
+// People asks the one Focus-need table which queue rows still need the
+// operator. Loading the real module here is what keeps that answer shared
+// with the needs surfaces rather than copied into the rail.
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModNeedShape = BossModNeedShape;\n`);
 // The Threads half hangs a menu off its `⋯`, so the real panel is loaded
 // rather than stubbed: a stub would prove a button exists and nothing about
 // what opening it does.
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 // Both halves build their right-hand column through this one builder.
-eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
-eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
-eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
+eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
+eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
+eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
 // Which list the rail is showing — the header row's third owner.
-eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
-eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
-eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
+eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[16], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";
@@ -190,17 +194,78 @@ function rowFor(el, name) {
     if (typeof dispose !== "function") throw new Error("mount must return a disposer");
     await drain();
 
-    // ── Status precedence: Paused beats a need beats the status label ──
+    // ── Status precedence: Paused, then live activity, then an open Focus ask ──
     const jim = () => rowFor(el, "Jim");
+    const laura = () => rowFor(el, "Laura");
+    const rowHasNeedDot = (name) => {
+        const row = rowFor(el, name);
+        return Boolean(row && find(row.parentNode, hasClass("roster-need-dot"), []).length);
+    };
     if (!jim()) throw new Error(`Jim's row missing; roster rendered: ${text(el)}`);
     if (!text(jim()).includes("Paused")) {
         throw new Error(`paused runtime must win the status line, got "${text(jim())}"`);
     }
     store.setState({ runtimePaused: false });
-    if (!text(jim()).includes("Needs you")) {
-        throw new Error(`an open need must win over the status label, got "${text(jim())}"`);
+    // Jim is writing, with a pending consent still on the queue. Live activity
+    // is the subtitle; the need dot is the remaining ask.
+    if (!text(jim()).includes("working") || text(jim()).includes("Needs you")) {
+        throw new Error(`working must beat an open Focus ask on the subtitle, got "${text(jim())}"`);
+    }
+    if (!rowHasNeedDot("Jim")) {
+        throw new Error("an uncleared Focus ask still marks the row while they work");
     }
     if (text(jim()).includes("Paused")) throw new Error("Paused must clear when the runtime resumes");
+    const pausedBeatsLiveActivity = true;
+
+    // A stale Focus error card must not relabel a writing row Needs you.
+    store.setState({ needs: [{ id: "e1", kind: "error", agentId: "a1" }] });
+    if (!text(jim()).includes("working") || text(jim()).includes("Needs you")) {
+        throw new Error(`a stale error must not beat working, got "${text(jim())}"`);
+    }
+    if (rowHasNeedDot("Jim")) {
+        throw new Error("a stale error card must not keep the People need dot");
+    }
+    const workingBeatsStaleError = true;
+
+    // Idle + uncleared consent is the one case People still says Needs you.
+    store.setState({ needs: [{ id: "n2", kind: "consent", agentId: "a2" }] });
+    if (!text(laura()).includes("Needs you")) {
+        throw new Error(`an idle open Focus ask must read Needs you, got "${text(laura())}"`);
+    }
+    if (!rowHasNeedDot("Laura")) {
+        throw new Error("an uncleared Focus ask must keep the need dot");
+    }
+    const idleOpenFocusNeedIsNeedsYou = true;
+
+    // Idle + stale error: live status, not Needs you.
+    store.setState({ needs: [{ id: "e2", kind: "error", agentId: "a2" }] });
+    if (text(laura()).includes("Needs you") || !text(laura()).includes("idle")) {
+        throw new Error(`an idle stale error must read idle, got "${text(laura())}"`);
+    }
+    if (rowHasNeedDot("Laura")) {
+        throw new Error("a stale error must not keep the need dot on an idle row");
+    }
+    const idleStaleErrorIsNotNeedsYou = true;
+
+    // Break is live activity too — an old error cannot stick over it.
+    const rosterNow = store.getState().roster.map((agent) => (
+        agent.id === "a2"
+            ? Object.assign({}, agent, { status: "social_active", currentActivityKind: "break" })
+            : agent
+    ));
+    store.setState({ roster: rosterNow });
+    if (!text(laura()).includes("break") || text(laura()).includes("Needs you")) {
+        throw new Error(`break must beat a stale error, got "${text(laura())}"`);
+    }
+    const breakBeatsStaleError = true;
+    store.setState({
+        roster: store.getState().roster.map((agent) => (
+            agent.id === "a2"
+                ? Object.assign({}, agent, { status: "idle", currentActivityKind: null })
+                : agent
+        )),
+    });
+
     store.setState({ needs: [] });
     // BossModAgentStatus.getStatusLabel('work_active', 'work') === 'working'; the raw
     // status would read 'work_active', so this pins the shared helper.
@@ -554,7 +619,11 @@ function rowFor(el, name) {
 
     process.stdout.write(JSON.stringify({
         ok: true,
-        pausedBeatsNeedBeatsStatus: true,
+        pausedBeatsLiveActivity: true,
+        workingBeatsStaleError: true,
+        idleOpenFocusNeedIsNeedsYou: true,
+        idleStaleErrorIsNotNeedsYou: true,
+        breakBeatsStaleError: true,
         usesSharedStatusLabel: true,
         searchMatchesNameAndRole: true,
         caretSurvivesRerender: true,

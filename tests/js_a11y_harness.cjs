@@ -64,7 +64,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    dom, avatar, store, bus, format, agentStatus, overlayFocus, overlays, rowMeta, places, header,
+    dom, avatar, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta, places, header,
     rosterPeople, threadCreate, threadViewMenu, rosterThreads, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -75,6 +75,7 @@ load(bus, "BossModBus");
 // A person row renders its last-activity timestamp through this.
 load(format, "BossModFormat");
 load(agentStatus, "BossModAgentStatus");
+load(needShape, "BossModNeedShape");
 load(rowMeta, "BossModRosterRowMeta");
 load(overlayFocus, "BossModOverlayFocus");
 load(overlays, "BossModOverlays");

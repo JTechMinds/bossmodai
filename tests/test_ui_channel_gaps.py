@@ -313,6 +313,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "overlay-focus.js"),
             str(JS / "core" / "overlays.js"),
             str(JS / "core" / "format.js"),
+            str(JS / "needs" / "need-shape.js"),
             str(JS / "shell" / "roster-row-meta.js"),
             str(JS / "conversation" / "sources" / "thread-archive.js"),
             str(JS / "conversation" / "sources" / "thread-source.js"),

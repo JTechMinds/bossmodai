@@ -158,6 +158,23 @@ async function main() {
     }
     const normalisesShape = true;
 
+    if (!BossModNeedShape.isOpenFocusNeed({ kind: "consent", agentId: "a1" })) {
+        throw new Error("pending consent is an open Focus need");
+    }
+    if (!BossModNeedShape.isOpenFocusNeed({ kind: "approval", agentId: "a1" })) {
+        throw new Error("pending approval is an open Focus need");
+    }
+    if (BossModNeedShape.isOpenFocusNeed({ kind: "error", agentId: "a1" })) {
+        throw new Error("an error card is not an open Focus need");
+    }
+    if (BossModNeedShape.isOpenFocusNeed({ kind: "blocked", agentId: "a1" })) {
+        throw new Error("a board block is not an open Focus need");
+    }
+    if (BossModNeedShape.isOpenFocusNeed({ kind: "consent" })) {
+        throw new Error("a Focus need without an agent cannot paint a People row");
+    }
+    const openFocusNeedTableHolds = true;
+
     // ─── 2. A ticking world publishes nothing ───
     // The world ticks continuously. Rebuilding store.needs on each tick would
     // re-render the roster, the bell, the bar and the toast forever.
@@ -765,6 +782,7 @@ async function main() {
         inspectionDoesNotResolve,
         barLeavesConsentInline,
         targetsNavigate,
+        openFocusNeedTableHolds,
     }));
 }
 

@@ -91,6 +91,7 @@ def test_needs_harness() -> None:
         "inspectionDoesNotResolve": True,
         "barLeavesConsentInline": True,
         "targetsNavigate": True,
+        "openFocusNeedTableHolds": True,
     }
 
 
@@ -327,10 +328,17 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     assert "consent: (need) => chatTarget(need.conversationId, need.agentId)" in shape
     assert "approval: (need) => chatTarget(need.conversationId, need.agentId)" in shape
     assert "function targetFor(need)" in shape
+    # People "Needs you" is the same kind of one-table answer: consent and
+    # approval are uncleared Focus asks; error and blocked are not.
+    assert "const OPEN_FOCUS_NEED = Object.freeze({" in shape
+    assert "function isOpenFocusNeed(need)" in shape
+    assert "consent: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
+    assert "approval: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
     # Both normalisers attach it, so no consumer has to ask for one.
     assert shape.count("need.target = targetFor(need);") == 2
 
-    # No call site decides anything from a kind.
+    # No call site decides anything from a kind. The People row asks the
+    # same table rather than naming error/consent itself.
     for name in ("needs-popover.js", "needs-bar.js", "needs-toast.js"):
         source = _read(NEEDS / name)
         for kind in ("'blocked'", "'error'", "'consent'", "'approval'"):
