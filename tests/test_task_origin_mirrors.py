@@ -216,6 +216,95 @@ def test_chat_task_create_posts_created_line() -> None:
     assert any(note.content == "Created: Write the weekly report" for note in notes)
 
 
+def test_created_and_accepted_bind_task_not_a_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Created/Accepted carry the Board task. They must not invent a desk path."""
+    jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(
+        name="Review",
+        member_agent_ids=[jimothy.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    created = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.content == "Created: Share review findings"
+    ]
+    assert len(created) == 1
+    assert created[0].task_id == creation.task.id
+    assert not created[0].desk_path
+
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": creation.task.title,
+        },
+        jimothy,
+        state,
+        {
+            "type": "task_assigned",
+            "task_id": creation.task.id,
+            "content": "Share the review findings.",
+            "from_name": "Human Operator",
+        },
+    )
+    assert result["event"] == "decision_applied"
+    accepted_payload = result.get("channel_message") or {}
+    assert accepted_payload.get("content") == "Accepted: Share review findings"
+    assert accepted_payload.get("task_id") == creation.task.id
+    assert not accepted_payload.get("desk_path")
+    accepted = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.content == "Accepted: Share review findings"
+    ]
+    assert accepted
+    assert accepted[-1].task_id == creation.task.id
+    assert not accepted[-1].desk_path
+
+    client = _task_api_client(monkeypatch)
+    channel_body = client.get(f"/api/channels/{channel.id}", headers=_headers())
+    assert channel_body.status_code == 200, channel_body.text
+    wire = [
+        item
+        for item in channel_body.json()["messages"]
+        if item.get("content") in {"Created: Share review findings", "Accepted: Share review findings"}
+    ]
+    assert {item["content"]: item["task_id"] for item in wire} == {
+        "Created: Share review findings": creation.task.id,
+        "Accepted: Share review findings": creation.task.id,
+    }
+    assert all(not item.get("desk_path") for item in wire)
+
+    ada = db.create_agent("Ada", role="Eng", desk_x=2, desk_y=1)
+    chat = _chat_task(assignee_id=ada.id)
+    assert chat.task is not None
+    notes = [
+        note
+        for note in db.list_notifications(agent_id=ada.id)
+        if note.content == "Created: Write the weekly report"
+    ]
+    assert notes
+    assert notes[0].task_id == chat.task.id
+    messages = client.get(f"/api/agents/{ada.id}/messages", headers=_headers())
+    assert messages.status_code == 200, messages.text
+    chat_wire = [
+        item
+        for item in messages.json()
+        if item.get("content") == "Created: Write the weekly report"
+    ]
+    assert chat_wire
+    assert chat_wire[-1].get("task_id") == chat.task.id
+    assert not chat_wire[-1].get("desk_path")
+
+
 def test_bind_existing_task_does_not_repost_created() -> None:
     jimothy = db.create_agent("Jimothy", role="Eng", desk_x=1, desk_y=1)
     channel = db.create_channel(

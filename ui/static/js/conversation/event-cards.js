@@ -39,6 +39,19 @@ const BossModEventCards = (() => {
     });
 
     /**
+     * Created/Accepted open the bound Board task. Documents stay on Done.
+     * A Created line must not grow a desk path just to look clickable.
+     *
+     * @param {object} message
+     * @returns {string}
+     */
+    function originTaskOpenId(message) {
+        const text = String((message && message.text) || '').trim();
+        if (!text.startsWith('Created:') && !text.startsWith('Accepted:')) return '';
+        return String((message && message.taskId) || '').trim();
+    }
+
+    /**
      * Build one event card.
      *
      * @param {object} message  A normalised Message with `kind !== 'message'`.
@@ -51,6 +64,9 @@ const BossModEventCards = (() => {
      *   Same file-open path Board deliverable cards use. The open chip renders
      *   only when this or openDesk is injected — a control that renders but
      *   does nothing is worse than one that is absent.
+     * @param {(placeId: string, params?: object) => void} [ctx.navigate]
+     *   Same Board open path blocked needs use: `navigate('board', { taskId })`.
+     *   Created/Accepted notes render a task-open chip only when this arrives.
      * @returns {HTMLElement}
      * @throws {Error} When ctx is missing, on a kind with no renderer, on a
      *   `request` or `event` with no card, or on an `event` whose tone has no
@@ -74,18 +90,29 @@ const BossModEventCards = (() => {
 
         if (message.kind === 'note') {
             const deskPath = String(message.deskPath || '').trim();
+            const taskId = originTaskOpenId(message);
             // Recorded even when nothing can act on it, so the path is never
             // lost between the phase that reads it and the phase that opens it.
-            const openable = Boolean(deskPath);
+            const openableFile = Boolean(deskPath) && !taskId;
             const note = h('div', {
-                class: openable ? 'note note-ok' : 'note',
+                class: openableFile ? 'note note-ok' : 'note',
                 'data-desk-path': deskPath,
-                'data-tone': openable ? 'ok' : null,
+                'data-task-id': taskId,
+                'data-tone': openableFile ? 'ok' : null,
             },
                 h('p', { class: 'note-text' }, String(message.text || '')));
-            const canOpen = typeof ctx.openDeliverable === 'function'
-                || typeof ctx.openDesk === 'function';
-            if (openable && canOpen) {
+            const canOpenFile = openableFile && (
+                typeof ctx.openDeliverable === 'function'
+                || typeof ctx.openDesk === 'function'
+            );
+            const canOpenTask = Boolean(taskId) && typeof ctx.navigate === 'function';
+            if (canOpenTask) {
+                note.append(h('button', {
+                    class: 'note-action',
+                    type: 'button',
+                    onclick: () => { ctx.navigate('board', { taskId }); },
+                }, 'open'));
+            } else if (canOpenFile) {
                 const agentId = String(message.authorAgentId || ctx.agentId || '');
                 note.append(h('button', {
                     class: 'note-action',

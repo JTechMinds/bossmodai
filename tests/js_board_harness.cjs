@@ -60,6 +60,9 @@ const BLOCKED_KIND_NEEDS = TASKS
 let taskFetches = 0;
 
 function api(url) {
+    if (String(url).includes("/events")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }
     if (url.startsWith("/api/tasks")) {
         taskFetches += 1;
         return Promise.resolve({ ok: true, json: () => Promise.resolve(TASKS) });
@@ -213,6 +216,30 @@ async function main() {
     await drain();
     if (taskFetches !== afterUnmount) fail("the resync subscription outlived the place");
 
+    // ── opensLinkedTask ─────────────────────────────────────────────────
+    // Blocked needs and Created/Accepted notes navigate here with { taskId }.
+    const linkedStore = global.BossModStore.createStore({
+        place: "board",
+        placeParams: { taskId: "t-accepted" },
+        conversationId: null,
+        conversationKind: null,
+        roster: [],
+        threads: [],
+        needs: BLOCKED_KIND_NEEDS,
+        runtimePaused: false,
+    });
+    const linkedContainer = document.createElement("div");
+    document.body.append(linkedContainer);
+    place.mount(linkedContainer, { store: linkedStore, bus, api, needs: {}, navigate: () => {} });
+    await drain();
+    const sheet = document.body.querySelector(".slide-over");
+    const opensLinkedTask = Boolean(sheet)
+        && String(sheet.getAttribute("aria-label") || "") === "Task accepted";
+    if (!opensLinkedTask) {
+        fail(`placeParams.taskId did not open the task: aria-label="${sheet && sheet.getAttribute("aria-label")}"`);
+    }
+    place.unmount();
+
     process.stdout.write(JSON.stringify({
         ok: true,
         everyStatusLands,
@@ -221,6 +248,7 @@ async function main() {
         selectionSurvivesRefresh,
         needsColumnMatchesQueue,
         refetchesOnResync,
+        opensLinkedTask,
     }));
 }
 

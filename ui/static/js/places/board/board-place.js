@@ -153,6 +153,21 @@ const BossModBoardPlace = (() => {
         });
     }
 
+    /**
+     * Same open path blocked needs use: `navigate('board', { taskId })`.
+     * A missing id says so rather than opening an empty slide-over.
+     */
+    function openLinkedDetail(taskId) {
+        const id = String(taskId || '').trim();
+        if (!id) return;
+        if (!tasks.some((item) => item && item.id === id)) {
+            boardEl.append(h('p', { class: 'place-error-detail', role: 'alert' },
+                'That task is not on the board.'));
+            return;
+        }
+        openDetail(id);
+    }
+
     function openAssign() {
         BossModAssignForm.openAssignForm({
             api: ctxRef.api,
@@ -217,7 +232,11 @@ const BossModBoardPlace = (() => {
             // what keeps the board from sitting stale after an outage.
             disposers.push(ctx.bus.subscribe('resync', () => BossModBoardPlace.resync()));
 
-            void refresh();
+            const linkedTaskId = String(ctx.store.getState().placeParams.taskId || '').trim();
+            void refresh().then(() => {
+                if (!linkedTaskId || !ctxRef || tasks.length === 0) return;
+                openLinkedDetail(linkedTaskId);
+            });
         },
 
         /**

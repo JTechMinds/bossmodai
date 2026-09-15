@@ -94,6 +94,18 @@ def test_column_map_is_total_over_task_status() -> None:
     assert "role: 'alert'" in place.split("grouped.unplaced.length > 0", 1)[1][:300]
 
 
+def test_board_opens_place_param_task() -> None:
+    """Created/Accepted notes and blocked needs share this Board open path."""
+    place = (BOARD / "board-place.js").read_text(encoding="utf-8")
+    assert "placeParams.taskId" in place
+    assert "function openLinkedDetail(taskId)" in place
+    cards = (JS / "conversation" / "event-cards.js").read_text(encoding="utf-8")
+    assert "ctx.navigate('board', { taskId })" in cards
+    assert "function originTaskOpenId(message)" in cards
+    needs = (JS / "needs" / "need-shape.js").read_text(encoding="utf-8")
+    assert "place: 'board', params: { taskId: need.id }" in needs
+
+
 def test_done_column_is_complete_only() -> None:
     """Done means done. Cancelled, declined and abandoned are a separate fact.
 
@@ -249,6 +261,7 @@ def test_board_harness() -> None:
         "selectionSurvivesRefresh": True,
         "needsColumnMatchesQueue": True,
         "refetchesOnResync": True,
+        "opensLinkedTask": True,
     }
 
     # Every refresh trigger must still be emitted somewhere in the engine.

@@ -87,6 +87,7 @@ class ConnectionManager:
         notification_kind: str | None = None,
         desk_path: str | None = None,
         host_path_consent: dict[str, Any] | None = None,
+        task_id: str | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
 
@@ -106,6 +107,7 @@ class ConnectionManager:
                 "notification_kind": notification_kind,
                 "desk_path": desk_path,
                 "host_path_consent": host_path_consent,
+                "task_id": task_id,
             },
         })
 
@@ -154,6 +156,7 @@ class ConnectionManager:
         host_path_consent: dict[str, Any] | None = None,
         author_agent_id: str | None = None,
         desk_path: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         """Broadcast one shared channel transcript message."""
         if db.is_channel_archived(channel_id):
@@ -171,6 +174,7 @@ class ConnectionManager:
                 "notification_kind": notification_kind,
                 "host_path_consent": host_path_consent,
                 "desk_path": desk_path,
+                "task_id": task_id,
             },
         })
 
