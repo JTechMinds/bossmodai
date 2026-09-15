@@ -526,6 +526,7 @@ async def _run_decision_turn(
                 created_at=chat_message.get("created_at"),
                 notification_kind=chat_message.get("notification_kind"),
                 desk_path=chat_message.get("desk_path"),
+                task_id=chat_message.get("task_id"),
             )
         if result.get("meeting_message"):
             meeting_message = result["meeting_message"]
@@ -550,6 +551,7 @@ async def _run_decision_turn(
                 created_at=channel_message.get("created_at"),
                 notification_kind=channel_message.get("notification_kind"),
                 desk_path=channel_message.get("desk_path"),
+                task_id=channel_message.get("task_id"),
             )
         await broadcast_origin_status_messages(result, agent=agent)
 

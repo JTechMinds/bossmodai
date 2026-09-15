@@ -293,11 +293,20 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "BossModTaskDeliverables.openDeliverablePath" in controller
     thread = _read(SOURCES / "thread-source.js")
     assert "deskPath: raw.desk_path || null" in thread
+    assert "taskId: raw.task_id || null" in thread
     assert "isSystem || isQueue" in thread
+    agent = _read(SOURCES / "agent-source.js")
+    assert "taskId: raw.task_id || null" in agent
+    assert "navigate('board', { taskId })" in source
+    assert "const cardCtx = { api, navigate, openDesk };" in controller
 
 
 def test_done_link_harness() -> None:
-    """Origin Done with an openable path tints and opens; prose-only has no chip."""
+    """Origin Done with an openable path tints and opens; prose-only has no chip.
+
+    Created/Accepted open the bound Board task on the same path blocked needs
+    use. A Created line must not invent a document chip.
+    """
     result = subprocess.run(
         [
             "node",
@@ -323,6 +332,22 @@ def test_done_link_harness() -> None:
         "prosePath": "",
         "noOpenerHasChip": False,
         "noOpenerKeepsPath": True,
+        "createdHasTint": False,
+        "createdChip": "open",
+        "createdTaskId": "task-1",
+        "createdPath": "",
+        "acceptedHasTint": False,
+        "acceptedChip": "open",
+        "acceptedTaskId": "task-1",
+        "createdNoTaskHasChip": False,
+        "createdFakeDocHasTint": False,
+        "createdFakeDocOpensFile": False,
+        "createdNoNavigateHasChip": False,
+        "navigated": [
+            {"place": "board", "params": {"taskId": "task-1"}},
+            {"place": "board", "params": {"taskId": "task-1"}},
+            {"place": "board", "params": {"taskId": "task-1"}},
+        ],
     }
 
 

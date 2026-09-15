@@ -127,6 +127,7 @@ async def emit_chat_notifications(
                 created_at=channel_notification.get("created_at"),
                 notification_kind=channel_notification.get("notification_kind"),
                 desk_path=channel_notification.get("desk_path"),
+                task_id=channel_notification.get("task_id"),
                 host_path_consent=channel_notification.get("host_path_consent"),
             )
             continue
@@ -141,6 +142,7 @@ async def emit_chat_notifications(
             created_at=chat_notification.get("created_at"),
             notification_kind=chat_notification.get("notification_kind"),
             desk_path=chat_notification.get("desk_path"),
+            task_id=chat_notification.get("task_id"),
             host_path_consent=chat_notification.get("host_path_consent"),
         )
         if chat_notification.get("feed_entry"):
@@ -167,6 +169,7 @@ async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Age
                 created_at=extra.get("created_at"),
                 notification_kind=extra.get("notification_kind"),
                 desk_path=extra.get("desk_path"),
+                task_id=extra.get("task_id"),
             )
             continue
         if extra.get("agent_id"):
@@ -180,6 +183,7 @@ async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Age
                 created_at=extra.get("created_at"),
                 notification_kind=extra.get("notification_kind"),
                 desk_path=extra.get("desk_path"),
+                task_id=extra.get("task_id"),
             )
 
 
@@ -241,6 +245,7 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
         "created_at": stored.created_at,
         "notification_kind": notification.kind,
         "desk_path": notification.desk_path,
+        "task_id": stored.task_id,
         "host_path_consent": (
             db.get_consent_request(notification.consent_id).as_card()
             if notification.consent_id and db.get_consent_request(notification.consent_id)
@@ -271,6 +276,7 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
             notification_kind=notification.kind,
             consent_id=notification.consent_id,
             desk_path=notification.desk_path,
+            task_id=notification.task_id,
         )
     except ChannelArchivedError:
         return {}
@@ -284,6 +290,7 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "created_at": message.created_at,
         "notification_kind": notification.kind,
         "desk_path": getattr(message, "desk_path", None) or notification.desk_path,
+        "task_id": getattr(message, "task_id", None) or notification.task_id,
         "host_path_consent": (
             db.get_consent_request(notification.consent_id).as_card()
             if notification.consent_id and db.get_consent_request(notification.consent_id)
@@ -417,17 +424,19 @@ def _build_task_notification(*, agent: Agent, result: dict[str, Any]) -> ChatNot
     ]
 
     if kind == "completion":
-        from core.agent_loop.task_origin_mirrors import format_done_claim_label, openable_done_claim_path
+        from core.agent_loop.task_origin_mirrors import format_origin_status_line, openable_done_claim_path
 
         claim = payload.get("done_claim") if isinstance(payload.get("done_claim"), dict) else None
         fallback_path = deliverable_paths[0] if len(deliverable_paths) == 1 else None
-        claim_label = format_done_claim_label(
-            claim=claim,
-            path=fallback_path,
-        )
         return ChatNotification(
             kind="completion",
-            content=f"Done — {claim_label}",
+            content=format_origin_status_line(
+                kind="completion",
+                agent=agent,
+                task={"title": task_title},
+                path=fallback_path,
+                claim=claim,
+            ),
             source_channel=str(payload.get("source_channel") or "chat"),
             policy=str(payload.get("policy") or "completion_blocked"),
             prompt_visibility=True,

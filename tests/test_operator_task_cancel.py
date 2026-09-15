@@ -95,7 +95,7 @@ def test_cancel_task_sets_cancelled_and_posts_locked_origin_line() -> None:
     assert stored is not None
     assert stored.status == "cancelled"
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert "Cancelled — Operator cancelled" in contents
+    assert f"{agent.name} Cancelled — Operator cancelled" in contents
     events = db.list_task_events(creation.task.id)
     assert any("→ cancelled" in event.content for event in events if event.event_type == "status_update")
     open_activities = [
@@ -144,7 +144,7 @@ def test_bulk_cancel_cancels_each_selected_task() -> None:
     assert {row["id"] for row in body} == {first.task.id, second.task.id}
     assert all(row["status"] == "cancelled" for row in body)
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert contents.count("Cancelled — Operator cancelled") == 2
+    assert contents.count(f"{agent.name} Cancelled — Operator cancelled") == 2
 
 
 def test_archive_leaves_open_tasks_until_operator_cancels() -> None:
@@ -193,4 +193,4 @@ def test_cancel_then_archive_closes_open_origin_tasks() -> None:
     assert db.get_task(live.task.id).status == "cancelled"
     assert client.get(f"/api/channels/{channel.id}/open-tasks", headers=_headers()).json()["count"] == 0
     contents = [item.content for item in db.list_channel_messages(channel.id)]
-    assert "Cancelled — Operator cancelled" in contents
+    assert f"{agent.name} Cancelled — Operator cancelled" in contents

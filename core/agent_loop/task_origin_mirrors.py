@@ -94,6 +94,18 @@ def format_done_claim_label(
     return "done"
 
 
+def named_origin_line(agent: Agent, line: str) -> str:
+    """Prefix Debra's locked origin one-liner with the agent's name."""
+    text = (line or "").strip()
+    name = str(getattr(agent, "name", None) or "").strip() or "Agent"
+    prefix = f"{name} "
+    if not text:
+        return name
+    if text.startswith(prefix):
+        return text
+    return f"{prefix}{text}"
+
+
 def format_origin_status_line(
     *,
     kind: str,
@@ -108,23 +120,24 @@ def format_origin_status_line(
     title = str(getattr(task, "title", None) or "the task").strip() or "the task"
     note = short_reason(reason)
     if kind == "created":
-        return f"Created: {title}"
-    if kind == "accepted":
-        return f"Accepted: {title}"
-    if kind == "waiting":
-        return f"Waiting — {note}" if note else "Waiting"
-    if kind == "stalled":
-        return f"Stalled — {note}" if note else "Stalled"
-    if kind == "progress":
+        line = f"Created: {title}"
+    elif kind == "accepted":
+        line = f"Accepted: {title}"
+    elif kind == "waiting":
+        line = f"Waiting — {note}" if note else "Waiting"
+    elif kind == "stalled":
+        line = f"Stalled — {note}" if note else "Stalled"
+    elif kind == "progress":
         target = (path or note or "").strip()
         if target.lower().startswith("writing "):
-            return target
-        if target:
-            return f"Writing {target}"
-        return "Writing"
-    if kind == "declined":
-        return f"Declined — {note}" if note else "Declined"
-    if kind == "rerouted":
+            line = f"Writing {target[8:].lstrip()}"
+        elif target:
+            line = f"Writing {target}"
+        else:
+            line = "Writing"
+    elif kind == "declined":
+        line = f"Declined — {note}" if note else "Declined"
+    elif kind == "rerouted":
         name = (target_name or "").strip() or "another agent"
         if note and note.lower() in {
             f"delegated to {name}".lower(),
@@ -132,30 +145,31 @@ def format_origin_status_line(
             f"rerouted to {name}".lower(),
         }:
             note = ""
-        if note:
-            return f"Rerouted to {name} — {note}"
-        return f"Rerouted to {name}"
-    if kind == "cancelled":
-        return f"Cancelled — {note}" if note else "Cancelled"
-    if kind == "blocked_claim":
-        return _BLOCKED_CLAIM_LINE
-    if kind == "blocked_peer_handoff":
-        return _BLOCKED_HANDOFF_LINE
-    if kind == "blocked_no_task":
-        return _BLOCKED_NO_TASK_LINE
-    if kind == "blocked_no_progress":
+        line = f"Rerouted to {name} — {note}" if note else f"Rerouted to {name}"
+    elif kind == "cancelled":
+        line = f"Cancelled — {note}" if note else "Cancelled"
+    elif kind == "blocked_claim":
+        line = _BLOCKED_CLAIM_LINE
+    elif kind == "blocked_peer_handoff":
+        line = _BLOCKED_HANDOFF_LINE
+    elif kind == "blocked_no_task":
+        line = _BLOCKED_NO_TASK_LINE
+    elif kind == "blocked_no_progress":
         tag = (target_name or "").strip()
         if note and note.startswith(_BLOCKED_NO_PROGRESS_LINE):
-            return note
-        if tag:
-            return f"{_BLOCKED_NO_PROGRESS_LINE}. {tag}"
-        return _BLOCKED_NO_PROGRESS_LINE
-    if kind == "completion":
+            line = note
+        elif tag:
+            line = f"{_BLOCKED_NO_PROGRESS_LINE}. {tag}"
+        else:
+            line = _BLOCKED_NO_PROGRESS_LINE
+    elif kind == "completion":
         label = format_done_claim_label(claim=claim, path=path, evidence=reason)
-        return f"Done — {label}"
-    if note:
-        return note
-    return f"Accepted: {title}"
+        line = f"Done — {label}"
+    elif note:
+        line = note
+    else:
+        line = f"Accepted: {title}"
+    return named_origin_line(agent, line)
 
 
 def mirror_origin_status(
@@ -372,7 +386,7 @@ def _origin_author_agent(task: Any) -> Agent | None:
 
 
 def mirror_task_created(task: Any) -> dict[str, Any]:
-    """Post Created: {task} on the origin thread when this thread spawned the work."""
+    """Post {Name} Created: {task} on the origin thread when this thread spawned the work."""
     if task is None or origin_thread_target(task) is None:
         return {}
     agent = _origin_author_agent(task)

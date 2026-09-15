@@ -86,6 +86,7 @@ const BossModThreadSource = (() => {
                 kind: consent ? 'request' : (isSystem || isQueue ? 'note' : 'message'),
                 card: raw.host_path_consent || null,
                 deskPath: raw.desk_path || null,
+                taskId: raw.task_id || null,
                 systemReceipt: false,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
