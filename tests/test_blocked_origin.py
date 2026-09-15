@@ -21,6 +21,12 @@ from core import config
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
+from core.agent_loop.auto_github import (
+    AUTO_GH_EVENT_PREFIX,
+    list_opened_auto_github_issues,
+    maybe_open_auto_github_issue,
+    reset_opened_auto_github_issues,
+)
 from core.agent_loop.blocked_origin import (
     HOST_DENY_WHY,
     format_blocked_line,
@@ -43,6 +49,7 @@ def setup_function() -> None:
             candidate.unlink()
     db.init_db()
     config.reload()
+    reset_opened_auto_github_issues()
 
 
 def teardown_function() -> None:
@@ -136,22 +143,20 @@ def test_no_progress_origin_wakes_tagged_next_owner() -> None:
     assert _debra_wakes(debra.id), "tagged next owner must receive a wake"
 
 
-def test_auto_github_only_when_no_owner_and_no_origin_line() -> None:
-    """3. Auto GH is a last resort. A named next owner or origin line is enough."""
-    assert should_open_auto_github_issue(origin_line=None, next_owner=None) is True
-    assert (
-        should_open_auto_github_issue(
-            origin_line="Jim Blocked — no progress. @Debra",
-            next_owner="@Debra",
-        )
-        is False
-    )
-    assert should_open_auto_github_issue(origin_line=None, next_owner="@Debra") is False
-    assert should_open_auto_github_issue(
-        origin_line="Jim Blocked — host deny. @Debra",
-        next_owner=None,
-    ) is False
+def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """3. Auto GH does not open when @NextOwner is already on the Blocked line."""
+    opener_calls: list[dict] = []
 
+    def _capture_open(**kwargs):
+        opener_calls.append(kwargs)
+        raise AssertionError("open_auto_github_issue must not run when @Debra is named")
+
+    monkeypatch.setattr(
+        "core.agent_loop.auto_github.open_auto_github_issue",
+        _capture_open,
+    )
     jim, _debra, channel = _jim_debra_channel()
     creation = _thread_task(assignee_id=jim.id, channel_id=channel.id)
     activate_work_activity(jim.id, creation.task)
@@ -159,7 +164,42 @@ def test_auto_github_only_when_no_owner_and_no_origin_line() -> None:
         jim,
         {"type": "channel_response", "channel_id": channel.id},
     )
+    expected = _named(jim, "Blocked — no progress. @Debra")
+    assert any(
+        item.author_type == "system" and (item.content or "") == expected
+        for item in db.list_channel_messages(channel.id)
+    )
     assert result["auto_github_issue"] is False
+    assert result["auto_github"]["opened"] is False
+    assert opener_calls == []
+    assert list_opened_auto_github_issues() == []
+    events = db.list_task_events(creation.task.id)
+    assert not any(
+        (event.content or "").startswith(AUTO_GH_EVENT_PREFIX) for event in events
+    )
+
+
+def test_auto_github_opens_only_when_no_owner_and_no_origin_line() -> None:
+    """3. Auto GH opener runs only when there is no origin line and no next owner."""
+    assert should_open_auto_github_issue(origin_line=None, next_owner=None) is True
+    skipped = maybe_open_auto_github_issue(
+        origin_line="Jim Blocked — no progress. @Debra",
+        next_owner="@Debra",
+        title="Blocked — no progress. @Debra",
+        body="Blocked — no progress. @Debra",
+    )
+    assert skipped["opened"] is False
+    assert list_opened_auto_github_issues() == []
+
+    opened = maybe_open_auto_github_issue(
+        origin_line=None,
+        next_owner=None,
+        title="Blocked — no progress",
+        body="Blocked — no progress",
+    )
+    assert opened["opened"] is True
+    assert opened["issue"]["number"] == 1
+    assert list_opened_auto_github_issues() == [opened["issue"]]
 
 
 @pytest.mark.asyncio
