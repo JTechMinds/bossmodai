@@ -449,7 +449,7 @@ async def test_consent_resume_keeps_channel_id_on_cli_continuation(
     monkeypatch.setattr("core.bm_cli.runtime.execute_bm_cli", _fake_cli)
     _script_completions(
         monkeypatch,
-        ['{"act":"idle","data":{},"th":"resume complete"}'],
+        ['{"act":"wait","data":{"why":"Host path granted; continuing."},"th":"resume complete"}'],
     )
     resume_trigger = {
         "type": "host_path_consent_resolved",
