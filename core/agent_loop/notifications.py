@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import db
+from core.agent_loop.task_origins import consent_origin_channel_id
 from core.models import Activity, Agent
 from core.models.channel import ChannelArchivedError
 from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
@@ -299,7 +300,7 @@ def _build_consent_notification(
         return None
     if db.has_consent_notification(consent_id):
         return None
-    channel_id = _consent_channel_id(trigger)
+    channel_id = _consent_channel_id(trigger, card)
     if channel_id and db.is_channel_archived(channel_id):
         return None
     if channel_id:
@@ -547,11 +548,19 @@ def _resolve_target_name(detail: str) -> str | None:
     return name or None
 
 
-def _consent_channel_id(trigger: dict[str, Any]) -> str | None:
-    """Return the originating shared channel when consent was asked there."""
-    raw = trigger.get("channel_id")
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
+def _consent_channel_id(trigger: dict[str, Any], card: dict[str, Any] | None = None) -> str | None:
+    """Return the originating shared channel when consent was asked there.
+
+    Thread-born work keeps the Assign origin stamp even when the live trigger
+    is an execution/CLI resume that omitted ``channel_id``.
+    """
+    found = consent_origin_channel_id(trigger)
+    if found:
+        return found
+    if isinstance(card, dict):
+        raw = card.get("channel_id")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
     return None
 
 

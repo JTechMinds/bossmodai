@@ -27,6 +27,7 @@ from core.agent_loop.turn_helpers import (
     _serialize_trace_value,
     _summarize_action_chain,
 )
+from core.agent_loop.task_origins import consent_origin_channel_id
 from core.bm_cli import BossModCliCall, execute_bm_cli
 from core.bm_cli.host_path_consent import HostAccessCall
 from core.bm_cli.managed_writer import (
@@ -258,6 +259,7 @@ async def _run_decision_turn(
                     base_context=current_context,
                     action_response=response.content,
                     trigger_type=trigger_type,
+                    channel_id=consent_origin_channel_id(trigger),
                     progress_callback=progress_reporter,
                 )
             elif is_managed_batch_write_request(cli_call.command, cli_call.content):
@@ -301,7 +303,7 @@ async def _run_decision_turn(
                     cli_call.command,
                     cli_call.content,
                     trigger_type=trigger_type,
-                    channel_id=trigger.get("channel_id") if isinstance(trigger.get("channel_id"), str) else None,
+                    channel_id=consent_origin_channel_id(trigger),
                 )
             if cli_call.thought:
                 await manager.broadcast_thought(

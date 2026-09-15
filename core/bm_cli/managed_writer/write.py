@@ -30,6 +30,7 @@ async def run_managed_write(
     action_response: str,
     trigger_type: str | None,
     progress_callback: ManagedWriteProgressCallback | None = None,
+    channel_id: str | None = None,
 ) -> ManagedWriteOutcome:
     """Generate one file body with adaptive authoring, then write it once."""
     parsed = parse_cli_command(command)
@@ -62,6 +63,7 @@ async def run_managed_write(
         command,
         generation.content,
         trigger_type=trigger_type,
+        channel_id=channel_id,
     )
     if cli_result.ok:
         await _emit_progress(

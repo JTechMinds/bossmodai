@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 import db
 from core.agent_loop.notifications import ChatNotification, persist_channel_notification, persist_chat_notification
+from core.agent_loop.task_origins import task_origin_channel_id
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
 
@@ -29,10 +30,9 @@ def origin_thread_target(task: Any | None) -> OriginThread | None:
     """Return the operator-visible origin for one task, if any."""
     if task is None:
         return None
-    channel_id = getattr(task, "notification_channel_id", None)
-    source_channel = getattr(task, "source_channel", None)
-    if isinstance(channel_id, str) and channel_id.strip() and source_channel == "channel":
+    if task_origin_channel_id(task):
         return "channel"
+    source_channel = getattr(task, "source_channel", None)
     if getattr(task, "requester_id", None) != HUMAN_SENDER_ID:
         return None
     if source_channel not in {"chat", "api"}:

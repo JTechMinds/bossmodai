@@ -16,6 +16,7 @@ from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.liveness import record_action_liveness
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.task_origins import consent_origin_channel_id
 from core.agent_loop.turn_helpers import (
     _build_continuation_instruction,
     _build_execution_repair_messages,
@@ -129,6 +130,7 @@ async def _run_execution_turn(
                     command,
                     consent_payload.get("content"),
                     trigger_type=trigger_type,
+                    channel_id=consent_origin_channel_id(trigger),
                 )
                 approval_context_msg = cli_result.prompt_content
         elif consent_status in {"cloned", "branched"}:
@@ -389,6 +391,7 @@ async def _run_execution_turn(
                     base_context=context,
                     action_response=response.content,
                     trigger_type=trigger_type,
+                    channel_id=consent_origin_channel_id(trigger),
                     progress_callback=progress_reporter,
                 )
             elif is_managed_batch_write_request(cli_command, cli_content):
