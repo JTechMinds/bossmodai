@@ -13,8 +13,9 @@ from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import (
     SETTING_CATEGORY,
     SETTING_KEY,
+    consent_grant_root,
     denial_message,
-    grantable_host_root,
+    is_broad_user_root,
     is_within_roots,
     looks_like_named_absolute_path,
     named_path_roots,
@@ -30,6 +31,8 @@ ConsentDecision = Literal["allow_once", "always_allow", "deny"]
 _ABS_PATH_TOKEN = re.compile(r"(?<![\w])/[A-Za-z0-9._~+-]+(?:/[A-Za-z0-9._~+-]+)+")
 # Trailing CLI flags glued onto a host path, e.g. ``-la``, ``--help``, ``-v``.
 _COMMAND_FLAG_TOKEN = re.compile(r"^-{1,2}(?!-)[A-Za-z0-9][A-Za-z0-9_=,.-]*$")
+# Trailing ``rr`` line ranges glued onto a host path, e.g. ``1:2``.
+_LINE_RANGE_TOKEN = re.compile(r"^\d+:\d+$")
 _VERBAL_ACCESS_ASK = re.compile(
     r"(?i)(?:"
     r"please confirm|"
@@ -134,25 +137,34 @@ def looks_like_command_flag(token: str) -> bool:
     return _COMMAND_FLAG_TOKEN.fullmatch(text) is not None
 
 
+def looks_like_path_junk_token(token: str) -> bool:
+    """Return True when *token* is a CLI flag or ``rr`` line range, not a path."""
+    text = (token or "").strip()
+    if looks_like_command_flag(text):
+        return True
+    return _LINE_RANGE_TOKEN.fullmatch(text) is not None
+
+
 def strip_command_junk_from_host_path(raw_path: str) -> str:
     """Drop trailing CLI flags glued onto a host path with spaces or slashes.
 
     ``/dir/-la`` and ``/dir -la`` both reduce to ``/dir`` when ``-la`` is not a
     real directory (or file). Existing paths whose names look like flags are
-    kept, so a real folder named ``-la`` can still be granted.
+    kept, so a real folder named ``-la`` can still be granted. Trailing
+    ``1:2`` line ranges from ``rr`` are stripped the same way.
     """
     token = (raw_path or "").replace("\\", "/").strip()
     if not token:
         return token
     pieces = token.split()
-    while len(pieces) > 1 and looks_like_command_flag(pieces[-1]):
+    while len(pieces) > 1 and looks_like_path_junk_token(pieces[-1]):
         pieces.pop()
     token = " ".join(pieces).strip()
     if not token:
         return token
 
     path = Path(token).expanduser()
-    while looks_like_command_flag(path.name):
+    while looks_like_path_junk_token(path.name):
         try:
             if path.exists():
                 break
@@ -171,12 +183,13 @@ def resolve_consent_host_path(raw_path: str) -> tuple[str, Path] | None:
     The grant root is always an existing directory that ``validate_host_root``
     accepts. The ask path is that folder, or an existing file under it. Returns
     ``None`` when the input cannot be reduced to a grantable directory — never
-    a flag fragment such as ``/-la``.
+    a flag fragment such as ``/-la``, and never ``$HOME`` / Desktop walked
+    up from a missing nested path.
     """
     token = strip_command_junk_from_host_path(raw_path)
     if not token:
         return None
-    grant_root = grantable_host_root(token)
+    grant_root = consent_grant_root(token)
     if grant_root is None:
         return None
     canonical = canonical_host_path(token)
@@ -227,9 +240,11 @@ def request_host_path_access(
 
     Already-allowlisted paths return success with no card. Denied system
     trees, the filesystem root, and paths with no grantable directory stay
-    hard-denied with no card. Trailing CLI flags are stripped before the
-    card so Always-allow never targets junk such as ``/-la``. Pending cards
-    are reused.
+    hard-denied with no card. Trailing CLI flags and ``rr`` line ranges are
+    stripped before the card so Always-allow never targets junk such as
+    ``/-la``. A missing nested path that would walk up to ``$HOME`` or
+    Desktop is rejected, or narrowed to the named project directory when
+    that folder exists. Pending cards are reused.
     """
     label = (command or "").strip() or _REQUEST_HOST_ACCESS_COMMAND
     token = strip_command_junk_from_host_path((raw_path or "").strip())
@@ -451,6 +466,11 @@ async def resume_host_path_consent(
     from core import config
 
     grant_root = _require_grantable_directory(existing)
+    if is_broad_user_root(grant_root):
+        raise ValueError(
+            f"Always-allow is not offered for {grant_root}: "
+            "that root is a home or Desktop folder."
+        )
     current = _current_host_root_setting()
     merged = normalize_host_root_setting("\n".join([current, str(grant_root)]))
     db.set_setting(SETTING_KEY, merged, SETTING_CATEGORY)
@@ -488,7 +508,7 @@ def _require_grantable_directory(existing: HostPathConsentRequest) -> Path:
     """Return the real directory this card may grant. Never a flag fragment."""
     from core.bm_cli.host_roots import validate_host_root
 
-    for candidate in (existing.grant_root, existing.path):
+    for candidate in (existing.path, existing.grant_root):
         resolved = resolve_consent_host_path(candidate)
         if resolved is not None:
             return validate_host_root(str(resolved[1]))

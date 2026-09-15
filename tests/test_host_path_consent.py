@@ -35,6 +35,7 @@ from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_path_consent import (
     is_verbal_host_access_ask,
     looks_like_command_flag,
+    looks_like_path_junk_token,
     request_host_path_access,
     resolve_consent_host_path,
     resume_host_path_consent,
@@ -1404,3 +1405,140 @@ def test_existing_directory_named_like_a_flag_can_still_be_granted(tmp_path: Pat
     assert card["path"] == str(host.resolve())
     assert card["grant_root"] == str(host.resolve())
     assert Path(card["grant_root"]).is_dir()
+
+
+def _desktop_project(tmp_path: Path) -> tuple[Path, Path]:
+    desktop = tmp_path / "Desktop"
+    project = desktop / "Projects" / "llm_helper"
+    project.mkdir(parents=True)
+    (project / "readme.md").write_text("notes\n", encoding="utf-8")
+    return desktop, project
+
+
+def test_strip_command_junk_drops_rr_line_range(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    assert looks_like_path_junk_token("1:2") is True
+    assert looks_like_path_junk_token("-la") is True
+    assert looks_like_path_junk_token("readme.md") is False
+    assert strip_command_junk_from_host_path(f"{host} 1:2") == str(host)
+    assert strip_command_junk_from_host_path(str(host / "1:2")) == str(host)
+
+
+def test_junk_rr_cli_does_not_grant_desktop(tmp_path: Path) -> None:
+    desktop, project = _desktop_project(tmp_path)
+    agent, state = _agent_and_state()
+
+    junk = execute_bm_cli(agent, state, f"rr {desktop}/ds/nothing 1:2")
+    assert junk.ok is False
+    assert junk.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    card = (junk.data or {}).get("host_path_consent") or {}
+    assert card.get("grant_root") != str(desktop.resolve())
+    payload = (junk.detail or "") + junk.prompt_content
+    assert "outside the allowed workspace roots" in payload
+
+    asked = request_host_path_access(
+        agent=agent,
+        raw_path=str(desktop / "ds" / "nothing"),
+        reason="Required for command: rr",
+        command=f"rr {desktop}/ds/nothing 1:2",
+        cwd="/me",
+    )
+    assert asked.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+
+    missing_project = execute_bm_cli(
+        agent, state, f"rr {desktop}/Projects/missing/ds/nothing 1:2"
+    )
+    assert missing_project.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    assert project.exists()
+
+
+def test_junk_rr_cli_narrows_to_identifiable_project(tmp_path: Path) -> None:
+    desktop, project = _desktop_project(tmp_path)
+    agent, state = _agent_and_state()
+
+    nested = execute_bm_cli(agent, state, f"rr {project}/ds/nothing 1:2")
+    assert nested.consent_required is True
+    card = (nested.data or {}).get("host_path_consent") or {}
+    assert card["grant_root"] == str(project.resolve())
+    assert card["path"] == str(project.resolve())
+    assert not str(card["grant_root"]).endswith("Desktop")
+    assert card["always_allow"] is True
+
+    remapped = execute_bm_cli(agent, state, f"rr {desktop}/llm_helper/ds/nothing 1:2")
+    assert remapped.consent_required is True
+    remapped_card = (remapped.data or {}).get("host_path_consent") or {}
+    assert remapped_card["grant_root"] == str(project.resolve())
+    assert remapped.consent_request_id == nested.consent_request_id
+
+
+def test_legitimate_project_folder_consent_still_works(tmp_path: Path) -> None:
+    _desktop, project = _desktop_project(tmp_path)
+    agent, state = _agent_and_state()
+    fixture = project / "readme.md"
+
+    listed = execute_bm_cli(agent, state, f"cat {fixture}")
+    assert listed.consent_required is True
+    card = (listed.data or {}).get("host_path_consent") or {}
+    assert card["path"] == str(fixture.resolve())
+    assert card["grant_root"] == str(project.resolve())
+    assert card["always_allow"] is True
+    assert "Always allow" in listed.prompt_content
+
+    folder = request_host_path_access(
+        agent=agent,
+        raw_path=str(project),
+        reason="Need the project",
+        cwd="/me",
+    )
+    assert folder.consent_required is True
+    folder_card = (folder.data or {}).get("host_path_consent") or {}
+    assert folder_card["grant_root"] == str(project.resolve())
+
+
+def test_always_allow_not_offered_for_desktop_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop, _project = _desktop_project(tmp_path)
+    note = desktop / "notes.txt"
+    note.write_text("desk\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+
+    paused = execute_bm_cli(agent, state, f"cat {note}")
+    assert paused.consent_required is True
+    card = (paused.data or {}).get("host_path_consent") or {}
+    assert card["grant_root"] == str(desktop.resolve())
+    assert card["always_allow"] is False
+    assert "Always allow" not in paused.prompt_content
+    request_id = paused.consent_request_id
+    assert request_id
+
+    response = client.post(f"/api/host-path-consent/{request_id}/always-allow", headers=_headers())
+    assert response.status_code == 400
+    assert "Always-allow is not offered" in response.text
+    setting = next((item for item in db.get_settings() if item.key == "workspace_host_roots"), None)
+    assert setting is None or str(desktop.resolve()) not in (setting.value or "").splitlines()
+
+    allowed = client.post(f"/api/host-path-consent/{request_id}/allow-once", headers=_headers())
+    assert allowed.status_code == 200
+    listed = execute_bm_cli(agent, state, f"cat {note}")
+    assert listed.ok is True
+
+
+def test_junk_rr_under_home_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home" / "jordan"
+    home.mkdir(parents=True)
+    monkeypatch.setattr("core.bm_cli.host_roots.user_home", lambda: home)
+    agent, state = _agent_and_state()
+
+    junk = execute_bm_cli(agent, state, f"rr {home}/ds/nothing 1:2")
+    assert junk.ok is False
+    assert junk.consent_required is False
+    assert db.list_consent_requests(agent_id=agent.id) == []
+    resolved = resolve_consent_host_path(str(home / "ds" / "nothing"))
+    assert resolved is None

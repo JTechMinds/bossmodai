@@ -21,8 +21,11 @@ from core import config
 from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
 from core.bm_cli.host_roots import (
     PathOutsideRootsError,
+    consent_grant_root,
     denial_message,
+    is_broad_user_root,
     normalize_host_root_setting,
+    offers_always_allow_grant,
     parse_host_root_setting,
     validate_host_root,
 )
@@ -395,3 +398,32 @@ def test_denial_message_is_honest() -> None:
     assert "not a full host mount" in text
     assert "/me" in text
     assert "/projects" in text
+
+
+def test_consent_grant_root_clamps_desktop_junk_to_project(tmp_path: Path) -> None:
+    desktop = tmp_path / "Desktop"
+    project = desktop / "Projects" / "llm_helper"
+    project.mkdir(parents=True)
+    (project / "readme.md").write_text("ok\n", encoding="utf-8")
+
+    assert is_broad_user_root(desktop) is True
+    assert offers_always_allow_grant(desktop) is False
+    assert offers_always_allow_grant(project) is True
+
+    assert consent_grant_root(str(project / "ds" / "nothing")) == project.resolve()
+    assert consent_grant_root(str(desktop / "llm_helper" / "ds" / "nothing")) == project.resolve()
+    assert consent_grant_root(str(desktop / "ds" / "nothing")) is None
+    assert consent_grant_root(str(desktop / "Projects" / "missing" / "ds" / "nothing")) is None
+    assert consent_grant_root(str(project / "readme.md")) == project.resolve()
+    assert consent_grant_root(str(project)) == project.resolve()
+
+
+def test_consent_grant_root_rejects_home_junk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home" / "jordan"
+    home.mkdir(parents=True)
+    monkeypatch.setattr("core.bm_cli.host_roots.user_home", lambda: home)
+
+    assert is_broad_user_root(home) is True
+    assert offers_always_allow_grant(home) is False
+    assert consent_grant_root(str(home / "ds" / "nothing")) is None
+    assert consent_grant_root(str(home)) == home.resolve()

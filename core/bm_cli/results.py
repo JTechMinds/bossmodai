@@ -123,7 +123,11 @@ def consent_required_result(
         "Stop and wait. The operator will Clone into workspace, Make a branch, "
         "Edit host directly, or Cancel in chat."
         if workspace
-        else "Stop and wait. The operator will Allow once, Always allow, or Deny in chat."
+        else (
+            "Stop and wait. The operator will Allow once or Deny in chat."
+            if card.get("always_allow") is False
+            else "Stop and wait. The operator will Allow once, Always allow, or Deny in chat."
+        )
     )
     detail_prefix = (
         "BossMod CLI workspace preference required"

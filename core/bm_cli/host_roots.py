@@ -270,6 +270,66 @@ def looks_like_named_absolute_path(raw_path: str) -> bool:
     return Path(cleaned).is_absolute()
 
 
+# Home and well-known home children are too broad to Always-allow, and too
+# broad to keep when junk CLI walked up from a missing nested path.
+_BROAD_FOLDER_NAMES = frozenset({"Desktop", "Documents", "Downloads"})
+_PROJECT_CONTAINER_NAMES = frozenset({
+    "Projects",
+    "projects",
+    "repos",
+    "src",
+    "code",
+    "dev",
+    "workspace",
+    "workspaces",
+    "Developer",
+    "Development",
+})
+
+
+def user_home() -> Path:
+    """Return the current user home. Isolated so tests can substitute a fixture."""
+    return Path.home()
+
+
+def is_broad_user_root(path: Path | str) -> bool:
+    """Return True for ``$HOME`` or a Desktop/Documents/Downloads folder.
+
+    Always-allow on these roots would grant the operator's whole home or
+    desktop. Junk CLI that walks up to them must not keep that target.
+    """
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:
+        resolved = Path(path)
+    try:
+        home = user_home().resolve()
+    except OSError:
+        home = None
+    if home is not None and resolved == home:
+        return True
+    if resolved.name in _BROAD_FOLDER_NAMES:
+        return True
+    return False
+
+
+def is_project_container(path: Path | str) -> bool:
+    """Return True for a folder that holds projects, not a project itself."""
+    try:
+        resolved = Path(path).expanduser()
+    except OSError:
+        resolved = Path(path)
+    return resolved.name in _PROJECT_CONTAINER_NAMES
+
+
+def offers_always_allow_grant(raw: str | Path | None) -> bool:
+    """Return True when Always-allow may target this grant root."""
+    token = str(raw or "").strip()
+    if not token:
+        return False
+    return not is_broad_user_root(token)
+
+
 def grantable_host_root(raw_path: str) -> Path | None:
     """Return the most specific existing directory that can be allowlisted.
 
@@ -304,6 +364,179 @@ def grantable_host_root(raw_path: str) -> Path | None:
             if parent == current:
                 return None
             current = parent
+
+
+def consent_grant_root(raw_path: str) -> Path | None:
+    """Return the directory a consent card may grant, or ``None`` to reject.
+
+    Walks to an existing directory, then clamps away ``$HOME`` / Desktop
+    (and project containers such as ``Desktop/Projects``) when the ask was
+    a missing nested path. If a real project directory under
+    ``Desktop/Projects`` (or similar) is named in the original path and
+    exists, that folder is the grant root.
+    """
+    walked = grantable_host_root(raw_path)
+    if walked is None:
+        return None
+    return clamp_consent_grant_root(raw_path, walked)
+
+
+def clamp_consent_grant_root(raw_path: str, walked: Path) -> Path | None:
+    """Narrow or reject a walked root that overshot a project folder.
+
+    Existing project directories stay as-is. A missing nested path that
+    climbed to ``$HOME``, Desktop, or a project container is rewritten to
+    the identifiable project directory, or rejected when none is named
+    and present.
+    """
+    token = (raw_path or "").strip()
+    if not token:
+        return None
+    original = Path(token).expanduser()
+    try:
+        original_resolved = original.resolve()
+    except OSError:
+        original_resolved = original
+
+    original_exists = False
+    try:
+        original_exists = original_resolved.exists()
+    except OSError:
+        pass
+
+    walked_is_broad = is_broad_user_root(walked)
+    walked_is_container = is_project_container(walked)
+
+    if original_exists:
+        if walked_is_broad:
+            try:
+                if original_resolved == walked or original_resolved.parent == walked:
+                    return walked
+            except OSError:
+                return walked
+            return _project_dir_from_original(original_resolved, walked)
+        if walked_is_container:
+            nested = _project_dir_from_original(original_resolved, walked)
+            if nested is not None:
+                return nested
+            try:
+                if original_resolved == walked or original_resolved.parent == walked:
+                    return walked
+            except OSError:
+                return walked
+            return None
+        return walked
+
+    nested = _project_dir_from_original(original, walked)
+    if nested is not None:
+        return nested
+    if walked_is_broad or walked_is_container:
+        return None
+    return walked
+
+
+def _usable_project_dir(path: Path) -> Path | None:
+    """Return *path* when it is a grantable project directory, else ``None``."""
+    try:
+        if not path.exists() or not path.is_dir():
+            return None
+        resolved = validate_host_root(str(path))
+    except (ValueError, OSError):
+        return None
+    if is_broad_user_root(resolved) or is_project_container(resolved):
+        return None
+    return resolved
+
+
+def _project_dir_from_original(original: Path, walked: Path) -> Path | None:
+    """Find an existing project directory named in *original*.
+
+    Only a folder that looks like a project counts: a child of a project
+    container (``Desktop/Projects/<name>``), a folder sitting directly on
+    Desktop, or a ``.git`` root. Ancestors of ``$HOME`` / Desktop are
+    ignored so junk like ``…/ds/nothing`` cannot grant ``tmp`` or home.
+    """
+    parts = original.parts
+    for index, part in enumerate(parts[:-1]):
+        if part not in _PROJECT_CONTAINER_NAMES:
+            continue
+        candidate = Path(*parts[: index + 2])
+        usable = _usable_project_dir(candidate)
+        if usable is not None:
+            return usable
+
+    current = original
+    while current != current.parent:
+        if _looks_like_project_dir(current):
+            usable = _usable_project_dir(current)
+            if usable is not None:
+                return usable
+        current = current.parent
+
+    skip_names = set(_PROJECT_CONTAINER_NAMES) | set(_BROAD_FOLDER_NAMES) | {"/", "", "home", "Users"}
+    try:
+        skip_names.add(user_home().name)
+    except OSError:
+        pass
+    names: list[str] = []
+    after_anchor = False
+    for part in parts:
+        if part in _BROAD_FOLDER_NAMES or part in _PROJECT_CONTAINER_NAMES:
+            after_anchor = True
+            continue
+        if not after_anchor or part in skip_names:
+            continue
+        names.append(part)
+    search_roots: list[Path] = [walked]
+    try:
+        home = user_home()
+        search_roots.extend([home, home / "Desktop", home / "Documents"])
+    except OSError:
+        pass
+    if walked.name in _BROAD_FOLDER_NAMES:
+        search_roots.append(walked)
+    seen: set[Path] = set()
+    for root in search_roots:
+        try:
+            resolved_root = root.resolve() if root.exists() else root
+        except OSError:
+            resolved_root = root
+        if resolved_root in seen:
+            continue
+        seen.add(resolved_root)
+        containers = [resolved_root] if is_project_container(resolved_root) else [
+            resolved_root / name for name in ("Projects", "projects", "repos", "code", "dev")
+        ]
+        if resolved_root.name in _BROAD_FOLDER_NAMES:
+            containers.append(resolved_root)
+        for container in containers:
+            if not container.is_dir():
+                continue
+            for name in names:
+                usable = _usable_project_dir(container / name)
+                if usable is not None:
+                    return usable
+    return None
+
+
+def _looks_like_project_dir(path: Path) -> bool:
+    """Return True when *path* is a project folder, not a home/tmp ancestor."""
+    try:
+        if not path.exists() or not path.is_dir():
+            return False
+    except OSError:
+        return False
+    if is_broad_user_root(path) or is_project_container(path):
+        return False
+    parent = path.parent
+    if is_project_container(parent) or parent.name in _BROAD_FOLDER_NAMES:
+        return True
+    try:
+        if (path / ".git").exists():
+            return True
+    except OSError:
+        return False
+    return False
 
 
 def _live_host_root_setting() -> str | None:

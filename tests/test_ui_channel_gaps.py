@@ -116,6 +116,7 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     assert "Allow once" in consent
     assert "Always allow (for all agents)" in consent
     assert "Always allowed (for all agents)" in consent
+    assert "hidden: card.always_allow === false" in consent
     assert "Deny" in consent
     assert "decision_note" in consent
     assert "{ label: 'Always allow'," not in consent
