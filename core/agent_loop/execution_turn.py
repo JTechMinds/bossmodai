@@ -427,7 +427,9 @@ async def _run_execution_turn(
                 step_prompt_tokens += managed_write.prompt_tokens
                 step_completion_tokens += managed_write.completion_tokens
                 step_total_tokens += managed_write.total_tokens
-                result = _cli_result_to_turn_result(agent, managed_write.cli_result)
+                result = _cli_result_to_turn_result(
+                    agent, managed_write.cli_result, trigger=trigger
+                )
             else:
                 result = await execute_action(action, agent, state, trigger, token_model=response.model)
         else:

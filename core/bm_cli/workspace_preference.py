@@ -423,6 +423,7 @@ def _result_for_resolved_preference(
             ),
             cwd=cwd,
             executor="virtual",
+            kind="host_deny",
         )
     return error_result(
         command,
@@ -432,6 +433,7 @@ def _result_for_resolved_preference(
         ),
         cwd=cwd,
         executor="virtual",
+        kind="host_deny",
     )
 
 

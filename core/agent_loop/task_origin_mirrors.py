@@ -21,6 +21,7 @@ _BLOCKED_CLAIM_LINE = "Blocked — checkable claim missing"
 _BLOCKED_HANDOFF_LINE = "Blocked — handoff needs a shared path"
 _BLOCKED_NO_TASK_LINE = "Blocked — wait needs an active task"
 _BLOCKED_NO_PROGRESS_LINE = "Blocked — no progress"
+_BLOCKED_HOST_DENY_LINE = "Blocked — host deny"
 
 
 OPERATOR_CANCEL_REASON = "Operator cancelled"
@@ -162,6 +163,14 @@ def format_origin_status_line(
             line = f"{_BLOCKED_NO_PROGRESS_LINE}. {tag}"
         else:
             line = _BLOCKED_NO_PROGRESS_LINE
+    elif kind == "blocked_host_deny":
+        tag = (target_name or "").strip()
+        if note and note.startswith(_BLOCKED_HOST_DENY_LINE):
+            line = note
+        elif tag:
+            line = f"{_BLOCKED_HOST_DENY_LINE}. {tag}"
+        else:
+            line = _BLOCKED_HOST_DENY_LINE
     elif kind == "completion":
         label = format_done_claim_label(claim=claim, path=path, evidence=reason)
         line = f"Done — {label}"

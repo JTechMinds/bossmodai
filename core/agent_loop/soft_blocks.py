@@ -16,6 +16,12 @@ from core.agent_loop.next_owner import (
     is_multi_party_channel,
     mention_names_for_channel,
 )
+from core.agent_loop.blocked_origin import (
+    NO_PROGRESS_KIND,
+    NO_PROGRESS_WHY,
+    finish_blocked_origin,
+    format_blocked_line,
+)
 from core.agent_loop.task_origin_mirrors import (
     attach_operator_status_line,
     named_origin_line,
@@ -29,7 +35,7 @@ WAITING_WITHOUT_TASK_CODE = "waiting_without_task"
 WAITING_WITHOUT_TASK_LINE = "Blocked — wait needs an active task"
 
 NO_PROGRESS_CODE = "no_progress_block"
-NO_PROGRESS_LINE = "Blocked — no progress"
+NO_PROGRESS_LINE = format_blocked_line(NO_PROGRESS_WHY)
 
 
 def waiting_without_task_result(
@@ -59,7 +65,7 @@ def apply_no_progress_block(
 ) -> dict[str, Any]:
     """Block the bound task (if any) and post a next-owner line. Not guardian noise."""
     mention = next_owner_mention(agent, trigger=trigger)
-    content = f"{NO_PROGRESS_LINE}. {mention}" if mention else NO_PROGRESS_LINE
+    content = format_blocked_line(NO_PROGRESS_WHY, mention)
     task_id = activity_runtime.get_active_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
     result: dict[str, Any] = {
@@ -94,10 +100,11 @@ def apply_no_progress_block(
             result,
             task=task,
             agent=agent,
-            kind="blocked_no_progress",
+            kind=NO_PROGRESS_KIND,
             reason=content,
             target_name=mention,
         )
+        finish_blocked_origin(result, agent=agent, content=content, mention=mention)
         return result
 
     _attach_unbound_line(
@@ -105,8 +112,9 @@ def apply_no_progress_block(
         agent=agent,
         trigger=trigger,
         content=content,
-        kind="blocked_no_progress",
+        kind=NO_PROGRESS_KIND,
     )
+    finish_blocked_origin(result, agent=agent, content=content, mention=mention)
     activity_runtime.refresh_agent_status(agent.id)
     return result
 

@@ -58,7 +58,14 @@ def success_result(
     )
 
 
-def error_result(command: str, message: str, *, cwd: str | None = None, executor: str = "virtual") -> BossModCliResult:
+def error_result(
+    command: str,
+    message: str,
+    *,
+    cwd: str | None = None,
+    executor: str = "virtual",
+    kind: str = "error",
+) -> BossModCliResult:
     """Build an error result the model can recover from inside the same turn."""
     return BossModCliResult(
         command=command,
@@ -68,7 +75,7 @@ def error_result(command: str, message: str, *, cwd: str | None = None, executor
             command,
             [("ERROR", [message])],
         ),
-        kind="error",
+        kind=kind,
         data={"error": message},
         cwd=cwd,
         executor=executor,
