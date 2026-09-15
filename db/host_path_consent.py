@@ -375,6 +375,40 @@ def find_pending_workspace_preference(
     )
 
 
+def list_locked_workspace_copies(
+    *,
+    agent_id: str | None = None,
+    task_id: str | None = None,
+    limit: int = 20,
+) -> list[HostPathConsentRequest]:
+    """Return cloned/branched workspace preferences still in force."""
+    if not agent_id and not task_id:
+        return []
+    conditions = [
+        f"card_kind = '{_WORKSPACE_KIND}'",
+        "status IN ('cloned', 'branched')",
+    ]
+    params: list[object] = []
+    if agent_id:
+        params.append(agent_id)
+        conditions.append(f"agent_id = ${len(params)}")
+    if task_id:
+        params.append(task_id)
+        conditions.append(f"task_id = ${len(params)}")
+    params.append(limit)
+    return fetch_all(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM host_path_consent_requests
+        WHERE {' AND '.join(conditions)}
+        ORDER BY decided_at DESC
+        LIMIT ${len(params)}
+        """,
+        params,
+        HostPathConsentRequest,
+    )
+
+
 def find_workspace_preference_for_scope(
     agent_id: str,
     path: str,

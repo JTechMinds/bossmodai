@@ -33,6 +33,7 @@ from core.agent_loop.turn_rules import (
     should_end_turn_after_action,
     validate_action_for_turn,
 )
+from core.agent_loop.runtime_core import LOCKED_WORKSPACE_COPY_STEER
 from core.bm_cli.managed_writer import (
     is_managed_batch_write_request,
     is_managed_section_rewrite_request,
@@ -136,8 +137,9 @@ async def _run_execution_turn(
         elif consent_status in {"cloned", "branched"}:
             dest = consent_payload.get("clone_dest") or "/me"
             approval_context_msg = (
-                f"Workspace preference: work in the agent workspace at {dest}. "
-                "Desk / /me is the default. Host writes stay blocked."
+                f"Workspace preference is locked: work in the agent workspace at {dest}. "
+                f"{LOCKED_WORKSPACE_COPY_STEER} "
+                "Host writes stay blocked."
             )
         else:
             note = consent_payload.get("decision_note") or "Host-path access denied."
