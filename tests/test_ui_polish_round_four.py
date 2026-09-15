@@ -333,6 +333,7 @@ ROSTER_MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
+    JS / "needs" / "need-shape.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "roster-row-meta.js",

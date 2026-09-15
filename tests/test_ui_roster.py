@@ -20,6 +20,7 @@ MODULES = [
     ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
     ("core", "format.js"),
     ("core", "agent-status.js"),
+    ("needs", "need-shape.js"),
     ("core", "overlay-focus.js"), ("core", "overlays.js"),
     ("shell", "roster-row-meta.js"),
     ("shell", "roster-people.js"),
@@ -47,16 +48,29 @@ def _people_source() -> str:
     return (JS / "shell" / "roster-people.js").read_text(encoding="utf-8")
 
 
-def test_status_line_precedence_is_paused_then_needs_then_status() -> None:
-    """Paused wins over an open need, which wins over the agent's own status."""
+def test_status_line_precedence_is_live_first() -> None:
+    """Paused, then live activity, then an uncleared Focus ask.
+
+    A stale Focus error or denied-consent fallout must not paint Needs you
+    while the thread is Writing or Done. Consent and approval still do when
+    the operator has not cleared them and the agent is idle.
+    """
     payload = _run_harness()
-    assert payload["pausedBeatsNeedBeatsStatus"] is True
+    assert payload["pausedBeatsLiveActivity"] is True
+    assert payload["workingBeatsStaleError"] is True
+    assert payload["idleOpenFocusNeedIsNeedsYou"] is True
+    assert payload["idleStaleErrorIsNotNeedsYou"] is True
+    assert payload["breakBeatsStaleError"] is True
     assert payload["usesSharedStatusLabel"] is True
-    # statusLine() travelled with the People half when the rail was split; the
-    # property is unchanged — it reads the shared helper, never a local copy.
-    assert "BossModAgentStatus.getStatusLabel(" in _people_source(), (
+    people = _people_source()
+    assert "BossModAgentStatus.getStatusLabel(" in people, (
         "the status label must come from the shared helper, not a local copy"
     )
+    assert "BossModNeedShape.isOpenFocusNeed(" in people, (
+        "which needs paint the row comes from the one Focus-need table"
+    )
+    assert "kind === 'error'" not in people
+    assert "kind === 'consent'" not in people
     assert "BossModRosterPeople.createPeople(" in _source()
 
 

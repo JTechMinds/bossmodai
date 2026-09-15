@@ -36,9 +36,10 @@ const BossModRosterPeople = (() => {
     /**
      * The one-line state under an agent's name.
      *
-     * Precedence is deliberate: a paused runtime makes every other state a
-     * lie, and an open need outranks whatever the agent was doing, because it
-     * is the only one of the three the operator can act on.
+     * Precedence is live first: a paused runtime makes every other state a
+     * lie, then Working / Idle / Break from current activity (the same truth
+     * as Writing / Done in the thread). Needs you is only an uncleared Focus
+     * ask — a stale error card or denied consent must not outrank writing.
      *
      * @param {object} agent
      * @param {boolean} runtimePaused
@@ -47,8 +48,27 @@ const BossModRosterPeople = (() => {
      */
     function statusLine(agent, runtimePaused, agentsWithNeeds) {
         if (runtimePaused) return 'Paused';
+        if (hasLiveActivity(agent)) {
+            return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
+        }
         if (agentsWithNeeds.has(agent.id)) return 'Needs you';
         return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
+    }
+
+    /**
+     * Whether the row should read the live activity word.
+     *
+     * A running kind is the thread's Writing / Break. work_active without a
+     * kind still means they are on a turn, so an old Focus error cannot
+     * relabel that row Needs you.
+     *
+     * @param {object} agent
+     * @returns {boolean}
+     */
+    function hasLiveActivity(agent) {
+        if (!agent) return false;
+        if (agent.currentActivityKind) return true;
+        return agent.status === 'work_active' || agent.status === 'social_active';
     }
 
     /**
@@ -108,7 +128,9 @@ const BossModRosterPeople = (() => {
             list);
 
         function agentsWithNeeds() {
-            return new Set(store.getState().needs.map((need) => need.agentId));
+            return new Set(store.getState().needs
+                .filter(BossModNeedShape.isOpenFocusNeed)
+                .map((need) => need.agentId));
         }
 
         /**

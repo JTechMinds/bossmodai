@@ -103,6 +103,30 @@ const BossModNeedShape = (() => {
     }
 
     /**
+     * Kinds that still need an operator decision in Focus.
+     *
+     * People reads live activity first. Only a pending consent or CLI
+     * approval paints "Needs you" on a roster row. Error cards are
+     * evidence — an old timeout or a denied-consent fallout must not
+     * stick after the agent is writing again. Board blocks live on the
+     * Board, not as a Focus ask.
+     */
+    const OPEN_FOCUS_NEED = Object.freeze({
+        consent: true,
+        approval: true,
+    });
+
+    /**
+     * Whether a need is an uncleared Focus ask the operator can still act on.
+     *
+     * @param {Need|object|null} need
+     * @returns {boolean}
+     */
+    function isOpenFocusNeed(need) {
+        return Boolean(need && need.agentId && OPEN_FOCUS_NEED[need.kind]);
+    }
+
+    /**
      * Activity event names that change what is waiting on the operator.
      *
      * Frozen, and every name is asserted to still be emitted somewhere in
@@ -294,5 +318,5 @@ const BossModNeedShape = (() => {
         return others.concat(Array.from(groups.values()));
     }
 
-    return { ACTIVITY_TRIGGERS, KIND_TARGETS, coalesceKey, coalesceNeeds, normalise, normaliseDiagnostic, targetFor };
+    return { ACTIVITY_TRIGGERS, KIND_TARGETS, OPEN_FOCUS_NEED, coalesceKey, coalesceNeeds, isOpenFocusNeed, normalise, normaliseDiagnostic, targetFor };
 })();
