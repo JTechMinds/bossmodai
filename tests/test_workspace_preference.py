@@ -16,6 +16,7 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.bm_cli.runtime import execute_bm_cli
+from core.agent_loop.notifications import persist_chat_notification, project_chat_notifications
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.models.host_path_consent import (
     WORKSPACE_PREFERENCE_BODY,
@@ -244,3 +245,67 @@ def test_desk_me_write_does_not_open_workspace_card() -> None:
     result = execute_bm_cli(agent, state, "write /me/note.txt", content="desk\n")
     assert result.consent_required is False
     assert result.ok is True
+
+
+def test_nested_paths_under_same_root_share_one_card(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    docs = host / "docs"
+    docs.mkdir(parents=True)
+    nested = docs / "requirements-llm-helper-bugfix.md"
+    _allow_host(host)
+    agent, state = _agent_and_state()
+
+    first = execute_bm_cli(agent, state, f"write {docs / 'outline.md'}", content="outline\n")
+    second = execute_bm_cli(agent, state, f"write {nested}", content="criteria\n")
+    assert first.consent_required is True
+    assert second.consent_required is True
+    assert first.consent_request_id == second.consent_request_id
+    assert (second.data or {}).get("consent_reused") is True
+    pending = [
+        row
+        for row in db.list_consent_requests(agent_id=agent.id, status="pending")
+        if (row.card_kind or "") == WORKSPACE_PREFERENCE_KIND
+    ]
+    assert len(pending) == 1
+
+
+def test_nested_preference_does_not_post_a_second_card(tmp_path: Path) -> None:
+    host = tmp_path / "llm_helper"
+    docs = host / "docs"
+    docs.mkdir(parents=True)
+    _allow_host(host)
+    agent, state = _agent_and_state()
+    first = execute_bm_cli(agent, state, f"write {docs / 'outline.md'}", content="outline\n")
+    second = execute_bm_cli(
+        agent, state, f"write {docs / 'requirements.md'}", content="criteria\n"
+    )
+    trigger = {"type": "human_chat", "source_channel": "chat"}
+    first_notes = project_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "bm_cli"},
+        result={
+            "event": "workspace_preference_required",
+            "consent_required": True,
+            "consent_request_id": first.consent_request_id,
+            "consent_reused": False,
+            "host_path_consent": (first.data or {}).get("host_path_consent"),
+        },
+    )
+    assert len(first_notes) == 1
+    persist_chat_notification(agent, first_notes[0])
+    second_notes = project_chat_notifications(
+        agent=agent,
+        trigger=trigger,
+        active_activity=None,
+        action={"action": "bm_cli"},
+        result={
+            "event": "workspace_preference_required",
+            "consent_required": True,
+            "consent_request_id": second.consent_request_id,
+            "consent_reused": bool((second.data or {}).get("consent_reused")),
+            "host_path_consent": (second.data or {}).get("host_path_consent"),
+        },
+    )
+    assert second_notes == []

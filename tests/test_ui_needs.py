@@ -78,6 +78,7 @@ def test_needs_harness() -> None:
         "restoresOnFailedResolve": True,
         "keepsQueueOnFailedRefresh": True,
         "errorNeedFromDiagnostic": True,
+        "identicalErrorCardsCoalesce": True,
         "ignoresUnknownActivity": True,
         "popoverShowsResolutionFailure": True,
         "barToggleNeverHidesTheBell": True,
@@ -306,7 +307,8 @@ def test_an_inspection_action_decides_nothing() -> None:
     guarded = resolve.split("if (decides) {", 1)[1].split("}", 1)[0]
     assert "publish(current.filter(" in guarded
     assert "await api(" not in guarded
-    assert "errorNeeds.delete(need.id);" in resolve
+    assert "errorNeeds.delete(id)" in resolve
+    assert "groupedIds" in resolve
 
 
 def test_need_targets_come_from_one_mapping_table() -> None:

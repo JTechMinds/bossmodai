@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from core.agent_loop.deliverables import get_work_contract, missing_deliverables, summarize_deliverable
+from core.agent_loop.shared_handoff import peer_invisible_handoff_error
 # Re-exported, not merely used: the pure specialty/finish-line half of this
 # module now lives in core.agent_loop.specialty so core.agent_pack can reach
 # suggest_finish_line without importing this module (and, through it, db).
@@ -336,6 +337,9 @@ def resolve_done_claim(
     contract = get_work_contract(task)
     if contract.deliverables:
         path = summarize_deliverable(contract.deliverables[0])
+        hidden = peer_invisible_handoff_error(agent_name=agent.name, task=task, path=path)
+        if hidden:
+            return None, hidden
         return DoneClaim(type="artifact", path=path), None
 
     raw = action.get("doneClaim")
@@ -372,7 +376,15 @@ def resolve_done_claim(
                 ),
                 "agent_name": agent.name,
             }
-        return DoneClaim(type="artifact", path=resolved.virtual_path, evidence=parsed.evidence), None
+        claim = DoneClaim(type="artifact", path=resolved.virtual_path, evidence=parsed.evidence)
+        hidden = peer_invisible_handoff_error(
+            agent_name=agent.name,
+            task=task,
+            path=claim.path,
+        )
+        if hidden:
+            return None, hidden
+        return claim, None
 
     if not parsed.evidence:
         kind = "Tests" if parsed.type == "tests" else "Proof"

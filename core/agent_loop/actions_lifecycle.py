@@ -13,6 +13,7 @@ from core.agent_loop.actions_shared import (
     _resolve_task_lifecycle_target,
     _task_is_human_visible,
 )
+from core.agent_loop.soft_blocks import waiting_without_task_result
 from core.agent_loop.activity_scheduler import (
     build_task_assigned_trigger,
     build_task_update_trigger,
@@ -41,7 +42,7 @@ async def _handle_waiting(
     """Pause the current task in a waiting state until another event resumes it."""
     task_id, error = _resolve_task_lifecycle_target(agent, action, action_name="waiting")
     if error:
-        return {"event": "agent_error", "detail": error, "agent_name": agent.name}
+        return waiting_without_task_result(agent, trigger)
     reason = action.get("reason", "")
 
     task = db.get_task(task_id)
@@ -61,7 +62,7 @@ async def _handle_waiting(
 
     paused = activity_runtime.pause_active_work(agent.id, reason or "Waiting on a dependency.", task_status="waiting")
     if paused is None:
-        return {"event": "agent_error", "detail": '"wait" requires an active task', "agent_name": agent.name}
+        return waiting_without_task_result(agent, trigger)
 
     task = db.get_task(task_id)
     result = {
@@ -146,18 +147,23 @@ async def _handle_complete(
     done_claim, claim_error = resolve_done_claim(agent=agent, task=task, action=action)
     if claim_error:
         if task is not None:
+            origin_kind = str(claim_error.get("origin_status_kind") or "blocked_claim")
             attach_operator_status_line(
                 claim_error,
                 task=task,
                 agent=agent,
-                kind="blocked_claim",
+                kind=origin_kind,
             )
             append_task_event(
                 task_id=task.id,
                 author_type="system",
                 author_name="BossMod",
                 event_type="blocker",
-                content="Blocked — checkable claim missing",
+                content=(
+                    "Blocked — handoff needs a shared path"
+                    if origin_kind == "blocked_peer_handoff"
+                    else "Blocked — checkable claim missing"
+                ),
                 source_trigger_id=(trigger or {}).get("trigger_id"),
             )
         return claim_error

@@ -162,11 +162,14 @@ def _clean_scope_channel_id(channel_id: str | None) -> str | None:
 def list_pending_for_grant_root_scope(
     grant_root: str,
     channel_id: str | None,
+    *,
+    card_kind: str = "host_path",
 ) -> list[HostPathConsentRequest]:
     """Return pending requests for one grant root in a channel or company scope."""
     token = (grant_root or "").strip()
     if not token:
         return []
+    kind = (card_kind or "host_path").strip() or "host_path"
     scoped = _clean_scope_channel_id(channel_id)
     if scoped:
         return fetch_all(
@@ -174,10 +177,10 @@ def list_pending_for_grant_root_scope(
             SELECT {_ALL_COLUMNS}
             FROM host_path_consent_requests
             WHERE status = 'pending' AND grant_root = $1 AND channel_id = $2
-              AND COALESCE(card_kind, 'host_path') = 'host_path'
+              AND COALESCE(card_kind, 'host_path') = $3
             ORDER BY created_at ASC
             """,
-            [token, scoped],
+            [token, scoped, kind],
             HostPathConsentRequest,
         )
     return fetch_all(
@@ -186,10 +189,10 @@ def list_pending_for_grant_root_scope(
         FROM host_path_consent_requests
         WHERE status = 'pending' AND grant_root = $1
           AND (channel_id IS NULL OR channel_id = '')
-          AND COALESCE(card_kind, 'host_path') = 'host_path'
+          AND COALESCE(card_kind, 'host_path') = $2
         ORDER BY created_at ASC
         """,
-        [token],
+        [token, kind],
         HostPathConsentRequest,
     )
 
@@ -197,9 +200,11 @@ def list_pending_for_grant_root_scope(
 def find_pending_for_grant_root_scope(
     grant_root: str,
     channel_id: str | None,
+    *,
+    card_kind: str = "host_path",
 ) -> HostPathConsentRequest | None:
     """Return the oldest pending request for this grant root in one scope."""
-    pending = list_pending_for_grant_root_scope(grant_root, channel_id)
+    pending = list_pending_for_grant_root_scope(grant_root, channel_id, card_kind=card_kind)
     return pending[0] if pending else None
 
 
