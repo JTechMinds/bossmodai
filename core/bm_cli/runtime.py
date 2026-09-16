@@ -120,6 +120,10 @@ def preview_bm_cli(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
 
+    gated = _apply_project_env_gate(agent, parsed, cwd_before)
+    if isinstance(gated, BossModCliResult):
+        return gated
+    parsed = gated
     policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
 
     if policy.approval_required:
@@ -261,6 +265,17 @@ def _execute_bm_cli_inner(
     if paused is not None:
         return paused
 
+    gated = _gate_locked_clone_project_env(
+        agent,
+        parsed,
+        cwd_before,
+        content=content,
+        trigger_type=trigger_type,
+    )
+    if isinstance(gated, BossModCliResult):
+        return gated
+    parsed = gated
+
     # Evaluate policy (DB-driven, with agent-specific rules)
     policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
 
@@ -379,12 +394,25 @@ def execute_approved_command(
 
     Command-tier policy is not re-evaluated (the operator already approved
     this argv), but the path jail still applies. Approval is not a jailbreak.
+    Host pip on a locked clone is also not an approval bypass — rewrite to
+    the clone uv/venv or deny.
     """
     cwd_before = cwd or get_cli_cwd(agent.id)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
+
+    gated = _gate_locked_clone_project_env(
+        agent,
+        parsed,
+        cwd_before,
+        content=content,
+        trigger_type=trigger_type,
+    )
+    if isinstance(gated, BossModCliResult):
+        return gated
+    parsed = gated
 
     prepared = _prepare_native_shell(agent, parsed.raw, cwd_before)
     if isinstance(prepared, BossModCliResult):
@@ -489,6 +517,50 @@ def _maybe_shell_executor_consent(
     return paused
 
 
+def _apply_project_env_gate(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+) -> ParsedCliCommand | BossModCliResult:
+    """Rewrite or deny host pip on a locked clone; prefer uv/venv pytest."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.project_env import gate_locked_clone_command
+
+    return gate_locked_clone_command(
+        agent,
+        parsed,
+        cwd_before,
+        task_id=get_active_task_id(agent.id),
+    )
+
+
+def _gate_locked_clone_project_env(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+    *,
+    content: str | None = None,
+    trigger_type: str | None = None,
+) -> ParsedCliCommand | BossModCliResult:
+    """Same as :func:`_apply_project_env_gate`, recording a deny audit event."""
+    gated = _apply_project_env_gate(agent, parsed, cwd_before)
+    if not isinstance(gated, BossModCliResult):
+        return gated
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=gated.executor,
+        cwd_before=cwd_before,
+        cwd_after=gated.cwd,
+        policy_tier="never_allowed",
+        decision="denied",
+        result=gated,
+        trigger_type=trigger_type,
+    )
+    return gated
+
+
 def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     """Return True when this git command should use shell policy, not virtual git."""
     if parsed.name != "git":
@@ -579,6 +651,25 @@ def _handle_approval_required(
     """Create an approval request and return the pausing result."""
     from core.bm_cli.host_path_consent import _clean_channel_id
     from core.models.channel import THREAD_ARCHIVED_CONSENT_DENY
+
+    gated = _gate_locked_clone_project_env(
+        agent,
+        parsed,
+        cwd_before,
+        content=content,
+        trigger_type=trigger_type,
+    )
+    if isinstance(gated, BossModCliResult):
+        return gated
+    if gated.raw != parsed.raw:
+        return _execute_shell_policy(
+            agent=agent,
+            parsed=gated,
+            content=content,
+            cwd_before=cwd_before,
+            trigger_type=trigger_type,
+            channel_id=channel_id,
+        )
 
     origin_channel = _clean_channel_id(channel_id)
     if origin_channel and db.is_channel_archived(origin_channel):

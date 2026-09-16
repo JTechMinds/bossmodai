@@ -374,6 +374,7 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert "Do not park @Operator to reopen" in block
     assert "Do not park @Operator as the test runner or git pusher" in block
     assert "Do not invent a desk deny" in block
+    assert "Do not pip install into the host Python" in block
     assert f"Locked workspace copy for {host_path}: work at {dest}." in block
     assert "Host writes stay blocked." in block
     assert "work directly in the host tree" not in block.lower()
