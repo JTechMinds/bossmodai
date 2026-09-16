@@ -27,7 +27,11 @@ from core.agent_loop.runtime_core import LOCKED_WORKSPACE_COPY_STEER, format_run
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
 from core.models.host_path_consent import (
+    SHELL_EXECUTOR_BODY,
     SHELL_EXECUTOR_CARD_COPY,
+    SHELL_EXECUTOR_DENY_LABEL,
+    SHELL_EXECUTOR_ENABLE_HINT,
+    SHELL_EXECUTOR_ENABLE_LABEL,
     SHELL_EXECUTOR_KIND,
     SHELL_EXECUTOR_TITLE,
 )
@@ -105,6 +109,14 @@ def test_locked_clone_pytest_posts_shell_executor_card() -> None:
     card = (paused.data or {}).get("host_path_consent") or {}
     assert card["kind"] == SHELL_EXECUTOR_KIND
     assert card["title"] == SHELL_EXECUTOR_TITLE
+    assert card["body"] == SHELL_EXECUTOR_BODY
+    assert card["enable_label"] == SHELL_EXECUTOR_ENABLE_LABEL
+    assert card["enable_hint"] == SHELL_EXECUTOR_ENABLE_HINT
+    assert card["deny_label"] == SHELL_EXECUTOR_DENY_LABEL
+    assert "company-wide" in card["enable_label"].lower() or "company" in card["body"].lower()
+    assert "CLI policy still applies after" in card["body"]
+    assert "CLI policy still applies after" in card["enable_hint"]
+    assert "Shell Executor stays off" in card["deny_label"]
     assert card.get("channel_id") is None
     assert "shell execution is not enabled" not in (paused.data or {}).get("error", "")
     assert SHELL_EXECUTOR_CARD_COPY in (paused.detail or "")
@@ -207,6 +219,63 @@ def test_shell_executor_card_copy_is_enable_or_deny() -> None:
     assert second == []
 
 
+def test_enable_is_company_wide_not_per_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    other = db.create_agent("Peer Clerk", role="Writer")
+    other_state = db.get_agent_state(other.id)
+    assert other_state is not None
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    _lock_workspace_copy(
+        other.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    client = _api_client(monkeypatch)
+    paused = execute_bm_cli(agent, state, "pytest -q")
+    shell_id = paused.consent_request_id
+    assert shell_id
+    enabled = client.post(f"/api/shell-executor/{shell_id}/enable", headers=_headers())
+    assert enabled.status_code == 200, enabled.text
+    assert config.get("cli_shell_enabled") == "true"
+
+    other_attempt = execute_bm_cli(other, other_state, "pytest -q")
+    assert other_attempt.consent_required is False
+    assert other_attempt.kind != "shell_executor_consent_required"
+
+
+def test_needs_queue_uses_company_wide_enable_copy() -> None:
+    agent, state = _agent_and_state()
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    paused = execute_bm_cli(agent, state, "pytest -q")
+    assert paused.consent_request_id
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    client = TestClient(app)
+    needs = client.get("/api/needs", headers=_headers())
+    assert needs.status_code == 200, needs.text
+    items = [
+        item
+        for item in needs.json()
+        if item.get("id") == paused.consent_request_id
+    ]
+    assert len(items) == 1
+    labels = [action["label"] for action in items[0]["actions"]]
+    assert SHELL_EXECUTOR_ENABLE_LABEL in labels
+    assert SHELL_EXECUTOR_DENY_LABEL in labels
+    assert items[0]["title"] == f"{agent.name} {SHELL_EXECUTOR_CARD_COPY}"
+
+
 def test_enable_turns_shell_on_and_resumes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -235,6 +304,9 @@ def test_enable_turns_shell_on_and_resumes(
     enabled = client.post(f"/api/shell-executor/{shell_id}/enable", headers=_headers())
     assert enabled.status_code == 200, enabled.text
     assert enabled.json()["status"] == "enabled"
+    note = enabled.json().get("decision_note") or ""
+    assert "company-wide" in note.lower()
+    assert "CLI policy still applies" in note
     assert config.get("cli_shell_enabled") == "true"
 
     triggers = db.list_agent_triggers(agent.id, status="queued")

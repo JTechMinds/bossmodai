@@ -34,6 +34,8 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     from core.bm_cli.host_roots import offers_always_allow_grant
     from core.models.host_path_consent import (
         SHELL_EXECUTOR_CARD_COPY,
+        SHELL_EXECUTOR_DENY_LABEL,
+        SHELL_EXECUTOR_ENABLE_LABEL,
         SHELL_EXECUTOR_KIND,
         WORKSPACE_PREFERENCE_KIND,
     )
@@ -44,9 +46,9 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         kind = (request.card_kind or "host_path").strip() or "host_path"
         if kind == SHELL_EXECUTOR_KIND:
             actions = [
-                {"label": "Enable", "method": "POST", "tone": "primary",
+                {"label": SHELL_EXECUTOR_ENABLE_LABEL, "method": "POST", "tone": "primary",
                  "href": f"/api/shell-executor/{request.id}/enable"},
-                {"label": "Deny", "method": "POST", "tone": "quiet",
+                {"label": SHELL_EXECUTOR_DENY_LABEL, "method": "POST", "tone": "quiet",
                  "href": f"/api/shell-executor/{request.id}/deny"},
             ]
             title = f"{name} {SHELL_EXECUTOR_CARD_COPY}"

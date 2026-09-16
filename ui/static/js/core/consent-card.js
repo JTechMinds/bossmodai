@@ -89,12 +89,12 @@ const BossModConsentCard = (() => {
         reasonEl.textContent = workspace
             ? (card.body || card.reason || "Host paths stay safer if we clone (or branch) into the agent's workspace first. Editing the host folder directly is allowed but not advised.")
             : (shell
-                ? (card.body || card.reason || 'Validate-on-clone needs pytest and local git add/commit on the locked workspace copy.')
+                ? (card.body || card.reason || 'Turns on Shell Executor for the company — same as Settings → CLI policy. CLI policy still applies after (not a blanket allow-all). Validate-on-clone needs pytest and local git add/commit on the locked workspace copy.')
                 : (card.reason || ''));
         container.appendChild(title);
         container.appendChild(pathEl);
         const reasonText = workspace || shell
-            ? (card.body || card.reason)
+            ? (card.body || card.reason || reasonEl.textContent)
             : card.reason;
         if (reasonText && status === 'pending') {
             container.appendChild(reasonEl);
@@ -112,7 +112,7 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         const buttons = workspace
             ? workspacePreferenceActions(card)
-            : (shell ? shellExecutorActions() : [
+            : (shell ? shellExecutorActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
             {
                 label: 'Always allow (for all agents)',
@@ -135,6 +135,12 @@ const BossModConsentCard = (() => {
             actions.appendChild(btn);
         });
         container.appendChild(actions);
+        if (shell) {
+            const hintEl = document.createElement('div');
+            hintEl.className = 'hpc-hint';
+            hintEl.textContent = card.enable_hint || 'same as Settings. CLI policy still applies after.';
+            container.appendChild(hintEl);
+        }
     }
 
     function workspacePreferenceActions(card) {
@@ -147,18 +153,32 @@ const BossModConsentCard = (() => {
         ];
     }
 
-    function shellExecutorActions() {
+    function shellExecutorActions(card) {
         return [
-            { label: 'Enable', path: 'enable', primary: true },
-            { label: 'Deny', path: 'deny' },
+            {
+                label: (card && card.enable_label) || 'Turn on Shell Executor (company-wide)',
+                path: 'enable',
+                primary: true,
+            },
+            {
+                label: (card && card.deny_label) || 'Deny — Shell Executor stays off',
+                path: 'deny',
+            },
         ];
     }
 
     function consentStatusLabel(card) {
         const status = card.status || 'pending';
         const workspace = isWorkspacePreferenceCard(card);
-        if (status === 'denied') return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
-        if (status === 'enabled') return card.decision_note || 'Shell Executor enabled';
+        if (status === 'denied') {
+            if (isShellExecutorCard(card)) {
+                return card.decision_note || 'Shell Executor stays off.';
+            }
+            return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
+        }
+        if (status === 'enabled') {
+            return card.decision_note || 'Shell Executor on (company-wide). CLI policy still applies.';
+        }
         if (status === 'cloned') return card.clone_dest ? `Cloned into ${card.clone_dest}` : 'Cloned into workspace';
         if (status === 'branched') return card.decision_note || 'Branched into workspace';
         if (status === 'edit_host') return 'Edit host directly (not advised)';
@@ -240,6 +260,7 @@ const BossModConsentCard = (() => {
             el.classList.add('is-resolved');
             el.querySelector('.host-path-consent-actions')?.remove();
             el.querySelector('.hpc-reason')?.remove();
+            el.querySelector('.hpc-hint')?.remove();
             if (!el.querySelector('.hpc-status')) {
                 const resolved = document.createElement('div');
                 resolved.className = 'hpc-status';

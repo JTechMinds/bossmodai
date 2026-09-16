@@ -21,6 +21,8 @@ from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
 from core.models import Agent
 from core.models.host_path_consent import (
     SHELL_EXECUTOR_BODY,
+    SHELL_EXECUTOR_DENIED_NOTE,
+    SHELL_EXECUTOR_ENABLED_NOTE,
     SHELL_EXECUTOR_GRANT_ROOT,
     SHELL_EXECUTOR_KIND,
     HostPathConsentRequest,
@@ -163,7 +165,7 @@ async def resume_shell_executor_consent(
             request_id,
             status="denied",
             decision_by=decision_by,
-            decision_note=note or "Shell Executor stays off. Validate-on-clone was denied.",
+            decision_note=note or SHELL_EXECUTOR_DENIED_NOTE,
         )
         if updated is None:
             return None
@@ -186,7 +188,7 @@ async def resume_shell_executor_consent(
         request_id,
         status="enabled",
         decision_by=decision_by,
-        decision_note=note or "Shell Executor enabled.",
+        decision_note=note or SHELL_EXECUTOR_ENABLED_NOTE,
     )
     if updated is None:
         return None
@@ -204,7 +206,7 @@ async def resume_shell_executor_consent(
             sibling.id,
             status="enabled",
             decision_by=decision_by,
-            decision_note=note or "Shell Executor enabled.",
+            decision_note=note or SHELL_EXECUTOR_ENABLED_NOTE,
         )
         if other is None:
             continue

@@ -17,9 +17,18 @@ SHELL_EXECUTOR_KIND = "shell_executor"
 SHELL_EXECUTOR_GRANT_ROOT = "cli_shell_enabled"
 SHELL_EXECUTOR_TITLE = "Enable Shell Executor?"
 SHELL_EXECUTOR_BODY = (
-    "Validate-on-clone needs pytest and local git add/commit on the locked workspace copy. "
-    "Enable turns Shell Executor on and resumes this command. Deny refuses. "
-    "The secure default stays off until you enable."
+    "Turns on Shell Executor for the company — same as Settings → CLI policy. "
+    "CLI policy still applies after (not a blanket allow-all). "
+    "Validate-on-clone needs pytest and local git add/commit on the locked workspace copy."
+)
+SHELL_EXECUTOR_ENABLE_LABEL = "Turn on Shell Executor (company-wide)"
+SHELL_EXECUTOR_ENABLE_HINT = "same as Settings. CLI policy still applies after."
+SHELL_EXECUTOR_DENY_LABEL = "Deny — Shell Executor stays off"
+SHELL_EXECUTOR_ENABLED_NOTE = (
+    "Shell Executor on (company-wide). CLI policy still applies."
+)
+SHELL_EXECUTOR_DENIED_NOTE = (
+    "Shell Executor stays off. Validate-on-clone was denied."
 )
 SHELL_EXECUTOR_CARD_COPY = (
     "needs Shell Executor for validate-on-clone — enable or deny"
@@ -79,6 +88,9 @@ class HostPathConsentRequest(BaseModel):
         elif kind == SHELL_EXECUTOR_KIND:
             card["title"] = SHELL_EXECUTOR_TITLE
             card["body"] = SHELL_EXECUTOR_BODY
+            card["enable_label"] = SHELL_EXECUTOR_ENABLE_LABEL
+            card["enable_hint"] = SHELL_EXECUTOR_ENABLE_HINT
+            card["deny_label"] = SHELL_EXECUTOR_DENY_LABEL
             card["always_allow"] = False
             if self.command:
                 card["command"] = self.command

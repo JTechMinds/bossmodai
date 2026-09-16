@@ -154,8 +154,9 @@ async def cancel_workspace_preference(request_id: str):
 
 @router.post("/shell-executor/{request_id}/enable")
 async def enable_shell_executor(request_id: str):
-    """Turn Shell Executor on and resume the pending CLI attempt."""
+    """Turn Shell Executor on company-wide (same as Settings) and resume."""
     from core.bm_cli.shell_executor_consent import resume_shell_executor_consent
+    from core.models.host_path_consent import SHELL_EXECUTOR_ENABLED_NOTE
 
     try:
         request = await resume_shell_executor_consent(
@@ -169,7 +170,7 @@ async def enable_shell_executor(request_id: str):
         raise HTTPException(404, "Consent request not found or already resolved")
     await manager.broadcast_activity(
         event="shell_executor_enabled",
-        detail="Shell Executor enabled.",
+        detail=SHELL_EXECUTOR_ENABLED_NOTE,
     )
     return request
 

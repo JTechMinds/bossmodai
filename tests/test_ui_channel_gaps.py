@@ -101,6 +101,7 @@ def test_operator_chrome_labels_threads() -> None:
     # Threads are a roster section, not a seventh place.
     assert "channels" not in places.lower()
     assert ".host-path-consent-card.is-resolved" in css
+    assert ".hpc-hint" in css
 
 
 def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
@@ -133,7 +134,10 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     assert "hidden: !git" in consent
     assert "/api/workspace-preference/" in consent
     assert "Enable Shell Executor?" in consent
-    assert "Enable" in consent
+    assert "Turn on Shell Executor (company-wide)" in consent
+    assert "same as Settings. CLI policy still applies after." in consent
+    assert "Deny — Shell Executor stays off" in consent
+    assert "CLI policy still applies after (not a blanket allow-all)" in consent
     assert "/api/shell-executor/" in consent
 
 
