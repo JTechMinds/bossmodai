@@ -9,6 +9,7 @@ import db
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.models import Activity, Agent
 from core.models.channel import ChannelArchivedError
+from core.models.cli_policy import CLI_APPROVAL_KIND
 from core.models.host_path_consent import (
     SHELL_EXECUTOR_CARD_COPY,
     SHELL_EXECUTOR_KIND,
@@ -24,6 +25,7 @@ NotificationKind = Literal[
     "abandoned",
     "task_update",
     "host_path_consent",
+    "cli_approval",
     "queue_visibility",
 ]
 
@@ -54,6 +56,7 @@ class ChatNotification:
     activity_id: str | None = None
     desk_path: str | None = None
     consent_id: str | None = None
+    approval_id: str | None = None
     channel_id: str | None = None
 
 
@@ -86,6 +89,10 @@ def project_chat_notifications(
     if consent is not None:
         notifications.append(consent)
 
+    approval = _build_approval_notification(agent=agent, trigger=trigger, result=result)
+    if approval is not None:
+        notifications.append(approval)
+
     return notifications
 
 
@@ -99,8 +106,8 @@ async def emit_chat_notifications(
 ) -> None:
     """Persist projected chat/channel notifications and broadcast them.
 
-    Host-path consent cards stay on one origin: the shared channel when
-    ``channel_id`` is set, otherwise Focus/DM. Never both surfaces.
+    Host-path consent and CLI approval cards stay on one origin: the shared
+    channel when ``channel_id`` is set, otherwise Focus/DM. Never both surfaces.
     """
     from core.runtime.events import runtime_events as manager
 
@@ -134,6 +141,7 @@ async def emit_chat_notifications(
                 desk_path=channel_notification.get("desk_path"),
                 task_id=channel_notification.get("task_id"),
                 host_path_consent=channel_notification.get("host_path_consent"),
+                cli_approval=channel_notification.get("cli_approval"),
             )
             continue
         chat_notification = persist_chat_notification(agent, notification)
@@ -149,6 +157,7 @@ async def emit_chat_notifications(
             desk_path=chat_notification.get("desk_path"),
             task_id=chat_notification.get("task_id"),
             host_path_consent=chat_notification.get("host_path_consent"),
+            cli_approval=chat_notification.get("cli_approval"),
         )
         if chat_notification.get("feed_entry"):
             await manager.broadcast_feed_update(chat_notification["feed_entry"])
@@ -223,6 +232,13 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             target_path=notification.consent_id,
             label="Host path consent",
         )
+    if notification.approval_id:
+        db.create_notification_link(
+            notification_id=stored.id,
+            target_kind="cli_approval",
+            target_path=notification.approval_id,
+            label="CLI approval",
+        )
 
     feed_entry = db.normalize_notification_entry(
         {
@@ -256,6 +272,11 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             if notification.consent_id and db.get_consent_request(notification.consent_id)
             else None
         ),
+        "cli_approval": (
+            db.get_cli_approval_request(notification.approval_id).as_card()
+            if notification.approval_id and db.get_cli_approval_request(notification.approval_id)
+            else None
+        ),
         "feed_entry": feed_entry,
     }
 
@@ -280,6 +301,7 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
             author_agent_id=agent.id,
             notification_kind=notification.kind,
             consent_id=notification.consent_id,
+            approval_id=notification.approval_id,
             desk_path=notification.desk_path,
             task_id=notification.task_id,
         )
@@ -299,6 +321,11 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         "host_path_consent": (
             db.get_consent_request(notification.consent_id).as_card()
             if notification.consent_id and db.get_consent_request(notification.consent_id)
+            else None
+        ),
+        "cli_approval": (
+            db.get_cli_approval_request(notification.approval_id).as_card()
+            if notification.approval_id and db.get_cli_approval_request(notification.approval_id)
             else None
         ),
     }
@@ -368,6 +395,43 @@ def _build_consent_notification(
         policy="all",
         prompt_visibility=False,
         consent_id=consent_id,
+        channel_id=channel_id,
+    )
+
+
+def _build_approval_notification(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    result: dict[str, Any],
+) -> ChatNotification | None:
+    """Return the in-thread CLI approval card when a new request is created."""
+    if result.get("event") != "cli_approval_required":
+        return None
+    card = result.get("cli_approval") if isinstance(result.get("cli_approval"), dict) else {}
+    approval_id = str(card.get("id") or result.get("approval_request_id") or "").strip()
+    if not approval_id:
+        return None
+    if db.has_approval_notification(approval_id):
+        return None
+    channel_id = _consent_channel_id(trigger, card)
+    if channel_id and db.is_channel_archived(channel_id):
+        return None
+    if channel_id:
+        bound = db.bind_cli_approval_channel(approval_id, channel_id)
+        if bound is not None:
+            card = bound.as_card()
+    command = str(card.get("command") or result.get("detail") or "a command").strip()
+    content = f"{agent.name} wants to run a command"
+    if command and command != "a command":
+        content = f"{agent.name} wants to run {command}"
+    return ChatNotification(
+        kind=CLI_APPROVAL_KIND,
+        content=content,
+        source_channel=_notification_source_channel(trigger),
+        policy="all",
+        prompt_visibility=False,
+        approval_id=approval_id,
         channel_id=channel_id,
     )
 

@@ -90,6 +90,7 @@ def test_needs_harness() -> None:
         "unchangedBaselineStillEnds": True,
         "inspectionDoesNotResolve": True,
         "barLeavesConsentInline": True,
+        "barLeavesApprovalInline": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }
@@ -221,6 +222,7 @@ def test_toast_and_bar_are_mutually_exclusive() -> None:
     # A consent ask is already inline in the transcript of the very
     # conversation the bar is scoped to, so the bar leaves it there.
     assert payload["barLeavesConsentInline"] is True
+    assert payload["barLeavesApprovalInline"] is True
 
 
 def test_no_toast_on_the_first_snapshot() -> None:

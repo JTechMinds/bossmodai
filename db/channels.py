@@ -20,7 +20,8 @@ _CHANNEL_COLUMNS = "id, name, kind, status, created_by, created_at, updated_at, 
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
 _MESSAGE_COLUMNS = (
     "id, channel_id, author_type, author_agent_id, author_name, content, "
-    "source_channel, notification_kind, consent_id, desk_path, task_id, created_at"
+    "source_channel, notification_kind, consent_id, approval_id, desk_path, "
+    "task_id, created_at"
 )
 
 
@@ -279,6 +280,7 @@ def create_channel_message(
     author_agent_id: str | None = None,
     notification_kind: str | None = None,
     consent_id: str | None = None,
+    approval_id: str | None = None,
     desk_path: str | None = None,
     task_id: str | None = None,
 ) -> ChannelMessage:
@@ -289,10 +291,10 @@ def create_channel_message(
         f"""
         INSERT INTO channel_messages (
             channel_id, author_type, author_agent_id, author_name, content,
-            source_channel, notification_kind, consent_id, desk_path, task_id,
-            created_at
+            source_channel, notification_kind, consent_id, approval_id,
+            desk_path, task_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING {_MESSAGE_COLUMNS}
         """,
         [
@@ -304,6 +306,7 @@ def create_channel_message(
             source_channel,
             notification_kind,
             consent_id,
+            (approval_id or "").strip() or None,
             (desk_path or "").strip() or None,
             (task_id or "").strip() or None,
             datetime.now(timezone.utc),

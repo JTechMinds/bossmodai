@@ -70,7 +70,7 @@ const BossModThreadSource = (() => {
          * @returns {object} Message
          */
         function toMessage(raw) {
-            const consent = BossModConsentCard.isHostPathConsentMessage(raw) && raw.host_path_consent;
+            const card = BossModConsentCard.cardFromMessage(raw);
             const isQueue = raw.notification_kind === 'queue_visibility';
             const isSystem = raw.author_type === 'system';
             const text = raw.content || '';
@@ -83,8 +83,8 @@ const BossModThreadSource = (() => {
                 showAuthor: true,
                 text,
                 createdAt: raw.created_at || '',
-                kind: consent ? 'request' : (isSystem || isQueue ? 'note' : 'message'),
-                card: raw.host_path_consent || null,
+                kind: card ? 'request' : (isSystem || isQueue ? 'note' : 'message'),
+                card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
                 systemReceipt: false,

@@ -24,15 +24,15 @@ const BossModNeedsBar = (() => {
     /**
      * Need kind to the `event` card tone that shows it.
      *
-     * `consent` is absent on purpose, and its absence is the suppression rule
-     * doing its job rather than a missing case. A host-path consent ask already
-     * renders inline in the transcript of the very conversation this bar is
-     * scoped to (conversation/sources/*.js emit it as `request`), so putting it
-     * here too would render one ask twice in one conversation — exactly what
-     * spec 4.3 and 5.5 exist to prevent. It stays reachable from the bell.
+     * `consent` and `approval` are absent on purpose, and their absence is the
+     * suppression rule doing its job rather than a missing case. A host-path
+     * consent or CLI approval ask already renders inline in the transcript of
+     * the very conversation this bar is scoped to (conversation/sources/*.js
+     * emit it as `request`), so putting it here too would render one ask twice
+     * in one conversation — exactly what spec 4.3 and 5.5 exist to prevent.
+     * Both stay reachable from the bell.
      */
     const BAR_CARDS = Object.freeze({
-        approval: 'ask',
         blocked: 'blocked',
         error: 'warn',
     });

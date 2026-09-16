@@ -25,6 +25,7 @@ class RuntimeEventSink(Protocol):
         notification_kind: str | None = None,
         desk_path: str | None = None,
         host_path_consent: dict[str, Any] | None = None,
+        cli_approval: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> None: ...
     async def broadcast_meeting_message(
@@ -49,6 +50,7 @@ class RuntimeEventSink(Protocol):
         created_at: Any = None,
         notification_kind: str | None = None,
         host_path_consent: dict[str, Any] | None = None,
+        cli_approval: dict[str, Any] | None = None,
         author_agent_id: str | None = None,
         desk_path: str | None = None,
         task_id: str | None = None,

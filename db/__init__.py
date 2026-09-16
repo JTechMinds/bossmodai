@@ -87,6 +87,7 @@ from db.host_path_consent import (
 )
 from db.cli_approval_requests import (
     approve_request as approve_cli_approval_request,
+    bind_approval_channel as bind_cli_approval_channel,
     count_pending_requests as count_pending_cli_approval_requests,
     create_approval_request as create_cli_approval_request,
     expire_stale_requests as expire_stale_cli_approval_requests,
@@ -104,6 +105,7 @@ from db.notifications import (
 )
 from db.notification_links import (
     create_notification_link,
+    has_approval_notification,
     has_consent_notification,
     list_notification_links,
 )
@@ -371,6 +373,7 @@ __all__ = [
     "list_bm_cli_events",
     "create_notification",
     "create_notification_link",
+    "has_approval_notification",
     "has_consent_notification",
     "delete_agent_notifications",
     "delete_notification",
@@ -579,6 +582,7 @@ __all__ = [
     "resolve_consent_request",
     # CLI Approval Requests
     "approve_cli_approval_request",
+    "bind_cli_approval_channel",
     "count_pending_cli_approval_requests",
     "create_cli_approval_request",
     "expire_stale_cli_approval_requests",

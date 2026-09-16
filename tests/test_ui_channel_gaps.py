@@ -177,10 +177,11 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "presence.stop(" in thread
     assert "presence.stopAll(" in thread
 
-    # Consent cards render inline in the transcript.
-    assert "BossModConsentCard.isHostPathConsentMessage(raw)" in thread
+    # Consent and CLI approval cards render inline in the transcript.
+    assert "BossModConsentCard.cardFromMessage(raw)" in thread
     assert "BossModConsentCard.collapseGrantedConsentCards(card)" in conversation
     assert "BossModConsentCard.renderHostPathConsentCard(" in cards
+    assert "BossModConsentCard.renderCliApprovalCard(" in cards
     assert "host-path-consent-card" in cards
 
     # A live message appends into the mounted transcript.

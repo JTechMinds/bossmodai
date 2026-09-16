@@ -2,15 +2,15 @@
  * BossMod AI — the visual treatment for every non-message row.
  *
  * Three kinds, two producers. A conversation SOURCE produces `request` (a
- * host-path consent ask) and `note` (a task-lifecycle receipt), and nothing
- * else. `event.*` is produced by needs/needs-bar.js, which renders its cards
- * through here rather than owning a second look for them.
+ * host-path consent or CLI approval ask) and `note` (a task-lifecycle receipt),
+ * and nothing else. `event.*` is produced by needs/needs-bar.js, which renders
+ * its cards through here rather than owning a second look for them.
  *
  * That split is spec 4.3 as reconciled: one renderer, one appearance per need.
  * Putting `event.*` in the transcript AND in the composer bar would render one
- * CLI approval twice in the same conversation, which is exactly what the
- * suppression rule in spec 5.5 exists to prevent. A source emitting `event` is
- * therefore a bug.
+ * ask twice in the same conversation, which is exactly what the suppression
+ * rule in spec 5.5 exists to prevent. A source emitting `event` is therefore
+ * a bug.
  *
  * `progress` was the fourth kind and is gone. It had a renderer and never had
  * a producer; the operator's answer (spec 12, carried items) was to feed the
@@ -138,13 +138,18 @@ const BossModEventCards = (() => {
             if (!message.card) {
                 throw new Error('[event-cards] a request message carries no card payload');
             }
-            // The id and class are what collapseRelatedConsentCards and the
-            // deep-link from the needs queue select on.
+            const approval = BossModConsentCard.isCliApprovalCard(message.card);
             const wrapper = h('div', {
                 class: 'msg host-path-consent-card',
-                id: `host-path-consent-${message.card.id}`,
+                id: approval
+                    ? `cli-approval-${message.card.id}`
+                    : `host-path-consent-${message.card.id}`,
             });
-            BossModConsentCard.renderHostPathConsentCard(wrapper, message.card, ctx.api);
+            if (approval) {
+                BossModConsentCard.renderCliApprovalCard(wrapper, message.card, ctx.api);
+            } else {
+                BossModConsentCard.renderHostPathConsentCard(wrapper, message.card, ctx.api);
+            }
             return wrapper;
         }
 

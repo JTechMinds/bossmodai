@@ -65,6 +65,7 @@ class ChannelMessage(BaseModel):
     source_channel: str
     notification_kind: str | None = None
     consent_id: str | None = None
+    approval_id: str | None = None
     desk_path: str | None = None
     task_id: str | None = None
     created_at: datetime

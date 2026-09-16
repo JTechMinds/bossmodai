@@ -65,3 +65,24 @@ def has_consent_notification(consent_id: str) -> bool:
         [token],
     )
     return channel_row is not None
+
+
+def has_approval_notification(approval_id: str) -> bool:
+    """Return True when a Focus or channel card already exists for this request."""
+    token = (approval_id or "").strip()
+    if not token:
+        return False
+    row = query_one(
+        """
+        SELECT notification_id FROM notification_links
+        WHERE target_kind = 'cli_approval' AND target_path = $1
+        """,
+        [token],
+    )
+    if row is not None:
+        return True
+    channel_row = query_one(
+        "SELECT id FROM channel_messages WHERE approval_id = $1 LIMIT 1",
+        [token],
+    )
+    return channel_row is not None

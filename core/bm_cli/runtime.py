@@ -273,6 +273,7 @@ def _execute_bm_cli_inner(
             cwd_before=cwd_before,
             policy=policy,
             trigger_type=trigger_type,
+            channel_id=channel_id,
         )
 
     # --- Denied: return error ---
@@ -305,6 +306,7 @@ def _execute_bm_cli_inner(
             content=content,
             cwd_before=cwd_before,
             trigger_type=trigger_type,
+            channel_id=channel_id,
         )
 
     # --- Virtual handler ---
@@ -331,6 +333,7 @@ def _execute_bm_cli_inner(
                     content=content,
                     cwd_before=cwd_before,
                     trigger_type=trigger_type,
+                    channel_id=channel_id,
                 )
         return result
 
@@ -519,6 +522,7 @@ def _execute_shell_policy(
     content: str | None,
     cwd_before: str,
     trigger_type: str | None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Evaluate shell policy for a command that left the virtual handler."""
     shell_policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id)
@@ -530,6 +534,7 @@ def _execute_shell_policy(
             cwd_before=cwd_before,
             policy=shell_policy,
             trigger_type=trigger_type,
+            channel_id=channel_id,
         )
     if not shell_policy.allowed:
         result = error_result(
@@ -569,8 +574,21 @@ def _handle_approval_required(
     cwd_before: str,
     policy: object,
     trigger_type: str | None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Create an approval request and return the pausing result."""
+    from core.bm_cli.host_path_consent import _clean_channel_id
+    from core.models.channel import THREAD_ARCHIVED_CONSENT_DENY
+
+    origin_channel = _clean_channel_id(channel_id)
+    if origin_channel and db.is_channel_archived(origin_channel):
+        return error_result(
+            parsed.raw,
+            THREAD_ARCHIVED_CONSENT_DENY,
+            cwd=cwd_before,
+            executor=getattr(policy, "executor", "shell"),
+        )
+
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
 
@@ -581,6 +599,7 @@ def _handle_approval_required(
         cwd=cwd_before,
         matched_rule_id=policy.matched_rule_id,
         expires_at=expires_at,
+        channel_id=origin_channel,
     )
 
     result = approval_required_result(
@@ -590,6 +609,7 @@ def _handle_approval_required(
         executor=policy.executor,
         matched_rule_id=policy.matched_rule_id,
         approval_request_id=approval.id,
+        approval_request=approval,
     )
     record_bm_cli_event(
         agent_id=agent.id,

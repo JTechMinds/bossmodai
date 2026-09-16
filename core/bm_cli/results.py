@@ -95,9 +95,14 @@ def approval_required_result(
     executor: str = "virtual",
     matched_rule_id: str | None = None,
     approval_request_id: str | None = None,
+    approval_request: Any | None = None,
 ) -> BossModCliResult:
     """Build an approval-required result for gated commands."""
     pause_note = load_default_prompt("internal_cli_approval_pause_note")
+    card = approval_request.as_card() if approval_request is not None else {}
+    data: dict[str, Any] = {"approval_required": True, "message": message}
+    if card:
+        data["cli_approval"] = card
     return BossModCliResult(
         command=command,
         ok=False,
@@ -107,7 +112,7 @@ def approval_required_result(
             [("APPROVAL REQUIRED", [message, pause_note])],
         ),
         kind="approval_required",
-        data={"approval_required": True, "message": message},
+        data=data,
         cwd=cwd,
         approval_required=True,
         executor=executor,
