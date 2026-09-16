@@ -19,6 +19,7 @@ from core.bm_cli.policy_engine import argv0_policy_names, is_venv_bin_path
 from core.bm_cli.results import error_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path
+from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo, find_git_root
 from core.models import Agent
 
@@ -211,7 +212,16 @@ def _env_for_cwd(agent: Agent, cwd: str) -> ProjectEnv | None:
     real = _real_cwd(agent, cwd)
     if real is None:
         return None
+    try:
+        workspace = agent_artifact_dir(agent.storage_key).resolve()
+    except OSError:
+        workspace = None
     root = find_git_root(real) or real
+    if workspace is not None:
+        try:
+            Path(root).resolve().relative_to(workspace)
+        except ValueError:
+            root = real
     return detect_project_env(root)
 
 

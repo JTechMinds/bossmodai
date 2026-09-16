@@ -304,9 +304,15 @@ def test_locked_clone_denies_uv_pip_system_flag(
 
 
 def test_desk_pip_install_still_requires_approval_without_lock() -> None:
+    from core.bm_cli.session import get_cli_cwd
+    from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
+
     _enable_shell()
     agent, state = _agent_and_state()
+    # Artifacts live inside this checkout's .git; /me is still not a locked clone.
+    assert cwd_is_nested_clone_repo(agent, get_cli_cwd(agent.id)) is False
     paused = execute_bm_cli(agent, state, "pip install pytest")
     assert paused.ok is False
     assert paused.approval_required is True
     assert paused.kind == "approval_required"
+    assert paused.command == "pip install pytest"
