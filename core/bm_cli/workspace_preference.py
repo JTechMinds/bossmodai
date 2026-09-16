@@ -136,9 +136,17 @@ def cwd_is_nested_clone_repo(agent: Agent, cwd: str) -> bool:
         return False
     try:
         workspace = agent_artifact_dir(agent.storage_key).resolve()
-        return git_root.resolve() != workspace
+        git_root = git_root.resolve()
     except OSError:
         return False
+    if git_root == workspace:
+        return False
+    try:
+        git_root.relative_to(workspace)
+    except ValueError:
+        # A git root above the agent workspace (the host checkout) is not a clone.
+        return False
+    return True
 
 
 def find_git_root(path: Path) -> Path | None:
