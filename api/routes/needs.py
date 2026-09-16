@@ -101,7 +101,12 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     items = []
+    seen: set[tuple[str, str]] = set()
     for request in db.list_cli_approval_requests(status="pending", limit=MAX_LIMIT):
+        key = (request.agent_id, request.command)
+        if key in seen:
+            continue
+        seen.add(key)
         name = _agent_name(request.agent_id, cache)
         items.append({
             "id": request.id,

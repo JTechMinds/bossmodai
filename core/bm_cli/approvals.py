@@ -92,6 +92,8 @@ async def resume_cli_approval(
     if approval is None:
         return None
 
+    _collapse_duplicate_pending(approval, approved=approved, decision_by=decision_by, note=note)
+
     payload: dict[str, Any] = {
         "approval_request_id": approval.id,
         "command": approval.command,
@@ -114,3 +116,28 @@ async def resume_cli_approval(
         payload=payload,
     )
     return approval
+
+
+def _collapse_duplicate_pending(
+    approval: CliApprovalRequest,
+    *,
+    approved: bool,
+    decision_by: str,
+    note: str | None,
+) -> None:
+    """Resolve leftover pending rows for the same agent and command.
+
+    Does not enqueue extra wakes — one decision already resumed the agent.
+    """
+    command = str(approval.command or "")
+    for sibling in db.list_cli_approval_requests(status="pending", agent_id=approval.agent_id, limit=80):
+        if sibling.id == approval.id or str(sibling.command or "") != command:
+            continue
+        if approved:
+            db.approve_cli_approval_request(sibling.id, decision_by=decision_by)
+        else:
+            db.reject_cli_approval_request(
+                sibling.id,
+                decision_by=decision_by,
+                decision_note=note,
+            )

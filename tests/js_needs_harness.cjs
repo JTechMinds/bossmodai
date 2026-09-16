@@ -68,6 +68,8 @@ function approvalRow(id, conversationId) {
         actions: [
             { label: "Approve", method: "POST", tone: "primary",
               href: `/api/cli-policy/approvals/${id}/approve` },
+            { label: "Reject", method: "POST", tone: "quiet",
+              href: `/api/cli-policy/approvals/${id}/reject` },
         ],
     };
 }
@@ -579,6 +581,7 @@ async function main() {
         conversationKind: null,
         needsBarEnabled: true,
         needsBarDismissed: false,
+        inlineNeedIds: [],
     });
     const bus2 = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
     let queue2 = [];
@@ -691,7 +694,7 @@ async function main() {
     // The transcript of the open conversation already carries the consent card
     // as a `request`, so a bar row would be the same ask twice in one place.
 
-    store2.setState({ conversationId: "a1", conversationKind: "agent" });
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: ["c1"] });
     queue2 = [consentRow("c1")];
     await needs2.refresh();
     await drain();
@@ -702,6 +705,7 @@ async function main() {
     const barLeavesConsentInline = true;
 
     // ─── 13b. A CLI approval stays inline; the bar does not repeat it ───
+    store2.setState({ inlineNeedIds: ["c2"] });
     queue2 = [approvalRow("c2")];
     await needs2.refresh();
     await drain();
@@ -710,6 +714,66 @@ async function main() {
         throw new Error("an approval already inline in the transcript must not repeat in the bar");
     }
     const barLeavesApprovalInline = true;
+
+    // ─── 13c. A pending approval with no inline card still shows on the bar ───
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [approvalRow("c-missing", "a1")];
+    await needs2.refresh();
+    await drain();
+    if (bar.element.hidden !== false) {
+        throw new Error("a pending approval with no inline card must appear on the bar");
+    }
+    if ((store2.getState().needs[0] || {}).id !== "c-missing") {
+        throw new Error("the live approval id must replace a coalesced same-command row");
+    }
+    if (barCards().length !== 1) {
+        throw new Error(`expected one fallback approval card, got ${barCards().length}`);
+    }
+    const fallbackLabels = bar.element.querySelectorAll("button")
+        .map((node) => node.textContent)
+        .filter((label) => label === "Approve" || label === "Reject");
+    if (!fallbackLabels.includes("Approve") || !fallbackLabels.includes("Reject")) {
+        throw new Error(`fallback approval bar must offer Approve/Reject, got ${fallbackLabels.join(",")}`);
+    }
+    const barShowsApprovalWhenInlineMissing = true;
+
+    // ─── 13d. Duplicate pending CLI Approves for the same command collapse ───
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [
+        Object.assign(approvalRow("dup-old", "a1"), { created_at: "2026-09-07T12:00:00Z" }),
+        Object.assign(approvalRow("dup-new", "a1"), { created_at: "2026-09-07T12:01:00Z" }),
+    ];
+    await needs2.refresh();
+    await drain();
+    const dupApprovals = store2.getState().needs.filter((item) => item.kind === "approval");
+    if (dupApprovals.length !== 1) {
+        throw new Error(`duplicate CLI Approves must be one card, got ${dupApprovals.length}`);
+    }
+    if (dupApprovals[0].id !== "dup-new") {
+        throw new Error(`the live duplicate must be the newest row, got ${dupApprovals[0].id}`);
+    }
+    const duplicateApprovalsCoalesce = true;
+
+    // ─── 13e. Thread-originated CLI Approve still lands on the agent's Focus bar ───
+    // Origin-thread chrome must not leave Jim's composer with only "blocked"
+    // while Approve lives solely in the bell.
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [Object.assign(approvalRow("thread-appr", "th1"), {
+        sub: 'pip install -e ".[dev]"',
+        created_at: "2026-09-07T12:02:00Z",
+    })];
+    await needs2.refresh();
+    await drain();
+    if (bar.element.hidden !== false) {
+        throw new Error("a thread-originated pending approval must appear on the agent's Focus bar");
+    }
+    const threadFallbackLabels = bar.element.querySelectorAll("button")
+        .map((node) => node.textContent)
+        .filter((label) => label === "Approve" || label === "Reject");
+    if (!threadFallbackLabels.includes("Approve") || !threadFallbackLabels.includes("Reject")) {
+        throw new Error(`Focus fallback for a thread card must offer Approve/Reject, got ${threadFallbackLabels.join(",")}`);
+    }
+    const barShowsThreadApprovalOnAgentFocus = true;
 
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
@@ -732,6 +796,7 @@ async function main() {
     // conversation this bar is pinned to is omitted from the bar, because the
     // transcript already carries that ask as a `request`.
     barNavigations.length = 0;
+    store2.setState({ inlineNeedIds: ["s2"] });
     queue2 = [approvalRow("s2", "a1"), blockedRow("s3", "a1")];
     await needs2.refresh();
     await drain();
@@ -792,6 +857,9 @@ async function main() {
         inspectionDoesNotResolve,
         barLeavesConsentInline,
         barLeavesApprovalInline,
+        barShowsApprovalWhenInlineMissing,
+        duplicateApprovalsCoalesce,
+        barShowsThreadApprovalOnAgentFocus,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));
