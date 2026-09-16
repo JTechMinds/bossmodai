@@ -20,7 +20,7 @@ const NAMES = [
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModConversationChrome",
-    "BossModComposer", "BossModSystemReceipts", "BossModNeedsBar", "BossModThreadArchive",
+    "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -33,10 +33,10 @@ NAMES.forEach((name, index) => {
 const { BossModStore, BossModBus, BossModConversation } = global;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function approvalPayload(id) {
+function approvalPayload(id, agentId) {
     return {
         id,
-        agent_id: "jim",
+        agent_id: agentId || "jim",
         kind: "cli_approval",
         title: "Approve this command?",
         command: 'pip install -e ".[dev]"',
@@ -69,10 +69,15 @@ const REST_MESSAGES = {
     }],
 };
 
+const blockers = {};
 const api = async (url) => {
     const agent = String(url).match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
-        return { ok: true, async json() { return REST_MESSAGES[agent[1]] || []; } };
+        const id = agent[1];
+        if (id === "slow") {
+            await new Promise((resolve) => { blockers.slow = resolve; });
+        }
+        return { ok: true, async json() { return REST_MESSAGES[id] || []; } };
     }
     throw new Error(`unhandled ${url}`);
 };
@@ -86,6 +91,8 @@ function actionLabels(root) {
         roster: [
             { id: "jim", name: "Jim", role: "Engineer" },
             { id: "live", name: "Live", role: "Engineer" },
+            { id: "chan", name: "Chan", role: "Engineer" },
+            { id: "slow", name: "Slow", role: "Engineer" },
             { id: "reload", name: "Reload", role: "Engineer" },
         ],
         threads: [],
@@ -187,10 +194,80 @@ function actionLabels(root) {
     }
     const refetchesWhenInlineMissing = true;
 
+    store.setState({ conversationId: "chan", conversationKind: "agent", needs: [], inlineNeedIds: [] });
+    await conversation.open("chan", "agent");
+    await tick();
+    bus.publish("channel_message", {
+        channel_id: "th-chan",
+        author_type: "system",
+        author_name: "Chan",
+        author_agent_id: "chan",
+        message_id: "n-chan",
+        notification_kind: "cli_approval",
+        content: 'Chan wants to run pip install -e ".[dev]"',
+        cli_approval: approvalPayload("appr-chan", "chan"),
+        created_at: "2026-09-16T17:03:00Z",
+    });
+    await tick();
+    const chanCard = conversation.element.querySelector("#cli-approval-appr-chan");
+    if (!chanCard) {
+        throw new Error("live channel_message must paint Approve in open Focus without a bell fetch");
+    }
+    const chanLabels = actionLabels(chanCard);
+    if (!chanLabels.includes("Approve") || !chanLabels.includes("Reject")) {
+        throw new Error(`channel live-append must offer Approve/Reject, got ${chanLabels.join(",")}`);
+    }
+    const paintsLiveChannelAppend = true;
+
+    store.setState({ conversationId: "slow", conversationKind: "agent", needs: [], inlineNeedIds: [] });
+    const slowOpen = conversation.open("slow", "agent");
+    await tick();
+    await tick();
+    if (typeof blockers.slow !== "function") {
+        throw new Error("slow Focus load never started");
+    }
+    store.setState({
+        needs: [{
+            id: "appr-slow",
+            kind: "approval",
+            agentId: "slow",
+            conversationId: "th-slow",
+            title: "Slow wants to run a command",
+            sub: 'pip install -e ".[dev]"',
+            actions: [],
+            target: { place: "chat", conversationId: "th-slow", conversationKind: "thread" },
+        }],
+    });
+    await tick();
+    if (conversation.element.querySelector("#cli-approval-appr-slow")) {
+        throw new Error("buffered origin-thread chrome must not paint before the in-flight load finishes");
+    }
+    blockers.slow();
+    await slowOpen;
+    await tick();
+    const slowCard = conversation.element.querySelector("#cli-approval-appr-slow");
+    if (!slowCard) {
+        throw new Error("create-time need must paint in Focus after load without a bell fetch");
+    }
+    const slowLabels = actionLabels(slowCard);
+    if (!slowLabels.includes("Approve") || !slowLabels.includes("Reject")) {
+        throw new Error(`projected origin-thread card must offer Approve/Reject, got ${slowLabels.join(",")}`);
+    }
+    if ((store.getState().inlineNeedIds || []).join(",") !== "appr-slow") {
+        throw new Error(`inlineNeedIds after live need paint, got ${(store.getState().inlineNeedIds || []).join(",")}`);
+    }
+    const barEl = conversation.element.querySelector(".needs-bar");
+    if (!barEl || barEl.hidden !== true) {
+        throw new Error("Needs-bar must stay quiet once the inline Approve card is present");
+    }
+    const paintsNeedWithoutBellFetch = true;
+
     process.stdout.write(JSON.stringify({
         ok: true,
         paintsCreateChrome,
         paintsLiveAppend,
+        paintsLiveChannelAppend,
+        paintsNeedWithoutBellFetch,
         refetchesWhenInlineMissing,
     }));
 })().catch((err) => {

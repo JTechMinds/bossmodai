@@ -94,6 +94,7 @@ def test_needs_harness() -> None:
         "barShowsApprovalWhenInlineMissing": True,
         "duplicateApprovalsCoalesce": True,
         "barShowsThreadApprovalOnAgentFocus": True,
+        "barSuppressesCoalescedSibling": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }
@@ -338,6 +339,9 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     # approval are uncleared Focus asks; error and blocked are not.
     assert "const OPEN_FOCUS_NEED = Object.freeze({" in shape
     assert "function isOpenFocusNeed(need)" in shape
+    assert "function belongsOnOpenFocus(" in shape
+    assert "function coversInlineNeed(" in shape
+    assert "function requestMessageFromNeed(" in shape
     assert "consent: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
     assert "approval: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
     # Both normalisers attach it, so no consumer has to ask for one.
@@ -358,6 +362,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     assert "const BAR_CARDS = Object.freeze({" in bar
     assert "const FALLBACK_CARDS = Object.freeze({" in bar
     assert "inlineNeedIds" in bar
+    assert "coversInlineNeed" in bar
     assert "need.target" in bar
 
     # The server-described actions are untouched: `target` is a client concern.

@@ -75,8 +75,11 @@ const BossModThreadSource = (() => {
             const isSystem = raw.author_type === 'system';
             const text = raw.content || '';
             const queueKey = raw.author_name || raw.author_agent_id || '';
+            const cardKey = card && card.id
+                ? `${BossModConsentCard.isCliApprovalCard(card) ? 'cli-approval' : 'consent'}:${card.id}`
+                : '';
             return {
-                key: isQueue ? `queue-visibility:${queueKey}` : String(raw.message_id || raw.id || '').trim(),
+                key: isQueue ? `queue-visibility:${queueKey}` : (cardKey || String(raw.message_id || raw.id || '').trim()),
                 author: raw.author_type || 'agent',
                 authorName: raw.author_name || 'Unknown',
                 authorAgentId: raw.author_agent_id || null,

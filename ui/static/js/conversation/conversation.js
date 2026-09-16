@@ -161,11 +161,7 @@ const BossModConversation = (() => {
             return messages.filter((message) => !message.systemReceipt);
         }
 
-        /**
-         * Pending request-card ids currently painted in this transcript.
-         * Needs-bar uses this to show Approve only when the inline card is
-         * missing — not when the ask is already on screen.
-         */
+        /** Pending request-card ids in this transcript (or the live buffer). */
         function pendingRequestIds(messages) {
             const ids = [];
             (messages || []).forEach((message) => {
@@ -174,6 +170,11 @@ const BossModConversation = (() => {
                 ids.push(String(message.card.id));
             });
             return ids;
+        }
+
+        function openRequestIds() {
+            const cached = visibleMessages(cache.recall(currentId) || []);
+            return pendingRequestIds(cached.concat(pendingLive || []));
         }
 
         function syncInlineNeedIds(messages) {
@@ -185,8 +186,6 @@ const BossModConversation = (() => {
 
         function paint(messages) {
             const visible = visibleMessages(messages);
-            // The source says WHO; the controller supplies what can be done,
-            // because it owns the composer and the assign form.
             if (visible.length) transcript.setStatus('ready');
             else transcript.setStatus('empty', Object.assign({}, source.emptyState(), {
                 onGreet: (text) => composer.sendText(text),
@@ -197,27 +196,27 @@ const BossModConversation = (() => {
             syncInlineNeedIds(visible);
         }
 
-        /**
-         * Create-time CLI/consent chrome is persisted before the live
-         * WebSocket push. If a chat-target need arrives for this conversation
-         * and the loaded transcript has no matching card, refetch so the
-         * operator watching Focus sees Approve/Reject instead of only the bell.
-         */
-        async function reloadIfPendingChromeMissing(previousNeeds) {
+        /** Live-paint pending chrome in Focus; never wait on a bell fetch. */
+        async function reloadIfPendingChromeMissing() {
             const id = currentId;
             const src = source;
-            if (!src || !id || pendingLive) return;
-            const prevIds = new Set((previousNeeds || []).map((need) => need && need.id));
-            const arrived = (store.getState().needs || []).filter((need) => (
+            if (!src || !id) return;
+            const inline = new Set(openRequestIds());
+            const missing = (store.getState().needs || []).filter((need) => (
                 need
-                && need.conversationId === id
                 && need.target
                 && need.target.place === 'chat'
-                && !prevIds.has(need.id)
+                && BossModNeedShape.belongsOnOpenFocus(need, id, currentKind)
+                && !BossModNeedShape.coversInlineNeed(need, inline)
             ));
-            if (!arrived.length) return;
-            const inline = new Set(pendingRequestIds(visibleMessages(cache.recall(id) || [])));
-            if (arrived.every((need) => inline.has(need.id))) return;
+            if (!missing.length) return;
+            missing.forEach((need) => {
+                if (need.conversationId === id) return;
+                const message = BossModNeedShape.requestMessageFromNeed(need);
+                if (message) handlers.message(message);
+            });
+            if (!missing.some((need) => need.conversationId === id)) return;
+            if (pendingLive) return;
             try {
                 const messages = await src.load();
                 if (source !== src || currentId !== id || pendingLive) return;
@@ -344,6 +343,7 @@ const BossModConversation = (() => {
             const buffered = pendingLive || [];
             pendingLive = null;
             buffered.forEach((message) => handlers.message(message));
+            void reloadIfPendingChromeMissing();
         }
 
         // The chrome names the agent, and the roster is what knows the name.
@@ -355,36 +355,34 @@ const BossModConversation = (() => {
             },
             () => { if (source) applyChrome(); }));
 
-        // A presence row that says "working · 12m" has to keep saying the
-        // right number. The roster is replaced on every simulation tick, so
-        // that reference IS the repaint clock — without this the duration
-        // freezes at whatever it read when the turn was announced. Note this
-        // is a STORE subscription, not a socket one: the surface still never
-        // remounts on a tick, which test_meeting_ui_incremental.py enforces.
+        // Roster ticks are the presence duration clock; never remount on them.
         disposers.push(store.subscribe(
             (s) => s.roster,
             () => { if (currentId) transcript.renderPresence(currentId); }));
 
-        // Enable from the bell never clicks the in-thread card. The activity
-        // broadcast is what collapses leftover pending Shell Executor chrome.
         disposers.push(bus.subscribe('activity', (entry) => {
             const card = shellExecutorActivityCard(entry);
-            if (!card) return;
-            BossModConsentCard.collapseGrantedConsentCards(card);
+            if (card) BossModConsentCard.collapseGrantedConsentCards(card);
+            const event = String((entry && entry.event) || '');
+            if (event === 'cli_approval_approved' || event === 'cli_approval_rejected'
+                || event === 'cli_approval_resolved') {
+                BossModConsentCard.collapseGrantedConsentCards({
+                    kind: 'cli_approval',
+                    status: event === 'cli_approval_rejected' ? 'rejected' : 'approved',
+                    command: (entry && entry.command) || '',
+                    decision_note: (entry && entry.decision_note) || '',
+                });
+            }
         }));
 
         disposers.push(store.subscribe(
             (s) => s.needs,
-            (_next, prev) => { void reloadIfPendingChromeMissing(prev); },
+            () => { void reloadIfPendingChromeMissing(); },
         ));
 
         return {
             element,
             open,
-            /**
-             * Drain every subscription this controller created.
-             * @returns {void}
-             */
             destroy() {
                 disposeSource();
                 composer.destroy();
