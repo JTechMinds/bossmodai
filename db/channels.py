@@ -415,6 +415,24 @@ def get_formatted_channel_messages(channel_id: str, *, limit: int = 80) -> list[
     ]
 
 
+def get_channel_message_for_approval(approval_id: str) -> ChannelMessage | None:
+    """Return the origin-thread card posted for one CLI approval, if any."""
+    token = (approval_id or "").strip()
+    if not token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages
+        WHERE approval_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        [token],
+        ChannelMessage,
+    )
+
+
 def get_channel_message(message_id: str) -> ChannelMessage | None:
     """Return one channel message by id."""
     token = (message_id or "").strip()

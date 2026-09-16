@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -9,7 +10,7 @@ import db
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.models import Activity, Agent
 from core.models.channel import ChannelArchivedError
-from core.models.cli_policy import CLI_APPROVAL_KIND
+from core.models.cli_policy import CLI_APPROVAL_KIND, CliApprovalRequest
 from core.models.host_path_consent import (
     SHELL_EXECUTOR_CARD_COPY,
     SHELL_EXECUTOR_KIND,
@@ -40,6 +41,16 @@ _DESTINATION_LABELS = {
 
 _HUMAN_VISIBLE_ACTIVITY_KINDS = {"conversation", "meeting"}
 _RECEIPT_ACTIONS = {"walkTo", "attendMeeting", "remoteMeeting"}
+logger = logging.getLogger(__name__)
+
+CLI_APPROVAL_CHROME_FAIL = (
+    "Approval card could not be posted to the conversation. "
+    "The command was not queued for operator review."
+)
+CLI_APPROVAL_CREATE_FAIL = (
+    "Approval request could not be created. "
+    "The command was not queued for operator review."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +218,10 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
     The returned dict includes a ``feed_entry`` key with the unified feed
     shape so the caller can broadcast it to the activity panel.
     """
+    if notification.approval_id:
+        existing = db.get_notification_for_approval(notification.approval_id)
+        if existing is not None:
+            return _chat_notification_payload(agent, notification, existing)
     stored = db.create_notification(
         agent_id=agent.id,
         task_id=notification.task_id,
@@ -240,6 +255,48 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             label="CLI approval",
         )
 
+    return _chat_notification_payload(agent, notification, stored)
+
+
+def persist_channel_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
+    """Persist one shared-channel notification as a system transcript message.
+
+    Completion / blocked / handoff cards stay transcript-only. They must not
+    open a response round or enqueue peer ``channel_message`` wakes.
+    """
+    if not notification.channel_id:
+        raise ValueError("channel notifications require a channel_id")
+    if db.is_channel_archived(notification.channel_id):
+        return {}
+    if notification.approval_id:
+        existing = db.get_channel_message_for_approval(notification.approval_id)
+        if existing is not None:
+            return _channel_notification_payload(agent, notification, existing)
+    try:
+        message = db.create_channel_message(
+            channel_id=notification.channel_id,
+            author_type="system",
+            author_name=agent.name,
+            content=notification.content,
+            source_channel=notification.source_channel,
+            author_agent_id=agent.id,
+            notification_kind=notification.kind,
+            consent_id=notification.consent_id,
+            approval_id=notification.approval_id,
+            desk_path=notification.desk_path,
+            task_id=notification.task_id,
+        )
+    except ChannelArchivedError:
+        return {}
+    return _channel_notification_payload(agent, notification, message)
+
+
+def _chat_notification_payload(
+    agent: Agent,
+    notification: ChatNotification,
+    stored: Any,
+) -> dict[str, Any]:
+    """Broadcast payload for one Focus notification row."""
     feed_entry = db.normalize_notification_entry(
         {
             "id": stored.id,
@@ -255,7 +312,6 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
         },
         target_path=notification.desk_path,
     )
-
     return {
         "agent_id": agent.id,
         "content": stored.content,
@@ -281,32 +337,13 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
     }
 
 
-def persist_channel_notification(agent: Agent, notification: ChatNotification) -> dict[str, Any]:
-    """Persist one shared-channel notification as a system transcript message.
-
-    Completion / blocked / handoff cards stay transcript-only. They must not
-    open a response round or enqueue peer ``channel_message`` wakes.
-    """
-    if not notification.channel_id:
-        raise ValueError("channel notifications require a channel_id")
-    if db.is_channel_archived(notification.channel_id):
-        return {}
-    try:
-        message = db.create_channel_message(
-            channel_id=notification.channel_id,
-            author_type="system",
-            author_name=agent.name,
-            content=notification.content,
-            source_channel=notification.source_channel,
-            author_agent_id=agent.id,
-            notification_kind=notification.kind,
-            consent_id=notification.consent_id,
-            approval_id=notification.approval_id,
-            desk_path=notification.desk_path,
-            task_id=notification.task_id,
-        )
-    except ChannelArchivedError:
-        return {}
+def _channel_notification_payload(
+    agent: Agent,
+    notification: ChatNotification,
+    message: Any,
+) -> dict[str, Any]:
+    """Broadcast payload for one shared-channel notification row."""
+    del agent
     return {
         "channel_id": notification.channel_id,
         "content": message.content,
@@ -329,6 +366,61 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
             else None
         ),
     }
+
+
+def ensure_cli_approval_chrome(
+    agent: Agent,
+    approval: CliApprovalRequest,
+    *,
+    channel_id: str | None,
+    source_channel: str = "chat",
+) -> bool:
+    """Persist origin-thread or Focus Approve/Reject chrome for one request.
+
+    Returns True only when a pending card is actually on a conversation
+    surface. Create-time callers must fail the CLI result if this is False.
+    """
+    try:
+        notification = _approval_chrome_notification(
+            agent,
+            approval,
+            channel_id=channel_id,
+            source_channel=source_channel,
+        )
+        if notification.channel_id:
+            persisted = persist_channel_notification(agent, notification)
+            return bool(persisted) and db.has_approval_notification(approval.id)
+        persist_chat_notification(agent, notification)
+        return db.has_approval_notification(approval.id)
+    except Exception:
+        logger.exception("CLI approval chrome persist failed for %s", approval.id)
+        return False
+
+
+def _approval_chrome_notification(
+    agent: Agent,
+    approval: CliApprovalRequest,
+    *,
+    channel_id: str | None,
+    source_channel: str,
+) -> ChatNotification:
+    """Build the in-thread / Focus card payload for one CLI approval."""
+    command = str(approval.command or "").strip() or "a command"
+    content = f"{agent.name} wants to run a command"
+    if command != "a command":
+        content = f"{agent.name} wants to run {command}"
+    origin = (channel_id or "").strip() or None
+    if origin and db.is_channel_archived(origin):
+        origin = None
+    return ChatNotification(
+        kind=CLI_APPROVAL_KIND,
+        content=content,
+        source_channel=source_channel,
+        policy="all",
+        prompt_visibility=False,
+        approval_id=approval.id,
+        channel_id=origin,
+    )
 
 
 def _build_consent_notification(
@@ -405,14 +497,19 @@ def _build_approval_notification(
     trigger: dict[str, Any],
     result: dict[str, Any],
 ) -> ChatNotification | None:
-    """Return the in-thread CLI approval card when a new request is created."""
+    """Return the in-thread CLI approval card so emit can persist + broadcast.
+
+    Create-time chrome may already exist. Persist is idempotent; skipping here
+    would drop the live WebSocket push.
+    """
     if result.get("event") != "cli_approval_required":
         return None
     card = result.get("cli_approval") if isinstance(result.get("cli_approval"), dict) else {}
     approval_id = str(card.get("id") or result.get("approval_request_id") or "").strip()
     if not approval_id:
         return None
-    if db.has_approval_notification(approval_id):
+    approval = db.get_cli_approval_request(approval_id)
+    if approval is None:
         return None
     channel_id = _consent_channel_id(trigger, card)
     if channel_id and db.is_channel_archived(channel_id):
@@ -420,19 +517,12 @@ def _build_approval_notification(
     if channel_id:
         bound = db.bind_cli_approval_channel(approval_id, channel_id)
         if bound is not None:
-            card = bound.as_card()
-    command = str(card.get("command") or result.get("detail") or "a command").strip()
-    content = f"{agent.name} wants to run a command"
-    if command and command != "a command":
-        content = f"{agent.name} wants to run {command}"
-    return ChatNotification(
-        kind=CLI_APPROVAL_KIND,
-        content=content,
+            approval = bound
+    return _approval_chrome_notification(
+        agent,
+        approval,
+        channel_id=channel_id or approval.channel_id,
         source_channel=_notification_source_channel(trigger),
-        policy="all",
-        prompt_visibility=False,
-        approval_id=approval_id,
-        channel_id=channel_id,
     )
 
 

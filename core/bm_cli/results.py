@@ -103,13 +103,18 @@ def approval_required_result(
     data: dict[str, Any] = {"approval_required": True, "message": message}
     if card:
         data["cli_approval"] = card
+    if approval_request_id:
+        data["approval_request_id"] = approval_request_id
+    approval_lines = [message, pause_note]
+    if approval_request_id:
+        approval_lines.append(f"request id: {approval_request_id}")
     return BossModCliResult(
         command=command,
         ok=False,
         detail=f"BossMod CLI approval required: {message}",
         prompt_content=render_sections(
             command,
-            [("APPROVAL REQUIRED", [message, pause_note])],
+            [("APPROVAL REQUIRED", approval_lines)],
         ),
         kind="approval_required",
         data=data,

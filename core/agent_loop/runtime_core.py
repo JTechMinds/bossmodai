@@ -55,7 +55,9 @@ LOCKED_WORKSPACE_COPY_STEER = (
     "Do not park @Operator as the test runner or git pusher. "
     "If Shell Executor is off, wait for the in-thread Enable/Deny card; "
     "do not park @Operator as the shell enabler. "
-    "A git push approval card is not a request for the operator to run the command."
+    "A git push approval card is not a request for the operator to run the command. "
+    "Do not claim an approval card is live unless the cli result shows "
+    "approval_required with a request id."
 )
 
 
