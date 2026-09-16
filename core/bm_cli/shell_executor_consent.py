@@ -35,6 +35,15 @@ _SETTING_KEY = "cli_shell_enabled"
 _SETTING_CATEGORY = "cli_policy"
 
 
+def shell_executor_is_enabled() -> bool:
+    """Return True when ``cli_shell_enabled`` is on in the database.
+
+    Reads through :func:`config.get_live` so a company-wide Enable in the
+    API process is visible to the runtime worker without a cache reload.
+    """
+    return config.get_live(_SETTING_KEY) == "true"
+
+
 def command_needs_shell_executor(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     """Return True when this CLI would use the shell executor if it were on."""
     from core.bm_cli.runtime import VIRTUAL_COMMANDS
@@ -57,9 +66,13 @@ def maybe_pause_for_shell_executor(
     cwd: str,
     task_id: str | None,
     channel_id: str | None,
+    trigger_type: str | None = None,
 ) -> BossModCliResult | None:
     """Pause for Enable/Deny when a locked clone needs the shell executor."""
-    if config.get(_SETTING_KEY) == "true":
+    if shell_executor_is_enabled():
+        return None
+    # A just-granted resume must re-run, not open a second pending card.
+    if trigger_type == "host_path_consent_resolved":
         return None
     if not command_needs_shell_executor(agent, parsed, cwd):
         return None
@@ -300,6 +313,6 @@ def named_shell_executor_block_reason(
         return SHELL_EXECUTOR_WHY
     if not locked_workspace_copies_for_turn(agent.id, task_id):
         return None
-    if config.get(_SETTING_KEY) == "true":
+    if shell_executor_is_enabled():
         return None
     return SHELL_EXECUTOR_WHY

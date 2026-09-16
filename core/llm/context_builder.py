@@ -280,7 +280,7 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
         "channel": _template_channel(turn.current_channel),
         "session": _template_session(turn.current_session),
         "cli": {
-            "shell_enabled": config.get("cli_shell_enabled") == "true",
+            "shell_enabled": config.get_live("cli_shell_enabled") == "true",
             "cwd": cli_cwd,
         },
         "workspace": workspace,

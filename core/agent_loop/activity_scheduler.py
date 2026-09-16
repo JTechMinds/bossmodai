@@ -12,6 +12,17 @@ from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
+_CONSENT_GRANT_STATUSES = frozenset(
+    {
+        "allowed_once",
+        "always_allowed",
+        "edit_host",
+        "enabled",
+        "cloned",
+        "branched",
+    }
+)
+
 _INTERRUPT_TRIGGER_TYPES = {
     "human_chat",
     "peer_message",
@@ -60,10 +71,23 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
     """Materialize any runtime activity needed before the turn starts."""
     active = activity_runtime.get_active_activity(agent_id)
     trigger_type = trigger.get("type")
-    if trigger_type == "activity_resumed" and trigger.get("task_id"):
+    if trigger.get("task_id") and (
+        trigger_type == "activity_resumed"
+        or (
+            trigger_type == "host_path_consent_resolved"
+            and str(trigger.get("status") or "") in _CONSENT_GRANT_STATUSES
+        )
+    ):
         task = db.get_task(trigger["task_id"])
         if task and task.assigned_to == agent_id:
-            if active and active.kind == "work" and active.task_id == task.id:
+            already = (
+                active is not None
+                and active.kind == "work"
+                and active.task_id == task.id
+            )
+            # Consent grants still reactivate a blocked/waiting Board task
+            # even when the work activity is already the live one.
+            if already and trigger_type == "activity_resumed":
                 return active
             return activity_runtime.activate_work_activity(
                 agent_id,

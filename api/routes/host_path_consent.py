@@ -168,11 +168,13 @@ async def enable_shell_executor(request_id: str):
         raise HTTPException(400, str(exc)) from exc
     if request is None:
         raise HTTPException(404, "Consent request not found or already resolved")
+    card = request.as_card()
     await manager.broadcast_activity(
         event="shell_executor_enabled",
         detail=SHELL_EXECUTOR_ENABLED_NOTE,
+        extra={"host_path_consent": card},
     )
-    return request
+    return card
 
 
 @router.post("/shell-executor/{request_id}/deny")
@@ -187,8 +189,10 @@ async def deny_shell_executor(request_id: str):
     )
     if request is None:
         raise HTTPException(404, "Consent request not found or already resolved")
+    card = request.as_card()
     await manager.broadcast_activity(
         event="shell_executor_denied",
         detail="Shell Executor stays off.",
+        extra={"host_path_consent": card},
     )
-    return request
+    return card

@@ -141,6 +141,19 @@ const BossModConversation = (() => {
             if (source) chrome.apply(source.chrome());
         }
 
+        function shellExecutorActivityCard(entry) {
+            const event = String((entry && entry.event) || '');
+            if (event === 'shell_executor_enabled') {
+                return entry.host_path_consent || {
+                    status: 'enabled',
+                    kind: 'shell_executor',
+                    grant_root: 'cli_shell_enabled',
+                    decision_note: entry.detail,
+                };
+            }
+            return null;
+        }
+
         // ── Painting ──
 
         function visibleMessages(messages) {
@@ -295,6 +308,14 @@ const BossModConversation = (() => {
         disposers.push(store.subscribe(
             (s) => s.roster,
             () => { if (currentId) transcript.renderPresence(currentId); }));
+
+        // Enable from the bell never clicks the in-thread card. The activity
+        // broadcast is what collapses leftover pending Shell Executor chrome.
+        disposers.push(bus.subscribe('activity', (entry) => {
+            const card = shellExecutorActivityCard(entry);
+            if (!card) return;
+            BossModConsentCard.collapseGrantedConsentCards(card);
+        }));
 
         return {
             element,

@@ -44,7 +44,13 @@ def test_get_int_and_float_still_parse_valid_values() -> None:
     assert config.get_int("watchdog_soft_ping_minutes") == 15
 
 
-def test_require_int_raises_config_error_not_value_error() -> None:
+def test_get_live_reads_database_over_stale_cache() -> None:
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    with config._lock:
+        config._cache["cli_shell_enabled"] = "false"
+    assert config.get("cli_shell_enabled") == "false"
+    assert config.get_live("cli_shell_enabled") == "true"
+    assert config.get("cli_shell_enabled") == "true"
     db.set_setting("default_spawn_x", "nope", "simulation")
     config.reload()
     try:

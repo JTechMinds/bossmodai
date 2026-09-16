@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ from api.routes import router
 from core import config
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity
-from core.agent_loop.activity_scheduler import persist_result_triggers
+from core.agent_loop.activity_scheduler import persist_result_triggers, prepare_trigger_context
 from core.agent_loop.blocked_origin import (
     SHELL_EXECUTOR_WHY,
     format_blocked_line,
@@ -36,8 +38,10 @@ from core.models.host_path_consent import (
     SHELL_EXECUTOR_TITLE,
 )
 from core.models.message import HUMAN_SENDER_ID
+from core.bm_cli.shell_executor_consent import shell_executor_is_enabled
 from core.runtime import runtime_services
 from core.tasking.service import create_or_bind_task
+from core.tasking.transitions import transition_task
 from tests.test_workspace_preference import (
     _agent_and_state,
     _allow_host,
@@ -430,3 +434,217 @@ def test_blocked_line_names_shell_executor_gate() -> None:
         == "Blocked — Shell Executor off — needs enable. @Debra"
     )
     assert "Shell Executor" in format_blocked_line(SHELL_EXECUTOR_WHY)
+
+
+def _force_cached_setting(key: str, value: str) -> None:
+    with config._lock:
+        config._cache[key] = value
+
+
+def _resume_payloads(agent_id: str, *, status: str) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for row in db.list_agent_triggers(agent_id, status="queued"):
+        raw = row.get("payload")
+        if isinstance(raw, str):
+            payload = json.loads(raw) if raw else {}
+        else:
+            payload = raw or {}
+        if row.get("trigger_type") == "host_path_consent_resolved" and payload.get("status") == status:
+            found.append(payload)
+    return found
+
+
+def test_live_setting_wins_over_stale_process_cache() -> None:
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    _force_cached_setting("cli_shell_enabled", "false")
+    assert config.get("cli_shell_enabled") == "false"
+    assert config.get_live("cli_shell_enabled") == "true"
+    assert shell_executor_is_enabled() is True
+
+
+def test_stale_worker_cache_does_not_open_a_second_card() -> None:
+    agent, state = _agent_and_state()
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    first = execute_bm_cli(agent, state, "git add -A")
+    assert first.consent_required is True
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    db.resolve_consent_request(
+        first.consent_request_id,
+        status="enabled",
+        decision_by="human",
+        decision_note="Shell Executor on (company-wide). CLI policy still applies.",
+    )
+    _force_cached_setting("cli_shell_enabled", "false")
+    retry = execute_bm_cli(
+        agent, state, "git add -A", trigger_type="host_path_consent_resolved"
+    )
+    assert retry.consent_required is False
+    assert retry.kind != "shell_executor_consent_required"
+    err = str((retry.data or {}).get("error") or "")
+    assert "shell execution is not enabled" not in err
+    pending = [
+        row
+        for row in db.list_consent_requests(agent_id=agent.id, status="pending")
+        if (row.card_kind or "") == SHELL_EXECUTOR_KIND
+    ]
+    assert pending == []
+
+    _force_cached_setting("cli_shell_enabled", "false")
+    independent = execute_bm_cli(agent, state, "git add -A")
+    assert independent.consent_required is False
+    assert independent.kind != "shell_executor_consent_required"
+    independent_err = str((independent.data or {}).get("error") or "")
+    assert "shell execution is not enabled" not in independent_err
+
+
+def test_enable_resolves_sibling_pending_and_wakes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    other = db.create_agent("Peer Clerk", role="Writer")
+    other_state = db.get_agent_state(other.id)
+    assert other_state is not None
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    _lock_workspace_copy(
+        other.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    client = _api_client(monkeypatch)
+    first = execute_bm_cli(agent, state, "git add -A")
+    second = execute_bm_cli(other, other_state, "pytest -q")
+    assert first.consent_request_id != second.consent_request_id
+    enabled = client.post(
+        f"/api/shell-executor/{first.consent_request_id}/enable",
+        headers=_headers(),
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["status"] == "enabled"
+    assert enabled.json().get("kind") == SHELL_EXECUTOR_KIND
+    assert db.get_consent_request(first.consent_request_id).status == "enabled"
+    assert db.get_consent_request(second.consent_request_id).status == "enabled"
+    primary = _resume_payloads(agent.id, status="enabled")
+    sibling = _resume_payloads(other.id, status="enabled")
+    assert primary, "Enable must wake the originating agent"
+    assert primary[0].get("command") == "git add -A"
+    assert sibling, "Enable must wake sibling waiters"
+    assert sibling[0].get("command") == "pytest -q"
+
+
+def test_deny_leaves_other_pending_cards(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, state = _agent_and_state()
+    other = db.create_agent("Peer Clerk", role="Writer")
+    other_state = db.get_agent_state(other.id)
+    assert other_state is not None
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    _lock_workspace_copy(
+        other.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    client = _api_client(monkeypatch)
+    first = execute_bm_cli(agent, state, "git add -A")
+    second = execute_bm_cli(other, other_state, "pytest -q")
+    denied = client.post(
+        f"/api/shell-executor/{first.consent_request_id}/deny",
+        headers=_headers(),
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["status"] == "denied"
+    assert db.get_consent_request(second.consent_request_id).status == "pending"
+    assert _resume_payloads(agent.id, status="denied")
+    assert _resume_payloads(other.id, status="denied") == []
+    assert _resume_payloads(other.id, status="enabled") == []
+    assert config.get("cli_shell_enabled") == "false"
+
+
+def test_enable_still_wakes_when_board_task_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+    creation = create_or_bind_task(
+        title="Validate clone",
+        description="Run git add on the locked clone.",
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel="chat",
+        notification_policy="completion_blocked",
+        notification_channel_id=None,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+    activate_work_activity(agent.id, creation.task)
+    transition_task(
+        creation.task.id,
+        "blocked",
+        reason="Waiting on Shell Executor.",
+        actor="BossMod",
+    )
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+        task_id=creation.task.id,
+    )
+    paused = execute_bm_cli(agent, state, "git add -A")
+    assert paused.consent_required is True
+    enabled = client.post(
+        f"/api/shell-executor/{paused.consent_request_id}/enable",
+        headers=_headers(),
+    )
+    assert enabled.status_code == 200, enabled.text
+    resumes = _resume_payloads(agent.id, status="enabled")
+    assert resumes, "Enable must still enqueue resume when the Board task is blocked"
+    assert resumes[0].get("command") == "git add -A"
+    prepare_trigger_context(
+        agent.id,
+        {
+            "type": "host_path_consent_resolved",
+            "status": "enabled",
+            "task_id": creation.task.id,
+        },
+    )
+    task = db.get_task(creation.task.id)
+    assert task is not None
+    assert task.status == "active"
+
+
+def test_enable_collapse_harness_resolves_pending_and_leaves_deny() -> None:
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parent / "js_consent_card_harness.cjs"),
+            str(root / "ui" / "static" / "js" / "core" / "dom.js"),
+            str(root / "ui" / "static" / "js" / "core" / "consent-card.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "enableCollapsesSibling": True,
+        "denyLeavesSiblingPending": True,
+        "activityCollapsesPending": True,
+    }

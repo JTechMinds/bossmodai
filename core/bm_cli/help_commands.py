@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _shell_enabled() -> bool:
     """Return True when the operator has enabled shell execution."""
     try:
-        return config.get("cli_shell_enabled") == "true"
+        return config.get_live("cli_shell_enabled") == "true"
     except Exception:
         return False
 

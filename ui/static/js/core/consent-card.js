@@ -219,6 +219,7 @@ const BossModConsentCard = (() => {
             container.replaceChildren();
             renderHostPathConsentCard(container, updated, api);
             collapseRelatedConsentCards(container, updated);
+            collapseGrantedConsentCards(updated);
             BossModIcons.paint(container, 'consent-card');
         } catch (err) {
             Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
@@ -237,6 +238,11 @@ const BossModConsentCard = (() => {
      * alone, because collapsing an unrelated ask would silently drop a
      * decision the operator still owes.
      *
+     * Enable from the needs bell never clicks the in-thread card, so
+     * `collapseGrantedConsentCards` is the same walk without an origin node:
+     * every matching pending shell_executor card in a transcript becomes
+     * resolved-only.
+     *
      * @param {HTMLElement} container  The card that was just decided.
      * @param {object} card  The server's updated card.
      * @returns {void}  No-op while the decision is still pending.
@@ -248,11 +254,43 @@ const BossModConsentCard = (() => {
         // for that case, not a swallowed lookup failure.
         const scope = container.closest('[data-transcript]') || container.parentElement;
         if (!scope) return;
+        collapseConsentCardsInScope(scope, card, container);
+    }
+
+    /**
+     * Collapse every matching pending card in open transcripts.
+     *
+     * Used when Enable lands from the bell or an `activity` broadcast rather
+     * than a click on the origin card. Deny is not company-wide and must not
+     * walk other cards.
+     *
+     * @param {object} card  `{status, kind, grant_root, decision_note}`.
+     * @param {ParentNode} [root]  Query root; defaults to `document`.
+     * @returns {void}
+     */
+    function collapseGrantedConsentCards(card, root) {
+        if (!card || (card.status || 'pending') === 'pending') return;
+        const companyWide = card.status === 'always_allowed' || card.status === 'enabled';
+        if (!companyWide) return;
+        const doc = root || (typeof document !== 'undefined' ? document : null);
+        if (!doc || typeof doc.querySelectorAll !== 'function') return;
+        const scopes = [];
+        if (typeof doc.getAttribute === 'function' && doc.getAttribute('data-transcript') !== null) {
+            scopes.push(doc);
+        }
+        doc.querySelectorAll('[data-transcript]').forEach((scope) => scopes.push(scope));
+        scopes.forEach((scope) => collapseConsentCardsInScope(scope, card, null));
+    }
+
+    function collapseConsentCardsInScope(scope, card, origin) {
+        if (!scope || typeof scope.querySelectorAll !== 'function') return;
         const grantRoot = card.grant_root || '';
         const companyWide = card.status === 'always_allowed' || card.status === 'enabled';
-        const kind = container.dataset.cardKind || 'host_path';
+        const kind = (origin && origin.dataset.cardKind) || cardKind(card);
+        // Deny is per-request for Shell Executor; siblings stay pending.
+        if (kind === 'shell_executor' && !companyWide) return;
         scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
-            if (el === container || el.classList.contains('is-resolved')) return;
+            if (el === origin || el.classList.contains('is-resolved')) return;
             const sameKind = (el.dataset.cardKind || 'host_path') === kind;
             if (!sameKind) return;
             const sameRoot = grantRoot && el.dataset.grantRoot === grantRoot;
@@ -277,5 +315,6 @@ const BossModConsentCard = (() => {
         renderHostPathConsentCard,
         decideHostPathConsent,
         collapseRelatedConsentCards,
+        collapseGrantedConsentCards,
     };
 })();

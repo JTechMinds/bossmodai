@@ -27,6 +27,6 @@ def _contract_render_context() -> dict[str, object]:
     """Return the minimal template context needed by the execution contract."""
     return {
         "cli": {
-            "shell_enabled": config.get("cli_shell_enabled") == "true",
+            "shell_enabled": config.get_live("cli_shell_enabled") == "true",
         }
     }

@@ -213,7 +213,7 @@ class PolicyEngine:
 
         # 2. Shell disabled globally — deny everything non-virtual.
         shell_on = (
-            config.get("cli_shell_enabled") == "true"
+            config.get_live("cli_shell_enabled") == "true"
             if assume_shell is None
             else bool(assume_shell)
         )

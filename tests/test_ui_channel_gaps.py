@@ -122,8 +122,11 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     assert "decision_note" in consent
     assert "{ label: 'Always allow'," not in consent
     assert "function collapseRelatedConsentCards(" in consent
+    assert "function collapseGrantedConsentCards(" in consent
     assert "is-resolved" in consent
     assert "collapseRelatedConsentCards," in consent
+    assert "collapseGrantedConsentCards," in consent
+    assert "Deny is per-request for Shell Executor" in consent
     assert "Work in your workspace?" in consent
     assert "Host paths stay safer if we clone (or branch) into the agent's workspace first." in consent
     assert "Editing the host folder directly is allowed but not advised." in consent
@@ -176,6 +179,7 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
 
     # Consent cards render inline in the transcript.
     assert "BossModConsentCard.isHostPathConsentMessage(raw)" in thread
+    assert "BossModConsentCard.collapseGrantedConsentCards(card)" in conversation
     assert "BossModConsentCard.renderHostPathConsentCard(" in cards
     assert "host-path-consent-card" in cards
 
