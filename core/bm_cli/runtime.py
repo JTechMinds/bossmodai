@@ -592,15 +592,50 @@ def _handle_approval_required(
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
 
-    approval = db.create_cli_approval_request(
-        agent_id=agent.id,
-        command=parsed.raw,
-        content=content,
-        cwd=cwd_before,
-        matched_rule_id=policy.matched_rule_id,
-        expires_at=expires_at,
-        channel_id=origin_channel,
+    try:
+        approval = db.create_cli_approval_request(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            cwd=cwd_before,
+            matched_rule_id=policy.matched_rule_id,
+            expires_at=expires_at,
+            channel_id=origin_channel,
+        )
+    except Exception:
+        logger.exception("CLI approval create failed for %s", parsed.raw)
+        from core.agent_loop.notifications import CLI_APPROVAL_CREATE_FAIL
+
+        return error_result(
+            parsed.raw,
+            CLI_APPROVAL_CREATE_FAIL,
+            cwd=cwd_before,
+            executor=getattr(policy, "executor", "shell"),
+        )
+
+    from core.agent_loop.notifications import (
+        CLI_APPROVAL_CHROME_FAIL,
+        ensure_cli_approval_chrome,
     )
+
+    posted = ensure_cli_approval_chrome(
+        agent,
+        approval,
+        channel_id=origin_channel,
+        source_channel="channel" if origin_channel else "chat",
+    )
+    if not posted:
+        db.reject_cli_approval_request(
+            approval.id,
+            decision_by="system",
+            decision_note="Approval card could not be posted.",
+        )
+        return error_result(
+            parsed.raw,
+            CLI_APPROVAL_CHROME_FAIL,
+            cwd=cwd_before,
+            executor=getattr(policy, "executor", "shell"),
+        )
 
     result = approval_required_result(
         parsed.raw,

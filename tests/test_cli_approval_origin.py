@@ -61,7 +61,9 @@ def setup_function() -> None:
 def teardown_function() -> None:
     db.close_connection()
 
+
 APPROVAL_CMD = "pip install pytest"
+EDITABLE_CMD = 'pip install -e ".[dev]"'
 
 
 def _auth() -> dict[str, str]:
@@ -87,6 +89,40 @@ def test_approval_create_stamps_channel_id() -> None:
     stored = db.get_cli_approval_request(paused.approval_request_id)
     assert stored is not None
     assert stored.channel_id == channel.id
+    cards = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.approval_id == stored.id
+    ]
+    assert len(cards) == 1
+    assert cards[0].notification_kind == CLI_APPROVAL_KIND
+    assert paused.approval_request_id in (paused.prompt_content or "")
+    assert "Do not claim an approval card is live" in (paused.prompt_content or "")
+
+
+def test_quoted_editable_pip_install_posts_chrome() -> None:
+    agent, state = _agent_and_state()
+    channel = _channel_for(agent.id)
+    paused = execute_bm_cli(agent, state, EDITABLE_CMD, channel_id=channel.id)
+    assert paused.approval_required is True
+    stored = db.get_cli_approval_request(paused.approval_request_id)
+    assert stored is not None
+    assert stored.channel_id == channel.id
+    assert stored.command == EDITABLE_CMD
+    cards = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.approval_id == stored.id
+    ]
+    assert len(cards) == 1
+    client = _api_client()
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    approvals = [item for item in res.json() if item["kind"] == "approval"]
+    assert len(approvals) == 1
+    assert approvals[0]["id"] == stored.id
+    assert approvals[0]["conversation_id"] == channel.id
+    assert {action["label"] for action in approvals[0]["actions"]} == {"Approve", "Reject"}
 
 
 def test_git_push_approval_stamps_channel_id() -> None:
@@ -109,6 +145,33 @@ def test_focus_approval_create_has_no_channel_id() -> None:
     stored = db.get_cli_approval_request(paused.approval_request_id)
     assert stored is not None
     assert stored.channel_id is None
+    assert db.has_approval_notification(stored.id)
+    assert any(
+        item.kind == CLI_APPROVAL_KIND
+        for item in db.list_notifications(agent_id=agent.id, chat_visible=True)
+    )
+
+
+def test_chrome_failure_does_not_pause_silently(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, state = _agent_and_state()
+    channel = _channel_for(agent.id)
+    monkeypatch.setattr(
+        "core.agent_loop.notifications.persist_channel_notification",
+        lambda *args, **kwargs: {},
+    )
+    paused = execute_bm_cli(agent, state, APPROVAL_CMD, channel_id=channel.id)
+    assert paused.approval_required is False
+    assert "could not be posted" in (paused.detail or "").lower()
+    assert db.list_cli_approval_requests(status="pending") == []
+    assert db.list_channel_messages(channel.id) == []
+
+
+def test_runtime_core_does_not_claim_live_card_without_request_id() -> None:
+    from core.agent_loop.runtime_core import format_runtime_core_block
+
+    agent, _state = _agent_and_state()
+    block = format_runtime_core_block(agent)
+    assert "approval_required with a request id" in block
 
 
 @pytest.mark.asyncio

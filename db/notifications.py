@@ -84,6 +84,26 @@ def list_notifications(
     )
 
 
+def get_notification_for_approval(approval_id: str) -> Notification | None:
+    """Return the Focus card posted for one CLI approval, if any."""
+    token = (approval_id or "").strip()
+    if not token:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_NOTIFICATION_COLUMNS}
+        FROM notifications
+        WHERE id = (
+            SELECT notification_id FROM notification_links
+            WHERE target_kind = 'cli_approval' AND target_path = $1
+            LIMIT 1
+        )
+        """,
+        [token],
+        Notification,
+    )
+
+
 def get_queue_visibility_notification(agent_id: str) -> Notification | None:
     """Return the live queue-visibility line for an agent, if any."""
     return fetch_one(
