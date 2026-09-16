@@ -372,6 +372,8 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert "Stay on the clone" in block
     assert "Do not recommend editing the live host tree" in block
     assert "Do not park @Operator to reopen" in block
+    assert "Do not park @Operator as the test runner or git pusher" in block
+    assert "Do not invent a desk deny" in block
     assert f"Locked workspace copy for {host_path}: work at {dest}." in block
     assert "Host writes stay blocked." in block
     assert "work directly in the host tree" not in block.lower()
@@ -411,6 +413,7 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert LOCKED_WORKSPACE_COPY_STEER in core_msgs[0]
     assert dest in core_msgs[0]
     assert "Do not park @Operator to reopen" in core_msgs[0]
+    assert "Do not park @Operator as the test runner or git pusher" in core_msgs[0]
 
 
 def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() -> None:
@@ -427,6 +430,7 @@ def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() 
     assert dest in block
     assert "Do not recommend editing the live host tree" in block
     assert "Do not park @Operator to reopen" in block
+    assert "Do not park @Operator as the test runner or git pusher" in block
 
 
 def test_runtime_core_does_not_inject_clone_dest_for_edit_host() -> None:
@@ -459,3 +463,107 @@ def test_runtime_core_steers_off_host_direct_when_clone_locked() -> None:
     preference = workspace_preference_context(agent_id=agent.id)
     assert preference["preference"] == "cloned"
     assert preference["clone_dest"] == dest
+
+
+def _enable_shell() -> None:
+    from core.bm_cli.policy_engine import policy_engine
+
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    config.reload()
+    policy_engine.reload()
+
+
+def _init_tiny_pytest_repo(host: Path) -> None:
+    """Standalone git repo whose pytest.ini stops upward config discovery."""
+    tests = host / "tests"
+    tests.mkdir()
+    (host / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+    (tests / "test_ok.py").write_text("def test_ok() -> None:\n    assert True\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=host, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=host, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=host, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=host, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=host, check=True, capture_output=True)
+
+
+def test_validate_on_clone_is_agent_owned_not_a_desk_deny(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Desk /me is not the limiter. After Branch lock, cli owns validate-on-clone.
+
+    Case evidence (invented desk-can't vs real CLI gaps):
+    - /me and /me/host-work are a real workspace (write, echo, cd, pytest, local git).
+    - python -m pytest and bash stay never_allowed (policy, not desk).
+    - git push still pauses for approval (approval card, not Operator-as-runner).
+    """
+    from core.bm_cli.policy_engine import policy_engine
+    from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
+
+    host = tmp_path / "llm_helper"
+    host.mkdir()
+    _init_tiny_pytest_repo(host)
+    _allow_host(host)
+    _enable_shell()
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+
+    desk_write = execute_bm_cli(agent, state, "write /me/scratch.txt", content="desk-ok\n")
+    assert desk_write.ok is True
+
+    paused = execute_bm_cli(agent, state, f"write {host / 'note.txt'}", content="changed\n")
+    request_id = paused.consent_request_id
+    assert request_id
+    branched = client.post(f"/api/workspace-preference/{request_id}/branch", headers=_headers())
+    assert branched.status_code == 200, branched.text
+    dest = branched.json().get("clone_dest") or ""
+    assert dest.startswith("/me/host-work/")
+
+    blocked_host = execute_bm_cli(agent, state, f"write {host / 'note.txt'}", content="host write\n")
+    assert blocked_host.ok is False
+    assert not (host / "note.txt").exists() or (host / "note.txt").read_text(encoding="utf-8") != "host write\n"
+
+    cd = execute_bm_cli(agent, state, f"cd {dest}")
+    assert cd.ok is True
+    assert cwd_is_nested_clone_repo(agent, dest) is True
+
+    echo = execute_bm_cli(agent, state, "echo clone-shell-ok")
+    assert echo.ok is True
+    assert echo.executor == "shell"
+    assert "clone-shell-ok" in (echo.prompt_content or "")
+
+    python_pytest = execute_bm_cli(agent, state, "python -m pytest -q")
+    assert python_pytest.ok is False
+    assert python_pytest.approval_required is False
+    python_decision = policy_engine.evaluate("python -m pytest -q", frozenset())
+    assert python_decision.tier == "never_allowed"
+
+    bash_script = execute_bm_cli(agent, state, "bash scripts/run-tests.sh")
+    assert bash_script.ok is False
+    assert policy_engine.evaluate("bash scripts/run-tests.sh", frozenset()).tier == "never_allowed"
+
+    collected = execute_bm_cli(agent, state, "pytest -q tests/test_ok.py")
+    assert collected.ok is True, collected.prompt_content
+    assert collected.executor == "shell"
+    assert collected.exit_code == 0
+    payload = collected.prompt_content or ""
+    assert "1 passed" in payload or "passed" in payload.lower()
+
+    extra = execute_bm_cli(
+        agent,
+        state,
+        f"write {dest}/tests/test_extra.py",
+        content="def test_extra() -> None:\n    assert 1 + 1 == 2\n",
+    )
+    assert extra.ok is True
+
+    added = execute_bm_cli(agent, state, "git add tests/test_extra.py")
+    assert added.ok is True, added.prompt_content
+    committed = execute_bm_cli(agent, state, "git commit -m validate-on-clone")
+    assert committed.ok is True, committed.prompt_content
+    assert committed.executor == "shell"
+    assert committed.exit_code == 0
+
+    push = execute_bm_cli(agent, state, "git push origin HEAD")
+    assert push.ok is False
+    assert push.approval_required is True
+    assert push.kind == "approval_required"

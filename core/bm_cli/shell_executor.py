@@ -232,6 +232,7 @@ def execute_shell_command(
     timeout_seconds: int = 30,
     max_output_bytes: int = 65_536,
     allowed_roots: Sequence[Path] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> ShellExecutionResult:
     """Execute a native shell command and return the result.
 
@@ -291,6 +292,8 @@ def execute_shell_command(
         return _path_jail_denied_result(str(exc))
 
     sanitized_env = _sanitize_env(cwd)
+    if extra_env:
+        sanitized_env.update(extra_env)
     start = time.monotonic()
 
     try:

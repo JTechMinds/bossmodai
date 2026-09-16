@@ -282,9 +282,12 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         description="Version control operations.",
         usage_syntax="git <subcommand> [args]",
         help_text=(
-            "Run read-only git operations inside the workspace.\n"
+            "Run git inside the workspace. Virtual git (status, log, diff,\n"
+            "show, restore) targets the agent /me repo. After a Branch or\n"
+            "workspace-copy lock, cd to the clone and use cli git there:\n"
+            "add/commit are local; push may require approval.\n"
             "\n"
-            "Supported subcommands:\n"
+            "Supported virtual subcommands:\n"
             "  status            — working tree status\n"
             "  log [N]           — recent commits (default 10)\n"
             "  diff [path]       — unstaged changes\n"
@@ -294,7 +297,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             "  git status        — check for uncommitted changes\n"
             "  git log 5         — last 5 commits\n"
-            "  git diff main.py  — diff a specific file"
+            "  git diff main.py  — diff a specific file\n"
+            "  git commit -m ok  — local commit on the locked clone"
         ),
     ),
 
