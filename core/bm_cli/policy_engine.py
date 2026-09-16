@@ -84,6 +84,8 @@ _MATCHERS = {
 
 # ``python3.12`` / ``python3.12.3`` should still hit the ``python3`` seed rule.
 _ARGV0_VERSION_SUFFIX_RE = re.compile(r"(?:\.\d+)+$")
+# Clone venv binaries: ``../.venv/bin/pip`` should match the ``.venv/bin/pip`` seed.
+_VENV_BIN_RE = re.compile(r"(?:^|/)(\.venv|venv)/bin/([^/]+)$")
 
 
 def argv0_basename_after_resolve(argv0: str) -> str:
@@ -133,12 +135,31 @@ def argv0_policy_names(argv0: str) -> tuple[str, ...]:
     return tuple(names)
 
 
+def is_venv_bin_path(argv0: str) -> bool:
+    """Return True when *argv0* is a ``.venv/bin/…`` or ``venv/bin/…`` path."""
+    posix = (argv0 or "").replace("\\", "/")
+    return _VENV_BIN_RE.search(posix) is not None
+
+
+def venv_bin_policy_subject(argv0: str, rest: tuple[str, ...] | list[str]) -> str | None:
+    """Map a venv binary path to a ``.venv/bin/<name> …`` policy subject."""
+    posix = (argv0 or "").replace("\\", "/")
+    match = _VENV_BIN_RE.search(posix)
+    if match is None:
+        return None
+    subject = f".venv/bin/{match.group(2)}"
+    extra = [str(token) for token in rest]
+    return " ".join([subject, *extra]) if extra else subject
+
+
 def policy_command_subjects(command_str: str) -> tuple[str, ...]:
     """Command strings to evaluate against policy rules.
 
     Always includes the raw command. When argv[0] is a path (or a versioned
     interpreter), also includes rewrites that replace argv[0] with each
     policy name so ``/bin/bash -c id`` is evaluated as ``bash -c id``.
+    Clone venv paths also get a ``.venv/bin/<name>`` subject so project-local
+    pip matches the validate-on-clone seed instead of host ``pip install``.
     """
     subjects = [command_str]
     try:
@@ -147,6 +168,9 @@ def policy_command_subjects(command_str: str) -> tuple[str, ...]:
         tokens = command_str.split()
     if not tokens:
         return tuple(subjects)
+    venv_subject = venv_bin_policy_subject(tokens[0], tokens[1:])
+    if venv_subject is not None and venv_subject not in subjects:
+        subjects.append(venv_subject)
     for name in argv0_policy_names(tokens[0]):
         if name == tokens[0]:
             continue

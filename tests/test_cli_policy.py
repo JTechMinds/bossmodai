@@ -221,9 +221,13 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert "cat" in always
     assert "uname" in always
     assert "pytest" in always
+    assert "uv run pytest" in always
+    assert "uv pip" in always
+    assert ".venv/bin/pip" in always
     assert "git add" in always
     assert "git commit" in always
     assert "git" not in always
+    assert "uv run" not in always
 
 
 def test_reconcile_hardens_legacy_always_allowed_rows() -> None:
@@ -314,6 +318,21 @@ def test_policy_subjects_include_basename_rewrite() -> None:
     assert "bash -c id" in subjects
 
 
+def test_policy_subjects_include_venv_bin_rewrite() -> None:
+    subjects = policy_command_subjects("../.venv/bin/pip install pytest")
+    assert "../.venv/bin/pip install pytest" in subjects
+    assert ".venv/bin/pip install pytest" in subjects
+    assert "pip install pytest" in subjects
+
+
+def test_venv_python_stays_never_allowed() -> None:
+    _enable_shell()
+    decision = policy_engine.evaluate(".venv/bin/python -c 'print(1)'", frozenset())
+    assert decision.allowed is False
+    assert decision.approval_required is False
+    assert decision.tier == "never_allowed"
+
+
 def test_policy_engine_denies_path_qualified_shells_and_xargs() -> None:
     _enable_shell()
 
@@ -348,6 +367,35 @@ def test_validate_on_clone_pytest_and_local_git_are_allowed_python_stays_blocked
     assert pytest_decision.allowed is True
     assert pytest_decision.tier == "always_allowed"
 
+    uv_pytest = policy_engine.evaluate("uv run pytest -q", frozenset())
+    assert uv_pytest.allowed is True
+    assert uv_pytest.tier == "always_allowed"
+
+    venv_pytest = policy_engine.evaluate(".venv/bin/pytest -q", frozenset())
+    assert venv_pytest.allowed is True
+    assert venv_pytest.tier == "always_allowed"
+
+    uv_pip = policy_engine.evaluate("uv pip install pytest", frozenset())
+    assert uv_pip.allowed is True
+    assert uv_pip.tier == "always_allowed"
+
+    venv_pip = policy_engine.evaluate('.venv/bin/pip install -e ".[dev]"', frozenset())
+    assert venv_pip.allowed is True
+    assert venv_pip.tier == "always_allowed"
+
+    rel_venv_pip = policy_engine.evaluate("../.venv/bin/pip install pytest", frozenset())
+    assert rel_venv_pip.allowed is True
+    assert rel_venv_pip.tier == "always_allowed"
+
+    host_pip = policy_engine.evaluate("pip install pytest", frozenset())
+    assert host_pip.allowed is False
+    assert host_pip.approval_required is True
+    assert host_pip.tier == "approval_required"
+
+    uv_python = policy_engine.evaluate("uv run python -c 'print(1)'", frozenset())
+    assert uv_python.allowed is False
+    assert uv_python.approval_required is False
+
     for command in ("git add tests/test_ok.py", "git commit -m validate", "git status --short"):
         decision = policy_engine.evaluate(command, frozenset())
         assert decision.allowed is True, command
@@ -366,14 +414,21 @@ def test_validate_on_clone_pytest_and_local_git_are_allowed_python_stays_blocked
 
 
 def test_reconcile_inserts_missing_validate_on_clone_rules() -> None:
-    db.execute("DELETE FROM cli_policy_rules WHERE pattern = $1", ["pytest"])
+    for pattern in ("pytest", "uv run pytest", "uv pip", ".venv/bin/pip"):
+        db.execute("DELETE FROM cli_policy_rules WHERE pattern = $1", [pattern])
     policy_engine.reload()
-    assert "pytest" not in {
+    always_before = {
         rule.pattern for rule in db.list_cli_policy_rules() if rule.tier == "always_allowed"
     }
+    assert "pytest" not in always_before
+    assert "uv run pytest" not in always_before
 
     changed = db.reconcile_hardened_cli_policy_rules()
     assert changed >= 1
     always = {rule.pattern for rule in db.list_cli_policy_rules() if rule.tier == "always_allowed"}
     assert "pytest" in always
+    assert "uv run pytest" in always
+    assert "uv pip" in always
+    assert ".venv/bin/pip" in always
+    assert "git commit" in always
     assert "git commit" in always

@@ -363,7 +363,8 @@ CLI LOOKUP DETAILS
 - results are turn-local
 {{if cli.shell_enabled}}
 - additional commands are available when policy allows them (pytest, git, npm, curl, …)
-- python and bash stay blocked; run pytest via cli on the clone, not python -m pytest
+- python and bash stay blocked; run pytest via cli on the clone (uv run pytest or .venv/bin/pytest), not python -m pytest
+- do not pip install into the host Python on a locked clone; use uv pip / uv add / .venv/bin/pip
 - some commands may require operator approval — that is an approval card, not a request for the operator to run the command
 - do not park @Operator as the test runner or git pusher when cli on the clone can run the command
 - blocked commands cannot be used; try an allowed alternative
