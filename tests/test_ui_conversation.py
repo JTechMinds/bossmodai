@@ -38,6 +38,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
+    JS / "needs" / "need-shape.js",
     JS / "needs" / "needs-bar.js",
     SOURCES / "thread-archive.js",
     SOURCES / "thread-source.js",
@@ -113,7 +114,9 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
         assert "queue-visibility:" in source
         assert "live: isQueue" in source
         assert "cleared: isQueue && !String(text).trim()" in source
-    assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue" in agent
+    assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk" in agent
+    assert "bus.subscribe('channel_message'" in agent
+    assert "BossModConsentCard.cardFromMessage(data)" in agent
     transcript = _read(CONVERSATION / "transcript.js")
     assert "message.live" in transcript
     assert "message.cleared" in transcript
@@ -264,6 +267,30 @@ def test_conversation_harness() -> None:
         "renameActionsAreIconOnly": True,
         "renameActionsAbsentAtRest": True,
         "cancelActionRestoresLikeEsc": True,
+    }
+
+
+def test_cli_approval_chrome_paints_approve_reject() -> None:
+    """Create-time, live WS, and need-queue chrome all paint Approve in Focus."""
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parent / "js_cli_approval_chrome_harness.cjs"),
+        ]
+        + [str(path) for path in CONVERSATION_MODULES],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "paintsCreateChrome": True,
+        "paintsLiveAppend": True,
+        "paintsLiveChannelAppend": True,
+        "paintsNeedWithoutBellFetch": True,
+        "refetchesWhenInlineMissing": True,
     }
 
 

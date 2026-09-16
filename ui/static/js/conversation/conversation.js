@@ -161,10 +161,31 @@ const BossModConversation = (() => {
             return messages.filter((message) => !message.systemReceipt);
         }
 
+        /** Pending request-card ids in this transcript (or the live buffer). */
+        function pendingRequestIds(messages) {
+            const ids = [];
+            (messages || []).forEach((message) => {
+                if (message.kind !== 'request' || !message.card || !message.card.id) return;
+                if ((message.card.status || 'pending') !== 'pending') return;
+                ids.push(String(message.card.id));
+            });
+            return ids;
+        }
+
+        function openRequestIds() {
+            const cached = visibleMessages(cache.recall(currentId) || []);
+            return pendingRequestIds(cached.concat(pendingLive || []));
+        }
+
+        function syncInlineNeedIds(messages) {
+            const ids = pendingRequestIds(messages);
+            const current = store.getState().inlineNeedIds || [];
+            if (current.length === ids.length && current.every((id, i) => id === ids[i])) return;
+            store.setState({ inlineNeedIds: ids });
+        }
+
         function paint(messages) {
             const visible = visibleMessages(messages);
-            // The source says WHO; the controller supplies what can be done,
-            // because it owns the composer and the assign form.
             if (visible.length) transcript.setStatus('ready');
             else transcript.setStatus('empty', Object.assign({}, source.emptyState(), {
                 onGreet: (text) => composer.sendText(text),
@@ -172,6 +193,38 @@ const BossModConversation = (() => {
             }));
             transcript.setMessages(visible);
             transcript.renderPresence(currentId);
+            syncInlineNeedIds(visible);
+        }
+
+        /** Live-paint pending chrome in Focus; never wait on a bell fetch. */
+        async function reloadIfPendingChromeMissing() {
+            const id = currentId;
+            const src = source;
+            if (!src || !id) return;
+            const inline = new Set(openRequestIds());
+            const missing = (store.getState().needs || []).filter((need) => (
+                need
+                && need.target
+                && need.target.place === 'chat'
+                && BossModNeedShape.belongsOnOpenFocus(need, id, currentKind)
+                && !BossModNeedShape.coversInlineNeed(need, inline)
+            ));
+            if (!missing.length) return;
+            missing.forEach((need) => {
+                if (need.conversationId === id) return;
+                const message = BossModNeedShape.requestMessageFromNeed(need);
+                if (message) handlers.message(message);
+            });
+            if (!missing.some((need) => need.conversationId === id)) return;
+            if (pendingLive) return;
+            try {
+                const messages = await src.load();
+                if (source !== src || currentId !== id || pendingLive) return;
+                cache.remember(id, messages);
+                paint(messages);
+            } catch (err) {
+                console.error(`[conversation] could not refresh ${id}`, err);
+            }
         }
 
         const handlers = {
@@ -185,6 +238,7 @@ const BossModConversation = (() => {
                     return;
                 }
                 if (transcript.append(message)) cache.append(currentId, message);
+                syncInlineNeedIds(visibleMessages(cache.recall(currentId) || []));
             },
             reset() {
                 cache.forget(currentId);
@@ -259,6 +313,7 @@ const BossModConversation = (() => {
             else {
                 transcript.setMessages([]);
                 transcript.setStatus('loading');
+                syncInlineNeedIds([]);
             }
             chrome.reset();  // a half-typed rename must not follow the switch
             applyChrome();
@@ -288,6 +343,7 @@ const BossModConversation = (() => {
             const buffered = pendingLive || [];
             pendingLive = null;
             buffered.forEach((message) => handlers.message(message));
+            void reloadIfPendingChromeMissing();
         }
 
         // The chrome names the agent, and the roster is what knows the name.
@@ -299,31 +355,34 @@ const BossModConversation = (() => {
             },
             () => { if (source) applyChrome(); }));
 
-        // A presence row that says "working · 12m" has to keep saying the
-        // right number. The roster is replaced on every simulation tick, so
-        // that reference IS the repaint clock — without this the duration
-        // freezes at whatever it read when the turn was announced. Note this
-        // is a STORE subscription, not a socket one: the surface still never
-        // remounts on a tick, which test_meeting_ui_incremental.py enforces.
+        // Roster ticks are the presence duration clock; never remount on them.
         disposers.push(store.subscribe(
             (s) => s.roster,
             () => { if (currentId) transcript.renderPresence(currentId); }));
 
-        // Enable from the bell never clicks the in-thread card. The activity
-        // broadcast is what collapses leftover pending Shell Executor chrome.
         disposers.push(bus.subscribe('activity', (entry) => {
             const card = shellExecutorActivityCard(entry);
-            if (!card) return;
-            BossModConsentCard.collapseGrantedConsentCards(card);
+            if (card) BossModConsentCard.collapseGrantedConsentCards(card);
+            const event = String((entry && entry.event) || '');
+            if (event === 'cli_approval_approved' || event === 'cli_approval_rejected'
+                || event === 'cli_approval_resolved') {
+                BossModConsentCard.collapseGrantedConsentCards({
+                    kind: 'cli_approval',
+                    status: event === 'cli_approval_rejected' ? 'rejected' : 'approved',
+                    command: (entry && entry.command) || '',
+                    decision_note: (entry && entry.decision_note) || '',
+                });
+            }
         }));
+
+        disposers.push(store.subscribe(
+            (s) => s.needs,
+            () => { void reloadIfPendingChromeMissing(); },
+        ));
 
         return {
             element,
             open,
-            /**
-             * Drain every subscription this controller created.
-             * @returns {void}
-             */
             destroy() {
                 disposeSource();
                 composer.destroy();

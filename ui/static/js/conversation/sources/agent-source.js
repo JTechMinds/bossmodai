@@ -67,15 +67,22 @@ const BossModAgentSource = (() => {
          * @returns {object} Message
          */
         function toMessage(raw) {
-            const isSystem = raw.from === 'system' || raw.message_type === 'system';
+            const isSystem = raw.from === 'system' || raw.from_type === 'system'
+                || raw.author_type === 'system'
+                || raw.message_type === 'system';
             const isWalkReceipt = raw.notification_kind === 'receipt';
             const isQueue = raw.notification_kind === 'queue_visibility';
             const card = BossModConsentCard.cardFromMessage(raw);
+            const isDecisionAsk = raw.notification_kind === 'cli_approval'
+                || raw.notification_kind === 'host_path_consent';
+            const cardKey = card && card.id
+                ? `${BossModConsentCard.isCliApprovalCard(card) ? 'cli-approval' : 'consent'}:${card.id}`
+                : '';
             const text = raw.content || '';
             return {
-                key: isQueue ? `queue-visibility:${agentId}` : String(raw.id || raw.message_id || '').trim(),
-                author: raw.from || 'agent',
-                authorName: raw.from_name || '',
+                key: isQueue ? `queue-visibility:${agentId}` : (cardKey || String(raw.id || raw.message_id || '').trim()),
+                author: raw.from || raw.from_type || raw.author_type || 'agent',
+                authorName: raw.from_name || raw.author_name || '',
                 authorAgentId: raw.author_agent_id || agentId,
                 showAuthor: false,
                 text,
@@ -84,7 +91,7 @@ const BossModAgentSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
-                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue,
+                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
             };
@@ -155,6 +162,14 @@ const BossModAgentSource = (() => {
                 bus.subscribe('chat_reset', (data) => {
                     if (!data || data.agent_id !== agentId) return;
                     on.reset();
+                }),
+                bus.subscribe('channel_message', (data) => {
+                    if (!data) return;
+                    const card = BossModConsentCard.cardFromMessage(data);
+                    if (!card) return;
+                    const owner = String(card.agent_id || data.author_agent_id || '');
+                    if (owner !== agentId) return;
+                    on.message(toMessage(data));
                 }),
                 bus.subscribe('meeting_message', (data) => {
                     if (!data || data.agent_id !== agentId) return;

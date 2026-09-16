@@ -1,23 +1,9 @@
 /**
- * BossMod AI — host-path consent cards.
- *
- * An agent that wants to read or write outside its own desk asks first, and
- * the ask is rendered inline in the conversation where it happened rather
- * than in a separate queue: the operator decides with the request's context
- * in front of them. Deciding one card collapses every sibling the decision
- * already answers, so the transcript does not keep asking a settled question.
- *
- * Moved out of utils.js. The one behavioural change is that the fetch helper
- * is now a required argument instead of a global reached for at call time.
+ * BossMod AI — host-path consent and CLI approval cards.
+ * Fetch helper is required at render, not a global reached at click time.
  */
 const BossModConsentCard = (() => {
 
-    /**
-     * Is this backend message a host-path consent request?
-     *
-     * @param {object|null} message  A raw chat or channel message payload.
-     * @returns {boolean}
-     */
     function isHostPathConsentMessage(message) {
         return Boolean(
             message
@@ -42,12 +28,6 @@ const BossModConsentCard = (() => {
         return cardKind(card) === 'cli_approval';
     }
 
-    /**
-     * Operator-facing card payload from a chat or channel message.
-     *
-     * @param {object|null} message
-     * @returns {object|null}
-     */
     function cardFromMessage(message) {
         if (isCliApprovalMessage(message) && message.cli_approval) {
             return message.cli_approval;
@@ -78,21 +58,6 @@ const BossModConsentCard = (() => {
         return api;
     }
 
-    /**
-     * Paint one consent card into `container`.
-     *
-     * Renders the pending form (path, reason, three actions) or the resolved
-     * state, depending on `card.status`. The container is mutated in place and
-     * gains the `host-path-consent-card` class.
-     *
-     * @param {HTMLElement} container  The node the card owns.
-     * @param {object} card  `{id, path, reason, status, grant_root, decision_note}`.
-     * @param {Function} api  Authenticated fetch helper, used when an action is
-     *   clicked.
-     * @returns {void}  No-op when container or card is missing.
-     * @throws {Error} When `api` is not a function — a card that cannot resolve
-     *   is worse than no card, so it fails at render rather than on click.
-     */
     function renderHostPathConsentCard(container, card, api) {
         requireApi(api);
         if (!container || !card) return;
@@ -173,19 +138,12 @@ const BossModConsentCard = (() => {
         }
     }
 
-    /**
-     * Paint one CLI approval card into `container`.
-     *
-     * @param {HTMLElement} container
-     * @param {object} card
-     * @param {Function} api
-     * @returns {void}
-     */
     function renderCliApprovalCard(container, card, api) {
         requireApi(api);
         if (!container || !card) return;
         container.classList.add('host-path-consent-card');
         container.dataset.cardKind = 'cli_approval';
+        if (card.command) container.dataset.command = card.command;
         const status = card.status || 'pending';
         container.classList.toggle('is-resolved', status !== 'pending');
         const title = document.createElement('div');
@@ -247,6 +205,7 @@ const BossModConsentCard = (() => {
             });
             container.replaceChildren();
             renderCliApprovalCard(container, next, api);
+            collapseRelatedConsentCards(container, next);
             BossModIcons.paint(container, 'consent-card');
         } catch (err) {
             Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
@@ -301,21 +260,6 @@ const BossModConsentCard = (() => {
         return status;
     }
 
-    /**
-     * POST one decision and repaint the card with the server's answer.
-     *
-     * The buttons are disabled for the duration so a double-click cannot send
-     * two decisions. A failure re-enables them and appends the reason — the
-     * operator must never be left believing they decided something they did not.
-     *
-     * @param {HTMLElement} container
-     * @param {object} card
-     * @param {'allow-once'|'always-allow'|'deny'|'clone'|'branch'|'edit-host'|'cancel'} action
-     * @param {HTMLElement} actions  The action row, disabled while in flight.
-     * @param {Function} api  Authenticated fetch helper.
-     * @returns {Promise<void>}
-     * @throws {Error} When `api` is not a function.
-     */
     async function decideHostPathConsent(container, card, action, actions, api) {
         requireApi(api);
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
@@ -344,48 +288,15 @@ const BossModConsentCard = (() => {
         }
     }
 
-    /**
-     * Collapse sibling cards a decision already answered.
-     *
-     * "Always allow" answers every pending card in the transcript; a scoped
-     * grant answers only cards sharing its `grant_root`. Anything else is left
-     * alone, because collapsing an unrelated ask would silently drop a
-     * decision the operator still owes.
-     *
-     * Enable from the needs bell never clicks the in-thread card, so
-     * `collapseGrantedConsentCards` is the same walk without an origin node:
-     * every matching pending shell_executor card in a transcript becomes
-     * resolved-only.
-     *
-     * @param {HTMLElement} container  The card that was just decided.
-     * @param {object} card  The server's updated card.
-     * @returns {void}  No-op while the decision is still pending.
-     */
     function collapseRelatedConsentCards(container, card) {
         if (!container || !card || (card.status || 'pending') === 'pending') return;
-        // A card rendered outside a transcript (a standalone prompt) still
-        // collapses its siblings; the parent element is the documented scope
-        // for that case, not a swallowed lookup failure.
         const scope = container.closest('[data-transcript]') || container.parentElement;
         if (!scope) return;
         collapseConsentCardsInScope(scope, card, container);
     }
 
-    /**
-     * Collapse every matching pending card in open transcripts.
-     *
-     * Used when Enable lands from the bell or an `activity` broadcast rather
-     * than a click on the origin card. Deny is not company-wide and must not
-     * walk other cards.
-     *
-     * @param {object} card  `{status, kind, grant_root, decision_note}`.
-     * @param {ParentNode} [root]  Query root; defaults to `document`.
-     * @returns {void}
-     */
     function collapseGrantedConsentCards(card, root) {
         if (!card || (card.status || 'pending') === 'pending') return;
-        const companyWide = card.status === 'always_allowed' || card.status === 'enabled';
-        if (!companyWide) return;
         const doc = root || (typeof document !== 'undefined' ? document : null);
         if (!doc || typeof doc.querySelectorAll !== 'function') return;
         const scopes = [];
@@ -398,11 +309,30 @@ const BossModConsentCard = (() => {
 
     function collapseConsentCardsInScope(scope, card, origin) {
         if (!scope || typeof scope.querySelectorAll !== 'function') return;
+        const kind = (origin && origin.dataset.cardKind) || cardKind(card);
+        if (kind === 'cli_approval') {
+            const command = card.command || (origin && origin.dataset.command) || '';
+            scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
+                if (el === origin || el.classList.contains('is-resolved')) return;
+                if ((el.dataset.cardKind || '') !== 'cli_approval') return;
+                if (command && el.dataset.command && el.dataset.command !== command) return;
+                el.classList.add('is-resolved');
+                el.querySelector('.host-path-consent-actions')?.remove();
+                el.querySelector('.hpc-reason')?.remove();
+                if (!el.querySelector('.hpc-status')) {
+                    const resolved = document.createElement('div');
+                    resolved.className = 'hpc-status';
+                    resolved.textContent = cliApprovalStatusLabel(card);
+                    el.appendChild(resolved);
+                }
+            });
+            return;
+        }
         const grantRoot = card.grant_root || '';
         const companyWide = card.status === 'always_allowed' || card.status === 'enabled';
-        const kind = (origin && origin.dataset.cardKind) || cardKind(card);
         // Deny is per-request for Shell Executor; siblings stay pending.
         if (kind === 'shell_executor' && !companyWide) return;
+        if (!companyWide && !grantRoot) return;
         scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
             if (el === origin || el.classList.contains('is-resolved')) return;
             const sameKind = (el.dataset.cardKind || 'host_path') === kind;

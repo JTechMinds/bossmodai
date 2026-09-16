@@ -352,6 +352,65 @@ def test_needs_focus_approval_uses_agent_conversation() -> None:
     assert approvals[0]["conversation_id"] == gerry.id
 
 
+def test_focus_transcript_serializes_approval_card_after_create() -> None:
+    agent, state = _agent_and_state()
+    paused = execute_bm_cli(agent, state, EDITABLE_CMD)
+    assert paused.approval_required is True
+    client = _api_client()
+    res = client.get(f"/api/agents/{agent.id}/messages", headers=_auth())
+    assert res.status_code == 200, res.text
+    cards = [
+        item
+        for item in res.json()
+        if item.get("notification_kind") == CLI_APPROVAL_KIND
+    ]
+    assert len(cards) == 1
+    card = cards[0]["cli_approval"]
+    assert card["id"] == paused.approval_request_id
+    assert card["command"] == EDITABLE_CMD
+    assert card["kind"] == CLI_APPROVAL_KIND
+    assert card["status"] == "pending"
+    assert cards[0]["from"] == "system"
+
+
+def test_duplicate_command_reuses_pending_approval() -> None:
+    agent, state = _agent_and_state()
+    first = execute_bm_cli(agent, state, EDITABLE_CMD)
+    second = execute_bm_cli(agent, state, EDITABLE_CMD)
+    assert first.approval_required is True
+    assert second.approval_required is True
+    assert first.approval_request_id == second.approval_request_id
+    pending = db.list_cli_approval_requests(status="pending", agent_id=agent.id)
+    assert len(pending) == 1
+    client = _api_client()
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    approvals = [item for item in res.json() if item["kind"] == "approval"]
+    assert len(approvals) == 1
+    assert approvals[0]["id"] == first.approval_request_id
+    assert approvals[0]["sub"] == EDITABLE_CMD
+
+
+@pytest.mark.asyncio
+async def test_approve_collapses_duplicate_pending_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    gerry, _state = _agent_and_state()
+    first = db.create_cli_approval_request(agent_id=gerry.id, command=EDITABLE_CMD)
+    monkeypatch.setattr("db.cli_approval_requests.get_pending_for_command", lambda *args, **kwargs: None)
+    second = db.create_cli_approval_request(agent_id=gerry.id, command=EDITABLE_CMD)
+    assert first.id != second.id
+    client = _api_client()
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    approvals = [item for item in res.json() if item["kind"] == "approval"]
+    assert len(approvals) == 1
+    services = _ResumeServices()
+    updated = await resume_cli_approval(approvals[0]["id"], approved=True, services=services)
+    assert updated is not None
+    assert db.get_cli_approval_request(first.id).status != "pending"
+    assert db.get_cli_approval_request(second.id).status != "pending"
+    assert len(services.triggers) == 1
+
+
 @pytest.mark.asyncio
 async def test_channel_transcript_serializes_approval_card() -> None:
     gerry, state = _agent_and_state()

@@ -238,6 +238,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
+    JS / "needs" / "need-shape.js",
     JS / "needs" / "needs-bar.js",
     CONVERSATION / "sources" / "thread-archive.js",
     CONVERSATION / "sources" / "thread-source.js",

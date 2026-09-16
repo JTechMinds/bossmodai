@@ -32,8 +32,11 @@ def create_approval_request(
     expires_at: datetime | None = None,
     channel_id: str | None = None,
 ) -> CliApprovalRequest:
-    """Insert a new approval request and return the created row."""
+    """Insert a new approval request, or reuse a pending row for this command."""
     origin = (channel_id or "").strip() or None
+    existing = get_pending_for_command(agent_id, command)
+    if existing is not None:
+        return existing
     return insert_returning(
         f"""
         INSERT INTO cli_approval_requests (
@@ -65,6 +68,21 @@ def bind_approval_channel(request_id: str, channel_id: str) -> CliApprovalReques
         RETURNING {_ALL_COLUMNS}
         """,
         [token, request_id],
+        CliApprovalRequest,
+    )
+
+
+def get_pending_for_command(agent_id: str, command: str) -> CliApprovalRequest | None:
+    """Return the newest pending approval for this agent and command, if any."""
+    return fetch_one(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM cli_approval_requests
+        WHERE agent_id = $1 AND command = $2 AND status = 'pending'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        [agent_id, command],
         CliApprovalRequest,
     )
 

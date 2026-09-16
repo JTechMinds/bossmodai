@@ -39,6 +39,7 @@ const BossModShell = (() => {
         hasUsableModel: false,
         connection: 'connecting',
         needs: [],
+        inlineNeedIds: [],
         needsBarEnabled: true,
         needsBarDismissed: false,
     };

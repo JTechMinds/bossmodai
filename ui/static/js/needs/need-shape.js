@@ -125,6 +125,41 @@ const BossModNeedShape = (() => {
         return Boolean(need && need.agentId && OPEN_FOCUS_NEED[need.kind]);
     }
 
+    /** Origin-thread chrome still belongs on the agent's open Focus. */
+    function belongsOnOpenFocus(need, conversationId, conversationKind) {
+        if (!need || !conversationId) return false;
+        if (need.conversationId === conversationId) return true;
+        if (!OPEN_FOCUS_NEED[need.kind]) return false;
+        return conversationKind === 'agent' && need.agentId === conversationId;
+    }
+
+    /** True when the transcript card is this need or a coalesced sibling. */
+    function coversInlineNeed(need, inlineIds) {
+        if (!need || !need.id) return false;
+        const inline = inlineIds instanceof Set ? inlineIds : new Set(inlineIds || []);
+        if (inline.has(String(need.id))) return true;
+        return (need.groupedIds || []).some((id) => inline.has(String(id)));
+    }
+
+    /** Safety-net request Message when live WS has not painted the card yet. */
+    function requestMessageFromNeed(need) {
+        if (!isOpenFocusNeed(need) || !need.id) return null;
+        const approval = need.kind === 'approval';
+        const card = approval
+            ? {
+                id: need.id, kind: 'cli_approval', status: 'pending',
+                title: need.title || 'Approve this command?', command: need.sub || '',
+            }
+            : { id: need.id, status: 'pending', title: need.title || '', path: need.sub || '' };
+        return {
+            key: `${approval ? 'cli-approval' : 'consent'}:${need.id}`,
+            author: 'system', authorName: need.agentName || '',
+            authorAgentId: need.agentId || null, showAuthor: false,
+            text: need.title || '', createdAt: need.createdAt || '',
+            kind: 'request', card, systemReceipt: false,
+        };
+    }
+
     /**
      * Activity event names that change what is waiting on the operator.
      *
@@ -266,25 +301,26 @@ const BossModNeedShape = (() => {
     }
 
     /**
-     * Identity used to coalesce identical live error cards.
+     * Identity used to coalesce identical live error and CLI-approval cards.
      *
-     * Errors are grouped by the agent that hit them and the message the
-     * operator sees. Other kinds stay one-id-one-need.
+     * Errors group by agent and message. Approvals group by agent and command.
+     * Other kinds stay one-id-one-need.
      *
      * @param {Need} need
      * @returns {string}
      */
     function coalesceKey(need) {
         if (!need) return '';
-        if (need.kind !== 'error') return String(need.id || '');
-        return `error:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'error') return `error:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'approval') return `approval:${need.agentId || ''}:${need.sub || ''}`;
+        return String(need.id || '');
     }
 
     /**
-     * Collapse identical error needs into one live card plus a count.
+     * Collapse identical error and CLI-approval needs into one live card.
      *
-     * Diagnostics stay individual in the log. Focus must not drown in three
-     * copies of "LLM call timed out after 120s".
+     * Diagnostics stay individual in the log. Duplicate pending Approves for
+     * the same command (two `pip install -e ".[dev]"` pauses) are one ask.
      *
      * @param {Need[]} needs
      * @returns {Need[]}
@@ -294,7 +330,7 @@ const BossModNeedShape = (() => {
         const others = [];
         const groups = new Map();
         list.forEach((need) => {
-            if (!need || need.kind !== 'error') {
+            if (!need || (need.kind !== 'error' && need.kind !== 'approval')) {
                 others.push(need);
                 return;
             }
@@ -312,7 +348,7 @@ const BossModNeedShape = (() => {
             const live = incomingIsNewer ? need : existing;
             const count = (existing.count || 1) + 1;
             const groupedIds = (existing.groupedIds || [existing.id]).concat([need.id]);
-            const title = count > 1
+            const title = count > 1 && live.kind === 'error'
                 ? `${live.agentName} hit an error ×${count}`
                 : live.title;
             groups.set(key, Object.assign({}, live, { count, groupedIds, title }));
@@ -320,5 +356,18 @@ const BossModNeedShape = (() => {
         return others.concat(Array.from(groups.values()));
     }
 
-    return { ACTIVITY_TRIGGERS, KIND_TARGETS, OPEN_FOCUS_NEED, coalesceKey, coalesceNeeds, isOpenFocusNeed, normalise, normaliseDiagnostic, targetFor };
+    return {
+        ACTIVITY_TRIGGERS,
+        KIND_TARGETS,
+        OPEN_FOCUS_NEED,
+        belongsOnOpenFocus,
+        coalesceKey,
+        coalesceNeeds,
+        coversInlineNeed,
+        isOpenFocusNeed,
+        normalise,
+        normaliseDiagnostic,
+        requestMessageFromNeed,
+        targetFor,
+    };
 })();

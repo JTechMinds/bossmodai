@@ -91,6 +91,10 @@ def test_needs_harness() -> None:
         "inspectionDoesNotResolve": True,
         "barLeavesConsentInline": True,
         "barLeavesApprovalInline": True,
+        "barShowsApprovalWhenInlineMissing": True,
+        "duplicateApprovalsCoalesce": True,
+        "barShowsThreadApprovalOnAgentFocus": True,
+        "barSuppressesCoalescedSibling": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }
@@ -223,6 +227,7 @@ def test_toast_and_bar_are_mutually_exclusive() -> None:
     # conversation the bar is scoped to, so the bar leaves it there.
     assert payload["barLeavesConsentInline"] is True
     assert payload["barLeavesApprovalInline"] is True
+    assert payload["barShowsApprovalWhenInlineMissing"] is True
 
 
 def test_no_toast_on_the_first_snapshot() -> None:
@@ -334,6 +339,9 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     # approval are uncleared Focus asks; error and blocked are not.
     assert "const OPEN_FOCUS_NEED = Object.freeze({" in shape
     assert "function isOpenFocusNeed(need)" in shape
+    assert "function belongsOnOpenFocus(" in shape
+    assert "function coversInlineNeed(" in shape
+    assert "function requestMessageFromNeed(" in shape
     assert "consent: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
     assert "approval: true" in shape.split("const OPEN_FOCUS_NEED = Object.freeze({", 1)[1]
     # Both normalisers attach it, so no consumer has to ask for one.
@@ -352,6 +360,9 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     # is a frozen table of its own, not a branch.
     bar = _read(NEEDS / "needs-bar.js")
     assert "const BAR_CARDS = Object.freeze({" in bar
+    assert "const FALLBACK_CARDS = Object.freeze({" in bar
+    assert "inlineNeedIds" in bar
+    assert "coversInlineNeed" in bar
     assert "need.target" in bar
 
     # The server-described actions are untouched: `target` is a client concern.
