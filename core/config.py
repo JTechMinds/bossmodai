@@ -52,6 +52,34 @@ def get(key: str) -> str | None:
     return val.strip()
 
 
+def get_live(key: str) -> str | None:
+    """Read one setting from the database, then the process cache.
+
+    The API process reloads after writes; the runtime worker does not.
+    Gates that must observe a just-flipped setting (Shell Executor Enable)
+    should use this instead of :func:`get`. A live hit warms the cache so
+    later ``get`` calls in the same worker turn see the same value.
+    """
+    global _loaded
+    token = (key or "").strip()
+    if not token:
+        return None
+    try:
+        from db.crud import query_one
+
+        row = query_one("SELECT value FROM settings WHERE key = $1", [token])
+    except Exception:
+        row = None
+    if row and row.get("value") not in (None, ""):
+        val = str(row["value"])
+        with _lock:
+            _cache[token] = val
+            _loaded = True
+        stripped = val.strip()
+        return stripped or None
+    return get(token)
+
+
 def require(key: str) -> str:
     """Get a required setting value, raising if not configured.
 

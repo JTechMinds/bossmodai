@@ -321,7 +321,7 @@ def _execute_bm_cli_inner(
         )
         # If virtual handler returned an "unsupported" error and shell is enabled,
         # fall through to the policy engine for shell execution.
-        if not result.ok and result.kind == "error" and config.get("cli_shell_enabled") == "true":
+        if not result.ok and result.kind == "error" and config.get_live("cli_shell_enabled") == "true":
             data = result.data or {}
             error_msg = str(data.get("error", ""))
             if "unsupported" in error_msg.lower():
@@ -467,6 +467,7 @@ def _maybe_shell_executor_consent(
         cwd=cwd_before,
         task_id=get_active_task_id(agent.id),
         channel_id=channel_id,
+        trigger_type=trigger_type,
     )
     if paused is None:
         return None
@@ -489,7 +490,7 @@ def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     """Return True when this git command should use shell policy, not virtual git."""
     if parsed.name != "git":
         return False
-    if config.get("cli_shell_enabled") != "true":
+    if config.get_live("cli_shell_enabled") != "true":
         return False
     from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
 

@@ -541,14 +541,6 @@ def _looks_like_project_dir(path: Path) -> bool:
 
 def _live_host_root_setting() -> str | None:
     """Read ``workspace_host_roots`` from the database, then the config cache."""
-    try:
-        from db.crud import query_one
-
-        row = query_one("SELECT value FROM settings WHERE key = $1", [SETTING_KEY])
-    except Exception:
-        row = None
-    if row and row.get("value") not in (None, ""):
-        return str(row["value"])
     from core import config
 
-    return config.get(SETTING_KEY)
+    return config.get_live(SETTING_KEY)
