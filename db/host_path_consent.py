@@ -448,6 +448,24 @@ def find_workspace_preference_for_scope(
     )
 
 
+def abandon_unposted_consent(request_id: str) -> None:
+    """Drop a pending consent that never reached a conversation surface.
+
+    Fail-closed create must not leave a denied-for-scope row: that would
+    block retries. Chrome never posted, so there are no transcript links.
+    """
+    token = (request_id or "").strip()
+    if not token:
+        return
+    execute(
+        """
+        DELETE FROM host_path_consent_requests
+        WHERE id = $1 AND status = 'pending'
+        """,
+        [token],
+    )
+
+
 def delete_agent_consent(agent_id: str) -> None:
     """Remove consent rows for a deleted agent."""
     execute("DELETE FROM host_path_once_grants WHERE agent_id = $1", [agent_id])

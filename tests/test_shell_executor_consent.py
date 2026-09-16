@@ -187,6 +187,7 @@ def test_shell_executor_card_copy_is_enable_or_deny() -> None:
         dest="/me/host-work/sample_repo",
     )
     paused = execute_bm_cli(agent, state, "pytest -q")
+    assert db.has_consent_notification(paused.consent_request_id)
     notes = project_chat_notifications(
         agent=agent,
         trigger={"type": "human_chat", "source_channel": "chat"},
@@ -648,3 +649,28 @@ def test_enable_collapse_harness_resolves_pending_and_leaves_deny() -> None:
         "denyLeavesSiblingPending": True,
         "activityCollapsesPending": True,
     }
+
+
+def test_shell_executor_chrome_failure_does_not_pause_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    channel = db.create_channel(
+        name="Shell Fail",
+        member_agent_ids=[agent.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    monkeypatch.setattr(
+        "core.agent_loop.notifications.persist_channel_notification",
+        lambda *args, **kwargs: {},
+    )
+    paused = execute_bm_cli(agent, state, "pytest -q", channel_id=channel.id)
+    assert paused.consent_required is False
+    assert "could not be posted" in (paused.detail or "").lower()
+    assert db.list_consent_requests(status="pending") == []
+    assert db.list_channel_messages(channel.id) == []

@@ -417,14 +417,24 @@ def get_formatted_channel_messages(channel_id: str, *, limit: int = 80) -> list[
 
 def get_channel_message_for_approval(approval_id: str) -> ChannelMessage | None:
     """Return the origin-thread card posted for one CLI approval, if any."""
-    token = (approval_id or "").strip()
-    if not token:
+    return _channel_message_for_decision("approval_id", approval_id)
+
+
+def get_channel_message_for_consent(consent_id: str) -> ChannelMessage | None:
+    """Return the origin-thread card posted for one consent request, if any."""
+    return _channel_message_for_decision("consent_id", consent_id)
+
+
+def _channel_message_for_decision(column: str, request_id: str) -> ChannelMessage | None:
+    """Return the origin-thread card for one approval or consent id."""
+    token = (request_id or "").strip()
+    if not token or column not in {"approval_id", "consent_id"}:
         return None
     return fetch_one(
         f"""
         SELECT {_MESSAGE_COLUMNS}
         FROM channel_messages
-        WHERE approval_id = $1
+        WHERE {column} = $1
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,

@@ -145,12 +145,16 @@ const BossModNeedShape = (() => {
     function requestMessageFromNeed(need) {
         if (!isOpenFocusNeed(need) || !need.id) return null;
         const approval = need.kind === 'approval';
+        const flavor = approval ? 'cli_approval' : (need.cardKind || 'host_path');
         const card = approval
             ? {
-                id: need.id, kind: 'cli_approval', status: 'pending',
+                id: need.id, kind: flavor, status: 'pending',
                 title: need.title || 'Approve this command?', command: need.sub || '',
             }
-            : { id: need.id, status: 'pending', title: need.title || '', path: need.sub || '' };
+            : {
+                id: need.id, kind: flavor, status: 'pending',
+                title: need.title || '', path: need.sub || '', command: need.sub || '',
+            };
         return {
             key: `${approval ? 'cli-approval' : 'consent'}:${need.id}`,
             author: 'system', authorName: need.agentName || '',
@@ -250,6 +254,8 @@ const BossModNeedShape = (() => {
             sub: String(raw.sub || ''),
             createdAt: String(raw.created_at || ''),
             conversationId: raw.conversation_id == null ? null : String(raw.conversation_id),
+            cardKind: raw.card_kind == null ? '' : String(raw.card_kind),
+            groupedIds: (Array.isArray(raw.grouped_ids) ? raw.grouped_ids : [raw.id]).map((id) => String(id)),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
         need.target = targetFor(need);
@@ -301,7 +307,7 @@ const BossModNeedShape = (() => {
     }
 
     /**
-     * Identity used to coalesce identical live error and CLI-approval cards.
+     * Identity used to coalesce identical live error, CLI-approval, and consent cards.
      *
      * Errors group by agent and message. Approvals group by agent and command.
      * Other kinds stay one-id-one-need.
@@ -313,14 +319,21 @@ const BossModNeedShape = (() => {
         if (!need) return '';
         if (need.kind === 'error') return `error:${need.agentId || ''}:${need.sub || ''}`;
         if (need.kind === 'approval') return `approval:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'consent') {
+            const flavor = need.cardKind || 'host_path';
+            if (flavor === 'shell_executor') {
+                return `consent:shell:${need.conversationId || need.agentId || ''}`;
+            }
+            return `consent:${flavor}:${need.conversationId || ''}:${need.sub || ''}`;
+        }
         return String(need.id || '');
     }
 
     /**
-     * Collapse identical error and CLI-approval needs into one live card.
+     * Collapse identical error, CLI-approval, and consent needs into one live card.
      *
      * Diagnostics stay individual in the log. Duplicate pending Approves for
-     * the same command (two `pip install -e ".[dev]"` pauses) are one ask.
+     * the same command, and identical consent waits, are one ask.
      *
      * @param {Need[]} needs
      * @returns {Need[]}
@@ -330,7 +343,7 @@ const BossModNeedShape = (() => {
         const others = [];
         const groups = new Map();
         list.forEach((need) => {
-            if (!need || (need.kind !== 'error' && need.kind !== 'approval')) {
+            if (!need || (need.kind !== 'error' && need.kind !== 'approval' && need.kind !== 'consent')) {
                 others.push(need);
                 return;
             }
@@ -339,7 +352,9 @@ const BossModNeedShape = (() => {
             if (!existing) {
                 groups.set(key, Object.assign({}, need, {
                     count: 1,
-                    groupedIds: [need.id],
+                    groupedIds: need.groupedIds && need.groupedIds.length
+                        ? need.groupedIds.slice()
+                        : [need.id],
                 }));
                 return;
             }
@@ -347,7 +362,9 @@ const BossModNeedShape = (() => {
                 .localeCompare(String(existing.createdAt || '')) >= 0;
             const live = incomingIsNewer ? need : existing;
             const count = (existing.count || 1) + 1;
-            const groupedIds = (existing.groupedIds || [existing.id]).concat([need.id]);
+            const groupedIds = (existing.groupedIds || [existing.id]).concat(
+                need.groupedIds && need.groupedIds.length ? need.groupedIds : [need.id],
+            );
             const title = count > 1 && live.kind === 'error'
                 ? `${live.agentName} hit an error ×${count}`
                 : live.title;

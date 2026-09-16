@@ -116,6 +116,8 @@ def request_shell_executor_consent(
     if denied is not None:
         return _denied_result(parsed.raw, cwd=cwd)
 
+    from core.bm_cli.host_path_consent import require_consent_chrome
+
     origin_channel = _clean_channel_id(channel_id)
     if origin_channel and db.is_channel_archived(origin_channel):
         from core.models.channel import THREAD_ARCHIVED_CONSENT_DENY
@@ -126,6 +128,17 @@ def request_shell_executor_consent(
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending
+        chrome_error = require_consent_chrome(
+            agent,
+            pending,
+            channel_id=origin_channel or pending.channel_id,
+            command=parsed.raw,
+            cwd=cwd,
+            executor="shell",
+            abandon=False,
+        )
+        if chrome_error is not None:
+            return chrome_error
         return consent_required_result(
             parsed.raw,
             _consent_message(pending, agent_name=agent.name),
@@ -147,6 +160,17 @@ def request_shell_executor_consent(
         channel_id=origin_channel,
         card_kind=SHELL_EXECUTOR_KIND,
     )
+    chrome_error = require_consent_chrome(
+        agent,
+        request,
+        channel_id=origin_channel,
+        command=parsed.raw,
+        cwd=cwd,
+        executor="shell",
+        abandon=True,
+    )
+    if chrome_error is not None:
+        return chrome_error
     return consent_required_result(
         parsed.raw,
         _consent_message(request, agent_name=agent.name),

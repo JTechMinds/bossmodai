@@ -65,6 +65,8 @@ function approvalRow(id, conversationId) {
         sub: "rm -rf build/",
         created_at: "2026-09-07T12:00:00Z",
         conversation_id: conversationId,
+        card_kind: "cli_approval",
+        grouped_ids: [id],
         actions: [
             { label: "Approve", method: "POST", tone: "primary",
               href: `/api/cli-policy/approvals/${id}/approve` },
@@ -103,6 +105,8 @@ function consentRow(id, conversationId) {
         sub: "docs/superpowers/specs/",
         created_at: "2026-09-07T10:17:56Z",
         conversation_id: conversationId || "a1",
+        card_kind: "host_path",
+        grouped_ids: [id],
         actions: [
             { label: "Allow once", method: "POST", tone: "primary",
               href: `/api/host-path-consent/${id}/allow-once` },
@@ -341,7 +345,7 @@ async function main() {
     // Blanking the bell because one fetch failed tells the operator nothing
     // needs them, which is a lie.
 
-    queue = [consentRow("n2"), consentRow("n3")];
+    queue = [consentRow("n2"), Object.assign(consentRow("n3"), { sub: "other/path" })];
     await needs.refresh();
     await drain();
     if (store.getState().needs.filter((item) => item.kind === "consent").length !== 2) {
@@ -812,6 +816,66 @@ async function main() {
     }
     const barSuppressesCoalescedSibling = true;
 
+    // ─── 13g. Consent fallback, then quiet, plus coalesced sibling ───
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [consentRow("c-missing", "a1")];
+    await needs2.refresh();
+    await drain();
+    if (bar.element.hidden !== false) {
+        throw new Error("a pending consent with no inline card must appear on the bar");
+    }
+    const consentFallbackLabels = bar.element.querySelectorAll("button")
+        .map((node) => node.textContent)
+        .filter((label) => label === "Allow once" || label === "Deny");
+    if (!consentFallbackLabels.includes("Allow once") || !consentFallbackLabels.includes("Deny")) {
+        throw new Error(`fallback consent bar must offer Allow once/Deny, got ${consentFallbackLabels.join(",")}`);
+    }
+    const barShowsConsentWhenInlineMissing = true;
+
+    store2.setState({ inlineNeedIds: ["c-old"] });
+    queue2 = [
+        Object.assign(consentRow("c-old", "a1"), { created_at: "2026-09-07T12:00:00Z" }),
+        Object.assign(consentRow("c-new", "a1"), { created_at: "2026-09-07T12:01:00Z" }),
+    ];
+    await needs2.refresh();
+    await drain();
+    const dupConsents = store2.getState().needs.filter((item) => item.kind === "consent");
+    if (dupConsents.length !== 1) {
+        throw new Error(`duplicate host-path consents must be one card, got ${dupConsents.length}`);
+    }
+    if (bar.element.hidden !== true) {
+        throw new Error("Needs-bar must stay quiet when a coalesced consent sibling is inline");
+    }
+    const duplicateConsentsCoalesce = true;
+
+    queue2 = [{
+        id: "shell-1",
+        kind: "consent",
+        card_kind: "shell_executor",
+        agent_id: "a1",
+        agent_name: "Jim",
+        title: "Jim needs Shell Executor for validate-on-clone — enable or deny",
+        sub: "pytest -q",
+        created_at: "2026-09-07T12:03:00Z",
+        conversation_id: "a1",
+        grouped_ids: ["shell-1"],
+        actions: [
+            { label: "Turn on Shell Executor (company-wide)", method: "POST", tone: "primary",
+              href: "/api/shell-executor/shell-1/enable" },
+            { label: "Deny — Shell Executor stays off", method: "POST", tone: "quiet",
+              href: "/api/shell-executor/shell-1/deny" },
+        ],
+    }];
+    store2.setState({ inlineNeedIds: [] });
+    await needs2.refresh();
+    await drain();
+    const shellNeed = store2.getState().needs[0];
+    const projected = BossModNeedShape.requestMessageFromNeed(shellNeed);
+    if (!projected || !projected.card || projected.card.kind !== "shell_executor") {
+        throw new Error("need-queue live paint must carry Shell Executor card kind");
+    }
+    const shellNeedPaintsEnableKind = true;
+
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
     queue2 = [blockedRow("s1", "a1")];
@@ -898,6 +962,9 @@ async function main() {
         duplicateApprovalsCoalesce,
         barShowsThreadApprovalOnAgentFocus,
         barSuppressesCoalescedSibling,
+        barShowsConsentWhenInlineMissing,
+        duplicateConsentsCoalesce,
+        shellNeedPaintsEnableKind,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));

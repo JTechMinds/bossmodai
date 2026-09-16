@@ -291,6 +291,9 @@ def test_cli_approval_chrome_paints_approve_reject() -> None:
         "paintsLiveChannelAppend": True,
         "paintsNeedWithoutBellFetch": True,
         "refetchesWhenInlineMissing": True,
+        "paintsHostPathCreateChrome": True,
+        "paintsShellLiveAppend": True,
+        "paintsShellNeedWithoutBellFetch": True,
     }
 
 

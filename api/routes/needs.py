@@ -40,8 +40,25 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         WORKSPACE_PREFERENCE_KIND,
     )
 
-    items = []
+    groups: dict[tuple[str, str, str], list[Any]] = {}
+    order: list[tuple[str, str, str]] = []
     for request in db.list_consent_requests(status="pending", limit=MAX_LIMIT):
+        kind = (request.card_kind or "host_path").strip() or "host_path"
+        conversation = request.channel_id or request.agent_id
+        if kind == SHELL_EXECUTOR_KIND:
+            key = (kind, conversation, "")
+        else:
+            key = (kind, conversation, request.grant_root or request.path)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(request)
+
+    items = []
+    for key in order:
+        rows = groups[key]
+        request = rows[0]
+        grouped_ids = [row.id for row in rows]
         name = _agent_name(request.agent_id, cache)
         kind = (request.card_kind or "host_path").strip() or "host_path"
         if kind == SHELL_EXECUTOR_KIND:
@@ -85,41 +102,44 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         items.append({
             "id": request.id,
             "kind": "consent",
+            "card_kind": kind,
             "agent_id": request.agent_id,
             "agent_name": name,
             "title": title,
             "sub": sub,
             "created_at": request.created_at.isoformat(),
-            # channel_id is a declared field on HostPathConsentRequest; when the
-            # request did not originate in a thread it is None and the agent's
-            # own conversation is the right place to show it.
             "conversation_id": request.channel_id or request.agent_id,
+            "grouped_ids": grouped_ids,
             "actions": actions,
         })
     return items
 
 
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
-    items = []
-    seen: set[tuple[str, str]] = set()
+    groups: dict[tuple[str, str], list[Any]] = {}
+    order: list[tuple[str, str]] = []
     for request in db.list_cli_approval_requests(status="pending", limit=MAX_LIMIT):
         key = (request.agent_id, request.command)
-        if key in seen:
-            continue
-        seen.add(key)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(request)
+    items = []
+    for key in order:
+        rows = groups[key]
+        request = rows[0]
         name = _agent_name(request.agent_id, cache)
         items.append({
             "id": request.id,
             "kind": "approval",
+            "card_kind": "cli_approval",
             "agent_id": request.agent_id,
             "agent_name": name,
             "title": f"{name} wants to run a command",
             "sub": request.command,
             "created_at": request.created_at.isoformat(),
-            # channel_id is a declared field on CliApprovalRequest; when the
-            # request did not originate in a thread it is None and the agent's
-            # own conversation is the right place to show it.
             "conversation_id": request.channel_id or request.agent_id,
+            "grouped_ids": [row.id for row in rows],
             "actions": [
                 {"label": "Approve", "method": "POST", "tone": "primary",
                  "href": f"/api/cli-policy/approvals/{request.id}/approve"},

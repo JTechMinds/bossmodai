@@ -86,7 +86,17 @@ def list_notifications(
 
 def get_notification_for_approval(approval_id: str) -> Notification | None:
     """Return the Focus card posted for one CLI approval, if any."""
-    token = (approval_id or "").strip()
+    return _notification_for_link("cli_approval", approval_id)
+
+
+def get_notification_for_consent(consent_id: str) -> Notification | None:
+    """Return the Focus card posted for one consent request, if any."""
+    return _notification_for_link("host_path_consent", consent_id)
+
+
+def _notification_for_link(target_kind: str, target_path: str) -> Notification | None:
+    """Return the Focus notification linked to one approval or consent id."""
+    token = (target_path or "").strip()
     if not token:
         return None
     return fetch_one(
@@ -95,11 +105,11 @@ def get_notification_for_approval(approval_id: str) -> Notification | None:
         FROM notifications
         WHERE id = (
             SELECT notification_id FROM notification_links
-            WHERE target_kind = 'cli_approval' AND target_path = $1
+            WHERE target_kind = $1 AND target_path = $2
             LIMIT 1
         )
         """,
-        [token],
+        [target_kind, token],
         Notification,
     )
 

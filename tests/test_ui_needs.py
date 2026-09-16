@@ -95,6 +95,9 @@ def test_needs_harness() -> None:
         "duplicateApprovalsCoalesce": True,
         "barShowsThreadApprovalOnAgentFocus": True,
         "barSuppressesCoalescedSibling": True,
+        "barShowsConsentWhenInlineMissing": True,
+        "duplicateConsentsCoalesce": True,
+        "shellNeedPaintsEnableKind": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }

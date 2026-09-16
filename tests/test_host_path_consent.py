@@ -430,6 +430,7 @@ async def test_consent_card_is_projected_once_and_attached_to_messages(
     }
     trigger = {"type": "activity_resumed", "source_channel": "work"}
     action = {"action": "bm_cli", "command": f"cat {fixture}"}
+    assert db.has_consent_notification(first.consent_request_id)
     notes = project_chat_notifications(
         agent=agent,
         trigger=trigger,
@@ -549,13 +550,13 @@ async def test_channel_origin_consent_projects_interactive_card_in_channel(
         '{"act":"request_host_access","data":{"path":"%s","why":"Need the shared file"},"th":"ask"}'
         % fixture
     )
-    result = await execute_action(parsed, agent, state)
     trigger = {
         "type": "channel_message",
         "source_channel": "channel",
         "channel_id": channel.id,
         "content": f"Please read {fixture}",
     }
+    result = await execute_action(parsed, agent, state, trigger)
     notes = project_chat_notifications(
         agent=agent,
         trigger=trigger,
@@ -606,13 +607,15 @@ async def test_channel_origin_consent_projects_interactive_card_in_channel(
         if item.get("notification_kind") == "host_path_consent"
     ]
     assert db.has_consent_notification(notes[0].consent_id) is True
-    assert project_chat_notifications(
+    replay = project_chat_notifications(
         agent=agent,
         trigger=trigger,
         active_activity=None,
         action=parsed,
         result=result,
-    ) == []
+    )
+    assert len(replay) == 1
+    assert replay[0].consent_id == notes[0].consent_id
 
 
 def test_channel_consent_deny_keeps_workspace_host_roots_unchanged(
@@ -634,6 +637,7 @@ def test_channel_consent_deny_keeps_workspace_host_roots_unchanged(
         raw_path=str(fixture),
         reason="Need the secret",
         cwd="/me",
+        channel_id=channel.id,
     )
     assert first.consent_required is True
     request_id = first.consent_request_id
@@ -1599,3 +1603,60 @@ def test_junk_rr_under_home_is_rejected(tmp_path: Path, monkeypatch: pytest.Monk
     assert db.list_consent_requests(agent_id=agent.id) == []
     resolved = resolve_consent_host_path(str(home / "ds" / "nothing"))
     assert resolved is None
+
+
+def test_host_path_chrome_failure_does_not_pause_silently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "fail-root"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("nope\n", encoding="utf-8")
+    agent, _state = _agent_and_state()
+    channel = db.create_channel(
+        name="Fail Thread",
+        member_agent_ids=[agent.id],
+        created_by=agent.id,
+    )
+    monkeypatch.setattr(
+        "core.agent_loop.notifications.persist_channel_notification",
+        lambda *args, **kwargs: {},
+    )
+    paused = request_host_path_access(
+        agent=agent,
+        raw_path=str(fixture),
+        reason="Need the note",
+        cwd="/me",
+        channel_id=channel.id,
+    )
+    assert paused.consent_required is False
+    assert "could not be posted" in (paused.detail or "").lower()
+    assert db.list_consent_requests(status="pending") == []
+    assert db.list_channel_messages(channel.id) == []
+
+
+def test_focus_consent_create_posts_chrome_without_emit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = tmp_path / "focus-create"
+    host.mkdir()
+    fixture = host / "note.txt"
+    fixture.write_text("focus\n", encoding="utf-8")
+    agent, state = _agent_and_state()
+    paused = execute_bm_cli(agent, state, f"cat {fixture}")
+    assert paused.consent_required is True
+    assert db.has_consent_notification(paused.consent_request_id)
+    client = _api_client(monkeypatch)
+    res = client.get(f"/api/agents/{agent.id}/messages", headers=_headers())
+    assert res.status_code == 200
+    cards = [
+        item for item in res.json()
+        if item.get("notification_kind") == "host_path_consent"
+    ]
+    assert len(cards) == 1
+    assert cards[0]["host_path_consent"]["id"] == paused.consent_request_id
+    needs = client.get("/api/needs", headers=_headers())
+    consents = [item for item in needs.json() if item["kind"] == "consent"]
+    assert len(consents) == 1
+    assert consents[0]["card_kind"] == "host_path"
+    assert paused.consent_request_id in consents[0]["grouped_ids"]

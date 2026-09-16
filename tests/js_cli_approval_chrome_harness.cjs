@@ -94,6 +94,8 @@ function actionLabels(root) {
             { id: "chan", name: "Chan", role: "Engineer" },
             { id: "slow", name: "Slow", role: "Engineer" },
             { id: "reload", name: "Reload", role: "Engineer" },
+            { id: "hp", name: "Hp", role: "Engineer" },
+            { id: "sh", name: "Sh", role: "Engineer" },
         ],
         threads: [],
         hasUsableModel: true,
@@ -262,6 +264,82 @@ function actionLabels(root) {
     }
     const paintsNeedWithoutBellFetch = true;
 
+    REST_MESSAGES.hp = [{
+        id: "n-hp",
+        from: "system", from_name: "Hp", message_type: "system",
+        notification_kind: "host_path_consent",
+        content: "Hp needs host-path access: /tmp/x",
+        host_path_consent: {
+            id: "hp-create", kind: "host_path", status: "pending",
+            title: "Host path consent", path: "/tmp/x", always_allow: false,
+        },
+        created_at: "2026-09-16T17:10:00Z",
+    }];
+    store.setState({ conversationId: "hp", conversationKind: "agent", needs: [], inlineNeedIds: [] });
+    await conversation.open("hp", "agent");
+    await tick();
+    const hpCard = conversation.element.querySelector("#host-path-consent-hp-create");
+    if (!hpCard) throw new Error("create-time Focus load must paint a host-path consent card");
+    const hpLabels = actionLabels(hpCard);
+    if (!hpLabels.includes("Allow once") || !hpLabels.includes("Deny")) {
+        throw new Error(`create-time host-path card must offer Allow once/Deny, got ${hpLabels.join(",")}`);
+    }
+    const paintsHostPathCreateChrome = true;
+
+    bus.publish("chat_message", {
+        agent_id: "hp",
+        content: "Hp needs Shell Executor for validate-on-clone — enable or deny",
+        from: "system", from_name: "Hp", message_type: "system",
+        message_id: "n-sh-live",
+        notification_kind: "host_path_consent",
+        host_path_consent: {
+            id: "sh-live", kind: "shell_executor", status: "pending",
+            title: "Enable Shell Executor?", command: "pytest -q",
+            enable_label: "Turn on Shell Executor (company-wide)",
+            deny_label: "Deny — Shell Executor stays off",
+        },
+        created_at: "2026-09-16T17:11:00Z",
+    });
+    await tick();
+    const shLive = conversation.element.querySelector("#host-path-consent-sh-live");
+    if (!shLive) throw new Error("live chat_message must paint a Shell Executor card");
+    const shLabels = actionLabels(shLive);
+    if (!shLabels.some((label) => /Turn on Shell Executor/.test(label))
+        || !shLabels.some((label) => /Deny/.test(label))) {
+        throw new Error(`live Shell Executor card must offer Enable/Deny, got ${shLabels.join(",")}`);
+    }
+    const paintsShellLiveAppend = true;
+
+    store.setState({ conversationId: "sh", conversationKind: "agent", needs: [], inlineNeedIds: [] });
+    REST_MESSAGES.sh = [{
+        id: "m-sh", from: "agent", content: "working", created_at: "2026-09-16T17:12:00Z",
+    }];
+    await conversation.open("sh", "agent");
+    await tick();
+    store.setState({
+        needs: [{
+            id: "sh-need",
+            kind: "consent",
+            cardKind: "shell_executor",
+            agentId: "sh",
+            conversationId: "th-sh",
+            title: "Sh needs Shell Executor for validate-on-clone — enable or deny",
+            sub: "pytest -q",
+            actions: [],
+            target: { place: "chat", conversationId: "th-sh", conversationKind: "thread" },
+        }],
+    });
+    await tick();
+    const shNeed = conversation.element.querySelector("#host-path-consent-sh-need");
+    if (!shNeed) {
+        throw new Error("create-time Shell Executor need must paint in Focus without a bell fetch");
+    }
+    const shNeedLabels = actionLabels(shNeed);
+    if (!shNeedLabels.some((label) => /Turn on Shell Executor/.test(label))) {
+        throw new Error(`projected Shell Executor card must offer Enable, got ${shNeedLabels.join(",")}`);
+    }
+    const paintsShellNeedWithoutBellFetch = true;
+
     process.stdout.write(JSON.stringify({
         ok: true,
         paintsCreateChrome,
@@ -269,6 +347,9 @@ function actionLabels(root) {
         paintsLiveChannelAppend,
         paintsNeedWithoutBellFetch,
         refetchesWhenInlineMissing,
+        paintsHostPathCreateChrome,
+        paintsShellLiveAppend,
+        paintsShellNeedWithoutBellFetch,
     }));
 })().catch((err) => {
     process.stderr.write(String((err && err.stack) || err));
