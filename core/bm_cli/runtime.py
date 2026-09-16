@@ -97,6 +97,10 @@ _HANDLERS: dict[str, CliHandler] = {
 
 VIRTUAL_COMMANDS: frozenset[str] = frozenset(_HANDLERS.keys())
 
+# Virtual git is the agent /me workspace repo only. Commit/push/add and any
+# git run inside a nested host-work clone must use the shell policy path.
+_VIRTUAL_GIT_SUBCOMMANDS = frozenset({"status", "log", "diff", "show", "restore"})
+
 
 def preview_bm_cli(
     agent: Agent,
@@ -282,6 +286,16 @@ def _execute_bm_cli_inner(
         )
         return result
 
+    # --- Virtual git that belongs on the clone or is not a virtual subcommand ---
+    if policy.executor == "virtual" and _use_shell_git(agent, parsed, cwd_before):
+        return _execute_shell_policy(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd_before=cwd_before,
+            trigger_type=trigger_type,
+        )
+
     # --- Virtual handler ---
     if policy.executor == "virtual":
         result = _execute_virtual(
@@ -300,17 +314,13 @@ def _execute_bm_cli_inner(
             data = result.data or {}
             error_msg = str(data.get("error", ""))
             if "unsupported" in error_msg.lower():
-                shell_policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id)
-                if shell_policy.allowed:
-                    return _execute_shell(
-                        agent=agent, parsed=parsed, content=content,
-                        cwd_before=cwd_before, policy=shell_policy, trigger_type=trigger_type,
-                    )
-                if shell_policy.approval_required:
-                    return _handle_approval_required(
-                        agent=agent, parsed=parsed, content=content,
-                        cwd_before=cwd_before, policy=shell_policy, trigger_type=trigger_type,
-                    )
+                return _execute_shell_policy(
+                    agent=agent,
+                    parsed=parsed,
+                    content=content,
+                    cwd_before=cwd_before,
+                    trigger_type=trigger_type,
+                )
         return result
 
     # --- Shell executor ---
@@ -373,6 +383,7 @@ def execute_approved_command(
         timeout_seconds=timeout,
         max_output_bytes=max_output,
         allowed_roots=roots,
+        extra_env=_agent_git_identity_env(agent),
     )
     if shell_exec.denied_by_path_jail:
         result = error_result(
@@ -424,6 +435,81 @@ def execute_approved_command(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
+    """Return True when this git command should use shell policy, not virtual git."""
+    if parsed.name != "git":
+        return False
+    if config.get("cli_shell_enabled") != "true":
+        return False
+    from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
+
+    subcommand = parsed.args[0] if parsed.args else ""
+    if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
+        return True
+    return cwd_is_nested_clone_repo(agent, cwd)
+
+
+def _agent_git_identity_env(agent: Agent) -> dict[str, str]:
+    """Identity so shell ``git commit`` on a clone does not fail closed."""
+    author_name = (agent.name or "").strip() or agent.storage_key
+    author_email = f"{agent.storage_key}@bossmod.local"
+    return {
+        "GIT_AUTHOR_NAME": author_name,
+        "GIT_AUTHOR_EMAIL": author_email,
+        "GIT_COMMITTER_NAME": author_name,
+        "GIT_COMMITTER_EMAIL": author_email,
+    }
+
+
+def _execute_shell_policy(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+) -> BossModCliResult:
+    """Evaluate shell policy for a command that left the virtual handler."""
+    shell_policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id)
+    if shell_policy.approval_required:
+        return _handle_approval_required(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd_before=cwd_before,
+            policy=shell_policy,
+            trigger_type=trigger_type,
+        )
+    if not shell_policy.allowed:
+        result = error_result(
+            parsed.raw,
+            shell_policy.message or f"Command not permitted: {parsed.name}",
+            cwd=cwd_before,
+            executor=shell_policy.executor,
+        )
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor=shell_policy.executor,
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier=shell_policy.tier,
+            decision="denied",
+            result=result,
+            trigger_type=trigger_type,
+        )
+        return result
+    return _execute_shell(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        policy=shell_policy,
+        trigger_type=trigger_type,
+    )
+
 
 def _handle_approval_required(
     *,
@@ -653,6 +739,7 @@ def _execute_shell(
         timeout_seconds=timeout,
         max_output_bytes=max_output,
         allowed_roots=roots,
+        extra_env=_agent_git_identity_env(agent),
     )
     if shell_exec.denied_by_path_jail:
         result = error_result(

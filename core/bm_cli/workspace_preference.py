@@ -29,6 +29,7 @@ from core.bm_cli.host_path_consent import (
 )
 from core.bm_cli.results import consent_required_result, error_result, success_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
+from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models import Agent
 from core.models.host_path_consent import (
     WORKSPACE_PREFERENCE_BODY,
@@ -115,6 +116,29 @@ MUTATING_CLI_COMMANDS = frozenset({
 })
 
 _HOST_WORK_DIR = "host-work"
+
+
+def cwd_is_nested_clone_repo(agent: Agent, cwd: str) -> bool:
+    """Return True when *cwd* sits in a git repo other than the agent /me root.
+
+    Branch/workspace-copy clones live under ``/me/host-work/<name>`` and keep
+    their own ``.git``. Virtual ``git`` always targets the agent workspace
+    repo, so clone status/commit/push must use the shell executor.
+    """
+    try:
+        resolved = resolve_cli_path(agent.storage_key, cwd, ".")
+    except (OSError, ValueError):
+        return False
+    if resolved is None or resolved.real_path is None:
+        return False
+    git_root = find_git_root(Path(resolved.real_path))
+    if git_root is None:
+        return False
+    try:
+        workspace = agent_artifact_dir(agent.storage_key).resolve()
+        return git_root.resolve() != workspace
+    except OSError:
+        return False
 
 
 def find_git_root(path: Path) -> Path | None:

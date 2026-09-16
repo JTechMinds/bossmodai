@@ -362,9 +362,11 @@ CLI LOOKUP DETAILS
 {{end}}
 - results are turn-local
 {{if cli.shell_enabled}}
-- additional commands are available (npm, pip, python, curl, etc.)
-- some commands may require operator approval — your turn will pause until reviewed
-- blocked commands cannot be used; try alternative approaches
+- additional commands are available when policy allows them (pytest, git, npm, curl, …)
+- python and bash stay blocked; run pytest via cli on the clone, not python -m pytest
+- some commands may require operator approval — that is an approval card, not a request for the operator to run the command
+- do not park @Operator as the test runner or git pusher when cli on the clone can run the command
+- blocked commands cannot be used; try an allowed alternative
 {{else}}
 - only built-in commands are currently available
 {{end}}

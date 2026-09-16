@@ -48,7 +48,11 @@ CHAT_FORMATTING = (
 LOCKED_WORKSPACE_COPY_STEER = (
     "Once the operator chooses Branch or workspace-copy, that preference stays locked for the task. "
     "Stay on the clone. Do not recommend editing the live host tree. "
-    "Do not park @Operator to reopen it unless the operator explicitly overrides."
+    "Do not park @Operator to reopen it unless the operator explicitly overrides. "
+    "The clone under /me is a real workspace: cd there and validate via cli "
+    "(pytest, local git add/commit). Do not invent a desk deny. "
+    "Do not park @Operator as the test runner or git pusher. "
+    "A git push approval card is not a request for the operator to run the command."
 )
 
 

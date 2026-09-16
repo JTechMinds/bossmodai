@@ -243,6 +243,37 @@ INTERPRETER_AND_XARGS_PATTERNS: frozenset[str] = frozenset(
 
 POSIX_SHELL_PATTERNS: frozenset[str] = frozenset({"sh", "bash", "zsh", "dash"})
 
+# Validate-on-clone: agents run tests and local git on /me/host-work copies.
+# python / python3 / bash stay never_allowed (HA-SEC-P0-03). pytest is argv0.
+# Do not seed a bare ``git`` prefix — that would swallow ``git push`` before
+# approval_required.
+_VALIDATE_ON_CLONE_ALWAYS_ALLOWED = (
+    ("always_allowed", "pytest", "prefix", "Run the pytest test runner.", "development",
+     "pytest [options] [path]",
+     "Run pytest inside the current workspace or locked clone. Use after cd to the clone. python -m pytest stays blocked.\nExample: pytest -q"),
+    ("always_allowed", "git status", "prefix", "Show working tree status.", "git",
+     "git status [path]",
+     "Show git status for the current repository (the locked clone after cd).\nExample: git status --short"),
+    ("always_allowed", "git log", "prefix", "Show commit history.", "git",
+     "git log [options]",
+     "Show recent commits in the current repository.\nExample: git log -n 5"),
+    ("always_allowed", "git diff", "prefix", "Show unstaged or staged diffs.", "git",
+     "git diff [path]",
+     "Show diffs in the current repository.\nExample: git diff"),
+    ("always_allowed", "git show", "prefix", "Show a commit or object.", "git",
+     "git show [revision]",
+     "Show one commit or object in the current repository.\nExample: git show HEAD"),
+    ("always_allowed", "git add", "prefix", "Stage files in the current repository.", "git",
+     "git add [path]",
+     "Stage files for a local commit on the locked clone.\nExample: git add tests/test_ok.py"),
+    ("always_allowed", "git commit", "prefix", "Create a local commit.", "git",
+     "git commit [options]",
+     "Create a local commit on the locked clone. Does not push.\nExample: git commit -m validate"),
+    ("always_allowed", "git restore", "prefix", "Restore working-tree files.", "git",
+     "git restore [path]",
+     "Restore files in the current repository working tree.\nExample: git restore README.md"),
+)
+
 _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]] = [
     # (tier, pattern, match_mode, description, category, usage_syntax, help_text)
 
@@ -380,6 +411,7 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
     ("always_allowed", "uname", "prefix", "Print kernel and OS identity.", "system",
      "uname [options]",
      "Print the kernel name and related system identity. Pathless diagnostic.\nExample: uname -a"),
+    *_VALIDATE_ON_CLONE_ALWAYS_ALLOWED,
 
     # ── approval_required — prefix ──
     ("approval_required", "rm", "prefix", "Remove files or directories.", "filesystem",
@@ -513,6 +545,7 @@ def reconcile_hardened_seed_rules() -> int:
             if updated is not None:
                 changes += 1
     changes += _ensure_safe_diagnostic_seed_rules()
+    changes += _ensure_validate_on_clone_seed_rules()
     return changes
 
 
@@ -528,8 +561,23 @@ def _ensure_safe_diagnostic_seed_rules() -> int:
 
     Does not overwrite an operator-customized existing ``uname`` row.
     """
+    return _insert_missing_global_seed_rules(_SAFE_DIAGNOSTIC_ALWAYS_ALLOWED)
+
+
+def _ensure_validate_on_clone_seed_rules() -> int:
+    """Insert missing validate-on-clone always-allowed seed rules.
+
+    Does not overwrite an operator-customized existing row for the same pattern.
+    """
+    return _insert_missing_global_seed_rules(_VALIDATE_ON_CLONE_ALWAYS_ALLOWED)
+
+
+def _insert_missing_global_seed_rules(
+    rules: tuple[tuple[str, str, str, str | None, str, str | None, str | None], ...],
+) -> int:
+    """Insert global seed rows that are absent. Leaves custom rows alone."""
     changes = 0
-    for tier, pattern, match_mode, description, category, usage_syntax, help_text in _SAFE_DIAGNOSTIC_ALWAYS_ALLOWED:
+    for tier, pattern, match_mode, description, category, usage_syntax, help_text in rules:
         existing = query_one(
             "SELECT id FROM cli_policy_rules WHERE pattern = $1 AND match_mode = $2 AND agent_id IS NULL",
             [pattern, match_mode],

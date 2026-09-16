@@ -17,7 +17,11 @@ from core.bm_cli.workspace_git import (
 def handle_git(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
     """Handle a bounded subset of Git commands inside the agent workspace repo."""
     if not parsed.args:
-        return error_result(parsed.raw, 'Supported git commands: status, log, diff, show, restore.', cwd=context.cwd)
+        return error_result(
+            parsed.raw,
+            'Unsupported git invocation. Supported virtual git: status, log, diff, show, restore.',
+            cwd=context.cwd,
+        )
 
     subcommand = parsed.args[0]
     args = parsed.args[1:]
@@ -132,7 +136,11 @@ def handle_git(context: CliExecutionContext, parsed: ParsedCliCommand, content: 
 
     return error_result(
         parsed.raw,
-        'Supported git commands: status, log, diff, show, restore.',
+        (
+            f"Unsupported git subcommand {subcommand!r}. "
+            "Supported virtual git: status, log, diff, show, restore. "
+            "On a locked clone, use cli git add/commit (and git push, which may need approval)."
+        ),
         cwd=context.cwd,
     )
 

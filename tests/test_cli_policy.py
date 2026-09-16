@@ -220,6 +220,10 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert HARDENED_NEVER_ALLOWED_PATTERNS <= never
     assert "cat" in always
     assert "uname" in always
+    assert "pytest" in always
+    assert "git add" in always
+    assert "git commit" in always
+    assert "git" not in always
 
 
 def test_reconcile_hardens_legacy_always_allowed_rows() -> None:
@@ -335,3 +339,41 @@ def test_path_qualified_always_allowed_still_matches_basename() -> None:
     decision = policy_engine.evaluate("/bin/cat notes.md", frozenset())
     assert decision.allowed is True
     assert decision.tier == "always_allowed"
+
+
+def test_validate_on_clone_pytest_and_local_git_are_allowed_python_stays_blocked() -> None:
+    _enable_shell()
+
+    pytest_decision = policy_engine.evaluate("pytest -q", frozenset())
+    assert pytest_decision.allowed is True
+    assert pytest_decision.tier == "always_allowed"
+
+    for command in ("git add tests/test_ok.py", "git commit -m validate", "git status --short"):
+        decision = policy_engine.evaluate(command, frozenset())
+        assert decision.allowed is True, command
+        assert decision.tier == "always_allowed", command
+
+    push = policy_engine.evaluate("git push origin main", frozenset())
+    assert push.allowed is False
+    assert push.approval_required is True
+    assert push.tier == "approval_required"
+
+    for command in ("python -m pytest -q", "python3 -m pytest -q", "bash scripts/run-tests.sh"):
+        decision = policy_engine.evaluate(command, frozenset())
+        assert decision.allowed is False, command
+        assert decision.approval_required is False, command
+        assert decision.tier == "never_allowed", command
+
+
+def test_reconcile_inserts_missing_validate_on_clone_rules() -> None:
+    db.execute("DELETE FROM cli_policy_rules WHERE pattern = $1", ["pytest"])
+    policy_engine.reload()
+    assert "pytest" not in {
+        rule.pattern for rule in db.list_cli_policy_rules() if rule.tier == "always_allowed"
+    }
+
+    changed = db.reconcile_hardened_cli_policy_rules()
+    assert changed >= 1
+    always = {rule.pattern for rule in db.list_cli_policy_rules() if rule.tier == "always_allowed"}
+    assert "pytest" in always
+    assert "git commit" in always
