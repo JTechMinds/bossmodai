@@ -276,6 +276,7 @@ def resolve_consent_request(
         "cloned",
         "branched",
         "edit_host",
+        "enabled",
     }:
         raise ValueError(f"Unsupported consent status: {status}")
     return fetch_one(

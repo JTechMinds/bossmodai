@@ -25,13 +25,21 @@ from core.models import Agent
 
 HOST_DENY_WHY = "host deny"
 NO_PROGRESS_WHY = "no progress"
+SHELL_EXECUTOR_WHY = "Shell Executor off — needs enable"
 HOST_DENY_KIND = "blocked_host_deny"
 NO_PROGRESS_KIND = "blocked_no_progress"
+SHELL_EXECUTOR_BLOCK_KIND = "blocked_shell_executor"
 
 _HOST_DENY_MARKERS = (
     "host writes stay blocked",
     "host-path access denied",
     "host path denied",
+)
+_SHELL_EXECUTOR_DENY_KIND = "shell_executor_deny"
+_SHELL_EXECUTOR_MARKERS = (
+    "shell executor is off",
+    "shell executor off",
+    "denied enable for validate-on-clone",
 )
 
 
@@ -83,6 +91,53 @@ def is_host_deny_result(cli_result: Any) -> bool:
         ]
     ).lower()
     return any(marker in blob for marker in _HOST_DENY_MARKERS)
+
+
+def is_shell_executor_deny_result(cli_result: Any) -> bool:
+    """Return True when a CLI result is a Shell Executor deny (not a wait)."""
+    if getattr(cli_result, "ok", True):
+        return False
+    if getattr(cli_result, "consent_required", False):
+        return False
+    if getattr(cli_result, "approval_required", False):
+        return False
+    if str(getattr(cli_result, "kind", "") or "") == _SHELL_EXECUTOR_DENY_KIND:
+        return True
+    data = getattr(cli_result, "data", None) or {}
+    blob = " ".join(
+        [
+            str(getattr(cli_result, "detail", "") or ""),
+            str(data.get("error") or ""),
+        ]
+    ).lower()
+    return any(marker in blob for marker in _SHELL_EXECUTOR_MARKERS)
+
+
+def surface_cli_gate_block(
+    result: dict[str, Any],
+    *,
+    agent: Agent,
+    trigger: dict[str, Any] | None,
+    cli_result: Any,
+) -> None:
+    """Post Blocked — {why} when a CLI result is a named gate deny."""
+    if is_host_deny_result(cli_result):
+        surface_blocked_origin(
+            result,
+            agent=agent,
+            trigger=trigger,
+            why=HOST_DENY_WHY,
+            kind=HOST_DENY_KIND,
+        )
+        return
+    if is_shell_executor_deny_result(cli_result):
+        surface_blocked_origin(
+            result,
+            agent=agent,
+            trigger=trigger,
+            why=SHELL_EXECUTOR_WHY,
+            kind=SHELL_EXECUTOR_BLOCK_KIND,
+        )
 
 
 def finish_blocked_origin(

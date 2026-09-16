@@ -24,7 +24,7 @@ from core.bm_cli.host_roots import (
 from core.bm_cli.results import consent_required_result, error_result, success_result
 from core.bm_cli.types import BossModCliResult
 from core.models import Agent
-from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND, HostPathConsentRequest
+from core.models.host_path_consent import SHELL_EXECUTOR_KIND, WORKSPACE_PREFERENCE_KIND, HostPathConsentRequest
 
 ConsentDecision = Literal["allow_once", "always_allow", "deny"]
 
@@ -403,7 +403,10 @@ async def resume_host_path_consent(
     existing = db.get_consent_request(request_id)
     if existing is None or existing.status != "pending":
         return None
-    if getattr(existing, "card_kind", "host_path") == WORKSPACE_PREFERENCE_KIND and decision != "deny":
+    kind = getattr(existing, "card_kind", "host_path") or "host_path"
+    if kind == SHELL_EXECUTOR_KIND:
+        return None
+    if kind == WORKSPACE_PREFERENCE_KIND and decision != "deny":
         return None
 
     if decision == "deny":

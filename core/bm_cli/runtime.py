@@ -250,6 +250,17 @@ def _execute_bm_cli_inner(
         )
         return result
 
+    paused = _maybe_shell_executor_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if paused is not None:
+        return paused
+
     # Evaluate policy (DB-driven, with agent-specific rules)
     policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
 
@@ -435,6 +446,44 @@ def execute_approved_command(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _maybe_shell_executor_consent(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Pause for Shell Executor Enable/Deny when a locked clone needs shell."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.shell_executor_consent import maybe_pause_for_shell_executor
+
+    paused = maybe_pause_for_shell_executor(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd_before,
+        task_id=get_active_task_id(agent.id),
+        channel_id=channel_id,
+    )
+    if paused is None:
+        return None
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=paused.executor,
+        cwd_before=cwd_before,
+        cwd_after=paused.cwd,
+        policy_tier="disabled",
+        decision="approval_required" if paused.consent_required else "denied",
+        result=paused,
+        trigger_type=trigger_type,
+    )
+    return paused
+
 
 def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     """Return True when this git command should use shell policy, not virtual git."""

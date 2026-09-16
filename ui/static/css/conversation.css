@@ -462,6 +462,7 @@
 }
 
 .host-path-consent-card .hpc-reason,
+.host-path-consent-card .hpc-hint,
 .host-path-consent-card .hpc-status {
   margin-top: 6px;
   font-size: 12px;

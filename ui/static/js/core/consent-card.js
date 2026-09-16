@@ -28,11 +28,17 @@ const BossModConsentCard = (() => {
         );
     }
 
+    function cardKind(card) {
+        if (!card) return 'host_path';
+        return (card.kind || card.card_kind || 'host_path');
+    }
+
     function isWorkspacePreferenceCard(card) {
-        return Boolean(
-            card
-            && (card.kind === 'workspace_preference' || card.card_kind === 'workspace_preference')
-        );
+        return cardKind(card) === 'workspace_preference';
+    }
+
+    function isShellExecutorCard(card) {
+        return cardKind(card) === 'shell_executor';
     }
 
     function requireApi(api) {
@@ -62,28 +68,35 @@ const BossModConsentCard = (() => {
         if (!container || !card) return;
         container.classList.add('host-path-consent-card');
         if (card.grant_root) container.dataset.grantRoot = card.grant_root;
-        container.dataset.cardKind = isWorkspacePreferenceCard(card)
-            ? 'workspace_preference'
-            : 'host_path';
+        const kind = cardKind(card);
+        container.dataset.cardKind = kind;
         const status = card.status || 'pending';
         container.classList.toggle('is-resolved', status !== 'pending');
         const title = document.createElement('div');
         title.className = 'hpc-title';
-        const workspace = isWorkspacePreferenceCard(card);
+        const workspace = kind === 'workspace_preference';
+        const shell = kind === 'shell_executor';
         title.textContent = workspace
             ? (card.title || 'Work in your workspace?')
-            : 'Host path consent';
+            : (shell ? (card.title || 'Enable Shell Executor?') : 'Host path consent');
         const pathEl = document.createElement('div');
         pathEl.className = 'hpc-path';
-        pathEl.textContent = card.path || '';
+        pathEl.textContent = shell
+            ? (card.command || card.path || 'validate-on-clone')
+            : (card.path || '');
         const reasonEl = document.createElement('div');
         reasonEl.className = 'hpc-reason';
         reasonEl.textContent = workspace
             ? (card.body || card.reason || "Host paths stay safer if we clone (or branch) into the agent's workspace first. Editing the host folder directly is allowed but not advised.")
-            : (card.reason || '');
+            : (shell
+                ? (card.body || card.reason || 'Turns on Shell Executor for the company — same as Settings → CLI policy. CLI policy still applies after (not a blanket allow-all). Validate-on-clone needs pytest and local git add/commit on the locked workspace copy.')
+                : (card.reason || ''));
         container.appendChild(title);
         container.appendChild(pathEl);
-        if ((workspace ? (card.body || card.reason) : card.reason) && status === 'pending') {
+        const reasonText = workspace || shell
+            ? (card.body || card.reason || reasonEl.textContent)
+            : card.reason;
+        if (reasonText && status === 'pending') {
             container.appendChild(reasonEl);
         }
 
@@ -97,7 +110,9 @@ const BossModConsentCard = (() => {
 
         const actions = document.createElement('div');
         actions.className = 'host-path-consent-actions';
-        const buttons = workspace ? workspacePreferenceActions(card) : [
+        const buttons = workspace
+            ? workspacePreferenceActions(card)
+            : (shell ? shellExecutorActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
             {
                 label: 'Always allow (for all agents)',
@@ -105,7 +120,7 @@ const BossModConsentCard = (() => {
                 hidden: card.always_allow === false,
             },
             { label: 'Deny', path: 'deny' },
-        ];
+        ]);
         buttons.forEach((item) => {
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -120,6 +135,12 @@ const BossModConsentCard = (() => {
             actions.appendChild(btn);
         });
         container.appendChild(actions);
+        if (shell) {
+            const hintEl = document.createElement('div');
+            hintEl.className = 'hpc-hint';
+            hintEl.textContent = card.enable_hint || 'same as Settings. CLI policy still applies after.';
+            container.appendChild(hintEl);
+        }
     }
 
     function workspacePreferenceActions(card) {
@@ -132,10 +153,32 @@ const BossModConsentCard = (() => {
         ];
     }
 
+    function shellExecutorActions(card) {
+        return [
+            {
+                label: (card && card.enable_label) || 'Turn on Shell Executor (company-wide)',
+                path: 'enable',
+                primary: true,
+            },
+            {
+                label: (card && card.deny_label) || 'Deny — Shell Executor stays off',
+                path: 'deny',
+            },
+        ];
+    }
+
     function consentStatusLabel(card) {
         const status = card.status || 'pending';
         const workspace = isWorkspacePreferenceCard(card);
-        if (status === 'denied') return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
+        if (status === 'denied') {
+            if (isShellExecutorCard(card)) {
+                return card.decision_note || 'Shell Executor stays off.';
+            }
+            return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
+        }
+        if (status === 'enabled') {
+            return card.decision_note || 'Shell Executor on (company-wide). CLI policy still applies.';
+        }
         if (status === 'cloned') return card.clone_dest ? `Cloned into ${card.clone_dest}` : 'Cloned into workspace';
         if (status === 'branched') return card.decision_note || 'Branched into workspace';
         if (status === 'edit_host') return 'Edit host directly (not advised)';
@@ -165,7 +208,9 @@ const BossModConsentCard = (() => {
         try {
             const endpoint = isWorkspacePreferenceCard(card)
                 ? `/api/workspace-preference/${card.id}/${action}`
-                : `/api/host-path-consent/${card.id}/${action}`;
+                : (isShellExecutorCard(card)
+                    ? `/api/shell-executor/${card.id}/${action}`
+                    : `/api/host-path-consent/${card.id}/${action}`);
             const res = await api(endpoint, { method: 'POST' });
             if (!res.ok) {
                 throw new Error((await res.text()) || 'Consent update failed.');
@@ -204,7 +249,7 @@ const BossModConsentCard = (() => {
         const scope = container.closest('[data-transcript]') || container.parentElement;
         if (!scope) return;
         const grantRoot = card.grant_root || '';
-        const companyWide = card.status === 'always_allowed';
+        const companyWide = card.status === 'always_allowed' || card.status === 'enabled';
         const kind = container.dataset.cardKind || 'host_path';
         scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
             if (el === container || el.classList.contains('is-resolved')) return;
@@ -215,6 +260,7 @@ const BossModConsentCard = (() => {
             el.classList.add('is-resolved');
             el.querySelector('.host-path-consent-actions')?.remove();
             el.querySelector('.hpc-reason')?.remove();
+            el.querySelector('.hpc-hint')?.remove();
             if (!el.querySelector('.hpc-status')) {
                 const resolved = document.createElement('div');
                 resolved.className = 'hpc-status';
@@ -227,6 +273,7 @@ const BossModConsentCard = (() => {
     return {
         isHostPathConsentMessage,
         isWorkspacePreferenceCard,
+        isShellExecutorCard,
         renderHostPathConsentCard,
         decideHostPathConsent,
         collapseRelatedConsentCards,
