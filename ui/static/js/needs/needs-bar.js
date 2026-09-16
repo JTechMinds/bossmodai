@@ -94,9 +94,13 @@ const BossModNeedsBar = (() => {
          * @returns {boolean}
          */
         function onThisConversation(need, state) {
-            if (need.conversationId === state.conversationId) return true;
+            if (Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind)) {
+                return need.conversationId === state.conversationId;
+            }
             if (!Object.prototype.hasOwnProperty.call(FALLBACK_CARDS, need.kind)) return false;
-            return state.conversationKind === 'agent' && need.agentId === state.conversationId;
+            return BossModNeedShape.belongsOnOpenFocus(
+                need, state.conversationId, state.conversationKind,
+            );
         }
 
         /**
@@ -111,7 +115,7 @@ const BossModNeedsBar = (() => {
                 if (!onThisConversation(need, state)) return false;
                 if (Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind)) return true;
                 if (Object.prototype.hasOwnProperty.call(FALLBACK_CARDS, need.kind)) {
-                    return !inline.has(need.id);
+                    return !BossModNeedShape.coversInlineNeed(need, inline);
                 }
                 return false;
             });

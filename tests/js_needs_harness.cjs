@@ -175,6 +175,26 @@ async function main() {
     if (BossModNeedShape.isOpenFocusNeed({ kind: "consent" })) {
         throw new Error("a Focus need without an agent cannot paint a People row");
     }
+    if (!BossModNeedShape.belongsOnOpenFocus(
+        { kind: "approval", agentId: "a1", conversationId: "th1" },
+        "a1",
+        "agent",
+    )) {
+        throw new Error("thread-originated approval belongs on the agent's open Focus");
+    }
+    if (BossModNeedShape.belongsOnOpenFocus(
+        { kind: "approval", agentId: "a1", conversationId: "th1" },
+        "th1",
+        "thread",
+    ) !== true) {
+        throw new Error("thread-originated approval belongs on its origin thread");
+    }
+    if (!BossModNeedShape.coversInlineNeed(
+        { id: "dup-new", groupedIds: ["dup-old", "dup-new"] },
+        ["dup-old"],
+    )) {
+        throw new Error("a coalesced sibling inline card must cover the live need");
+    }
     const openFocusNeedTableHolds = true;
 
     // ─── 2. A ticking world publishes nothing ───
@@ -775,6 +795,23 @@ async function main() {
     }
     const barShowsThreadApprovalOnAgentFocus = true;
 
+    // ─── 13f. Coalesced live id stays off the bar when a sibling is inline ───
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: ["dup-old"] });
+    queue2 = [
+        Object.assign(approvalRow("dup-old", "a1"), { created_at: "2026-09-07T12:00:00Z" }),
+        Object.assign(approvalRow("dup-new", "a1"), { created_at: "2026-09-07T12:01:00Z" }),
+    ];
+    await needs2.refresh();
+    await drain();
+    const coalesced = store2.getState().needs.filter((item) => item.kind === "approval");
+    if (coalesced.length !== 1 || coalesced[0].id !== "dup-new") {
+        throw new Error("13f must still coalesce to the newest pending id");
+    }
+    if (barCards().length !== 0 || bar.element.hidden !== true) {
+        throw new Error("Needs-bar must stay quiet when a coalesced sibling is already inline");
+    }
+    const barSuppressesCoalescedSibling = true;
+
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
     queue2 = [blockedRow("s1", "a1")];
@@ -860,6 +897,7 @@ async function main() {
         barShowsApprovalWhenInlineMissing,
         duplicateApprovalsCoalesce,
         barShowsThreadApprovalOnAgentFocus,
+        barSuppressesCoalescedSibling,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));

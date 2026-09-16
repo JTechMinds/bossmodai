@@ -125,6 +125,41 @@ const BossModNeedShape = (() => {
         return Boolean(need && need.agentId && OPEN_FOCUS_NEED[need.kind]);
     }
 
+    /** Origin-thread chrome still belongs on the agent's open Focus. */
+    function belongsOnOpenFocus(need, conversationId, conversationKind) {
+        if (!need || !conversationId) return false;
+        if (need.conversationId === conversationId) return true;
+        if (!OPEN_FOCUS_NEED[need.kind]) return false;
+        return conversationKind === 'agent' && need.agentId === conversationId;
+    }
+
+    /** True when the transcript card is this need or a coalesced sibling. */
+    function coversInlineNeed(need, inlineIds) {
+        if (!need || !need.id) return false;
+        const inline = inlineIds instanceof Set ? inlineIds : new Set(inlineIds || []);
+        if (inline.has(String(need.id))) return true;
+        return (need.groupedIds || []).some((id) => inline.has(String(id)));
+    }
+
+    /** Safety-net request Message when live WS has not painted the card yet. */
+    function requestMessageFromNeed(need) {
+        if (!isOpenFocusNeed(need) || !need.id) return null;
+        const approval = need.kind === 'approval';
+        const card = approval
+            ? {
+                id: need.id, kind: 'cli_approval', status: 'pending',
+                title: need.title || 'Approve this command?', command: need.sub || '',
+            }
+            : { id: need.id, status: 'pending', title: need.title || '', path: need.sub || '' };
+        return {
+            key: `${approval ? 'cli-approval' : 'consent'}:${need.id}`,
+            author: 'system', authorName: need.agentName || '',
+            authorAgentId: need.agentId || null, showAuthor: false,
+            text: need.title || '', createdAt: need.createdAt || '',
+            kind: 'request', card, systemReceipt: false,
+        };
+    }
+
     /**
      * Activity event names that change what is waiting on the operator.
      *
@@ -321,5 +356,18 @@ const BossModNeedShape = (() => {
         return others.concat(Array.from(groups.values()));
     }
 
-    return { ACTIVITY_TRIGGERS, KIND_TARGETS, OPEN_FOCUS_NEED, coalesceKey, coalesceNeeds, isOpenFocusNeed, normalise, normaliseDiagnostic, targetFor };
+    return {
+        ACTIVITY_TRIGGERS,
+        KIND_TARGETS,
+        OPEN_FOCUS_NEED,
+        belongsOnOpenFocus,
+        coalesceKey,
+        coalesceNeeds,
+        coversInlineNeed,
+        isOpenFocusNeed,
+        normalise,
+        normaliseDiagnostic,
+        requestMessageFromNeed,
+        targetFor,
+    };
 })();

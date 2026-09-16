@@ -54,6 +54,7 @@ CONVERSATION_STACK = [
     JS / "conversation" / "chrome.js",
     JS / "conversation" / "composer.js",
     JS / "conversation" / "system-receipts.js",
+    JS / "needs" / "need-shape.js",
     JS / "needs" / "needs-bar.js",
     JS / "conversation" / "sources" / "thread-archive.js",
     JS / "conversation" / "sources" / "thread-source.js",

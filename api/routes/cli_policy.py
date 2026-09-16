@@ -172,6 +172,12 @@ async def approve_cli_request(request_id: str):
     await manager.broadcast_activity(
         event="cli_approval_approved",
         detail=f"Command approved: {approval.command}",
+        extra={
+            "approval_id": approval.id,
+            "command": approval.command,
+            "agent_id": approval.agent_id,
+            "status": "approved",
+        },
     )
     return approval
 
@@ -190,6 +196,13 @@ async def reject_cli_request(request_id: str, body: CliApprovalDecisionBody | No
     await manager.broadcast_activity(
         event="cli_approval_rejected",
         detail=f"Command rejected: {rejection.command}" + (f" — {note}" if note else ""),
+        extra={
+            "approval_id": rejection.id,
+            "command": rejection.command,
+            "agent_id": rejection.agent_id,
+            "status": "rejected",
+            "decision_note": note or "",
+        },
     )
     return rejection
 
