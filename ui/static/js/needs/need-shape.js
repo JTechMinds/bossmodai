@@ -266,25 +266,26 @@ const BossModNeedShape = (() => {
     }
 
     /**
-     * Identity used to coalesce identical live error cards.
+     * Identity used to coalesce identical live error and CLI-approval cards.
      *
-     * Errors are grouped by the agent that hit them and the message the
-     * operator sees. Other kinds stay one-id-one-need.
+     * Errors group by agent and message. Approvals group by agent and command.
+     * Other kinds stay one-id-one-need.
      *
      * @param {Need} need
      * @returns {string}
      */
     function coalesceKey(need) {
         if (!need) return '';
-        if (need.kind !== 'error') return String(need.id || '');
-        return `error:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'error') return `error:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'approval') return `approval:${need.agentId || ''}:${need.sub || ''}`;
+        return String(need.id || '');
     }
 
     /**
-     * Collapse identical error needs into one live card plus a count.
+     * Collapse identical error and CLI-approval needs into one live card.
      *
-     * Diagnostics stay individual in the log. Focus must not drown in three
-     * copies of "LLM call timed out after 120s".
+     * Diagnostics stay individual in the log. Duplicate pending Approves for
+     * the same command (two `pip install -e ".[dev]"` pauses) are one ask.
      *
      * @param {Need[]} needs
      * @returns {Need[]}
@@ -294,7 +295,7 @@ const BossModNeedShape = (() => {
         const others = [];
         const groups = new Map();
         list.forEach((need) => {
-            if (!need || need.kind !== 'error') {
+            if (!need || (need.kind !== 'error' && need.kind !== 'approval')) {
                 others.push(need);
                 return;
             }
@@ -312,7 +313,7 @@ const BossModNeedShape = (() => {
             const live = incomingIsNewer ? need : existing;
             const count = (existing.count || 1) + 1;
             const groupedIds = (existing.groupedIds || [existing.id]).concat([need.id]);
-            const title = count > 1
+            const title = count > 1 && live.kind === 'error'
                 ? `${live.agentName} hit an error ×${count}`
                 : live.title;
             groups.set(key, Object.assign({}, live, { count, groupedIds, title }));

@@ -83,8 +83,11 @@ const BossModNeeds = (() => {
          * compares selected values by reference, so writing a freshly built
          * array on every tick would re-render the roster, the bell, the bar and
          * the toast forever. The signature is the identity of the queue —
-         * which needs, of which kind — and nothing below that granularity is
-         * worth a repaint.
+         * which needs, of which kind, which live id. A coalesced CLI Approve
+         * can keep the same command while the pending row id (or its
+         * conversation) changes; omitting those left the store holding a
+         * stale card, so Focus and the bar never saw the live ask. Arrivals
+         * still key on coalesceKey, so a replacement does not extra-toast.
          *
          * @param {object[]} next
          * @param {boolean} force  Publish even when the signature matches. Used
@@ -92,7 +95,9 @@ const BossModNeeds = (() => {
          *   one of them now carries an error the operator must see.
          */
         function publish(next, force) {
-            const nextSignature = next.map((item) => `${coalesceKey(item)}:${item.kind}:${item.count || 1}`).sort().join('|');
+            const nextSignature = next.map((item) => (
+                `${coalesceKey(item)}:${item.kind}:${item.count || 1}:${item.id}:${item.conversationId || ''}`
+            )).sort().join('|');
             if (!force && nextSignature === signature) return;
             signature = nextSignature;
             current = next;

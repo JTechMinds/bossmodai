@@ -82,6 +82,24 @@ const BossModNeedsBar = (() => {
         }, listEl, errorEl, dismiss);
 
         /**
+         * Whether a need belongs on this conversation's bar.
+         *
+         * Matching conversationId is the common case. Fallback kinds also
+         * belong on the agent's Focus when their card was posted to an origin
+         * thread — otherwise Jim's composer only says "blocked" while Approve
+         * lives solely in the bell.
+         *
+         * @param {object} need
+         * @param {object} state
+         * @returns {boolean}
+         */
+        function onThisConversation(need, state) {
+            if (need.conversationId === state.conversationId) return true;
+            if (!Object.prototype.hasOwnProperty.call(FALLBACK_CARDS, need.kind)) return false;
+            return state.conversationKind === 'agent' && need.agentId === state.conversationId;
+        }
+
+        /**
          * The needs belonging to the open conversation that this bar shows.
          * @returns {object[]}
          */
@@ -90,7 +108,7 @@ const BossModNeedsBar = (() => {
             if (!state.conversationId) return [];
             const inline = new Set(state.inlineNeedIds || []);
             return state.needs.filter((need) => {
-                if (need.conversationId !== state.conversationId) return false;
+                if (!onThisConversation(need, state)) return false;
                 if (Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind)) return true;
                 if (Object.prototype.hasOwnProperty.call(FALLBACK_CARDS, need.kind)) {
                     return !inline.has(need.id);

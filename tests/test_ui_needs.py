@@ -92,6 +92,8 @@ def test_needs_harness() -> None:
         "barLeavesConsentInline": True,
         "barLeavesApprovalInline": True,
         "barShowsApprovalWhenInlineMissing": True,
+        "duplicateApprovalsCoalesce": True,
+        "barShowsThreadApprovalOnAgentFocus": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }

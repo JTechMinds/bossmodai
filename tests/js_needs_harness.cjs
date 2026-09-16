@@ -723,6 +723,9 @@ async function main() {
     if (bar.element.hidden !== false) {
         throw new Error("a pending approval with no inline card must appear on the bar");
     }
+    if ((store2.getState().needs[0] || {}).id !== "c-missing") {
+        throw new Error("the live approval id must replace a coalesced same-command row");
+    }
     if (barCards().length !== 1) {
         throw new Error(`expected one fallback approval card, got ${barCards().length}`);
     }
@@ -733,6 +736,44 @@ async function main() {
         throw new Error(`fallback approval bar must offer Approve/Reject, got ${fallbackLabels.join(",")}`);
     }
     const barShowsApprovalWhenInlineMissing = true;
+
+    // ─── 13d. Duplicate pending CLI Approves for the same command collapse ───
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [
+        Object.assign(approvalRow("dup-old", "a1"), { created_at: "2026-09-07T12:00:00Z" }),
+        Object.assign(approvalRow("dup-new", "a1"), { created_at: "2026-09-07T12:01:00Z" }),
+    ];
+    await needs2.refresh();
+    await drain();
+    const dupApprovals = store2.getState().needs.filter((item) => item.kind === "approval");
+    if (dupApprovals.length !== 1) {
+        throw new Error(`duplicate CLI Approves must be one card, got ${dupApprovals.length}`);
+    }
+    if (dupApprovals[0].id !== "dup-new") {
+        throw new Error(`the live duplicate must be the newest row, got ${dupApprovals[0].id}`);
+    }
+    const duplicateApprovalsCoalesce = true;
+
+    // ─── 13e. Thread-originated CLI Approve still lands on the agent's Focus bar ───
+    // Origin-thread chrome must not leave Jim's composer with only "blocked"
+    // while Approve lives solely in the bell.
+    store2.setState({ conversationId: "a1", conversationKind: "agent", inlineNeedIds: [] });
+    queue2 = [Object.assign(approvalRow("thread-appr", "th1"), {
+        sub: 'pip install -e ".[dev]"',
+        created_at: "2026-09-07T12:02:00Z",
+    })];
+    await needs2.refresh();
+    await drain();
+    if (bar.element.hidden !== false) {
+        throw new Error("a thread-originated pending approval must appear on the agent's Focus bar");
+    }
+    const threadFallbackLabels = bar.element.querySelectorAll("button")
+        .map((node) => node.textContent)
+        .filter((label) => label === "Approve" || label === "Reject");
+    if (!threadFallbackLabels.includes("Approve") || !threadFallbackLabels.includes("Reject")) {
+        throw new Error(`Focus fallback for a thread card must offer Approve/Reject, got ${threadFallbackLabels.join(",")}`);
+    }
+    const barShowsThreadApprovalOnAgentFocus = true;
 
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
@@ -817,6 +858,8 @@ async function main() {
         barLeavesConsentInline,
         barLeavesApprovalInline,
         barShowsApprovalWhenInlineMissing,
+        duplicateApprovalsCoalesce,
+        barShowsThreadApprovalOnAgentFocus,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));
