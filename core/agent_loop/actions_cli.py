@@ -90,8 +90,11 @@ def _cli_action_result(
         result, agent=agent, trigger=trigger, cli_result=cli_result
     )
     if cli_result.approval_required:
+        data = cli_result.data or {}
+        card = data.get("cli_approval") if isinstance(data.get("cli_approval"), dict) else {}
         result["approval_required"] = True
         result["approval_request_id"] = cli_result.approval_request_id
+        result["cli_approval"] = card
         result["event"] = "cli_approval_required"
         result["detail"] = f"{agent.name} requests approval: {command}"
     if cli_result.consent_required:

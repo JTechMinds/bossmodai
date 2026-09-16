@@ -111,7 +111,10 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             "title": f"{name} wants to run a command",
             "sub": request.command,
             "created_at": request.created_at.isoformat(),
-            "conversation_id": request.agent_id,
+            # channel_id is a declared field on CliApprovalRequest; when the
+            # request did not originate in a thread it is None and the agent's
+            # own conversation is the right place to show it.
+            "conversation_id": request.channel_id or request.agent_id,
             "actions": [
                 {"label": "Approve", "method": "POST", "tone": "primary",
                  "href": f"/api/cli-policy/approvals/{request.id}/approve"},

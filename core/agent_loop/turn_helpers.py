@@ -278,8 +278,10 @@ def _cli_result_to_turn_result(
             "files": cli_data.get("batch_files") or [],
         }
     if getattr(cli_result, "approval_required", False):
+        card = cli_data.get("cli_approval") if isinstance(cli_data.get("cli_approval"), dict) else {}
         result["approval_required"] = True
         result["approval_request_id"] = getattr(cli_result, "approval_request_id", None)
+        result["cli_approval"] = card
         result["event"] = "cli_approval_required"
         result["suppress_activity_broadcast"] = False
     if getattr(cli_result, "consent_required", False):

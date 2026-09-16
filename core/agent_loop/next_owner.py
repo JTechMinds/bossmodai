@@ -38,6 +38,7 @@ _EXEMPT_NOTIFICATION_KINDS = frozenset(
         "handoff",
         "host_path_consent",
         WORKSPACE_PREFERENCE_KIND,
+        "cli_approval",
     }
 )
 
@@ -188,6 +189,8 @@ def is_exempt_reply(text: str | None, *, trigger: dict[str, Any] | None = None) 
     if kind in _EXEMPT_NOTIFICATION_KINDS:
         return True
     if payload.get("consent_id") or payload.get("host_path_consent"):
+        return True
+    if payload.get("approval_id") or payload.get("cli_approval"):
         return True
     if str(payload.get("author_type") or "").strip().lower() == "system":
         return True

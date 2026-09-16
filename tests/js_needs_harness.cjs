@@ -590,7 +590,7 @@ async function main() {
     };
 
     // Three pending needs are already on the server when the app launches.
-    queue2 = [approvalRow("q1", "a1"), approvalRow("q2", "a1"), approvalRow("q3", "b1")];
+    queue2 = [blockedRow("q1", "a1"), blockedRow("q2", "a1"), blockedRow("q3", "b1")];
     const needs2 = BossModNeeds.createNeedsStore({ store: store2, bus: bus2, api: api2 });
     const toastHost = BossModNeedsToast.createToastHost({
         store: store2, needs: needs2, navigate: () => {},
@@ -625,7 +625,7 @@ async function main() {
     if (bar.element.hidden !== false) throw new Error("the bar must be visible when it has rows");
 
     // A new need for the OPEN conversation: bar, no toast.
-    queue2 = queue2.concat([approvalRow("q4", "a1")]);
+    queue2 = queue2.concat([blockedRow("q4", "a1")]);
     await needs2.refresh();
     await drain();
     if (barCards().length !== 3) throw new Error("an arrival for the open conversation joins the bar");
@@ -634,7 +634,7 @@ async function main() {
     }
 
     // A new need for a DIFFERENT conversation: toast, no bar row.
-    queue2 = queue2.concat([approvalRow("q5", "b1")]);
+    queue2 = queue2.concat([blockedRow("q5", "b1")]);
     await needs2.refresh();
     await drain();
     if (toasts().length !== 1) {
@@ -649,7 +649,7 @@ async function main() {
     // What comes back after an outage is a re-read, not a set of arrivals.
 
     [...documentStub.body.querySelectorAll(".toast")].forEach((node) => node.remove());
-    queue2 = [approvalRow("r1", "b1"), approvalRow("r2", "b1"), approvalRow("r3", "b1")];
+    queue2 = [blockedRow("r1", "b1"), blockedRow("r2", "b1"), blockedRow("r3", "b1")];
     bus2.publish("resync", { downtimeMs: 4000 });
     await drain();
     if (store2.getState().needs.length !== 3) throw new Error("resync must re-read the queue");
@@ -657,7 +657,7 @@ async function main() {
         throw new Error(`a resync re-read produced ${toasts().length} toasts`);
     }
     // ...and a genuine arrival after it still toasts.
-    queue2 = queue2.concat([approvalRow("r4", "b1")]);
+    queue2 = queue2.concat([blockedRow("r4", "b1")]);
     await needs2.refresh();
     await drain();
     if (toasts().length !== 1) {
@@ -678,7 +678,7 @@ async function main() {
         throw new Error("the unchanged resync must leave the queue as it was");
     }
     if (toasts().length !== 0) throw new Error("an unchanged resync must toast nothing");
-    queue2 = queue2.concat([approvalRow("r5", "b1")]);
+    queue2 = queue2.concat([blockedRow("r5", "b1")]);
     await needs2.refresh();
     await drain();
     if (toasts().length !== 1) {
@@ -701,9 +701,19 @@ async function main() {
     }
     const barLeavesConsentInline = true;
 
+    // ─── 13b. A CLI approval stays inline; the bar does not repeat it ───
+    queue2 = [approvalRow("c2")];
+    await needs2.refresh();
+    await drain();
+    if (store2.getState().needs.length !== 1) throw new Error("the approval must reach the queue");
+    if (barCards().length !== 0 || bar.element.hidden !== true) {
+        throw new Error("an approval already inline in the transcript must not repeat in the bar");
+    }
+    const barLeavesApprovalInline = true;
+
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
-    queue2 = [approvalRow("s1", "a1")];
+    queue2 = [blockedRow("s1", "a1")];
     await needs2.refresh();
     await drain();
     if (bar.element.hidden !== false) throw new Error("the bar must show an open-conversation need");
@@ -718,9 +728,9 @@ async function main() {
     if (bar.element.hidden !== false) throw new Error("re-enabling must show it again");
 
     // The bar reads the same targets. A blocked need in the open conversation
-    // still offers a way to the board; an approval whose target IS the
-    // conversation this bar is pinned to offers nothing, because "show me"
-    // pointing at the screen you are looking at is the noise spec 5.5 forbids.
+    // still offers a way to the board; a CLI approval whose target IS the
+    // conversation this bar is pinned to is omitted from the bar, because the
+    // transcript already carries that ask as a `request`.
     barNavigations.length = 0;
     queue2 = [approvalRow("s2", "a1"), blockedRow("s3", "a1")];
     await needs2.refresh();
@@ -737,7 +747,7 @@ async function main() {
     if (barNavigations[0].params.taskId !== "s3") {
         throw new Error("the bar's Show me must carry the task id");
     }
-    queue2 = [approvalRow("s1", "a1")];
+    queue2 = [blockedRow("s1", "a1")];
     await needs2.refresh();
     await drain();
 
@@ -781,6 +791,7 @@ async function main() {
         unchangedBaselineStillEnds,
         inspectionDoesNotResolve,
         barLeavesConsentInline,
+        barLeavesApprovalInline,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));

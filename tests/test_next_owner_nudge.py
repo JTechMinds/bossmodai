@@ -275,6 +275,8 @@ def test_consent_and_preference_cards_are_exempt() -> None:
     assert is_exempt_reply("Need /tmp/app", trigger={"notification_kind": "host_path_consent"})
     assert is_exempt_reply("Work in your workspace?", trigger={"notification_kind": "workspace_preference"})
     assert is_exempt_reply("Need /tmp/app", trigger={"consent_id": "consent-1"})
+    assert is_exempt_reply("pip install pytest", trigger={"notification_kind": "cli_approval"})
+    assert is_exempt_reply("pip install pytest", trigger={"cli_approval": {"id": "appr-1"}})
 
 
 def test_pure_reactions_are_exempt() -> None:

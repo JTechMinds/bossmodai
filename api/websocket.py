@@ -87,6 +87,7 @@ class ConnectionManager:
         notification_kind: str | None = None,
         desk_path: str | None = None,
         host_path_consent: dict[str, Any] | None = None,
+        cli_approval: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
@@ -107,6 +108,7 @@ class ConnectionManager:
                 "notification_kind": notification_kind,
                 "desk_path": desk_path,
                 "host_path_consent": host_path_consent,
+                "cli_approval": cli_approval,
                 "task_id": task_id,
             },
         })
@@ -154,6 +156,7 @@ class ConnectionManager:
         created_at: Any = None,
         notification_kind: str | None = None,
         host_path_consent: dict[str, Any] | None = None,
+        cli_approval: dict[str, Any] | None = None,
         author_agent_id: str | None = None,
         desk_path: str | None = None,
         task_id: str | None = None,
@@ -173,6 +176,7 @@ class ConnectionManager:
                 "created_at": created_at,
                 "notification_kind": notification_kind,
                 "host_path_consent": host_path_consent,
+                "cli_approval": cli_approval,
                 "desk_path": desk_path,
                 "task_id": task_id,
             },

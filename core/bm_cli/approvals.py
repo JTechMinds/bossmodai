@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
 import db
+from core.bm_cli.host_path_consent import _clean_channel_id
 from core.models.cli_policy import CliApprovalRequest
 
 ApprovalPrefixStatus = Literal["unique", "none", "ambiguous"]
@@ -102,10 +103,14 @@ async def resume_cli_approval(
     else:
         payload["decision_note"] = note
 
+    channel_id = _clean_channel_id(getattr(approval, "channel_id", None))
+    if channel_id:
+        payload["channel_id"] = channel_id
+
     await services.enqueue_trigger(
         agent_id=approval.agent_id,
         trigger_type="cli_approval_resolved",
-        source_channel="system",
+        source_channel="channel" if channel_id else "system",
         payload=payload,
     )
     return approval

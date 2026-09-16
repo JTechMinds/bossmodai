@@ -651,6 +651,13 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
                     and db.get_consent_request(notification_links[item.id].target_path)
                     else None
                 ),
+                "cli_approval": (
+                    db.get_cli_approval_request(notification_links[item.id].target_path).as_card()
+                    if item.id in notification_links
+                    and notification_links[item.id].target_kind == "cli_approval"
+                    and db.get_cli_approval_request(notification_links[item.id].target_path)
+                    else None
+                ),
                 "created_at": item.created_at.isoformat() if item.created_at else None,
             }
             for item in notifications
@@ -681,6 +688,7 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
             "desk_path": msg.get("desk_path"),
             "task_id": msg.get("task_id"),
             "host_path_consent": msg.get("host_path_consent"),
+            "cli_approval": msg.get("cli_approval"),
             "created_at": msg["created_at"],
         })
 
@@ -729,6 +737,13 @@ async def get_agent_notifications(
                 if item.id in notification_links
                 and notification_links[item.id].target_kind == "host_path_consent"
                 and db.get_consent_request(notification_links[item.id].target_path)
+                else None
+            ),
+            "cli_approval": (
+                db.get_cli_approval_request(notification_links[item.id].target_path).as_card()
+                if item.id in notification_links
+                and notification_links[item.id].target_kind == "cli_approval"
+                and db.get_cli_approval_request(notification_links[item.id].target_path)
                 else None
             ),
             "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -804,6 +819,12 @@ def _serialize_channel_message(item) -> dict[str, object]:
         request = db.get_consent_request(consent_id)
         if request is not None:
             consent_card = request.as_card()
+    approval_card = None
+    approval_id = getattr(item, "approval_id", None)
+    if approval_id:
+        approval = db.get_cli_approval_request(approval_id)
+        if approval is not None:
+            approval_card = approval.as_card()
     return {
         "id": item.id,
         "channel_id": item.channel_id,
@@ -814,9 +835,10 @@ def _serialize_channel_message(item) -> dict[str, object]:
         "source_channel": item.source_channel,
         "notification_kind": getattr(item, "notification_kind", None),
         "host_path_consent": consent_card,
-            "desk_path": getattr(item, "desk_path", None),
-            "task_id": getattr(item, "task_id", None),
-            "created_at": item.created_at.isoformat() if item.created_at else None,
+        "cli_approval": approval_card,
+        "desk_path": getattr(item, "desk_path", None),
+        "task_id": getattr(item, "task_id", None),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 

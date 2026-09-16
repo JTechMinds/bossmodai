@@ -56,7 +56,7 @@ def classify_category(source: str, event: str) -> str:
             return "task"
         if event in ("blocked", "abandoned"):
             return "error"
-        if event == "host_path_consent":
+        if event in ("host_path_consent", "cli_approval"):
             return "system"
         return "agent"  # receipt
 

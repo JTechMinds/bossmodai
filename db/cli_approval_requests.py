@@ -13,7 +13,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 
 _ALL_COLUMNS = (
     "id, agent_id, trigger_id, command, content, cwd, matched_rule_id, "
-    "status, decision_by, decision_note, decided_at, expires_at, created_at"
+    "channel_id, status, decision_by, decision_note, decided_at, expires_at, created_at"
 )
 
 
@@ -30,18 +30,20 @@ def create_approval_request(
     matched_rule_id: str | None = None,
     trigger_id: str | None = None,
     expires_at: datetime | None = None,
+    channel_id: str | None = None,
 ) -> CliApprovalRequest:
     """Insert a new approval request and return the created row."""
+    origin = (channel_id or "").strip() or None
     return insert_returning(
         f"""
         INSERT INTO cli_approval_requests (
             agent_id, command, content, cwd,
-            matched_rule_id, trigger_id, expires_at
+            matched_rule_id, trigger_id, expires_at, channel_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING {_ALL_COLUMNS}
         """,
-        [agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at],
+        [agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin],
         CliApprovalRequest,
     )
 
@@ -49,6 +51,23 @@ def create_approval_request(
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
+
+def bind_approval_channel(request_id: str, channel_id: str) -> CliApprovalRequest | None:
+    """Stamp ``channel_id`` onto a pending approval that does not have one yet."""
+    token = (channel_id or "").strip()
+    if not token:
+        return None
+    return fetch_one(
+        f"""
+        UPDATE cli_approval_requests
+        SET channel_id = $1
+        WHERE id = $2 AND (channel_id IS NULL OR channel_id = '')
+        RETURNING {_ALL_COLUMNS}
+        """,
+        [token, request_id],
+        CliApprovalRequest,
+    )
+
 
 def get_approval_request(request_id: str) -> CliApprovalRequest | None:
     """Fetch a single approval request by ID, or ``None`` if not found."""

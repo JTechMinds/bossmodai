@@ -46,9 +46,8 @@ const BossModNeedShape = (() => {
      * Which conversation kind a need's conversation is.
      *
      * api/routes/needs.py sets a need's conversation to the originating thread
-     * when a consent came from one, and to the agent otherwise. So a
-     * conversationId that is not the agent's own id is a thread id. Verified
-     * against that file — the queue carries no conversation kind of its own.
+     * when a consent or CLI approval came from one, and to the agent otherwise.
+     * So a conversationId that is not the agent's own id is a thread id.
      *
      * @param {string|null} conversationId
      * @param {string|null} agentId

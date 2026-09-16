@@ -28,6 +28,36 @@ const BossModConsentCard = (() => {
         );
     }
 
+    function isCliApprovalMessage(message) {
+        return Boolean(
+            message
+            && (
+                message.notification_kind === 'cli_approval'
+                || message.cli_approval
+            )
+        );
+    }
+
+    function isCliApprovalCard(card) {
+        return cardKind(card) === 'cli_approval';
+    }
+
+    /**
+     * Operator-facing card payload from a chat or channel message.
+     *
+     * @param {object|null} message
+     * @returns {object|null}
+     */
+    function cardFromMessage(message) {
+        if (isCliApprovalMessage(message) && message.cli_approval) {
+            return message.cli_approval;
+        }
+        if (isHostPathConsentMessage(message) && message.host_path_consent) {
+            return message.host_path_consent;
+        }
+        return null;
+    }
+
     function cardKind(card) {
         if (!card) return 'host_path';
         return (card.kind || card.card_kind || 'host_path');
@@ -140,6 +170,90 @@ const BossModConsentCard = (() => {
             hintEl.className = 'hpc-hint';
             hintEl.textContent = card.enable_hint || 'same as Settings. CLI policy still applies after.';
             container.appendChild(hintEl);
+        }
+    }
+
+    /**
+     * Paint one CLI approval card into `container`.
+     *
+     * @param {HTMLElement} container
+     * @param {object} card
+     * @param {Function} api
+     * @returns {void}
+     */
+    function renderCliApprovalCard(container, card, api) {
+        requireApi(api);
+        if (!container || !card) return;
+        container.classList.add('host-path-consent-card');
+        container.dataset.cardKind = 'cli_approval';
+        const status = card.status || 'pending';
+        container.classList.toggle('is-resolved', status !== 'pending');
+        const title = document.createElement('div');
+        title.className = 'hpc-title';
+        title.textContent = card.title || 'Approve this command?';
+        const commandEl = document.createElement('div');
+        commandEl.className = 'hpc-path';
+        commandEl.textContent = card.command || '';
+        container.appendChild(title);
+        container.appendChild(commandEl);
+        if (card.cwd && status === 'pending') {
+            const cwdEl = document.createElement('div');
+            cwdEl.className = 'hpc-reason';
+            cwdEl.textContent = `cwd: ${card.cwd}`;
+            container.appendChild(cwdEl);
+        }
+        if (status !== 'pending') {
+            const resolved = document.createElement('div');
+            resolved.className = 'hpc-status';
+            resolved.textContent = cliApprovalStatusLabel(card);
+            container.appendChild(resolved);
+            return;
+        }
+        const actions = document.createElement('div');
+        actions.className = 'host-path-consent-actions';
+        [
+            { label: 'Approve', path: 'approve', primary: true },
+            { label: 'Reject', path: 'reject' },
+        ].forEach((item) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = item.primary ? 'hpc-action hpc-action-primary' : 'hpc-action';
+            btn.textContent = item.label;
+            btn.addEventListener('click', () => decideCliApproval(container, card, item.path, actions, api));
+            actions.appendChild(btn);
+        });
+        container.appendChild(actions);
+    }
+
+    function cliApprovalStatusLabel(card) {
+        const status = card.status || 'pending';
+        if (status === 'rejected') return card.decision_note || 'Rejected';
+        if (status === 'approved') return 'Approved';
+        if (status === 'expired') return 'Expired';
+        return status;
+    }
+
+    async function decideCliApproval(container, card, action, actions, api) {
+        requireApi(api);
+        Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
+        try {
+            const res = await api(`/api/cli-policy/approvals/${card.id}/${action}`, { method: 'POST' });
+            if (!res.ok) {
+                throw new Error((await res.text()) || 'Approval update failed.');
+            }
+            const updated = await res.json();
+            const next = Object.assign({ kind: 'cli_approval' }, updated, {
+                title: updated.title || card.title || 'Approve this command?',
+            });
+            container.replaceChildren();
+            renderCliApprovalCard(container, next, api);
+            BossModIcons.paint(container, 'consent-card');
+        } catch (err) {
+            Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
+            const note = document.createElement('div');
+            note.className = 'hpc-status';
+            note.textContent = err?.message || 'Approval update failed.';
+            container.appendChild(note);
         }
     }
 
@@ -310,10 +424,15 @@ const BossModConsentCard = (() => {
 
     return {
         isHostPathConsentMessage,
+        isCliApprovalMessage,
+        isCliApprovalCard,
+        cardFromMessage,
         isWorkspacePreferenceCard,
         isShellExecutorCard,
         renderHostPathConsentCard,
+        renderCliApprovalCard,
         decideHostPathConsent,
+        decideCliApproval,
         collapseRelatedConsentCards,
         collapseGrantedConsentCards,
     };

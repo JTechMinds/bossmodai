@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS channel_messages (
     source_channel   VARCHAR NOT NULL,
     notification_kind VARCHAR,
     consent_id       VARCHAR,
+    approval_id      VARCHAR,
     desk_path        VARCHAR,
     task_id          VARCHAR,
     created_at       TIMESTAMP DEFAULT current_timestamp
@@ -418,6 +419,7 @@ CREATE TABLE IF NOT EXISTS cli_approval_requests (
     content         TEXT,
     cwd             VARCHAR,
     matched_rule_id VARCHAR REFERENCES cli_policy_rules(id),
+    channel_id      VARCHAR,
     status          VARCHAR NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
     decision_by     VARCHAR,
@@ -564,7 +566,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     task_id           VARCHAR REFERENCES tasks(id),
     activity_id       VARCHAR REFERENCES activities(id),
     kind              VARCHAR NOT NULL
-                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'queue_visibility')),
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'cli_approval', 'queue_visibility')),
     content           TEXT NOT NULL,
     source_channel    VARCHAR NOT NULL,
     policy            VARCHAR NOT NULL
@@ -577,7 +579,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE TABLE IF NOT EXISTS notification_links (
     notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
     target_kind     VARCHAR NOT NULL
-                       CHECK (target_kind IN ('desk', 'host_path_consent')),
+                       CHECK (target_kind IN ('desk', 'host_path_consent', 'cli_approval')),
     target_path     VARCHAR NOT NULL,
     label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
     created_at      TIMESTAMP DEFAULT current_timestamp
