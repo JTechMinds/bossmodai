@@ -88,6 +88,8 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/workspace-preference/{request_id}/branch", "branch_workspace_preference"),
     (("POST",), "/api/workspace-preference/{request_id}/edit-host", "edit_host_workspace_preference"),
     (("POST",), "/api/workspace-preference/{request_id}/cancel", "cancel_workspace_preference"),
+    (("POST",), "/api/shell-executor/{request_id}/enable", "enable_shell_executor"),
+    (("POST",), "/api/shell-executor/{request_id}/deny", "deny_shell_executor"),
     (("GET",), "/api/settings", "get_settings"),
     (("GET",), "/api/settings/desktop-open-folder-options", "get_desktop_open_folder_options"),
     (("GET",), "/api/runtime/core", "get_runtime_core"),
@@ -127,7 +129,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 103
+    assert len(got) == 105
 
 
 def test_from_api_routes_import_router_still_works() -> None:

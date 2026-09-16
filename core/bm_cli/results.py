@@ -6,7 +6,11 @@ import re
 from typing import Any
 
 from core.bm_cli.types import BossModCliResult
-from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND, HostPathConsentRequest
+from core.models.host_path_consent import (
+    SHELL_EXECUTOR_KIND,
+    WORKSPACE_PREFERENCE_KIND,
+    HostPathConsentRequest,
+)
 from core.default_prompts import load_default_prompt, render_default_prompt
 
 # Hard delimiters so CLI / tool stdout cannot be mistaken for system instructions.
@@ -122,26 +126,36 @@ def consent_required_result(
     consent_request: HostPathConsentRequest | None = None,
     reused: bool = False,
 ) -> BossModCliResult:
-    """Build a host-path or workspace-preference consent pause result."""
+    """Build a host-path, workspace-preference, or shell-executor consent pause."""
     card = consent_request.as_card() if consent_request is not None else {}
     workspace = bool(card.get("kind") == WORKSPACE_PREFERENCE_KIND)
-    heading = "WORKSPACE PREFERENCE REQUIRED" if workspace else "HOST PATH CONSENT REQUIRED"
-    wait = (
-        "Stop and wait. The operator will Clone into workspace, Make a branch, "
-        "Edit host directly, or Cancel in chat."
-        if workspace
-        else (
+    shell = bool(card.get("kind") == SHELL_EXECUTOR_KIND)
+    if workspace:
+        heading = "WORKSPACE PREFERENCE REQUIRED"
+        wait = (
+            "Stop and wait. The operator will Clone into workspace, Make a branch, "
+            "Edit host directly, or Cancel in chat."
+        )
+        detail_prefix = "BossMod CLI workspace preference required"
+        kind = "workspace_preference_required"
+    elif shell:
+        heading = "SHELL EXECUTOR CONSENT REQUIRED"
+        wait = (
+            "Stop and wait. The operator will Enable or Deny Shell Executor in chat. "
+            "Do not invent that the desk cannot shell. "
+            "Do not park @Operator as the test runner or shell enabler."
+        )
+        detail_prefix = "BossMod CLI Shell Executor consent required"
+        kind = "shell_executor_consent_required"
+    else:
+        heading = "HOST PATH CONSENT REQUIRED"
+        wait = (
             "Stop and wait. The operator will Allow once or Deny in chat."
             if card.get("always_allow") is False
             else "Stop and wait. The operator will Allow once, Always allow, or Deny in chat."
         )
-    )
-    detail_prefix = (
-        "BossMod CLI workspace preference required"
-        if workspace
-        else "BossMod CLI host-path consent required"
-    )
-    kind = "workspace_preference_required" if workspace else "host_path_consent_required"
+        detail_prefix = "BossMod CLI host-path consent required"
+        kind = "host_path_consent_required"
     return BossModCliResult(
         command=command,
         ok=False,

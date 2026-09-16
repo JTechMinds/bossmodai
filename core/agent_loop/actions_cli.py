@@ -73,12 +73,8 @@ def _cli_action_result(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Map a CLI / host-access result onto the execution-turn payload."""
-    from core.agent_loop.blocked_origin import (
-        HOST_DENY_KIND,
-        HOST_DENY_WHY,
-        is_host_deny_result,
-        surface_blocked_origin,
-    )
+    from core.agent_loop.blocked_origin import surface_cli_gate_block
+    from core.models.host_path_consent import consent_turn_event
 
     result = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
@@ -90,16 +86,9 @@ def _cli_action_result(
             cli_result.approval_required or cli_result.consent_required
         ),
     }
-    if is_host_deny_result(cli_result):
-        # Origin thread still gets Blocked — host deny. @NextOwner.
-        # suppress_*_broadcast must not bury that why.
-        surface_blocked_origin(
-            result,
-            agent=agent,
-            trigger=trigger,
-            why=HOST_DENY_WHY,
-            kind=HOST_DENY_KIND,
-        )
+    surface_cli_gate_block(
+        result, agent=agent, trigger=trigger, cli_result=cli_result
+    )
     if cli_result.approval_required:
         result["approval_required"] = True
         result["approval_request_id"] = cli_result.approval_request_id
@@ -108,15 +97,11 @@ def _cli_action_result(
     if cli_result.consent_required:
         data = cli_result.data or {}
         card = data.get("host_path_consent") if isinstance(data.get("host_path_consent"), dict) else {}
-        path = card.get("path") or "host path"
         result["consent_required"] = True
         result["consent_request_id"] = cli_result.consent_request_id
         result["consent_reused"] = bool(data.get("consent_reused"))
         result["host_path_consent"] = card
-        if card.get("kind") == "workspace_preference":
-            result["event"] = "workspace_preference_required"
-            result["detail"] = f"{agent.name} needs a workspace preference: {path}"
-        else:
-            result["event"] = "host_path_consent_required"
-            result["detail"] = f"{agent.name} requests host-path access: {path}"
+        event, detail = consent_turn_event(agent.name, card)
+        result["event"] = event
+        result["detail"] = detail
     return result

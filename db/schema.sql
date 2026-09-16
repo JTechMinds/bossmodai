@@ -385,14 +385,14 @@ CREATE TABLE IF NOT EXISTS host_path_consent_requests (
     cwd             VARCHAR,
     task_id         VARCHAR REFERENCES tasks(id),
     channel_id      VARCHAR,
-    card_kind       VARCHAR NOT NULL DEFAULT 'host_path'
-                        CHECK (card_kind IN ('host_path', 'workspace_preference')),
-    is_git          BOOLEAN NOT NULL DEFAULT FALSE,
-    clone_dest      VARCHAR,
-    status          VARCHAR NOT NULL DEFAULT 'pending'
+                card_kind       VARCHAR NOT NULL DEFAULT 'host_path'
+                        CHECK (card_kind IN ('host_path', 'workspace_preference', 'shell_executor')),
+                is_git          BOOLEAN NOT NULL DEFAULT FALSE,
+                clone_dest      VARCHAR,
+                status          VARCHAR NOT NULL DEFAULT 'pending'
                         CHECK (status IN (
                             'pending', 'allowed_once', 'always_allowed', 'denied',
-                            'cloned', 'branched', 'edit_host'
+                            'cloned', 'branched', 'edit_host', 'enabled'
                         )),
     decision_by     VARCHAR,
     decision_note   TEXT,

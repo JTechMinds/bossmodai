@@ -305,7 +305,11 @@ async def _handle_blocked(
     task = db.get_task(task_id)
     follow_up_message = action.get("followUpMessage")
     from core.bm_cli.host_path_consent import is_verbal_host_access_ask, verbal_host_access_steer
+    from core.bm_cli.shell_executor_consent import named_shell_executor_block_reason
 
+    named_shell_why = named_shell_executor_block_reason(agent, reason, task_id=task_id)
+    if named_shell_why:
+        reason = named_shell_why
     if is_verbal_host_access_ask(reason) or is_verbal_host_access_ask(follow_up_message):
         return verbal_host_access_steer(agent)
     if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
@@ -416,7 +420,19 @@ async def _handle_blocked(
     )
     if task is not None:
         # Profile shows blocked; origin thread uses Waiting so claim-Blocked stays exclusive.
-        attach_operator_status_line(result, task=task, agent=agent, kind="waiting", reason=reason)
+        # Shell Executor deny is a named gate: origin must say Blocked — {why}.
+        if named_shell_why:
+            from core.agent_loop.blocked_origin import SHELL_EXECUTOR_BLOCK_KIND
+
+            attach_operator_status_line(
+                result,
+                task=task,
+                agent=agent,
+                kind=SHELL_EXECUTOR_BLOCK_KIND,
+                reason=reason,
+            )
+        else:
+            attach_operator_status_line(result, task=task, agent=agent, kind="waiting", reason=reason)
     return result
 
 

@@ -32,30 +32,61 @@ def _agent_name(agent_id: str | None, cache: dict[str, str]) -> str:
 
 def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     from core.bm_cli.host_roots import offers_always_allow_grant
+    from core.models.host_path_consent import (
+        SHELL_EXECUTOR_CARD_COPY,
+        SHELL_EXECUTOR_KIND,
+        WORKSPACE_PREFERENCE_KIND,
+    )
 
     items = []
     for request in db.list_consent_requests(status="pending", limit=MAX_LIMIT):
         name = _agent_name(request.agent_id, cache)
-        actions = [
-            {"label": "Allow once", "method": "POST", "tone": "primary",
-             "href": f"/api/host-path-consent/{request.id}/allow-once"},
-        ]
-        if offers_always_allow_grant(request.grant_root):
+        kind = (request.card_kind or "host_path").strip() or "host_path"
+        if kind == SHELL_EXECUTOR_KIND:
+            actions = [
+                {"label": "Enable", "method": "POST", "tone": "primary",
+                 "href": f"/api/shell-executor/{request.id}/enable"},
+                {"label": "Deny", "method": "POST", "tone": "quiet",
+                 "href": f"/api/shell-executor/{request.id}/deny"},
+            ]
+            title = f"{name} {SHELL_EXECUTOR_CARD_COPY}"
+            sub = request.command or request.path
+        elif kind == WORKSPACE_PREFERENCE_KIND:
+            actions = [
+                {"label": "Clone into workspace", "method": "POST", "tone": "primary",
+                 "href": f"/api/workspace-preference/{request.id}/clone"},
+                {"label": "Make a branch", "method": "POST", "tone": "default",
+                 "href": f"/api/workspace-preference/{request.id}/branch"},
+                {"label": "Edit host directly (not advised)", "method": "POST", "tone": "quiet",
+                 "href": f"/api/workspace-preference/{request.id}/edit-host"},
+                {"label": "Cancel", "method": "POST", "tone": "quiet",
+                 "href": f"/api/workspace-preference/{request.id}/cancel"},
+            ]
+            title = f"{name} needs a workspace preference"
+            sub = request.path
+        else:
+            actions = [
+                {"label": "Allow once", "method": "POST", "tone": "primary",
+                 "href": f"/api/host-path-consent/{request.id}/allow-once"},
+            ]
+            if offers_always_allow_grant(request.grant_root):
+                actions.append(
+                    {"label": "Always allow (for all agents)", "method": "POST", "tone": "default",
+                     "href": f"/api/host-path-consent/{request.id}/always-allow"},
+                )
             actions.append(
-                {"label": "Always allow (for all agents)", "method": "POST", "tone": "default",
-                 "href": f"/api/host-path-consent/{request.id}/always-allow"},
+                {"label": "Deny", "method": "POST", "tone": "quiet",
+                 "href": f"/api/host-path-consent/{request.id}/deny"},
             )
-        actions.append(
-            {"label": "Deny", "method": "POST", "tone": "quiet",
-             "href": f"/api/host-path-consent/{request.id}/deny"},
-        )
+            title = f"{name} wants to read a folder"
+            sub = request.path
         items.append({
             "id": request.id,
             "kind": "consent",
             "agent_id": request.agent_id,
             "agent_name": name,
-            "title": f"{name} wants to read a folder",
-            "sub": request.path,
+            "title": title,
+            "sub": sub,
             "created_at": request.created_at.isoformat(),
             # channel_id is a declared field on HostPathConsentRequest; when the
             # request did not originate in a thread it is None and the agent's

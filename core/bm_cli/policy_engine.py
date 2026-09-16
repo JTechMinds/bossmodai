@@ -178,6 +178,8 @@ class PolicyEngine:
         command_str: str,
         virtual_commands: frozenset[str],
         agent_id: str | None = None,
+        *,
+        assume_shell: bool | None = None,
     ) -> CommandPolicyDecision:
         """Evaluate *command_str* against the rule hierarchy.
 
@@ -189,6 +191,9 @@ class PolicyEngine:
             Frozenset of command names handled by the virtual CLI layer.
         agent_id:
             Optional agent id for agent-specific rule overrides.
+        assume_shell:
+            When True, skip the global ``cli_shell_enabled`` gate so callers
+            can peek at the rule that would apply after Shell Executor is on.
 
         Returns
         -------
@@ -207,7 +212,12 @@ class PolicyEngine:
             )
 
         # 2. Shell disabled globally — deny everything non-virtual.
-        if config.get("cli_shell_enabled") != "true":
+        shell_on = (
+            config.get("cli_shell_enabled") == "true"
+            if assume_shell is None
+            else bool(assume_shell)
+        )
+        if not shell_on:
             return CommandPolicyDecision(
                 allowed=False,
                 tier="disabled",

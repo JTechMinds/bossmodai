@@ -369,6 +369,8 @@ CLI LOOKUP DETAILS
 - blocked commands cannot be used; try an allowed alternative
 {{else}}
 - only built-in commands are currently available
+- when a locked clone needs pytest or local git add/commit, wait for the in-thread Shell Executor Enable/Deny card
+- do not invent that the desk cannot shell; do not park @Operator as the test runner or shell enabler
 {{end}}
 
 {{if trigger.type = 'peer_message'}}

@@ -132,6 +132,9 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     assert "Cancel" in consent
     assert "hidden: !git" in consent
     assert "/api/workspace-preference/" in consent
+    assert "Enable Shell Executor?" in consent
+    assert "Enable" in consent
+    assert "/api/shell-executor/" in consent
 
 
 def test_no_notifications_tab_and_consent_stays_in_thread() -> None:

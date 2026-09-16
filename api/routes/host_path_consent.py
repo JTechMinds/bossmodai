@@ -150,3 +150,44 @@ async def cancel_workspace_preference(request_id: str):
         detail=f"Workspace preference cancelled: {request.path}",
     )
     return request
+
+
+@router.post("/shell-executor/{request_id}/enable")
+async def enable_shell_executor(request_id: str):
+    """Turn Shell Executor on and resume the pending CLI attempt."""
+    from core.bm_cli.shell_executor_consent import resume_shell_executor_consent
+
+    try:
+        request = await resume_shell_executor_consent(
+            request_id,
+            decision="enable",
+            services=runtime_services,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if request is None:
+        raise HTTPException(404, "Consent request not found or already resolved")
+    await manager.broadcast_activity(
+        event="shell_executor_enabled",
+        detail="Shell Executor enabled.",
+    )
+    return request
+
+
+@router.post("/shell-executor/{request_id}/deny")
+async def deny_shell_executor(request_id: str):
+    """Refuse Shell Executor enable (fail-closed; setting stays off)."""
+    from core.bm_cli.shell_executor_consent import resume_shell_executor_consent
+
+    request = await resume_shell_executor_consent(
+        request_id,
+        decision="deny",
+        services=runtime_services,
+    )
+    if request is None:
+        raise HTTPException(404, "Consent request not found or already resolved")
+    await manager.broadcast_activity(
+        event="shell_executor_denied",
+        detail="Shell Executor stays off.",
+    )
+    return request

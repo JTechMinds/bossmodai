@@ -114,7 +114,7 @@ async def _run_execution_turn(
             except (json.JSONDecodeError, TypeError):
                 consent_payload = {}
         consent_status = consent_payload.get("status", "denied")
-        if consent_status in {"allowed_once", "always_allowed", "edit_host"}:
+        if consent_status in {"allowed_once", "always_allowed", "edit_host", "enabled"}:
             from core.bm_cli.host_path_consent import is_request_host_access_command
             from core.bm_cli.runtime import execute_bm_cli
 

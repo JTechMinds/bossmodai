@@ -212,12 +212,8 @@ def _cli_result_to_turn_result(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert one BossMod CLI result into the standard turn-local action result."""
-    from core.agent_loop.blocked_origin import (
-        HOST_DENY_KIND,
-        HOST_DENY_WHY,
-        is_host_deny_result,
-        surface_blocked_origin,
-    )
+    from core.agent_loop.blocked_origin import surface_cli_gate_block
+    from core.models.host_path_consent import consent_turn_event
 
     result = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
@@ -227,14 +223,9 @@ def _cli_result_to_turn_result(
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": True,
     }
-    if is_host_deny_result(cli_result):
-        surface_blocked_origin(
-            result,
-            agent=agent,
-            trigger=trigger,
-            why=HOST_DENY_WHY,
-            kind=HOST_DENY_KIND,
-        )
+    surface_cli_gate_block(
+        result, agent=agent, trigger=trigger, cli_result=cli_result
+    )
     cli_data = cli_result.data or {}
     if cli_data.get("managed_writer_attempted") or cli_data.get("managed_writer_used"):
         call_count = int(cli_data.get("managed_calls") or cli_data.get("managed_chunks") or 0)
@@ -293,17 +284,13 @@ def _cli_result_to_turn_result(
         result["suppress_activity_broadcast"] = False
     if getattr(cli_result, "consent_required", False):
         card = cli_data.get("host_path_consent") if isinstance(cli_data.get("host_path_consent"), dict) else {}
-        path = card.get("path") or "host path"
         result["consent_required"] = True
         result["consent_request_id"] = getattr(cli_result, "consent_request_id", None)
         result["consent_reused"] = bool(cli_data.get("consent_reused"))
         result["host_path_consent"] = card
-        if card.get("kind") == "workspace_preference":
-            result["event"] = "workspace_preference_required"
-            result["detail"] = f"{agent.name} needs a workspace preference: {path}"
-        else:
-            result["event"] = "host_path_consent_required"
-            result["detail"] = f"{agent.name} requests host-path access: {path}"
+        event, detail = consent_turn_event(agent.name, card)
+        result["event"] = event
+        result["detail"] = detail
         result["suppress_activity_broadcast"] = False
     return result
 

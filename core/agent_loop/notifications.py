@@ -9,7 +9,12 @@ import db
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.models import Activity, Agent
 from core.models.channel import ChannelArchivedError
-from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
+from core.models.host_path_consent import (
+    SHELL_EXECUTOR_CARD_COPY,
+    SHELL_EXECUTOR_KIND,
+    WORKSPACE_PREFERENCE_KIND,
+    consent_turn_event,
+)
 
 NotificationKind = Literal[
     "receipt",
@@ -306,7 +311,11 @@ def _build_consent_notification(
     result: dict[str, Any],
 ) -> ChatNotification | None:
     """Return the in-chat host-path consent card when a new request is created."""
-    if result.get("event") not in {"host_path_consent_required", "workspace_preference_required"}:
+    if result.get("event") not in {
+        "host_path_consent_required",
+        "workspace_preference_required",
+        "shell_executor_consent_required",
+    }:
         return None
     if result.get("consent_reused"):
         return None
@@ -334,15 +343,24 @@ def _build_consent_notification(
             grant_root, path, channel_id, consent_id
         ):
             return None
+    elif card.get("kind") == SHELL_EXECUTOR_KIND:
+        if _shell_executor_card_already_open(channel_id, consent_id):
+            return None
     elif grant_root and _grant_root_already_has_card(grant_root, channel_id, consent_id):
         return None
     reason = str(card.get("reason") or "").strip()
-    if card.get("kind") == "workspace_preference":
+    if card.get("kind") == SHELL_EXECUTOR_KIND:
+        _, content = consent_turn_event(agent.name, card)
+        if not content:
+            content = f"{agent.name} {SHELL_EXECUTOR_CARD_COPY}"
+    elif card.get("kind") == WORKSPACE_PREFERENCE_KIND:
         content = f"{agent.name} needs a workspace preference for {path}."
+        if reason:
+            content = f"{content} {reason}"
     else:
         content = f"{agent.name} needs host-path access: {path}."
-    if reason:
-        content = f"{content} {reason}"
+        if reason:
+            content = f"{content} {reason}"
     return ChatNotification(
         kind="host_path_consent",
         content=content,
@@ -619,6 +637,26 @@ def _workspace_preference_card_already_open(
         if not workspace_preference_scopes_match(
             sibling, path=path, grant_root=grant_root
         ):
+            continue
+        if db.has_consent_notification(sibling.id):
+            return True
+    return False
+
+
+def _shell_executor_card_already_open(
+    channel_id: str | None,
+    consent_id: str,
+) -> bool:
+    """Return True when another Shell Executor card is already in this thread."""
+    current = db.get_consent_request(consent_id)
+    agent_id = current.agent_id if current is not None else None
+    pending = db.list_consent_requests(agent_id=agent_id, status="pending", limit=80)
+    for sibling in pending:
+        if sibling.id == consent_id:
+            continue
+        if (sibling.card_kind or "") != SHELL_EXECUTOR_KIND:
+            continue
+        if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue
         if db.has_consent_notification(sibling.id):
             return True
