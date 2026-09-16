@@ -15,6 +15,7 @@ from core.models.host_path_consent import (
     SHELL_EXECUTOR_CARD_COPY,
     SHELL_EXECUTOR_KIND,
     WORKSPACE_PREFERENCE_KIND,
+    HostPathConsentRequest,
     consent_turn_event,
 )
 
@@ -50,6 +51,10 @@ CLI_APPROVAL_CHROME_FAIL = (
 CLI_APPROVAL_CREATE_FAIL = (
     "Approval request could not be created. "
     "The command was not queued for operator review."
+)
+CONSENT_CHROME_FAIL = (
+    "Consent card could not be posted to the conversation. "
+    "The request was not queued for operator review."
 )
 
 
@@ -218,10 +223,9 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
     The returned dict includes a ``feed_entry`` key with the unified feed
     shape so the caller can broadcast it to the activity panel.
     """
-    if notification.approval_id:
-        existing = db.get_notification_for_approval(notification.approval_id)
-        if existing is not None:
-            return _chat_notification_payload(agent, notification, existing)
+    existing = _existing_focus_card(notification)
+    if existing is not None:
+        return _chat_notification_payload(agent, notification, existing)
     stored = db.create_notification(
         agent_id=agent.id,
         task_id=notification.task_id,
@@ -268,10 +272,9 @@ def persist_channel_notification(agent: Agent, notification: ChatNotification) -
         raise ValueError("channel notifications require a channel_id")
     if db.is_channel_archived(notification.channel_id):
         return {}
-    if notification.approval_id:
-        existing = db.get_channel_message_for_approval(notification.approval_id)
-        if existing is not None:
-            return _channel_notification_payload(agent, notification, existing)
+    existing = _existing_channel_card(notification)
+    if existing is not None:
+        return _channel_notification_payload(agent, notification, existing)
     try:
         message = db.create_channel_message(
             channel_id=notification.channel_id,
@@ -368,6 +371,27 @@ def _channel_notification_payload(
     }
 
 
+def persist_origin_chrome(agent: Agent, notification: ChatNotification) -> bool:
+    """Persist one origin card (thread or Focus) and confirm it is live.
+
+    Idempotent. Returns False when the conversation surface could not take
+    the card — create-time callers must fail closed rather than pause.
+    """
+    try:
+        if notification.channel_id:
+            persisted = persist_channel_notification(agent, notification)
+            return bool(persisted) and _origin_chrome_is_live(notification)
+        persist_chat_notification(agent, notification)
+        return _origin_chrome_is_live(notification)
+    except Exception:
+        logger.exception(
+            "Origin chrome persist failed for approval=%s consent=%s",
+            notification.approval_id,
+            notification.consent_id,
+        )
+        return False
+
+
 def ensure_cli_approval_chrome(
     agent: Agent,
     approval: CliApprovalRequest,
@@ -380,21 +404,44 @@ def ensure_cli_approval_chrome(
     Returns True only when a pending card is actually on a conversation
     surface. Create-time callers must fail the CLI result if this is False.
     """
-    try:
-        notification = _approval_chrome_notification(
+    return persist_origin_chrome(
+        agent,
+        _approval_chrome_notification(
             agent,
             approval,
             channel_id=channel_id,
             source_channel=source_channel,
-        )
-        if notification.channel_id:
-            persisted = persist_channel_notification(agent, notification)
-            return bool(persisted) and db.has_approval_notification(approval.id)
-        persist_chat_notification(agent, notification)
-        return db.has_approval_notification(approval.id)
-    except Exception:
-        logger.exception("CLI approval chrome persist failed for %s", approval.id)
+        ),
+    )
+
+
+def ensure_consent_chrome(
+    agent: Agent,
+    request: HostPathConsentRequest,
+    *,
+    channel_id: str | None,
+    source_channel: str = "chat",
+) -> bool:
+    """Persist origin-thread or Focus consent chrome, or accept a sibling card.
+
+    Identical pendings coalesce: a second waiter on the same grant/thread
+    does not post another card. Returns True when chrome is live for this
+    ask. Create-time callers must fail closed if this is False.
+    """
+    origin = (channel_id or "").strip() or None
+    if origin and db.is_channel_archived(origin):
         return False
+    if _consent_sibling_card_open(request, origin):
+        return True
+    return persist_origin_chrome(
+        agent,
+        _consent_chrome_notification(
+            agent,
+            request,
+            channel_id=origin,
+            source_channel=source_channel,
+        ),
+    )
 
 
 def _approval_chrome_notification(
@@ -429,20 +476,26 @@ def _build_consent_notification(
     trigger: dict[str, Any],
     result: dict[str, Any],
 ) -> ChatNotification | None:
-    """Return the in-chat host-path consent card when a new request is created."""
+    """Return the in-chat host-path consent card when a new request is created.
+
+    Create-time chrome may already exist. Persist is idempotent; skipping here
+    would drop the live WebSocket push. Reused pendings whose card is already
+    live stay quiet (post once).
+    """
     if result.get("event") not in {
         "host_path_consent_required",
         "workspace_preference_required",
         "shell_executor_consent_required",
     }:
         return None
-    if result.get("consent_reused"):
-        return None
     card = result.get("host_path_consent") if isinstance(result.get("host_path_consent"), dict) else {}
     consent_id = str(card.get("id") or result.get("consent_request_id") or "").strip()
     if not consent_id:
         return None
-    if db.has_consent_notification(consent_id):
+    request = db.get_consent_request(consent_id)
+    if request is None:
+        return None
+    if result.get("consent_reused") and db.has_consent_notification(consent_id):
         return None
     channel_id = _consent_channel_id(trigger, card)
     if channel_id and db.is_channel_archived(channel_id):
@@ -450,44 +503,16 @@ def _build_consent_notification(
     if channel_id:
         bound = db.bind_consent_channel(consent_id, channel_id)
         if bound is not None:
+            request = bound
             card = bound.as_card()
-    grant_root = str(card.get("grant_root") or "").strip()
-    path = str(card.get("path") or "host path")
-    # Host-path waiters coalesce per grant root. Workspace preference is a
-    # different question (clone / branch / edit-host / cancel) and must not
-    # be swallowed by an unrelated host-path card on the same root — but two
-    # nested preference writes under one grant share one card.
-    if card.get("kind") == WORKSPACE_PREFERENCE_KIND:
-        if _workspace_preference_card_already_open(
-            grant_root, path, channel_id, consent_id
-        ):
-            return None
-    elif card.get("kind") == SHELL_EXECUTOR_KIND:
-        if _shell_executor_card_already_open(channel_id, consent_id):
-            return None
-    elif grant_root and _grant_root_already_has_card(grant_root, channel_id, consent_id):
+            channel_id = request.channel_id or channel_id
+    if _consent_sibling_card_open(request, channel_id):
         return None
-    reason = str(card.get("reason") or "").strip()
-    if card.get("kind") == SHELL_EXECUTOR_KIND:
-        _, content = consent_turn_event(agent.name, card)
-        if not content:
-            content = f"{agent.name} {SHELL_EXECUTOR_CARD_COPY}"
-    elif card.get("kind") == WORKSPACE_PREFERENCE_KIND:
-        content = f"{agent.name} needs a workspace preference for {path}."
-        if reason:
-            content = f"{content} {reason}"
-    else:
-        content = f"{agent.name} needs host-path access: {path}."
-        if reason:
-            content = f"{content} {reason}"
-    return ChatNotification(
-        kind="host_path_consent",
-        content=content,
-        source_channel=_notification_source_channel(trigger),
-        policy="all",
-        prompt_visibility=False,
-        consent_id=consent_id,
+    return _consent_chrome_notification(
+        agent,
+        request,
         channel_id=channel_id,
+        source_channel=_notification_source_channel(trigger),
     )
 
 
@@ -753,6 +778,86 @@ def _consent_channel_id(trigger: dict[str, Any], card: dict[str, Any] | None = N
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
     return None
+
+
+def _existing_focus_card(notification: ChatNotification):
+    """Return an already-posted Focus row for this approval or consent, if any."""
+    if notification.approval_id:
+        return db.get_notification_for_approval(notification.approval_id)
+    if notification.consent_id:
+        return db.get_notification_for_consent(notification.consent_id)
+    return None
+
+
+def _existing_channel_card(notification: ChatNotification):
+    """Return an already-posted origin-thread row for this decision, if any."""
+    if notification.approval_id:
+        return db.get_channel_message_for_approval(notification.approval_id)
+    if notification.consent_id:
+        return db.get_channel_message_for_consent(notification.consent_id)
+    return None
+
+
+def _origin_chrome_is_live(notification: ChatNotification) -> bool:
+    """Return True when Focus or the origin thread already carries this card."""
+    if notification.approval_id:
+        return db.has_approval_notification(notification.approval_id)
+    if notification.consent_id:
+        return db.has_consent_notification(notification.consent_id)
+    return False
+
+
+def _consent_chrome_notification(
+    agent: Agent,
+    request: HostPathConsentRequest,
+    *,
+    channel_id: str | None,
+    source_channel: str,
+) -> ChatNotification:
+    """Build the in-thread / Focus card payload for one consent request."""
+    card = request.as_card()
+    origin = (channel_id or "").strip() or None
+    if origin and db.is_channel_archived(origin):
+        origin = None
+    return ChatNotification(
+        kind="host_path_consent",
+        content=_consent_card_content(agent.name, card),
+        source_channel=source_channel,
+        policy="all",
+        prompt_visibility=False,
+        consent_id=request.id,
+        channel_id=origin,
+    )
+
+
+def _consent_card_content(agent_name: str, card: dict[str, Any]) -> str:
+    """Return the transcript line for one consent kind."""
+    path = str(card.get("path") or "host path")
+    reason = str(card.get("reason") or "").strip()
+    if card.get("kind") == SHELL_EXECUTOR_KIND:
+        _, content = consent_turn_event(agent_name, card)
+        return content or f"{agent_name} {SHELL_EXECUTOR_CARD_COPY}"
+    if card.get("kind") == WORKSPACE_PREFERENCE_KIND:
+        content = f"{agent_name} needs a workspace preference for {path}."
+        return f"{content} {reason}" if reason else content
+    content = f"{agent_name} needs host-path access: {path}."
+    return f"{content} {reason}" if reason else content
+
+
+def _consent_sibling_card_open(
+    request: HostPathConsentRequest,
+    channel_id: str | None,
+) -> bool:
+    """Return True when a coalesced sibling already owns the live card."""
+    kind = (request.card_kind or "host_path").strip() or "host_path"
+    if kind == WORKSPACE_PREFERENCE_KIND:
+        return _workspace_preference_card_already_open(
+            request.grant_root, request.path, channel_id, request.id
+        )
+    if kind == SHELL_EXECUTOR_KIND:
+        return _shell_executor_card_already_open(channel_id, request.id)
+    grant_root = str(request.grant_root or "").strip()
+    return bool(grant_root and _grant_root_already_has_card(grant_root, channel_id, request.id))
 
 
 def _grant_root_already_has_card(

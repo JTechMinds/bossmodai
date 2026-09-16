@@ -97,7 +97,7 @@ def test_approval_create_stamps_channel_id() -> None:
     assert len(cards) == 1
     assert cards[0].notification_kind == CLI_APPROVAL_KIND
     assert paused.approval_request_id in (paused.prompt_content or "")
-    assert "Do not claim an approval card is live" in (paused.prompt_content or "")
+    assert "Do not claim an Approve or consent card is live" in (paused.prompt_content or "")
 
 
 def test_quoted_editable_pip_install_posts_chrome() -> None:
@@ -171,7 +171,8 @@ def test_runtime_core_does_not_claim_live_card_without_request_id() -> None:
 
     agent, _state = _agent_and_state()
     block = format_runtime_core_block(agent)
-    assert "approval_required with a request id" in block
+    assert "a request id" in block
+    assert "Approve or consent card" in block
 
 
 @pytest.mark.asyncio

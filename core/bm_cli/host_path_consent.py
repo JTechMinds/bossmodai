@@ -312,6 +312,16 @@ def request_host_path_access(
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending
+        chrome_error = require_consent_chrome(
+            agent,
+            pending,
+            channel_id=origin_channel or pending.channel_id,
+            command=label,
+            cwd=cwd,
+            abandon=False,
+        )
+        if chrome_error is not None:
+            return chrome_error
         return consent_required_result(
             label,
             _consent_message(pending),
@@ -324,6 +334,16 @@ def request_host_path_access(
     if scoped is not None and scoped.agent_id == agent.id:
         if origin_channel and not scoped.channel_id:
             scoped = db.bind_consent_channel(scoped.id, origin_channel) or scoped
+        chrome_error = require_consent_chrome(
+            agent,
+            scoped,
+            channel_id=origin_channel or scoped.channel_id,
+            command=label,
+            cwd=cwd,
+            abandon=False,
+        )
+        if chrome_error is not None:
+            return chrome_error
         return consent_required_result(
             label,
             _consent_message(scoped),
@@ -344,6 +364,16 @@ def request_host_path_access(
         task_id=task_id,
         channel_id=origin_channel,
     )
+    chrome_error = require_consent_chrome(
+        agent,
+        request,
+        channel_id=origin_channel,
+        command=label,
+        cwd=cwd,
+        abandon=True,
+    )
+    if chrome_error is not None:
+        return chrome_error
     attached = scoped is not None
     return consent_required_result(
         label,
@@ -534,6 +564,38 @@ def _consent_message(request: HostPathConsentRequest) -> str:
         f"Host-path access needs operator consent in chat for {request.path!r} "
         f"(grant root {request.grant_root!r}). {request.reason}"
     )
+
+
+def require_consent_chrome(
+    agent: Agent,
+    request: HostPathConsentRequest,
+    *,
+    channel_id: str | None,
+    command: str,
+    cwd: str | None,
+    executor: str = "virtual",
+    abandon: bool,
+) -> BossModCliResult | None:
+    """Post origin chrome for a consent pause, or return a fail-closed error.
+
+    New rows pass ``abandon=True`` so a missing card does not leave a pending
+    ask the model treats as live. Reused rows keep the pending and still
+    refuse to pause as if the card posted.
+    """
+    from core.agent_loop.notifications import CONSENT_CHROME_FAIL, ensure_consent_chrome
+
+    origin = _clean_channel_id(channel_id) or _clean_channel_id(request.channel_id)
+    posted = ensure_consent_chrome(
+        agent,
+        request,
+        channel_id=origin,
+        source_channel="channel" if origin else "chat",
+    )
+    if posted:
+        return None
+    if abandon:
+        db.abandon_unposted_consent(request.id)
+    return error_result(command, CONSENT_CHROME_FAIL, cwd=cwd, executor=executor)
 
 
 async def _enqueue_resume(

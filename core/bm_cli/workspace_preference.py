@@ -253,6 +253,8 @@ def request_workspace_preference(
 
         return error_result(command, THREAD_ARCHIVED_CONSENT_DENY, cwd=cwd, executor="virtual")
 
+    from core.bm_cli.host_path_consent import require_consent_chrome
+
     pending = _pending_preference_for_write(
         agent_id=agent.id,
         path=path,
@@ -261,6 +263,16 @@ def request_workspace_preference(
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending
+        chrome_error = require_consent_chrome(
+            agent,
+            pending,
+            channel_id=origin_channel or pending.channel_id,
+            command=command,
+            cwd=cwd,
+            abandon=False,
+        )
+        if chrome_error is not None:
+            return chrome_error
         return consent_required_result(
             command,
             _preference_message(pending),
@@ -283,6 +295,16 @@ def request_workspace_preference(
         card_kind=WORKSPACE_PREFERENCE_KIND,
         is_git=is_git,
     )
+    chrome_error = require_consent_chrome(
+        agent,
+        request,
+        channel_id=origin_channel,
+        command=command,
+        cwd=cwd,
+        abandon=True,
+    )
+    if chrome_error is not None:
+        return chrome_error
     return consent_required_result(
         command,
         _preference_message(request),

@@ -225,6 +225,7 @@ async def test_thread_origin_execution_cli_posts_consent_to_channel_not_focus(
     assert stored is not None
     assert stored.channel_id == channel.id
     assert result["host_path_consent"]["channel_id"] == channel.id
+    assert any(item.consent_id == stored.id for item in db.list_channel_messages(channel.id))
 
     notes = project_chat_notifications(
         agent=gerry,
@@ -276,6 +277,7 @@ async def test_thread_origin_request_host_access_posts_to_channel(
     stored = db.get_consent_request(result["consent_request_id"])
     assert stored is not None
     assert stored.channel_id == channel.id
+    assert any(item.consent_id == stored.id for item in db.list_channel_messages(channel.id))
     await emit_chat_notifications(
         agent=gerry,
         trigger=trigger,
@@ -307,6 +309,7 @@ async def test_focus_origin_execution_cli_still_posts_consent_to_focus(
     stored = db.get_consent_request(result["consent_request_id"])
     assert stored is not None
     assert stored.channel_id is None
+    assert db.has_consent_notification(stored.id)
     notes = project_chat_notifications(
         agent=gerry,
         trigger=trigger,
