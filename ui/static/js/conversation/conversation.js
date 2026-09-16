@@ -161,6 +161,28 @@ const BossModConversation = (() => {
             return messages.filter((message) => !message.systemReceipt);
         }
 
+        /**
+         * Pending request-card ids currently painted in this transcript.
+         * Needs-bar uses this to show Approve only when the inline card is
+         * missing — not when the ask is already on screen.
+         */
+        function pendingRequestIds(messages) {
+            const ids = [];
+            (messages || []).forEach((message) => {
+                if (message.kind !== 'request' || !message.card || !message.card.id) return;
+                if ((message.card.status || 'pending') !== 'pending') return;
+                ids.push(String(message.card.id));
+            });
+            return ids;
+        }
+
+        function syncInlineNeedIds(messages) {
+            const ids = pendingRequestIds(messages);
+            const current = store.getState().inlineNeedIds || [];
+            if (current.length === ids.length && current.every((id, i) => id === ids[i])) return;
+            store.setState({ inlineNeedIds: ids });
+        }
+
         function paint(messages) {
             const visible = visibleMessages(messages);
             // The source says WHO; the controller supplies what can be done,
@@ -172,6 +194,38 @@ const BossModConversation = (() => {
             }));
             transcript.setMessages(visible);
             transcript.renderPresence(currentId);
+            syncInlineNeedIds(visible);
+        }
+
+        /**
+         * Create-time CLI/consent chrome is persisted before the live
+         * WebSocket push. If a chat-target need arrives for this conversation
+         * and the loaded transcript has no matching card, refetch so the
+         * operator watching Focus sees Approve/Reject instead of only the bell.
+         */
+        async function reloadIfPendingChromeMissing(previousNeeds) {
+            const id = currentId;
+            const src = source;
+            if (!src || !id || pendingLive) return;
+            const prevIds = new Set((previousNeeds || []).map((need) => need && need.id));
+            const arrived = (store.getState().needs || []).filter((need) => (
+                need
+                && need.conversationId === id
+                && need.target
+                && need.target.place === 'chat'
+                && !prevIds.has(need.id)
+            ));
+            if (!arrived.length) return;
+            const inline = new Set(pendingRequestIds(visibleMessages(cache.recall(id) || [])));
+            if (arrived.every((need) => inline.has(need.id))) return;
+            try {
+                const messages = await src.load();
+                if (source !== src || currentId !== id || pendingLive) return;
+                cache.remember(id, messages);
+                paint(messages);
+            } catch (err) {
+                console.error(`[conversation] could not refresh ${id}`, err);
+            }
         }
 
         const handlers = {
@@ -185,6 +239,7 @@ const BossModConversation = (() => {
                     return;
                 }
                 if (transcript.append(message)) cache.append(currentId, message);
+                syncInlineNeedIds(visibleMessages(cache.recall(currentId) || []));
             },
             reset() {
                 cache.forget(currentId);
@@ -259,6 +314,7 @@ const BossModConversation = (() => {
             else {
                 transcript.setMessages([]);
                 transcript.setStatus('loading');
+                syncInlineNeedIds([]);
             }
             chrome.reset();  // a half-typed rename must not follow the switch
             applyChrome();
@@ -316,6 +372,11 @@ const BossModConversation = (() => {
             if (!card) return;
             BossModConsentCard.collapseGrantedConsentCards(card);
         }));
+
+        disposers.push(store.subscribe(
+            (s) => s.needs,
+            (_next, prev) => { void reloadIfPendingChromeMissing(prev); },
+        ));
 
         return {
             element,

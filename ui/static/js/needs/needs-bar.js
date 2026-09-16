@@ -7,7 +7,8 @@
  *
  * It defines no card markup of its own: every row goes through
  * conversation/event-cards.js, which is why a need and a transcript event look
- * the same. Consent is deliberately absent — see BAR_CARDS.
+ * the same. Approval and consent stay off the bar when the transcript already
+ * has the matching pending card — see BAR_CARDS and FALLBACK_CARDS.
  *
  * Four states: ready (cards), error (an inline line when the queue could not be
  * confirmed), and empty. Loading is deliberately indistinguishable from empty:
@@ -24,17 +25,20 @@ const BossModNeedsBar = (() => {
     /**
      * Need kind to the `event` card tone that shows it.
      *
-     * `consent` and `approval` are absent on purpose, and their absence is the
-     * suppression rule doing its job rather than a missing case. A host-path
-     * consent or CLI approval ask already renders inline in the transcript of
-     * the very conversation this bar is scoped to (conversation/sources/*.js
-     * emit it as `request`), so putting it here too would render one ask twice
-     * in one conversation — exactly what spec 4.3 and 5.5 exist to prevent.
-     * Both stay reachable from the bell.
+     * `consent` and `approval` are not in BAR_CARDS because an inline
+     * transcript card is the primary chrome. They join FALLBACK_CARDS so a
+     * pending ask whose loaded transcript has no matching card still gets
+     * Approve/Reject here — suppressing on a missing inline left operators
+     * with only the bell. When conversation.js reports the card id in
+     * `inlineNeedIds`, the bar stays quiet and the transcript owns the ask.
      */
     const BAR_CARDS = Object.freeze({
         blocked: 'blocked',
         error: 'warn',
+    });
+    const FALLBACK_CARDS = Object.freeze({
+        approval: 'ask',
+        consent: 'ask',
     });
 
     /**
@@ -84,8 +88,15 @@ const BossModNeedsBar = (() => {
         function visible() {
             const state = store.getState();
             if (!state.conversationId) return [];
-            return state.needs.filter((need) => need.conversationId === state.conversationId
-                && Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind));
+            const inline = new Set(state.inlineNeedIds || []);
+            return state.needs.filter((need) => {
+                if (need.conversationId !== state.conversationId) return false;
+                if (Object.prototype.hasOwnProperty.call(BAR_CARDS, need.kind)) return true;
+                if (Object.prototype.hasOwnProperty.call(FALLBACK_CARDS, need.kind)) {
+                    return !inline.has(need.id);
+                }
+                return false;
+            });
         }
 
         /**
@@ -134,7 +145,7 @@ const BossModNeedsBar = (() => {
             }));
             if (showMe) actions.push(showMe);
             return {
-                tone: BAR_CARDS[need.kind],
+                tone: BAR_CARDS[need.kind] || FALLBACK_CARDS[need.kind],
                 title: need.title,
                 sub: need.sub,
                 error: need.error || '',
@@ -192,6 +203,7 @@ const BossModNeedsBar = (() => {
         disposers.push(store.subscribe((s) => s.conversationId, render));
         disposers.push(store.subscribe((s) => s.needsBarEnabled, render));
         disposers.push(store.subscribe((s) => s.needsBarDismissed, render));
+        disposers.push(store.subscribe((s) => s.inlineNeedIds, render));
         disposers.push(needs.subscribeError(render));
 
         render();

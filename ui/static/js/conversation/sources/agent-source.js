@@ -67,14 +67,17 @@ const BossModAgentSource = (() => {
          * @returns {object} Message
          */
         function toMessage(raw) {
-            const isSystem = raw.from === 'system' || raw.message_type === 'system';
+            const isSystem = raw.from === 'system' || raw.from_type === 'system'
+                || raw.message_type === 'system';
             const isWalkReceipt = raw.notification_kind === 'receipt';
             const isQueue = raw.notification_kind === 'queue_visibility';
             const card = BossModConsentCard.cardFromMessage(raw);
+            const isDecisionAsk = raw.notification_kind === 'cli_approval'
+                || raw.notification_kind === 'host_path_consent';
             const text = raw.content || '';
             return {
                 key: isQueue ? `queue-visibility:${agentId}` : String(raw.id || raw.message_id || '').trim(),
-                author: raw.from || 'agent',
+                author: raw.from || raw.from_type || 'agent',
                 authorName: raw.from_name || '',
                 authorAgentId: raw.author_agent_id || agentId,
                 showAuthor: false,
@@ -84,7 +87,7 @@ const BossModAgentSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
-                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue,
+                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
             };

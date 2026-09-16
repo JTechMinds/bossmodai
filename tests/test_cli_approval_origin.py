@@ -352,6 +352,27 @@ def test_needs_focus_approval_uses_agent_conversation() -> None:
     assert approvals[0]["conversation_id"] == gerry.id
 
 
+def test_focus_transcript_serializes_approval_card_after_create() -> None:
+    agent, state = _agent_and_state()
+    paused = execute_bm_cli(agent, state, EDITABLE_CMD)
+    assert paused.approval_required is True
+    client = _api_client()
+    res = client.get(f"/api/agents/{agent.id}/messages", headers=_auth())
+    assert res.status_code == 200, res.text
+    cards = [
+        item
+        for item in res.json()
+        if item.get("notification_kind") == CLI_APPROVAL_KIND
+    ]
+    assert len(cards) == 1
+    card = cards[0]["cli_approval"]
+    assert card["id"] == paused.approval_request_id
+    assert card["command"] == EDITABLE_CMD
+    assert card["kind"] == CLI_APPROVAL_KIND
+    assert card["status"] == "pending"
+    assert cards[0]["from"] == "system"
+
+
 @pytest.mark.asyncio
 async def test_channel_transcript_serializes_approval_card() -> None:
     gerry, state = _agent_and_state()
