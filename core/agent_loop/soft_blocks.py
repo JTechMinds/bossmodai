@@ -3,10 +3,14 @@
 These must not become hard ``agent_error`` / diagnostic spam. Origin thread
 gets one locked line. Wait without a task does not freeze the agent. No-progress
 blocks the bound task (when there is one) and tags a next owner.
+
+Soft-block stays an operator safety control. It auto-clears when the agent is
+actually working the bound task so Board / Needs do not stay sticky Blocked.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import db
@@ -27,15 +31,60 @@ from core.agent_loop.task_origin_mirrors import (
     named_origin_line,
     persist_unbound_status_line,
 )
-from core.models import Agent
+from core.models import Activity, Agent, Task
 from core.models.message import HUMAN_SENDER_ID
+from core.runtime.events import runtime_events as manager
 from core.tasking.transitions import IllegalTaskTransition, transition_task
+
+SOFT_BLOCK_STATUSES = frozenset({"blocked", "stalled"})
+LIVE_WORK_CLEARS_REASON = "Live work cleared Soft-block."
+STATUS_REPLY_RESUME_NOTE = "Resumed after a status reply."
 
 WAITING_WITHOUT_TASK_CODE = "waiting_without_task"
 WAITING_WITHOUT_TASK_LINE = "Blocked — wait needs an active task"
 
 NO_PROGRESS_CODE = "no_progress_block"
 NO_PROGRESS_LINE = format_blocked_line(NO_PROGRESS_WHY)
+
+
+def clear_soft_block_for_live_work(agent_id: str) -> Task | None:
+    """Demote Board Soft-block when the agent is executing the bound task.
+
+    Live work activity wins over a sticky ``blocked`` / ``stalled`` row. True
+    stalls keep Soft-block: paused work, or no bound task, is left alone.
+    """
+    active = activity_runtime.get_active_work_activity(agent_id)
+    if active is None or not active.task_id:
+        return None
+    return _clear_soft_block_task(active.task_id, agent_id=agent_id, reason=LIVE_WORK_CLEARS_REASON)
+
+
+def resume_soft_blocked_work(agent_id: str) -> Activity | None:
+    """Clear live Soft-block, or reactivate paused Soft-blocked work.
+
+    A status-only reply must not strand an open Board task. Returns the work
+    activity only when Soft-block was actually cleared or resumed.
+    """
+    active = activity_runtime.get_active_work_activity(agent_id)
+    if active is not None and active.task_id:
+        if clear_soft_block_for_live_work(agent_id) is None:
+            return None
+        return activity_runtime.get_active_work_activity(agent_id) or active
+
+    for status in ("blocked", "stalled"):
+        for task in db.list_tasks(assigned_to=agent_id, status=status):
+            paused = db.get_resumable_work_activity(agent_id, task.id)
+            if paused is None:
+                continue
+            return activity_runtime.activate_work_activity(
+                agent_id,
+                task,
+                title=task.title,
+                detail=task.description,
+                task_status="active",
+                supersede_note=STATUS_REPLY_RESUME_NOTE,
+            )
+    return None
 
 
 def waiting_without_task_result(
@@ -167,6 +216,49 @@ def _channel_id(task: Any, trigger: dict[str, Any] | None) -> str | None:
     if isinstance(channel_id, str) and channel_id.strip():
         return channel_id.strip()
     return None
+
+
+def _clear_soft_block_task(task_id: str, *, agent_id: str, reason: str) -> Task | None:
+    task = db.get_task(task_id)
+    if task is None or task.status not in SOFT_BLOCK_STATUSES:
+        return None
+    try:
+        updated = transition_task(
+            task.id,
+            "active",
+            reason=reason,
+            actor="BossMod",
+            actor_type="system",
+            status_note=None,
+            watchdog_pinged_at=None,
+        )
+    except IllegalTaskTransition:
+        return None
+    _schedule_status_changed(agent_id, updated)
+    return updated
+
+
+def _schedule_status_changed(agent_id: str, task: Task) -> None:
+    agent = db.get_agent(agent_id)
+    name = agent.name if agent is not None else None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(
+        manager.broadcast_activity(
+            event="status_changed",
+            detail=_status_changed_detail(name, task),
+            agent_name=name,
+            extra={"task_id": task.id, "task_status": task.status},
+        )
+    )
+
+
+def _status_changed_detail(agent_name: str | None, task: Task) -> str:
+    title = (task.title or "task").strip() or "task"
+    who = (agent_name or "Agent").strip() or "Agent"
+    return f'{who} resumed work on "{title}"'
 
 
 def _attach_unbound_line(

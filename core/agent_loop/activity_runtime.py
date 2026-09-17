@@ -87,10 +87,13 @@ def refresh_agent_status(agent_id: str) -> AgentState | None:
     """Derive visible agent status from the active runtime activity."""
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id:
+        from core.agent_loop.soft_blocks import clear_soft_block_for_live_work
+
+        # Live work demotes sticky Soft-block. Waiting still reads as waiting.
+        clear_soft_block_for_live_work(agent_id)
         task = db.get_task(active.task_id)
-        if task is not None and task.status in {"waiting", "blocked", "stalled"}:
-            status = "waiting" if task.status == "waiting" else "blocked"
-            return db.update_agent_state(agent_id, status=status)
+        if task is not None and task.status == "waiting":
+            return db.update_agent_state(agent_id, status="waiting")
     if not active:
         if db.list_tasks(assigned_to=agent_id, status="blocked") or db.list_tasks(assigned_to=agent_id, status="stalled"):
             return db.update_agent_state(agent_id, status="blocked")

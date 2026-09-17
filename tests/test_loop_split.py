@@ -52,6 +52,7 @@ def test_apply_decision_collaborators_live_in_focused_modules() -> None:
     assert "def _persist_reply" not in runtime_source
     assert "def _resolve_or_create_work_task" not in runtime_source
     assert "def _resume_previous_work_if_needed" not in runtime_source
+    assert "def _continue_soft_blocked_work_after_status" not in runtime_source
 
     from core.agent_loop import (
         decision_replies,
@@ -67,6 +68,7 @@ def test_apply_decision_collaborators_live_in_focused_modules() -> None:
     assert callable(decision_replies._persist_reply)
     assert callable(decision_replies._prepare_shared_response_trigger)
     assert callable(decision_resume._resume_previous_work_if_needed)
+    assert callable(decision_resume._continue_soft_blocked_work_after_status)
     assert callable(decision_resume._complete_assignment_if_present)
 
 
