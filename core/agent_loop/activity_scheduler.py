@@ -69,6 +69,8 @@ def can_dispatch_trigger(
 
 def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity | None:
     """Materialize any runtime activity needed before the turn starts."""
+    from core.agent_loop.soft_blocks import clear_soft_block_for_live_work
+
     active = activity_runtime.get_active_activity(agent_id)
     trigger_type = trigger.get("type")
     if trigger.get("task_id") and (
@@ -86,9 +88,11 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
                 and active.task_id == task.id
             )
             # Consent grants still reactivate a blocked/waiting Board task
-            # even when the work activity is already the live one.
+            # even when the work activity is already the live one. A live
+            # activity_resumed turn still demotes sticky Soft-block.
             if already and trigger_type == "activity_resumed":
-                return active
+                clear_soft_block_for_live_work(agent_id)
+                return activity_runtime.get_active_activity(agent_id) or active
             return activity_runtime.activate_work_activity(
                 agent_id,
                 task,
@@ -103,6 +107,7 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
             if active and not (active.kind == "assignment" and active.task_id == task.id):
                 return active
             return activity_runtime.start_assignment_activity(agent_id, task)
+    clear_soft_block_for_live_work(agent_id)
     return active
 
 

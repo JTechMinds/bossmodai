@@ -12,6 +12,7 @@ from core.agent_loop.activity_scheduler import (
     build_task_resume_trigger,
 )
 from core.agent_loop.decision_contract import ConversationDecision
+from core.agent_loop.soft_blocks import resume_soft_blocked_work
 from core.models import Agent
 
 
@@ -27,6 +28,21 @@ def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | N
             reason=f'Resume work on "{active_work.title or "your task"}".',
         )
     )
+
+
+def _continue_soft_blocked_work_after_status(
+    result: dict[str, Any],
+    agent: Agent,
+    active_work: Any | None,
+) -> Any | None:
+    """Unstick Soft-block after a status-only reply when work continues."""
+    work = resume_soft_blocked_work(agent.id)
+    if work is not None:
+        _resume_previous_work_if_needed(result, work)
+        return work
+    _resume_previous_work_if_needed(result, active_work)
+    return active_work
+
 
 def _resume_waiting_work_after_task_attention(
     *,

@@ -23,6 +23,7 @@ from core.agent_loop.thread_supersede import supersede_stale_thread_turn
 from core.agent_loop.next_owner import maybe_next_owner_nudge
 from core.agent_loop.decision_resume import (
     _complete_assignment_if_present,
+    _continue_soft_blocked_work_after_status,
     _record_watchdog_reply_if_needed,
     _resume_previous_work_if_needed,
     _resume_waiting_work_after_task_attention,
@@ -100,14 +101,15 @@ def apply_decision(
         result["detail"] = f"{agent.name} answered the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
+            _continue_soft_blocked_work_after_status(result, agent, None)
         else:
-            _resume_previous_work_if_needed(result, active_work)
+            live_work = _continue_soft_blocked_work_after_status(result, agent, active_work)
             _resume_waiting_work_after_task_attention(
                 result=result,
                 agent=agent,
                 trigger=trigger,
                 decision=decision,
-                active_work=active_work,
+                active_work=live_work,
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
