@@ -244,6 +244,8 @@ def _parse_json_object(raw_response: str) -> dict[str, Any]:
         lines = [line for line in lines if not line.strip().startswith("```")]
         text = "\n".join(lines).strip()
 
+    from core.agent_loop.parse_steer import parse_failed_payload
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
@@ -254,13 +256,17 @@ def _parse_json_object(raw_response: str) -> dict[str, Any]:
                 parsed = json.loads(text[start:end])
             except json.JSONDecodeError:
                 logger.warning("Failed to parse decision JSON: %s", text[:200])
-                return {"decision": "_parse_failed", "thought": "", "_raw_snippet": text[:200]}
+                return parse_failed_payload(text, decision=True, snippet=text[:200])
         else:
             logger.warning("No JSON found in decision response: %s", text[:200])
-            return {"decision": "_parse_failed", "thought": "", "_raw_snippet": text[:200]}
+            return parse_failed_payload(text, decision=True, snippet=text[:200])
 
     if not isinstance(parsed, dict):
-        return {"decision": "_parse_failed", "thought": "", "_raw_snippet": "Decision payload must be a JSON object"}
+        return parse_failed_payload(
+            text,
+            decision=True,
+            snippet="Decision payload must be a JSON object",
+        )
     return parsed
 
 

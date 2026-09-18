@@ -86,9 +86,11 @@ def maybe_pause_for_shell_executor(
         assume_shell=True,
     )
     if peek.tier == "never_allowed":
+        from core.bm_cli.locked_clone_outcome import blocked_never_allowed_message
+
         return error_result(
             parsed.raw,
-            peek.message or f"Command blocked by policy: {parsed.name}",
+            blocked_never_allowed_message(peek, parsed),
             cwd=cwd,
             executor="shell",
         )

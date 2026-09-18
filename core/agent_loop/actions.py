@@ -106,6 +106,8 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines).strip()
 
+    from core.agent_loop.parse_steer import parse_failed_payload
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
@@ -116,10 +118,10 @@ def parse_action(raw_response: str) -> dict[str, Any]:
                 parsed = json.loads(text[start:end])
             except json.JSONDecodeError:
                 logger.warning("Failed to parse action JSON: %s", text[:200])
-                return {"action": "_parse_failed", "thought": "Failed to parse response", "_raw_snippet": text[:200]}
+                return parse_failed_payload(text, decision=False, snippet=text[:200])
         else:
             logger.warning("No JSON found in response: %s", text[:200])
-            return {"action": "_parse_failed", "thought": "No action in response", "_raw_snippet": text[:200]}
+            return parse_failed_payload(text, decision=False, snippet=text[:200])
 
     if not isinstance(parsed, dict):
         logger.warning("Parsed action is not an object: %s", parsed)

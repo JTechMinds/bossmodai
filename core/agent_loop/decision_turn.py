@@ -18,6 +18,11 @@ from core.agent_loop.next_owner import NUDGE_FEEDBACK_CODE, next_owner_nudge_con
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
+from core.agent_loop.parse_steer import (
+    classify_json_parse_failure,
+    parse_failure_should_repair,
+    parse_failure_steer,
+)
 from core.agent_loop.turn_helpers import (
     _build_decision_repair_messages,
     _build_managed_writer_progress_reporter,
@@ -141,8 +146,15 @@ async def _run_decision_turn(
 
         parsed = parse_direct_turn_response(response.content)
         if parsed.get("decision") == "_parse_failed":
-            error = f"Failed to parse decision JSON: {parsed.get('_raw_snippet', '')}"
-            if decision_repair_attempts < _MAX_DECISION_REPAIR_ATTEMPTS:
+            parse_kind = parsed.get("_parse_kind") or classify_json_parse_failure(
+                response.content
+            )
+            error = parse_failure_steer(parse_kind, parsed.get("_raw_snippet", ""))
+            if parse_failure_should_repair(
+                kind=parse_kind,
+                repair_attempts=decision_repair_attempts,
+                max_repairs=_MAX_DECISION_REPAIR_ATTEMPTS,
+            ):
                 decision_repair_attempts += 1
                 continuation_messages = _build_decision_repair_messages(
                     parsed_error=parsed.get("_raw_snippet", ""),
@@ -171,8 +183,9 @@ async def _run_decision_turn(
 
             result = {
                 "event": "agent_error",
-                "detail": f"{agent.name} returned invalid decision JSON",
+                "detail": error,
                 "agent_name": agent.name,
+                "parse_steer": True,
             }
             await manager.broadcast_activity(**result)
             return await _finalize_turn(
