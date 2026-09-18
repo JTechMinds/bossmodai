@@ -155,6 +155,22 @@ function actionLabels(root) {
     if (!liveLabels.includes("Approve") || !liveLabels.includes("Reject")) {
         throw new Error(`live-append card must offer Approve/Reject, got ${liveLabels.join(",")}`);
     }
+    store.setState({
+        needs: [{
+            id: "appr-live",
+            kind: "approval",
+            conversationId: "live",
+            title: "Live wants to run a command",
+            sub: 'pip install -e ".[dev]"',
+            actions: [],
+            target: { place: "chat", conversationId: "live", conversationKind: "agent" },
+        }],
+    });
+    await tick();
+    const liveBar = conversation.element.querySelector(".needs-bar");
+    if (!liveBar || liveBar.hidden !== true) {
+        throw new Error("Needs-bar must stay quiet when live WS already painted Approve");
+    }
     const paintsLiveAppend = true;
 
     store.setState({ conversationId: "reload", conversationKind: "agent" });

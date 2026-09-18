@@ -342,8 +342,10 @@ async def _run_decision_turn(
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
-            if cli_turn_result.get("consent_required"):
-                return await _finalize_host_path_consent_pause(
+            if cli_turn_result.get("consent_required") or cli_turn_result.get(
+                "approval_required"
+            ):
+                return await _finalize_origin_chrome_pause(
                     agent=agent,
                     state=state,
                     trigger=trigger,
@@ -397,7 +399,7 @@ async def _run_decision_turn(
                 )
             )
             if host_result.get("consent_required"):
-                return await _finalize_host_path_consent_pause(
+                return await _finalize_origin_chrome_pause(
                     agent=agent,
                     state=state,
                     trigger=trigger,
@@ -604,7 +606,7 @@ async def _run_decision_turn(
         )
 
 
-async def _finalize_host_path_consent_pause(
+async def _finalize_origin_chrome_pause(
     *,
     agent: Agent,
     state: AgentState,
@@ -624,7 +626,7 @@ async def _finalize_host_path_consent_pause(
     result: dict[str, Any],
     start: float,
 ) -> TurnOutcome:
-    """Project the consent card and end the decision turn for the operator."""
+    """Project origin chrome (Approve or consent) and end the decision turn."""
     del state
     await emit_chat_notifications(
         agent=agent,
@@ -649,7 +651,10 @@ async def _finalize_host_path_consent_pause(
         outcome=TurnOutcome.success(
             result=result,
             action=action,
-            action_summary=_summarize_action_chain(executed_actions, "request_host_access"),
+            action_summary=_summarize_action_chain(
+                executed_actions,
+                str(action.get("action") or "bm_cli"),
+            ),
             raw_response=last_response_content,
             prompt_tokens=total_prompt_tokens,
             completion_tokens=total_completion_tokens,

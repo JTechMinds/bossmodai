@@ -131,7 +131,7 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         parsed = _normalize_action_payload(parsed)
     except ValueError as exc:
         logger.warning("Invalid compact action payload: %s", exc)
-        return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(exc)[:200]}
+        return _schema_failed_action(raw_response, parsed, exc)
 
     if "action" not in parsed:
         logger.warning("No 'action' key in response: %s", parsed)
@@ -151,6 +151,25 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         }
 
     return parsed
+
+
+def _schema_failed_action(
+    raw_response: str,
+    parsed: dict[str, Any],
+    exc: Exception,
+) -> dict[str, Any]:
+    """Return a typed ``_parse_failed`` payload for a schema-invalid action."""
+    from core.agent_loop.parse_steer import kind_for_schema_error, parse_failed_payload
+
+    error = str(exc)
+    return parse_failed_payload(
+        raw_response,
+        decision=False,
+        snippet=error[:200],
+        kind=kind_for_schema_error(error),
+        thought=_candidate_thought(parsed),
+        candidate=parsed,
+    )
 
 
 def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
