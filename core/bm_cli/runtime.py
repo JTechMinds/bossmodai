@@ -120,6 +120,19 @@ def preview_bm_cli(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
 
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
+
+    preview_outcome = decide_locked_clone_shell_outcome(
+        agent,
+        parsed,
+        cwd_before,
+        task_id=get_active_task_id(agent.id),
+        virtual_commands=VIRTUAL_COMMANDS,
+    )
+    if preview_outcome is not None:
+        return _preview_locked_clone_outcome(preview_outcome, cwd_before)
+
     gated = _apply_project_env_gate(agent, parsed, cwd_before)
     if isinstance(gated, BossModCliResult):
         return gated
@@ -265,6 +278,17 @@ def _execute_bm_cli_inner(
     if paused is not None:
         return paused
 
+    locked = _apply_locked_clone_shell_outcome(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if locked is not None:
+        return locked
+
     gated = _gate_locked_clone_project_env(
         agent,
         parsed,
@@ -403,6 +427,19 @@ def execute_approved_command(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
 
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
+
+    prepared_clone = prepare_locked_clone_approved(
+        agent,
+        parsed,
+        cwd_before,
+        task_id=get_active_task_id(agent.id),
+    )
+    if isinstance(prepared_clone, BossModCliResult):
+        return prepared_clone
+    parsed = prepared_clone
+
     gated = _gate_locked_clone_project_env(
         agent,
         parsed,
@@ -428,12 +465,7 @@ def execute_approved_command(
         extra_env=_agent_git_identity_env(agent),
     )
     if shell_exec.denied_by_path_jail:
-        result = error_result(
-            parsed.raw,
-            shell_exec.stderr,
-            cwd=cwd_before,
-            executor="shell",
-        )
+        result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)
         record_bm_cli_event(
             agent_id=agent.id,
             command=parsed.raw,
@@ -515,6 +547,169 @@ def _maybe_shell_executor_consent(
         trigger_type=trigger_type,
     )
     return paused
+
+
+def _apply_locked_clone_shell_outcome(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Apply the shared locked-clone shell outcome, or None for the desk path."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
+
+    outcome = decide_locked_clone_shell_outcome(
+        agent,
+        parsed,
+        cwd_before,
+        task_id=get_active_task_id(agent.id),
+        virtual_commands=VIRTUAL_COMMANDS,
+    )
+    if outcome is None:
+        return None
+    if outcome.kind == "never_allowed":
+        result = error_result(
+            outcome.parsed.raw,
+            outcome.message or outcome.blocked_why or "Command not permitted",
+            cwd=cwd_before,
+            executor="shell",
+            kind="host_deny" if outcome.blocked_why and "host path" in (outcome.blocked_why or "").lower() else "error",
+        )
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor="shell",
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier="never_allowed",
+            decision="denied",
+            result=result,
+            trigger_type=trigger_type,
+        )
+        return result
+    if outcome.kind == "approval_required":
+        policy = outcome.policy
+        if policy is None:
+            from core.bm_cli.policy_engine import CommandPolicyDecision
+
+            policy = CommandPolicyDecision(
+                allowed=False,
+                tier="approval_required",
+                executor="shell",
+                approval_required=True,
+                message=outcome.message,
+            )
+        return _handle_approval_required(
+            agent=agent,
+            parsed=outcome.parsed,
+            content=content,
+            cwd_before=cwd_before,
+            policy=policy,
+            trigger_type=trigger_type,
+            channel_id=channel_id,
+        )
+    policy = outcome.policy
+    if policy is None:
+        return None
+    return _execute_shell(
+        agent=agent,
+        parsed=outcome.parsed,
+        content=content,
+        cwd_before=cwd_before,
+        policy=policy,
+        trigger_type=trigger_type,
+    )
+
+
+def _preview_locked_clone_outcome(outcome: object, cwd_before: str) -> BossModCliResult:
+    """Dry-run one locked-clone outcome without creating chrome."""
+    from core.bm_cli.locked_clone_outcome import LockedCloneShellOutcome
+
+    assert isinstance(outcome, LockedCloneShellOutcome)
+    if outcome.kind == "never_allowed":
+        denied = error_result(
+            outcome.parsed.raw,
+            outcome.message or outcome.blocked_why or "Command not permitted",
+            cwd=cwd_before,
+            executor="shell",
+        )
+        return BossModCliResult(
+            command=denied.command,
+            ok=False,
+            detail=denied.detail,
+            prompt_content=denied.prompt_content,
+            kind=denied.kind,
+            data=denied.data,
+            cwd=denied.cwd,
+            executor=denied.executor,
+            exit_code=denied.exit_code,
+            matched_rule_id=getattr(outcome.policy, "matched_rule_id", None),
+        )
+    if outcome.kind == "approval_required":
+        return approval_required_result(
+            outcome.parsed.raw,
+            outcome.message or "Approval required.",
+            cwd=cwd_before,
+            executor="shell",
+            matched_rule_id=getattr(outcome.policy, "matched_rule_id", None),
+        )
+    policy = outcome.policy
+    return success_result(
+        command=outcome.parsed.raw,
+        detail=(
+            f"Dry-run: {outcome.parsed.name} would run via shell "
+            f"({outcome.kind}; parse + policy only; no writes or shell)."
+        ),
+        kind="dry_run",
+        data={
+            "dry_run": True,
+            "would_executor": "shell",
+            "policy_tier": getattr(policy, "tier", outcome.kind),
+            "locked_clone_outcome": outcome.kind,
+        },
+        sections=[
+            (
+                "DRY RUN",
+                [
+                    "No files were written and no shell command ran.",
+                    "executor: shell",
+                    f"outcome: {outcome.kind}",
+                    f"tier: {getattr(policy, 'tier', outcome.kind)}",
+                    "Send execute=true to run this command for real.",
+                ],
+            )
+        ],
+        cwd=cwd_before,
+        executor="shell",
+    )
+
+
+def _path_jail_cli_result(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+    jail_message: str,
+) -> BossModCliResult:
+    """Path jail on a locked clone is Blocked {why}, never a quiet drop."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.locked_clone_outcome import (
+        is_locked_clone_context,
+        path_jail_blocked_result,
+    )
+
+    if is_locked_clone_context(agent, cwd_before, task_id=get_active_task_id(agent.id)):
+        return path_jail_blocked_result(parsed.raw, cwd_before)
+    return error_result(
+        parsed.raw,
+        jail_message,
+        cwd=cwd_before,
+        executor="shell",
+    )
 
 
 def _apply_project_env_gate(
@@ -938,12 +1133,7 @@ def _execute_shell(
         extra_env=_agent_git_identity_env(agent),
     )
     if shell_exec.denied_by_path_jail:
-        result = error_result(
-            parsed.raw,
-            shell_exec.stderr,
-            cwd=cwd_before,
-            executor="shell",
-        )
+        result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)
         record_bm_cli_event(
             agent_id=agent.id,
             command=parsed.raw,

@@ -17,6 +17,11 @@ from core.agent_loop.liveness import record_action_liveness
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.task_origins import consent_origin_channel_id
+from core.agent_loop.parse_steer import (
+    classify_json_parse_failure,
+    parse_failure_should_repair,
+    parse_failure_steer,
+)
 from core.agent_loop.turn_helpers import (
     _build_continuation_instruction,
     _build_execution_repair_messages,
@@ -249,7 +254,15 @@ async def _run_execution_turn(
         # Handle parse failure
         if action_name == "_parse_failed":
             logger.warning("Parse failure for %s: %s", agent.name, action.get("_raw_snippet", ""))
-            if execution_repair_attempts < _MAX_EXECUTION_REPAIR_ATTEMPTS:
+            parse_kind = action.get("_parse_kind") or classify_json_parse_failure(
+                response.content
+            )
+            steer = parse_failure_steer(parse_kind, action.get("_raw_snippet", ""))
+            if parse_failure_should_repair(
+                kind=parse_kind,
+                repair_attempts=execution_repair_attempts,
+                max_repairs=_MAX_EXECUTION_REPAIR_ATTEMPTS,
+            ):
                 execution_repair_attempts += 1
                 continuation_messages = _build_execution_repair_messages(
                     parsed_error=action.get("_raw_snippet", ""),
@@ -281,10 +294,11 @@ async def _run_execution_turn(
 
             result = {
                 "event": "agent_error",
-                "detail": f"{agent.name} returned invalid action JSON",
+                "detail": steer,
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
+            result["parse_steer"] = True
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -295,7 +309,7 @@ async def _run_execution_turn(
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
                     result=result,
-                    error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
+                    error=steer,
                     action=action,
                     action_summary=_summarize_action_chain(executed_actions, ""),
                     raw_response=last_response_content,
@@ -313,7 +327,7 @@ async def _run_execution_turn(
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
-                            error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
+                            error=steer,
                         ),
                     ],
                 ),

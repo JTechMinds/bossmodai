@@ -95,7 +95,7 @@ def _looks_like_path(token: str) -> bool:
     return False
 
 
-def _path_candidates_from_token(token: str) -> list[str]:
+def path_candidates_from_token(token: str) -> list[str]:
     """Extract path-like payloads from an argv token.
 
     Handles bare paths, ``--flag=/abs/path``, and attached forms like
@@ -105,7 +105,7 @@ def _path_candidates_from_token(token: str) -> list[str]:
         return []
     if token.startswith("-"):
         if "=" in token:
-            return _path_candidates_from_token(token.split("=", 1)[1])
+            return path_candidates_from_token(token.split("=", 1)[1])
         for index, char in enumerate(token):
             if char in "/~":
                 return [token[index:]]
@@ -174,7 +174,7 @@ def assert_argv_within_path_jail(
         )
 
     for raw_token in args[1:]:
-        for candidate in _path_candidates_from_token(raw_token):
+        for candidate in path_candidates_from_token(raw_token):
             try:
                 resolved = resolve_jailed_path(candidate, cwd=cwd_resolved)
             except PathJailError:
