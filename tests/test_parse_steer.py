@@ -75,9 +75,11 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     assert parse_failure_should_repair(
         kind="invalid_json", repair_attempts=0, max_repairs=2
     ) is True
-    assert PROSE_STATUS_STEER in parse_failure_steer("prose_status")
-    assert "@Operator" not in parse_failure_steer("prose_status")
-    assert "desk" not in parse_failure_steer("prose_status").lower() or "do not invent a desk" in parse_failure_steer("prose_status").lower()
+    steer = parse_failure_steer("prose_status")
+    assert PROSE_STATUS_STEER in steer
+    assert "Do not park @Operator" in steer
+    assert "do not invent a desk" in steer.lower()
+    assert not steer.startswith("Blocked")
 
 
 def test_parse_direct_turn_prose_is_parse_failed_prose_kind() -> None:
@@ -115,7 +117,8 @@ async def test_decision_prose_fail_closes_without_repair_loop(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Emit the required JSON" in detail
-    assert "@Operator" not in detail
+    assert "Do not park @Operator" in detail
+    assert not detail.startswith("Blocked")
     assert outcome.result.get("parse_steer") is True
 
 
@@ -144,4 +147,5 @@ async def test_execution_prose_fail_closes_without_repair_loop(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Emit the required JSON" in detail
-    assert "@Operator" not in detail
+    assert "Do not park @Operator" in detail
+    assert not detail.startswith("Blocked")

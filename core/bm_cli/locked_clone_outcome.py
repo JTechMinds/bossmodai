@@ -255,17 +255,19 @@ def first_host_path_outside_nest(
         for candidate in path_candidates_from_token(token):
             if is_virtual_cli_path(candidate):
                 continue
-            if looks_like_named_absolute_path(candidate):
-                return candidate
             try:
                 path = Path(candidate).expanduser()
             except OSError:
                 continue
             if not path.is_absolute() or not roots:
+                if looks_like_named_absolute_path(candidate):
+                    return candidate
                 continue
             try:
                 resolved = path.resolve()
             except OSError:
+                if looks_like_named_absolute_path(candidate):
+                    return candidate
                 continue
             if not is_within_roots(resolved, roots):
                 return candidate

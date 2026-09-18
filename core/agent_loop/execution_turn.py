@@ -296,9 +296,9 @@ async def _run_execution_turn(
                 "event": "agent_error",
                 "detail": steer,
                 "agent_name": agent.name,
-                "parse_steer": True,
             }
             await manager.broadcast_activity(**result)
+            result["parse_steer"] = True
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
