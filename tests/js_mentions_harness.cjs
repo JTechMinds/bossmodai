@@ -32,7 +32,8 @@ const { h } = global.BossModDom;
 const JOEY = { id: "joey", name: "Joey", role: "Eng", color: "#1d4ed8" };
 const HUGH = { id: "hugh", name: "Hugh", role: "QA", color: "#065f46" };
 const DEBRA = { id: "debra", name: "Debra", role: "PM", color: "#92400e" };
-const LIVE = [JOEY, HUGH, DEBRA];
+const AUDITOR = { id: "auditor", name: "TheAuditor", role: "Auditor", color: "#6d28d9" };
+const LIVE = [JOEY, HUGH, DEBRA, AUDITOR];
 
 function fail(label, detail) {
     throw new Error(`${label}: ${detail}`);
@@ -43,7 +44,7 @@ function ids(agents) {
 }
 
 const filterAll = ids(Mentions.filterAgents(LIVE, ""));
-if (filterAll.join(",") !== "joey,hugh,debra") {
+if (filterAll.join(",") !== "joey,hugh,debra,auditor") {
     fail("filterEmpty", filterAll.join(","));
 }
 
@@ -88,6 +89,15 @@ if (hits.length !== 1 || hits[0].agent.id !== "joey") {
 }
 if (Mentions.scanMentions("CLEAR @Bea please", LIVE).length !== 0) {
     fail("scanFired", "Bea is not live");
+}
+
+const possHits = Mentions.scanMentions("Waiting on @TheAuditor's LOCK.", LIVE);
+if (possHits.length !== 1 || possHits[0].agent.id !== "auditor" || possHits[0].glue !== "'s") {
+    fail("scanPossessiveGlue", JSON.stringify(possHits));
+}
+const periodHits = Mentions.scanMentions("parked @Joey.", LIVE);
+if (periodHits.length !== 1 || periodHits[0].glue !== ".") {
+    fail("scanPeriodGlue", JSON.stringify(periodHits));
 }
 
 const input = documentStub.createElement("div");
@@ -245,6 +255,52 @@ async function main() {
         && /background:/.test(pill.getAttribute("style") || "");
     if (!softPillBackground) fail("softPillBackground", pillRule);
 
+    const possessive = h("div", { class: "msg-body md" }, "Debra parked @TheAuditor's LOCK.");
+    const possMsg = h("div", { class: "msg msg-agent" }, possessive);
+    documentStub.body.append(possMsg);
+    const possPainted = Pills.linkify(possessive, { agents: LIVE, container: possMsg });
+    if (possPainted !== 1) fail("possessiveLinkify", possPainted);
+    const possPill = possMsg.querySelector(".mention-pill");
+    const possName = possPill && possPill.querySelector(".mention-pill-name");
+    if (!possName || possName.textContent !== "TheAuditor's") {
+        fail("trailingPunctGlued", possName && possName.textContent);
+    }
+    if (possPill.getAttribute("data-agent-name") !== "TheAuditor") {
+        fail("possessiveNameAttr", possPill.getAttribute("data-agent-name"));
+    }
+    if (possPill.getAttribute("data-mention-glue") !== "'s") {
+        fail("possessiveGlueAttr", possPill.getAttribute("data-mention-glue"));
+    }
+    const leftover = [];
+    function walkLooseText(node) {
+        if (!node) return;
+        if (node.nodeType === 3) {
+            leftover.push(node.textContent);
+            return;
+        }
+        if (node.nodeType === 1 && node.classList
+            && (node.classList.contains("mention-pill") || node.classList.contains("mention-host"))) {
+            return;
+        }
+        const kids = node.childNodes || node.children || [];
+        for (const child of kids) walkLooseText(child);
+    }
+    walkLooseText(possessive);
+    if (leftover.some((text) => text === "'s" || text === " 's")) {
+        fail("strandedPossessive", leftover.join("|"));
+    }
+
+    const glueField = documentStub.createElement("div");
+    Draft.bindEditable(glueField, { agents: LIVE });
+    glueField.value = "tip @TheAuditor's LOCK";
+    if (Draft.readEditable(glueField) !== "tip @TheAuditor's LOCK") {
+        fail("possessiveSerialize", Draft.readEditable(glueField));
+    }
+    const draftName = glueField.querySelector(".mention-pill-name");
+    if (!draftName || draftName.textContent !== "TheAuditor's") {
+        fail("possessiveDraft", draftName && draftName.textContent);
+    }
+
     console.log(JSON.stringify({
         ok: true,
         filterEmpty: filterAll,
@@ -261,6 +317,9 @@ async function main() {
         softPillBackground: true,
         menuUnderPill: true,
         linkifyLive: painted,
+        trailingPunctGlued: possName.textContent,
+        noStrandedPossessive: true,
+        possessiveSerialize: Draft.readEditable(glueField),
         menuActions: labels,
         openChat: openedChat,
         viewDesk: viewedDesk,

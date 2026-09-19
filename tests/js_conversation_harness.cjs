@@ -196,6 +196,8 @@ async function main() {
     const authorRule = conversationCss.split(".msg-author {")[1].split("}")[0];
     const quietAuthor = /font-weight:\s*400/.test(authorRule)
         && !/font-weight:\s*600/.test(authorRule)
+        && /color:\s*var\(--muted\)/.test(authorRule)
+        && !/color:\s*var\(--ink\)/.test(authorRule)
         && /background:\s*none/.test(authorRule)
         && !/background:\s*var\(--btn-face-active\)/.test(authorRule)
         && /border:\s*0/.test(authorRule)
@@ -215,6 +217,38 @@ async function main() {
             `agent name chrome wrong: face=${Boolean(adaFace)} name=${adaName && adaName.textContent} `
             + `outside=${nameOutsideBubble} lowerLeft=${faceLowerLeftBesideBubble} `
             + `quiet=${nameIsQuiet}`
+        );
+    }
+
+    // Live miss after #98: an agent face with showAuthor off still paints
+    // quiet .msg-author. TheAuditor's top turn was an orphan initial.
+    const auditorTurn = global.BossModMessage.renderMessage({
+        kind: "message",
+        key: "auditor-1",
+        author: "agent",
+        authorName: "TheAuditor",
+        authorColor: "#6d28d9",
+        showAuthor: false,
+        text: "Review parked.",
+        createdAt: "",
+    });
+    const auditorFace = auditorTurn.querySelector(".msg-face");
+    const auditorName = auditorTurn.querySelector(".msg-author");
+    const auditorBubble = auditorTurn.querySelector(".msg");
+    const auditorStack = auditorTurn.querySelector(".msg-stack");
+    const noOrphanAgentFace = Boolean(
+        auditorFace
+        && auditorName
+        && auditorName.textContent === "TheAuditor"
+        && auditorTurn.children[0] === auditorFace
+        && auditorStack
+        && auditorStack.contains(auditorName)
+        && auditorBubble
+        && !auditorBubble.contains(auditorName)
+    );
+    if (!noOrphanAgentFace) {
+        throw new Error(
+            `orphan agent face: face=${Boolean(auditorFace)} name=${auditorName && auditorName.textContent}`
         );
     }
 
@@ -742,6 +776,7 @@ async function main() {
         agentNameIsChromeOutside,
         quietAuthor,
         faceLowerLeftBesideBubble,
+        noOrphanAgentFace,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,
         escapeCancelsRenameWithoutSaving,

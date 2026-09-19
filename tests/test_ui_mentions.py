@@ -71,6 +71,11 @@ def test_messages_linkify_pills_and_a_click_opens_the_menu() -> None:
     message = _read(CONVERSATION / "message.js")
     assert "BossModMentionPills.linkify(body)" in message
     pills = _read(CONVERSATION / "mention-pill.js")
+    assert "data-mention-glue" in pills
+    mentions = _read(CONVERSATION / "mentions.js")
+    assert "function trailingGlue(" in mentions
+    draft = _read(CONVERSATION / "mention-draft.js")
+    assert "mentionTokenText" in draft
     assert "function openMenu(" in pills
     assert "BossModMentions.OPEN_CHAT" in pills
     assert "BossModMentions.VIEW_DESK" in pills
@@ -129,7 +134,7 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "ok": True,
-        "filterEmpty": ["joey", "hugh", "debra"],
+        "filterEmpty": ["joey", "hugh", "debra", "auditor"],
         "filterQuery": ["joey"],
         "filterRole": ["hugh"],
         "filterNone": 0,
@@ -143,6 +148,9 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "softPillBackground": True,
         "menuUnderPill": True,
         "linkifyLive": 1,
+        "trailingPunctGlued": "TheAuditor's",
+        "noStrandedPossessive": True,
+        "possessiveSerialize": "tip @TheAuditor's LOCK",
         "menuActions": ["Open Chat", "View Desk", "Mention again"],
         "openChat": "joey",
         "viewDesk": "joey",

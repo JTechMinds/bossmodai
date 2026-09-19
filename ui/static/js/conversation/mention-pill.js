@@ -18,13 +18,14 @@ const BossModMentionPills = (() => {
      * the name inherits, so it stays body-readable rather than tint ink.
      *
      * @param {object} agent
-     * @param {{onClick?: Function, editable?: boolean}} [options]
+     * @param {{onClick?: Function, editable?: boolean, glue?: string}} [options]
      * @returns {HTMLElement}
      */
     function renderPill(agent, options) {
         const opts = options || {};
         const who = agent || {};
         const name = String(who.name || '').trim() || 'Agent';
+        const glue = String(opts.glue || '');
         const tint = BossModAvatar.tintFor(who.color || null);
         const interactive = typeof opts.onClick === 'function';
         const attrs = {
@@ -33,10 +34,11 @@ const BossModMentionPills = (() => {
             'data-agent-name': name,
             style: `background:${tint.bg}`,
         };
+        if (glue) attrs['data-mention-glue'] = glue;
         if (opts.editable) attrs.contenteditable = 'false';
         const children = [
             BossModAvatar.create({ name, color: who.color || null, size: 'chip' }),
-            h('span', { class: 'mention-pill-name' }, name),
+            h('span', { class: 'mention-pill-name' }, name + glue),
         ];
         if (!interactive) return h('span', attrs, children);
         const pill = h('button', {
@@ -86,7 +88,8 @@ const BossModMentionPills = (() => {
             if (!hits.length) continue;
             const parent = node.parentNode;
             if (!parent) continue;
-            painted += appendTokens(parent, value, agents, (agent) => renderPill(agent, {
+            painted += appendTokens(parent, value, agents, (agent, glue) => renderPill(agent, {
+                glue,
                 onClick: (event) => openPillMenu(event, agent, options),
             }), node);
             node.remove();
@@ -111,7 +114,7 @@ const BossModMentionPills = (() => {
             if (hit.start > cursor) {
                 insert(document.createTextNode(value.slice(cursor, hit.start)));
             }
-            insert(makePill(hit.agent));
+            insert(makePill(hit.agent, hit.glue || ''));
             painted += 1;
             cursor = hit.end;
         }
@@ -136,8 +139,9 @@ const BossModMentionPills = (() => {
             ? BossModMentions.liveAgents(options.agents)
             : BossModMentions.currentAgents();
         root.replaceChildren();
-        return appendTokens(root, text, agents, (agent) => renderPill(agent, {
+        return appendTokens(root, text, agents, (agent, glue) => renderPill(agent, {
             editable: options.editable !== false,
+            glue,
         }));
     }
 

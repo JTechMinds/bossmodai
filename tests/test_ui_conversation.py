@@ -233,6 +233,7 @@ def test_conversation_harness() -> None:
         "agentNameIsChromeOutside": True,
         "quietAuthor": True,
         "faceLowerLeftBesideBubble": True,
+        "noOrphanAgentFace": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage
         # key, its control, and the node that holds it are unchanged — which is
@@ -529,6 +530,7 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     assert "class: 'msg-chrome'" not in message
     assert "BossModAvatar.create(" in message
     assert "color:${tint.ink}" not in message
+    assert "withFace && author === 'agent'" in message
     bubble = message.split("class: `msg msg-${author}`", 1)[1].split(");", 1)[0]
     assert "msg-author" not in bubble
     assert "msg-face" not in bubble
@@ -542,6 +544,8 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     author = css.split(".msg-author {", 1)[1].split("}", 1)[0]
     assert "font-weight: 400" in author
     assert "font-weight: 600" not in author
+    assert "color: var(--muted)" in author
+    assert "color: var(--ink)" not in author
     assert "background: none" in author
     assert "border: 0" in author
     assert "border-radius: 0" in author
