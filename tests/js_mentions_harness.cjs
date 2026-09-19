@@ -1,7 +1,7 @@
 /**
  * Node harness: live-agent @mention filter, pill insert, click menu,
- * composer persist, bottom align, regular weight, soft tint, and
- * menu-under-pill.
+ * composer persist, baseline align, regular weight, soft gray chip
+ * (not agent-tinted fill), and menu-under-pill.
  * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -132,8 +132,8 @@ if (input.value !== "tip @Hugh ") fail("pillInsertValue", input.value);
 if (picker.isOpen()) fail("pickerClosedAfterInsert", "pick should close the list");
 const composerPill = input.querySelector(".mention-pill");
 if (!composerPill) fail("composerPillAfterPick", "pick must paint a pill in the field");
-if (!composerPill.getAttribute("style") || !/background:/.test(composerPill.getAttribute("style"))) {
-    fail("softTint", composerPill.getAttribute("style"));
+if (/background:/.test(composerPill.getAttribute("style") || "")) {
+    fail("composerNoTintFill", composerPill.getAttribute("style"));
 }
 if (/(?:^|;)\s*color:/.test(composerPill.getAttribute("style") || "")) {
     fail("nameBodyInk", composerPill.getAttribute("style"));
@@ -164,8 +164,8 @@ if (pill.getAttribute("data-agent-id") !== "joey") fail("linkifyId", pill.getAtt
 if (pill.tagName !== "BUTTON") fail("linkifyInteractive", pill.tagName);
 const host = pill.closest(".mention-host");
 if (!host) fail("mentionHost", "interactive pill needs a host the menu hangs off");
-if (!pill.getAttribute("style") || !/background:/.test(pill.getAttribute("style"))) {
-    fail("chatSoftTint", pill.getAttribute("style"));
+if (/background:/.test(pill.getAttribute("style") || "")) {
+    fail("chatNoTintFill", pill.getAttribute("style"));
 }
 if (/(?:^|;)\s*color:/.test(pill.getAttribute("style") || "")) {
     fail("chatNameBodyInk", pill.getAttribute("style"));
@@ -239,9 +239,12 @@ async function main() {
     );
     const pillRule = css.split(".mention-pill {")[1].split("}")[0];
     const nameRule = css.split(".mention-pill-name {")[1].split("}")[0];
-    const alignBottom = /align-items:\s*flex-end/.test(pillRule)
-        && /vertical-align:\s*bottom/.test(pillRule);
-    if (!alignBottom) fail("alignBottom", pillRule);
+    const alignBaseline = /vertical-align:\s*baseline/.test(pillRule)
+        && /align-items:\s*center/.test(pillRule)
+        && /min-height:\s*0/.test(pillRule)
+        && !/vertical-align:\s*bottom/.test(pillRule)
+        && !/align-items:\s*flex-end/.test(pillRule);
+    if (!alignBaseline) fail("alignBaseline", pillRule);
     const regularWeight = /font-weight:\s*400/.test(pillRule)
         && /font-weight:\s*400/.test(nameRule)
         && !/font-weight:\s*600/.test(pillRule)
@@ -251,9 +254,56 @@ async function main() {
         && !/background:\s*none/.test(pillRule)
         && /border:\s*1px solid var\(--line\)/.test(pillRule)
         && !/border:\s*0/.test(pillRule)
-        && /background:/.test(composerPill.getAttribute("style") || "")
-        && /background:/.test(pill.getAttribute("style") || "");
+        && !/background:/.test(composerPill.getAttribute("style") || "")
+        && !/background:/.test(pill.getAttribute("style") || "")
+        && !/--accent/.test(pillRule)
+        && !/--alert/.test(pillRule)
+        && !/pink/i.test(pillRule);
     if (!softPillBackground) fail("softPillBackground", pillRule);
+
+    function assertNeutralChip(agent, prose) {
+        const bodyEl = h("div", { class: "msg-body md" }, prose);
+        const wrap = h("div", { class: "msg msg-agent" }, bodyEl);
+        documentStub.body.append(wrap);
+        Pills.linkify(bodyEl, { agents: LIVE, container: wrap });
+        const chip = wrap.querySelector(".mention-pill");
+        const chipName = chip && chip.querySelector(".mention-pill-name");
+        const chipAvatar = chip && chip.querySelector(".avatar");
+        const tint = global.BossModAvatar.tintFor(agent.color);
+        const chipStyle = (chip && chip.getAttribute("style")) || "";
+        const nameStyle = (chipName && chipName.getAttribute("style")) || "";
+        const avatarStyle = (chipAvatar && chipAvatar.getAttribute("style")) || "";
+        const ok = Boolean(
+            tint
+            && chip
+            && chip.getAttribute("data-agent-id") === agent.id
+            && chipStyle.indexOf(tint.bg) === -1
+            && chipStyle.indexOf(agent.color) === -1
+            && !/background:/.test(chipStyle)
+            && !/(?:^|;)\s*color:/.test(chipStyle)
+            && chipName
+            && !/color:/.test(nameStyle)
+            && chipAvatar
+            && avatarStyle.indexOf(`background:${tint.bg}`) !== -1
+            && avatarStyle.indexOf(`color:${tint.ink}`) !== -1
+        );
+        if (!ok) {
+            fail(
+                "neutralSoftGrayChip",
+                `${agent.name}: pill=${chipStyle} name=${nameStyle} `
+                + `avatar=${avatarStyle} tint.bg=${tint && tint.bg}`,
+            );
+        }
+        return chip;
+    }
+
+    // TheAuditor's 16% tint still reads pink/heavy — the chip fill must
+    // stay the shared gray, with colour only on the letter. Same for the
+    // rest of the live roster so a later wash cannot sneak back in.
+    assertNeutralChip(AUDITOR, "parked @TheAuditor please.");
+    assertNeutralChip(DEBRA, "lock that layout @Debra please.");
+    assertNeutralChip(JOEY, "tip @Joey please.");
+    assertNeutralChip(HUGH, "CLEAR @Hugh please.");
 
     const possessive = h("div", { class: "msg-body md" }, "Debra parked @TheAuditor's LOCK.");
     const possMsg = h("div", { class: "msg msg-agent" }, possessive);
@@ -312,9 +362,10 @@ async function main() {
         pickerFilter: options.length,
         pillInsert: pick.text,
         composerPersist: true,
-        alignBottom: true,
+        alignBaseline: true,
         regularWeight: true,
         softPillBackground: true,
+        neutralSoftGrayChip: true,
         menuUnderPill: true,
         linkifyLive: painted,
         trailingPunctGlued: possName.textContent,

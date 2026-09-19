@@ -1,10 +1,11 @@
 /**
  * BossMod AI — the mention pill and the menu a click opens.
  *
- * The mark is a letter avatar plus a regular-weight name on a soft tint.
- * Colour lives on the avatar; the name inherits body ink so it stays readable.
- * One builder, one menu, no hard-jump to Desk on the click. Missing or fired
- * agents stay text, or open nothing if a pill outlives them.
+ * The mark is a letter avatar plus a regular-weight name on a soft gray
+ * chip. Colour lives on the avatar only; the chip fill is the shared --bg
+ * and --line, never the agent's 16% tint. The name inherits body ink so it
+ * stays readable. One builder, one menu, no hard-jump to Desk on the click.
+ * Missing or fired agents stay text, or open nothing if a pill outlives them.
  */
 const BossModMentionPills = (() => {
     const { h } = BossModDom;
@@ -14,8 +15,9 @@ const BossModMentionPills = (() => {
     let openMenuHandle = null;
 
     /**
-     * One mention pill. Soft tint from the same derivation the avatar uses;
-     * the name inherits, so it stays body-readable rather than tint ink.
+     * One mention pill. Soft gray chip from the stylesheet (--bg + --line);
+     * the letter avatar keeps the agent's colour. The name inherits, so it
+     * stays body-readable rather than tint ink.
      *
      * @param {object} agent
      * @param {{onClick?: Function, editable?: boolean, glue?: string}} [options]
@@ -26,13 +28,11 @@ const BossModMentionPills = (() => {
         const who = agent || {};
         const name = String(who.name || '').trim() || 'Agent';
         const glue = String(opts.glue || '');
-        const tint = BossModAvatar.tintFor(who.color || null);
         const interactive = typeof opts.onClick === 'function';
         const attrs = {
             class: 'mention-pill',
             'data-agent-id': who.id || null,
             'data-agent-name': name,
-            style: `background:${tint.bg}`,
         };
         if (glue) attrs['data-mention-glue'] = glue;
         if (opts.editable) attrs.contenteditable = 'false';

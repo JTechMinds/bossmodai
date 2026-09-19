@@ -232,6 +232,7 @@ def test_conversation_harness() -> None:
         "greetingWentThroughTheComposer": True,
         "agentNameIsChromeOutside": True,
         "quietAuthor": True,
+        "authorUsesAgentColor": True,
         "faceLowerLeftBesideBubble": True,
         "noOrphanAgentFace": True,
         # The polish round moved the receipts preference out of the action row
@@ -522,14 +523,15 @@ def test_conversation_assign_stamps_thread_origin() -> None:
 
 
 def test_agent_name_is_chrome_outside_the_paragraph() -> None:
-    """Quiet name above the bubble; color initial lower-left beside it."""
+    """Quiet agent-colored name above the bubble; initial lower-left beside it."""
     message = _read(CONVERSATION / "message.js")
     assert "class: `msg-turn msg-turn-${author}`" in message
     assert "class: 'msg-face'" in message
     assert "class: 'msg-stack'" in message
     assert "class: 'msg-chrome'" not in message
     assert "BossModAvatar.create(" in message
-    assert "color:${tint.ink}" not in message
+    assert "BossModAvatar.tintFor(color)" in message
+    assert "color:${tint.ink}" in message
     assert "withFace && author === 'agent'" in message
     bubble = message.split("class: `msg msg-${author}`", 1)[1].split(");", 1)[0]
     assert "msg-author" not in bubble

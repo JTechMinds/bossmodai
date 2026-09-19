@@ -187,7 +187,8 @@ async function main() {
     );
     const nameIsQuiet = Boolean(
         adaName && adaName.textContent === "Ada"
-        && !adaName.getAttribute("style")
+        && !/background:/.test(adaName.getAttribute("style") || "")
+        && !/border:/.test(adaName.getAttribute("style") || "")
     );
     const conversationCss = fs.readFileSync(
         require("path").join(__dirname, "..", "ui", "static", "css", "conversation.css"),
@@ -204,13 +205,26 @@ async function main() {
         && !/border:\s*1px/.test(authorRule)
         && !/border-radius:\s*999px/.test(authorRule);
     if (!quietAuthor) throw new Error(`quiet author missing: ${authorRule}`);
+    const adaTint = global.BossModAvatar.tintFor("#1d4ed8");
+    const authorUsesAgentColor = Boolean(
+        adaName
+        && adaTint
+        && (adaName.getAttribute("style") || "").indexOf(`color:${adaTint.ink}`) !== -1
+        && !/var\(--muted\)/.test(adaName.getAttribute("style") || "")
+    );
+    if (!authorUsesAgentColor) {
+        throw new Error(
+            `author must use agent color: style=${adaName && adaName.getAttribute("style")} `
+            + `ink=${adaTint && adaTint.ink}`
+        );
+    }
     const turnRule = conversationCss.split(".msg-turn {")[1].split("}")[0];
     const faceBottomAligned = /align-items:\s*flex-end/.test(turnRule)
         && !/flex-direction:\s*column/.test(turnRule);
     if (!faceBottomAligned) throw new Error(`initial must sit lower-left: ${turnRule}`);
     const agentNameIsChromeOutside = Boolean(
         adaTurn && adaFace && nameOutsideBubble && faceLowerLeftBesideBubble
-        && nameIsQuiet && quietAuthor && faceBottomAligned
+        && nameIsQuiet && quietAuthor && faceBottomAligned && authorUsesAgentColor
     );
     if (!agentNameIsChromeOutside) {
         throw new Error(
@@ -236,6 +250,7 @@ async function main() {
     const auditorName = auditorTurn.querySelector(".msg-author");
     const auditorBubble = auditorTurn.querySelector(".msg");
     const auditorStack = auditorTurn.querySelector(".msg-stack");
+    const auditorTint = global.BossModAvatar.tintFor("#6d28d9");
     const noOrphanAgentFace = Boolean(
         auditorFace
         && auditorName
@@ -245,6 +260,8 @@ async function main() {
         && auditorStack.contains(auditorName)
         && auditorBubble
         && !auditorBubble.contains(auditorName)
+        && auditorTint
+        && (auditorName.getAttribute("style") || "").indexOf(`color:${auditorTint.ink}`) !== -1
     );
     if (!noOrphanAgentFace) {
         throw new Error(
@@ -775,6 +792,7 @@ async function main() {
         greetingWentThroughTheComposer,
         agentNameIsChromeOutside,
         quietAuthor,
+        authorUsesAgentColor,
         faceLowerLeftBesideBubble,
         noOrphanAgentFace,
         titleOpensEditOnEnter,

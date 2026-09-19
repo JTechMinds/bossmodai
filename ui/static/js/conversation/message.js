@@ -17,11 +17,12 @@
  * two renderers again, and a pasted log is worth a fence whoever pasted it.
  *
  * The name is chrome, not prose. It sits above the paragraph bubble as
- * quiet muted text — regular weight, no chip fill, no border. A color-coded
- * initial sits lower-left beside the bubble, bottom-aligned with it, so a
- * labelled turn reads as a name over `[face] [bubble]` rather than a face
- * stacked on the name row. Every agent turn that paints a face also paints
- * `.msg-author`; `showAuthor` must not leave an orphan initial.
+ * quiet agent-colored text — the same ink family as the initial, regular
+ * weight, no chip fill, no border. A color-coded initial sits lower-left
+ * beside the bubble, bottom-aligned with it, so a labelled turn reads as a
+ * name over `[face] [bubble]` rather than a face stacked on the name row.
+ * Every agent turn that paints a face also paints `.msg-author`;
+ * `showAuthor` must not leave an orphan initial.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -75,6 +76,7 @@ const BossModMessage = (() => {
         const showName = Boolean(message.showAuthor) || (withFace && author === 'agent');
         const faceName = label || (author === 'human' ? 'You' : 'Agent');
         const color = message.authorColor || null;
+        const tint = color ? BossModAvatar.tintFor(color) : null;
         const bubble = h('div', { class: `msg msg-${author}` },
             body,
             createdAt
@@ -91,7 +93,10 @@ const BossModMessage = (() => {
                 : null,
             h('div', { class: 'msg-stack' },
                 showName
-                    ? h('div', { class: 'msg-author' }, label || 'Unknown')
+                    ? h('div', {
+                        class: 'msg-author',
+                        style: tint ? `color:${tint.ink}` : null,
+                    }, label || 'Unknown')
                     : null,
                 bubble));
     }
