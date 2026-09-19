@@ -89,7 +89,7 @@ function section(name) {
 // the seven section FILES; CliPolicySection is the eighth name in the switch
 // and is the one this harness hands options to, so it is stubbed alongside them.
 for (const name of ["ConnectionsSection", "PersonalitiesSection", "SystemSection",
-    "CliPolicySection", "TelegramSection", "AdvancedSystemSection",
+    "CliPolicySection", "NestGitSection", "TelegramSection", "AdvancedSystemSection",
     "PromptTemplateSection", "RuntimeContractsSection"]) {
     global[name] = section(name);
 }

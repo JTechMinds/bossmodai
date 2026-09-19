@@ -69,6 +69,7 @@ CRITICAL_CALL_SITES = {
 # binds it to apiFetch is asserted there too.
 API_BY_INJECTION = {
     "core/consent-card.js",
+    "core/consent-card-nest-git.js",
     # The rail's Threads half takes shell/roster.js's shared readJson helper,
     # which is the only thing in the rail that touches apiFetch. So does the
     # creation half it was split into, which is what POSTs /api/channels.

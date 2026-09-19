@@ -39,13 +39,19 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         SHELL_EXECUTOR_KIND,
         WORKSPACE_PREFERENCE_KIND,
     )
+    from core.models.nest_git import (
+        NEST_GIT_ADD_LABEL,
+        NEST_GIT_CARD_COPY,
+        NEST_GIT_ENABLE_LABEL,
+        NEST_GIT_KIND,
+    )
 
     groups: dict[tuple[str, str, str], list[Any]] = {}
     order: list[tuple[str, str, str]] = []
     for request in db.list_consent_requests(status="pending", limit=MAX_LIMIT):
         kind = (request.card_kind or "host_path").strip() or "host_path"
         conversation = request.channel_id or request.agent_id
-        if kind == SHELL_EXECUTOR_KIND:
+        if kind == SHELL_EXECUTOR_KIND or kind == NEST_GIT_KIND:
             key = (kind, conversation, "")
         else:
             key = (kind, conversation, request.grant_root or request.path)
@@ -69,6 +75,15 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
                  "href": f"/api/shell-executor/{request.id}/deny"},
             ]
             title = f"{name} {SHELL_EXECUTOR_CARD_COPY}"
+            sub = request.command or request.path
+        elif kind == NEST_GIT_KIND:
+            actions = [
+                {"label": NEST_GIT_ENABLE_LABEL, "method": "POST", "tone": "primary",
+                 "href": f"/api/nest-git/{request.id}/enable"},
+                {"label": NEST_GIT_ADD_LABEL, "method": "POST", "tone": "default",
+                 "href": f"/api/nest-git/{request.id}/credentials"},
+            ]
+            title = f"{name} {NEST_GIT_CARD_COPY}"
             sub = request.command or request.path
         elif kind == WORKSPACE_PREFERENCE_KIND:
             actions = [

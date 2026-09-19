@@ -11,6 +11,7 @@ from core.models.host_path_consent import (
     WORKSPACE_PREFERENCE_KIND,
     HostPathConsentRequest,
 )
+from core.models.nest_git import NEST_GIT_KIND
 from core.default_prompts import load_default_prompt, render_default_prompt
 
 # Hard delimiters so CLI / tool stdout cannot be mistaken for system instructions.
@@ -136,10 +137,11 @@ def consent_required_result(
     consent_request: HostPathConsentRequest | None = None,
     reused: bool = False,
 ) -> BossModCliResult:
-    """Build a host-path, workspace-preference, or shell-executor consent pause."""
+    """Build a host-path, workspace-preference, shell-executor, or nest-git pause."""
     card = consent_request.as_card() if consent_request is not None else {}
     workspace = bool(card.get("kind") == WORKSPACE_PREFERENCE_KIND)
     shell = bool(card.get("kind") == SHELL_EXECUTOR_KIND)
+    nest = bool(card.get("kind") == NEST_GIT_KIND)
     if workspace:
         heading = "WORKSPACE PREFERENCE REQUIRED"
         wait = (
@@ -157,6 +159,17 @@ def consent_required_result(
         )
         detail_prefix = "BossMod CLI Shell Executor consent required"
         kind = "shell_executor_consent_required"
+    elif nest:
+        heading = "NEST GIT CONSENT REQUIRED"
+        wait = (
+            "Stop and wait. The operator will Enable host git for nest or Add PAT/SSH "
+            "in chat (same as Settings → Nest git). "
+            "Always-allow on a command does not skip auth. "
+            "Do not invent that browser or desktop GitHub login is the agent's. "
+            "Do not park @Operator as the git enabler."
+        )
+        detail_prefix = "BossMod CLI nest git consent required"
+        kind = "nest_git_consent_required"
     else:
         heading = "HOST PATH CONSENT REQUIRED"
         wait = (

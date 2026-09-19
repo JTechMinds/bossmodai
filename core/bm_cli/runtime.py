@@ -278,6 +278,17 @@ def _execute_bm_cli_inner(
     if paused is not None:
         return paused
 
+    paused = _maybe_nest_git_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if paused is not None:
+        return paused
+
     locked = _apply_locked_clone_shell_outcome(
         agent=agent,
         parsed=parsed,
@@ -395,6 +406,7 @@ def _execute_bm_cli_inner(
             cwd_before=cwd_before,
             policy=policy,
             trigger_type=trigger_type,
+            channel_id=channel_id,
         )
 
     # Unreachable in practice but defensive
@@ -461,6 +473,17 @@ def execute_approved_command(
         return gated
     parsed = gated
 
+    paused = _maybe_nest_git_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=None,
+    )
+    if paused is not None:
+        return paused
+
     prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
         return prepared
@@ -472,7 +495,7 @@ def execute_approved_command(
         timeout_seconds=timeout,
         max_output_bytes=max_output,
         allowed_roots=roots,
-        extra_env=_agent_git_identity_env(agent),
+        extra_env=_shell_extra_env(agent, parsed, cwd_before),
     )
     if shell_exec.denied_by_path_jail:
         result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)
@@ -553,6 +576,46 @@ def _maybe_shell_executor_consent(
         cwd_before=cwd_before,
         cwd_after=paused.cwd,
         policy_tier=str(data.get("policy_tier") or "disabled"),
+        decision="approval_required" if paused.consent_required else "denied",
+        result=paused,
+        trigger_type=trigger_type,
+    )
+    return paused
+
+
+def _maybe_nest_git_consent(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Pause or fail-closed for nest git auth. Always-allow does not skip this."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.nest_git_consent import maybe_pause_for_nest_git
+
+    paused = maybe_pause_for_nest_git(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd_before,
+        task_id=get_active_task_id(agent.id),
+        channel_id=channel_id,
+        trigger_type=trigger_type,
+    )
+    if paused is None:
+        return None
+    data = paused.data or {}
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=paused.executor,
+        cwd_before=cwd_before,
+        cwd_after=paused.cwd,
+        policy_tier=str(data.get("policy_tier") or "nest_git"),
         decision="approval_required" if paused.consent_required else "denied",
         result=paused,
         trigger_type=trigger_type,
@@ -839,6 +902,20 @@ def _agent_git_identity_env(agent: Agent) -> dict[str, str]:
     }
 
 
+def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[str, str]:
+    """Agent git identity, plus nest-git auth env when this op needs it.
+
+    PAT path overwrites identity with the bot attribution. Values are never
+    logged here.
+    """
+    extra = _agent_git_identity_env(agent)
+    from core.bm_cli.nest_git import command_needs_nest_git_auth, nest_git_shell_env
+
+    if command_needs_nest_git_auth(agent, parsed, cwd):
+        extra.update(nest_git_shell_env(agent))
+    return extra
+
+
 def _execute_shell_policy(
     *,
     agent: Agent,
@@ -899,6 +976,7 @@ def _execute_shell_policy(
         cwd_before=cwd_before,
         policy=shell_policy,
         trigger_type=trigger_type,
+        channel_id=channel_id,
     )
 
 
@@ -1190,8 +1268,19 @@ def _execute_shell(
     cwd_before: str,
     policy: object,
     trigger_type: str | None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Run a native shell command and record the audit event."""
+    paused = _maybe_nest_git_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if paused is not None:
+        return paused
     prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
         return prepared
@@ -1203,7 +1292,7 @@ def _execute_shell(
         timeout_seconds=timeout,
         max_output_bytes=max_output,
         allowed_roots=roots,
-        extra_env=_agent_git_identity_env(agent),
+        extra_env=_shell_extra_env(agent, parsed, cwd_before),
     )
     if shell_exec.denied_by_path_jail:
         result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)

@@ -28,6 +28,7 @@ _BLOCKED_NO_TASK_LINE = "Blocked — wait needs an active task"
 _BLOCKED_NO_PROGRESS_LINE = "Blocked — no progress"
 _BLOCKED_HOST_DENY_LINE = "Blocked — host deny"
 _BLOCKED_SHELL_EXECUTOR_LINE = "Blocked — Shell Executor off — needs enable"
+_BLOCKED_NEST_GIT_LINE = "Blocked — Nest git has no credentials"
 
 
 OPERATOR_CANCEL_REASON = "Operator cancelled"
@@ -185,6 +186,14 @@ def format_origin_status_line(
             line = f"{_BLOCKED_SHELL_EXECUTOR_LINE}. {tag}"
         else:
             line = _BLOCKED_SHELL_EXECUTOR_LINE
+    elif kind == "blocked_nest_git":
+        tag = (target_name or "").strip()
+        if note and note.startswith(_BLOCKED_NEST_GIT_LINE):
+            line = note
+        elif tag:
+            line = f"{_BLOCKED_NEST_GIT_LINE}. {tag}"
+        else:
+            line = _BLOCKED_NEST_GIT_LINE
     elif kind == "completion":
         label = format_done_claim_label(claim=claim, path=path, evidence=reason)
         line = f"Done — {label}"

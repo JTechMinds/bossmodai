@@ -29,6 +29,8 @@ SECRET_PREFIX = "bm1:"
 SECRET_SETTING_KEYS = frozenset({
     "telegram_bot_token",
     "local_api_token",
+    "nest_git_pat",
+    "nest_git_ssh_key",
 })
 
 _DATA_KEY_NAME = ".bossmod_data_key"

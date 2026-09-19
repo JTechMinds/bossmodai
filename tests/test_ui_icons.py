@@ -29,6 +29,7 @@ CALL_SITES = {
     "settings/settings-view.js": "BossModIcons.paint(nav, 'settings-view.renderNav')",
     "settings/settings-connections.js": "BossModIcons.paint(container, 'settings-connections')",
     "settings/settings-telegram.js": "BossModIcons.paint(el, 'settings-telegram')",
+    "settings/settings-nest-git.js": "BossModIcons.paint(el, 'settings-nest-git')",
     "settings/cli-policy/shared.js": "BossModIcons.paint(root, 'cli-policy')",
     "core/consent-card.js": "BossModIcons.paint(container, 'consent-card')",
     "shell/responsive.js": "BossModIcons.paint(headerEl, 'responsive')",

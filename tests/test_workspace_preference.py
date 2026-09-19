@@ -495,7 +495,8 @@ def test_validate_on_clone_is_agent_owned_not_a_desk_deny(
     Case evidence (invented desk-can't vs real CLI gaps):
     - /me and /me/host-work are a real workspace (write, echo, cd, pytest, local git).
     - python -m pytest and bash stay never_allowed (policy, not desk).
-    - git push still pauses for approval (approval card, not Operator-as-runner).
+        - git push pauses for nest git auth first, then approval
+          (not Operator-as-runner; always-allow does not skip auth).
     """
     from core.bm_cli.policy_engine import policy_engine
     from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
@@ -566,5 +567,13 @@ def test_validate_on_clone_is_agent_owned_not_a_desk_deny(
 
     push = execute_bm_cli(agent, state, "git push origin HEAD")
     assert push.ok is False
-    assert push.approval_required is True
-    assert push.kind == "approval_required"
+    assert push.consent_required is True
+    assert push.kind == "nest_git_consent_required"
+    from core.bm_cli.nest_git import write_nest_git_secret
+    from core.models.nest_git import NEST_GIT_PAT_KEY
+
+    write_nest_git_secret(NEST_GIT_PAT_KEY, "ghp_validate-on-clone-pat")
+    approved = execute_bm_cli(agent, state, "git push origin HEAD")
+    assert approved.ok is False
+    assert approved.approval_required is True
+    assert approved.kind == "approval_required"

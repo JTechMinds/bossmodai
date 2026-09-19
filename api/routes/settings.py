@@ -78,6 +78,19 @@ async def reset_setting_to_default(key: str):
     return serialize_setting(result)
 
 
+def _validate_nest_git_settings(key: str, value: str) -> None:
+    """Host Enable only persists On after the Shell probe passes."""
+    from core.models.nest_git import NEST_GIT_HOST_ENABLED_KEY
+
+    if key != NEST_GIT_HOST_ENABLED_KEY or value != "true":
+        return
+    from core.bm_cli.nest_git import probe_host_git_for_shell
+
+    probe = probe_host_git_for_shell()
+    if not probe.ok:
+        raise HTTPException(400, probe.blocked_message())
+
+
 def _validate_telegram_settings(key: str, value: str) -> None:
     """Reject Telegram enablement without a usable allowlist (SEC-P0-01)."""
     if key == "telegram_enabled" and value == "true":
@@ -104,6 +117,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
         except TemplateError as exc:
             raise HTTPException(400, str(exc)) from exc
     _validate_telegram_settings(key, value)
+    _validate_nest_git_settings(key, value)
     if key == "workspace_host_roots":
         from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
 

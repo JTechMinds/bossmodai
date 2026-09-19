@@ -365,7 +365,10 @@ def test_enable_turns_shell_on_and_resumes(
     assert bash.ok is False
     assert policy_engine.evaluate("bash scripts/run-tests.sh", frozenset()).tier == "never_allowed"
     push = execute_bm_cli(agent, state, "git push origin HEAD")
-    assert push.approval_required is True
+    # Nest remotes need nest git auth even after Shell Executor is on.
+    # Always-allow / approval is a later gate, not a skip.
+    assert push.consent_required is True
+    assert push.kind == "nest_git_consent_required"
 
 
 @pytest.mark.asyncio

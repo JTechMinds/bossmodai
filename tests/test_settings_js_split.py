@@ -23,6 +23,7 @@ SHELL_GLOBALS = {
     "settings/settings-view.js": "SettingsView",
     "settings/cli-policy/section.js": "CliPolicySection",
     "settings/cli-policy/simulator.js": "CliPolicySimulator",
+    "settings/settings-nest-git.js": "NestGitSection",
 }
 
 # The halves the two oversized sections were split into in Phase 3C. They are
@@ -59,6 +60,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-runtime-contracts-actions.js",
     "js/settings/settings-runtime-contracts.js",
     "js/settings/settings-telegram.js",
+    "js/settings/settings-nest-git.js",
     "js/settings/settings-view.js",
     "js/shell/shell.js",
 ]
@@ -92,6 +94,7 @@ def test_settings_shell_no_longer_owns_section_iifes() -> None:
         assert f"const {global_name}" not in shell
         assert f"{global_name}.render(content)" in shell
     assert "CliPolicySection.render(content, pendingOptions)" in shell
+    assert "NestGitSection.render(content, pendingOptions)" in shell
     assert "function initResizeHandle" not in shell
 
 

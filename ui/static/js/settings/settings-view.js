@@ -14,6 +14,7 @@ const SettingsView = (() => {
         { id: 'personalities', label: 'AI Personalities', icon: 'brain' },
         { id: 'system',       label: 'System Settings',  icon: 'sliders' },
         { id: 'cli-policy',   label: 'CLI Policy',       icon: 'terminal' },
+        { id: 'nest-git',     label: 'Nest git',         icon: 'git-branch' },
         { id: 'telegram',     label: 'Telegram',         icon: 'send' },
     ];
 
@@ -135,6 +136,9 @@ const SettingsView = (() => {
                 break;
             case 'cli-policy':
                 CliPolicySection.render(content, pendingOptions);
+                break;
+            case 'nest-git':
+                NestGitSection.render(content, pendingOptions);
                 break;
             case 'telegram':
                 TelegramSection.render(content);

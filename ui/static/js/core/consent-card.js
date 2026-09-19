@@ -51,6 +51,10 @@ const BossModConsentCard = (() => {
         return cardKind(card) === 'shell_executor';
     }
 
+    function isNestGitCard(card) {
+        return typeof BossModNestGitCard !== 'undefined' && BossModNestGitCard.isNestGitCard(card);
+    }
+
     function requireApi(api) {
         if (typeof api !== 'function') {
             throw new Error('[consent-card] api is required');
@@ -71,13 +75,15 @@ const BossModConsentCard = (() => {
         title.className = 'hpc-title';
         const workspace = kind === 'workspace_preference';
         const shell = kind === 'shell_executor';
+        const nest = kind === 'nest_git';
         title.textContent = workspace
             ? (card.title || 'Work in your workspace?')
-            : (shell ? (card.title || 'Enable Shell Executor?') : 'Host path consent');
+            : (shell ? (card.title || 'Enable Shell Executor?')
+                : (nest ? BossModNestGitCard.title(card) : 'Host path consent'));
         const pathEl = document.createElement('div');
         pathEl.className = 'hpc-path';
-        pathEl.textContent = shell
-            ? (card.command || card.path || 'validate-on-clone')
+        pathEl.textContent = (shell || nest)
+            ? (card.command || card.path || (nest ? 'nest git' : 'validate-on-clone'))
             : (card.path || '');
         const reasonEl = document.createElement('div');
         reasonEl.className = 'hpc-reason';
@@ -85,10 +91,10 @@ const BossModConsentCard = (() => {
             ? (card.body || card.reason || "Host paths stay safer if we clone (or branch) into the agent's workspace first. Editing the host folder directly is allowed but not advised.")
             : (shell
                 ? (card.body || card.reason || 'Turns on Shell Executor for the company — same as Settings → CLI policy. CLI policy still applies after (not a blanket allow-all). Validate-on-clone needs pytest and local git add/commit on the locked workspace copy.')
-                : (card.reason || ''));
+                : (nest ? BossModNestGitCard.body(card) : (card.reason || '')));
         container.appendChild(title);
         container.appendChild(pathEl);
-        const reasonText = workspace || shell
+        const reasonText = workspace || shell || nest
             ? (card.body || card.reason || reasonEl.textContent)
             : card.reason;
         if (reasonText && status === 'pending') {
@@ -107,7 +113,7 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         const buttons = workspace
             ? workspacePreferenceActions(card)
-            : (shell ? shellExecutorActions(card) : [
+            : (nest ? BossModNestGitCard.actions(card) : (shell ? shellExecutorActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
             {
                 label: 'Always allow (for all agents)',
@@ -115,7 +121,7 @@ const BossModConsentCard = (() => {
                 hidden: card.always_allow === false,
             },
             { label: 'Deny', path: 'deny' },
-        ]);
+        ]));
         buttons.forEach((item) => {
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -130,10 +136,12 @@ const BossModConsentCard = (() => {
             actions.appendChild(btn);
         });
         container.appendChild(actions);
-        if (shell) {
+        if (shell || nest) {
             const hintEl = document.createElement('div');
             hintEl.className = 'hpc-hint';
-            hintEl.textContent = card.enable_hint || 'same as Settings. CLI policy still applies after.';
+            hintEl.textContent = nest
+                ? BossModNestGitCard.hint(card)
+                : (card.enable_hint || 'same as Settings. CLI policy still applies after.');
             container.appendChild(hintEl);
         }
     }
@@ -348,6 +356,7 @@ const BossModConsentCard = (() => {
             return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
         }
         if (status === 'enabled') {
+            if (isNestGitCard(card)) return BossModNestGitCard.statusLabel(card);
             return card.decision_note || 'Shell Executor on (company-wide). CLI policy still applies.';
         }
         if (status === 'cloned') return card.clone_dest ? `Cloned into ${card.clone_dest}` : 'Cloned into workspace';
@@ -360,13 +369,25 @@ const BossModConsentCard = (() => {
 
     async function decideHostPathConsent(container, card, action, actions, api) {
         requireApi(api);
+        if (isNestGitCard(card) && action === 'credentials') {
+            BossModNestGitCard.showCredentialsForm(container, card, actions, api, (updated) => {
+                container.replaceChildren();
+                renderHostPathConsentCard(container, updated, api);
+                collapseRelatedConsentCards(container, updated);
+                collapseGrantedConsentCards(updated);
+                if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
+            });
+            return;
+        }
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
         try {
             const endpoint = isWorkspacePreferenceCard(card)
                 ? `/api/workspace-preference/${card.id}/${action}`
-                : (isShellExecutorCard(card)
-                    ? `/api/shell-executor/${card.id}/${action}`
-                    : `/api/host-path-consent/${card.id}/${action}`);
+                : (isNestGitCard(card)
+                    ? `/api/nest-git/${card.id}/${action}`
+                    : (isShellExecutorCard(card)
+                        ? `/api/shell-executor/${card.id}/${action}`
+                        : `/api/host-path-consent/${card.id}/${action}`));
             const res = await api(endpoint, { method: 'POST' });
             if (!res.ok) {
                 throw new Error((await res.text()) || 'Consent update failed.');
@@ -469,6 +490,7 @@ const BossModConsentCard = (() => {
         cardFromMessage,
         isWorkspacePreferenceCard,
         isShellExecutorCard,
+        isNestGitCard,
         renderHostPathConsentCard,
         renderCliApprovalCard,
         decideHostPathConsent,

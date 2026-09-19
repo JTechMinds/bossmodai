@@ -389,7 +389,9 @@ CREATE TABLE IF NOT EXISTS host_path_consent_requests (
     task_id         VARCHAR REFERENCES tasks(id),
     channel_id      VARCHAR,
                 card_kind       VARCHAR NOT NULL DEFAULT 'host_path'
-                        CHECK (card_kind IN ('host_path', 'workspace_preference', 'shell_executor')),
+                        CHECK (card_kind IN (
+                            'host_path', 'workspace_preference', 'shell_executor', 'nest_git'
+                        )),
                 is_git          BOOLEAN NOT NULL DEFAULT FALSE,
                 clone_dest      VARCHAR,
                 status          VARCHAR NOT NULL DEFAULT 'pending'

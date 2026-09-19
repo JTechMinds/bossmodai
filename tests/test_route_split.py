@@ -36,6 +36,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels/{channel_id}/open-tasks", "list_channel_open_tasks"),
     (("DELETE",), "/api/channels/{channel_id}", "delete_channel"),
     (("POST",), "/api/channels/{channel_id}/messages", "create_channel_message"),
+    (("POST",), "/api/channels/{channel_id}/members", "seat_channel_member"),
     (("GET",), "/api/agents/{agent_id}/api-key", "get_agent_api_key"),
     (("GET",), "/api/agents/{agent_id}/prompt-history-policy", "get_agent_prompt_history_policy"),
     (("GET",), "/api/agents/{agent_id}/desk", "get_agent_desk"),
@@ -91,6 +92,10 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/workspace-preference/{request_id}/cancel", "cancel_workspace_preference"),
     (("POST",), "/api/shell-executor/{request_id}/enable", "enable_shell_executor"),
     (("POST",), "/api/shell-executor/{request_id}/deny", "deny_shell_executor"),
+    (("GET",), "/api/nest-git/status", "nest_git_status"),
+    (("POST",), "/api/nest-git/{request_id}/enable", "enable_nest_git"),
+    (("POST",), "/api/nest-git/{request_id}/credentials", "add_nest_git_credentials"),
+    (("PUT",), "/api/nest-git/credentials", "put_nest_git_credentials"),
     (("GET",), "/api/settings", "get_settings"),
     (("GET",), "/api/settings/desktop-open-folder-options", "get_desktop_open_folder_options"),
     (("GET",), "/api/runtime/core", "get_runtime_core"),
@@ -130,7 +135,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 106
+    assert len(got) == 111
 
 
 def test_from_api_routes_import_router_still_works() -> None:
