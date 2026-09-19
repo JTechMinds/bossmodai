@@ -346,9 +346,10 @@
    `breaks: true` rendered every newline the operator typed twice — once as a
    <br>, once as the literal character it came from. */
 
-/* Quiet name up top: regular weight, muted ink, no chip. Colour lives
-   on the letter face, not here. --hint (4.51) is only for timestamps;
-   the name stays --muted so it remains readable without scanning heavy. */
+/* Quiet name up top: regular weight, agent-colored ink (same family as
+   the initial), no chip. --muted is only the colorless fallback; a face
+   with a stored colour paints tint.ink from message.js. --hint (4.51)
+   stays on timestamps. */
 .msg-author {
   margin: 0;
   align-self: flex-start;
@@ -379,8 +380,8 @@
   color: var(--blue-ink);
 }
 
-/* The name sits outside the tint and stays the shared muted ink. Time stays
-   inside the bubble: --hint measures only 4.19:1 on --accent-bg. */
+/* The name sits outside the bubble tint. Time stays inside: --hint
+   measures only 4.19:1 on --accent-bg. */
 .msg-human .msg-time { color: var(--blue-ink); }
 
 /* The tint's own ink for everything markdown paints in the operator's bubble
@@ -667,21 +668,27 @@
   display: inline;
 }
 
+/* Sit on the text baseline with the surrounding words. base.css's 24px
+   button floor would grow a transcript pill into a floating badge, so
+   min-height/min-width are zeroed here — the chip is inline chrome, not
+   a standalone target. Soft --bg + the 16% avatar tint; no pink ink. */
 .mention-pill {
   display: inline-flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 4px;
   max-width: 100%;
+  min-height: 0;
+  min-width: 0;
   margin: 0 1px;
-  padding: 1px 6px 1px 3px;
+  padding: 0 6px 0 3px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg);
   color: inherit;
   font: inherit;
   font-weight: 400;
-  line-height: inherit;
-  vertical-align: bottom;
+  line-height: 1.25;
+  vertical-align: baseline;
   cursor: pointer;
 }
 

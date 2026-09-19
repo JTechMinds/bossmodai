@@ -1,7 +1,7 @@
 /**
  * Node harness: live-agent @mention filter, pill insert, click menu,
- * composer persist, bottom align, regular weight, soft tint, and
- * menu-under-pill.
+ * composer persist, baseline align, regular weight, soft tint (not
+ * heavy pink), and menu-under-pill.
  * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -239,9 +239,12 @@ async function main() {
     );
     const pillRule = css.split(".mention-pill {")[1].split("}")[0];
     const nameRule = css.split(".mention-pill-name {")[1].split("}")[0];
-    const alignBottom = /align-items:\s*flex-end/.test(pillRule)
-        && /vertical-align:\s*bottom/.test(pillRule);
-    if (!alignBottom) fail("alignBottom", pillRule);
+    const alignBaseline = /vertical-align:\s*baseline/.test(pillRule)
+        && /align-items:\s*center/.test(pillRule)
+        && /min-height:\s*0/.test(pillRule)
+        && !/vertical-align:\s*bottom/.test(pillRule)
+        && !/align-items:\s*flex-end/.test(pillRule);
+    if (!alignBaseline) fail("alignBaseline", pillRule);
     const regularWeight = /font-weight:\s*400/.test(pillRule)
         && /font-weight:\s*400/.test(nameRule)
         && !/font-weight:\s*600/.test(pillRule)
@@ -254,6 +257,30 @@ async function main() {
         && /background:/.test(composerPill.getAttribute("style") || "")
         && /background:/.test(pill.getAttribute("style") || "");
     if (!softPillBackground) fail("softPillBackground", pillRule);
+
+    const debraTint = global.BossModAvatar.tintFor(DEBRA.color);
+    const debraBody = h("div", { class: "msg-body md" }, "lock that layout @Debra please.");
+    const debraMsg = h("div", { class: "msg msg-agent" }, debraBody);
+    documentStub.body.append(debraMsg);
+    Pills.linkify(debraBody, { agents: LIVE, container: debraMsg });
+    const debraPill = debraMsg.querySelector(".mention-pill");
+    const debraName = debraPill && debraPill.querySelector(".mention-pill-name");
+    const debraStyle = (debraPill && debraPill.getAttribute("style")) || "";
+    const softNotHeavyPink = Boolean(
+        debraTint
+        && debraPill
+        && debraStyle === `background:${debraTint.bg}`
+        && debraStyle.indexOf(DEBRA.color) === -1
+        && !/(?:^|;)\s*color:/.test(debraStyle)
+        && debraName
+        && !/color:/.test(debraName.getAttribute("style") || "")
+        && !/--accent/.test(pillRule)
+        && !/--alert/.test(pillRule)
+        && !/pink/i.test(pillRule)
+    );
+    if (!softNotHeavyPink) {
+        fail("softNotHeavyPink", `${debraStyle} | ${pillRule}`);
+    }
 
     const possessive = h("div", { class: "msg-body md" }, "Debra parked @TheAuditor's LOCK.");
     const possMsg = h("div", { class: "msg msg-agent" }, possessive);
@@ -312,9 +339,10 @@ async function main() {
         pickerFilter: options.length,
         pillInsert: pick.text,
         composerPersist: true,
-        alignBottom: true,
+        alignBaseline: true,
         regularWeight: true,
         softPillBackground: true,
+        softNotHeavyPink: true,
         menuUnderPill: true,
         linkifyLive: painted,
         trailingPunctGlued: possName.textContent,
