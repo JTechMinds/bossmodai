@@ -444,8 +444,13 @@ def test_saved_pat_reaches_flagged_push_and_approved_path(monkeypatch: pytest.Mo
     assert extra.get("BOSSMOD_NEST_GIT_PASSWORD") == token
 
     captured.clear()
+    approval = db.create_cli_approval_request(
+        agent_id=agent.id,
+        command="git push origin HEAD",
+        cwd=cwd,
+    )
     approved = execute_approved_command(
-        agent, state, "git push origin HEAD", approval_request_id="approved-inject",
+        agent, state, "git push origin HEAD", approval_request_id=approval.id,
     )
     extra = captured.get("extra_env") or {}
     assert extra.get("GIT_ASKPASS")
