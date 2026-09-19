@@ -21,9 +21,11 @@ from core.agent_loop.loop import run_turn
 from core.bm_cli.types import BossModCliResult
 from core.llm.client import LLMResponse
 from core.models.message import HUMAN_SENDER_ID
+from core.runtime.events import NullRuntimeEventSink, runtime_events
 
 
 def setup_function() -> None:
+    runtime_events.set_sink(NullRuntimeEventSink())
     db.close_connection()
     db_path = Path(os.environ["BOSSMOD_DB_PATH"])
     for suffix in ("", "-wal", "-shm"):
@@ -35,7 +37,37 @@ def setup_function() -> None:
 
 
 def teardown_function() -> None:
+    runtime_events.set_sink(NullRuntimeEventSink())
     db.close_connection()
+
+
+class _RecordingActivitySink(NullRuntimeEventSink):
+    """Real sink so fail-closed peek hits RuntimeEventProxy.broadcast_activity."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def broadcast_activity(
+        self,
+        event: str,
+        detail: str,
+        agent_name: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        self.calls.append(
+            {
+                "event": event,
+                "detail": detail,
+                "agent_name": agent_name,
+                "extra": extra,
+            }
+        )
+
+
+def _install_activity_sink() -> _RecordingActivitySink:
+    sink = _RecordingActivitySink()
+    runtime_events.set_sink(sink)
+    return sink
 
 
 def _cli(cmd: str) -> str:
@@ -195,15 +227,7 @@ async def test_eleventh_peek_fails_soft_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
-    broadcasts: list[dict[str, Any]] = []
-
-    async def _capture_activity(**kwargs: Any) -> None:
-        broadcasts.append(kwargs)
-
-    monkeypatch.setattr(
-        "core.agent_loop.decision_turn.manager.broadcast_activity",
-        _capture_activity,
-    )
+    sink = _install_activity_sink()
     _script_completions(
         monkeypatch,
         [_cli(f"ls /me/p{index}") for index in range(SOFT_PEEK_BUDGET + 1)],
@@ -214,8 +238,9 @@ async def test_eleventh_peek_fails_soft_budget(
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
     assert SOFT_PEEK_STEER in str(outcome.result.get("detail") or "")
-    errors = [item for item in broadcasts if item.get("event") == "agent_error"]
+    errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
+    assert (errors[0].get("extra") or {}).get("peek_budget") == "soft_budget"
 
 
 @pytest.mark.asyncio
@@ -223,15 +248,7 @@ async def test_alternating_known_peeks_still_hit_soft_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
-    broadcasts: list[dict[str, Any]] = []
-
-    async def _capture_activity(**kwargs: Any) -> None:
-        broadcasts.append(kwargs)
-
-    monkeypatch.setattr(
-        "core.agent_loop.decision_turn.manager.broadcast_activity",
-        _capture_activity,
-    )
+    sink = _install_activity_sink()
     peeks = [_cli("ls a" if index % 2 == 0 else "ls b") for index in range(SOFT_PEEK_BUDGET + 1)]
     _script_completions(monkeypatch, peeks)
     outcome = await run_turn(agent, state, _human_chat_trigger())
@@ -240,8 +257,9 @@ async def test_alternating_known_peeks_still_hit_soft_budget(
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
     assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET
-    errors = [item for item in broadcasts if item.get("event") == "agent_error"]
+    errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
+    assert (errors[0].get("extra") or {}).get("peek_budget") == "soft_budget"
 
 
 @pytest.mark.asyncio
@@ -257,15 +275,7 @@ async def test_identical_triple_hard_stops_before_third_execute(
         return real_execute(agent_obj, state_obj, command, content, **kwargs)
 
     monkeypatch.setattr("core.agent_loop.decision_turn.execute_bm_cli", _count_execute)
-    broadcasts: list[dict[str, Any]] = []
-
-    async def _capture_activity(**kwargs: Any) -> None:
-        broadcasts.append(kwargs)
-
-    monkeypatch.setattr(
-        "core.agent_loop.decision_turn.manager.broadcast_activity",
-        _capture_activity,
-    )
+    sink = _install_activity_sink()
     _script_completions(monkeypatch, [_cli("ls a"), _cli("ls a/"), _cli("ls ./a")])
     outcome = await run_turn(agent, state, _human_chat_trigger())
     assert outcome.trigger_status == "failed"
@@ -273,8 +283,9 @@ async def test_identical_triple_hard_stops_before_third_execute(
     assert IDENTICAL_PEEK_STEER in (outcome.diagnostic_error or "")
     assert IDENTICAL_PEEK_STEER in str(outcome.result.get("detail") or "")
     assert executed == ["ls a", "ls a/"]
-    errors = [item for item in broadcasts if item.get("event") == "agent_error"]
+    errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
+    assert (errors[0].get("extra") or {}).get("peek_budget") == "identical_loop"
 
 
 @pytest.mark.asyncio

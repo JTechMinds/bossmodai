@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from core.runtime.events import NullRuntimeEventSink, RuntimeEventProxy
 from core.runtime.services import RuntimeServices
 
 
@@ -93,3 +94,46 @@ async def test_dispatch_event_without_sink_does_not_raise() -> None:
     services = RuntimeServices()
     await services._dispatch_event({"kind": "world_state", "data": {}})
     await services._dispatch_event({"kind": "chat_message", "data": {"agent_id": "a1"}})
+
+
+@pytest.mark.asyncio
+async def test_proxy_broadcast_activity_forwards_peek_budget_in_extra() -> None:
+    """Decision-turn fail-closed results splat peek_budget onto the proxy."""
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+
+    result = {
+        "event": "agent_error",
+        "detail": "Peek Clerk peek budget exhausted — decide or accept work",
+        "agent_name": "Peek Clerk",
+        "peek_budget": "soft_budget",
+    }
+    await proxy.broadcast_activity(**result)
+
+    assert sink.calls == [
+        (
+            "activity",
+            {
+                "event": result["event"],
+                "detail": result["detail"],
+                "agent_name": result["agent_name"],
+                "extra": {"peek_budget": "soft_budget"},
+            },
+        )
+    ]
+
+    await proxy.broadcast_activity(
+        event="agent_error",
+        detail="looping — decide or accept work",
+        agent_name="Peek Clerk",
+        extra={"task_id": "t1"},
+        peek_budget="identical_loop",
+    )
+    assert sink.calls[-1][1]["extra"] == {
+        "task_id": "t1",
+        "peek_budget": "identical_loop",
+    }
+
+    proxy.set_sink(NullRuntimeEventSink())
+    await proxy.broadcast_activity(**result)
