@@ -234,7 +234,7 @@ def _schema_failed_payload(
         raw_response,
         decision=True,
         snippet=error[:200],
-        kind=kind_for_schema_error(error),
+        kind=kind_for_schema_error(error, parsed),
         thought=_candidate_thought(parsed),
         candidate=parsed,
     )

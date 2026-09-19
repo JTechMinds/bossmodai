@@ -20,9 +20,12 @@ PROSE_STATUS_STEER = (
 INVALID_DECISION_STEER = (
     "Emit the required JSON decision/action shape for this turn. "
     "Do not invent approval fields. "
-    "Approval is an in-thread Approve/Reject card, not a decision key. "
+    "Approval comes from approval_required plus a request id from the tool, "
+    "not from invented JSON fields. "
     "Do not park @Operator. Do not invent a desk deny."
 )
+
+_COMPACT_ROOT_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th"})
 
 
 def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
@@ -33,9 +36,13 @@ def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
     return "invalid_json"
 
 
-def kind_for_schema_error(error: str) -> ParseFailureKind:
+def kind_for_schema_error(
+    error: str,
+    payload: dict[str, Any] | None = None,
+) -> ParseFailureKind:
     """Unknown top-level keys are an invalid decision, not malformed JSON."""
-    if "unexpected top-level keys" in (error or ""):
+    extra = set(payload or ()) - _COMPACT_ROOT_KEYS
+    if extra or "unexpected top-level keys" in (error or ""):
         return "invalid_decision"
     return "invalid_json"
 

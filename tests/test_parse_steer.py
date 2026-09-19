@@ -11,7 +11,7 @@ import pytest
 import db
 from core import config
 from core.agent_loop.actions import parse_action
-from core.agent_loop.decision_contract import parse_direct_turn_response
+from core.agent_loop.decision_contract import ConversationDecision, parse_direct_turn_response
 from core.agent_loop.loop import run_turn
 from core.agent_loop.parse_steer import (
     INVALID_DECISION_STEER,
@@ -83,6 +83,10 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     assert kind_for_schema_error("unexpected top-level keys: _needsApproval") == (
         "invalid_decision"
     )
+    assert kind_for_schema_error(
+        'missing "act"',
+        {"decision": "answer", "_needsApproval": True},
+    ) == "invalid_decision"
     assert kind_for_schema_error('missing "act"') == "invalid_json"
     steer = parse_failure_steer("prose_status")
     assert PROSE_STATUS_STEER in steer
@@ -116,14 +120,23 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""))
     assert INVALID_DECISION_STEER in steer
     assert "Do not invent approval fields" in steer
+    assert "approval_required" in steer
+    assert "request id" in steer
+    assert "invented JSON fields" in steer
     assert "Do not park @Operator" in steer
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
+    other = parse_direct_turn_response(
+        '{"act":"reply","intent":"status","msg":"Continuing.","extraField":1}'
+    )
+    assert other["decision"] == "_parse_failed"
+    assert other.get("_parse_kind") == "invalid_decision"
     valid = parse_direct_turn_response(
         '{"act":"reply","intent":"status","msg":"Continuing.","th":"ok"}'
     )
     assert valid.get("decision") == "answer"
     assert "_needsApproval" not in valid
+    assert "_needsApproval" not in ConversationDecision.model_fields
 
 
 def test_parse_action_invented_needs_approval_is_invalid_decision() -> None:
@@ -193,7 +206,8 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Do not invent approval fields" in detail
-    assert "Approve/Reject" in detail
+    assert "approval_required" in detail
+    assert "request id" in detail
     assert "Do not park @Operator" in detail
     assert "do not invent a desk" in detail.lower()
     assert "_needsApproval" in detail

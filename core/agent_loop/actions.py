@@ -166,7 +166,7 @@ def _schema_failed_action(
         raw_response,
         decision=False,
         snippet=error[:200],
-        kind=kind_for_schema_error(error),
+        kind=kind_for_schema_error(error, parsed),
         thought=_candidate_thought(parsed),
         candidate=parsed,
     )
