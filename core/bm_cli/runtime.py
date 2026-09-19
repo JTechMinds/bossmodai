@@ -461,10 +461,10 @@ def execute_approved_command(
         return gated
     parsed = gated
 
-    prepared = _prepare_native_shell(agent, parsed.raw, cwd_before)
+    prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
         return prepared
-    shell_cwd, roots, timeout, max_output = prepared
+    parsed, shell_cwd, roots, timeout, max_output = prepared
 
     shell_exec = execute_shell_command(
         parsed.raw,
@@ -762,21 +762,11 @@ def _path_jail_cli_result(
     cwd_before: str,
     jail_message: str,
 ) -> BossModCliResult:
-    """Path jail on a locked clone is Blocked {why}, never a quiet drop."""
-    from core.agent_loop.activity_runtime import get_active_task_id
-    from core.bm_cli.locked_clone_outcome import (
-        is_locked_clone_context,
-        path_jail_blocked_result,
-    )
+    """Path jail is Blocked {why} with a rewrite steer, never a quiet drop."""
+    from core.bm_cli.locked_clone_outcome import path_jail_blocked_result
 
-    if is_locked_clone_context(agent, cwd_before, task_id=get_active_task_id(agent.id)):
-        return path_jail_blocked_result(parsed.raw, cwd_before)
-    return error_result(
-        parsed.raw,
-        jail_message,
-        cwd=cwd_before,
-        executor="shell",
-    )
+    del agent
+    return path_jail_blocked_result(parsed.raw, cwd_before, jail_message)
 
 
 def _apply_project_env_gate(
@@ -1163,17 +1153,20 @@ def _named_path_from_command(parsed: ParsedCliCommand) -> str | None:
 
 def _prepare_native_shell(
     agent: Agent,
-    command: str,
+    parsed: ParsedCliCommand,
     cwd_before: str,
-) -> tuple[Path, tuple[Path, ...], int, int] | BossModCliResult:
-    """Resolve a real workspace cwd and path-jail roots, or return an error."""
+) -> tuple[ParsedCliCommand, Path, tuple[Path, ...], int, int] | BossModCliResult:
+    """Rewrite virtual mounts, then resolve cwd and path-jail roots."""
+    from core.bm_cli.locked_clone_outcome import rewrite_virtual_shell_paths
+
+    parsed = rewrite_virtual_shell_paths(agent, parsed, cwd_before)
     try:
         resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
     except ValueError as exc:
-        return error_result(command, str(exc), cwd=cwd_before, executor="shell")
+        return error_result(parsed.raw, str(exc), cwd=cwd_before, executor="shell")
     if resolved is None or resolved.real_path is None:
         return error_result(
-            command,
+            parsed.raw,
             "Shell cwd is not a real workspace path",
             cwd=cwd_before,
             executor="shell",
@@ -1181,6 +1174,7 @@ def _prepare_native_shell(
     timeout = config.get_int("cli_shell_timeout_seconds") or 30
     max_output = config.get_int("cli_shell_max_output_bytes") or 65536
     return (
+        parsed,
         Path(resolved.real_path),
         allowed_shell_roots(agent.storage_key),
         timeout,
@@ -1198,10 +1192,10 @@ def _execute_shell(
     trigger_type: str | None,
 ) -> BossModCliResult:
     """Run a native shell command and record the audit event."""
-    prepared = _prepare_native_shell(agent, parsed.raw, cwd_before)
+    prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
         return prepared
-    shell_cwd, roots, timeout, max_output = prepared
+    parsed, shell_cwd, roots, timeout, max_output = prepared
 
     shell_exec = execute_shell_command(
         parsed.raw,

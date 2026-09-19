@@ -13,6 +13,7 @@ from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.locked_clone_outcome import (
     DEFAULT_APPROVAL_MESSAGE,
     HOST_OUTSIDE_NEST_WHY,
+    PATH_JAIL_BLOCKED_WHY,
     decide_locked_clone_shell_outcome,
     is_virtual_cli_path,
     rewrite_virtual_shell_paths,
@@ -290,3 +291,10 @@ def test_preview_nest_sed_is_approval_not_silent_deny(
 def test_host_outside_nest_why_constant() -> None:
     assert HOST_OUTSIDE_NEST_WHY.startswith("Blocked")
     assert "enablement" in HOST_OUTSIDE_NEST_WHY
+
+
+def test_path_jail_blocked_why_steers_projects_rewrite() -> None:
+    assert PATH_JAIL_BLOCKED_WHY.startswith("Blocked")
+    assert "/projects" in PATH_JAIL_BLOCKED_WHY
+    assert "rewrite" in PATH_JAIL_BLOCKED_WHY
+    assert "enablement" in PATH_JAIL_BLOCKED_WHY

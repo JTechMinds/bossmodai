@@ -51,8 +51,9 @@ HOST_OUTSIDE_NEST_WHY = (
 )
 
 PATH_JAIL_BLOCKED_WHY = (
-    "Blocked — path jail. Nest paths must stay under /me/host-work after rewrite. "
-    "Host writes outside the clone stay denied. "
+    "Blocked — path jail. Shared /projects paths rewrite into the projects artifact root. "
+    "Nest paths rewrite under /me/host-work. Stay inside those roots after rewrite. "
+    "Host writes outside the jail stay denied. "
     "Do not invent a desk deny. Do not park @Operator as an enablement switch."
 )
 
@@ -104,7 +105,11 @@ def rewrite_virtual_shell_paths(
     parsed: ParsedCliCommand,
     cwd: str,
 ) -> ParsedCliCommand:
-    """Rewrite ``/me`` and ``/projects`` argv tokens to real workspace paths."""
+    """Rewrite ``/me`` and ``/projects`` argv tokens to real workspace paths.
+
+    Shared deliverables under ``/projects`` map into ``projects_artifact_root``
+    so read/list/find stay inside the path jail. Host Desktop is not unlocked.
+    """
     tokens = [parsed.name, *parsed.args]
     changed = False
     rewritten: list[str] = []
@@ -231,13 +236,21 @@ def prepare_locked_clone_approved(
     return parsed
 
 
-def path_jail_blocked_result(command: str, cwd: str | None) -> BossModCliResult:
+def path_jail_blocked_result(
+    command: str,
+    cwd: str | None,
+    jail_message: str | None = None,
+) -> BossModCliResult:
     """Convert a quiet path-jail drop into an explicit Blocked {why}."""
     from core.bm_cli.results import error_result
 
+    why = PATH_JAIL_BLOCKED_WHY
+    extra = (jail_message or "").strip()
+    if extra and extra not in why:
+        why = f"{why} {extra}"
     return error_result(
         command,
-        PATH_JAIL_BLOCKED_WHY,
+        why,
         cwd=cwd,
         executor="shell",
         kind="host_deny",
