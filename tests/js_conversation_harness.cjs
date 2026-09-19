@@ -222,6 +222,9 @@ async function main() {
     const faceBottomAligned = /align-items:\s*flex-end/.test(turnRule)
         && !/flex-direction:\s*column/.test(turnRule);
     if (!faceBottomAligned) throw new Error(`initial must sit lower-left: ${turnRule}`);
+    const listRule = conversationCss.split(".transcript-list {")[1].split("}")[0];
+    const turnGap = /gap:\s*16px/.test(listRule) && !/gap:\s*8px/.test(listRule);
+    if (!turnGap) throw new Error(`turn gap must breathe: ${listRule}`);
     const agentNameIsChromeOutside = Boolean(
         adaTurn && adaFace && nameOutsideBubble && faceLowerLeftBesideBubble
         && nameIsQuiet && quietAuthor && faceBottomAligned && authorUsesAgentColor
@@ -795,6 +798,7 @@ async function main() {
         authorUsesAgentColor,
         faceLowerLeftBesideBubble,
         noOrphanAgentFace,
+        turnGap,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,
         escapeCancelsRenameWithoutSaving,

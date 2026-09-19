@@ -235,6 +235,7 @@ def test_conversation_harness() -> None:
         "authorUsesAgentColor": True,
         "faceLowerLeftBesideBubble": True,
         "noOrphanAgentFace": True,
+        "turnGap": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage
         # key, its control, and the node that holds it are unchanged — which is
@@ -537,6 +538,9 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     assert "msg-author" not in bubble
     assert "msg-face" not in bubble
     css = _read(CSS / "conversation.css")
+    listing = css.split(".transcript-list {", 1)[1].split("}", 1)[0]
+    assert "gap: 16px" in listing
+    assert "gap: 8px" not in listing
     turn = css.split(".msg-turn {", 1)[1].split("}", 1)[0]
     assert "display: flex" in turn
     assert "align-items: flex-end" in turn

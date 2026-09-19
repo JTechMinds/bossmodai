@@ -96,25 +96,36 @@ def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
     host = css.split(".mention-host {", 1)[1].split("}", 1)[0]
     assert "position: relative" in host
     assert "display: inline" in host
+    assert "vertical-align: middle" in host
     pill = css.split(".mention-pill {", 1)[1].split("}", 1)[0]
     assert "inline-flex" in pill
     assert "align-items: center" in pill
-    assert "vertical-align: baseline" in pill
+    assert "vertical-align: middle" in pill
     assert "min-height: 0" in pill
+    assert "vertical-align: baseline" not in pill
     assert "vertical-align: bottom" not in pill
     assert "align-items: flex-end" not in pill
     assert "font-weight: 400" in pill
     assert "color: inherit" in pill
-    assert "background: var(--bg)" in pill
+    assert "background: var(--btn-face-hover)" in pill
+    assert "background: var(--bg)" not in pill
     assert "background: none" not in pill
-    assert "border: 1px solid var(--line)" in pill
+    assert "border: 1px solid var(--line-strong)" in pill
+    assert "border: 1px solid var(--line);" not in pill
     assert "border: 0" not in pill
     assert "font-weight: 600" not in pill
     assert "var(--accent)" not in pill
+    assert "tint.bg" not in pill
     assert "pink" not in pill.lower()
     name = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0]
     assert "color: inherit" in name
     assert "font-weight: 400" in name
+    composer_pill = css.split(".composer-input .mention-pill {", 1)[1].split("}", 1)[0]
+    assert "vertical-align: middle" in composer_pill
+    assert "vertical-align: bottom" not in composer_pill
+    assert "align-items: flex-end" not in composer_pill
+    composer_input = css.split(".composer-input {", 1)[1].split("}", 1)[0]
+    assert "line-height: 1.5" in composer_input
     pills = _read(CONVERSATION / "mention-pill.js")
     assert "background:${tint.bg}" not in pills
     assert "color:${tint.ink}" not in pills
@@ -148,8 +159,10 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "pickerFilter": 1,
         "pillInsert": "tip @Hugh ",
         "composerPersist": True,
-        "alignBaseline": True,
+        "alignOpticalCenter": True,
+        "composerAlignsWithText": True,
         "regularWeight": True,
+        "louderNeutralChip": True,
         "softPillBackground": True,
         "neutralSoftGrayChip": True,
         "menuUnderPill": True,
