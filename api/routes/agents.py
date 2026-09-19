@@ -30,6 +30,7 @@ from core.models import (
 )
 from core.models.message import HUMAN_SENDER_ID
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
+from core.channel_members import ThreadSeatError, seat_agent_in_thread
 from core.tasking.service import list_open_origin_tasks_for_channel
 from core.tasking.transitions import IllegalTaskTransition
 from core.runtime import runtime_services
@@ -77,6 +78,10 @@ class ChannelMessageBody(BaseModel):
 
 class ChannelRenameBody(BaseModel):
     name: str
+
+
+class ChannelMemberBody(BaseModel):
+    agent_id: str
 
 
 # A thread name is one line in the roster rail and one line in the chat header.
@@ -394,6 +399,26 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
         "message": _serialize_channel_message(message),
         "member_count": len(result["members"]),
     }
+
+
+@router.post("/channels/{channel_id}/members")
+async def seat_channel_member(channel_id: str, body: ChannelMemberBody):
+    """Seat one live agent into an existing thread. History is not rewritten."""
+    try:
+        seated = seat_agent_in_thread(channel_id, body.agent_id)
+    except ThreadSeatError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    members = db.list_channel_member_details(seated.id)
+    latest = db.get_latest_channel_message(seated.id)
+    summary = _serialize_channel_summary(seated, members=members, latest_message=latest)
+    await manager.broadcast_channel_updated(summary)
+    await manager.broadcast_activity(
+        event="channel_member_seated",
+        detail=f'Seated a teammate in "{seated.name}"',
+        agent_name=None,
+    )
+    return summary
 
 
 @router.get("/agents/{agent_id}/api-key")

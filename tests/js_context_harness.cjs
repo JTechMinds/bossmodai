@@ -118,7 +118,7 @@ const NAMES = [
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModConversationChrome", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeeds", "BossModNeedsBar",
-    "BossModThreadArchive", "BossModThreadSource", "BossModAgentSource",
+    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadSource", "BossModAgentSource",
     "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModMiniOffice",

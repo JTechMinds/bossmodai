@@ -21,6 +21,7 @@ const BossModThreadSource = (() => {
      * @param {object} ctx.bus  Topic bus.
      * @param {object} ctx.presence  Shared presence controller, keyed by conversation.
      * @param {object} ctx.archive  From BossModThreadArchive.createThreadArchive.
+     * @param {object} ctx.seat  From BossModThreadSeat.createThreadSeat.
      * @param {(conversationId: string) => void} ctx.forgetCache  Drops the cached
      *   transcript when a room is sealed, so a re-open does not paint stale posts.
      * @returns {object} ConversationSource (spec 4.1).
@@ -31,11 +32,13 @@ const BossModThreadSource = (() => {
         const bus = ctx && ctx.bus;
         const presence = ctx && ctx.presence;
         const archive = ctx && ctx.archive;
+        const seat = ctx && ctx.seat;
         const forgetCache = ctx && ctx.forgetCache;
         if (typeof api !== 'function') throw new Error('[thread-source] ctx.api is required');
         if (!bus) throw new Error('[thread-source] ctx.bus is required');
         if (!presence) throw new Error('[thread-source] ctx.presence is required');
         if (!archive) throw new Error('[thread-source] ctx.archive is required');
+        if (!seat) throw new Error('[thread-source] ctx.seat is required');
         if (typeof forgetCache !== 'function') {
             throw new Error('[thread-source] ctx.forgetCache is required');
         }
@@ -236,44 +239,66 @@ const BossModThreadSource = (() => {
         }
 
         /**
-         * Title, participant count, and exactly one of Archive / Reopen.
+         * Seat one live agent who is not already in this room.
+         *
+         * Cancel is null, not a failure. A rejected seat throws so chrome's
+         * onError can say so — adding someone must never look like it worked.
+         *
+         * @returns {Promise<void>}
+         */
+        async function seatAgent() {
+            const updated = await seat.pickAndSeat(threadId, members());
+            if (!updated) return;
+            channel = updated;
+            signal('chrome');
+        }
+
+        /**
+         * Title, participant count, Add to thread, and Archive / Reopen.
          *
          * A LIVE thread also carries `onRename`, which is what makes its title
          * editable in place. A sealed room does not: archiving seals it against
          * writes, and renaming it is a write. Reopen is the way back.
          *
-         * Both sit behind the header's `⋯` (`slot: 'menu'`) rather than in the
-         * action row. Archiving is irreversible-looking, rare, and the only
-         * thing a thread's header could ever offer — so it spent every visit
-         * proposing itself. Reopen goes with it rather than being promoted on
-         * its own: the two are one control in two states, and splitting them
-         * across the row and the menu would move a button the operator had just
-         * learned where to find.
+         * Archive / Reopen sit behind the header's `⋯`. Add to thread stays on
+         * the action row: seating someone is the ordinary next step, not a
+         * once-a-month seal.
          *
          * @returns {{title: string, subtitle: string, actions: object[],
          *            onRename?: (name: string) => Promise<void>}}
          */
         function chrome() {
             const archived = !isLiveThread();
+            const actions = [];
+            if (!archived) {
+                actions.push({
+                    id: 'channel-seat-btn',
+                    label: 'Add to thread',
+                    icon: 'user-plus',
+                    iconOnly: true,
+                    onSelect: seatAgent,
+                });
+            }
+            actions.push(archived
+                ? {
+                    id: 'channel-reopen-btn',
+                    label: 'Reopen',
+                    icon: 'archive-restore',
+                    slot: 'menu',
+                    onSelect: reopenThread,
+                }
+                : {
+                    id: 'channel-archive-btn',
+                    label: 'Archive',
+                    icon: 'archive',
+                    slot: 'menu',
+                    onSelect: archiveThread,
+                });
             return {
                 title: (channel && channel.name) || 'Thread',
                 subtitle: `${members().length} participants`,
                 onRename: archived ? null : renameThread,
-                actions: [archived
-                    ? {
-                        id: 'channel-reopen-btn',
-                        label: 'Reopen',
-                        icon: 'archive-restore',
-                        slot: 'menu',
-                        onSelect: reopenThread,
-                    }
-                    : {
-                        id: 'channel-archive-btn',
-                        label: 'Archive',
-                        icon: 'archive',
-                        slot: 'menu',
-                        onSelect: archiveThread,
-                    }],
+                actions,
             };
         }
 

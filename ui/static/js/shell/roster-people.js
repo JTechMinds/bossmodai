@@ -94,6 +94,9 @@ const BossModRosterPeople = (() => {
      * @param {() => void} deps.onSelectionChange  Called whenever the selection
      *   or the mode changes. The Threads half re-reads the selection through
      *   it; People never names the module that listens.
+     * @param {object} [deps.seat]  From BossModThreadSeat.createThreadSeat.
+     *   When a live thread is open, the People header offers Add to thread.
+     * @param {(message: string, err?: Error) => void} [deps.onError]
      * @returns {{ element: HTMLElement,
      *             selection: () => string[],
      *             isSelecting: () => boolean,
@@ -105,7 +108,7 @@ const BossModRosterPeople = (() => {
      *   render rows whose clicks go nowhere.
      */
     function createPeople(deps) {
-        const { store, onOpenConversation, onOpenDesk, onSelectionChange } = deps || {};
+        const { store, onOpenConversation, onOpenDesk, onSelectionChange, seat, onError } = deps || {};
         if (!store) throw new Error('[roster-people] deps.store is required');
         if (typeof onOpenConversation !== 'function') {
             throw new Error('[roster-people] deps.onOpenConversation is required');
@@ -123,9 +126,13 @@ const BossModRosterPeople = (() => {
         const selected = new Set();
 
         const list = h('ul', { class: 'roster-people' });
-        const element = h('section', { class: 'roster-section' },
-            h('h2', { class: 'roster-section-title' }, 'People'),
-            list);
+        // The action group is mounted only while a live thread is open. Idle
+        // People is still just the label — a hidden `roster-section-actions`
+        // would become the rail's first header group and steal Threads' `+`.
+        const head = h('div', { class: 'roster-section-head' },
+            h('h2', { class: 'roster-section-title' }, 'People'));
+        const element = h('section', { class: 'roster-section' }, head, list);
+        let seatGroup = null;
 
         function agentsWithNeeds() {
             return new Set(store.getState().needs
@@ -243,7 +250,54 @@ const BossModRosterPeople = (() => {
             const paused = store.getState().runtimePaused === true;
             const needy = agentsWithNeeds();
             visible.forEach((agent) => list.append(personRow(agent, paused, needy)));
+            syncSeatAction();
             BossModIcons.paintDocument('roster-people');
+        }
+
+        /**
+         * The open conversation, when it is a shared thread.
+         * @returns {object|null}
+         */
+        function openThread() {
+            const state = store.getState();
+            if (state.conversationKind !== 'thread' || !state.conversationId) return null;
+            return (state.threads || []).find((thread) => thread && thread.id === state.conversationId)
+                || { id: state.conversationId, status: 'active', members: [] };
+        }
+
+        function syncSeatAction() {
+            const thread = openThread();
+            const show = Boolean(seat) && Boolean(thread) && thread.status !== 'archived';
+            if (show === Boolean(seatGroup)) return;
+            if (!show) {
+                seatGroup.remove();
+                seatGroup = null;
+                return;
+            }
+            seatGroup = h('div', { class: 'roster-section-actions' },
+                h('button', {
+                    class: 'roster-section-action',
+                    id: 'roster-seat-agent',
+                    type: 'button',
+                    'aria-label': 'Add to thread',
+                    onclick: () => { void seatIntoOpenThread(); },
+                }, h('i', { 'data-lucide': 'user-plus', 'aria-hidden': 'true' })));
+            head.append(seatGroup);
+            BossModIcons.paint(seatGroup, 'roster-people');
+        }
+
+        async function seatIntoOpenThread() {
+            const thread = openThread();
+            if (!seat || !thread || thread.status === 'archived') return;
+            try {
+                await seat.pickAndSeat(thread.id, thread.members || []);
+            } catch (err) {
+                if (typeof onError === 'function') {
+                    onError((err && err.message) || 'Could not add that agent to this thread.', err);
+                    return;
+                }
+                throw err;
+            }
         }
 
         /** Show the checkboxes. From the Threads half's `New thread`. @returns {void} */
@@ -272,6 +326,9 @@ const BossModRosterPeople = (() => {
         disposers.push(store.subscribe((s) => s.rosterQuery, render));
         disposers.push(store.subscribe((s) => s.needs, render));
         disposers.push(store.subscribe((s) => s.runtimePaused, render));
+        disposers.push(store.subscribe((s) => s.conversationId, syncSeatAction));
+        disposers.push(store.subscribe((s) => s.conversationKind, syncSeatAction));
+        disposers.push(store.subscribe((s) => s.threads, syncSeatAction));
 
         render();
 
