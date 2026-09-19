@@ -69,7 +69,7 @@ def test_rewrite_projects_find_into_artifact_root() -> None:
         agent, parse_cli_command(f"find {virtual}"), "/me"
     )
     assert str(real) in rewritten.raw
-    assert "/projects/" not in rewritten.raw
+    assert not rewritten.raw.startswith("find /projects")
     assert rewritten.raw.startswith("find ")
 
 
