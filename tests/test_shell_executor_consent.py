@@ -142,15 +142,34 @@ def test_locked_clone_git_add_posts_shell_executor_card() -> None:
 
 
 def test_bash_on_locked_clone_stays_never_allowed_without_a_card() -> None:
+    from core.agent_loop.notifications import never_allowed_operator_note
+
     agent, state = _agent_and_state()
+    channel = db.create_channel(
+        name="Validate",
+        member_agent_ids=[agent.id],
+        created_by=HUMAN_SENDER_ID,
+    )
     _lock_workspace_copy(
         agent.id,
         path="/home/operator/Projects/sample_repo",
         dest="/me/host-work/sample_repo",
     )
-    blocked = execute_bm_cli(agent, state, "bash scripts/run-tests.sh")
+    command = "bash scripts/run-tests.sh"
+    blocked = execute_bm_cli(agent, state, command, channel_id=channel.id)
     assert blocked.ok is False
     assert blocked.consent_required is False
+    assert blocked.approval_required is False
+    assert blocked.approval_request_id is None
+    blob = f"{blocked.detail} {blocked.prompt_content}"
+    assert "Blocked" in blob
+    assert "uv run pytest" in blob or ".venv/bin/pytest" in blob
+    expected = never_allowed_operator_note(agent.name, command)
+    assert expected in [item.content for item in db.list_channel_messages(channel.id)]
+    assert "CLI Policy" in expected
+    assert "Settings" in expected
+    assert db.list_cli_approval_requests(status="pending") == []
+    assert db.list_consent_requests(status="pending") == []
     python_pytest = execute_bm_cli(agent, state, "python -m pytest -q")
     assert python_pytest.consent_required is False
     peek = policy_engine.evaluate("bash scripts/run-tests.sh", frozenset(), assume_shell=True)

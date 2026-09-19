@@ -10,7 +10,12 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import db
-from core.agent_loop.notifications import ChatNotification, persist_channel_notification, persist_chat_notification
+from core.agent_loop.notifications import (
+    ChatNotification,
+    persist_channel_notification,
+    persist_chat_notification,
+    persist_origin_system_note,
+)
 from core.agent_loop.task_origins import task_origin_channel_id
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
@@ -228,47 +233,15 @@ def persist_unbound_status_line(
     channel_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist a locked one-liner when no task is bound. Dedupes the same line."""
-    text = (content or "").strip()
-    if not text:
-        return {}
     _ = kind
-    scoped = (channel_id or "").strip() or None
-    if scoped:
-        if db.is_channel_archived(scoped):
-            return {}
-        recent = db.list_channel_messages(scoped, limit=8)
-        if any(
-            item.author_type == "system" and (item.content or "").strip() == text
-            for item in recent
-        ):
-            return {}
-        notification = persist_channel_notification(
-            agent,
-            ChatNotification(
-                kind="task_update",
-                content=text,
-                source_channel="channel",
-                policy="completion_blocked",
-                prompt_visibility=False,
-                channel_id=scoped,
-            ),
-        )
-        if not notification:
-            return {}
-        return {"channel_message": notification}
-    if _chat_already_has_line(agent.id, None, text):
-        return {}
-    chat_message = persist_chat_notification(
+    return persist_origin_system_note(
         agent,
-        ChatNotification(
-            kind="task_update",
-            content=text,
-            source_channel="chat",
-            policy="completion_blocked",
-            prompt_visibility=False,
-        ),
+        content,
+        channel_id=channel_id,
+        kind="task_update",
+        source_channel="chat",
+        policy="completion_blocked",
     )
-    return {"chat_message": chat_message}
 
 
 def persist_origin_status_line(

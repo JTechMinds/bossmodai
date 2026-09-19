@@ -56,6 +56,7 @@ CONSENT_CHROME_FAIL = (
     "Consent card could not be posted to the conversation. "
     "The request was not queued for operator review."
 )
+NEVER_ALLOWED_SETTINGS_CUE = "To enable, update CLI Policy in Settings."
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +370,101 @@ def _channel_notification_payload(
             else None
         ),
     }
+
+
+def never_allowed_operator_note(agent_name: str, command: str) -> str:
+    """Return the in-thread system note for a policy ``never_allowed`` deny."""
+    name = (agent_name or "").strip() or "Agent"
+    cmd = (command or "").strip() or "a command"
+    return (
+        f"{name} tried `{cmd}` — auto-denied (never allowed). "
+        f"{NEVER_ALLOWED_SETTINGS_CUE}"
+    )
+
+
+def persist_origin_system_note(
+    agent: Agent,
+    content: str,
+    *,
+    channel_id: str | None = None,
+    kind: NotificationKind = "task_update",
+    source_channel: str = "chat",
+    policy: str = "completion_blocked",
+) -> dict[str, Any]:
+    """Persist a system note on the origin thread or Focus. Dedupes same line.
+
+    Same persist helpers as Approve/consent chrome. Not a card — no
+    ``approval_id`` / ``consent_id``.
+    """
+    text = (content or "").strip()
+    if not text:
+        return {}
+    origin = (channel_id or "").strip() or None
+    if origin:
+        if db.is_channel_archived(origin):
+            return {}
+        recent = db.list_channel_messages(origin, limit=8)
+        if any(
+            item.author_type == "system" and (item.content or "").strip() == text
+            for item in recent
+        ):
+            return {}
+        persisted = persist_channel_notification(
+            agent,
+            ChatNotification(
+                kind=kind,
+                content=text,
+                source_channel="channel",
+                policy=policy,
+                prompt_visibility=False,
+                channel_id=origin,
+            ),
+        )
+        if not persisted:
+            return {}
+        return {"channel_message": persisted}
+    if _focus_already_has_line(agent.id, text):
+        return {}
+    persisted = persist_chat_notification(
+        agent,
+        ChatNotification(
+            kind=kind,
+            content=text,
+            source_channel=source_channel,
+            policy=policy,
+            prompt_visibility=False,
+        ),
+    )
+    return {"chat_message": persisted}
+
+
+def ensure_never_allowed_chrome(
+    agent: Agent,
+    command: str,
+    *,
+    channel_id: str | None,
+    source_channel: str = "chat",
+) -> dict[str, Any]:
+    """Post origin-thread or Focus chrome for a ``never_allowed`` deny.
+
+    Fail-closed on the command (already denied). Not an Approve/Reject card.
+    Returns the persist payload when a new note was written.
+    """
+    origin = (channel_id or "").strip() or None
+    if origin and db.is_channel_archived(origin):
+        return {}
+    try:
+        return persist_origin_system_note(
+            agent,
+            never_allowed_operator_note(agent.name, command),
+            channel_id=origin,
+            kind="blocked",
+            source_channel="channel" if origin else source_channel,
+            policy="all",
+        )
+    except Exception:
+        logger.exception("never_allowed chrome persist failed for %s", command)
+        return {}
 
 
 def persist_origin_chrome(agent: Agent, notification: ChatNotification) -> bool:
@@ -951,6 +1047,17 @@ def _shell_executor_card_already_open(
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue
         if db.has_consent_notification(sibling.id):
+            return True
+    return False
+
+
+def _focus_already_has_line(agent_id: str, content: str) -> bool:
+    """Return whether Focus already has this system note for the agent."""
+    text = (content or "").strip()
+    if not text:
+        return False
+    for note in db.list_notifications(agent_id=agent_id, limit=8):
+        if (note.content or "").strip() == text:
             return True
     return False
 

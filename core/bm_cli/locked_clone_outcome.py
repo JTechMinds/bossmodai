@@ -15,7 +15,7 @@ Host writes outside the nest stay ``never_allowed``.
 from __future__ import annotations
 
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -281,6 +281,9 @@ def blocked_never_allowed_message(
 ) -> str:
     """Name the gate and steer to the allowed form. No desk myth."""
     gate = (policy.message or f"Command not permitted: {parsed.name}").strip()
+    prefix = "command blocked by policy rule:"
+    if gate.lower().startswith(prefix):
+        gate = gate[len(prefix):].strip()
     line = gate if gate.lower().startswith("blocked") else f"Blocked — {gate}"
     parts = [line]
     rule_steer = _steer_from_policy(policy)
@@ -289,6 +292,36 @@ def blocked_never_allowed_message(
     if LOCKED_CLONE_DEFAULT_STEER not in " ".join(parts):
         parts.append(LOCKED_CLONE_DEFAULT_STEER)
     return " ".join(parts)
+
+
+def never_allowed_cli_result(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+    policy: CommandPolicyDecision,
+    *,
+    channel_id: str | None,
+    kind: str = "error",
+) -> BossModCliResult:
+    """Blocked {why} + allowed-form steer, plus operator chrome. No Approve card."""
+    from core.agent_loop.notifications import ensure_never_allowed_chrome
+    from core.bm_cli.results import error_result
+
+    why = blocked_never_allowed_message(policy, parsed)
+    chrome = ensure_never_allowed_chrome(
+        agent,
+        parsed.raw,
+        channel_id=channel_id,
+        source_channel="channel" if (channel_id or "").strip() else "chat",
+    )
+    result = error_result(parsed.raw, why, cwd=cwd, executor="shell", kind=kind)
+    payload = chrome.get("channel_message") or chrome.get("chat_message")
+    if not isinstance(payload, dict) or not payload:
+        return result
+    data = dict(result.data or {})
+    data["origin_chrome"] = payload
+    data["policy_tier"] = "never_allowed"
+    return replace(result, data=data)
 
 
 def _approval_from_default(
