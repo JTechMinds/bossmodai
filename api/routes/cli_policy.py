@@ -22,6 +22,7 @@ class CliPolicyRuleBody(BaseModel):
     help_text: str | None = None
     enabled: bool = True
     priority: int = 0
+    cwd_prefix: str | None = None
 
 
 class CliPolicyRuleUpdateBody(BaseModel):
@@ -35,6 +36,7 @@ class CliPolicyRuleUpdateBody(BaseModel):
     help_text: str | None = None
     enabled: bool | None = None
     priority: int | None = None
+    cwd_prefix: str | None = None
 
 
 class CliPolicySimulateBody(BaseModel):
@@ -109,6 +111,7 @@ async def create_cli_policy_rule(body: CliPolicyRuleBody):
         help_text=body.help_text,
         enabled=body.enabled,
         priority=body.priority,
+        cwd_prefix=body.cwd_prefix,
     )
     # Invalidate policy engine cache
     from core.bm_cli.policy_engine import policy_engine
@@ -177,6 +180,33 @@ async def approve_cli_request(request_id: str):
             "command": approval.command,
             "agent_id": approval.agent_id,
             "status": "approved",
+        },
+    )
+    return approval
+
+
+@router.post("/cli-policy/approvals/{request_id}/always-allow")
+async def always_allow_cli_request(request_id: str):
+    try:
+        approval = await resume_cli_approval(
+            request_id,
+            approved=True,
+            always_allow=True,
+            services=runtime_services,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if approval is None:
+        raise HTTPException(404, "Approval request not found or already resolved")
+    await manager.broadcast_activity(
+        event="cli_approval_approved",
+        detail=f"Command always allowed: {approval.command}",
+        extra={
+            "approval_id": approval.id,
+            "command": approval.command,
+            "agent_id": approval.agent_id,
+            "status": "always_allowed",
+            "decision_note": approval.decision_note or "Always allowed",
         },
     )
     return approval

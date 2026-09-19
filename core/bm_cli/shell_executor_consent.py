@@ -84,6 +84,7 @@ def maybe_pause_for_shell_executor(
         frozenset(),
         agent_id=agent.id,
         assume_shell=True,
+        cwd=cwd,
     )
     if peek.tier == "never_allowed":
         from core.bm_cli.locked_clone_outcome import blocked_never_allowed_message

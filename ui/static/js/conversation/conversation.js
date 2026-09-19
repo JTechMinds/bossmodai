@@ -368,8 +368,11 @@ const BossModConversation = (() => {
                 || event === 'cli_approval_resolved') {
                 BossModConsentCard.collapseGrantedConsentCards({
                     kind: 'cli_approval',
-                    status: event === 'cli_approval_rejected' ? 'rejected' : 'approved',
+                    status: event === 'cli_approval_rejected'
+                        ? 'rejected'
+                        : ((entry && entry.status) || 'approved'),
                     command: (entry && entry.command) || '',
+                    cwd: (entry && entry.cwd) || '',
                     decision_note: (entry && entry.decision_note) || '',
                 });
             }

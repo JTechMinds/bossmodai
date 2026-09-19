@@ -23,6 +23,7 @@ class CliPolicyRule(BaseModel):
     help_text: str | None = None
     enabled: bool = True
     priority: int = 0
+    cwd_prefix: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -40,6 +41,7 @@ class CliPolicyRuleCreate(BaseModel):
     help_text: str | None = None
     enabled: bool = True
     priority: int = 0
+    cwd_prefix: str | None = None
 
 
 CLI_APPROVAL_KIND = "cli_approval"
@@ -82,4 +84,7 @@ class CliApprovalRequest(BaseModel):
             card["channel_id"] = self.channel_id
         if self.decision_note:
             card["decision_note"] = self.decision_note
+        from core.bm_cli.cli_always import offers_always_allow_cli
+
+        card["always_allow"] = offers_always_allow_cli(self.cwd)
         return card

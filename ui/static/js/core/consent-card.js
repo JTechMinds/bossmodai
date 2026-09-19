@@ -139,13 +139,15 @@ const BossModConsentCard = (() => {
     }
 
     function renderCliApprovalCard(container, card, api) {
-        requireApi(api);
+        if (!isGoneApprovalCard(card)) requireApi(api);
         if (!container || !card) return;
         container.classList.add('host-path-consent-card');
         container.dataset.cardKind = 'cli_approval';
         if (card.command) container.dataset.command = card.command;
+        if (card.cwd) container.dataset.cwd = card.cwd;
         const status = card.status || 'pending';
-        container.classList.toggle('is-resolved', status !== 'pending');
+        const gone = isGoneApprovalCard(card);
+        container.classList.toggle('is-resolved', status !== 'pending' || gone);
         const title = document.createElement('div');
         title.className = 'hpc-title';
         title.textContent = card.title || 'Approve this command?';
@@ -154,11 +156,15 @@ const BossModConsentCard = (() => {
         commandEl.textContent = card.command || '';
         container.appendChild(title);
         container.appendChild(commandEl);
-        if (card.cwd && status === 'pending') {
+        if (card.cwd && status === 'pending' && !gone) {
             const cwdEl = document.createElement('div');
             cwdEl.className = 'hpc-reason';
             cwdEl.textContent = `cwd: ${card.cwd}`;
             container.appendChild(cwdEl);
+        }
+        if (gone) {
+            appendGoneApprovalChrome(container, card, api);
+            return;
         }
         if (status !== 'pending') {
             const resolved = document.createElement('div');
@@ -171,22 +177,95 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         [
             { label: 'Approve', path: 'approve', primary: true },
+            {
+                label: 'Always allow',
+                path: 'always-allow',
+                hidden: card.always_allow === false || card.always_allow == null,
+            },
             { label: 'Reject', path: 'reject' },
         ].forEach((item) => {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = item.primary ? 'hpc-action hpc-action-primary' : 'hpc-action';
             btn.textContent = item.label;
+            if (item.hidden) {
+                btn.hidden = true;
+                btn.disabled = true;
+            }
             btn.addEventListener('click', () => decideCliApproval(container, card, item.path, actions, api));
             actions.appendChild(btn);
         });
         container.appendChild(actions);
     }
 
+    function isGoneApprovalCard(card) {
+        const status = (card && card.status) || '';
+        return status === 'gone' || status === 'already_resolved';
+    }
+
+    function goneApprovalCard(card) {
+        return Object.assign({ kind: 'cli_approval' }, card || {}, {
+            status: 'gone',
+            always_allow: false,
+            decision_note: (card && card.decision_note)
+                || 'This approval is gone or already resolved.',
+        });
+    }
+
+    function isGoneApprovalResponse(res, bodyText) {
+        if (res && res.status === 404) return true;
+        return /not found or already resolved/i.test(String(bodyText || ''));
+    }
+
+    function appendGoneApprovalChrome(container, card, api) {
+        const resolved = document.createElement('div');
+        resolved.className = 'hpc-status';
+        resolved.textContent = cliApprovalStatusLabel(goneApprovalCard(card));
+        container.appendChild(resolved);
+        const actions = document.createElement('div');
+        actions.className = 'host-path-consent-actions';
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'hpc-action';
+        dismiss.textContent = 'Dismiss';
+        dismiss.addEventListener('click', () => dismissCliApprovalChrome(container, card, api));
+        actions.appendChild(dismiss);
+        container.appendChild(actions);
+    }
+
+    function dismissCliApprovalChrome(container, card, api) {
+        const gone = goneApprovalCard(card);
+        hideApprovalChrome(container, gone);
+        collapseRelatedConsentCards(container, gone);
+        if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
+    }
+
+    function hideApprovalChrome(origin, card) {
+        const scope = (origin && (origin.closest('[data-transcript]') || origin.parentElement)) || origin;
+        if (!scope || typeof scope.querySelectorAll !== 'function') {
+            if (origin) origin.hidden = true;
+            return;
+        }
+        const command = (card && card.command) || (origin && origin.dataset.command) || '';
+        const cwd = (card && card.cwd) || (origin && origin.dataset.cwd) || '';
+        scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
+            if ((el.dataset.cardKind || '') !== 'cli_approval') return;
+            if (command && el.dataset.command && el.dataset.command !== command) return;
+            if (cwd && el.dataset.cwd && el.dataset.cwd !== cwd) return;
+            el.hidden = true;
+            el.classList.add('is-resolved');
+            el.querySelector('.host-path-consent-actions')?.remove();
+        });
+    }
+
     function cliApprovalStatusLabel(card) {
         const status = card.status || 'pending';
+        if (status === 'gone' || status === 'already_resolved') {
+            return card.decision_note || 'This approval is gone or already resolved.';
+        }
         if (status === 'rejected') return card.decision_note || 'Rejected';
-        if (status === 'approved') return 'Approved';
+        if (status === 'always_allowed') return card.decision_note || 'Always allowed';
+        if (status === 'approved') return card.decision_note || 'Approved';
         if (status === 'expired') return 'Expired';
         return status;
     }
@@ -196,24 +275,47 @@ const BossModConsentCard = (() => {
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
         try {
             const res = await api(`/api/cli-policy/approvals/${card.id}/${action}`, { method: 'POST' });
+            const bodyText = await res.text();
             if (!res.ok) {
-                throw new Error((await res.text()) || 'Approval update failed.');
+                if (isGoneApprovalResponse(res, bodyText)) {
+                    morphGoneApprovalChrome(container, card, api);
+                    return;
+                }
+                throw new Error(bodyText || 'Approval update failed.');
             }
-            const updated = await res.json();
+            const updated = bodyText ? JSON.parse(bodyText) : {};
             const next = Object.assign({ kind: 'cli_approval' }, updated, {
                 title: updated.title || card.title || 'Approve this command?',
+                command: updated.command || card.command,
+                cwd: updated.cwd || card.cwd,
             });
+            if (action === 'always-allow') {
+                next.status = next.status === 'approved' ? 'always_allowed' : (next.status || 'always_allowed');
+                next.decision_note = next.decision_note || 'Always allowed';
+            }
             container.replaceChildren();
             renderCliApprovalCard(container, next, api);
             collapseRelatedConsentCards(container, next);
             BossModIcons.paint(container, 'consent-card');
         } catch (err) {
+            if (isGoneApprovalResponse(null, err?.message)) {
+                morphGoneApprovalChrome(container, card, api);
+                return;
+            }
             Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
             const note = document.createElement('div');
             note.className = 'hpc-status';
             note.textContent = err?.message || 'Approval update failed.';
             container.appendChild(note);
         }
+    }
+
+    function morphGoneApprovalChrome(container, card, api) {
+        const gone = goneApprovalCard(card);
+        container.replaceChildren();
+        renderCliApprovalCard(container, gone, api);
+        collapseRelatedConsentCards(container, gone);
+        if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
     }
 
     function workspacePreferenceActions(card) {
@@ -312,10 +414,22 @@ const BossModConsentCard = (() => {
         const kind = (origin && origin.dataset.cardKind) || cardKind(card);
         if (kind === 'cli_approval') {
             const command = card.command || (origin && origin.dataset.command) || '';
+            const cwd = card.cwd || (origin && origin.dataset.cwd) || '';
+            const gone = isGoneApprovalCard(card);
             scope.querySelectorAll('.host-path-consent-card').forEach((el) => {
                 if (el === origin || el.classList.contains('is-resolved')) return;
                 if ((el.dataset.cardKind || '') !== 'cli_approval') return;
                 if (command && el.dataset.command && el.dataset.command !== command) return;
+                if (cwd && el.dataset.cwd && el.dataset.cwd !== cwd) return;
+                if (gone) {
+                    el.replaceChildren();
+                    renderCliApprovalCard(el, goneApprovalCard(Object.assign({}, card, {
+                        id: el.id || card.id,
+                        command: el.dataset.command || command,
+                        cwd: el.dataset.cwd || cwd,
+                    })));
+                    return;
+                }
                 el.classList.add('is-resolved');
                 el.querySelector('.host-path-consent-actions')?.remove();
                 el.querySelector('.hpc-reason')?.remove();
@@ -363,6 +477,8 @@ const BossModConsentCard = (() => {
         renderCliApprovalCard,
         decideHostPathConsent,
         decideCliApproval,
+        dismissCliApprovalChrome,
+        isGoneApprovalResponse,
         collapseRelatedConsentCards,
         collapseGrantedConsentCards,
     };

@@ -200,7 +200,29 @@ const BossModNeeds = (() => {
             }
             try {
                 const res = await api(action.href, { method: action.method });
-                if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+                const bodyText = await res.text();
+                if (!res.ok) {
+                    const gone = need.kind === 'approval' && (
+                        (typeof BossModConsentCard !== 'undefined'
+                            && BossModConsentCard.isGoneApprovalResponse(res, bodyText))
+                        || res.status === 404
+                        || /not found or already resolved/i.test(bodyText || '')
+                    );
+                    if (gone) {
+                        if (typeof BossModConsentCard !== 'undefined') {
+                            BossModConsentCard.collapseGrantedConsentCards({
+                                kind: 'cli_approval',
+                                status: 'gone',
+                                command: need.sub || '',
+                                cwd: need.cwd || '',
+                                decision_note: 'This approval is gone or already resolved.',
+                            });
+                        }
+                        await refresh();
+                        return;
+                    }
+                    throw new Error(bodyText || `HTTP ${res.status}`);
+                }
             } catch (err) {
                 // Restoring is not optional. A dropped failure leaves the
                 // operator believing they approved something they did not.

@@ -18,6 +18,8 @@ def evaluate_parsed_command_policy(
     parsed: ParsedCliCommand,
     virtual_commands: frozenset[str],
     agent_id: str | None = None,
+    *,
+    cwd: str | None = None,
 ) -> CommandPolicyDecision:
     """Return the policy decision for one parsed BossMod CLI command."""
     if parsed.name in virtual_commands:
@@ -26,14 +28,16 @@ def evaluate_parsed_command_policy(
             tier="virtual",
             executor="virtual",
         )
-    return policy_engine.evaluate(parsed.raw, virtual_commands, agent_id)
+    return policy_engine.evaluate(parsed.raw, virtual_commands, agent_id, cwd=cwd)
 
 
 def evaluate_command_policy(
     command: str,
     virtual_commands: frozenset[str],
     agent_id: str | None = None,
+    *,
+    cwd: str | None = None,
 ) -> CommandPolicyDecision:
     """Parse and evaluate one raw command string against the CLI policy rules."""
     parsed = parse_cli_command(command)
-    return evaluate_parsed_command_policy(parsed, virtual_commands, agent_id)
+    return evaluate_parsed_command_policy(parsed, virtual_commands, agent_id, cwd=cwd)
