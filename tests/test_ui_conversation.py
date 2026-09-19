@@ -231,6 +231,8 @@ def test_conversation_harness() -> None:
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
         "agentNameIsChromeOutside": True,
+        "quietAuthor": True,
+        "faceLowerLeftBesideBubble": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage
         # key, its control, and the node that holds it are unchanged — which is
@@ -519,24 +521,33 @@ def test_conversation_assign_stamps_thread_origin() -> None:
 
 
 def test_agent_name_is_chrome_outside_the_paragraph() -> None:
-    """The name is not body prose. Face on the left, name above the bubble."""
+    """Quiet name above the bubble; color initial lower-left beside it."""
     message = _read(CONVERSATION / "message.js")
     assert "class: `msg-turn msg-turn-${author}`" in message
     assert "class: 'msg-face'" in message
     assert "class: 'msg-stack'" in message
-    assert "class: 'msg-chrome'" in message
+    assert "class: 'msg-chrome'" not in message
     assert "BossModAvatar.create(" in message
+    assert "color:${tint.ink}" not in message
     bubble = message.split("class: `msg msg-${author}`", 1)[1].split(");", 1)[0]
     assert "msg-author" not in bubble
     assert "msg-face" not in bubble
     css = _read(CSS / "conversation.css")
-    assert ".msg-turn {" in css
+    turn = css.split(".msg-turn {", 1)[1].split("}", 1)[0]
+    assert "display: flex" in turn
+    assert "align-items: flex-end" in turn
+    assert "flex-direction: column" not in turn
     assert ".msg-face {" in css
-    chrome = css.split(".msg-chrome {", 1)[1].split("}", 1)[0]
-    assert "align-items: flex-end" in chrome
+    assert ".msg-chrome {" not in css
     author = css.split(".msg-author {", 1)[1].split("}", 1)[0]
     assert "font-weight: 400" in author
     assert "font-weight: 600" not in author
+    assert "background: none" in author
+    assert "border: 0" in author
+    assert "border-radius: 0" in author
+    assert "background: var(--btn-face-active)" not in author
+    assert "border: 1px" not in author
+    assert "border-radius: 999px" not in author
     agent = _read(SOURCES / "agent-source.js")
     assert "authorColor: colorFor(authorAgentId)" in agent
     assert "showAuthor: author === 'agent'" in agent

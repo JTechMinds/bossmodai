@@ -239,6 +239,8 @@ async function main() {
     if (!regularWeight) fail("regularWeight", `${pillRule} | ${nameRule}`);
     const softPillBackground = /background:\s*var\(--bg\)/.test(pillRule)
         && !/background:\s*none/.test(pillRule)
+        && /border:\s*1px solid var\(--line\)/.test(pillRule)
+        && !/border:\s*0/.test(pillRule)
         && /background:/.test(composerPill.getAttribute("style") || "")
         && /background:/.test(pill.getAttribute("style") || "");
     if (!softPillBackground) fail("softPillBackground", pillRule);
