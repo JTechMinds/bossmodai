@@ -126,19 +126,13 @@ const BossModRosterPeople = (() => {
         const selected = new Set();
 
         const list = h('ul', { class: 'roster-people' });
-        const seatBtn = h('button', {
-            class: 'roster-section-action',
-            id: 'roster-seat-agent',
-            type: 'button',
-            'aria-label': 'Add to thread',
-            hidden: true,
-            onclick: () => { void seatIntoOpenThread(); },
-        }, h('i', { 'data-lucide': 'user-plus', 'aria-hidden': 'true' }));
-        const element = h('section', { class: 'roster-section' },
-            h('div', { class: 'roster-section-head' },
-                h('h2', { class: 'roster-section-title' }, 'People'),
-                h('div', { class: 'roster-section-actions' }, seatBtn)),
-            list);
+        // The action group is mounted only while a live thread is open. Idle
+        // People is still just the label — a hidden `roster-section-actions`
+        // would become the rail's first header group and steal Threads' `+`.
+        const head = h('div', { class: 'roster-section-head' },
+            h('h2', { class: 'roster-section-title' }, 'People'));
+        const element = h('section', { class: 'roster-section' }, head, list);
+        let seatGroup = null;
 
         function agentsWithNeeds() {
             return new Set(store.getState().needs
@@ -274,8 +268,22 @@ const BossModRosterPeople = (() => {
         function syncSeatAction() {
             const thread = openThread();
             const show = Boolean(seat) && Boolean(thread) && thread.status !== 'archived';
-            if (show) seatBtn.removeAttribute('hidden');
-            else seatBtn.setAttribute('hidden', '');
+            if (show === Boolean(seatGroup)) return;
+            if (!show) {
+                seatGroup.remove();
+                seatGroup = null;
+                return;
+            }
+            seatGroup = h('div', { class: 'roster-section-actions' },
+                h('button', {
+                    class: 'roster-section-action',
+                    id: 'roster-seat-agent',
+                    type: 'button',
+                    'aria-label': 'Add to thread',
+                    onclick: () => { void seatIntoOpenThread(); },
+                }, h('i', { 'data-lucide': 'user-plus', 'aria-hidden': 'true' })));
+            head.append(seatGroup);
+            BossModIcons.paint(seatGroup, 'roster-people');
         }
 
         async function seatIntoOpenThread() {

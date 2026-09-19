@@ -39,6 +39,7 @@ def test_seat_picker_is_not_a_source() -> None:
     people = _read("shell/roster-people.js")
     assert "id: 'roster-seat-agent'" in people
     assert "seat.pickAndSeat(" in people
+    assert "seatGroup.remove()" in people
     conversation = _read("conversation/conversation.js")
     assert "BossModThreadSeat.createThreadSeat(" in conversation
     assert "seat: BossModThreadSeat.createThreadSeat({ api, store })" in conversation

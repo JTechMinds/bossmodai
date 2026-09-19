@@ -203,7 +203,9 @@ def test_service_does_not_mint_a_new_thread() -> None:
     seated = seat_agent_in_thread(channel.id, hugh.id)
     assert seated.id == channel.id
     assert [item.id for item in db.list_channels()] == before
-    assert db.list_channel_messages(channel.id, limit=1)[0].id == first.id
+    kept = db.list_channel_messages(channel.id, limit=80)
+    assert [item.id for item in kept][0] == first.id
+    assert len(kept) == 2
     try:
         seat_agent_in_thread(channel.id, hugh.id)
     except ThreadSeatError as exc:

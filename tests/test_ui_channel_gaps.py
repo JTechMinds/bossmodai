@@ -199,7 +199,7 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "id: 'channel-seat-btn'" in thread
     assert "'Add to thread'" in thread
     seat = _read("conversation/sources/thread-seat.js")
-    assert "BossModThreadSeat.createThreadSeat(" in seat
+    assert "function createThreadSeat(" in seat
     assert "/api/channels/${threadId}/members" in seat
     people = _read("shell/roster-people.js")
     assert "id: 'roster-seat-agent'" in people
