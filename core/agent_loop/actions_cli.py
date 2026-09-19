@@ -86,6 +86,10 @@ def _cli_action_result(
             cli_result.approval_required or cli_result.consent_required
         ),
     }
+    chrome = (cli_result.data or {}).get("origin_chrome")
+    if isinstance(chrome, dict) and chrome:
+        extras = result.setdefault("origin_status_messages", [])
+        extras.append(chrome)
     surface_cli_gate_block(
         result, agent=agent, trigger=trigger, cli_result=cli_result
     )

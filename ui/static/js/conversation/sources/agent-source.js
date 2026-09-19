@@ -59,9 +59,9 @@ const BossModAgentSource = (() => {
          * Normalise one backend row.
          *
          * `systemReceipt` is what the system-notifications toggle hides. Walk
-         * receipts and consent asks are system messages that are NEVER hidden —
-         * one is the operator's proof an agent moved, the other is a decision
-         * they still owe.
+         * receipts, consent asks, and never-allowed gate notes are NEVER hidden —
+         * one is the operator's proof an agent moved, another is a decision
+         * they still owe, and a never-allowed deny is not a silent miss.
          *
          * @param {object} raw
          * @returns {object} Message
@@ -75,6 +75,7 @@ const BossModAgentSource = (() => {
             const card = BossModConsentCard.cardFromMessage(raw);
             const isDecisionAsk = raw.notification_kind === 'cli_approval'
                 || raw.notification_kind === 'host_path_consent';
+            const isGateNote = raw.notification_kind === 'blocked';
             const cardKey = card && card.id
                 ? `${BossModConsentCard.isCliApprovalCard(card) ? 'cli-approval' : 'consent'}:${card.id}`
                 : '';
@@ -91,7 +92,7 @@ const BossModAgentSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
-                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk,
+                systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
             };

@@ -114,7 +114,7 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
         assert "queue-visibility:" in source
         assert "live: isQueue" in source
         assert "cleared: isQueue && !String(text).trim()" in source
-    assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk" in agent
+    assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote" in agent
     assert "bus.subscribe('channel_message'" in agent
     assert "BossModConsentCard.cardFromMessage(data)" in agent
     transcript = _read(CONVERSATION / "transcript.js")

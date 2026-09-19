@@ -87,13 +87,14 @@ def maybe_pause_for_shell_executor(
         cwd=cwd,
     )
     if peek.tier == "never_allowed":
-        from core.bm_cli.locked_clone_outcome import blocked_never_allowed_message
+        from core.bm_cli.locked_clone_outcome import never_allowed_cli_result
 
-        return error_result(
-            parsed.raw,
-            blocked_never_allowed_message(peek, parsed),
-            cwd=cwd,
-            executor="shell",
+        return never_allowed_cli_result(
+            agent,
+            parsed,
+            cwd,
+            peek,
+            channel_id=channel_id,
         )
     return request_shell_executor_consent(
         agent=agent,

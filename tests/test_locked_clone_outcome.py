@@ -39,6 +39,16 @@ def teardown_function() -> None:
     db.close_connection()
 
 
+def test_never_allowed_operator_note_wording() -> None:
+    from core.agent_loop.notifications import never_allowed_operator_note
+
+    note = never_allowed_operator_note("Jim", "bash scripts/run-tests.sh")
+    assert note == (
+        "Jim tried `bash scripts/run-tests.sh` — auto-denied (never allowed). "
+        "To enable, update CLI Policy in Settings."
+    )
+
+
 def test_virtual_cli_path_detects_me_and_projects() -> None:
     assert is_virtual_cli_path("/me/host-work/llm_helper/tests/x.py") is True
     assert is_virtual_cli_path("/projects/demo") is True
@@ -124,8 +134,68 @@ def test_never_allowed_names_the_gate_and_steers(
     bash = execute_bm_cli(agent, state, "bash scripts/run-tests.sh")
     assert bash.ok is False
     assert bash.approval_required is False
-    assert "Blocked" in (bash.detail or "")
+    assert bash.approval_request_id is None
+    bash_blob = f"{bash.detail} {bash.prompt_content}"
+    assert "Blocked" in bash_blob
+    assert "uv run pytest" in bash_blob or ".venv/bin/pytest" in bash_blob
     assert dest.startswith("/me/host-work/")
+
+
+def test_bash_run_tests_posts_operator_note_not_an_approve_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.agent_loop.notifications import never_allowed_operator_note
+    from tests.test_consent_origin import _channel_for
+
+    agent, state, _dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    channel = _channel_for(agent.id)
+    command = "bash scripts/run-tests.sh"
+    blocked = execute_bm_cli(agent, state, command, channel_id=channel.id)
+    assert blocked.ok is False
+    assert blocked.approval_required is False
+    assert blocked.consent_required is False
+    assert blocked.approval_request_id is None
+    assert db.list_cli_approval_requests(status="pending") == []
+    blob = f"{blocked.detail} {blocked.prompt_content}"
+    assert "Blocked" in blob
+    assert "uv run pytest" in blob or ".venv/bin/pytest" in blob
+    assert "request id" not in (blocked.prompt_content or "").lower()
+    expected = never_allowed_operator_note(agent.name, command)
+    assert "auto-denied (never allowed)" in expected
+    assert "CLI Policy" in expected
+    assert "Settings" in expected
+    notes = [item.content for item in db.list_channel_messages(channel.id)]
+    assert expected in notes
+    assert not any(item.approval_id for item in db.list_channel_messages(channel.id))
+    assert not any(
+        "Approve" in (item.content or "") for item in db.list_channel_messages(channel.id)
+    )
+    retry = execute_bm_cli(agent, state, command, channel_id=channel.id)
+    assert retry.approval_request_id is None
+    assert [
+        item.content for item in db.list_channel_messages(channel.id) if item.content == expected
+    ] == [expected]
+
+
+def test_bash_run_tests_never_allowed_note_on_focus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.agent_loop.notifications import never_allowed_operator_note
+
+    agent, state, _dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    command = "bash scripts/run-tests.sh"
+    blocked = execute_bm_cli(agent, state, command)
+    assert blocked.ok is False
+    assert blocked.approval_request_id is None
+    expected = never_allowed_operator_note(agent.name, command)
+    notes = [
+        item.content
+        for item in db.list_notifications(agent_id=agent.id, chat_visible=True)
+    ]
+    assert expected in notes
+    assert "Settings" in expected
+    assert "CLI Policy" in expected
+    assert db.list_cli_approval_requests(status="pending") == []
 
 
 def test_chrome_fail_is_fail_closed_on_nest_sed(

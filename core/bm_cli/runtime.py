@@ -317,6 +317,16 @@ def _execute_bm_cli_inner(
 
     # --- Denied: return error ---
     if not policy.allowed:
+        if policy.tier == "never_allowed":
+            return _deny_policy_never_allowed(
+                agent=agent,
+                parsed=parsed,
+                content=content,
+                cwd_before=cwd_before,
+                policy=policy,
+                trigger_type=trigger_type,
+                channel_id=channel_id,
+            )
         result = error_result(
             parsed.raw,
             policy.message or f"Command not permitted: {parsed.name}",
@@ -534,6 +544,7 @@ def _maybe_shell_executor_consent(
     )
     if paused is None:
         return None
+    data = paused.data or {}
     record_bm_cli_event(
         agent_id=agent.id,
         command=parsed.raw,
@@ -541,12 +552,55 @@ def _maybe_shell_executor_consent(
         executor=paused.executor,
         cwd_before=cwd_before,
         cwd_after=paused.cwd,
-        policy_tier="disabled",
+        policy_tier=str(data.get("policy_tier") or "disabled"),
         decision="approval_required" if paused.consent_required else "denied",
         result=paused,
         trigger_type=trigger_type,
     )
     return paused
+
+
+def _deny_policy_never_allowed(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    policy: object,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult:
+    """Fail-closed never_allowed: operator note + agent Blocked+steer. No Approve."""
+    from core.bm_cli.locked_clone_outcome import never_allowed_cli_result
+    from core.bm_cli.policy_engine import CommandPolicyDecision
+
+    decision = policy if isinstance(policy, CommandPolicyDecision) else CommandPolicyDecision(
+        allowed=False,
+        tier="never_allowed",
+        executor="shell",
+        message=getattr(policy, "message", None),
+        matched_rule_id=getattr(policy, "matched_rule_id", None),
+    )
+    result = never_allowed_cli_result(
+        agent,
+        parsed,
+        cwd_before,
+        decision,
+        channel_id=channel_id,
+    )
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor="shell",
+        cwd_before=cwd_before,
+        cwd_after=result.cwd,
+        policy_tier="never_allowed",
+        decision="denied",
+        result=result,
+        trigger_type=trigger_type,
+    )
+    return result
 
 
 def _apply_locked_clone_shell_outcome(
@@ -572,6 +626,19 @@ def _apply_locked_clone_shell_outcome(
     if outcome is None:
         return None
     if outcome.kind == "never_allowed":
+        if (
+            outcome.policy is not None
+            and outcome.policy.tier == "never_allowed"
+        ):
+            return _deny_policy_never_allowed(
+                agent=agent,
+                parsed=outcome.parsed,
+                content=content,
+                cwd_before=cwd_before,
+                policy=outcome.policy,
+                trigger_type=trigger_type,
+                channel_id=channel_id,
+            )
         result = error_result(
             outcome.parsed.raw,
             outcome.message or outcome.blocked_why or "Command not permitted",
@@ -806,6 +873,16 @@ def _execute_shell_policy(
             channel_id=channel_id,
         )
     if not shell_policy.allowed:
+        if shell_policy.tier == "never_allowed":
+            return _deny_policy_never_allowed(
+                agent=agent,
+                parsed=parsed,
+                content=content,
+                cwd_before=cwd_before,
+                policy=shell_policy,
+                trigger_type=trigger_type,
+                channel_id=channel_id,
+            )
         result = error_result(
             parsed.raw,
             shell_policy.message or f"Command not permitted: {parsed.name}",
