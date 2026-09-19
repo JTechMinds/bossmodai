@@ -114,6 +114,23 @@ const BossModMentions = (() => {
     }
 
     /**
+     * Punctuation that must stay glued to a resolved `@Name` (`TheAuditor's`,
+     * not a pill and a stranded `'s`). Possessive first, then one sentence mark.
+     * @param {string} text
+     * @param {number} index
+     * @returns {string}
+     */
+    function trailingGlue(text, index) {
+        const rest = String(text || '').slice(index);
+        const possessive = /^(?:['\u2019][sS])/.exec(rest);
+        let taken = possessive ? possessive[0] : '';
+        const after = rest.slice(taken.length);
+        const punct = /^[.,!?;:]/.exec(after);
+        if (punct) taken += punct[0];
+        return taken;
+    }
+
+    /**
      * The `@query` at `caret`, or null when `@` is not starting a mention.
      * @param {string} text
      * @param {number} caret
@@ -188,9 +205,10 @@ const BossModMentions = (() => {
 
     /**
      * Mentions of live agents in `text`, longest name first.
+     * A hit's `end` includes trailing glue (`'s`, `.`) so the token stays one unit.
      * @param {string} text
      * @param {object[]} agents
-     * @returns {Array<{start: number, end: number, agent: object}>}
+     * @returns {Array<{start: number, end: number, agent: object, glue: string}>}
      */
     function scanMentions(text, agents) {
         const value = String(text || '');
@@ -210,7 +228,13 @@ const BossModMentions = (() => {
             for (const agent of names) {
                 const name = String(agent.name).trim();
                 if (lowered.startsWith(name.toLowerCase()) && mentionBoundary(rest, name.length)) {
-                    matched = { start: index, end: index + 1 + name.length, agent };
+                    const glue = trailingGlue(rest, name.length);
+                    matched = {
+                        start: index,
+                        end: index + 1 + name.length + glue.length,
+                        agent,
+                        glue,
+                    };
                     break;
                 }
             }

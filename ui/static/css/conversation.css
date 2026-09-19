@@ -346,8 +346,9 @@
    `breaks: true` rendered every newline the operator typed twice — once as a
    <br>, once as the literal character it came from. */
 
-/* Quiet name up top: regular weight, muted, no chip. Colour lives on
-   the letter face, not here. */
+/* Quiet name up top: regular weight, muted ink, no chip. Colour lives
+   on the letter face, not here. --hint (4.51) is only for timestamps;
+   the name stays --muted so it remains readable without scanning heavy. */
 .msg-author {
   margin: 0;
   align-self: flex-start;

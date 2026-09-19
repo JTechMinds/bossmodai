@@ -20,7 +20,8 @@
  * quiet muted text — regular weight, no chip fill, no border. A color-coded
  * initial sits lower-left beside the bubble, bottom-aligned with it, so a
  * labelled turn reads as a name over `[face] [bubble]` rather than a face
- * stacked on the name row.
+ * stacked on the name row. Every agent turn that paints a face also paints
+ * `.msg-author`; `showAuthor` must not leave an orphan initial.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -70,10 +71,10 @@ const BossModMessage = (() => {
         }
 
         const label = String(message.authorName || '').trim();
-        const showName = Boolean(message.showAuthor);
+        const withFace = author === 'human' || author === 'agent';
+        const showName = Boolean(message.showAuthor) || (withFace && author === 'agent');
         const faceName = label || (author === 'human' ? 'You' : 'Agent');
         const color = message.authorColor || null;
-        const withFace = author === 'human' || author === 'agent';
         const bubble = h('div', { class: `msg msg-${author}` },
             body,
             createdAt

@@ -8,16 +8,28 @@
  * only serializes, places the caret, and binds the shim.
  */
 const BossModMentionDraft = (() => {
-    function mentionName(node) {
-        if (!node || node.nodeType !== 1) return '';
-        if (node.classList && node.classList.contains('mention-pill')) {
-            return String(node.getAttribute('data-agent-name') || '').trim();
-        }
+    function mentionPill(node) {
+        if (!node || node.nodeType !== 1) return null;
+        if (node.classList && node.classList.contains('mention-pill')) return node;
         if (node.classList && node.classList.contains('mention-host')) {
-            const pill = node.querySelector && node.querySelector('.mention-pill');
-            return mentionName(pill);
+            return node.querySelector ? node.querySelector('.mention-pill') : null;
         }
-        return '';
+        return null;
+    }
+
+    function mentionName(node) {
+        const pill = mentionPill(node);
+        return String((pill && pill.getAttribute('data-agent-name')) || '').trim();
+    }
+
+    function mentionGlue(node) {
+        const pill = mentionPill(node);
+        return String((pill && pill.getAttribute('data-mention-glue')) || '');
+    }
+
+    function mentionTokenText(node) {
+        const name = mentionName(node);
+        return name ? `@${name}${mentionGlue(node)}` : '';
     }
 
     function isMentionNode(node) {
@@ -39,7 +51,7 @@ const BossModMentionDraft = (() => {
             }
             if (node.nodeType !== 1) return;
             if (isMentionNode(node)) {
-                out += `@${mentionName(node)}`;
+                out += mentionTokenText(node);
                 return;
             }
             if (node.tagName === 'BR') {
@@ -95,7 +107,7 @@ const BossModMentionDraft = (() => {
             }
             if (node.nodeType !== 1) return;
             if (isMentionNode(node)) {
-                count += 1 + mentionName(node).length;
+                count += mentionTokenText(node).length;
                 if (node === target || (node.contains && target && node.contains(target))) {
                     found = true;
                 }
@@ -134,7 +146,7 @@ const BossModMentionDraft = (() => {
             }
             if (node.nodeType !== 1) return;
             if (isMentionNode(node)) {
-                const len = 1 + mentionName(node).length;
+                const len = mentionTokenText(node).length;
                 if (remaining <= len) {
                     at = { node, offset: 0, after: true };
                     remaining = 0;
