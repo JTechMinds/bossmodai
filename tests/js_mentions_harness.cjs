@@ -1,9 +1,11 @@
 /**
  * Node harness: live-agent @mention filter, pill insert, click menu,
- * composer persist, baseline align, and menu-under-pill.
+ * composer persist, bottom align, regular weight, soft tint, and
+ * menu-under-pill.
  * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
  */
 const fs = require("fs");
+const path = require("path");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
@@ -120,8 +122,11 @@ if (input.value !== "tip @Hugh ") fail("pillInsertValue", input.value);
 if (picker.isOpen()) fail("pickerClosedAfterInsert", "pick should close the list");
 const composerPill = input.querySelector(".mention-pill");
 if (!composerPill) fail("composerPillAfterPick", "pick must paint a pill in the field");
-if (composerPill.getAttribute("style") && /background:/.test(composerPill.getAttribute("style"))) {
-    fail("softChrome", composerPill.getAttribute("style"));
+if (!composerPill.getAttribute("style") || !/background:/.test(composerPill.getAttribute("style"))) {
+    fail("softTint", composerPill.getAttribute("style"));
+}
+if (/(?:^|;)\s*color:/.test(composerPill.getAttribute("style") || "")) {
+    fail("nameBodyInk", composerPill.getAttribute("style"));
 }
 const composerName = composerPill.querySelector(".mention-pill-name");
 if (!composerName) fail("composerName", "missing name");
@@ -149,8 +154,11 @@ if (pill.getAttribute("data-agent-id") !== "joey") fail("linkifyId", pill.getAtt
 if (pill.tagName !== "BUTTON") fail("linkifyInteractive", pill.tagName);
 const host = pill.closest(".mention-host");
 if (!host) fail("mentionHost", "interactive pill needs a host the menu hangs off");
-if (pill.getAttribute("style") && /background:/.test(pill.getAttribute("style"))) {
-    fail("chatSoftChrome", pill.getAttribute("style"));
+if (!pill.getAttribute("style") || !/background:/.test(pill.getAttribute("style"))) {
+    fail("chatSoftTint", pill.getAttribute("style"));
+}
+if (/(?:^|;)\s*color:/.test(pill.getAttribute("style") || "")) {
+    fail("chatNameBodyInk", pill.getAttribute("style"));
 }
 const chatAvatar = pill.querySelector(".avatar");
 if (!chatAvatar || !/background:/.test(chatAvatar.getAttribute("style") || "")) {
@@ -215,6 +223,26 @@ async function main() {
     picker.destroy();
     Mentions.configure(null);
 
+    const css = fs.readFileSync(
+        path.join(__dirname, "..", "ui", "static", "css", "conversation.css"),
+        "utf8",
+    );
+    const pillRule = css.split(".mention-pill {", 1)[1].split("}", 1)[0];
+    const nameRule = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0];
+    const alignBottom = /align-items:\s*flex-end/.test(pillRule)
+        && /vertical-align:\s*bottom/.test(pillRule);
+    if (!alignBottom) fail("alignBottom", pillRule);
+    const regularWeight = /font-weight:\s*400/.test(pillRule)
+        && /font-weight:\s*400/.test(nameRule)
+        && !/font-weight:\s*600/.test(pillRule)
+        && !/font-weight:\s*600/.test(nameRule);
+    if (!regularWeight) fail("regularWeight", `${pillRule} | ${nameRule}`);
+    const softPillBackground = /background:\s*var\(--bg\)/.test(pillRule)
+        && !/background:\s*none/.test(pillRule)
+        && /background:/.test(composerPill.getAttribute("style") || "")
+        && /background:/.test(pill.getAttribute("style") || "");
+    if (!softPillBackground) fail("softPillBackground", pillRule);
+
     console.log(JSON.stringify({
         ok: true,
         filterEmpty: filterAll,
@@ -226,7 +254,9 @@ async function main() {
         pickerFilter: options.length,
         pillInsert: pick.text,
         composerPersist: true,
-        alignBaseline: true,
+        alignBottom: true,
+        regularWeight: true,
+        softPillBackground: true,
         menuUnderPill: true,
         linkifyLive: painted,
         menuActions: labels,

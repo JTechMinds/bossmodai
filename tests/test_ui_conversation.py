@@ -524,6 +524,7 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     assert "class: `msg-turn msg-turn-${author}`" in message
     assert "class: 'msg-face'" in message
     assert "class: 'msg-stack'" in message
+    assert "class: 'msg-chrome'" in message
     assert "BossModAvatar.create(" in message
     bubble = message.split("class: `msg msg-${author}`", 1)[1].split(");", 1)[0]
     assert "msg-author" not in bubble
@@ -531,8 +532,11 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     css = _read(CSS / "conversation.css")
     assert ".msg-turn {" in css
     assert ".msg-face {" in css
+    chrome = css.split(".msg-chrome {", 1)[1].split("}", 1)[0]
+    assert "align-items: flex-end" in chrome
     author = css.split(".msg-author {", 1)[1].split("}", 1)[0]
-    assert "font-weight: 600" in author
+    assert "font-weight: 400" in author
+    assert "font-weight: 600" not in author
     agent = _read(SOURCES / "agent-source.js")
     assert "authorColor: colorFor(authorAgentId)" in agent
     assert "showAuthor: author === 'agent'" in agent

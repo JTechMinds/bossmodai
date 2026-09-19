@@ -1,7 +1,8 @@
 /**
  * BossMod AI — the mention pill and the menu a click opens.
  *
- * The mark is a letter avatar plus the name in body ink — not a filled chip.
+ * The mark is a letter avatar plus a regular-weight name on a soft tint.
+ * Colour lives on the avatar; the name inherits body ink so it stays readable.
  * One builder, one menu, no hard-jump to Desk on the click. Missing or fired
  * agents stay text, or open nothing if a pill outlives them.
  */
@@ -13,7 +14,8 @@ const BossModMentionPills = (() => {
     let openMenuHandle = null;
 
     /**
-     * One mention pill. Colour lives on the letter avatar; the name inherits.
+     * One mention pill. Soft tint from the same derivation the avatar uses;
+     * the name inherits, so it stays body-readable rather than tint ink.
      *
      * @param {object} agent
      * @param {{onClick?: Function, editable?: boolean}} [options]
@@ -23,11 +25,13 @@ const BossModMentionPills = (() => {
         const opts = options || {};
         const who = agent || {};
         const name = String(who.name || '').trim() || 'Agent';
+        const tint = BossModAvatar.tintFor(who.color || null);
         const interactive = typeof opts.onClick === 'function';
         const attrs = {
             class: 'mention-pill',
             'data-agent-id': who.id || null,
             'data-agent-name': name,
+            style: `background:${tint.bg}`,
         };
         if (opts.editable) attrs.contenteditable = 'false';
         const children = [

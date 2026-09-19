@@ -167,14 +167,20 @@ async function main() {
     if (bodies().join("|") !== "from Ada") throw new Error("Ada must load");
 
     const adaTurn = conversation.element.querySelector(".msg-turn-agent");
+    const adaChrome = adaTurn && adaTurn.querySelector(".msg-chrome");
     const adaFace = adaTurn && adaTurn.querySelector(".msg-face");
     const adaName = adaTurn && adaTurn.querySelector(".msg-author");
     const adaBubble = adaTurn && adaTurn.querySelector(".msg");
     const nameOutsideBubble = Boolean(
         adaName && adaBubble && !adaBubble.contains(adaName)
-        && adaName.parentNode && adaName.parentNode.classList.contains("msg-stack")
+        && adaChrome && adaChrome.contains(adaName)
+        && adaChrome.parentNode && adaChrome.parentNode.classList.contains("msg-stack")
     );
-    const faceLeftOfName = Boolean(adaFace && adaName && adaTurn.children[0] === adaFace);
+    const faceLeftOfName = Boolean(
+        adaFace && adaName && adaChrome
+        && adaChrome.contains(adaFace)
+        && adaChrome.children[0] === adaFace
+    );
     const nameIsChrome = Boolean(
         adaName && adaName.textContent === "Ada"
         && adaName.getAttribute("style")

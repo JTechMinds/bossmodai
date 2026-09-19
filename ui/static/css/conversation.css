@@ -302,12 +302,13 @@
 
 /* ─── Messages ─── */
 
-/* The turn is the row: face + name chrome, then the paragraph bubble.
+/* The turn is the column: `[face] [Name]` chrome, then the paragraph bubble.
    `.msg` is the bubble alone so a name cannot sit inside the prose. */
 .msg-turn {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   max-width: 72%;
 }
 
@@ -320,9 +321,15 @@
   max-width: 92%;
 }
 
+/* Face and name share one row so the initial can sit on the name's bottom. */
+.msg-chrome {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
 .msg-face {
   flex: none;
-  margin-top: 1px;
 }
 
 .msg-stack {
@@ -351,7 +358,7 @@
 .msg-author {
   margin: 0;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.2;
   color: var(--muted);
 }
@@ -653,7 +660,7 @@
 
 .composer-error.hidden { display: none; }
 
-/* ─── Mentions: letter avatar + body-ink name, on the text line ─── */
+/* ─── Mentions: letter avatar + regular-weight name on a soft tint ─── */
 
 /* Host is `position: relative` so the click menu hangs under THIS pill,
    not under `.msg`. `inline` keeps the mark in the prose flow. */
@@ -664,19 +671,19 @@
 
 .mention-pill {
   display: inline-flex;
-  align-items: baseline;
+  align-items: flex-end;
   gap: 4px;
   max-width: 100%;
   margin: 0 1px;
-  padding: 0;
+  padding: 1px 6px 1px 3px;
   border: 0;
-  border-radius: 0;
-  background: none;
+  border-radius: 999px;
+  background: var(--bg);
   color: inherit;
   font: inherit;
   font-weight: 400;
   line-height: inherit;
-  vertical-align: baseline;
+  vertical-align: bottom;
   cursor: pointer;
 }
 
@@ -687,7 +694,7 @@ span.mention-pill { cursor: default; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: inherit;
-  font-weight: inherit;
+  font-weight: 400;
 }
 
 .mention-picker {
