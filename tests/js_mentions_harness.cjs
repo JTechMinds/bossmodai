@@ -227,8 +227,8 @@ async function main() {
         path.join(__dirname, "..", "ui", "static", "css", "conversation.css"),
         "utf8",
     );
-    const pillRule = css.split(".mention-pill {", 1)[1].split("}", 1)[0];
-    const nameRule = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0];
+    const pillRule = css.split(".mention-pill {")[1].split("}")[0];
+    const nameRule = css.split(".mention-pill-name {")[1].split("}")[0];
     const alignBottom = /align-items:\s*flex-end/.test(pillRule)
         && /vertical-align:\s*bottom/.test(pillRule);
     if (!alignBottom) fail("alignBottom", pillRule);
