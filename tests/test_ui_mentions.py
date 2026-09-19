@@ -99,6 +99,8 @@ def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
     assert "color: inherit" in pill
     assert "background: var(--bg)" in pill
     assert "background: none" not in pill
+    assert "border: 1px solid var(--line)" in pill
+    assert "border: 0" not in pill
     assert "font-weight: 600" not in pill
     name = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0]
     assert "color: inherit" in name

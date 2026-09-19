@@ -1146,7 +1146,9 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     assert "font-size: 10px" in time
     assert "color: var(--hint)" in time
     # ...except on the tint, where --hint measures 4.19:1 and fails AA.
-    assert ".msg-turn-human .msg-author," in css
+    # The quiet name stays the shared muted ink; only the timestamp inside
+    # the operator bubble takes --blue-ink.
+    assert ".msg-turn-human .msg-author," not in css
     assert ".msg-human .msg-time { color: var(--blue-ink); }" in css
 
 
