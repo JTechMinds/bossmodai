@@ -2,9 +2,10 @@
  * BossMod AI — the mention pill and the menu a click opens.
  *
  * The mark is a letter avatar plus a regular-weight name on a soft gray
- * chip. Colour lives on the avatar only; the chip fill is the shared --bg
- * and --line, never the agent's 16% tint. The name inherits body ink so it
- * stays readable. One builder, one menu, no hard-jump to Desk on the click.
+ * chip. Colour lives on the avatar only; the chip fill is the shared
+ * --btn-face-hover + --line-strong, never the agent's 16% tint. The name
+ * inherits body ink so it stays readable. One builder, one menu, no
+ * hard-jump to Desk on the click.
  * Missing or fired agents stay text, or open nothing if a pill outlives them.
  */
 const BossModMentionPills = (() => {
@@ -15,9 +16,10 @@ const BossModMentionPills = (() => {
     let openMenuHandle = null;
 
     /**
-     * One mention pill. Soft gray chip from the stylesheet (--bg + --line);
-     * the letter avatar keeps the agent's colour. The name inherits, so it
-     * stays body-readable rather than tint ink.
+     * One mention pill. Soft gray chip from the stylesheet
+     * (--btn-face-hover + --line-strong); the letter avatar keeps the
+     * agent's colour. The name inherits, so it stays body-readable
+     * rather than tint ink.
      *
      * @param {object} agent
      * @param {{onClick?: Function, editable?: boolean, glue?: string}} [options]

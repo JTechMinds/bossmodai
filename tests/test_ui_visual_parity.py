@@ -1123,6 +1123,8 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
 
     listing = css.split(".transcript-list {", 1)[1].split("}", 1)[0]
     assert "max-width: 760px" in listing
+    assert "gap: 16px" in listing
+    assert "gap: 8px" not in listing
 
     turn = css.split(".msg-turn {", 1)[1].split("}", 1)[0]
     assert "max-width: 72%" in turn

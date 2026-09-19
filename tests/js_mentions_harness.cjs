@@ -239,27 +239,44 @@ async function main() {
     );
     const pillRule = css.split(".mention-pill {")[1].split("}")[0];
     const nameRule = css.split(".mention-pill-name {")[1].split("}")[0];
-    const alignBaseline = /vertical-align:\s*baseline/.test(pillRule)
+    const hostRule = css.split(".mention-host {")[1].split("}")[0];
+    const composerPillRule = css.split(".composer-input .mention-pill {")[1].split("}")[0];
+    const composerInputRule = css.split(".composer-input {")[1].split("}")[0];
+    const alignOpticalCenter = /vertical-align:\s*middle/.test(pillRule)
         && /align-items:\s*center/.test(pillRule)
         && /min-height:\s*0/.test(pillRule)
+        && /vertical-align:\s*middle/.test(hostRule)
+        && !/vertical-align:\s*baseline/.test(pillRule)
         && !/vertical-align:\s*bottom/.test(pillRule)
         && !/align-items:\s*flex-end/.test(pillRule);
-    if (!alignBaseline) fail("alignBaseline", pillRule);
+    if (!alignOpticalCenter) fail("alignOpticalCenter", pillRule);
+    const composerAlignsWithText = /vertical-align:\s*middle/.test(composerPillRule)
+        && /line-height:\s*1\.5/.test(composerInputRule)
+        && !/vertical-align:\s*bottom/.test(composerPillRule)
+        && !/align-items:\s*flex-end/.test(composerPillRule)
+        && !/vertical-align:\s*baseline/.test(composerPillRule);
+    if (!composerAlignsWithText) {
+        fail("composerAlignsWithText", `${composerPillRule} | ${composerInputRule}`);
+    }
     const regularWeight = /font-weight:\s*400/.test(pillRule)
         && /font-weight:\s*400/.test(nameRule)
         && !/font-weight:\s*600/.test(pillRule)
         && !/font-weight:\s*600/.test(nameRule);
     if (!regularWeight) fail("regularWeight", `${pillRule} | ${nameRule}`);
-    const softPillBackground = /background:\s*var\(--bg\)/.test(pillRule)
+    const louderNeutralChip = /background:\s*var\(--btn-face-hover\)/.test(pillRule)
+        && /border:\s*1px solid var\(--line-strong\)/.test(pillRule)
+        && !/background:\s*var\(--bg\)/.test(pillRule)
+        && !/border:\s*1px solid var\(--line\);/.test(pillRule)
         && !/background:\s*none/.test(pillRule)
-        && /border:\s*1px solid var\(--line\)/.test(pillRule)
         && !/border:\s*0/.test(pillRule)
         && !/background:/.test(composerPill.getAttribute("style") || "")
         && !/background:/.test(pill.getAttribute("style") || "")
         && !/--accent/.test(pillRule)
         && !/--alert/.test(pillRule)
-        && !/pink/i.test(pillRule);
-    if (!softPillBackground) fail("softPillBackground", pillRule);
+        && !/pink/i.test(pillRule)
+        && !/tint\.bg/.test(pillRule);
+    if (!louderNeutralChip) fail("louderNeutralChip", pillRule);
+    const softPillBackground = louderNeutralChip;
 
     function assertNeutralChip(agent, prose) {
         const bodyEl = h("div", { class: "msg-body md" }, prose);
@@ -362,8 +379,10 @@ async function main() {
         pickerFilter: options.length,
         pillInsert: pick.text,
         composerPersist: true,
-        alignBaseline: true,
+        alignOpticalCenter: true,
+        composerAlignsWithText: true,
         regularWeight: true,
+        louderNeutralChip: true,
         softPillBackground: true,
         neutralSoftGrayChip: true,
         menuUnderPill: true,
