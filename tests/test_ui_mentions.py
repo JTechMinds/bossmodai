@@ -93,14 +93,20 @@ def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
     assert "display: inline" in host
     pill = css.split(".mention-pill {", 1)[1].split("}", 1)[0]
     assert "inline-flex" in pill
-    assert "align-items: baseline" in pill
-    assert "vertical-align: baseline" in pill
+    assert "align-items: flex-end" in pill
+    assert "vertical-align: bottom" in pill
     assert "font-weight: 400" in pill
     assert "color: inherit" in pill
-    assert "background: none" in pill
+    assert "background: var(--bg)" in pill
+    assert "background: none" not in pill
     assert "font-weight: 600" not in pill
     name = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0]
     assert "color: inherit" in name
+    assert "font-weight: 400" in name
+    pills = _read(CONVERSATION / "mention-pill.js")
+    assert "BossModAvatar.tintFor(" in pills
+    assert "background:${tint.bg}" in pills
+    assert "color:${tint.ink}" not in pills
     menu = css.split(".menu[data-menu=\"mention\"] {", 1)[1].split("}", 1)[0]
     assert "left: 0" in menu
     assert "right: auto" in menu
@@ -130,7 +136,9 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "pickerFilter": 1,
         "pillInsert": "tip @Hugh ",
         "composerPersist": True,
-        "alignBaseline": True,
+        "alignBottom": True,
+        "regularWeight": True,
+        "softPillBackground": True,
         "menuUnderPill": True,
         "linkifyLive": 1,
         "menuActions": ["Open Chat", "View Desk", "Mention again"],

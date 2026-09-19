@@ -17,8 +17,9 @@
  * two renderers again, and a pasted log is worth a fence whoever pasted it.
  *
  * The name is chrome, not prose. It sits outside the paragraph bubble with a
- * color-coded initial to its left, so a labelled turn reads as
- * `[face] [Name]` above the body rather than a name buried in the paragraph.
+ * color-coded initial to its left, bottom-aligned with the name, so a labelled
+ * turn reads as `[face] [Name]` above the body rather than a name buried in
+ * the paragraph.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -78,23 +79,25 @@ const BossModMessage = (() => {
             createdAt
                 ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
                 : null);
-
-        return h('div', {
-            class: `msg-turn msg-turn-${author}`,
-            'data-message-key': key || null,
-        },
-            withFace
-                ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
-                    BossModAvatar.create({ name: faceName, color, size: 'sm' }))
-                : null,
-            h('div', { class: 'msg-stack' },
+        const chrome = (withFace || showName)
+            ? h('div', { class: 'msg-chrome' },
+                withFace
+                    ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
+                        BossModAvatar.create({ name: faceName, color, size: 'sm' }))
+                    : null,
                 showName
                     ? h('div', {
                         class: 'msg-author',
                         style: author === 'human' ? null : `color:${tint.ink}`,
                     }, label || 'Unknown')
-                    : null,
-                bubble));
+                    : null)
+            : null;
+
+        return h('div', {
+            class: `msg-turn msg-turn-${author}`,
+            'data-message-key': key || null,
+        },
+            h('div', { class: 'msg-stack' }, chrome, bubble));
     }
 
     return { renderMessage };
