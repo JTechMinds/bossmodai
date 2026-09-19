@@ -38,6 +38,25 @@ and omits it when the company is unknown.
 Optional `tools_hint` must be a YAML list of short tool names
 (`cli`, `work`). Prose strings are rejected.
 
+Optional `communication` is a mapping of four closed enums — never a
+free-text essay. Omitted fields (or an omitted block) fill from the
+pack specialty: auditor-style roles default to precise-but-scannable;
+planner-style roles default to product-clear; other specialties get a
+small family default. Unknown values are rejected. Extra keys are
+ignored.
+
+```yaml
+communication:
+  tone: precise-but-scannable   # precise-but-scannable | product-clear | direct | warm
+  density: scannable            # scannable | compact | thorough
+  jargon: field                 # none | light | field
+  audience: operator            # operator | implementer | mixed
+```
+
+Runtime injects this block into the Role contract on every turn.
+Marketplace detail shows it; hire Advanced and agent settings can edit
+the four fields. Export writes the agent's stored contract back.
+
 ## Senior quality
 
 Bare schema still accepts a short hire snapshot (export of a casual

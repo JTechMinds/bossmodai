@@ -110,6 +110,7 @@ CONTEXT_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "specialty.js",
+    JS / "core" / "communication.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",

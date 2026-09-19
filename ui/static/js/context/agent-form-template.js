@@ -56,7 +56,8 @@ const BossModAgentFormTemplate = (() => {
      *
      * @param {object} template  An `AgentTemplate` row.
      * @returns {{role: string, description: string, done_fail_bar: string,
-     *   personality_hint: string|null}} In `applyHireFields`' shape.
+     *   personality_hint: string|null, communication: object|null}} In
+     *   `applyHireFields`' shape.
      */
     function templateFields(template) {
         return {
@@ -64,6 +65,7 @@ const BossModAgentFormTemplate = (() => {
             description: template.description || '',
             done_fail_bar: template.what_done_looks_like || '',
             personality_hint: template.personality_hint || null,
+            communication: template.communication || null,
         };
     }
 

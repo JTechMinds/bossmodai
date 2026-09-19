@@ -39,9 +39,14 @@ AUDIENCE_SOFT_JUDGMENT = (
 )
 
 CHAT_FORMATTING = (
-    "Chat replies: use short paragraphs with real newlines. "
-    "Use markdown lists for plans and steps. "
-    "Prefer readable formatting over one dense brick. "
+    "Chat replies must emit this shape.\n"
+    "\n"
+    "Write short paragraphs. Separate them with real newline characters.\n"
+    "\n"
+    "- Use markdown lists for plans, steps, and findings.\n"
+    "- Do not emit one dense brick or wall of text.\n"
+    "- Do not flatten a reply onto a single line.\n"
+    "\n"
     "No hard length limit."
 )
 

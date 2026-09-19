@@ -196,6 +196,7 @@ def test_schema_validates_required_hire_fields() -> None:
     assert hire["role"] == pack.specialty
     assert hire["description"] == pack.description
     assert hire["done_fail_bar"] == pack.what_done_looks_like
+    assert hire["communication"] == pack.communication.as_dict()
     assert "name" not in hire
     assert "kind" not in hire
     assert "desk_x" not in hire
@@ -818,6 +819,7 @@ def test_import_hydrates_hire_fields_without_creating_an_agent() -> None:
     )
     assert "Reviews claims" in result.hire_fields["description"]
     assert "Fail examples:" in result.hire_fields["done_fail_bar"]
+    assert result.hire_fields["communication"]["tone"] == "precise-but-scannable"
     assert "name" not in result.hire_fields
     assert "pack_author" not in result.hire_fields
     assert result.pack.pack_author is not None
@@ -1638,6 +1640,12 @@ def test_api_cards_carry_sections_done_and_tools_at_no_extra_fetch(
     assert card["id"] == "code-auditor"
     assert card["what_done_looks_like"].startswith("A checkable allow/deny exists")
     assert card["tools_hint"] == ["work"]
+    assert card["communication"] == {
+        "tone": "precise-but-scannable",
+        "density": "scannable",
+        "jargon": "field",
+        "audience": "operator",
+    }
     assert card["sections"] == describe_pack(
         card["description"], card["what_done_looks_like"]
     )

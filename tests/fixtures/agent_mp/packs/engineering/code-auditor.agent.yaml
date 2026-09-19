@@ -15,3 +15,8 @@ what_done_looks_like: |
   Fail examples: "Looks good" with no path; Done pointing only at `/me/...` that peers cannot open; a vibe check; done with zero evidence attached.
 tools_hint:
   - work
+communication:
+  tone: precise-but-scannable
+  density: scannable
+  jargon: field
+  audience: operator

@@ -75,6 +75,10 @@ const CATALOG = {
                         "A checkable allow/deny exists.", "A vibe check with no evidence.",
                     ),
                     tools_hint: ["work"],
+                    communication: {
+                        tone: "precise-but-scannable", density: "scannable",
+                        jargon: "field", audience: "operator",
+                    },
                     content_hash: "hash-auditor-v2",
                     pack_author: { name: "JTech Minds", url: "https://github.com/JTechMinds" },
                 },
@@ -691,7 +695,7 @@ async function main() {
         && count(".market-rail") === 0 && count(".market-head") === 0
         && Boolean(host().querySelector("#market-detail"));
     verdict.detailSectionsInOrder = texts(".market-section-name").join("|")
-        === "In scope|Out of scope|Handoff|Done looks like|Fail examples|Tools";
+        === "In scope|Out of scope|Handoff|Done looks like|Fail examples|Tools|Communication";
     verdict.detailLeadIsTheMission =
         host().querySelector(".market-detail-lead").textContent === AUDITOR_MISSION;
 
@@ -728,7 +732,8 @@ async function main() {
     verdict.everySectionCarriesItsSubtitle =
         texts(".market-section-sub").join("|")
             === "What it takes on|What it won’t do|Who gets the result|"
-            + "The bar it must clear|What doesn’t count|What it expects to use";
+            + "The bar it must clear|What doesn’t count|What it expects to use|"
+            + "How it talks";
 
     // ONE tab stop for the list, and the panel is named by the tab that opened
     // it. `aria-controls` is published by the selected tab alone: the others
@@ -760,18 +765,19 @@ async function main() {
         && sectionPanel().getAttribute("aria-labelledby") === sectionTabs()[1].id;
     await fireKey(sectionTabs()[1], "End");
     verdict.endGoesToTheLastSection =
-        sectionTabs()[5].getAttribute("aria-selected") === "true"
-        && sectionPanel().querySelectorAll(".market-detail-tools").length === 1;
-    await fireKey(sectionTabs()[5], "Home");
+        sectionTabs()[6].getAttribute("aria-selected") === "true"
+        && sectionPanel().querySelectorAll(".market-detail-tools").length === 1
+        && sectionPanel().textContent.includes("tone: precise-but-scannable");
+    await fireKey(sectionTabs()[6], "Home");
     verdict.homeGoesBackToTheFirst =
         sectionTabs()[0].getAttribute("aria-selected") === "true"
         && global.document.activeElement === sectionTabs()[0]
         && sectionPanel().textContent === "Pull requests and their tests.";
-    // Up from the top wraps rather than falling out of a list of six.
+    // Up from the top wraps rather than falling out of a list of seven.
     await fireKey(sectionTabs()[0], "ArrowUp");
     verdict.arrowUpWrapsToTheEnd =
-        sectionTabs()[5].getAttribute("aria-selected") === "true"
-        && global.document.activeElement === sectionTabs()[5];
+        sectionTabs()[6].getAttribute("aria-selected") === "true"
+        && global.document.activeElement === sectionTabs()[6];
 
     // Click is the third way in, and it is the one that takes the keyboard with
     // it — a pointer that presses a control expects to have pressed it.

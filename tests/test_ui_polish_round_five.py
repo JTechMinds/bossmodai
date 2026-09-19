@@ -122,6 +122,7 @@ AGENT_FORM_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "avatar.js",
+    JS / "core" / "communication.js",
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",

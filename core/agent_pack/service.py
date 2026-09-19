@@ -89,9 +89,9 @@ class PackImportResult:
 class CatalogListPack:
     """One browse card, built from a pack that passed the install gate.
 
-    Specialty, description, done bar, tools hint and content hash are all read
-    from the one parse ``list_catalog`` already ran, and none of them is
-    optional: a row whose pack does not parse — or parses but fails
+    Specialty, description, done bar, tools hint, communication and content
+    hash are all read from the one parse ``list_catalog`` already ran, and
+    none of them is optional: a row whose pack does not parse — or parses but fails
     ``validate_pack_quality`` — never becomes a card at all, it comes back as a
     ``WithheldPack``. So no field here is ``None`` standing in for "never
     read", and no consumer has to branch on that case.
@@ -112,6 +112,7 @@ class CatalogListPack:
     description: str
     what_done_looks_like: str
     tools_hint: tuple[str, ...]
+    communication: dict[str, str]
     content_hash: str
     pack_author: dict[str, str] | None = None
     summary: str | None = None
@@ -335,6 +336,7 @@ def list_catalog(
                 description=pack.description,
                 what_done_looks_like=pack.what_done_looks_like,
                 tools_hint=pack.tools_hint,
+                communication=pack.communication.as_dict(),
                 content_hash=pack_content_hash(pack),
                 pack_author=pack.pack_author.as_dict() if pack.pack_author else None,
                 # The pack read here IS the pack install writes, so its own

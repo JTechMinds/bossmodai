@@ -246,6 +246,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     # What the server is told moved to context/agent-submit.js with the split.
     submit = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")
     assert "done_fail_bar: formData.get('done_fail_bar')" in submit
+    assert "communication: BossModCommunication.resolve({" in submit
     assert "first_unoccupied_chair" not in panel
     assert "No empty desk is free" in panel
     assert "An empty desk is selected when one is free." in panel
@@ -282,7 +283,13 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "Runtime core" in panel
     assert 'id="runtime-core-preview"' in panel
     assert 'name="runtime_core"' not in panel
-    assert panel.index('name="done_fail_bar"') < panel.index("Runtime core")
+    assert panel.index('name="done_fail_bar"') < panel.index("${communicationFields(agent)}")
+    assert panel.index("${communicationFields(agent)}") < panel.index("Runtime core")
+    advanced = Path("ui/static/js/context/agent-form-advanced.js").read_text(encoding="utf-8")
+    assert 'name="communication_${field}"' in advanced
+    submit_js = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")
+    for key in ("tone", "density", "jargon", "audience"):
+        assert f"communication_{key}" in submit_js
     assert panel.index("Runtime core") < panel.index('name="personality_id"')
     agent_status_js = Path("ui/static/js/core/agent-status.js").read_text(encoding="utf-8")
     assert "nextUnusedAgentColor" in agent_status_js
@@ -858,6 +865,9 @@ def test_role_contract_block_and_done_claim_guidance_are_operator_actionable() -
     assert "# Role contract" in block
     assert "Specialty: Writer" in block
     assert "Description: Writes first drafts and short status notes." in block
+    assert "Communication:" in block
+    assert "- tone: product-clear" in block
+    assert "- density: scannable" in block
     assert "Good: draft path exists" in block
     assert "data.claim" in block
     assert "Empty done is rejected" in block

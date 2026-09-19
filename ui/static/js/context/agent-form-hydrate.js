@@ -32,7 +32,7 @@ const BossModAgentFormHydrate = (() => {
      *
      * @param {HTMLElement} formRoot
      * @param {{role?: string, description?: string, done_fail_bar?: string,
-     *   personality_hint?: string|null}} fields
+     *   personality_hint?: string|null, communication?: object|null}} fields
      * @returns {void}
      */
     function applyHireFields(formRoot, fields) {
@@ -42,6 +42,11 @@ const BossModAgentFormHydrate = (() => {
         if (role) role.value = fields.role || '';
         if (description) description.value = fields.description || '';
         if (done) done.value = fields.done_fail_bar || '';
+        const comm = BossModCommunication.resolve(fields.communication, fields.role || '');
+        BossModCommunication.KEYS.forEach((key) => {
+            const select = formRoot.querySelector(`[name="communication_${key}"]`);
+            if (select) select.value = comm[key];
+        });
         const hint = fields.personality_hint;
         // Absent entirely when Settings holds no personality — the form renders
         // its own link to Settings there instead of a dropdown.

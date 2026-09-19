@@ -70,6 +70,7 @@ const BossModAgentFormAdvanced = (() => {
                         Optional. We’ll suggest one from the specialty; edit anytime.
                     </p>
                 </div>
+                ${communicationFields(agent)}
                 <div class="field">
                     <span class="field-label">Runtime core</span>
                     <pre id="runtime-core-preview" class="runtime-core-preview"></pre>
@@ -146,6 +147,40 @@ const BossModAgentFormAdvanced = (() => {
                 </label>
             </div>
         </section>`;
+    }
+
+    function communicationFields(agent) {
+        const comm = BossModCommunication.resolve(agent?.communication, agent?.role || '');
+        const select = (key) => {
+            const options = BossModCommunication.ENUMS[key].map((value) => {
+                const selected = value === comm[key] ? 'selected' : '';
+                return `<option value="${BossModFormat.escapeAttribute(value)}" ${selected}>${BossModFormat.escapeHtml(value)}</option>`;
+            }).join('');
+            const field = BossModFormat.escapeAttribute(key);
+            const label = BossModFormat.escapeHtml(BossModCommunication.LABELS[key]);
+            return `
+                <div class="field">
+                    <label class="field-label field-label-sm" for="agent-communication-${field}">${label}</label>
+                    <select name="communication_${field}" id="agent-communication-${field}" class="field-select">
+                        ${options}
+                    </select>
+                </div>`;
+        };
+        return `
+                <div class="field">
+                    <span class="field-label">Communication</span>
+                    <p class="field-hint">
+                        Closed enums from the pack. Edit anytime; not a prose style guide.
+                    </p>
+                    <div class="field-row">
+                        ${select('tone')}
+                        ${select('density')}
+                    </div>
+                    <div class="field-row">
+                        ${select('jargon')}
+                        ${select('audience')}
+                    </div>
+                </div>`;
     }
 
     return { advancedSection };

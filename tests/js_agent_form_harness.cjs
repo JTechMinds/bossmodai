@@ -45,6 +45,7 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus", "BossModAvatar",
+    "BossModCommunication",
     "BossModAgentFields", "BossModAgentFormFields", "BossModAgentFormAdvanced",
     "BossModAgentFormConnections", "BossModAgentSubmit",
 ];

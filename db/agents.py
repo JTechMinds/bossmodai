@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core import config
+from core.agent_loop.communication_contract import dump_communication_json
 from core.models import Agent, AgentState
 from db.connection import transaction
 from db.crud import (
@@ -22,7 +23,8 @@ from db.secret_store import decrypt_secret, encrypt_secret
 
 _AGENT_COLUMNS = (
     "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
-    "agents.description, agents.done_fail_bar, agents.prompt_template, agents.color, "
+    "agents.description, agents.done_fail_bar, agents.communication, "
+    "agents.prompt_template, agents.color, "
     "agents.model_social, agents.model_work, "
     "agents.model_reasoning, agents.model_extraction, agents.model_self_queue, "
     "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
@@ -32,7 +34,8 @@ _AGENT_COLUMNS = (
 )
 
 _AGENT_VALID_COLUMNS = {
-    "name", "role", "description", "done_fail_bar", "prompt_template", "color",
+    "name", "role", "description", "done_fail_bar", "communication",
+    "prompt_template", "color",
     "model_social", "model_work", "model_reasoning",
     "model_extraction", "model_self_queue",
     "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
@@ -63,6 +66,7 @@ def create_agent(
     role: str | None = None,
     description: str | None = None,
     done_fail_bar: str | None = None,
+    communication: dict[str, str] | None = None,
     prompt_template: str | None = None,
     color: str = "#3b82f6",
     model_social: str | None = None,
@@ -85,16 +89,18 @@ def create_agent(
         created = insert_returning_dict(
             """
             INSERT INTO agents (
-                name, role, description, done_fail_bar, prompt_template, color,
+                name, role, description, done_fail_bar, communication, prompt_template, color,
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
                 api_base_url, api_key, extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
             RETURNING id
             """,
             [
-                name, role, description, done_fail_bar, prompt_template, color,
+                name, role, description, done_fail_bar,
+                dump_communication_json(communication, specialty=role),
+                prompt_template, color,
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
                 api_base_url, encrypt_secret(api_key), extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
@@ -168,6 +174,17 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     """Update an agent's fields. Returns the updated Agent or None."""
     if "api_key" in fields:
         fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
+    if "communication" in fields:
+        role = fields.get("role")
+        if role is None:
+            current = get_agent(agent_id)
+            role = current.role if current is not None else None
+        fields = {
+            **fields,
+            "communication": dump_communication_json(
+                fields["communication"], specialty=role,
+            ),
+        }
     build_update("agents", "id", agent_id, fields, _AGENT_VALID_COLUMNS)
     return get_agent(agent_id)
 

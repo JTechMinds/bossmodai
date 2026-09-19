@@ -15,3 +15,8 @@ what_done_looks_like: |
   Fail examples: "Looks good" with no path; Done pointing only at `/me/...` that peers cannot open; a vibe sketch with no name; "we should maybe"; a plan with no finish line.
 tools_hint:
   - work
+communication:
+  tone: product-clear
+  density: scannable
+  jargon: light
+  audience: mixed

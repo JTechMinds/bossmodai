@@ -163,6 +163,7 @@ def install_agent_template(body: AgentTemplateInstallBody) -> AgentTemplate:
         what_done_looks_like=pack.what_done_looks_like,
         personality_hint=pack.personality_hint,
         tools_hint=list(pack.tools_hint),
+        communication=pack.communication.as_dict(),
         author_name=author.name if author else None,
         author_url=author.url if author else None,
         commit_sha=commit_sha,
