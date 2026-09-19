@@ -231,7 +231,12 @@ class RuntimeEventProxy:
         detail: str,
         agent_name: str | None = None,
         extra: dict[str, Any] | None = None,
+        peek_budget: str | None = None,
     ) -> None:
+        # Decision-turn fail-closed results splat peek_budget. Park it in extra
+        # so the sink contract stays event/detail/agent_name/extra.
+        if peek_budget is not None:
+            extra = {**(extra or {}), "peek_budget": peek_budget}
         await self._sink.broadcast_activity(
             event=event,
             detail=detail,
