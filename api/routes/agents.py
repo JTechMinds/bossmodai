@@ -509,6 +509,7 @@ async def create_agent(body: AgentCreate) -> Agent:
         role=body.role,
         description=body.description,
         done_fail_bar=body.done_fail_bar,
+        communication=body.communication,
         prompt_template=body.prompt_template,
         color=body.color,
         desk_x=desk_x,

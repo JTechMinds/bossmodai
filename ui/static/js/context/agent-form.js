@@ -287,6 +287,7 @@ const BossModAgentForm = (() => {
 
         const BINDINGS = BossModAgentFormBindings;
         BINDINGS.bindFinishLineSuggestion(form, agent);
+        BINDINGS.bindCommunicationDefaults(form, agent);
         BINDINGS.bindRuntimeCorePreview(form, agent);
         BINDINGS.bindDuplicateNameWarning(form, roster, agent);
         BINDINGS.bindColorSwatchInitial(form);

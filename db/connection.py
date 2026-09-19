@@ -239,6 +239,12 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "agents", "done_fail_bar", "TEXT",
     )
     _add_column_if_missing(
+        con, "agents", "communication", "TEXT",
+    )
+    _add_column_if_missing(
+        con, "agent_templates", "communication", "TEXT",
+    )
+    _add_column_if_missing(
         con, "agents", "description", "TEXT",
     )
     _add_column_if_missing(

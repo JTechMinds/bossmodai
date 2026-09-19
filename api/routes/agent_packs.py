@@ -76,6 +76,8 @@ def _group_categories(result: CatalogListResult) -> list[dict[str, Any]]:
             )
         if card.tools_hint:
             payload["tools_hint"] = list(card.tools_hint)
+        if card.communication:
+            payload["communication"] = card.communication
         if card.content_hash:
             # The marketplace compares this against the installed template's
             # hash to decide between "Installed" and "Update available".

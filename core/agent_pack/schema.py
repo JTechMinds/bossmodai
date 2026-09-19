@@ -13,6 +13,12 @@ from urllib.parse import urlparse
 
 import yaml
 
+from core.agent_loop.communication_contract import (
+    CommunicationContract,
+    CommunicationContractError,
+    communication_from_agent,
+    parse_communication,
+)
 from core.agent_loop.specialty import suggest_finish_line
 from core.agent_pack.sections import (
     DESCRIPTION_SECTION_KEYS,
@@ -49,6 +55,7 @@ _CANONICAL_KEYS = (
     "what_done_looks_like",
     "personality_hint",
     "tools_hint",
+    "communication",
     "mission",
     "in_scope",
     "out_of_scope",
@@ -147,6 +154,7 @@ class AgentPack:
     what_done_looks_like: str
     personality_hint: str | None = None
     tools_hint: tuple[str, ...] = ()
+    communication: CommunicationContract = field(default_factory=lambda: parse_communication(None))
     pack_author: PackAuthor | None = None
     ignored_keys: tuple[str, ...] = field(default_factory=tuple)
 
@@ -165,6 +173,7 @@ class AgentPack:
             fields["personality_hint"] = self.personality_hint
         if self.tools_hint:
             fields["tools_hint"] = list(self.tools_hint)
+        fields["communication"] = self.communication.as_dict()
         return fields
 
     def as_dict(self) -> dict[str, Any]:
@@ -182,6 +191,7 @@ class AgentPack:
             data["personality_hint"] = self.personality_hint
         if self.tools_hint:
             data["tools_hint"] = list(self.tools_hint)
+        data["communication"] = self.communication.as_dict()
         return data
 
     def to_yaml(self) -> str:
@@ -256,6 +266,7 @@ def export_agent_pack(
         description=description,
         what_done_looks_like=done,
         personality_hint=hint,
+        communication=communication_from_agent(agent),
         pack_author=pack_author,
     )
 
@@ -317,6 +328,10 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
         field_name="personality_hint",
     )
     tools_hint = _optional_tools_hint(normalized.get("tools_hint"))
+    communication = _optional_communication(
+        normalized.get("communication"),
+        specialty=specialty,
+    )
     pack_author, author_ignored = _optional_pack_author(normalized.get("pack_author"))
     ignored.extend(author_ignored)
     additive = {
@@ -336,6 +351,7 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
         what_done_looks_like=done,
         personality_hint=personality_hint,
         tools_hint=tools_hint,
+        communication=communication,
         pack_author=pack_author,
         ignored_keys=tuple(ignored),
     )
@@ -490,6 +506,14 @@ def _fold_structured_sections(
             )
         done = composed_done
     return description, done
+
+
+def _optional_communication(value: Any, *, specialty: str) -> CommunicationContract:
+    """Parse the closed-enum block. Essays and unknown values fail closed."""
+    try:
+        return parse_communication(value, specialty=specialty)
+    except CommunicationContractError as exc:
+        raise AgentPackError(str(exc), code=exc.code) from exc
 
 
 def _optional_tools_hint(value: Any) -> tuple[str, ...]:

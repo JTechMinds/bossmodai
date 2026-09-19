@@ -53,6 +53,12 @@ const BossModAgentSubmit = (() => {
             role: formData.get('role') || null,
             description: formData.get('description') || null,
             done_fail_bar: formData.get('done_fail_bar') || null,
+            communication: BossModCommunication.resolve({
+                tone: formData.get('communication_tone'),
+                density: formData.get('communication_density'),
+                jargon: formData.get('communication_jargon'),
+                audience: formData.get('communication_audience'),
+            }, formData.get('role')),
             color,
             desk_x,
             desk_y,

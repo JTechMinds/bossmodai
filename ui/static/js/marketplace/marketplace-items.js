@@ -147,11 +147,33 @@ const BossModMarketplaceItems = (() => {
      *
      * @param {object} row  A catalog card or an installed template row.
      * @returns {{sections: object, intro: string|null, mission: string|null,
-     *   toolsHint: string[]|null}}
+     *   toolsHint: string[]|null, communication: object|null}}
      * @throws {Error} When `sections` is missing or is not the two-half shape
      *   `describe_pack` returns. Named and loud, rather than an
      *   undefined-property crash three frames deeper or a card drawn blank.
      */
+    /**
+     * The four closed enums, or null when the row never carried a block.
+     *
+     * A catalog card that survived parse always has one (defaults fill). An
+     * older installed row or a harness fixture may omit it, and that absence
+     * must stay absence so the detail does not invent a Voice tab.
+     *
+     * @param {object|null|undefined} value
+     * @returns {object|null}
+     */
+    function communicationBlock(value) {
+        if (!value || typeof value !== 'object') return null;
+        const keys = ['tone', 'density', 'jargon', 'audience'];
+        const block = {};
+        for (const key of keys) {
+            const token = typeof value[key] === 'string' ? value[key].trim() : '';
+            if (!token) return null;
+            block[key] = token;
+        }
+        return block;
+    }
+
     function parsed(row) {
         const sections = row.sections;
         if (!sections || !sections.description || !sections.done) {
@@ -163,6 +185,7 @@ const BossModMarketplaceItems = (() => {
             sections,
             ...openingText(row),
             toolsHint: Array.isArray(row.tools_hint) ? row.tools_hint : null,
+            communication: communicationBlock(row.communication),
         };
     }
 

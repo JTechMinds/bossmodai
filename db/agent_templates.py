@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from core.agent_loop.communication_contract import dump_communication_json
 from core.models.agent_template import AgentTemplate
 from db.crud import build_update_returning, execute, fetch_all, fetch_one, insert_returning
 
 _TEMPLATE_COLUMNS = (
     "id, source, pack_id, source_url, category, title, specialty, description, "
-    "what_done_looks_like, personality_hint, tools_hint, author_name, author_url, "
+    "what_done_looks_like, personality_hint, tools_hint, communication, "
+    "author_name, author_url, "
     "commit_sha, content_hash, installed_at, updated_at"
 )
 # The natural key (source, pack_id, source_url) and installed_at identify the
@@ -29,6 +31,7 @@ _MUTABLE_COLUMNS = {
     "what_done_looks_like",
     "personality_hint",
     "tools_hint",
+    "communication",
     "author_name",
     "author_url",
     "commit_sha",
@@ -101,6 +104,7 @@ def upsert_agent_template(
     what_done_looks_like: str,
     personality_hint: str | None,
     tools_hint: list[str],
+    communication: dict[str, str] | None = None,
     author_name: str | None,
     author_url: str | None,
     commit_sha: str,
@@ -129,6 +133,7 @@ def upsert_agent_template(
             "source_url (URL install) as its natural key."
         )
     encoded_tools = json.dumps(list(tools_hint))
+    encoded_communication = dump_communication_json(communication, specialty=specialty)
     # One clock read for both columns. The app writes timestamps rather than
     # leaning on the column defaults because SQLite's current_timestamp is
     # second-resolution, which would make installed_at and updated_at
@@ -150,6 +155,7 @@ def upsert_agent_template(
                 "what_done_looks_like": what_done_looks_like,
                 "personality_hint": personality_hint,
                 "tools_hint": encoded_tools,
+                "communication": encoded_communication,
                 "author_name": author_name,
                 "author_url": author_url,
                 "commit_sha": commit_sha,
@@ -171,9 +177,9 @@ def upsert_agent_template(
         INSERT INTO agent_templates (
             source, pack_id, source_url, category, title, specialty,
             description, what_done_looks_like, personality_hint, tools_hint,
-            author_name, author_url, commit_sha, content_hash,
+            communication, author_name, author_url, commit_sha, content_hash,
             installed_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         RETURNING {_TEMPLATE_COLUMNS}
         """,
         [
@@ -187,6 +193,7 @@ def upsert_agent_template(
             what_done_looks_like,
             personality_hint,
             encoded_tools,
+            encoded_communication,
             author_name,
             author_url,
             commit_sha,

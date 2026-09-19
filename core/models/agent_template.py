@@ -14,6 +14,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from core.agent_loop.communication_contract import (
+    CommunicationContractError,
+    load_communication_value,
+)
 from core.agent_pack.service import describe_pack
 
 
@@ -40,6 +44,7 @@ class AgentTemplate(BaseModel):
     what_done_looks_like: str
     personality_hint: str | None = None
     tools_hint: list[str] = Field(default_factory=list)
+    communication: dict[str, str] | None = None
     author_name: str | None = None
     author_url: str | None = None
     commit_sha: str
@@ -97,3 +102,14 @@ class AgentTemplate(BaseModel):
         if not all(isinstance(item, str) for item in decoded):
             raise ValueError("tools_hint must decode to a JSON array of strings")
         return decoded
+
+    @field_validator("communication", mode="before")
+    @classmethod
+    def _parse_communication(cls, value: Any) -> Any:
+        """Decode the optional ``communication`` JSON ``TEXT`` column."""
+        if value is None:
+            return None
+        try:
+            return load_communication_value(value)
+        except CommunicationContractError as exc:
+            raise ValueError(str(exc)) from exc

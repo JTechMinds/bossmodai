@@ -7,9 +7,14 @@ for position and activity tracking, plus API input models for create/update.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from core.agent_loop.communication_contract import (
+    CommunicationContractError,
+    load_communication_value,
+)
 
 # Hire-contract field lengths. Agent packs use the same caps so import
 # hydrates Advanced hire fields without a second set of limits.
@@ -34,6 +39,7 @@ class Agent(BaseModel):
     role: str | None = None
     description: str | None = None
     done_fail_bar: str | None = None
+    communication: dict[str, str] | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
 
@@ -60,6 +66,11 @@ class Agent(BaseModel):
     guardian_no_progress_threshold: int = 30
 
     created_at: datetime
+
+    @field_validator("communication", mode="before")
+    @classmethod
+    def _normalize_communication(cls, value: Any) -> dict[str, str] | None:
+        return _coerce_communication(value)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +108,14 @@ def normalize_hire_text(value: str | None, *, max_len: int) -> str | None:
     return text[:max_len]
 
 
+def _coerce_communication(value: Any) -> dict[str, str] | None:
+    """Accept a mapping or JSON TEXT column; reject essays and unknown enums."""
+    try:
+        return load_communication_value(value)
+    except CommunicationContractError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 class AgentCreate(BaseModel):
     """Payload accepted by POST /api/agents to create a new agent."""
 
@@ -106,6 +125,7 @@ class AgentCreate(BaseModel):
     role: str | None = None
     description: str | None = None
     done_fail_bar: str | None = None
+    communication: dict[str, str] | None = None
     prompt_template: str | None = None
     color: str = "#3b82f6"
     desk_x: int | None = None
@@ -137,6 +157,11 @@ class AgentCreate(BaseModel):
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
         return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
 
+    @field_validator("communication", mode="before")
+    @classmethod
+    def _normalize_communication(cls, value: Any) -> dict[str, str] | None:
+        return _coerce_communication(value)
+
 
 class AgentUpdate(BaseModel):
     """Partial update payload for PATCH /api/agents/{id}.
@@ -148,6 +173,7 @@ class AgentUpdate(BaseModel):
     role: str | None = None
     description: str | None = None
     done_fail_bar: str | None = None
+    communication: dict[str, str] | None = None
     prompt_template: str | None = None
     color: str | None = None
 
@@ -184,3 +210,8 @@ class AgentUpdate(BaseModel):
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
         return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
+
+    @field_validator("communication", mode="before")
+    @classmethod
+    def _normalize_communication(cls, value: Any) -> dict[str, str] | None:
+        return _coerce_communication(value)

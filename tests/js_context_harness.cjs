@@ -113,7 +113,7 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModConversationChrome", "BossModComposer",

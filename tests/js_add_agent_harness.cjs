@@ -29,6 +29,7 @@ const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus",
     "BossModOverlayFocus", "BossModOverlays", "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
+    "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape
     // vocabulary the refusal reads back, and the connection guard itself.
     "BossModAgentFormConnections", "BossModAgentFormBindings",

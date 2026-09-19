@@ -140,6 +140,40 @@ const BossModAgentFormBindings = (() => {
             applySuggestion();
         }
     }
+
+    /**
+     * Keep the four communication enums on the specialty default until the
+     * operator changes one. A template hydrate writes the pack block first;
+     * this only replaces values that still match the previous default.
+     *
+     * @param {HTMLElement} container
+     * @param {object|null} agent
+     * @returns {void}
+     */
+    function bindCommunicationDefaults(container, agent) {
+        const specialtyInput = container.querySelector('input[name="role"]');
+        const selects = BossModCommunication.KEYS.map((key) => (
+            container.querySelector(`[name="communication_${key}"]`)
+        ));
+        if (!specialtyInput || selects.some((node) => !node)) return;
+
+        let lastDefault = BossModCommunication.defaultFor(
+            agent ? (agent.role || '') : specialtyInput.value,
+        );
+
+        function applyDefaults() {
+            const next = BossModCommunication.defaultFor(specialtyInput.value);
+            BossModCommunication.KEYS.forEach((key, index) => {
+                const select = selects[index];
+                if (select.value === lastDefault[key]) {
+                    select.value = next[key];
+                }
+            });
+            lastDefault = next;
+        }
+
+        specialtyInput.addEventListener('input', applyDefaults);
+    }
     /**
      * Refuse a CREATE that would leave every activation type at `None`.
      *
@@ -299,6 +333,7 @@ const BossModAgentFormBindings = (() => {
         bindDuplicateNameWarning,
         bindRuntimeCorePreview,
         bindFinishLineSuggestion,
+        bindCommunicationDefaults,
         bindConnectionGuard,
     };
 })();

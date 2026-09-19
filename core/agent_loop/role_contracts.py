@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from core.agent_loop.communication_contract import communication_from_agent
 from core.agent_loop.deliverables import get_work_contract, missing_deliverables, summarize_deliverable
 from core.agent_loop.shared_handoff import peer_invisible_handoff_error
 from core.agent_loop.tool_evidence import (
@@ -228,11 +229,13 @@ def format_role_contract_block(agent: Agent) -> str:
         else "Empty done is rejected. A chat assertion is not a claim."
     )
     description_line = f"Description: {description}\n" if description else ""
+    communication = communication_from_agent(agent).prompt_block()
     return (
         "# Role contract\n"
         f"Specialty: {specialty}\n"
         f"{description_line}"
         f"Done/fail bar: {bar}\n"
+        f"{communication}\n"
         "- Prefer teammates whose specialty matches the work. "
         "Do not assign review/audit work to a writer, or writing to an auditor, "
         "unless the mismatch was confirmed.\n"

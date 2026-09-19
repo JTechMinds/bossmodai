@@ -41,7 +41,7 @@ const BossModMarketplaceSections = (() => {
     const COPY = Object.freeze({ listLabel: 'Pack sections' });
 
     /**
-     * The six sections a pack can carry, in the order they are read.
+     * The seven sections a pack can carry, in the order they are read.
      *
      * `id` is what the state holds, and it is OURS: a section id ends up in a
      * selector, and catalog text has no business in one. `half` and `key` name
@@ -79,6 +79,10 @@ const BossModMarketplaceSections = (() => {
             id: 'tools', half: null, key: null,
             label: 'Tools', sub: 'What it expects to use',
         }),
+        Object.freeze({
+            id: 'communication', half: null, key: null,
+            label: 'Communication', sub: 'How it talks',
+        }),
     ]);
 
     /**
@@ -115,15 +119,22 @@ const BossModMarketplaceSections = (() => {
      *
      * @param {object} item  A marketplace-items.js projection. Reads `sections`
      *   and `toolsHint`.
-     * @returns {Array<{spec: object, body?: string, tools?: string[]}>}
+     * @returns {Array<{spec: object, body?: string, tools?: string[],
+     *   communication?: object}>}
      */
     function available(item) {
         // ABSENT — not `[]` — on a pack that lists no tools, and an installed
         // row carries `[]` for the same fact, so the test is length and both
         // answers land in the same place.
         const tools = Array.isArray(item.toolsHint) ? item.toolsHint.filter(Boolean) : [];
+        const communication = item.communication && typeof item.communication === 'object'
+            ? item.communication
+            : null;
         return SECTIONS.map((spec) => {
             if (spec.id === 'tools') return tools.length ? { spec, tools } : null;
+            if (spec.id === 'communication') {
+                return communication ? { spec, communication } : null;
+            }
             const body = sectionText(item.sections, spec.half, spec.key);
             return body ? { spec, body } : null;
         }).filter(Boolean);
@@ -224,6 +235,12 @@ const BossModMarketplaceSections = (() => {
         if (entry.tools) {
             return h('ul', { class: 'market-detail-tools' },
                 entry.tools.map((tool) => h('li', {}, tool)));
+        }
+        if (entry.communication) {
+            return h('ul', { class: 'market-detail-tools' },
+                ['tone', 'density', 'jargon', 'audience'].map((key) => (
+                    h('li', {}, `${key}: ${entry.communication[key]}`)
+                )));
         }
         return h('p', { class: 'market-detail-text' }, entry.body);
     }
