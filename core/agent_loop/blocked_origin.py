@@ -27,6 +27,7 @@ HOST_DENY_WHY = "host deny"
 NO_PROGRESS_WHY = "no progress"
 SHELL_EXECUTOR_WHY = "Shell Executor off — needs enable"
 NEST_GIT_WHY = "Nest git has no credentials"
+NEST_GIT_BAD_CREDS_WHY = "GitHub didn’t accept that access token or SSH key"
 HOST_DENY_KIND = "blocked_host_deny"
 NO_PROGRESS_KIND = "blocked_no_progress"
 SHELL_EXECUTOR_BLOCK_KIND = "blocked_shell_executor"
@@ -48,6 +49,8 @@ _NEST_GIT_MARKERS = (
     "nest git has no credentials",
     "host git is not visible to shell",
     "browser or desktop github login is not the agent's",
+    "github didn’t accept that access token",
+    "github didn't accept that access token",
 )
 
 
@@ -99,6 +102,20 @@ def is_host_deny_result(cli_result: Any) -> bool:
         ]
     ).lower()
     return any(marker in blob for marker in _HOST_DENY_MARKERS)
+
+
+def _nest_git_block_why(cli_result: Any) -> str:
+    """Prefer the bad-creds why when the CLI error names a rejected token."""
+    data = getattr(cli_result, "data", None) or {}
+    blob = " ".join(
+        [
+            str(getattr(cli_result, "detail", "") or ""),
+            str(data.get("error") or ""),
+        ]
+    ).lower()
+    if "didn’t accept" in blob or "didn't accept" in blob:
+        return NEST_GIT_BAD_CREDS_WHY
+    return NEST_GIT_WHY
 
 
 def is_nest_git_block_result(cli_result: Any) -> bool:
@@ -172,7 +189,7 @@ def surface_cli_gate_block(
             result,
             agent=agent,
             trigger=trigger,
-            why=NEST_GIT_WHY,
+            why=_nest_git_block_why(cli_result),
             kind=NEST_GIT_BLOCK_KIND,
         )
 

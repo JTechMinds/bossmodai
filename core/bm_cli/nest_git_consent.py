@@ -6,12 +6,14 @@ gate. Probe fail does not persist host Enable On.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Literal
 
 import db
 from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
 from core.bm_cli.nest_git import (
+    auth_failed_blocked_message,
     command_needs_nest_git_auth,
     enable_host_git,
     nest_git_auth_ready,
@@ -73,6 +75,7 @@ def request_nest_git_consent(
     cwd: str | None,
     task_id: str | None,
     channel_id: str | None,
+    reason: str | None = None,
 ) -> BossModCliResult:
     """Open or reuse the nest git Enable / Add PAT/SSH card."""
     from core.bm_cli.host_path_consent import require_consent_chrome
@@ -111,7 +114,7 @@ def request_nest_git_consent(
         agent_id=agent.id,
         path=dest or NEST_GIT_GRANT_ROOT,
         grant_root=NEST_GIT_GRANT_ROOT,
-        reason=NEST_GIT_BODY,
+        reason=reason or NEST_GIT_BODY,
         command=parsed.raw,
         content=content,
         cwd=cwd,
@@ -209,6 +212,45 @@ async def resume_nest_git_consent(
             omit_origin_channel=omit_origin_channel,
         )
     return updated
+
+
+def bounce_nest_git_after_auth_failure(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd: str,
+    task_id: str | None,
+    channel_id: str | None,
+) -> BossModCliResult:
+    """Fail-closed Blocked + reopen the Nest git card. Do not wipe secrets."""
+    paused = request_nest_git_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd,
+        task_id=task_id,
+        channel_id=channel_id,
+        reason=auth_failed_blocked_message(),
+    )
+    blocked = error_result(
+        parsed.raw,
+        auth_failed_blocked_message(),
+        cwd=cwd,
+        executor="shell",
+        kind="nest_git_block",
+    )
+    if not paused.consent_required:
+        return blocked
+    data = dict(blocked.data or {})
+    card = (paused.data or {}).get("host_path_consent") or {}
+    if card:
+        data["host_path_consent"] = card
+    return replace(
+        blocked,
+        data=data,
+        consent_request_id=paused.consent_request_id,
+    )
 
 
 def named_nest_git_block_reason(

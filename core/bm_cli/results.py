@@ -162,8 +162,9 @@ def consent_required_result(
     elif nest:
         heading = "NEST GIT CONSENT REQUIRED"
         wait = (
-            "Stop and wait. The operator will Enable host git for nest or Add PAT/SSH "
-            "in chat (same as Settings → Nest git). "
+            "Stop and wait. The operator will use this computer’s Git login "
+            "or add a GitHub access token or SSH key in chat "
+            "(same as Settings → Nest git). "
             "Always-allow on a command does not skip auth. "
             "Do not invent that browser or desktop GitHub login is the agent's. "
             "Do not park @Operator as the git enabler."

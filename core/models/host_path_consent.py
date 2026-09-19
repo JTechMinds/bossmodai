@@ -112,6 +112,9 @@ class HostPathConsentRequest(BaseModel):
             card["always_allow"] = False
             if self.command:
                 card["command"] = self.command
+            note = (self.reason or "").strip()
+            if note and note != NEST_GIT_BODY:
+                card["error"] = note
         return card
 
 

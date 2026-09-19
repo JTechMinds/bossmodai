@@ -28,6 +28,10 @@ const BossModNestGitCard = (() => {
             || 'Saved once under Settings → Nest git. Approving a command once doesn’t skip this.';
     }
 
+    function errorText(card) {
+        return (card && card.error) || '';
+    }
+
     function actions(card) {
         return [
             {
@@ -104,5 +108,5 @@ const BossModNestGitCard = (() => {
         actionsEl.appendChild(row);
     }
 
-    return { isNestGitCard, title, body, hint, actions, statusLabel, showCredentialsForm };
+    return { isNestGitCard, title, body, hint, errorText, actions, statusLabel, showCredentialsForm };
 })();

@@ -100,6 +100,15 @@ const BossModConsentCard = (() => {
         if (reasonText && status === 'pending') {
             container.appendChild(reasonEl);
         }
+        if (nest && status === 'pending') {
+            const bounce = BossModNestGitCard.errorText(card);
+            if (bounce) {
+                const errEl = document.createElement('div');
+                errEl.className = 'hpc-status';
+                errEl.textContent = bounce;
+                container.appendChild(errEl);
+            }
+        }
 
         if (status !== 'pending') {
             const resolved = document.createElement('div');

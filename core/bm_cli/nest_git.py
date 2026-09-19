@@ -21,6 +21,8 @@ from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.types import ParsedCliCommand
 from core.models import Agent
 from core.models.nest_git import (
+    NEST_GIT_BAD_CREDS_HOWTO,
+    NEST_GIT_BAD_CREDS_WHY,
     NEST_GIT_BOT_EMAIL,
     NEST_GIT_BOT_NAME,
     NEST_GIT_CATEGORY,
@@ -39,6 +41,32 @@ logger = logging.getLogger(__name__)
 _AUTH_GIT_SUBCOMMANDS = frozenset({
     "push", "fetch", "pull", "clone", "ls-remote",
 })
+
+# Global git options that consume the next argv token.
+_GIT_VALUE_OPTIONS = frozenset({
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--config-env",
+    "--attr-source",
+})
+
+_AUTH_FAIL_MARKERS = (
+    "authentication failed",
+    "invalid username or password",
+    "could not read username",
+    "terminal prompts disabled",
+    "username for '",
+    "password for '",
+    "permission denied (publickey)",
+    "the requested url returned error: 401",
+    "the requested url returned error: 403",
+    "error: 401",
+    "error: 403",
+)
 
 _HOST_PASSTHROUGH_ENV = (
     "SSH_AUTH_SOCK",
@@ -118,15 +146,44 @@ def write_nest_git_secret(key: str, value: str) -> None:
     config.reload()
 
 
+def is_git_cli(parsed: ParsedCliCommand) -> bool:
+    """Return True when argv0 is git (path-stripped)."""
+    name = Path(parsed.name).name.lower()
+    return name in {"git", "git.exe"}
+
+
+def git_subcommand(args: tuple[str, ...] | list[str]) -> str:
+    """Return the git subcommand, skipping leading global options.
+
+    ``git -C dest --no-pager push`` must still classify as ``push``.
+    """
+    index = 0
+    tokens = list(args)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            key = token.split("=", 1)[0]
+            if key in _GIT_VALUE_OPTIONS and "=" not in token:
+                index += 2
+                continue
+            index += 1
+            continue
+        return token
+    return tokens[index] if index < len(tokens) else ""
+
+
 def command_needs_nest_git_auth(
     agent: Agent,
     parsed: ParsedCliCommand,
     cwd: str,
 ) -> bool:
     """Return True when this CLI is a nest remote-git op that needs auth."""
-    if parsed.name != "git":
+    if not is_git_cli(parsed):
         return False
-    subcommand = parsed.args[0] if parsed.args else ""
+    subcommand = git_subcommand(parsed.args)
     if subcommand not in _AUTH_GIT_SUBCOMMANDS:
         return False
     if is_nest_cwd(cwd):
@@ -214,7 +271,11 @@ def host_git_passthrough_env() -> dict[str, str]:
 
 
 def nest_git_shell_env(agent: Agent) -> dict[str, str]:
-    """Extra env for one nest git Shell invocation. Never log the values."""
+    """Extra env for one nest git Shell invocation. Never log the values.
+
+    Applied on the shared Shell path for every git argv — not only when the
+    nest-git gate matched — so a saved PAT still reaches ``git push``.
+    """
     del agent
     extra: dict[str, str] = {}
     pat = nest_git_pat()
@@ -226,12 +287,24 @@ def nest_git_shell_env(agent: Agent) -> dict[str, str]:
     elif host_git_is_enabled() and probe_host_git_for_shell().ok:
         extra.update(host_git_passthrough_env())
     extra.setdefault("GIT_TERMINAL_PROMPT", "0")
+    extra.setdefault("GCM_INTERACTIVE", "never")
     return extra
 
 
 def no_creds_blocked_message() -> str:
     """Return Blocked why + how-to when no auth path is ready."""
     return f"{NEST_GIT_NO_CREDS_WHY}. {NEST_GIT_HOWTO}"
+
+
+def auth_failed_blocked_message() -> str:
+    """Return Blocked why + how-to when GitHub rejected the saved creds."""
+    return f"{NEST_GIT_BAD_CREDS_WHY}. {NEST_GIT_BAD_CREDS_HOWTO}"
+
+
+def shell_output_looks_like_git_auth_failure(stdout: str, stderr: str) -> bool:
+    """Return True when git asked for a username/password or rejected auth."""
+    blob = f"{stdout or ''}\n{stderr or ''}".lower()
+    return any(marker in blob for marker in _AUTH_FAIL_MARKERS)
 
 
 def _credential_helper_visible(extra: dict[str, str]) -> bool:
@@ -280,15 +353,37 @@ def _probe_env(extra: dict[str, str]) -> dict[str, str]:
 
 
 def _pat_env(pat: str) -> dict[str, str]:
-    return {
-        "GIT_ASKPASS": str(_ensure_askpass()),
+    askpass = str(_ensure_askpass())
+    extra = {
+        "GIT_ASKPASS": askpass,
+        "SSH_ASKPASS": askpass,
         "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "never",
+        "GIT_CONFIG_NOSYSTEM": "1",
         "BOSSMOD_NEST_GIT_USERNAME": "x-access-token",
         "BOSSMOD_NEST_GIT_PASSWORD": pat,
         "GIT_AUTHOR_NAME": NEST_GIT_BOT_NAME,
         "GIT_AUTHOR_EMAIL": NEST_GIT_BOT_EMAIL,
         "GIT_COMMITTER_NAME": NEST_GIT_BOT_NAME,
         "GIT_COMMITTER_EMAIL": NEST_GIT_BOT_EMAIL,
+    }
+    extra.update(_https_username_inject_env())
+    return extra
+
+
+def _https_username_inject_env() -> dict[str, str]:
+    """HTTPS username ``x-access-token`` plus no interactive credential helper.
+
+    Token stays in askpass env, never in the rewritten URL (no log leak).
+    """
+    return {
+        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "",
+        "GIT_CONFIG_KEY_1": "credential.username",
+        "GIT_CONFIG_VALUE_1": "x-access-token",
+        "GIT_CONFIG_KEY_2": "url.https://x-access-token@github.com/.insteadOf",
+        "GIT_CONFIG_VALUE_2": "https://github.com/",
     }
 
 

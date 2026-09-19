@@ -52,7 +52,9 @@ def command_needs_shell_executor(agent: Agent, parsed: ParsedCliCommand, cwd: st
         return True
     if parsed.name != "git":
         return False
-    subcommand = parsed.args[0] if parsed.args else ""
+    from core.bm_cli.nest_git import git_subcommand
+
+    subcommand = git_subcommand(parsed.args)
     if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
         return True
     return cwd_is_nested_clone_repo(agent, cwd)
