@@ -1,20 +1,31 @@
-"""Fail-closed steer when a turn emits prose instead of decision JSON.
+"""Fail-closed steer when a turn emits prose or an invalid decision object.
 
-Prose status is not a spinning action and must not loop. Soft-block
-behavior is unchanged — this only stops parse-failure from feeding it.
+Prose status and unknown top-level decision keys are not spinning actions
+and must not loop. Soft-block behavior is unchanged — this only stops
+parse-failure from feeding it.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-ParseFailureKind = Literal["prose_status", "invalid_json"]
+ParseFailureKind = Literal["prose_status", "invalid_json", "invalid_decision"]
 
 PROSE_STATUS_STEER = (
     "Emit the required JSON decision/action shape for this turn. "
     "Prose status is not a valid turn result. "
     "Do not park @Operator. Do not invent a desk deny."
 )
+
+INVALID_DECISION_STEER = (
+    "Emit the required JSON decision/action shape for this turn. "
+    "Do not invent approval fields. "
+    "Approval comes from approval_required plus a request id from the tool, "
+    "not from invented JSON fields. "
+    "Do not park @Operator. Do not invent a desk deny."
+)
+
+_COMPACT_ROOT_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th"})
 
 
 def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
@@ -25,14 +36,25 @@ def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
     return "invalid_json"
 
 
+def kind_for_schema_error(
+    error: str,
+    payload: dict[str, Any] | None = None,
+) -> ParseFailureKind:
+    """Unknown top-level keys are an invalid decision, not malformed JSON."""
+    extra = set(payload or ()) - _COMPACT_ROOT_KEYS
+    if extra or "unexpected top-level keys" in (error or ""):
+        return "invalid_decision"
+    return "invalid_json"
+
+
 def parse_failure_should_repair(
     *,
     kind: str,
     repair_attempts: int,
     max_repairs: int,
 ) -> bool:
-    """Prose status fail-closes immediately. Malformed JSON may repair."""
-    if kind == "prose_status":
+    """Prose status and invalid decisions fail-close. Malformed JSON may repair."""
+    if kind in {"prose_status", "invalid_decision"}:
         return False
     return repair_attempts < max_repairs
 
@@ -40,11 +62,15 @@ def parse_failure_should_repair(
 def parse_failure_steer(kind: str, snippet: str = "") -> str:
     """Return the fail-closed steer for a parse failure."""
     extra = (snippet or "").strip()
+    if kind == "invalid_decision":
+        base = INVALID_DECISION_STEER
+    else:
+        base = PROSE_STATUS_STEER
     if kind == "prose_status":
-        return PROSE_STATUS_STEER
+        return base
     if extra:
-        return f"{PROSE_STATUS_STEER} Parser error: {extra}"
-    return PROSE_STATUS_STEER
+        return f"{base} Parser error: {extra}"
+    return base
 
 
 def parse_failed_payload(
@@ -52,24 +78,34 @@ def parse_failed_payload(
     *,
     decision: bool,
     snippet: str | None = None,
-) -> dict[str, str]:
+    kind: ParseFailureKind | None = None,
+    thought: str = "",
+    candidate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the structured ``_parse_failed`` payload used by both contracts."""
-    kind = classify_json_parse_failure(raw_response)
+    resolved = kind or classify_json_parse_failure(raw_response)
     text = (snippet if snippet is not None else raw_response)[:200]
     if decision:
-        return {
+        payload: dict[str, Any] = {
             "decision": "_parse_failed",
-            "thought": "",
+            "thought": thought,
             "_raw_snippet": text,
-            "_parse_kind": kind,
+            "_parse_kind": resolved,
         }
-    thought = "No action in response" if kind == "prose_status" else "Failed to parse response"
-    return {
-        "action": "_parse_failed",
-        "thought": thought,
-        "_raw_snippet": text,
-        "_parse_kind": kind,
-    }
+    else:
+        if not thought:
+            thought = (
+                "No action in response" if resolved == "prose_status" else "Failed to parse response"
+            )
+        payload = {
+            "action": "_parse_failed",
+            "thought": thought,
+            "_raw_snippet": text,
+            "_parse_kind": resolved,
+        }
+    if candidate is not None:
+        payload["_candidate_payload"] = candidate
+    return payload
 
 
 def _strip_fences(raw_response: str) -> str:

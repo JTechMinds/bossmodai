@@ -200,23 +200,13 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         try:
             cli_call = maybe_parse_bm_cli_call(parsed)
         except (ValidationError, ValueError) as exc:
-            return {
-                "decision": "_parse_failed",
-                "thought": _candidate_thought(parsed),
-                "_raw_snippet": _validation_message(exc)[:200],
-                "_candidate_payload": parsed,
-            }
+            return _schema_failed_payload(raw_response, parsed, exc)
         if cli_call is not None:
             return cli_call.model_dump()
         try:
             host_call = maybe_parse_host_access_call(parsed)
         except (ValidationError, ValueError) as exc:
-            return {
-                "decision": "_parse_failed",
-                "thought": _candidate_thought(parsed),
-                "_raw_snippet": _validation_message(exc)[:200],
-                "_candidate_payload": parsed,
-            }
+            return _schema_failed_payload(raw_response, parsed, exc)
         if host_call is not None:
             return host_call.model_dump()
 
@@ -226,14 +216,28 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
     except (ValidationError, ValueError) as exc:
         error = _validation_message(exc)
         logger.warning("Invalid decision payload: %s", error)
-        return {
-            "decision": "_parse_failed",
-            "thought": _candidate_thought(parsed),
-            "_raw_snippet": error[:200],
-            "_candidate_payload": parsed,
-        }
+        return _schema_failed_payload(raw_response, parsed, exc)
 
     return decision.model_dump()
+
+
+def _schema_failed_payload(
+    raw_response: str,
+    parsed: dict[str, Any],
+    exc: Exception,
+) -> dict[str, Any]:
+    """Return a typed ``_parse_failed`` payload for a schema-invalid object."""
+    from core.agent_loop.parse_steer import kind_for_schema_error, parse_failed_payload
+
+    error = _validation_message(exc)
+    return parse_failed_payload(
+        raw_response,
+        decision=True,
+        snippet=error[:200],
+        kind=kind_for_schema_error(error, parsed),
+        thought=_candidate_thought(parsed),
+        candidate=parsed,
+    )
 
 
 def _parse_json_object(raw_response: str) -> dict[str, Any]:

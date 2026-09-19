@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -26,6 +27,7 @@ from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
 from core.models.cli_policy import CLI_APPROVAL_KIND
+from core.models.message import HUMAN_SENDER_ID
 from tests.test_consent_origin import (
     _ResumeServices,
     _agent_and_state,
@@ -283,6 +285,115 @@ async def test_execution_turn_cli_on_thread_origin_posts_approval_in_channel(
     assert not any(
         item.kind == CLI_APPROVAL_KIND
         for item in db.list_notifications(agent_id=gerry.id, chat_visible=True)
+    )
+
+
+@pytest.mark.asyncio
+async def test_decision_turn_approval_live_paints_focus_without_bell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Create-time persist + live WS must paint Focus Approve. No bell poke."""
+    jim, state = _agent_and_state(name="Jim")
+    chats: list[dict[str, Any]] = []
+    activities: list[dict[str, Any]] = []
+
+    async def _capture_chat(**kwargs: Any) -> None:
+        chats.append(kwargs)
+
+    async def _capture_activity(**kwargs: Any) -> None:
+        activities.append(kwargs)
+
+    monkeypatch.setattr(
+        "core.runtime.events.runtime_events.broadcast_chat_message",
+        _capture_chat,
+    )
+    monkeypatch.setattr(
+        "core.runtime.events.runtime_events.broadcast_activity",
+        _capture_activity,
+    )
+    _script_completions(
+        monkeypatch,
+        ['{"act":"cli","data":{"cmd":"%s"},"th":"install"}' % APPROVAL_CMD],
+    )
+    outcome = await run_turn(
+        jim,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Continue.",
+            "from_name": "Human",
+            "from_id": HUMAN_SENDER_ID,
+            "source_channel": "chat",
+        },
+    )
+    assert outcome.trigger_status == "completed"
+    assert outcome.result.get("event") == "cli_approval_required"
+    approval_id = outcome.result.get("approval_request_id")
+    stored = db.get_cli_approval_request(approval_id)
+    assert stored is not None
+    assert stored.channel_id is None
+    assert db.has_approval_notification(stored.id)
+    focus = [
+        item
+        for item in db.list_notifications(agent_id=jim.id, chat_visible=True)
+        if item.kind == CLI_APPROVAL_KIND
+    ]
+    assert len(focus) == 1
+    painted = [item for item in chats if item.get("cli_approval")]
+    assert len(painted) == 1
+    assert painted[0]["cli_approval"]["id"] == stored.id
+    assert painted[0]["cli_approval"]["kind"] == CLI_APPROVAL_KIND
+    assert painted[0]["notification_kind"] == CLI_APPROVAL_KIND
+    assert painted[0]["agent_id"] == jim.id
+    assert any(item.get("event") == "cli_approval_required" for item in activities)
+
+
+@pytest.mark.asyncio
+async def test_decision_turn_approval_live_paints_origin_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jim, state = _agent_and_state(name="Jim")
+    channel = _channel_for(jim.id)
+    channels: list[dict[str, Any]] = []
+
+    async def _capture_channel(**kwargs: Any) -> None:
+        channels.append(kwargs)
+
+    monkeypatch.setattr(
+        "core.runtime.events.runtime_events.broadcast_channel_message",
+        _capture_channel,
+    )
+    _script_completions(
+        monkeypatch,
+        ['{"act":"cli","data":{"cmd":"%s"},"th":"install"}' % APPROVAL_CMD],
+    )
+    outcome = await run_turn(
+        jim,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Continue.",
+            "from_name": "Human",
+            "from_id": HUMAN_SENDER_ID,
+            "source_channel": "channel",
+            "channel_id": channel.id,
+        },
+    )
+    assert outcome.result.get("event") == "cli_approval_required"
+    stored = db.get_cli_approval_request(outcome.result.get("approval_request_id"))
+    assert stored is not None
+    assert stored.channel_id == channel.id
+    cards = [
+        item for item in db.list_channel_messages(channel.id) if item.approval_id == stored.id
+    ]
+    assert len(cards) == 1
+    painted = [item for item in channels if item.get("cli_approval")]
+    assert len(painted) == 1
+    assert painted[0]["cli_approval"]["id"] == stored.id
+    assert painted[0]["channel_id"] == channel.id
+    assert not any(
+        item.kind == CLI_APPROVAL_KIND
+        for item in db.list_notifications(agent_id=jim.id, chat_visible=True)
     )
 
 
