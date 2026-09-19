@@ -203,14 +203,14 @@ const BossModNeeds = (() => {
                 const bodyText = await res.text();
                 if (!res.ok) {
                     const gone = need.kind === 'approval' && (
-                        (typeof BossModConsentCard !== 'undefined'
-                            && BossModConsentCard.isGoneApprovalResponse(res, bodyText))
-                        || res.status === 404
+                        res.status === 404
                         || /not found or already resolved/i.test(bodyText || '')
                     );
                     if (gone) {
-                        if (typeof BossModConsentCard !== 'undefined') {
-                            BossModConsentCard.collapseGrantedConsentCards({
+                        const collapse = globalThis.BossModConsentCard
+                            && globalThis.BossModConsentCard.collapseGrantedConsentCards;
+                        if (typeof collapse === 'function') {
+                            collapse({
                                 kind: 'cli_approval',
                                 status: 'gone',
                                 command: need.sub || '',

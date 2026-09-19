@@ -177,11 +177,7 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         [
             { label: 'Approve', path: 'approve', primary: true },
-            {
-                label: 'Always allow',
-                path: 'always-allow',
-                hidden: card.always_allow === false || card.always_allow == null,
-            },
+            { label: 'Always allow', path: 'always-allow', hidden: card.always_allow === false || card.always_allow == null },
             { label: 'Reject', path: 'reject' },
         ].forEach((item) => {
             const btn = document.createElement('button');
