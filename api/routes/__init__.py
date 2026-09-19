@@ -14,6 +14,7 @@ from api.routes import (
     company_files,
     host_path_consent,
     needs,
+    nest_git,
     runtime,
     settings,
     tasks,
@@ -30,5 +31,6 @@ router.include_router(company_files.router)
 router.include_router(tasks.router)
 router.include_router(cli_policy.router)
 router.include_router(host_path_consent.router)
+router.include_router(nest_git.router)
 router.include_router(needs.router)
 router.include_router(settings.router)

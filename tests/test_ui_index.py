@@ -80,6 +80,7 @@ SETTINGS_SCRIPTS = [
     "js/settings/settings-runtime-contracts-actions.js",
     "js/settings/settings-runtime-contracts.js",
     "js/settings/settings-telegram.js",
+    "js/settings/settings-nest-git.js",
     "js/settings/settings-view.js",
 ]
 
@@ -604,6 +605,7 @@ def test_settings_takeover_and_banners_survive() -> None:
 # failure this phase could introduce.
 NON_PREFIXED_GLOBALS = (
     "SettingsView", "AgentPanel", "CliPolicySection", "CliPolicySimulator",
+    "NestGitSection",
 )
 
 MODULE_DEF = re.compile(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(", re.M)

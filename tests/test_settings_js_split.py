@@ -17,6 +17,7 @@ SECTION_FILES = {
     "settings/settings-advanced.js": "AdvancedSystemSection",
     "settings/settings-runtime-contracts.js": "RuntimeContractsSection",
     "settings/settings-telegram.js": "TelegramSection",
+    "settings/settings-nest-git.js": "NestGitSection",
 }
 
 SHELL_GLOBALS = {
@@ -59,6 +60,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-runtime-contracts-actions.js",
     "js/settings/settings-runtime-contracts.js",
     "js/settings/settings-telegram.js",
+    "js/settings/settings-nest-git.js",
     "js/settings/settings-view.js",
     "js/shell/shell.js",
 ]

@@ -87,6 +87,15 @@ def test_secret_settings_not_plaintext_in_sqlite() -> None:
     settings = {row.key: row.value for row in db.get_settings()}
     assert settings["telegram_bot_token"] == token
 
+    pat = "ghp_nest-git-secret-wrap-test"
+    db.set_setting("nest_git_pat", pat, "nest_git")
+    stored_pat = _raw_value("SELECT value FROM settings WHERE key = $1", ["nest_git_pat"])
+    assert stored_pat is not None
+    assert pat not in stored_pat
+    assert is_encrypted(stored_pat)
+    settings = {row.key: row.value for row in db.get_settings()}
+    assert settings["nest_git_pat"] == pat
+
     api_token = db.ensure_local_api_token()
     assert api_token
     raw_api = _raw_value("SELECT value FROM settings WHERE key = $1", ["local_api_token"])

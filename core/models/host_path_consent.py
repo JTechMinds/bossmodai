@@ -5,6 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from core.models.nest_git import (
+    NEST_GIT_ADD_LABEL,
+    NEST_GIT_BODY,
+    NEST_GIT_CARD_COPY,
+    NEST_GIT_ENABLE_HINT,
+    NEST_GIT_ENABLE_LABEL,
+    NEST_GIT_KIND,
+    NEST_GIT_TITLE,
+)
 from pydantic import BaseModel, ConfigDict
 
 WORKSPACE_PREFERENCE_KIND = "workspace_preference"
@@ -94,6 +103,15 @@ class HostPathConsentRequest(BaseModel):
             card["always_allow"] = False
             if self.command:
                 card["command"] = self.command
+        elif kind == NEST_GIT_KIND:
+            card["title"] = NEST_GIT_TITLE
+            card["body"] = NEST_GIT_BODY
+            card["enable_label"] = NEST_GIT_ENABLE_LABEL
+            card["add_label"] = NEST_GIT_ADD_LABEL
+            card["enable_hint"] = NEST_GIT_ENABLE_HINT
+            card["always_allow"] = False
+            if self.command:
+                card["command"] = self.command
         return card
 
 
@@ -109,5 +127,10 @@ def consent_turn_event(agent_name: str, card: dict[str, Any] | None) -> tuple[st
         return (
             "shell_executor_consent_required",
             f"{name} {SHELL_EXECUTOR_CARD_COPY}",
+        )
+    if kind == NEST_GIT_KIND:
+        return (
+            "nest_git_consent_required",
+            f"{name} {NEST_GIT_CARD_COPY}",
         )
     return "host_path_consent_required", f"{name} requests host-path access: {path}"

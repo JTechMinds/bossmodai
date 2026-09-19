@@ -18,6 +18,7 @@ from core.models.host_path_consent import (
     HostPathConsentRequest,
     consent_turn_event,
 )
+from core.models.nest_git import NEST_GIT_CARD_COPY, NEST_GIT_KIND
 
 NotificationKind = Literal[
     "receipt",
@@ -589,6 +590,7 @@ def _build_consent_notification(
         "host_path_consent_required",
         "workspace_preference_required",
         "shell_executor_consent_required",
+        "nest_git_consent_required",
     }:
         return None
     card = result.get("host_path_consent") if isinstance(result.get("host_path_consent"), dict) else {}
@@ -942,6 +944,9 @@ def _consent_card_content(agent_name: str, card: dict[str, Any]) -> str:
     if card.get("kind") == SHELL_EXECUTOR_KIND:
         _, content = consent_turn_event(agent_name, card)
         return content or f"{agent_name} {SHELL_EXECUTOR_CARD_COPY}"
+    if card.get("kind") == NEST_GIT_KIND:
+        _, content = consent_turn_event(agent_name, card)
+        return content or f"{agent_name} {NEST_GIT_CARD_COPY}"
     if card.get("kind") == WORKSPACE_PREFERENCE_KIND:
         content = f"{agent_name} needs a workspace preference for {path}."
         return f"{content} {reason}" if reason else content
@@ -985,6 +990,8 @@ def _consent_sibling_card_open(
         )
     if kind == SHELL_EXECUTOR_KIND:
         return _shell_executor_card_already_open(channel_id, request.id)
+    if kind == NEST_GIT_KIND:
+        return _nest_git_card_already_open(channel_id, request.id)
     grant_root = str(request.grant_root or "").strip()
     return bool(grant_root and _grant_root_already_has_card(grant_root, channel_id, request.id))
 
@@ -1043,6 +1050,26 @@ def _shell_executor_card_already_open(
         if sibling.id == consent_id:
             continue
         if (sibling.card_kind or "") != SHELL_EXECUTOR_KIND:
+            continue
+        if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
+            continue
+        if db.has_consent_notification(sibling.id):
+            return True
+    return False
+
+
+def _nest_git_card_already_open(
+    channel_id: str | None,
+    consent_id: str,
+) -> bool:
+    """Return True when another nest git card is already in this thread."""
+    current = db.get_consent_request(consent_id)
+    agent_id = current.agent_id if current is not None else None
+    pending = db.list_consent_requests(agent_id=agent_id, status="pending", limit=80)
+    for sibling in pending:
+        if sibling.id == consent_id:
+            continue
+        if (sibling.card_kind or "") != NEST_GIT_KIND:
             continue
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue

@@ -107,6 +107,13 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Empty = no extra host access (fail-closed). Not a full host mount.
     ("workspace_host_roots", "", "cli_policy"),
 
+    # ── Nest git (self-host remotes) ──
+    # Host Enable stays off until a Shell probe sees a credential helper
+    # or SSH agent. PAT/SSH are secret settings (bm1 wrap).
+    ("nest_git_host_enabled", "false", "nest_git"),
+    ("nest_git_pat", "", "nest_git"),
+    ("nest_git_ssh_key", "", "nest_git"),
+
     # ── Agent defaults ──
     ("default_spawn_x", "14", "simulation"),
     ("default_spawn_y", "9", "simulation"),
