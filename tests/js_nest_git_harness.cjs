@@ -12,8 +12,9 @@ global.BossModFormat = {
     escapeAttribute: (value) => String(value ?? "").replace(/"/g, "&quot;"),
 };
 
-const [domPath, consentPath, settingsPath] = process.argv.slice(2);
+const [domPath, nestPath, consentPath, settingsPath] = process.argv.slice(2);
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
+eval(`${fs.readFileSync(nestPath, "utf8")}\n;global.BossModNestGitCard = BossModNestGitCard;\n`);
 eval(`${fs.readFileSync(consentPath, "utf8")}\n;global.BossModConsentCard = BossModConsentCard;\n`);
 eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGitSection;\n`);
 

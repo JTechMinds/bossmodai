@@ -52,7 +52,7 @@ const BossModConsentCard = (() => {
     }
 
     function isNestGitCard(card) {
-        return cardKind(card) === 'nest_git';
+        return typeof BossModNestGitCard !== 'undefined' && BossModNestGitCard.isNestGitCard(card);
     }
 
     function requireApi(api) {
@@ -79,7 +79,7 @@ const BossModConsentCard = (() => {
         title.textContent = workspace
             ? (card.title || 'Work in your workspace?')
             : (shell ? (card.title || 'Enable Shell Executor?')
-                : (nest ? (card.title || 'Enable host git for nest?') : 'Host path consent'));
+                : (nest ? BossModNestGitCard.title(card) : 'Host path consent'));
         const pathEl = document.createElement('div');
         pathEl.className = 'hpc-path';
         pathEl.textContent = (shell || nest)
@@ -91,9 +91,7 @@ const BossModConsentCard = (() => {
             ? (card.body || card.reason || "Host paths stay safer if we clone (or branch) into the agent's workspace first. Editing the host folder directly is allowed but not advised.")
             : (shell
                 ? (card.body || card.reason || 'Turns on Shell Executor for the company — same as Settings → CLI policy. CLI policy still applies after (not a blanket allow-all). Validate-on-clone needs pytest and local git add/commit on the locked workspace copy.')
-                : (nest
-                    ? (card.body || card.reason || 'Remote nest git (typically push) needs credentials the Shell can see. Enable host git after a credential helper or SSH agent is visible to Shell, or add a PAT/SSH. Both write Settings → Nest git. Always-allow on a command does not skip auth. Browser or desktop GitHub login is not the agent\'s.')
-                    : (card.reason || '')));
+                : (nest ? BossModNestGitCard.body(card) : (card.reason || '')));
         container.appendChild(title);
         container.appendChild(pathEl);
         const reasonText = workspace || shell || nest
@@ -115,7 +113,7 @@ const BossModConsentCard = (() => {
         actions.className = 'host-path-consent-actions';
         const buttons = workspace
             ? workspacePreferenceActions(card)
-            : (nest ? nestGitActions(card) : (shell ? shellExecutorActions(card) : [
+            : (nest ? BossModNestGitCard.actions(card) : (shell ? shellExecutorActions(card) : [
             { label: 'Allow once', path: 'allow-once' },
             {
                 label: 'Always allow (for all agents)',
@@ -142,7 +140,7 @@ const BossModConsentCard = (() => {
             const hintEl = document.createElement('div');
             hintEl.className = 'hpc-hint';
             hintEl.textContent = nest
-                ? (card.enable_hint || 'same as Settings → Nest git. Always-allow does not skip auth.')
+                ? BossModNestGitCard.hint(card)
                 : (card.enable_hint || 'same as Settings. CLI policy still applies after.');
             container.appendChild(hintEl);
         }
@@ -348,20 +346,6 @@ const BossModConsentCard = (() => {
         ];
     }
 
-    function nestGitActions(card) {
-        return [
-            {
-                label: (card && card.enable_label) || 'Enable host git for nest',
-                path: 'enable',
-                primary: true,
-            },
-            {
-                label: (card && card.add_label) || 'Add PAT/SSH',
-                path: 'credentials',
-            },
-        ];
-    }
-
     function consentStatusLabel(card) {
         const status = card.status || 'pending';
         const workspace = isWorkspacePreferenceCard(card);
@@ -372,9 +356,7 @@ const BossModConsentCard = (() => {
             return card.decision_note || (workspace ? 'Cancelled' : 'Denied');
         }
         if (status === 'enabled') {
-            if (isNestGitCard(card)) {
-                return card.decision_note || 'Nest git auth ready (Settings → Nest git).';
-            }
+            if (isNestGitCard(card)) return BossModNestGitCard.statusLabel(card);
             return card.decision_note || 'Shell Executor on (company-wide). CLI policy still applies.';
         }
         if (status === 'cloned') return card.clone_dest ? `Cloned into ${card.clone_dest}` : 'Cloned into workspace';
@@ -388,7 +370,13 @@ const BossModConsentCard = (() => {
     async function decideHostPathConsent(container, card, action, actions, api) {
         requireApi(api);
         if (isNestGitCard(card) && action === 'credentials') {
-            showNestGitCredentialsForm(container, card, actions, api);
+            BossModNestGitCard.showCredentialsForm(container, card, actions, api, (updated) => {
+                container.replaceChildren();
+                renderHostPathConsentCard(container, updated, api);
+                collapseRelatedConsentCards(container, updated);
+                collapseGrantedConsentCards(updated);
+                if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
+            });
             return;
         }
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
@@ -417,66 +405,6 @@ const BossModConsentCard = (() => {
             note.textContent = err?.message || 'Consent update failed.';
             container.appendChild(note);
         }
-    }
-
-    function showNestGitCredentialsForm(container, card, actions, api) {
-        requireApi(api);
-        actions.replaceChildren();
-        const pat = document.createElement('input');
-        pat.type = 'password';
-        pat.placeholder = 'PAT';
-        pat.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
-        const ssh = document.createElement('textarea');
-        ssh.rows = 3;
-        ssh.placeholder = 'SSH private key';
-        ssh.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
-        const row = document.createElement('div');
-        row.className = 'host-path-consent-actions';
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'hpc-action hpc-action-primary';
-        save.textContent = 'Save to Settings';
-        const settings = document.createElement('button');
-        settings.type = 'button';
-        settings.className = 'hpc-action';
-        settings.textContent = 'Settings → Nest git';
-        settings.addEventListener('click', () => {
-            if (typeof SettingsView !== 'undefined' && SettingsView.open) {
-                SettingsView.open('nest-git', { focus: 'pat' });
-            }
-        });
-        save.addEventListener('click', async () => {
-            save.disabled = true;
-            settings.disabled = true;
-            try {
-                const res = await api(`/api/nest-git/${card.id}/credentials`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pat: pat.value, ssh_key: ssh.value }),
-                });
-                if (!res.ok) throw new Error((await res.text()) || 'Consent update failed.');
-                const updated = await res.json();
-                pat.value = '';
-                ssh.value = '';
-                container.replaceChildren();
-                renderHostPathConsentCard(container, updated, api);
-                collapseRelatedConsentCards(container, updated);
-                collapseGrantedConsentCards(updated);
-                if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
-            } catch (err) {
-                save.disabled = false;
-                settings.disabled = false;
-                const note = document.createElement('div');
-                note.className = 'hpc-status';
-                note.textContent = err?.message || 'Consent update failed.';
-                container.appendChild(note);
-            }
-        });
-        row.appendChild(save);
-        row.appendChild(settings);
-        actions.appendChild(pat);
-        actions.appendChild(ssh);
-        actions.appendChild(row);
     }
 
     function collapseRelatedConsentCards(container, card) {

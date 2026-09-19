@@ -292,6 +292,7 @@ def test_card_and_settings_harness() -> None:
             "node",
             str(Path(__file__).resolve().parent / "js_nest_git_harness.cjs"),
             str(root / "ui" / "static" / "js" / "core" / "dom.js"),
+            str(root / "ui" / "static" / "js" / "core" / "consent-card-nest-git.js"),
             str(root / "ui" / "static" / "js" / "core" / "consent-card.js"),
             str(root / "ui" / "static" / "js" / "settings" / "settings-nest-git.js"),
         ],
