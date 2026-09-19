@@ -16,10 +16,10 @@
  * transcript that formatted `**x**` for one speaker and not the other would be
  * two renderers again, and a pasted log is worth a fence whoever pasted it.
  *
- * The name is chrome, not prose. It sits outside the paragraph bubble with a
- * color-coded initial to its left, bottom-aligned with the name, so a labelled
- * turn reads as `[face] [Name]` above the body rather than a name buried in
- * the paragraph.
+ * The name is chrome, not prose. It sits above the paragraph bubble as a
+ * quiet gray chip with a border. A color-coded initial sits lower-left
+ * beside the bubble, bottom-aligned with it, so a labelled turn reads as
+ * a name over `[face] [bubble]` rather than a face stacked on the name row.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -72,32 +72,26 @@ const BossModMessage = (() => {
         const showName = Boolean(message.showAuthor);
         const faceName = label || (author === 'human' ? 'You' : 'Agent');
         const color = message.authorColor || null;
-        const tint = BossModAvatar.tintFor(color);
         const withFace = author === 'human' || author === 'agent';
         const bubble = h('div', { class: `msg msg-${author}` },
             body,
             createdAt
                 ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
                 : null);
-        const chrome = (withFace || showName)
-            ? h('div', { class: 'msg-chrome' },
-                withFace
-                    ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
-                        BossModAvatar.create({ name: faceName, color, size: 'sm' }))
-                    : null,
-                showName
-                    ? h('div', {
-                        class: 'msg-author',
-                        style: author === 'human' ? null : `color:${tint.ink}`,
-                    }, label || 'Unknown')
-                    : null)
-            : null;
 
         return h('div', {
             class: `msg-turn msg-turn-${author}`,
             'data-message-key': key || null,
         },
-            h('div', { class: 'msg-stack' }, chrome, bubble));
+            withFace
+                ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
+                    BossModAvatar.create({ name: faceName, color, size: 'sm' }))
+                : null,
+            h('div', { class: 'msg-stack' },
+                showName
+                    ? h('div', { class: 'msg-author' }, label || 'Unknown')
+                    : null,
+                bubble));
     }
 
     return { renderMessage };

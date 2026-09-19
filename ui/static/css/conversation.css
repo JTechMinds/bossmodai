@@ -302,13 +302,13 @@
 
 /* ─── Messages ─── */
 
-/* The turn is the column: `[face] [Name]` chrome, then the paragraph bubble.
-   `.msg` is the bubble alone so a name cannot sit inside the prose. */
+/* The turn is the row: initial lower-left beside the bubble, name chip above.
+   `.msg` is the bubble alone so a name cannot sit inside the prose.
+   flex-end keeps the face on the bubble's bottom, not stacked on the name. */
 .msg-turn {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 8px;
   max-width: 72%;
 }
 
@@ -319,13 +319,6 @@
 .msg-turn-other {
   align-self: center;
   max-width: 92%;
-}
-
-/* Face and name share one row so the initial can sit on the name's bottom. */
-.msg-chrome {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
 }
 
 .msg-face {
@@ -353,13 +346,18 @@
    `breaks: true` rendered every newline the operator typed twice — once as a
    <br>, once as the literal character it came from. */
 
-/* Chrome, not body prose. Agent ink is the derived tint on the node;
-   the operator keeps --blue-ink so the name matches their bubble. */
+/* Quiet name chip: a tad darker than the bubble's --bg, with a border so
+   it is not bare tinted text. Colour lives on the letter face, not here. */
 .msg-author {
   margin: 0;
+  align-self: flex-start;
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--btn-face-hover);
   font-size: 12px;
   font-weight: 400;
-  line-height: 1.2;
+  line-height: 1.4;
   color: var(--muted);
 }
 
@@ -380,9 +378,8 @@
   color: var(--blue-ink);
 }
 
-/* The name sits outside the tint, so --blue-ink is on the turn. Time stays
+/* The name chip sits outside the tint and keeps the shared gray. Time stays
    inside the bubble: --hint measures only 4.19:1 on --accent-bg. */
-.msg-turn-human .msg-author,
 .msg-human .msg-time { color: var(--blue-ink); }
 
 /* The tint's own ink for everything markdown paints in the operator's bubble
@@ -676,7 +673,7 @@
   max-width: 100%;
   margin: 0 1px;
   padding: 1px 6px 1px 3px;
-  border: 0;
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg);
   color: inherit;

@@ -167,32 +167,51 @@ async function main() {
     if (bodies().join("|") !== "from Ada") throw new Error("Ada must load");
 
     const adaTurn = conversation.element.querySelector(".msg-turn-agent");
-    const adaChrome = adaTurn && adaTurn.querySelector(".msg-chrome");
     const adaFace = adaTurn && adaTurn.querySelector(".msg-face");
     const adaName = adaTurn && adaTurn.querySelector(".msg-author");
     const adaBubble = adaTurn && adaTurn.querySelector(".msg");
+    const adaStack = adaTurn && adaTurn.querySelector(".msg-stack");
     const nameOutsideBubble = Boolean(
-        adaName && adaBubble && !adaBubble.contains(adaName)
-        && adaChrome && adaChrome.contains(adaName)
-        && adaChrome.parentNode && adaChrome.parentNode.classList.contains("msg-stack")
+        adaName && adaBubble && adaStack
+        && !adaBubble.contains(adaName)
+        && adaStack.contains(adaName)
+        && adaStack.contains(adaBubble)
+        && adaStack.children[0] === adaName
     );
-    const faceLeftOfName = Boolean(
-        adaFace && adaName && adaChrome
-        && adaChrome.contains(adaFace)
-        && adaChrome.children[0] === adaFace
+    const faceLowerLeftBesideBubble = Boolean(
+        adaFace && adaBubble && adaStack
+        && adaTurn.children[0] === adaFace
+        && adaTurn.children[1] === adaStack
+        && !adaStack.contains(adaFace)
+        && !adaBubble.contains(adaFace)
     );
-    const nameIsChrome = Boolean(
+    const nameChipQuiet = Boolean(
         adaName && adaName.textContent === "Ada"
-        && adaName.getAttribute("style")
-        && /color:/.test(adaName.getAttribute("style"))
+        && !adaName.getAttribute("style")
     );
+    const conversationCss = fs.readFileSync(
+        require("path").join(__dirname, "..", "ui", "static", "css", "conversation.css"),
+        "utf8",
+    );
+    const authorRule = conversationCss.split(".msg-author {")[1].split("}")[0];
+    const nameChipBorder = /background:\s*var\(--btn-face-hover\)/.test(authorRule)
+        && /border:\s*1px solid var\(--line-strong\)/.test(authorRule)
+        && !/border:\s*0/.test(authorRule)
+        && !/background:\s*none/.test(authorRule);
+    if (!nameChipBorder) throw new Error(`name chip+border missing: ${authorRule}`);
+    const turnRule = conversationCss.split(".msg-turn {")[1].split("}")[0];
+    const faceBottomAligned = /align-items:\s*flex-end/.test(turnRule)
+        && !/flex-direction:\s*column/.test(turnRule);
+    if (!faceBottomAligned) throw new Error(`initial must sit lower-left: ${turnRule}`);
     const agentNameIsChromeOutside = Boolean(
-        adaTurn && adaFace && nameOutsideBubble && faceLeftOfName && nameIsChrome
+        adaTurn && adaFace && nameOutsideBubble && faceLowerLeftBesideBubble
+        && nameChipQuiet && nameChipBorder && faceBottomAligned
     );
     if (!agentNameIsChromeOutside) {
         throw new Error(
             `agent name chrome wrong: face=${Boolean(adaFace)} name=${adaName && adaName.textContent} `
-            + `outside=${nameOutsideBubble} left=${faceLeftOfName} tinted=${nameIsChrome}`
+            + `outside=${nameOutsideBubble} lowerLeft=${faceLowerLeftBesideBubble} `
+            + `chip=${nameChipQuiet}`
         );
     }
 
@@ -718,6 +737,8 @@ async function main() {
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
         agentNameIsChromeOutside,
+        nameChipBorder,
+        faceLowerLeftBesideBubble,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,
         escapeCancelsRenameWithoutSaving,
