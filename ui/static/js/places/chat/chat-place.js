@@ -84,6 +84,10 @@ const BossModChatPlace = (() => {
             // The shell focuses this after navigating; exactly one per place.
             el.append(h('h1', { class: 'visually-hidden', tabindex: '-1' }, 'Chat'), bodyEl);
 
+            if (typeof BossModMentions !== 'undefined') {
+                BossModMentions.configure({ store: ctx.store, navigate: ctx.navigate });
+            }
+
             conversation = BossModConversation.createConversation({
                 store: ctx.store,
                 bus: ctx.bus,
@@ -119,6 +123,7 @@ const BossModChatPlace = (() => {
             disposers.splice(0).forEach((off) => off());
             if (conversation) conversation.destroy();
             conversation = null;
+            if (typeof BossModMentions !== 'undefined') BossModMentions.configure(null);
             // The column must not survive a navigation away from Chat: the
             // shell hides the element, but the subscriptions would leak.
             if (contextColumn) contextColumn.destroy();

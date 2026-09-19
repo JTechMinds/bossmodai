@@ -303,6 +303,7 @@
 /* ─── Messages ─── */
 
 .msg {
+  position: relative;
   max-width: 72%;
   padding: 8px 12px;
   border-radius: 14px;
@@ -508,6 +509,7 @@
    derived from, and a multi-line draft breaking the alignment is a transient
    the operator is causing on purpose. */
 .composer {
+  position: relative;
   flex: 0 0 auto;
   min-height: var(--dock);
   padding: 10px 16px;
@@ -611,6 +613,77 @@
 }
 
 .composer-error.hidden { display: none; }
+
+/* ─── Mentions: the same chip-plus-name mark as an agent face ─── */
+
+.mention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 0 7px 0 3px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+span.mention-pill { cursor: default; }
+
+.mention-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-picker {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 100%;
+  z-index: 20;
+  max-height: 220px;
+  margin: 0 0 6px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.mention-picker[hidden] { display: none !important; }
+
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+
+.mention-option[aria-selected="true"],
+.mention-option:hover { background: var(--bg); }
+
+.mention-empty {
+  padding: 8px 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Hang off the message, not the whole column — .msg is the positioned host. */
+.menu[data-menu="mention"] {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+}
 
 /* ─── Event cards: one look, whether a transcript row or a needs-bar row ─── */
 

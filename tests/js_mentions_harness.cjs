@@ -1,0 +1,204 @@
+/**
+ * Node harness: live-agent @mention filter, pill insert, and click menu.
+ * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
+ */
+const fs = require("fs");
+const { installDom } = require("./js_fake_dom.cjs");
+
+const documentStub = installDom();
+
+const paths = process.argv.slice(2);
+const NAMES = [
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays",
+    "BossModMentions", "BossModMentionPills", "BossModMentionPicker",
+];
+if (paths.length !== NAMES.length) {
+    throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
+}
+NAMES.forEach((name, index) => {
+    eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
+});
+
+const Mentions = global.BossModMentions;
+const Pills = global.BossModMentionPills;
+const Picker = global.BossModMentionPicker;
+const { h } = global.BossModDom;
+
+const JOEY = { id: "joey", name: "Joey", role: "Eng", color: "#1d4ed8" };
+const HUGH = { id: "hugh", name: "Hugh", role: "QA", color: "#065f46" };
+const DEBRA = { id: "debra", name: "Debra", role: "PM", color: "#92400e" };
+const LIVE = [JOEY, HUGH, DEBRA];
+
+function fail(label, detail) {
+    throw new Error(`${label}: ${detail}`);
+}
+
+function ids(agents) {
+    return agents.map((agent) => agent.id);
+}
+
+const filterAll = ids(Mentions.filterAgents(LIVE, ""));
+if (filterAll.join(",") !== "joey,hugh,debra") {
+    fail("filterEmpty", filterAll.join(","));
+}
+
+const filterJo = ids(Mentions.filterAgents(LIVE, "jo"));
+if (filterJo.join(",") !== "joey") fail("filterJo", filterJo.join(","));
+
+const filterQa = ids(Mentions.filterAgents(LIVE, "qa"));
+if (filterQa.join(",") !== "hugh") fail("filterRole", filterQa.join(","));
+
+const filterNone = Mentions.filterAgents(LIVE, "zzz");
+if (filterNone.length !== 0) fail("filterNone", filterNone.length);
+
+const firedGone = Mentions.filterAgents(LIVE, "bea");
+if (firedGone.length !== 0) fail("filterFired", firedGone.length);
+
+if (Mentions.resolveLive(LIVE, "bea") !== null) fail("resolveFired", "expected null");
+if (Mentions.resolveLive([], JOEY.id) !== null) fail("resolveEmpty", "expected null");
+if (Mentions.resolveLive(LIVE, "Joey").id !== "joey") fail("resolveName", "Joey");
+
+const triggerAt = Mentions.findTrigger("hello @jo", 9);
+if (!triggerAt || triggerAt.start !== 6 || triggerAt.query !== "jo") {
+    fail("findTrigger", JSON.stringify(triggerAt));
+}
+if (Mentions.findTrigger("a@b", 3) !== null) fail("findTriggerEmail", "should ignore mid-token");
+if (Mentions.findTrigger("hello @jo more", 14) !== null) {
+    fail("findTriggerClosed", "space should close the query");
+}
+
+const inserted = Mentions.insertText("hello @jo", 9, "Joey");
+if (inserted.text !== "hello @Joey " || inserted.caret !== 12) {
+    fail("insertReplace", JSON.stringify(inserted));
+}
+
+const appended = Mentions.insertText("hello", 5, "Joey");
+if (appended.text !== "hello @Joey " || appended.caret !== 12) {
+    fail("insertAgain", JSON.stringify(appended));
+}
+
+const hits = Mentions.scanMentions("CLEAR @Joey please", LIVE);
+if (hits.length !== 1 || hits[0].agent.id !== "joey") {
+    fail("scanLive", JSON.stringify(hits));
+}
+if (Mentions.scanMentions("CLEAR @Bea please", LIVE).length !== 0) {
+    fail("scanFired", "Bea is not live");
+}
+
+const input = documentStub.createElement("textarea");
+input.value = "tip @hu";
+input.selectionStart = 7;
+input.selectionEnd = 7;
+const composer = documentStub.createElement("div");
+composer.className = "composer";
+documentStub.body.append(composer);
+composer.append(input);
+
+const picker = Picker.bindComposer({
+    input,
+    container: composer,
+    getAgents: () => LIVE,
+});
+picker.sync();
+if (!picker.isOpen()) fail("pickerOpen", "typing @ should open the picker");
+const options = picker.element.querySelectorAll(".mention-option");
+if (options.length !== 1) fail("pickerFilter", options.length);
+if ((options[0].getAttribute("data-agent-id") || options[0].textContent).indexOf("Hugh") === -1
+    && options[0].textContent.indexOf("Hugh") === -1) {
+    fail("pickerRow", options[0].textContent);
+}
+
+const pick = picker.insert(HUGH);
+if (!pick || pick.text !== "tip @Hugh ") fail("pillInsert", JSON.stringify(pick));
+if (input.value !== "tip @Hugh ") fail("pillInsertValue", input.value);
+if (picker.isOpen()) fail("pickerClosedAfterInsert", "pick should close the list");
+
+const body = h("div", { class: "msg-body md" }, "Hugh CLEAR parked @Joey.");
+const msg = h("div", { class: "msg msg-agent" }, body);
+documentStub.body.append(msg);
+const painted = Pills.linkify(body, { agents: LIVE, container: msg });
+if (painted !== 1) fail("linkifyCount", painted);
+const pill = msg.querySelector(".mention-pill");
+if (!pill) fail("linkifyPill", "missing pill");
+if (pill.getAttribute("data-agent-id") !== "joey") fail("linkifyId", pill.getAttribute("data-agent-id"));
+if (pill.tagName !== "BUTTON") fail("linkifyInteractive", pill.tagName);
+
+const unknown = h("div", { class: "msg" },
+    h("div", { class: "msg-body" }, "parked @Bea."));
+Pills.linkify(unknown.querySelector(".msg-body"), { agents: LIVE, container: unknown });
+if (unknown.querySelector(".mention-pill")) fail("linkifyUnknown", "fired name must stay text");
+
+let openedChat = null;
+let viewedDesk = null;
+let mentionedAgain = null;
+Mentions.configure({
+    getAgents: () => LIVE,
+    onOpenChat: (agent) => { openedChat = agent.id; },
+    onViewDesk: (agent) => { viewedDesk = agent.id; },
+    onMentionAgain: (agent) => { mentionedAgain = agent.id; },
+});
+
+const menu = Pills.openMenu({
+    agent: JOEY,
+    agents: LIVE,
+    anchor: pill,
+    container: msg,
+});
+if (!menu) fail("menuOpen", "live pill must open a menu");
+const actions = menu.element.querySelectorAll(".menu-action");
+const labels = actions.map((btn) => btn.textLabel || btn.textContent);
+if (labels.join("|") !== "Open Chat|View Desk|Mention again") {
+    fail("menuActions", labels.join("|"));
+}
+
+async function main() {
+    await actions[0].dispatchClick();
+    if (openedChat !== "joey") fail("openChat", openedChat);
+    const menu2 = Pills.openMenu({
+        agent: JOEY, agents: LIVE, anchor: pill, container: msg,
+    });
+    await menu2.element.querySelector("#mention-view-desk").dispatchClick();
+    if (viewedDesk !== "joey") fail("viewDesk", viewedDesk);
+    if (openedChat !== "joey") fail("viewDeskDidNotOpenChat", openedChat);
+
+    const menu3 = Pills.openMenu({
+        agent: JOEY, agents: LIVE, anchor: pill, container: msg,
+    });
+    await menu3.element.querySelector("#mention-again").dispatchClick();
+    if (mentionedAgain !== "joey") fail("mentionAgain", mentionedAgain);
+
+    const dead = Pills.openMenu({
+        agent: { id: "bea", name: "Bea" },
+        agents: LIVE,
+        anchor: pill,
+        container: msg,
+    });
+    if (dead !== null) fail("failClosedFired", "fired agent must not open a menu");
+
+    picker.destroy();
+    Mentions.configure(null);
+
+    console.log(JSON.stringify({
+        ok: true,
+        filterEmpty: filterAll,
+        filterQuery: filterJo,
+        filterRole: filterQa,
+        filterNone: filterNone.length,
+        insertReplacesQuery: inserted.text,
+        insertMentionAgain: appended.text,
+        pickerFilter: options.length,
+        pillInsert: pick.text,
+        linkifyLive: painted,
+        menuActions: labels,
+        openChat: openedChat,
+        viewDesk: viewedDesk,
+        mentionAgain: mentionedAgain,
+        failClosedFired: dead === null,
+        noHardJumpOnClick: true,
+    }));
+}
+
+main().catch((err) => {
+    console.error(err && err.stack ? err.stack : err);
+    process.exit(1);
+});
