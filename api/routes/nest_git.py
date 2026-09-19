@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.websocket import manager
-from core.models.nest_git import NEST_GIT_ENABLED_NOTE
+from core.models.nest_git import NEST_GIT_EMPTY_CREDS, NEST_GIT_ENABLED_NOTE
 from core.runtime import runtime_services
 
 router = APIRouter()
@@ -84,7 +84,7 @@ async def put_nest_git_credentials(body: NestGitCredentialsBody):
     from core.models.nest_git import NEST_GIT_PAT_KEY, NEST_GIT_SSH_KEY
 
     if not body.clear_pat and not body.clear_ssh and not (body.pat or "").strip() and not (body.ssh_key or "").strip():
-        raise HTTPException(400, "Add a PAT or an SSH key. Empty does not enable nest git.")
+        raise HTTPException(400, NEST_GIT_EMPTY_CREDS)
     if body.clear_pat:
         write_nest_git_secret(NEST_GIT_PAT_KEY, "")
     elif (body.pat or "").strip():

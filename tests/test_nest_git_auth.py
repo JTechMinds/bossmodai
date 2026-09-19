@@ -30,15 +30,23 @@ from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.session import set_cli_cwd
 from core.models.nest_git import (
+    NEST_GIT_ADD_LABEL,
+    NEST_GIT_BODY,
     NEST_GIT_BOT_EMAIL,
     NEST_GIT_BOT_NAME,
     NEST_GIT_CARD_COPY,
+    NEST_GIT_ENABLE_HINT,
     NEST_GIT_ENABLE_LABEL,
+    NEST_GIT_EMPTY_CREDS,
     NEST_GIT_HOWTO,
     NEST_GIT_KIND,
     NEST_GIT_NO_CREDS_WHY,
+    NEST_GIT_OPEN_SETTINGS_LABEL,
     NEST_GIT_PAT_KEY,
-    NEST_GIT_TITLE,
+    NEST_GIT_SAVE_LABEL,
+    NEST_GIT_SSH_LABEL,
+    NEST_GIT_TOKEN_LABEL,
+    nest_git_card_title,
 )
 from core.runtime import runtime_services
 from db.secret_store import SECRET_PREFIX, is_encrypted
@@ -88,6 +96,29 @@ def _nest_cwd(agent_id: str) -> str:
     return dest
 
 
+def test_operator_copy_matches_beginner_lock() -> None:
+    assert nest_git_card_title("Jim") == "Jim needs permission to push to GitHub"
+    assert nest_git_card_title("") == "needs permission to push to GitHub"
+    assert nest_git_card_title(None) == "needs permission to push to GitHub"
+    assert NEST_GIT_BODY == (
+        "Your computer’s GitHub login isn’t shared with agents. "
+        "Paste a GitHub access token (a special password from GitHub → Settings → Developer settings), "
+        "or an SSH key if you use those. Saved once under Settings → Nest git. "
+        "Approving a command once doesn’t skip this."
+    )
+    assert NEST_GIT_TOKEN_LABEL == "GitHub access token"
+    assert NEST_GIT_SSH_LABEL == "SSH key (optional)"
+    assert NEST_GIT_SAVE_LABEL == "Save"
+    assert NEST_GIT_OPEN_SETTINGS_LABEL == "Open Nest git settings"
+    assert "Always-allow" not in NEST_GIT_BODY
+    assert "Always-allow" not in NEST_GIT_ENABLE_HINT
+    assert "PAT" not in NEST_GIT_TOKEN_LABEL
+    assert "empty field" in NEST_GIT_EMPTY_CREDS
+    # Fail-closed Blocked why + how-to stay on the gate path.
+    assert NEST_GIT_NO_CREDS_WHY == "Nest git has no credentials"
+    assert "Enable host git" in NEST_GIT_HOWTO
+
+
 def test_host_enable_defaults_off_and_auth_is_fail_closed() -> None:
     assert config.get("nest_git_host_enabled") == "false"
     assert host_git_is_enabled() is False
@@ -103,13 +134,18 @@ def test_nest_push_without_creds_posts_card() -> None:
     assert paused.kind == "nest_git_consent_required"
     card = (paused.data or {}).get("host_path_consent") or {}
     assert card["kind"] == NEST_GIT_KIND
-    assert card["title"] == NEST_GIT_TITLE
+    assert card["title"] == nest_git_card_title(agent.name)
+    assert card["body"] == NEST_GIT_BODY
     assert card["enable_label"] == NEST_GIT_ENABLE_LABEL
+    assert card["add_label"] == NEST_GIT_ADD_LABEL
     assert card["always_allow"] is False
     assert NEST_GIT_CARD_COPY in (paused.detail or "")
+    assert f"{agent.name} {NEST_GIT_CARD_COPY}" in (paused.detail or "")
     assert "desktop GitHub" in (paused.prompt_content or "")
     assert "@Operator" in (paused.prompt_content or "")
     assert "Always-allow" in (paused.prompt_content or "")
+    assert "Enable host git for nest?" not in json.dumps(card)
+    assert "Add PAT/SSH" not in json.dumps(card)
     dumped = json.dumps(card)
     assert "ghp_" not in dumped
     assert config.get("nest_git_host_enabled") == "false"
@@ -273,8 +309,9 @@ def test_needs_and_status_redact_secrets(monkeypatch: pytest.MonkeyPatch) -> Non
     items = [item for item in needs.json() if item.get("card_kind") == NEST_GIT_KIND]
     assert len(items) == 1
     assert {action["label"] for action in items[0]["actions"]} == {
-        "Enable host git for nest", "Add PAT/SSH",
+        NEST_GIT_ENABLE_LABEL, NEST_GIT_ADD_LABEL,
     }
+    assert items[0]["title"] == nest_git_card_title(agent.name)
     status = client.get("/api/nest-git/status", headers=_headers())
     assert status.status_code == 200
     body = status.json()
@@ -305,7 +342,10 @@ def test_card_and_settings_harness() -> None:
     assert payload == {
         "ok": True,
         "cardShowsEnableAndAdd": True,
+        "cardShowsLockCopy": True,
+        "cardShowsSaveAndSettings": True,
         "enableCollapsesSibling": True,
         "probeFailLeavesToggleOff": True,
         "patNotLeftInDom": True,
+        "settingsShowsBeginnerCopy": True,
     }

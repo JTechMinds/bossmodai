@@ -25,6 +25,7 @@ from core.models.host_path_consent import HostPathConsentRequest
 from core.models.nest_git import (
     NEST_GIT_BODY,
     NEST_GIT_CARD_COPY,
+    NEST_GIT_EMPTY_CREDS,
     NEST_GIT_ENABLED_NOTE,
     NEST_GIT_GRANT_ROOT,
     NEST_GIT_KIND,
@@ -165,7 +166,7 @@ async def resume_nest_git_consent(
         token = (pat or "").strip()
         key = (ssh_key or "").strip()
         if not token and not key:
-            raise ValueError("Add a PAT or an SSH key. Empty does not enable nest git.")
+            raise ValueError(NEST_GIT_EMPTY_CREDS)
         if token:
             write_nest_git_secret(NEST_GIT_PAT_KEY, token)
         if key:
