@@ -35,7 +35,7 @@ const BossModComposer = (() => {
      *   `canSend()` is false; '' otherwise.
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
      *             sendText: Function, setError: Function, readDraft: Function,
-     *             setDraft: Function, destroy: Function }}
+     *             setDraft: Function, insertMention: Function, destroy: Function }}
      * @throws {Error} When any dependency is missing. A composer with no send
      *   path would look usable and silently do nothing.
      */
@@ -53,6 +53,7 @@ const BossModComposer = (() => {
 
         const sendGate = BossModGates.createComposerSendGate();
         const disposers = [];
+        let mentions = null;
 
         function grow() {
             input.style.height = 'auto';
@@ -60,6 +61,7 @@ const BossModComposer = (() => {
         }
 
         function onKeyDown(event) {
+            if (mentions && mentions.handleKeyDown(event)) return;
             if (event.key !== 'Enter' || event.shiftKey) return;
             event.preventDefault();
             void submit();
@@ -173,6 +175,12 @@ const BossModComposer = (() => {
             return result;
         }
 
+        if (typeof BossModMentionPicker !== 'undefined') {
+            mentions = BossModMentionPicker.bindComposer({
+                store, input, container: element, onChange: grow,
+            });
+        }
+
         disposers.push(store.subscribe((s) => s.hasUsableModel, applyState));
 
         applyState();
@@ -187,12 +195,16 @@ const BossModComposer = (() => {
             setDraft: (text) => {
                 input.value = String(text == null ? '' : text);
                 grow();
+                if (mentions) mentions.sync();
             },
+            insertMention: (agent) => (mentions ? mentions.insert(agent) : null),
             /**
              * Drop every subscription and listener this composer created.
              * @returns {void}
              */
             destroy() {
+                if (mentions) mentions.destroy();
+                mentions = null;
                 input.removeEventListener('input', grow);
                 input.removeEventListener('keydown', onKeyDown);
                 sendBtn.removeEventListener('click', onSendClick);

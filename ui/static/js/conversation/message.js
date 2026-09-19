@@ -57,6 +57,11 @@ const BossModMessage = (() => {
         const key = String(message.key || '').trim();
         const createdAt = String(message.createdAt || '').trim();
 
+        const body = h('div', { class: 'msg-body md' },
+            BossModMarkdown.render(String(message.text || '')));
+        if (typeof BossModMentionPills !== 'undefined') {
+            BossModMentionPills.linkify(body);
+        }
         return h('div', {
             class: `msg msg-${author}`,
             'data-message-key': key || null,
@@ -64,8 +69,7 @@ const BossModMessage = (() => {
             message.showAuthor
                 ? h('div', { class: 'msg-author' }, message.authorName || 'Unknown')
                 : null,
-            h('div', { class: 'msg-body md' },
-                BossModMarkdown.render(String(message.text || ''))),
+            body,
             createdAt
                 ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
                 : null);
