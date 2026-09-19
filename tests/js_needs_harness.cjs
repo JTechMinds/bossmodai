@@ -121,12 +121,22 @@ async function main() {
     let queue = [consentRow("n1")];
     let queueFails = false;
     let resolveFails = false;
+    let resolveGone = false;
 
     function api(url, init) {
         calls.push({ url, method: (init && init.method) || "GET" });
         if (url.startsWith("/api/needs")) {
             if (queueFails) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("down") });
             return Promise.resolve({ ok: true, json: () => Promise.resolve(queue) });
+        }
+        if (resolveGone) {
+            return Promise.resolve({
+                ok: false,
+                status: 404,
+                text: () => Promise.resolve(
+                    JSON.stringify({ detail: "Approval request not found or already resolved" }),
+                ),
+            });
         }
         if (resolveFails) {
             return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve("Consent already answered.") });
@@ -340,6 +350,28 @@ async function main() {
     if (store.getState().needs.some((item) => item.id === "n1")) {
         throw new Error("a successful resolution must clear the need");
     }
+
+    // ─── 5b. Already-resolved approval 404 drops the need; no restore, no throw ───
+    queue = [approvalRow("stale-appr", "a1")];
+    await needs.refresh();
+    await drain();
+    const staleNeed = store.getState().needs.find((item) => item.id === "stale-appr");
+    if (!staleNeed) throw new Error("stale approval must reach the queue");
+    resolveGone = true;
+    queue = [];
+    let staleThrew = false;
+    try {
+        await needs.resolve(staleNeed, staleNeed.actions[0]);
+    } catch (err) {
+        staleThrew = true;
+    }
+    await drain();
+    if (staleThrew) throw new Error("a gone/already-resolved approval must not reject");
+    if (store.getState().needs.some((item) => item.id === "stale-appr")) {
+        throw new Error("a gone approval must leave the queue, not restore Approve/Reject");
+    }
+    resolveGone = false;
+    const staleAlreadyResolvedDropsNeed = true;
 
     // ─── 6. A failed refresh keeps the last good list ───
     // Blanking the bell because one fetch failed tells the operator nothing
@@ -943,6 +975,7 @@ async function main() {
         normalisesShape,
         quietOnUnchangedTick,
         restoresOnFailedResolve,
+        staleAlreadyResolvedDropsNeed,
         keepsQueueOnFailedRefresh,
         errorNeedFromDiagnostic,
         identicalErrorCardsCoalesce,

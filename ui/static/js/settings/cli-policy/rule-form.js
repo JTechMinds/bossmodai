@@ -77,6 +77,13 @@ const BossModCliPolicyRuleForm = (() => {
                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
                     </div>
                     <div class="md:col-span-2">
+                        <label class="block text-xs font-medium mb-1">CWD prefix</label>
+                        <input type="text" name="cwd_prefix"
+                               value="${escAttr(rule?.cwd_prefix || '')}"
+                               placeholder="Optional. Nest Always uses /me/host-work"
+                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
+                    </div>
+                    <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Description</label>
                         <input type="text" name="description"
                                value="${escAttr(rule?.description || '')}"
@@ -153,6 +160,7 @@ const BossModCliPolicyRuleForm = (() => {
                 category: fd.get('category') || 'general',
                 usage_syntax: fd.get('usage_syntax') || null,
                 help_text: fd.get('help_text') || null,
+                cwd_prefix: fd.get('cwd_prefix') || null,
             };
 
             try {

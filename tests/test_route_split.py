@@ -78,6 +78,7 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/cli-policy/rules/seed-defaults", "seed_cli_policy_rules"),
     (("GET",), "/api/cli-policy/approvals", "list_cli_approval_requests"),
     (("POST",), "/api/cli-policy/approvals/{request_id}/approve", "approve_cli_request"),
+    (("POST",), "/api/cli-policy/approvals/{request_id}/always-allow", "always_allow_cli_request"),
     (("POST",), "/api/cli-policy/approvals/{request_id}/reject", "reject_cli_request"),
     (("POST",), "/api/cli-policy/simulate", "simulate_cli_policy"),
     (("POST",), "/api/cli-policy/simulator/execute", "simulator_execute"),
@@ -129,7 +130,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 105
+    assert len(got) == 106
 
 
 def test_from_api_routes_import_router_still_works() -> None:

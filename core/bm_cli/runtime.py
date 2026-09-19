@@ -792,7 +792,9 @@ def _execute_shell_policy(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Evaluate shell policy for a command that left the virtual handler."""
-    shell_policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id)
+    shell_policy = policy_engine.evaluate(
+        parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd_before,
+    )
     if shell_policy.approval_required:
         return _handle_approval_required(
             agent=agent,

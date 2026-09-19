@@ -262,6 +262,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "channel_messages", "approval_id", "VARCHAR",
     )
+    _add_column_if_missing(
+        con, "cli_policy_rules", "cwd_prefix", "VARCHAR",
+    )
 
 
 def _add_column_if_missing(

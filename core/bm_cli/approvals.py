@@ -11,6 +11,7 @@ from core.models.cli_policy import CliApprovalRequest
 
 ApprovalPrefixStatus = Literal["unique", "none", "ambiguous"]
 _MIN_APPROVAL_DISPLAY_PREFIX = 8
+ALWAYS_ALLOWED_NOTE = "Always allowed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,16 +74,41 @@ async def resume_cli_approval(
     note: str | None = None,
     decision_by: str = "human",
     services: Any,
+    always_allow: bool = False,
 ) -> CliApprovalRequest | None:
-    """Persist an approve/reject decision and wake the waiting agent.
+    """Persist an approve/reject/Always decision and wake the waiting agent.
 
     Returns the updated approval row, or ``None`` if the request is missing
     or already resolved. Callers must pass a runtime services object that
     implements ``enqueue_trigger`` (the real ``runtime_services`` or a test
     double) so the dispatcher is woken the same way as other inbound work.
+
+    Always allow writes a real Settings CLI Always rule scoped to
+    ``/me/host-work`` before approving. Missing/already-resolved ids return
+    ``None`` and do not enqueue a wake.
     """
+    if always_allow:
+        existing = db.get_cli_approval_request(request_id)
+        if existing is None or existing.status != "pending":
+            return None
+        from core.bm_cli.cli_always import write_nest_always_rule
+        from core.bm_cli.policy_engine import policy_engine
+
+        write_nest_always_rule(
+            existing.command,
+            existing.cwd,
+            matched_rule_id=existing.matched_rule_id,
+        )
+        policy_engine.reload()
+        approved = True
+        note = note or ALWAYS_ALLOWED_NOTE
+
     if approved:
-        approval = db.approve_cli_approval_request(request_id, decision_by=decision_by)
+        approval = db.approve_cli_approval_request(
+            request_id,
+            decision_by=decision_by,
+            decision_note=note if always_allow else None,
+        )
     else:
         approval = db.reject_cli_approval_request(
             request_id,
@@ -97,11 +123,13 @@ async def resume_cli_approval(
     payload: dict[str, Any] = {
         "approval_request_id": approval.id,
         "command": approval.command,
-        "status": "approved" if approved else "rejected",
+        "status": "always_allowed" if always_allow else ("approved" if approved else "rejected"),
     }
     if approved:
         payload["content"] = approval.content
         payload["cwd"] = approval.cwd
+        if always_allow:
+            payload["decision_note"] = ALWAYS_ALLOWED_NOTE
     else:
         payload["decision_note"] = note
 
@@ -125,13 +153,18 @@ def _collapse_duplicate_pending(
     decision_by: str,
     note: str | None,
 ) -> None:
-    """Resolve leftover pending rows for the same agent and command.
+    """Resolve leftover pending rows for the same agent, command, and cwd.
 
     Does not enqueue extra wakes — one decision already resumed the agent.
     """
     command = str(approval.command or "")
+    cwd = str(approval.cwd or "")
     for sibling in db.list_cli_approval_requests(status="pending", agent_id=approval.agent_id, limit=80):
-        if sibling.id == approval.id or str(sibling.command or "") != command:
+        if sibling.id == approval.id:
+            continue
+        if str(sibling.command or "") != command:
+            continue
+        if str(sibling.cwd or "") != cwd:
             continue
         if approved:
             db.approve_cli_approval_request(sibling.id, decision_by=decision_by)

@@ -403,13 +403,20 @@ def ensure_cli_approval_chrome(
 
     Returns True only when a pending card is actually on a conversation
     surface. Create-time callers must fail the CLI result if this is False.
+    Identical command+cwd pendings coalesce: a sibling card already live
+    counts as posted.
     """
+    origin = (channel_id or "").strip() or None
+    if origin and db.is_channel_archived(origin):
+        return False
+    if _approval_sibling_card_open(approval, origin):
+        return True
     return persist_origin_chrome(
         agent,
         _approval_chrome_notification(
             agent,
             approval,
-            channel_id=channel_id,
+            channel_id=origin,
             source_channel=source_channel,
         ),
     )
@@ -543,6 +550,8 @@ def _build_approval_notification(
         bound = db.bind_cli_approval_channel(approval_id, channel_id)
         if bound is not None:
             approval = bound
+    if _approval_sibling_card_open(approval, channel_id or approval.channel_id):
+        return None
     return _approval_chrome_notification(
         agent,
         approval,
@@ -842,6 +851,30 @@ def _consent_card_content(agent_name: str, card: dict[str, Any]) -> str:
         return f"{content} {reason}" if reason else content
     content = f"{agent_name} needs host-path access: {path}."
     return f"{content} {reason}" if reason else content
+
+
+def _approval_sibling_card_open(
+    approval: CliApprovalRequest,
+    channel_id: str | None,
+) -> bool:
+    """Return True when a coalesced sibling already owns the live card."""
+    command = str(approval.command or "")
+    cwd = str(approval.cwd or "")
+    origin = (channel_id or "").strip() or None
+    for sibling in db.list_cli_approval_requests(
+        status="pending", agent_id=approval.agent_id, limit=80,
+    ):
+        if sibling.id == approval.id:
+            continue
+        if str(sibling.command or "") != command:
+            continue
+        if str(sibling.cwd or "") != cwd:
+            continue
+        if origin and sibling.channel_id and sibling.channel_id != origin:
+            continue
+        if db.has_approval_notification(sibling.id):
+            return True
+    return False
 
 
 def _consent_sibling_card_open(

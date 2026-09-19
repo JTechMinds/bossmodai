@@ -116,10 +116,12 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 
 
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str], list[Any]] = {}
-    order: list[tuple[str, str]] = []
+    from core.bm_cli.cli_always import offers_always_allow_cli
+
+    groups: dict[tuple[str, str, str], list[Any]] = {}
+    order: list[tuple[str, str, str]] = []
     for request in db.list_cli_approval_requests(status="pending", limit=MAX_LIMIT):
-        key = (request.agent_id, request.command)
+        key = (request.agent_id, request.command, request.cwd or "")
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -129,6 +131,19 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         rows = groups[key]
         request = rows[0]
         name = _agent_name(request.agent_id, cache)
+        actions = [
+            {"label": "Approve", "method": "POST", "tone": "primary",
+             "href": f"/api/cli-policy/approvals/{request.id}/approve"},
+        ]
+        if offers_always_allow_cli(request.cwd):
+            actions.append(
+                {"label": "Always allow", "method": "POST", "tone": "default",
+                 "href": f"/api/cli-policy/approvals/{request.id}/always-allow"},
+            )
+        actions.append(
+            {"label": "Reject", "method": "POST", "tone": "quiet",
+             "href": f"/api/cli-policy/approvals/{request.id}/reject"},
+        )
         items.append({
             "id": request.id,
             "kind": "approval",
@@ -137,15 +152,11 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             "agent_name": name,
             "title": f"{name} wants to run a command",
             "sub": request.command,
+            "cwd": request.cwd,
             "created_at": request.created_at.isoformat(),
             "conversation_id": request.channel_id or request.agent_id,
             "grouped_ids": [row.id for row in rows],
-            "actions": [
-                {"label": "Approve", "method": "POST", "tone": "primary",
-                 "href": f"/api/cli-policy/approvals/{request.id}/approve"},
-                {"label": "Reject", "method": "POST", "tone": "quiet",
-                 "href": f"/api/cli-policy/approvals/{request.id}/reject"},
-            ],
+            "actions": actions,
         })
     return items
 

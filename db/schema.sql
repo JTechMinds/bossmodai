@@ -367,6 +367,7 @@ CREATE TABLE IF NOT EXISTS cli_policy_rules (
     help_text   TEXT,
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
     priority    INTEGER NOT NULL DEFAULT 0,
+    cwd_prefix  VARCHAR,
     created_at  TIMESTAMP DEFAULT current_timestamp,
     updated_at  TIMESTAMP DEFAULT current_timestamp
 );

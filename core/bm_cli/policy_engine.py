@@ -204,6 +204,7 @@ class PolicyEngine:
         agent_id: str | None = None,
         *,
         assume_shell: bool | None = None,
+        cwd: str | None = None,
     ) -> CommandPolicyDecision:
         """Evaluate *command_str* against the rule hierarchy.
 
@@ -218,6 +219,9 @@ class PolicyEngine:
         assume_shell:
             When True, skip the global ``cli_shell_enabled`` gate so callers
             can peek at the rule that would apply after Shell Executor is on.
+        cwd:
+            Optional working directory. Nest-scoped Always rules only match
+            when this sits under their ``cwd_prefix``.
 
         Returns
         -------
@@ -254,7 +258,7 @@ class PolicyEngine:
         for tier in _TIER_ORDER:
             rules = self._rules_for_tier(tier, agent_id)
             for rule in rules:
-                if self._match_rule(command_str, rule):
+                if self._match_rule(command_str, rule, cwd=cwd):
                     return self._decision_for_tier(tier, rule)
 
         # 4. No rule matched — fall through to the default policy.
@@ -315,8 +319,18 @@ class PolicyEngine:
                 return self._rules.get(tier, [])
         return []
 
-    def _match_rule(self, command_str: str, rule: CliPolicyRule) -> bool:
+    def _match_rule(
+        self,
+        command_str: str,
+        rule: CliPolicyRule,
+        *,
+        cwd: str | None = None,
+    ) -> bool:
         """Check if a single rule's pattern matches *command_str* or argv[0] basename."""
+        from core.bm_cli.cli_always import cwd_matches_rule_scope
+
+        if not cwd_matches_rule_scope(cwd, getattr(rule, "cwd_prefix", None)):
+            return False
         matcher = _MATCHERS.get(rule.match_mode)
         if matcher is None:
             logger.warning(

@@ -150,6 +150,8 @@ const BossModNeedShape = (() => {
             ? {
                 id: need.id, kind: flavor, status: 'pending',
                 title: need.title || 'Approve this command?', command: need.sub || '',
+                cwd: need.cwd || '',
+                always_allow: (need.actions || []).some((item) => item.label === 'Always allow'),
             }
             : {
                 id: need.id, kind: flavor, status: 'pending',
@@ -256,6 +258,7 @@ const BossModNeedShape = (() => {
             conversationId: raw.conversation_id == null ? null : String(raw.conversation_id),
             cardKind: raw.card_kind == null ? '' : String(raw.card_kind),
             groupedIds: (Array.isArray(raw.grouped_ids) ? raw.grouped_ids : [raw.id]).map((id) => String(id)),
+            cwd: raw.cwd == null ? '' : String(raw.cwd),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
         need.target = targetFor(need);
@@ -318,7 +321,9 @@ const BossModNeedShape = (() => {
     function coalesceKey(need) {
         if (!need) return '';
         if (need.kind === 'error') return `error:${need.agentId || ''}:${need.sub || ''}`;
-        if (need.kind === 'approval') return `approval:${need.agentId || ''}:${need.sub || ''}`;
+        if (need.kind === 'approval') {
+            return `approval:${need.agentId || ''}:${need.sub || ''}:${need.cwd || ''}`;
+        }
         if (need.kind === 'consent') {
             const flavor = need.cardKind || 'host_path';
             if (flavor === 'shell_executor') {

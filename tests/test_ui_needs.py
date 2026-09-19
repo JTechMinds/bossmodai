@@ -76,6 +76,7 @@ def test_needs_harness() -> None:
         "normalisesShape": True,
         "quietOnUnchangedTick": True,
         "restoresOnFailedResolve": True,
+        "staleAlreadyResolvedDropsNeed": True,
         "keepsQueueOnFailedRefresh": True,
         "errorNeedFromDiagnostic": True,
         "identicalErrorCardsCoalesce": True,

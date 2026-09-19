@@ -23,13 +23,13 @@ from db.crud import (
 _ALL_COLUMNS = (
     "id, tier, pattern, match_mode, agent_id, description, "
     "category, usage_syntax, help_text, "
-    "enabled, priority, created_at, updated_at"
+    "enabled, priority, cwd_prefix, created_at, updated_at"
 )
 
 _UPDATE_VALID_COLUMNS = {
     "tier", "pattern", "match_mode", "agent_id",
     "description", "category", "usage_syntax", "help_text",
-    "enabled", "priority", "updated_at",
+    "enabled", "priority", "cwd_prefix", "updated_at",
 }
 
 
@@ -49,22 +49,24 @@ def create_rule(
     help_text: str | None = None,
     enabled: bool = True,
     priority: int = 0,
+    cwd_prefix: str | None = None,
 ) -> CliPolicyRule:
     """Insert a new CLI policy rule."""
+    scope = (cwd_prefix or "").strip() or None
     return insert_returning(
         f"""
         INSERT INTO cli_policy_rules (
             tier, pattern, match_mode, agent_id,
             description, category, usage_syntax, help_text,
-            enabled, priority
+            enabled, priority, cwd_prefix
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING {_ALL_COLUMNS}
         """,
         [
             tier, pattern, match_mode, agent_id,
             description, category, usage_syntax, help_text,
-            enabled, priority,
+            enabled, priority, scope,
         ],
         CliPolicyRule,
     )

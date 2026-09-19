@@ -164,7 +164,7 @@ def decide_locked_clone_shell_outcome(
             blocked_why=HOST_OUTSIDE_NEST_WHY,
         )
 
-    policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id)
+    policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd)
     if policy.tier == "disabled":
         return None
 

@@ -34,7 +34,7 @@ def create_approval_request(
 ) -> CliApprovalRequest:
     """Insert a new approval request, or reuse a pending row for this command."""
     origin = (channel_id or "").strip() or None
-    existing = get_pending_for_command(agent_id, command)
+    existing = get_pending_for_command(agent_id, command, cwd=cwd)
     if existing is not None:
         return existing
     return insert_returning(
@@ -72,17 +72,23 @@ def bind_approval_channel(request_id: str, channel_id: str) -> CliApprovalReques
     )
 
 
-def get_pending_for_command(agent_id: str, command: str) -> CliApprovalRequest | None:
-    """Return the newest pending approval for this agent and command, if any."""
+def get_pending_for_command(
+    agent_id: str,
+    command: str,
+    cwd: str | None = None,
+) -> CliApprovalRequest | None:
+    """Return the newest pending approval for this agent, command, and cwd."""
+    scope = (cwd or "").strip()
     return fetch_one(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM cli_approval_requests
         WHERE agent_id = $1 AND command = $2 AND status = 'pending'
+          AND COALESCE(cwd, '') = $3
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        [agent_id, command],
+        [agent_id, command, scope],
         CliApprovalRequest,
     )
 
@@ -151,16 +157,17 @@ def approve_request(
     request_id: str,
     *,
     decision_by: str = "human",
+    decision_note: str | None = None,
 ) -> CliApprovalRequest | None:
     """Mark a request as approved and return the updated row."""
     return fetch_one(
         f"""
         UPDATE cli_approval_requests
-        SET status = 'approved', decision_by = $1, decided_at = $2
-        WHERE id = $3 AND status = 'pending'
+        SET status = 'approved', decision_by = $1, decision_note = $2, decided_at = $3
+        WHERE id = $4 AND status = 'pending'
         RETURNING {_ALL_COLUMNS}
         """,
-        [decision_by, datetime.now(timezone.utc), request_id],
+        [decision_by, decision_note, datetime.now(timezone.utc), request_id],
         CliApprovalRequest,
     )
 
