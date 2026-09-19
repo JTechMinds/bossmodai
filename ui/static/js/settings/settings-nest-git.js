@@ -2,7 +2,8 @@
  * BossMod AI — Settings → Nest git (self-host remotes).
  *
  * One Settings store. Host Enable only flips On after a Shell probe.
- * PAT/SSH use the same bm1 wrap as API keys. Always-allow does not skip auth.
+ * Token/SSH use the same bm1 wrap as API keys. Approving a command once
+ * does not skip auth.
  */
 
 const NestGitSection = (() => {
@@ -13,7 +14,7 @@ const NestGitSection = (() => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             status = await res.json();
         } catch {
-            el.innerHTML = '<p class="text-red-500 text-sm">Failed to load Nest git settings.</p>';
+            el.innerHTML = '<p class="text-red-500 text-sm">Couldn’t load Nest git settings.</p>';
             return;
         }
 
@@ -23,18 +24,19 @@ const NestGitSection = (() => {
             <div class="mb-6">
                 <h2 class="text-lg font-semibold">Nest git</h2>
                 <p class="text-sm text-bm-muted mt-0.5">
-                    Credentials the Shell can see for nest remotes (typically push).
-                    Always-allow on a command does not skip auth.
-                    Browser or desktop GitHub login is not the agent's.
+                    Your computer’s GitHub login isn’t shared with agents.
+                    Paste a GitHub access token (a special password from GitHub → Settings → Developer settings),
+                    or an SSH key if you use those. Saved once here.
+                    Approving a command once doesn’t skip this.
                 </p>
             </div>
             <div class="max-w-lg space-y-5">
                 <div class="border border-bm-border rounded-lg p-4 bg-white">
                     <div class="flex items-center justify-between">
                         <div>
-                            <h3 class="text-sm font-semibold">Enable host git</h3>
+                            <h3 class="text-sm font-semibold">Use this computer’s Git login</h3>
                             <p class="text-xs text-bm-muted mt-0.5">
-                                On only after a credential helper or SSH agent is visible to Shell.
+                                Turns on only if Git on this computer already has a login the agent can use.
                             </p>
                         </div>
                         <button id="btn-toggle-nest-git" type="button"
@@ -47,34 +49,35 @@ const NestGitSection = (() => {
                     </div>
                     <p id="nest-git-probe" class="text-xs mt-3 ${status.probe_ok ? 'text-emerald-700' : 'text-bm-muted'}">
                         ${status.probe_ok
-                            ? `Probe: visible via ${BossModFormat.escapeHtml(status.probe_via || 'host')}.`
+                            ? `Git on this computer is ready (${BossModFormat.escapeHtml(status.probe_via || 'host')}).`
                             : BossModFormat.escapeHtml(status.probe_why || 'Host git is not visible to Shell')}
                     </p>
                 </div>
                 <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
-                    <label class="block text-sm font-medium mb-1">PAT</label>
+                    <label class="block text-sm font-medium mb-1">GitHub access token</label>
                     <p class="text-xs text-bm-muted mb-1.5">
-                        Stored with the same wrap as API keys. Prefer bot identity for attribution.
+                        A special password from GitHub → Settings → Developer settings.
                         ${status.has_pat ? `Saved (last 4: ${BossModFormat.escapeHtml(status.pat_last4 || '')}). Leave blank to keep.` : 'Not saved.'}
                     </p>
                     <input type="password" id="nest-git-pat" data-focus="pat" value=""
-                           placeholder="${status.has_pat ? '••••' + BossModFormat.escapeAttribute(status.pat_last4 || '') : 'ghp_…'}"
+                           placeholder="${status.has_pat ? '••••' + BossModFormat.escapeAttribute(status.pat_last4 || '') : 'GitHub access token'}"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono">
                     <div class="flex gap-2 mt-2">
-                        <button type="button" id="nest-git-pat-save" class="hpc-action hpc-action-primary text-sm">Save PAT</button>
+                        <button type="button" id="nest-git-pat-save" class="hpc-action hpc-action-primary text-sm">Save</button>
                         <button type="button" id="nest-git-pat-clear" class="hpc-action text-sm" ${status.has_pat ? '' : 'disabled'}>Clear</button>
                     </div>
                 </div>
                 <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
-                    <label class="block text-sm font-medium mb-1">SSH private key</label>
+                    <label class="block text-sm font-medium mb-1">SSH key (optional)</label>
                     <p class="text-xs text-bm-muted mb-1.5">
-                        Written 0600 for Shell. ${status.has_ssh ? `Saved (last 4: ${BossModFormat.escapeHtml(status.ssh_last4 || '')}).` : 'Not saved.'}
+                        Use this if you sign in with an SSH key.
+                        ${status.has_ssh ? `Saved (last 4: ${BossModFormat.escapeHtml(status.ssh_last4 || '')}).` : 'Not saved.'}
                     </p>
                     <textarea id="nest-git-ssh" rows="4"
                               class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono"
-                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                              placeholder="SSH key (optional)"></textarea>
                     <div class="flex gap-2 mt-2">
-                        <button type="button" id="nest-git-ssh-save" class="hpc-action hpc-action-primary text-sm">Save SSH</button>
+                        <button type="button" id="nest-git-ssh-save" class="hpc-action hpc-action-primary text-sm">Save</button>
                         <button type="button" id="nest-git-ssh-clear" class="hpc-action text-sm" ${status.has_ssh ? '' : 'disabled'}>Clear</button>
                     </div>
                 </div>
@@ -104,7 +107,7 @@ const NestGitSection = (() => {
                 }
                 render(el);
             } catch {
-                showStatus(el, 'Failed to update host Enable.', 'error');
+                showStatus(el, 'Couldn’t update this computer’s Git login.', 'error');
             }
         });
         el.querySelector('#nest-git-pat-save').addEventListener('click', () => saveSecret(el, 'pat'));
@@ -118,7 +121,7 @@ const NestGitSection = (() => {
         const input = el.querySelector(field === 'pat' ? '#nest-git-pat' : '#nest-git-ssh');
         const value = (input && input.value) || '';
         if (!value.trim()) {
-            showStatus(el, 'Add a PAT or an SSH key. Empty does not enable nest git.', 'error');
+            showStatus(el, 'Paste a GitHub access token or an SSH key. An empty field doesn’t save.', 'error');
             return;
         }
         try {
@@ -129,13 +132,13 @@ const NestGitSection = (() => {
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                showStatus(el, err.detail || 'Failed to save.', 'error');
+                showStatus(el, err.detail || 'Couldn’t save.', 'error');
                 return;
             }
             if (input) input.value = '';
             render(el);
         } catch {
-            showStatus(el, 'Failed to save.', 'error');
+            showStatus(el, 'Couldn’t save.', 'error');
         }
     }
 
@@ -148,12 +151,12 @@ const NestGitSection = (() => {
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                showStatus(el, err.detail || 'Failed to clear.', 'error');
+                showStatus(el, err.detail || 'Couldn’t clear.', 'error');
                 return;
             }
             render(el);
         } catch {
-            showStatus(el, 'Failed to clear.', 'error');
+            showStatus(el, 'Couldn’t clear.', 'error');
         }
     }
 

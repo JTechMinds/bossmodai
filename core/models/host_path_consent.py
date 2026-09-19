@@ -12,7 +12,7 @@ from core.models.nest_git import (
     NEST_GIT_ENABLE_HINT,
     NEST_GIT_ENABLE_LABEL,
     NEST_GIT_KIND,
-    NEST_GIT_TITLE,
+    nest_git_card_title,
 )
 from pydantic import BaseModel, ConfigDict
 
@@ -104,7 +104,7 @@ class HostPathConsentRequest(BaseModel):
             if self.command:
                 card["command"] = self.command
         elif kind == NEST_GIT_KIND:
-            card["title"] = NEST_GIT_TITLE
+            card["title"] = nest_git_card_title(_agent_display_name(self.agent_id))
             card["body"] = NEST_GIT_BODY
             card["enable_label"] = NEST_GIT_ENABLE_LABEL
             card["add_label"] = NEST_GIT_ADD_LABEL
@@ -113,6 +113,19 @@ class HostPathConsentRequest(BaseModel):
             if self.command:
                 card["command"] = self.command
         return card
+
+
+def _agent_display_name(agent_id: str | None) -> str:
+    """Best-effort agent display name for nest git card titles. Fail closed to empty."""
+    if not agent_id:
+        return ""
+    try:
+        import db
+
+        agent = db.get_agent(agent_id)
+    except Exception:
+        return ""
+    return ((getattr(agent, "name", None) if agent else None) or "").strip()
 
 
 def consent_turn_event(agent_name: str, card: dict[str, Any] | None) -> tuple[str, str]:

@@ -1,5 +1,5 @@
 /**
- * Node harness: nest git card Enable/Add PAT + Settings probe-fail stays Off.
+ * Node harness: nest git card token/SSH form + Settings probe-fail stays Off.
  * Invoked by tests/test_nest_git_auth.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -21,19 +21,28 @@ eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGit
 const { h } = global.BossModDom;
 const Card = global.BossModConsentCard;
 
+const LOCK_TITLE = "Jim needs permission to push to GitHub";
+const LOCK_BODY = "Your computer’s GitHub login isn’t shared with agents. "
+    + "Paste a GitHub access token (a special password from GitHub → Settings → Developer settings), "
+    + "or an SSH key if you use those. Saved once under Settings → Nest git. "
+    + "Approving a command once doesn’t skip this.";
+const ENABLE_LABEL = "Use this computer’s Git login";
+const ADD_LABEL = "Add a GitHub access token or SSH key";
+
 function pendingNestCard(id, command) {
     return {
         id,
         kind: "nest_git",
         grant_root: "nest_git_host_enabled",
         status: "pending",
-        title: "Enable host git for nest?",
+        agent_name: "Jim",
+        title: LOCK_TITLE,
         command,
         path: command,
-        enable_label: "Enable host git for nest",
-        add_label: "Add PAT/SSH",
-        enable_hint: "same as Settings → Nest git. Always-allow does not skip auth.",
-        body: "Remote nest git needs credentials the Shell can see.",
+        enable_label: ENABLE_LABEL,
+        add_label: ADD_LABEL,
+        enable_hint: "Saved once under Settings → Nest git. Approving a command once doesn’t skip this.",
+        body: LOCK_BODY,
     };
 }
 
@@ -61,15 +70,48 @@ const origin = pendingNestCard("nest-a", "git push origin main");
 const sibling = pendingNestCard("nest-b", "git fetch");
 const originEl = paintCard(list, origin);
 const siblingEl = paintCard(list, sibling);
+const titleEl = originEl.querySelector(".hpc-title");
+const reasonEl = originEl.querySelector(".hpc-reason");
+if (!titleEl || titleEl.textContent !== LOCK_TITLE) {
+    throw new Error(`card title was ${JSON.stringify(titleEl && titleEl.textContent)}`);
+}
+if (!reasonEl || reasonEl.textContent !== LOCK_BODY) {
+    throw new Error(`card body was ${JSON.stringify(reasonEl && reasonEl.textContent)}`);
+}
 const labels = actionButtons(originEl).map((btn) => btn.textContent);
-const cardShowsEnableAndAdd = labels.includes("Enable host git for nest")
-    && labels.includes("Add PAT/SSH");
+const cardShowsEnableAndAdd = labels.includes(ENABLE_LABEL)
+    && labels.includes(ADD_LABEL);
 if (!cardShowsEnableAndAdd) throw new Error(`card buttons were ${JSON.stringify(labels)}`);
+if (labels.includes("Enable host git for nest") || labels.includes("Add PAT/SSH")) {
+    throw new Error(`old jargon buttons still visible: ${JSON.stringify(labels)}`);
+}
+
+const credApi = async () => ({ ok: true, async json() { return origin; } });
+originEl.replaceChildren();
+Card.renderHostPathConsentCard(originEl, origin, credApi);
+const addBtn = actionButtons(originEl).find((btn) => btn.textContent === ADD_LABEL);
+if (!addBtn) throw new Error("Add token/SSH button missing");
+await addBtn.dispatchClick();
+const tokenField = originEl.querySelector("input");
+const sshField = originEl.querySelector("textarea");
+const formLabels = actionButtons(originEl).map((btn) => btn.textContent);
+const cardShowsSaveAndSettings = Boolean(tokenField)
+    && tokenField.placeholder === "GitHub access token"
+    && Boolean(sshField)
+    && sshField.placeholder === "SSH key (optional)"
+    && formLabels.includes("Save")
+    && formLabels.includes("Open Nest git settings");
+if (!cardShowsSaveAndSettings) {
+    throw new Error(`credentials form was placeholders=${Boolean(tokenField)}/${Boolean(sshField)} buttons=${JSON.stringify(formLabels)}`);
+}
+if (formLabels.includes("Save to Settings") || formLabels.includes("Settings → Nest git")) {
+    throw new Error(`old jargon form buttons still visible: ${JSON.stringify(formLabels)}`);
+}
 
 const enabled = {
     ...origin,
     status: "enabled",
-    decision_note: "Nest git auth ready (Settings → Nest git).",
+    decision_note: "GitHub permission saved under Settings → Nest git.",
 };
 const apiEnable = async (url) => {
     if (!String(url).includes("/api/nest-git/") || !String(url).endsWith("/enable")) {
@@ -79,7 +121,7 @@ const apiEnable = async (url) => {
 };
 originEl.replaceChildren();
 Card.renderHostPathConsentCard(originEl, origin, apiEnable);
-const enableBtn = actionButtons(originEl).find((btn) => /Enable host git/.test(btn.textContent));
+const enableBtn = actionButtons(originEl).find((btn) => btn.textContent === ENABLE_LABEL);
 if (!enableBtn) throw new Error("Enable button missing");
 await enableBtn.dispatchClick();
 const enableCollapsesSibling = originEl.classList.contains("is-resolved")
@@ -158,6 +200,19 @@ global.apiFetch = async (url, init) => {
 };
 
 await NestGitSection.render(settingsRoot);
+const settingsHtml = settingsRoot.innerHTML;
+const settingsShowsBeginnerCopy = settingsHtml.includes("GitHub access token")
+    && settingsHtml.includes("SSH key (optional)")
+    && settingsHtml.includes("Use this computer’s Git login")
+    && settingsHtml.includes("Your computer’s GitHub login isn’t shared with agents.")
+    && !settingsHtml.includes("Enable host git")
+    && !/>PAT</.test(settingsHtml)
+    && !settingsHtml.includes("SSH private key")
+    && !settingsHtml.includes("Save PAT")
+    && !settingsHtml.includes("Save SSH");
+if (!settingsShowsBeginnerCopy) {
+    throw new Error(`Settings copy still jargon or missing LOCK fields: ${settingsHtml.slice(0, 400)}`);
+}
 const toggle = settingsRoot.querySelector("#btn-toggle-nest-git");
 if (!toggle) throw new Error("host Enable toggle missing");
 await toggle.dispatchClick();
@@ -171,14 +226,17 @@ await savePat.dispatchClick();
 const after = settingsRoot.querySelector("#nest-git-pat");
 const patNotLeftInDom = !settingsRoot.innerHTML.includes(secret)
     && (!after || after.value === "");
-if (!patNotLeftInDom) throw new Error("PAT lingered in the Settings DOM");
+if (!patNotLeftInDom) throw new Error("token lingered in the Settings DOM");
 
 process.stdout.write(JSON.stringify({
     ok: true,
     cardShowsEnableAndAdd: true,
+    cardShowsLockCopy: true,
+    cardShowsSaveAndSettings: true,
     enableCollapsesSibling: true,
     probeFailLeavesToggleOff: true,
     patNotLeftInDom: true,
+    settingsShowsBeginnerCopy: true,
 }));
 })().catch((err) => {
     console.error(err && err.stack ? err.stack : err);

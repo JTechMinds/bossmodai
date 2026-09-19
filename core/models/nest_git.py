@@ -13,19 +13,27 @@ NEST_GIT_SSH_KEY = "nest_git_ssh_key"
 NEST_GIT_KIND = "nest_git"
 NEST_GIT_GRANT_ROOT = NEST_GIT_HOST_ENABLED_KEY
 
-NEST_GIT_TITLE = "Enable host git for nest?"
+NEST_GIT_TITLE = "needs permission to push to GitHub"
 NEST_GIT_BODY = (
-    "Remote nest git (typically push) needs credentials the Shell can see. "
-    "Enable host git after a credential helper or SSH agent is visible to Shell, "
-    "or add a PAT/SSH. Both write Settings → Nest git. "
-    "Always-allow on a command does not skip auth. "
-    "Browser or desktop GitHub login is not the agent's."
+    "Your computer’s GitHub login isn’t shared with agents. "
+    "Paste a GitHub access token (a special password from GitHub → Settings → Developer settings), "
+    "or an SSH key if you use those. Saved once under Settings → Nest git. "
+    "Approving a command once doesn’t skip this."
 )
-NEST_GIT_ENABLE_LABEL = "Enable host git for nest"
-NEST_GIT_ADD_LABEL = "Add PAT/SSH"
-NEST_GIT_ENABLE_HINT = "same as Settings → Nest git. Always-allow does not skip auth."
-NEST_GIT_ENABLED_NOTE = "Nest git auth ready (Settings → Nest git)."
-NEST_GIT_CARD_COPY = "needs nest git credentials — Enable host git or Add PAT/SSH"
+NEST_GIT_ENABLE_LABEL = "Use this computer’s Git login"
+NEST_GIT_ADD_LABEL = "Add a GitHub access token or SSH key"
+NEST_GIT_ENABLE_HINT = (
+    "Saved once under Settings → Nest git. Approving a command once doesn’t skip this."
+)
+NEST_GIT_ENABLED_NOTE = "GitHub permission saved under Settings → Nest git."
+NEST_GIT_CARD_COPY = "needs permission to push to GitHub"
+NEST_GIT_TOKEN_LABEL = "GitHub access token"
+NEST_GIT_SSH_LABEL = "SSH key (optional)"
+NEST_GIT_SAVE_LABEL = "Save"
+NEST_GIT_OPEN_SETTINGS_LABEL = "Open Nest git settings"
+NEST_GIT_EMPTY_CREDS = (
+    "Paste a GitHub access token or an SSH key. An empty field doesn’t save."
+)
 
 NEST_GIT_HOWTO = (
     "Configure a git credential helper the Shell can see "
@@ -41,3 +49,11 @@ NEST_GIT_BLOCK_KIND = "blocked_nest_git"
 # Bot attribution when a stored PAT is the auth path.
 NEST_GIT_BOT_NAME = "bossmod-bot"
 NEST_GIT_BOT_EMAIL = "nest-git@users.noreply.github.com"
+
+
+def nest_git_card_title(agent_name: str | None = None) -> str:
+    """Return the in-thread card title, preferring the agent display name."""
+    name = (agent_name or "").strip()
+    if name:
+        return f"{name} needs permission to push to GitHub"
+    return NEST_GIT_TITLE
