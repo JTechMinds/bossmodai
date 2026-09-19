@@ -542,7 +542,7 @@ def test_agent_name_is_chrome_outside_the_paragraph() -> None:
     author = css.split(".msg-author {", 1)[1].split("}", 1)[0]
     assert "font-weight: 400" in author
     assert "font-weight: 600" not in author
-    assert "background: var(--btn-face-hover)" in author
+    assert "background: var(--btn-face-active)" in author
     assert "border: 1px solid var(--line-strong)" in author
     assert "border: 0" not in author
     agent = _read(SOURCES / "agent-source.js")

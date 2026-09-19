@@ -351,10 +351,10 @@
 .msg-author {
   margin: 0;
   align-self: flex-start;
-  padding: 1px 8px;
+  padding: 2px 8px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background: var(--btn-face-hover);
+  background: var(--btn-face-active);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.4;

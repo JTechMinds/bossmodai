@@ -194,7 +194,7 @@ async function main() {
         "utf8",
     );
     const authorRule = conversationCss.split(".msg-author {")[1].split("}")[0];
-    const nameChipBorder = /background:\s*var\(--btn-face-hover\)/.test(authorRule)
+    const nameChipBorder = /background:\s*var\(--btn-face-active\)/.test(authorRule)
         && /border:\s*1px solid var\(--line-strong\)/.test(authorRule)
         && !/border:\s*0/.test(authorRule)
         && !/background:\s*none/.test(authorRule);
