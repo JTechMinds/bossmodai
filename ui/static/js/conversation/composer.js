@@ -71,14 +71,46 @@ const BossModComposer = (() => {
             void submit();
         }
 
-        const input = h('textarea', {
+        function onComposerInput() {
+            const kids = input.childNodes || [];
+            if (kids.length === 1 && kids[0] && kids[0].tagName === 'BR') {
+                input.replaceChildren();
+            }
+            grow();
+        }
+
+        // Contenteditable so a picked `@Name` stays a pill while the operator
+        // keeps typing. `.value` is a shim: send, drafts, and insert still
+        // speak `@Name` text. A textarea cannot hold a pill.
+        const input = h('div', {
             class: 'composer-input',
             id: INPUT_ID,
-            rows: '1',
-            placeholder: READY_PLACEHOLDER,
-            oninput: grow,
+            role: 'textbox',
+            'aria-multiline': 'true',
+            contenteditable: 'true',
+            tabindex: '0',
+            'data-placeholder': READY_PLACEHOLDER,
+            oninput: onComposerInput,
             onkeydown: onKeyDown,
         });
+        Object.defineProperty(input, 'placeholder', {
+            configurable: true,
+            get() { return input.getAttribute('data-placeholder') || ''; },
+            set(text) { input.setAttribute('data-placeholder', String(text == null ? '' : text)); },
+        });
+        if (typeof BossModMentionDraft !== 'undefined') {
+            BossModMentionDraft.bindEditable(input);
+        } else {
+            Object.defineProperty(input, 'value', {
+                configurable: true,
+                get() { return String(input.textContent || ''); },
+                set(text) {
+                    const raw = String(text == null ? '' : text);
+                    input.replaceChildren();
+                    if (raw) input.append(document.createTextNode(raw));
+                },
+            });
+        }
         // Icon-only send, so the control is named twice over: for the label
         // association and for the button itself.
         const label = h('label', { class: 'visually-hidden', for: INPUT_ID }, 'Message');
@@ -116,6 +148,7 @@ const BossModComposer = (() => {
             const enabled = hasUsableModel && allowed && !sendGate.busy();
             sendBtn.disabled = !enabled;
             input.disabled = !enabled;
+            input.setAttribute('contenteditable', enabled ? 'true' : 'false');
             input.setAttribute('aria-disabled', enabled ? 'false' : 'true');
             sendBtn.setAttribute('title', hasUsableModel ? SEND_TITLE : NO_MODEL_TITLE);
             if (!hasUsableModel) input.placeholder = NO_MODEL_PLACEHOLDER;
@@ -205,7 +238,7 @@ const BossModComposer = (() => {
             destroy() {
                 if (mentions) mentions.destroy();
                 mentions = null;
-                input.removeEventListener('input', grow);
+                input.removeEventListener('input', onComposerInput);
                 input.removeEventListener('keydown', onKeyDown);
                 sendBtn.removeEventListener('click', onSendClick);
                 disposers.splice(0).forEach((off) => off());

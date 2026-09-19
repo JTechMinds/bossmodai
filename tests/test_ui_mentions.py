@@ -21,6 +21,7 @@ MENTION_MODULES = [
     JS / "core" / "overlays.js",
     CONVERSATION / "mentions.js",
     CONVERSATION / "mention-pill.js",
+    CONVERSATION / "mention-draft.js",
     CONVERSATION / "mention-picker.js",
 ]
 
@@ -41,6 +42,9 @@ def test_mention_modules_load_before_the_surfaces_that_spend_them() -> None:
         "js/conversation/mention-pill.js"
     )
     assert scripts.index("js/conversation/mention-pill.js") < scripts.index(
+        "js/conversation/mention-draft.js"
+    )
+    assert scripts.index("js/conversation/mention-draft.js") < scripts.index(
         "js/conversation/mention-picker.js"
     )
     assert scripts.index("js/conversation/mention-picker.js") < scripts.index(
@@ -82,13 +86,28 @@ def test_chat_place_configures_focus_and_desk_the_rail_already_uses() -> None:
     assert "BossModMentions.configure(null)" in place
 
 
-def test_mention_css_is_the_chip_plus_name_family() -> None:
+def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
     css = _read(CSS / "conversation.css")
+    host = css.split(".mention-host {", 1)[1].split("}", 1)[0]
+    assert "position: relative" in host
+    assert "display: inline" in host
     pill = css.split(".mention-pill {", 1)[1].split("}", 1)[0]
-    assert "border-radius: 999px" in pill
     assert "inline-flex" in pill
+    assert "align-items: baseline" in pill
+    assert "vertical-align: baseline" in pill
+    assert "font-weight: 400" in pill
+    assert "color: inherit" in pill
+    assert "background: none" in pill
+    assert "font-weight: 600" not in pill
+    name = css.split(".mention-pill-name {", 1)[1].split("}", 1)[0]
+    assert "color: inherit" in name
+    menu = css.split(".menu[data-menu=\"mention\"] {", 1)[1].split("}", 1)[0]
+    assert "left: 0" in menu
+    assert "right: auto" in menu
     assert ".mention-picker {" in css
-    assert ".menu[data-menu=\"mention\"]" in css
+    composer = _read(CONVERSATION / "composer.js")
+    assert "contenteditable: 'true'" in composer
+    assert "BossModMentionDraft.bindEditable(input)" in composer
 
 
 def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
@@ -110,6 +129,9 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "insertMentionAgain": "hello @Joey ",
         "pickerFilter": 1,
         "pillInsert": "tip @Hugh ",
+        "composerPersist": True,
+        "alignBaseline": True,
+        "menuUnderPill": True,
         "linkifyLive": 1,
         "menuActions": ["Open Chat", "View Desk", "Mention again"],
         "openChat": "joey",

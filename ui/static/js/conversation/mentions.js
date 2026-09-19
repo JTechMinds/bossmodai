@@ -2,8 +2,8 @@
  * BossMod AI — live-agent @mention data.
  *
  * Who is live, how `@query` filters, how a pick becomes `@Name`, and the
- * injected Focus / Desk / insert actions. Painting and the composer picker
- * live beside this file so each stays one job.
+ * injected Focus / Desk / insert actions. Painting, the composer draft, and
+ * the picker live beside this file so each stays one job.
  *
  * Fail-closed: a name that is not a live hire does not resolve, and a fired
  * agent cannot be opened, desked, or mentioned again.
@@ -167,13 +167,17 @@ const BossModMentions = (() => {
      */
     function insertAtCaret(input, name) {
         const value = String(input && input.value != null ? input.value : '');
-        const caret = input && Number.isInteger(input.selectionStart)
-            ? input.selectionStart : value.length;
+        const caret = input && typeof BossModMentionDraft !== 'undefined'
+            ? BossModMentionDraft.caretIn(input)
+            : (input && Number.isInteger(input.selectionStart)
+                ? input.selectionStart : value.length);
         const next = insertText(value, caret, name);
         if (input) {
             input.value = next.text;
             if (typeof input.setSelectionRange === 'function') {
                 input.setSelectionRange(next.caret, next.caret);
+            } else if (typeof BossModMentionDraft !== 'undefined') {
+                BossModMentionDraft.placeCaret(input, next.caret);
             } else {
                 input.selectionStart = next.caret;
                 input.selectionEnd = next.caret;

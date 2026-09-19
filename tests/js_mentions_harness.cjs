@@ -1,5 +1,6 @@
 /**
- * Node harness: live-agent @mention filter, pill insert, and click menu.
+ * Node harness: live-agent @mention filter, pill insert, click menu,
+ * composer persist, baseline align, and menu-under-pill.
  * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -10,7 +11,8 @@ const documentStub = installDom();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays",
-    "BossModMentions", "BossModMentionPills", "BossModMentionPicker",
+    "BossModMentions", "BossModMentionPills", "BossModMentionDraft",
+    "BossModMentionPicker",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -21,6 +23,7 @@ NAMES.forEach((name, index) => {
 
 const Mentions = global.BossModMentions;
 const Pills = global.BossModMentionPills;
+const Draft = global.BossModMentionDraft;
 const Picker = global.BossModMentionPicker;
 const { h } = global.BossModDom;
 
@@ -85,7 +88,10 @@ if (Mentions.scanMentions("CLEAR @Bea please", LIVE).length !== 0) {
     fail("scanFired", "Bea is not live");
 }
 
-const input = documentStub.createElement("textarea");
+const input = documentStub.createElement("div");
+input.setAttribute("contenteditable", "true");
+input.className = "composer-input";
+Draft.bindEditable(input, { agents: LIVE });
 input.value = "tip @hu";
 input.selectionStart = 7;
 input.selectionEnd = 7;
@@ -112,6 +118,25 @@ const pick = picker.insert(HUGH);
 if (!pick || pick.text !== "tip @Hugh ") fail("pillInsert", JSON.stringify(pick));
 if (input.value !== "tip @Hugh ") fail("pillInsertValue", input.value);
 if (picker.isOpen()) fail("pickerClosedAfterInsert", "pick should close the list");
+const composerPill = input.querySelector(".mention-pill");
+if (!composerPill) fail("composerPillAfterPick", "pick must paint a pill in the field");
+if (composerPill.getAttribute("style") && /background:/.test(composerPill.getAttribute("style"))) {
+    fail("softChrome", composerPill.getAttribute("style"));
+}
+const composerName = composerPill.querySelector(".mention-pill-name");
+if (!composerName) fail("composerName", "missing name");
+if (composerName.getAttribute("style") && /color:/.test(composerName.getAttribute("style"))) {
+    fail("nameInherits", composerName.getAttribute("style"));
+}
+const composerAvatar = composerPill.querySelector(".avatar");
+if (!composerAvatar || !/background:/.test(composerAvatar.getAttribute("style") || "")) {
+    fail("avatarTint", composerAvatar && composerAvatar.getAttribute("style"));
+}
+input.append(documentStub.createTextNode("please review"));
+if (!input.querySelector(".mention-pill")) fail("composerPersist", "typing must leave the pill");
+if (Draft.readEditable(input) !== "tip @Hugh please review") {
+    fail("composerSerialize", Draft.readEditable(input));
+}
 
 const body = h("div", { class: "msg-body md" }, "Hugh CLEAR parked @Joey.");
 const msg = h("div", { class: "msg msg-agent" }, body);
@@ -122,6 +147,15 @@ const pill = msg.querySelector(".mention-pill");
 if (!pill) fail("linkifyPill", "missing pill");
 if (pill.getAttribute("data-agent-id") !== "joey") fail("linkifyId", pill.getAttribute("data-agent-id"));
 if (pill.tagName !== "BUTTON") fail("linkifyInteractive", pill.tagName);
+const host = pill.closest(".mention-host");
+if (!host) fail("mentionHost", "interactive pill needs a host the menu hangs off");
+if (pill.getAttribute("style") && /background:/.test(pill.getAttribute("style"))) {
+    fail("chatSoftChrome", pill.getAttribute("style"));
+}
+const chatAvatar = pill.querySelector(".avatar");
+if (!chatAvatar || !/background:/.test(chatAvatar.getAttribute("style") || "")) {
+    fail("chatAvatarTint", chatAvatar && chatAvatar.getAttribute("style"));
+}
 
 const unknown = h("div", { class: "msg" },
     h("div", { class: "msg-body" }, "parked @Bea."));
@@ -145,6 +179,9 @@ const menu = Pills.openMenu({
     container: msg,
 });
 if (!menu) fail("menuOpen", "live pill must open a menu");
+if (menu.element.parentNode !== host) {
+    fail("menuUnderPill", menu.element.parentNode && menu.element.parentNode.className);
+}
 const actions = menu.element.querySelectorAll(".menu-action");
 const labels = actions.map((btn) => btn.textLabel || btn.textContent);
 if (labels.join("|") !== "Open Chat|View Desk|Mention again") {
@@ -188,6 +225,9 @@ async function main() {
         insertMentionAgain: appended.text,
         pickerFilter: options.length,
         pillInsert: pick.text,
+        composerPersist: true,
+        alignBaseline: true,
+        menuUnderPill: true,
         linkifyLive: painted,
         menuActions: labels,
         openChat: openedChat,
