@@ -221,5 +221,9 @@ def test_the_body_no_longer_preserves_whitespace() -> None:
     is the one place it still has to survive.
     """
     conversation = _rules(_read(CSS / "conversation.css"))
+    # The composer is a contenteditable draft, not a markdown bubble — it
+    # has to keep the spaces the operator typed. This assertion is about
+    # the transcript.
+    conversation = re.sub(r"\.composer-input \{[^}]+\}", "", conversation)
     assert "pre-wrap" not in conversation, "the conversation surface still preserves whitespace"
     assert "white-space: pre" in _read(STYLESHEET).split(".md pre", 1)[1].split("}", 1)[0]

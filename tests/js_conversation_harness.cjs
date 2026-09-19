@@ -110,7 +110,7 @@ const api = async (url, init) => {
 
 const store = BossModStore.createStore({
     roster: [
-        { id: "a", name: "Ada", role: "Writer" },
+        { id: "a", name: "Ada", role: "Writer", color: "#1d4ed8" },
         { id: "b", name: "Bo", role: "Reviewer" },
         { id: "c", name: "Cy", role: "Engineer" },
         { id: "d", name: "Di", role: "Designer", color: "#065f46" },
@@ -165,6 +165,30 @@ async function main() {
     // Prime Ada's cache with a clean load.
     await conversation.open("a", "agent");
     if (bodies().join("|") !== "from Ada") throw new Error("Ada must load");
+
+    const adaTurn = conversation.element.querySelector(".msg-turn-agent");
+    const adaFace = adaTurn && adaTurn.querySelector(".msg-face");
+    const adaName = adaTurn && adaTurn.querySelector(".msg-author");
+    const adaBubble = adaTurn && adaTurn.querySelector(".msg");
+    const nameOutsideBubble = Boolean(
+        adaName && adaBubble && !adaBubble.contains(adaName)
+        && adaName.parentNode && adaName.parentNode.classList.contains("msg-stack")
+    );
+    const faceLeftOfName = Boolean(adaFace && adaName && adaTurn.children[0] === adaFace);
+    const nameIsChrome = Boolean(
+        adaName && adaName.textContent === "Ada"
+        && adaName.getAttribute("style")
+        && /color:/.test(adaName.getAttribute("style"))
+    );
+    const agentNameIsChromeOutside = Boolean(
+        adaTurn && adaFace && nameOutsideBubble && faceLeftOfName && nameIsChrome
+    );
+    if (!agentNameIsChromeOutside) {
+        throw new Error(
+            `agent name chrome wrong: face=${Boolean(adaFace)} name=${adaName && adaName.textContent} `
+            + `outside=${nameOutsideBubble} left=${faceLeftOfName} tinted=${nameIsChrome}`
+        );
+    }
 
     // ─── cacheSkipsLoading ───
     // A re-click paints from the cache with no flash of an empty room.
@@ -687,6 +711,7 @@ async function main() {
         receiptsNodeSurvivesReopen,
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
+        agentNameIsChromeOutside,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,
         escapeCancelsRenameWithoutSaving,

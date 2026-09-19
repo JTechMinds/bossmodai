@@ -1,9 +1,9 @@
 /**
  * BossMod AI — the mention pill and the menu a click opens.
  *
- * Chat already paints an agent as a tinted chip-plus-name. Mentions reuse
- * that mark: one builder, one menu, no hard-jump to Desk on the click.
- * Missing or fired agents stay text, or open nothing if a pill outlives them.
+ * The mark is a letter avatar plus the name in body ink — not a filled chip.
+ * One builder, one menu, no hard-jump to Desk on the click. Missing or fired
+ * agents stay text, or open nothing if a pill outlives them.
  */
 const BossModMentionPills = (() => {
     const { h } = BossModDom;
@@ -13,35 +13,38 @@ const BossModMentionPills = (() => {
     let openMenuHandle = null;
 
     /**
-     * One mention pill. Chip avatar plus the name, on the derived tint.
+     * One mention pill. Colour lives on the letter avatar; the name inherits.
      *
      * @param {object} agent
-     * @param {{onClick?: Function}} [options]
+     * @param {{onClick?: Function, editable?: boolean}} [options]
      * @returns {HTMLElement}
      */
     function renderPill(agent, options) {
         const opts = options || {};
         const who = agent || {};
         const name = String(who.name || '').trim() || 'Agent';
-        const tint = BossModAvatar.tintFor(who.color || null);
         const interactive = typeof opts.onClick === 'function';
         const attrs = {
             class: 'mention-pill',
             'data-agent-id': who.id || null,
             'data-agent-name': name,
-            style: `background:${tint.bg};color:${tint.ink}`,
         };
+        if (opts.editable) attrs.contenteditable = 'false';
         const children = [
             BossModAvatar.create({ name, color: who.color || null, size: 'chip' }),
             h('span', { class: 'mention-pill-name' }, name),
         ];
         if (!interactive) return h('span', attrs, children);
-        return h('button', {
+        const pill = h('button', {
             ...attrs,
             type: 'button',
             'aria-label': `${name} mention`,
             onclick: opts.onClick,
         }, children);
+        // Host is the positioned ancestor the menu hangs off, so a click
+        // cannot park the panel under the whole paragraph. A menu must not
+        // live inside the button (nested interactive).
+        return h('span', { class: 'mention-host' }, pill);
     }
 
     function skipTag(node) {
@@ -79,23 +82,59 @@ const BossModMentionPills = (() => {
             if (!hits.length) continue;
             const parent = node.parentNode;
             if (!parent) continue;
-            let cursor = 0;
-            for (const hit of hits) {
-                if (hit.start > cursor) {
-                    parent.insertBefore(document.createTextNode(value.slice(cursor, hit.start)), node);
-                }
-                parent.insertBefore(renderPill(hit.agent, {
-                    onClick: (event) => openPillMenu(event, hit.agent, options),
-                }), node);
-                painted += 1;
-                cursor = hit.end;
-            }
-            if (cursor < value.length) {
-                parent.insertBefore(document.createTextNode(value.slice(cursor)), node);
-            }
+            painted += appendTokens(parent, value, agents, (agent) => renderPill(agent, {
+                onClick: (event) => openPillMenu(event, agent, options),
+            }), node);
             node.remove();
         }
         return painted;
+    }
+
+    function appendTokens(parent, text, agents, makePill, before) {
+        const value = String(text || '');
+        const hits = BossModMentions.scanMentions(value, agents);
+        const insert = (node) => {
+            if (before) parent.insertBefore(node, before);
+            else parent.append(node);
+        };
+        if (!hits.length) {
+            if (value && !before) insert(document.createTextNode(value));
+            return 0;
+        }
+        let cursor = 0;
+        let painted = 0;
+        for (const hit of hits) {
+            if (hit.start > cursor) {
+                insert(document.createTextNode(value.slice(cursor, hit.start)));
+            }
+            insert(makePill(hit.agent));
+            painted += 1;
+            cursor = hit.end;
+        }
+        if (cursor < value.length) insert(document.createTextNode(value.slice(cursor)));
+        return painted;
+    }
+
+    /**
+     * Paint a composer field from `@Name` text. Pills are not buttons — a
+     * contenteditable that held a button would steal the caret. Typing after
+     * a pick must leave the pill in the tree (do not rebuild on every key).
+     *
+     * @param {HTMLElement} root
+     * @param {string} text
+     * @param {object} [ctx]
+     * @returns {number} Pills created.
+     */
+    function paintDraft(root, text, ctx) {
+        if (!root) return 0;
+        const options = ctx || {};
+        const agents = options.agents
+            ? BossModMentions.liveAgents(options.agents)
+            : BossModMentions.currentAgents();
+        root.replaceChildren();
+        return appendTokens(root, text, agents, (agent) => renderPill(agent, {
+            editable: options.editable !== false,
+        }));
     }
 
     function menuAction(id, label, onSelect) {
@@ -117,7 +156,8 @@ const BossModMentionPills = (() => {
         const pool = opts.agents || BossModMentions.currentAgents();
         const agent = BossModMentions.resolveLive(pool, (opts.agent && opts.agent.id) || '');
         if (!agent) return null;
-        if (!opts.anchor || !opts.container) {
+        const container = mentionHost(opts.anchor) || opts.container;
+        if (!opts.anchor || !container) {
             throw new Error('[mention-pill] a pill menu needs an anchor and a container');
         }
         if (openMenuHandle) {
@@ -132,7 +172,7 @@ const BossModMentionPills = (() => {
             anchor: opts.anchor,
             label: `${agent.name} mention`,
             items,
-            container: opts.container,
+            container,
             onClose: () => { openMenuHandle = null; },
         });
         openMenuHandle.element.setAttribute('data-menu', 'mention');
@@ -146,13 +186,19 @@ const BossModMentionPills = (() => {
         const live = BossModMentions.resolveLive(pool, agent && agent.id);
         if (!live) return null;
         const fromEvent = event && event.currentTarget;
-        const container = ctx.container
-            || (ctx.anchor && ctx.anchor.closest && ctx.anchor.closest('.msg'))
-            || (fromEvent && fromEvent.closest && fromEvent.closest('.msg'))
-            || document.body;
         const anchor = fromEvent || ctx.anchor;
+        const container = mentionHost(anchor)
+            || ctx.container
+            || (anchor && anchor.closest && anchor.closest('.msg'))
+            || document.body;
         return openMenu({ agent: live, agents: pool, anchor, container });
     }
 
-    return { renderPill, linkify, openMenu };
+    function mentionHost(node) {
+        if (!node) return null;
+        if (node.classList && node.classList.contains('mention-host')) return node;
+        return node.closest ? node.closest('.mention-host') : null;
+    }
+
+    return { renderPill, linkify, paintDraft, openMenu };
 })();

@@ -34,6 +34,7 @@ const BossModThreadSource = (() => {
         const archive = ctx && ctx.archive;
         const seat = ctx && ctx.seat;
         const forgetCache = ctx && ctx.forgetCache;
+        const store = ctx && ctx.store;
         if (typeof api !== 'function') throw new Error('[thread-source] ctx.api is required');
         if (!bus) throw new Error('[thread-source] ctx.bus is required');
         if (!presence) throw new Error('[thread-source] ctx.presence is required');
@@ -52,6 +53,12 @@ const BossModThreadSource = (() => {
 
         function members() {
             return Array.isArray(channel && channel.members) ? channel.members : [];
+        }
+
+        function colorFor(id) {
+            if (!store || !id) return null;
+            const row = (store.getState().roster || []).find((item) => item && item.id === id);
+            return (row && row.color) || null;
         }
 
         /** Unknown until loaded: an unloaded thread is treated as live. */
@@ -86,6 +93,7 @@ const BossModThreadSource = (() => {
                 author: raw.author_type || 'agent',
                 authorName: raw.author_name || 'Unknown',
                 authorAgentId: raw.author_agent_id || null,
+                authorColor: colorFor(raw.author_agent_id),
                 showAuthor: true,
                 text,
                 createdAt: raw.created_at || '',

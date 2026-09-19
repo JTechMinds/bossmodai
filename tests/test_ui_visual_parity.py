@@ -1123,17 +1123,21 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     listing = css.split(".transcript-list {", 1)[1].split("}", 1)[0]
     assert "max-width: 760px" in listing
 
-    bubble = css.split(".msg {", 1)[1].split("}", 1)[0]
-    assert "max-width: 72%" in bubble
+    turn = css.split(".msg-turn {", 1)[1].split("}", 1)[0]
+    assert "max-width: 72%" in turn
+    assert "display: flex" in turn
+    bubble = css.split("\n.msg {", 1)[1].split("}", 1)[0]
     assert "border-radius: 14px" in bubble
 
+    human_turn = css.split(".msg-turn-human {", 1)[1].split("}", 1)[0]
+    assert "align-self: flex-end" in human_turn
     human = css.split(".msg-human {", 1)[1].split("}", 1)[0]
-    assert "align-self: flex-end" in human
     assert "background: var(--accent-bg)" in human
     assert "color: var(--blue-ink)" in human
 
+    agent_turn = css.split(".msg-turn-agent {", 1)[1].split("}", 1)[0]
+    assert "align-self: flex-start" in agent_turn
     agent = css.split(".msg-agent {", 1)[1].split("}", 1)[0]
-    assert "align-self: flex-start" in agent
     assert "background: var(--bg)" in agent
 
     # Kept — they are ours, not the concept's — but demoted.
@@ -1141,6 +1145,7 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     assert "font-size: 10px" in time
     assert "color: var(--hint)" in time
     # ...except on the tint, where --hint measures 4.19:1 and fails AA.
+    assert ".msg-turn-human .msg-author," in css
     assert ".msg-human .msg-time { color: var(--blue-ink); }" in css
 
 

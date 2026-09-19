@@ -39,6 +39,12 @@ const BossModAgentSource = (() => {
             if (signals && typeof signals[name] === 'function') signals[name]();
         }
 
+        function colorFor(id) {
+            if (!id) return null;
+            const row = (store.getState().roster || []).find((item) => item && item.id === id);
+            return (row && row.color) || null;
+        }
+
         /**
          * The roster row for this agent.
          *
@@ -80,12 +86,16 @@ const BossModAgentSource = (() => {
                 ? `${BossModConsentCard.isCliApprovalCard(card) ? 'cli-approval' : 'consent'}:${card.id}`
                 : '';
             const text = raw.content || '';
+            const author = raw.from || raw.from_type || raw.author_type || 'agent';
+            const authorAgentId = raw.author_agent_id || (author === 'agent' ? agentId : null);
             return {
                 key: isQueue ? `queue-visibility:${agentId}` : (cardKey || String(raw.id || raw.message_id || '').trim()),
-                author: raw.from || raw.from_type || raw.author_type || 'agent',
-                authorName: raw.from_name || raw.author_name || '',
-                authorAgentId: raw.author_agent_id || agentId,
-                showAuthor: false,
+                author,
+                authorName: raw.from_name || raw.author_name
+                    || (author === 'agent' ? agent().name : ''),
+                authorAgentId,
+                authorColor: colorFor(authorAgentId),
+                showAuthor: author === 'agent',
                 text,
                 createdAt: raw.created_at || '',
                 kind: card ? 'request' : (isSystem || isQueue ? 'note' : 'message'),

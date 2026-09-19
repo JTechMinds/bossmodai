@@ -302,9 +302,39 @@
 
 /* ─── Messages ─── */
 
+/* The turn is the row: face + name chrome, then the paragraph bubble.
+   `.msg` is the bubble alone so a name cannot sit inside the prose. */
+.msg-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 72%;
+}
+
+.msg-turn-human { align-self: flex-end; }
+.msg-turn-agent { align-self: flex-start; }
+
+.msg-turn-system,
+.msg-turn-other {
+  align-self: center;
+  max-width: 92%;
+}
+
+.msg-face {
+  flex: none;
+  margin-top: 1px;
+}
+
+.msg-stack {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .msg {
   position: relative;
-  max-width: 72%;
   padding: 8px 12px;
   border-radius: 14px;
   line-height: 1.5;
@@ -316,10 +346,13 @@
    `breaks: true` rendered every newline the operator typed twice — once as a
    <br>, once as the literal character it came from. */
 
+/* Chrome, not body prose. Agent ink is the derived tint on the node;
+   the operator keeps --blue-ink so the name matches their bubble. */
 .msg-author {
-  margin-bottom: 2px;
-  font-size: 11px;
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
   color: var(--muted);
 }
 
@@ -336,15 +369,13 @@
    operator's own turns the loudest thing in a transcript they are reading for
    the agent's. --blue-ink on --accent-bg measures 6.86:1. */
 .msg-human {
-  align-self: flex-end;
   background: var(--accent-bg);
   color: var(--blue-ink);
 }
 
-/* Both the author and the time need the tint's own ink: --hint measures only
-   4.19:1 on --accent-bg and --accent is the same 4.19:1, so neither clears AA
-   there however quiet they look on the agent side. */
-.msg-human .msg-author,
+/* The name sits outside the tint, so --blue-ink is on the turn. Time stays
+   inside the bubble: --hint measures only 4.19:1 on --accent-bg. */
+.msg-turn-human .msg-author,
 .msg-human .msg-time { color: var(--blue-ink); }
 
 /* The tint's own ink for everything markdown paints in the operator's bubble
@@ -360,15 +391,12 @@
 }
 
 .msg-agent {
-  align-self: flex-start;
   background: var(--bg);
   color: var(--ink);
 }
 
 .msg-system,
 .msg-other {
-  max-width: 92%;
-  margin-inline: auto;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--muted);
@@ -545,11 +573,21 @@
   color: var(--ink);
   resize: none;
   overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   /* The focus hairline arrives rather than appearing. See :focus-visible. */
   transition: box-shadow 0.15s ease;
 }
 
 .composer-input::placeholder { color: var(--hint); }
+
+/* Contenteditable has no native placeholder. :empty is the empty draft;
+   a lone <br> is stripped in composer.js so this rule can see it. */
+.composer-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--hint);
+  pointer-events: none;
+}
 
 /* base.css's 2px accent ring drew a box around the one field whose whole point
    is that it has none — and it fires on a mouse click too, because a browser
@@ -576,7 +614,8 @@
   box-shadow: inset 0 -1px 0 var(--line-control);
 }
 
-.composer-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.composer-input:disabled,
+.composer-input[contenteditable="false"] { opacity: 0.6; cursor: not-allowed; }
 
 /* Send, alone on its side of the row now the clipboard has gone.
  *
@@ -614,21 +653,29 @@
 
 .composer-error.hidden { display: none; }
 
-/* ─── Mentions: the same chip-plus-name mark as an agent face ─── */
+/* ─── Mentions: letter avatar + body-ink name, on the text line ─── */
+
+/* Host is `position: relative` so the click menu hangs under THIS pill,
+   not under `.msg`. `inline` keeps the mark in the prose flow. */
+.mention-host {
+  position: relative;
+  display: inline;
+}
 
 .mention-pill {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 4px;
   max-width: 100%;
   margin: 0 1px;
-  padding: 0 7px 0 3px;
+  padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
+  background: none;
+  color: inherit;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.6;
+  font-weight: 400;
+  line-height: inherit;
   vertical-align: baseline;
   cursor: pointer;
 }
@@ -639,6 +686,8 @@ span.mention-pill { cursor: default; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: inherit;
+  font-weight: inherit;
 }
 
 .mention-picker {
@@ -678,10 +727,11 @@ span.mention-pill { cursor: default; }
   font-size: 12px;
 }
 
-/* Hang off the message, not the whole column — .msg is the positioned host. */
+/* Hang off the clicked pill. .mention-host is the positioned ancestor. */
 .menu[data-menu="mention"] {
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
+  right: auto;
   min-width: 180px;
 }
 

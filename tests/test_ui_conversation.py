@@ -230,6 +230,7 @@ def test_conversation_harness() -> None:
         "subtitleIsWithTheActions": True,
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
+        "agentNameIsChromeOutside": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage
         # key, its control, and the node that holds it are unchanged — which is
@@ -515,6 +516,28 @@ def test_conversation_assign_stamps_thread_origin() -> None:
         "return {", 1
     )[0]
     assert "bindOrigin" not in board_assign
+
+
+def test_agent_name_is_chrome_outside_the_paragraph() -> None:
+    """The name is not body prose. Face on the left, name above the bubble."""
+    message = _read(CONVERSATION / "message.js")
+    assert "class: `msg-turn msg-turn-${author}`" in message
+    assert "class: 'msg-face'" in message
+    assert "class: 'msg-stack'" in message
+    assert "BossModAvatar.create(" in message
+    bubble = message.split("class: `msg msg-${author}`", 1)[1].split(");", 1)[0]
+    assert "msg-author" not in bubble
+    assert "msg-face" not in bubble
+    css = _read(CSS / "conversation.css")
+    assert ".msg-turn {" in css
+    assert ".msg-face {" in css
+    author = css.split(".msg-author {", 1)[1].split("}", 1)[0]
+    assert "font-weight: 600" in author
+    agent = _read(SOURCES / "agent-source.js")
+    assert "authorColor: colorFor(authorAgentId)" in agent
+    assert "showAuthor: author === 'agent'" in agent
+    thread = _read(SOURCES / "thread-source.js")
+    assert "authorColor: colorFor(raw.author_agent_id)" in thread
 
 
 def test_conversation_css_uses_tokens_only() -> None:

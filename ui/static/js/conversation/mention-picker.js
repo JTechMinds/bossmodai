@@ -2,9 +2,9 @@
  * BossMod AI — the composer `@` live-agent picker.
  *
  * Typing `@` opens a list of live hires, filtered as the operator types.
- * A pick inserts `@Name ` into the field — the same token chat paints as a
- * pill — and never sends. Focus stays in the composer; this is a typeahead,
- * not a modal.
+ * A pick inserts `@Name ` and paints the pill in the field. The pill stays
+ * while the operator keeps typing — the field is not rebuilt on each key.
+ * Never sends. Focus stays in the composer; this is a typeahead, not a modal.
  */
 const BossModMentionPicker = (() => {
     const { h } = BossModDom;
@@ -85,8 +85,10 @@ const BossModMentionPicker = (() => {
         }
 
         function sync() {
-            const caret = Number.isInteger(input.selectionStart)
-                ? input.selectionStart : String(input.value || '').length;
+            const caret = typeof BossModMentionDraft !== 'undefined'
+                ? BossModMentionDraft.caretIn(input)
+                : (Number.isInteger(input.selectionStart)
+                    ? input.selectionStart : String(input.value || '').length);
             const trigger = BossModMentions.findTrigger(input.value, caret);
             if (!trigger) {
                 if (open) close();
