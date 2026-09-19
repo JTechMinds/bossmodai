@@ -254,21 +254,17 @@ const BossModConversation = (() => {
             source = null;
         }
 
-
         function buildSource(id, kind) {
             if (kind === 'agent') {
-                // openDesk is optional and documented (spec 4.1); the source
-                // renders its Desk toggle only when it arrives.
                 return BossModAgentSource.createAgentSource(id, {
                     api, bus, store, presence, openDesk,
                 });
             }
             if (kind === 'thread') {
                 return BossModThreadSource.createThreadSource(id, {
-                    api,
-                    bus,
-                    presence,
+                    api, bus, presence,
                     archive: BossModThreadArchive.createThreadArchive({ api }),
+                    seat: BossModThreadSeat.createThreadSeat({ api, store }),
                     forgetCache: (conversationId) => {
                         cache.forget(conversationId);
                         drafts.delete(conversationId);

@@ -42,6 +42,7 @@ CONTEXT_MODULES = [
     NEEDS / "needs-store.js",
     NEEDS / "needs-bar.js",
     CONVERSATION / "sources" / "thread-archive.js",
+    CONVERSATION / "sources" / "thread-seat.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation.js",

@@ -35,6 +35,7 @@ CALL_SITES = {
     "shell/add-agent-menu.js": "BossModIcons.paint(menu.element, 'add-agent-menu')",
     "context/agent-form.js": "BossModIcons.paint(advancedToggle, 'agent-form.advanced')",
     "conversation/chrome.js": "BossModIcons.paintDocument('conversation-chrome')",
+    "conversation/sources/thread-seat.js": "BossModIcons.paint(modal.element, 'thread-seat')",
     "conversation/event-cards.js": "BossModIcons.paint(note, 'event-cards')",
     "shell/roster.js": "BossModIcons.paintDocument('roster')",
     "shell/header.js": "BossModIcons.paintDocument('header')",

@@ -35,7 +35,7 @@ const NAMES = [
     "BossModOverlayFocus", "BossModOverlays",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModConversationChrome",     "BossModComposer", "BossModSystemReceipts",
-    "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSource",
+    "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadSource",
     "BossModAgentSource", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {

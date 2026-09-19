@@ -34,6 +34,9 @@ CRITICAL_CALL_SITES = {
     "conversation/sources/thread-source.js": [
         "api(`/api/channels/${threadId}/messages`",
     ],
+    "conversation/sources/thread-seat.js": [
+        "api(`/api/channels/${threadId}/members`",
+    ],
     # Files left the manifest with the dock shell. Its reads and its
     # open-folder call are now DI'd, so they are spelled api(...); the DI chain
     # that binds that to apiFetch is asserted below.
@@ -89,6 +92,7 @@ API_BY_INJECTION = {
     "conversation/sources/agent-source.js",
     "conversation/sources/thread-source.js",
     "conversation/sources/thread-archive.js",
+    "conversation/sources/thread-seat.js",
     # The Office and Board places take `api` from the shell's ctx and hand it
     # down; none of them names the global.
     "places/office/office-canvas.js",
@@ -193,6 +197,7 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "conversation/sources/agent-source.js",
                  "conversation/sources/thread-source.js",
                  "conversation/sources/thread-archive.js",
+                 "conversation/sources/thread-seat.js",
                  "places/office/office-canvas.js",
                  "places/office/org-view.js",
                  "places/office/office-place.js",

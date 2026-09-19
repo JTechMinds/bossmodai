@@ -164,8 +164,15 @@ function sourceFor(threadId, confirmChoice) {
         bus,
         presence,
         archive: BossModThreadArchive.createThreadArchive({ api, confirm: () => confirmChoice }),
+        seat: { pickAndSeat: async () => null },
         forgetCache: (id) => forgotten.push(id),
     });
+}
+
+function chromeAction(source, id) {
+    const action = source.chrome().actions.find((item) => item.id === id);
+    if (!action) throw new Error(`chrome is missing ${id}`);
+    return action;
 }
 
 function modal() {
@@ -266,11 +273,14 @@ async function main() {
     const annSource = sourceFor("open-a", "cancel_and_archive");
     const offAnn = annSource.subscribe(signals);
     await annSource.load();
-    if (annSource.chrome().actions[0].id !== "channel-archive-btn") {
+    if (chromeAction(annSource, "channel-archive-btn").id !== "channel-archive-btn") {
         throw new Error("a live thread must offer Archive");
     }
+    if (!annSource.chrome().actions.some((item) => item.id === "channel-seat-btn")) {
+        throw new Error("a live thread must offer Add to thread");
+    }
     calls.length = 0;
-    await annSource.chrome().actions[0].onSelect();
+    await chromeAction(annSource, "channel-archive-btn").onSelect();
     if (calls.some((item) => item.url === "/api/tasks/cancel")) {
         throw new Error("cancel-and-archive must not use a separate cancel POST");
     }
@@ -285,7 +295,7 @@ async function main() {
     const offBea = beaSource.subscribe(signals);
     await beaSource.load();
     calls.length = 0;
-    await beaSource.chrome().actions[0].onSelect();
+    await chromeAction(beaSource, "channel-archive-btn").onSelect();
     if (calls.some((item) => item.url === "/api/tasks/cancel")) {
         throw new Error("archive only must leave tasks open");
     }
@@ -298,12 +308,12 @@ async function main() {
     const offDee = deeSource.subscribe(signals);
     await deeSource.load();
     calls.length = 0;
-    await deeSource.chrome().actions[0].onSelect();
+    await chromeAction(deeSource, "channel-archive-btn").onSelect();
     if (calls.some((item) => item.method === "DELETE" && item.url === "/api/channels/open-d")) {
         throw new Error("Back must abort archive");
     }
     if (deeSource.canSend() !== true
-        || deeSource.chrome().actions[0].id !== "channel-archive-btn") {
+        || chromeAction(deeSource, "channel-archive-btn").id !== "channel-archive-btn") {
         throw new Error("an aborted archive must leave the thread archivable");
     }
 
@@ -349,10 +359,10 @@ async function main() {
     const calSource = sourceFor("none-c", "archive_only");
     const offCal = calSource.subscribe(signals);
     await calSource.load();
-    await calSource.chrome().actions[0].onSelect();
+    await chromeAction(calSource, "channel-archive-btn").onSelect();
     if (calSource.canSend() !== false) throw new Error("none-c must archive");
     calls.length = 0;
-    await calSource.chrome().actions[0].onSelect();
+    await chromeAction(calSource, "channel-reopen-btn").onSelect();
     const reopened = calls.some((item) => item.method === "POST"
         && item.url.includes("/api/channels/none-c/reopen"));
     if (!reopened) throw new Error("Reopen must POST /reopen");

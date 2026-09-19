@@ -25,6 +25,7 @@ const NAMES = [
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
+    "BossModThreadSeat",
     "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -455,10 +456,13 @@ async function main() {
         throw new Error("a control that looks like a heading needs its own name");
     }
     if (titleInput().value !== "Standup") throw new Error("the title must show the name");
-    // At rest the row is the `⋯` and nothing else — Archive was the only thing
-    // ever in it, and it is behind the menu now.
+    // At rest the row's only wordless action is Add to thread. Archive lives
+    // behind the `⋯`. Add to thread is icon-only, so textContent stays empty.
     if (actionLabels().join("|") !== "") {
         throw new Error(`at rest the row carries no text action, got ${actionLabels().join("|")}`);
+    }
+    if (actionNames().join("|") !== "Add to thread") {
+        throw new Error(`a live thread must offer Add to thread, got ${actionNames().join("|")}`);
     }
     const archiveLivesInTheMenu = await menuActionNames() === "Archive";
     if (!archiveLivesInTheMenu) {
@@ -485,7 +489,7 @@ async function main() {
     // Beside the TITLE, and nowhere near the action row at the other end.
     const saveActionAppearsBesideArchive =
         renameSlotNames().join("|") === "Cancel rename|Save name"
-        && actionNames().join("|") === ""
+        && actionNames().join("|") === "Add to thread"
         && Boolean(conversation.element.querySelector("#conversation-title-save"));
     if (!saveActionAppearsBesideArchive) {
         throw new Error(`the rename pair must sit beside the title, got `

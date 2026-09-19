@@ -67,6 +67,10 @@ const BossModRoster = (() => {
             onOpenConversation: (agentId) => openConversation(agentId, 'agent'),
             onOpenDesk: openDesk,
             onSelectionChange: () => threads.applySelection(),
+            seat: typeof BossModThreadSeat === 'undefined'
+                ? null
+                : BossModThreadSeat.createThreadSeat({ api: apiFetch, store }),
+            onError: (message, err) => reportError(message, err),
         });
 
         const threads = BossModRosterThreads.createThreads({

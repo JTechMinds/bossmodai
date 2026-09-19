@@ -41,6 +41,7 @@ CONVERSATION_MODULES = [
     JS / "needs" / "need-shape.js",
     JS / "needs" / "needs-bar.js",
     SOURCES / "thread-archive.js",
+    SOURCES / "thread-seat.js",
     SOURCES / "thread-source.js",
     SOURCES / "agent-source.js",
     CONVERSATION / "conversation.js",
@@ -70,8 +71,9 @@ def _app_js() -> list[Path]:
 def test_one_renderer_two_sources() -> None:
     """Exactly two adapters, one per backend conversation kind.
 
-    thread-archive.js also lives under sources/ but declares no `kind`: it is
-    the archive dialog the thread adapter delegates to, not a third source.
+    thread-archive.js and thread-seat.js also live under sources/ but declare
+    no `kind`: they are the archive dialog and the seat picker the thread
+    adapter delegates to, not extra sources.
     """
     adapters = {
         path.name: _read(path)
