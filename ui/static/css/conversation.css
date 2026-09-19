@@ -302,9 +302,39 @@
 
 /* ─── Messages ─── */
 
+/* The turn is the row: face + name chrome, then the paragraph bubble.
+   `.msg` is the bubble alone so a name cannot sit inside the prose. */
+.msg-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 72%;
+}
+
+.msg-turn-human { align-self: flex-end; }
+.msg-turn-agent { align-self: flex-start; }
+
+.msg-turn-system,
+.msg-turn-other {
+  align-self: center;
+  max-width: 92%;
+}
+
+.msg-face {
+  flex: none;
+  margin-top: 1px;
+}
+
+.msg-stack {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .msg {
   position: relative;
-  max-width: 72%;
   padding: 8px 12px;
   border-radius: 14px;
   line-height: 1.5;
@@ -316,10 +346,13 @@
    `breaks: true` rendered every newline the operator typed twice — once as a
    <br>, once as the literal character it came from. */
 
+/* Chrome, not body prose. Agent ink is the derived tint on the node;
+   the operator keeps --blue-ink so the name matches their bubble. */
 .msg-author {
-  margin-bottom: 2px;
-  font-size: 11px;
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
   color: var(--muted);
 }
 
@@ -336,15 +369,13 @@
    operator's own turns the loudest thing in a transcript they are reading for
    the agent's. --blue-ink on --accent-bg measures 6.86:1. */
 .msg-human {
-  align-self: flex-end;
   background: var(--accent-bg);
   color: var(--blue-ink);
 }
 
-/* Both the author and the time need the tint's own ink: --hint measures only
-   4.19:1 on --accent-bg and --accent is the same 4.19:1, so neither clears AA
-   there however quiet they look on the agent side. */
-.msg-human .msg-author,
+/* The name sits outside the tint, so --blue-ink is on the turn. Time stays
+   inside the bubble: --hint measures only 4.19:1 on --accent-bg. */
+.msg-turn-human .msg-author,
 .msg-human .msg-time { color: var(--blue-ink); }
 
 /* The tint's own ink for everything markdown paints in the operator's bubble
@@ -360,15 +391,12 @@
 }
 
 .msg-agent {
-  align-self: flex-start;
   background: var(--bg);
   color: var(--ink);
 }
 
 .msg-system,
 .msg-other {
-  max-width: 92%;
-  margin-inline: auto;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--muted);

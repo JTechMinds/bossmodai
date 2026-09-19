@@ -15,6 +15,10 @@
  * Every author renders the same way, the operator's own turns included: one
  * transcript that formatted `**x**` for one speaker and not the other would be
  * two renderers again, and a pasted log is worth a fence whoever pasted it.
+ *
+ * The name is chrome, not prose. It sits outside the paragraph bubble with a
+ * color-coded initial to its left, so a labelled turn reads as
+ * `[face] [Name]` above the body rather than a name buried in the paragraph.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -62,17 +66,35 @@ const BossModMessage = (() => {
         if (typeof BossModMentionPills !== 'undefined') {
             BossModMentionPills.linkify(body);
         }
-        return h('div', {
-            class: `msg msg-${author}`,
-            'data-message-key': key || null,
-        },
-            message.showAuthor
-                ? h('div', { class: 'msg-author' }, message.authorName || 'Unknown')
-                : null,
+
+        const label = String(message.authorName || '').trim();
+        const showName = Boolean(message.showAuthor);
+        const faceName = label || (author === 'human' ? 'You' : 'Agent');
+        const color = message.authorColor || null;
+        const tint = BossModAvatar.tintFor(color);
+        const withFace = author === 'human' || author === 'agent';
+        const bubble = h('div', { class: `msg msg-${author}` },
             body,
             createdAt
                 ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
                 : null);
+
+        return h('div', {
+            class: `msg-turn msg-turn-${author}`,
+            'data-message-key': key || null,
+        },
+            withFace
+                ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
+                    BossModAvatar.create({ name: faceName, color, size: 'sm' }))
+                : null,
+            h('div', { class: 'msg-stack' },
+                showName
+                    ? h('div', {
+                        class: 'msg-author',
+                        style: author === 'human' ? null : `color:${tint.ink}`,
+                    }, label || 'Unknown')
+                    : null,
+                bubble));
     }
 
     return { renderMessage };

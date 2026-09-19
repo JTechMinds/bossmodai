@@ -262,7 +262,7 @@ const BossModConversation = (() => {
             }
             if (kind === 'thread') {
                 return BossModThreadSource.createThreadSource(id, {
-                    api, bus, presence,
+                    api, bus, store, presence,
                     archive: BossModThreadArchive.createThreadArchive({ api }),
                     seat: BossModThreadSeat.createThreadSeat({ api, store }),
                     forgetCache: (conversationId) => {
