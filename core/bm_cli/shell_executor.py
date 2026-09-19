@@ -294,6 +294,9 @@ def execute_shell_command(
     sanitized_env = _sanitize_env(cwd)
     if extra_env:
         sanitized_env.update(extra_env)
+    if Path(args[0]).name.lower() in {"git", "git.exe"}:
+        sanitized_env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        sanitized_env.setdefault("GCM_INTERACTIVE", "never")
     start = time.monotonic()
 
     try:
@@ -301,6 +304,7 @@ def execute_shell_command(
             args,
             cwd=str(cwd),
             env=sanitized_env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,

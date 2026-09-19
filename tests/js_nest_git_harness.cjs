@@ -66,6 +66,17 @@ const list = h("div", { class: "transcript-list" });
 transcript.append(list);
 documentStub.body.append(transcript);
 
+const bounceCard = pendingNestCard("nest-bounce", "git push origin main");
+bounceCard.error = "GitHub didn’t accept that access token or SSH key. "
+    + "Paste a GitHub access token on the Nest git card.";
+const bounceEl = paintCard(list, bounceCard);
+const bounceStatus = bounceEl.querySelector(".hpc-status");
+const cardShowsAuthBounce = Boolean(bounceStatus)
+    && bounceStatus.textContent.includes("didn’t accept that access token");
+if (!cardShowsAuthBounce) {
+    throw new Error(`auth bounce error missing on card: ${JSON.stringify(bounceStatus && bounceStatus.textContent)}`);
+}
+
 const origin = pendingNestCard("nest-a", "git push origin main");
 const sibling = pendingNestCard("nest-b", "git fetch");
 const originEl = paintCard(list, origin);
@@ -237,6 +248,7 @@ process.stdout.write(JSON.stringify({
     probeFailLeavesToggleOff: true,
     patNotLeftInDom: true,
     settingsShowsBeginnerCopy: true,
+    cardShowsAuthBounce: true,
 }));
 })().catch((err) => {
     console.error(err && err.stack ? err.stack : err);

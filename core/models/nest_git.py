@@ -43,6 +43,12 @@ NEST_GIT_HOWTO = (
     "Browser or desktop GitHub login is not the agent's."
 )
 NEST_GIT_NO_CREDS_WHY = "Nest git has no credentials"
+NEST_GIT_BAD_CREDS_WHY = "GitHub didn’t accept that access token or SSH key"
+NEST_GIT_BAD_CREDS_HOWTO = (
+    "Paste a GitHub access token (a special password from GitHub → Settings → Developer settings), "
+    "or an SSH key if you use those, on the Nest git card or under Settings → Nest git. "
+    "Your computer’s GitHub login isn’t shared with agents."
+)
 NEST_GIT_PROBE_FAIL_WHY = "Host git is not visible to Shell"
 NEST_GIT_BLOCK_KIND = "blocked_nest_git"
 

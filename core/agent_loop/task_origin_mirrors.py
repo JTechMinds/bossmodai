@@ -188,7 +188,7 @@ def format_origin_status_line(
             line = _BLOCKED_SHELL_EXECUTOR_LINE
     elif kind == "blocked_nest_git":
         tag = (target_name or "").strip()
-        if note and note.startswith(_BLOCKED_NEST_GIT_LINE):
+        if note and note.lower().startswith("blocked —"):
             line = note
         elif tag:
             line = f"{_BLOCKED_NEST_GIT_LINE}. {tag}"

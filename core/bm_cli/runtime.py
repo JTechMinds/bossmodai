@@ -514,6 +514,31 @@ def execute_approved_command(
         )
         return result
 
+    auth_failed = _maybe_nest_git_auth_failure(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=None,
+        shell_exec=shell_exec,
+    )
+    if auth_failed is not None:
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor="shell",
+            cwd_before=cwd_before,
+            cwd_after=auth_failed.cwd,
+            policy_tier="approved",
+            decision="denied",
+            result=auth_failed,
+            trigger_type=trigger_type,
+            approval_request_id=approval_request_id,
+        )
+        return auth_failed
+
     result = shell_result(
         command=parsed.raw,
         exit_code=shell_exec.exit_code,
@@ -581,6 +606,41 @@ def _maybe_shell_executor_consent(
         trigger_type=trigger_type,
     )
     return paused
+
+
+def _maybe_nest_git_auth_failure(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+    shell_exec: object,
+) -> BossModCliResult | None:
+    """Map interactive git auth / rejected PAT to Blocked + Nest git card bounce."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.nest_git import (
+        is_git_cli,
+        shell_output_looks_like_git_auth_failure,
+    )
+    from core.bm_cli.nest_git_consent import bounce_nest_git_after_auth_failure
+
+    del trigger_type
+    if not is_git_cli(parsed):
+        return None
+    stdout = str(getattr(shell_exec, "stdout", "") or "")
+    stderr = str(getattr(shell_exec, "stderr", "") or "")
+    if not shell_output_looks_like_git_auth_failure(stdout, stderr):
+        return None
+    return bounce_nest_git_after_auth_failure(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd_before,
+        task_id=get_active_task_id(agent.id),
+        channel_id=channel_id,
+    )
 
 
 def _maybe_nest_git_consent(
@@ -878,13 +938,15 @@ def _gate_locked_clone_project_env(
 
 def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     """Return True when this git command should use shell policy, not virtual git."""
-    if parsed.name != "git":
+    from core.bm_cli.nest_git import git_subcommand, is_git_cli
+
+    if not is_git_cli(parsed):
         return False
     if config.get_live("cli_shell_enabled") != "true":
         return False
     from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
 
-    subcommand = parsed.args[0] if parsed.args else ""
+    subcommand = git_subcommand(parsed.args)
     if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
         return True
     return cwd_is_nested_clone_repo(agent, cwd)
@@ -903,15 +965,16 @@ def _agent_git_identity_env(agent: Agent) -> dict[str, str]:
 
 
 def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[str, str]:
-    """Agent git identity, plus nest-git auth env when this op needs it.
+    """Agent git identity, plus nest-git auth env on the shared git Shell path.
 
-    PAT path overwrites identity with the bot attribution. Values are never
-    logged here.
+    PAT/askpass is applied for every git argv so a saved token reaches push
+    even when the gate's cwd/subcommand check missed. Values are never logged.
     """
     extra = _agent_git_identity_env(agent)
-    from core.bm_cli.nest_git import command_needs_nest_git_auth, nest_git_shell_env
+    from core.bm_cli.nest_git import is_git_cli, nest_git_shell_env
 
-    if command_needs_nest_git_auth(agent, parsed, cwd):
+    del cwd
+    if is_git_cli(parsed):
         extra.update(nest_git_shell_env(agent))
     return extra
 
@@ -1309,6 +1372,30 @@ def _execute_shell(
             trigger_type=trigger_type,
         )
         return result
+
+    auth_failed = _maybe_nest_git_auth_failure(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+        shell_exec=shell_exec,
+    )
+    if auth_failed is not None:
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor="shell",
+            cwd_before=cwd_before,
+            cwd_after=auth_failed.cwd,
+            policy_tier=policy.tier,
+            decision="denied",
+            result=auth_failed,
+            trigger_type=trigger_type,
+        )
+        return auth_failed
 
     result = shell_result(
         command=parsed.raw,
