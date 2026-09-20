@@ -21,6 +21,8 @@ wheels/
 .env.*
 .bossmod_data_key
 .bossmod-backend.pid
+.nest_git_askpass
+.nest_git_ssh
 
 # IDE
 .idea/
