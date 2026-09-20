@@ -112,7 +112,6 @@ const NestGitSection = (() => {
     }
 
     function credentialCard(item) {
-        const id = BossModFormat.escapeAttribute(item.id || '');
         const label = BossModFormat.escapeHtml(item.label || item.id || '');
         const match = BossModFormat.escapeHtml(item.match || 'unmatched remotes (default)');
         const badge = item.is_default ? '<span class="text-xs text-emerald-700 ml-2">default</span>' : '';
@@ -123,7 +122,7 @@ const NestGitSection = (() => {
             ? `SSH saved (last 4: ${BossModFormat.escapeHtml(item.ssh_last4 || '')}).`
             : 'No SSH key.';
         return `
-            <div class="border border-bm-border rounded-lg p-3 bg-white" data-cred-id="${id}">
+            <div class="border border-bm-border rounded-lg p-3 bg-white" data-cred-id="${BossModFormat.escapeAttribute(item.id || '')}">
                 <div class="flex items-start justify-between gap-2">
                     <div>
                         <p class="text-sm font-medium">${label}${badge}</p>
@@ -131,8 +130,8 @@ const NestGitSection = (() => {
                         <p class="text-xs text-bm-muted mt-1">${pat} ${ssh}</p>
                     </div>
                     <div class="flex flex-col gap-1">
-                        <button type="button" class="hpc-action text-xs nest-git-edit" data-id="${id}">Edit</button>
-                        <button type="button" class="hpc-action text-xs nest-git-remove" data-id="${id}">Remove</button>
+                        <button type="button" class="hpc-action text-xs nest-git-edit" data-id="${BossModFormat.escapeAttribute(item.id || '')}">Edit</button>
+                        <button type="button" class="hpc-action text-xs nest-git-remove" data-id="${BossModFormat.escapeAttribute(item.id || '')}">Remove</button>
                     </div>
                 </div>
                 <div class="hidden nest-git-edit-form mt-3 space-y-2">
@@ -148,7 +147,7 @@ const NestGitSection = (() => {
                         <input type="checkbox" class="nest-edit-default" ${item.is_default ? 'checked' : ''}>
                         Use for remotes that don’t match another credential
                     </label>
-                    <button type="button" class="hpc-action hpc-action-primary text-sm nest-git-save-edit" data-id="${id}">Save</button>
+                    <button type="button" class="hpc-action hpc-action-primary text-sm nest-git-save-edit" data-id="${BossModFormat.escapeAttribute(item.id || '')}">Save</button>
                 </div>
             </div>`;
     }

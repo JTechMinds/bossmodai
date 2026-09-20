@@ -122,8 +122,7 @@ Card.renderHostPathConsentCard(originEl, origin, credApi);
 const addBtn = actionButtons(originEl).find((btn) => btn.textContent === ADD_LABEL);
 if (!addBtn) throw new Error("Add token/SSH button missing");
 await addBtn.dispatchClick();
-const tokenField = originEl.querySelector('input[aria-label="GitHub access token"]')
-    || Array.from(originEl.querySelectorAll("input")).find((node) => node.placeholder === "GitHub access token");
+const tokenField = Array.from(originEl.querySelectorAll("input")).find((node) => node.placeholder === "GitHub access token");
 const sshField = originEl.querySelector("textarea");
 const formLabels = actionButtons(originEl).map((btn) => btn.textContent);
 const cardShowsSaveAndSettings = Boolean(tokenField)

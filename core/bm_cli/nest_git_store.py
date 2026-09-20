@@ -119,7 +119,10 @@ def normalize_remote_url(url: str | None) -> str:
         host = parsed.hostname or parsed.netloc.split("@")[-1]
         return _join_host_path(host, parsed.path)
     stripped = text.split("@")[-1]
-    return _join_host_path("", stripped) if "/" in stripped else stripped.lower()
+    if "/" in stripped:
+        host, _, path = stripped.partition("/")
+        return _join_host_path(host, path)
+    return stripped.lower()
 
 
 def suggested_match_for_remote(remote: str | None) -> str:
