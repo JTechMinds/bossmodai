@@ -56,8 +56,16 @@ NEST_GIT_TOKEN_REJECTED_HOWTO = (
     "or an SSH key if you use those, on the Nest git card or under Settings → Nest git. "
     "Your computer’s GitHub login isn’t shared with agents."
 )
+NEST_GIT_TOKEN_NO_REPO_OWNER = (
+    "A fine-grained token belongs to one Resource owner — you, or one organization, not both. "
+    "For an organization repo, Resource owner = the org that owns the repo, then select that repo "
+    "and turn on Contents Read and write. "
+    "Need one token for personal and organization repos? Use a classic token with repo access. "
+    "If GitHub asks you to Configure SSO, do that on the token."
+)
 NEST_GIT_TOKEN_NO_REPO_HOWTO = (
-    f"{NEST_GIT_TOKEN_NO_REPO_WHY} — {NEST_GIT_TOKEN_NO_REPO_HINT}"
+    f"{NEST_GIT_TOKEN_NO_REPO_WHY} — {NEST_GIT_TOKEN_NO_REPO_HINT} "
+    f"{NEST_GIT_TOKEN_NO_REPO_OWNER}"
 )
 NEST_GIT_BAD_CREDS_HOWTO = (
     f"{NEST_GIT_TOKEN_REJECTED_WHY}. {NEST_GIT_TOKEN_REJECTED_HOWTO} "

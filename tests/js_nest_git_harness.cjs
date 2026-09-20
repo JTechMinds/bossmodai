@@ -68,14 +68,17 @@ documentStub.body.append(transcript);
 
 const bounceCard = pendingNestCard("nest-bounce", "git push origin main");
 bounceCard.error = "GitHub rejected this token. "
-    + "Or this token may not have access to this repo — grant it under the token’s repository access.";
+    + "Or this token may not have access to this repo — grant it under the token’s repository access. "
+    + "A fine-grained token belongs to one Resource owner — you, or one organization, not both. "
+    + "For an organization repo, Resource owner = the org that owns the repo.";
 const bounceEl = paintCard(list, bounceCard);
 const bounceStatus = bounceEl.querySelector(".hpc-status");
 const bounceText = bounceStatus ? bounceStatus.textContent : "";
 const cardShowsAuthBounce = Boolean(bounceStatus)
     && bounceText.includes("GitHub rejected this token")
     && bounceText.includes("this token may not have access to this repo")
-    && bounceText.includes("grant it under the token’s repository access.");
+    && bounceText.includes("grant it under the token’s repository access.")
+    && bounceText.includes("Resource owner = the org that owns the repo");
 if (!cardShowsAuthBounce) {
     throw new Error(`auth bounce error missing on card: ${JSON.stringify(bounceText)}`);
 }
