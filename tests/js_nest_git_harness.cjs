@@ -143,21 +143,55 @@ const enabled = {
     status: "enabled",
     decision_note: "GitHub permission saved under Settings → Nest git.",
 };
-const apiEnable = async (url) => {
+let enableInit = null;
+const apiEnable = async (url, init) => {
+    enableInit = init || {};
     if (!String(url).includes("/api/nest-git/") || !String(url).endsWith("/enable")) {
         throw new Error(`unexpected enable URL ${url}`);
     }
-    return { ok: true, async json() { return enabled; } };
+    const payload = JSON.stringify(enabled);
+    return { ok: true, async text() { return payload; }, async json() { return enabled; } };
 };
 originEl.replaceChildren();
 Card.renderHostPathConsentCard(originEl, origin, apiEnable);
 const enableBtn = actionButtons(originEl).find((btn) => btn.textContent === ENABLE_LABEL);
 if (!enableBtn) throw new Error("Enable button missing");
 await enableBtn.dispatchClick();
+const enablePostsBody = Boolean(enableInit)
+    && enableInit.method === "POST"
+    && String(enableInit.body || "") === "{}";
+if (!enablePostsBody) {
+    throw new Error(`enable must POST an empty JSON body, got ${JSON.stringify(enableInit)}`);
+}
 const enableCollapsesSibling = originEl.classList.contains("is-resolved")
     && siblingEl.classList.contains("is-resolved")
     && actionButtons(siblingEl).length === 0;
 if (!enableCollapsesSibling) throw new Error("Enable must collapse sibling nest_git cards");
+
+const staleEl = paintCard(list, pendingNestCard("nest-stale", "git push origin main"));
+const api422 = async () => ({
+    ok: false,
+    status: 422,
+    async text() {
+        return JSON.stringify({
+            detail: [{ type: "missing", loc: ["body"], msg: "Field required", input: null }],
+        });
+    },
+});
+staleEl.replaceChildren();
+Card.renderHostPathConsentCard(staleEl, pendingNestCard("nest-stale", "git push origin main"), api422);
+const staleEnable = actionButtons(staleEl).find((btn) => btn.textContent === ENABLE_LABEL);
+if (!staleEnable) throw new Error("stale Enable button missing");
+await staleEnable.dispatchClick();
+const staleLabels = actionButtons(staleEl).map((btn) => btn.textContent);
+const staleText = staleEl.textContent || "";
+const schemaMismatchDismisses = staleLabels.length === 1
+    && staleLabels[0] === "Dismiss"
+    && !staleText.includes("Field required")
+    && !staleText.includes("\"detail\"");
+if (!schemaMismatchDismisses) {
+    throw new Error(`schema mismatch must collapse to Dismiss, got labels=${JSON.stringify(staleLabels)} text=${JSON.stringify(staleText)}`);
+}
 
 const settingsRoot = h("div", { id: "settings-content" });
 Object.defineProperty(settingsRoot, "innerHTML", {
@@ -272,6 +306,8 @@ process.stdout.write(JSON.stringify({
     settingsShowsBeginnerCopy: true,
     cardShowsAuthBounce: true,
     cardShowsPickSaved: true,
+    enablePostsBody: true,
+    schemaMismatchDismisses: true,
 }));
 })().catch((err) => {
     console.error(err && err.stack ? err.stack : err);

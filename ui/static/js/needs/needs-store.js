@@ -17,6 +17,19 @@ const BossModNeeds = (() => {
 
     const NEEDS_URL = '/api/needs';
 
+    function requestInit(action) {
+        const init = { method: action.method };
+        if (action.body != null && typeof action.body === 'object') {
+            init.headers = { 'Content-Type': 'application/json' };
+            init.body = JSON.stringify(action.body);
+        }
+        return init;
+    }
+
+    function nestGit() {
+        return globalThis.BossModNestGitCard || null;
+    }
+
     /**
      * Build the needs store.
      *
@@ -199,7 +212,19 @@ const BossModNeeds = (() => {
                 publish(current.filter((item) => item.id !== need.id), false);
             }
             try {
-                const res = await api(action.href, { method: action.method });
+                const nest = nestGit();
+                if (action.dismiss) {
+                    if (nest) nest.collapseNeed(need);
+                    return;
+                }
+                if (nest && nest.actionNeedsBody(need, action)
+                    && (action.body == null || typeof action.body !== 'object')) {
+                    publish(before.map((item) => (item.id === need.id
+                        ? nest.dismissOnlyNeed(item) : item)), true);
+                    nest.collapseNeed(need);
+                    return;
+                }
+                const res = await api(action.href, requestInit(action));
                 const bodyText = await res.text();
                 if (!res.ok) {
                     const gone = need.kind === 'approval' && (
@@ -221,7 +246,19 @@ const BossModNeeds = (() => {
                         await refresh();
                         return;
                     }
-                    throw new Error(bodyText || `HTTP ${res.status}`);
+                    const nestKind = nest ? nest.classifyNeedFailure(need, action, res, bodyText) : '';
+                    if (nestKind === 'gone') {
+                        nest.collapseNeed(need);
+                        await refresh();
+                        return;
+                    }
+                    if (nestKind === 'mismatch') {
+                        publish(before.map((item) => (item.id === need.id
+                            ? nest.dismissOnlyNeed(item) : item)), true);
+                        nest.collapseNeed(need);
+                        return;
+                    }
+                    throw new Error((nest && nest.operatorMessage(bodyText)) || bodyText || `HTTP ${res.status}`);
                 }
             } catch (err) {
                 // Restoring is not optional. A dropped failure leaves the

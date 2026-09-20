@@ -40,9 +40,7 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         WORKSPACE_PREFERENCE_KIND,
     )
     from core.models.nest_git import (
-        NEST_GIT_ADD_LABEL,
         NEST_GIT_CARD_COPY,
-        NEST_GIT_ENABLE_LABEL,
         NEST_GIT_KIND,
     )
 
@@ -77,12 +75,7 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             title = f"{name} {SHELL_EXECUTOR_CARD_COPY}"
             sub = request.command or request.path
         elif kind == NEST_GIT_KIND:
-            actions = [
-                {"label": NEST_GIT_ENABLE_LABEL, "method": "POST", "tone": "primary",
-                 "href": f"/api/nest-git/{request.id}/enable"},
-                {"label": NEST_GIT_ADD_LABEL, "method": "POST", "tone": "default",
-                 "href": f"/api/nest-git/{request.id}/credentials"},
-            ]
+            actions = _nest_git_need_actions(request)
             title = f"{name} {NEST_GIT_CARD_COPY}"
             sub = request.command or request.path
         elif kind == WORKSPACE_PREFERENCE_KIND:
@@ -128,6 +121,35 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             "actions": actions,
         })
     return items
+
+
+def _nest_git_need_actions(request: Any) -> list[dict[str, Any]]:
+    """Describe Enable / Add / Use with the JSON body multi-cred routes expect."""
+    from core.bm_cli.nest_git_store import load_credentials
+    from core.models.nest_git import (
+        NEST_GIT_ADD_LABEL,
+        NEST_GIT_ENABLE_LABEL,
+        NEST_GIT_PICK_PREFIX,
+    )
+
+    actions = [
+        {"label": NEST_GIT_ENABLE_LABEL, "method": "POST", "tone": "primary",
+         "href": f"/api/nest-git/{request.id}/enable", "body": {}},
+        {"label": NEST_GIT_ADD_LABEL, "method": "POST", "tone": "default",
+         "href": f"/api/nest-git/{request.id}/credentials", "body": {}},
+    ]
+    for cred in load_credentials():
+        if not cred or not cred.id:
+            continue
+        name = (cred.label or "").strip() or "saved credential"
+        actions.append({
+            "label": f"{NEST_GIT_PICK_PREFIX} {name}",
+            "method": "POST",
+            "tone": "default",
+            "href": f"/api/nest-git/{request.id}/use",
+            "body": {"credential_id": cred.id},
+        })
+    return actions
 
 
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:

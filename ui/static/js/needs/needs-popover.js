@@ -18,13 +18,18 @@ const BossModNeedsPopover = (() => {
     const FOCUSABLE = 'button, input';
 
     /** Rendering order. Decisions the operator owes come before reports. */
-    const KIND_ORDER = Object.freeze(['consent', 'approval', 'blocked', 'error']);
+    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'blocked', 'error']);
     const KIND_LABELS = Object.freeze({
         consent: 'Folder access',
+        nest_git: 'Nest git',
         approval: 'Command approval',
         blocked: 'Blocked work',
         error: 'Errors',
     });
+
+    function groupKey(need) {
+        return need && need.cardKind === 'nest_git' ? 'nest_git' : need.kind;
+    }
 
     /**
      * The dialog's accessible name. The badge is decorative, so a screen-reader
@@ -178,7 +183,7 @@ const BossModNeedsPopover = (() => {
             }
             KIND_ORDER.forEach((kind) => {
                 // store.needs is already newest-first, so filtering preserves it.
-                const group = list.filter((need) => need.kind === kind);
+                const group = list.filter((need) => groupKey(need) === kind);
                 if (group.length === 0) return;
                 listEl.append(h('section', { class: 'popover-group' },
                     h('h3', { class: 'popover-group-title' },

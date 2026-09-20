@@ -21,6 +21,7 @@ NEEDS_MODULES = [
     # harness loads the real gates module rather than a second copy of it.
     JS / "core" / "gates.js",
     JS / "core" / "format.js",
+    JS / "core" / "consent-card-nest-git.js",
     JS / "conversation" / "event-cards.js",
     NEEDS / "need-shape.js",
     NEEDS / "needs-store.js",
@@ -99,6 +100,9 @@ def test_needs_harness() -> None:
         "barShowsConsentWhenInlineMissing": True,
         "duplicateConsentsCoalesce": True,
         "shellNeedPaintsEnableKind": True,
+        "nestGitPostsBody": True,
+        "nestGitSchemaMismatchDismisses": True,
+        "nestGitGroupIsLabeled": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
     }
@@ -181,6 +185,8 @@ def test_popover_actions_come_from_the_server() -> None:
     /api/ path in this file would be that promise broken.
     """
     source = _read(NEEDS / "needs-popover.js")
+    assert "nest_git: 'Nest git'" in source
+    assert "Folder access" in source
     assert "/api/" not in source, "the popover must not name an API path"
     # The whole action travels through to the store, which reads href/method.
     # The popover never takes either apart, so it cannot build a URL of its own.
@@ -193,7 +199,8 @@ def test_popover_actions_come_from_the_server() -> None:
     assert "${action.tone}" in source
 
     store_source = _read(NEEDS / "needs-store.js")
-    assert "api(action.href, { method: action.method })" in store_source
+    assert "api(action.href, requestInit(action))" in store_source
+    assert "JSON.stringify(action.body)" in store_source
 
 
 def test_bell_is_never_suppressible() -> None:
@@ -333,6 +340,9 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     surfaces end up with four opinions about where a blocked task lives.
     """
     shape = _read(NEEDS / "need-shape.js")
+    assert "'nest_git_consent_required'" in shape
+    assert "'nest_git_enabled'" in shape
+    assert "'nest_git_credentials'" in shape
     assert "const KIND_TARGETS = Object.freeze({" in shape
     assert "place: 'board', params: { taskId: need.id }" in shape
     assert "place: 'log', params: { diagnosticId: need.id }" in shape
