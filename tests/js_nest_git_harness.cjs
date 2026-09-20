@@ -70,7 +70,10 @@ const bounceCard = pendingNestCard("nest-bounce", "git push origin main");
 bounceCard.error = "GitHub rejected this token. "
     + "Or this token may not have access to this repo — grant it under the token’s repository access. "
     + "A fine-grained token belongs to one Resource owner — you, or one organization, not both. "
-    + "For an organization repo, Resource owner = the org that owns the repo.";
+    + "Personal and organization repos cannot share one fine-grained token. "
+    + "For an organization repo, Resource owner = the org that owns the repo → select that repo → "
+    + "Contents Read and write. Need one key for everything? Use a classic repo token. "
+    + "If the organization uses SAML, open Configure SSO on the token.";
 const bounceEl = paintCard(list, bounceCard);
 const bounceStatus = bounceEl.querySelector(".hpc-status");
 const bounceText = bounceStatus ? bounceStatus.textContent : "";

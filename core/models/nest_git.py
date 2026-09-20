@@ -58,10 +58,11 @@ NEST_GIT_TOKEN_REJECTED_HOWTO = (
 )
 NEST_GIT_TOKEN_NO_REPO_OWNER = (
     "A fine-grained token belongs to one Resource owner — you, or one organization, not both. "
-    "For an organization repo, Resource owner = the org that owns the repo, then select that repo "
-    "and turn on Contents Read and write. "
-    "Need one token for personal and organization repos? Use a classic token with repo access. "
-    "If GitHub asks you to Configure SSO, do that on the token."
+    "Personal and organization repos cannot share one fine-grained token. "
+    "For an organization repo, Resource owner = the org that owns the repo → select that repo → "
+    "Contents Read and write. "
+    "Need one key for everything? Use a classic repo token. "
+    "If the organization uses SAML, open Configure SSO on the token."
 )
 NEST_GIT_TOKEN_NO_REPO_HOWTO = (
     f"{NEST_GIT_TOKEN_NO_REPO_WHY} — {NEST_GIT_TOKEN_NO_REPO_HINT} "

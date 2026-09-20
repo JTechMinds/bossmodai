@@ -145,7 +145,9 @@ def test_operator_copy_matches_beginner_lock() -> None:
     )
     assert "Resource owner = the org that owns the repo" in NEST_GIT_TOKEN_NO_REPO_OWNER
     assert "Contents Read and write" in NEST_GIT_TOKEN_NO_REPO_OWNER
-    assert "classic token" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "cannot share one fine-grained token" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "classic repo token" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "SAML" in NEST_GIT_TOKEN_NO_REPO_OWNER
     assert "Configure SSO" in NEST_GIT_TOKEN_NO_REPO_OWNER
     assert NEST_GIT_TOKEN_NO_REPO_OWNER in NEST_GIT_TOKEN_NO_REPO_HOWTO
     assert NEST_GIT_AMBIGUOUS_CREDS_WHY == (
@@ -652,6 +654,10 @@ def test_403_repo_access_copy_on_card(monkeypatch: pytest.MonkeyPatch) -> None:
     assert NEST_GIT_TOKEN_NO_REPO_WHY in str(card.get("error"))
     assert "Resource owner = the org that owns the repo" in str(card.get("error"))
     assert "Contents Read and write" in str(card.get("error"))
+    assert "cannot share one fine-grained token" in str(card.get("error"))
+    assert "classic repo token" in str(card.get("error"))
+    assert "SAML" in str(card.get("error"))
+    assert "Configure SSO" in str(card.get("error"))
     assert token not in error
     assert token not in json.dumps(result.data or {})
 
