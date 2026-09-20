@@ -43,11 +43,25 @@ NEST_GIT_HOWTO = (
     "Browser or desktop GitHub login is not the agent's."
 )
 NEST_GIT_NO_CREDS_WHY = "Nest git has no credentials"
-NEST_GIT_BAD_CREDS_WHY = "GitHub didn’t accept that access token or SSH key"
-NEST_GIT_BAD_CREDS_HOWTO = (
+NEST_GIT_TOKEN_REJECTED_WHY = "GitHub rejected this token"
+NEST_GIT_TOKEN_NO_REPO_WHY = "this token may not have access to this repo"
+NEST_GIT_TOKEN_NO_REPO_HINT = "grant it under the token’s repository access."
+NEST_GIT_AMBIGUOUS_CREDS_WHY = (
+    "GitHub rejected this token, or it may not have access to this repo"
+)
+# Kept as the fail-closed short why when 401 vs 403 cannot be told apart.
+NEST_GIT_BAD_CREDS_WHY = NEST_GIT_AMBIGUOUS_CREDS_WHY
+NEST_GIT_TOKEN_REJECTED_HOWTO = (
     "Paste a GitHub access token (a special password from GitHub → Settings → Developer settings), "
     "or an SSH key if you use those, on the Nest git card or under Settings → Nest git. "
     "Your computer’s GitHub login isn’t shared with agents."
+)
+NEST_GIT_TOKEN_NO_REPO_HOWTO = (
+    f"{NEST_GIT_TOKEN_NO_REPO_WHY} — {NEST_GIT_TOKEN_NO_REPO_HINT}"
+)
+NEST_GIT_BAD_CREDS_HOWTO = (
+    f"{NEST_GIT_TOKEN_REJECTED_WHY}. {NEST_GIT_TOKEN_REJECTED_HOWTO} "
+    f"Or {NEST_GIT_TOKEN_NO_REPO_HOWTO}"
 )
 NEST_GIT_PROBE_FAIL_WHY = "Host git is not visible to Shell"
 NEST_GIT_BLOCK_KIND = "blocked_nest_git"

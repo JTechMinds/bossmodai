@@ -13,6 +13,7 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import db
 from core import config
@@ -21,8 +22,8 @@ from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.types import ParsedCliCommand
 from core.models import Agent
 from core.models.nest_git import (
+    NEST_GIT_AMBIGUOUS_CREDS_WHY,
     NEST_GIT_BAD_CREDS_HOWTO,
-    NEST_GIT_BAD_CREDS_WHY,
     NEST_GIT_BOT_EMAIL,
     NEST_GIT_BOT_NAME,
     NEST_GIT_CATEGORY,
@@ -32,6 +33,10 @@ from core.models.nest_git import (
     NEST_GIT_PAT_KEY,
     NEST_GIT_PROBE_FAIL_WHY,
     NEST_GIT_SSH_KEY,
+    NEST_GIT_TOKEN_NO_REPO_HOWTO,
+    NEST_GIT_TOKEN_NO_REPO_WHY,
+    NEST_GIT_TOKEN_REJECTED_HOWTO,
+    NEST_GIT_TOKEN_REJECTED_WHY,
 )
 from db.secret_store import decrypt_setting_value
 
@@ -66,7 +71,34 @@ _AUTH_FAIL_MARKERS = (
     "the requested url returned error: 403",
     "error: 401",
     "error: 403",
+    "write access to repository not granted",
+    "resource not accessible by personal access token",
+    "bad credentials",
 )
+
+# Strong 403 / fine-grained PAT-without-repo hints from GitHub.
+_REPO_ACCESS_MARKERS = (
+    "the requested url returned error: 403",
+    "error: 403",
+    "write access to repository not granted",
+    "resource not accessible by personal access token",
+    "repository access",
+    "permission to ",
+)
+
+# Strong 401 / wrong-or-expired token or SSH key hints.
+_TOKEN_REJECTED_MARKERS = (
+    "the requested url returned error: 401",
+    "error: 401",
+    "authentication failed",
+    "invalid username or password",
+    "bad credentials",
+    "permission denied (publickey)",
+    "could not read username",
+    "terminal prompts disabled",
+)
+
+GitAuthFailureKind = Literal["token_rejected", "repo_access", "ambiguous"]
 
 _HOST_PASSTHROUGH_ENV = (
     "SSH_AUTH_SOCK",
@@ -296,9 +328,33 @@ def no_creds_blocked_message() -> str:
     return f"{NEST_GIT_NO_CREDS_WHY}. {NEST_GIT_HOWTO}"
 
 
-def auth_failed_blocked_message() -> str:
+def auth_failed_blocked_message(kind: GitAuthFailureKind = "ambiguous") -> str:
     """Return Blocked why + how-to when GitHub rejected the saved creds."""
-    return f"{NEST_GIT_BAD_CREDS_WHY}. {NEST_GIT_BAD_CREDS_HOWTO}"
+    why, howto = auth_failed_operator_copy(kind)
+    return f"{why}. {howto}"
+
+
+def auth_failed_operator_copy(kind: GitAuthFailureKind) -> tuple[str, str]:
+    """Return ``(short why, card how-to)`` for one auth-reject class."""
+    if kind == "token_rejected":
+        return NEST_GIT_TOKEN_REJECTED_WHY, NEST_GIT_TOKEN_REJECTED_HOWTO
+    if kind == "repo_access":
+        return NEST_GIT_TOKEN_NO_REPO_WHY, NEST_GIT_TOKEN_NO_REPO_HOWTO
+    return NEST_GIT_AMBIGUOUS_CREDS_WHY, NEST_GIT_BAD_CREDS_HOWTO
+
+
+def classify_git_auth_failure(stdout: str, stderr: str) -> GitAuthFailureKind:
+    """Split 401-style token reject from 403-style repo access when possible."""
+    blob = f"{stdout or ''}\n{stderr or ''}".lower()
+    has_repo = any(marker in blob for marker in _REPO_ACCESS_MARKERS)
+    has_token = any(marker in blob for marker in _TOKEN_REJECTED_MARKERS)
+    if has_repo and has_token:
+        return "ambiguous"
+    if has_repo:
+        return "repo_access"
+    if has_token:
+        return "token_rejected"
+    return "ambiguous"
 
 
 def shell_output_looks_like_git_auth_failure(stdout: str, stderr: str) -> bool:

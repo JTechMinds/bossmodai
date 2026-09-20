@@ -22,12 +22,13 @@ from core.agent_loop.next_owner import (
 )
 from core.agent_loop.task_origin_mirrors import short_reason
 from core.models import Agent
+from core.models.nest_git import NEST_GIT_AMBIGUOUS_CREDS_WHY
 
 HOST_DENY_WHY = "host deny"
 NO_PROGRESS_WHY = "no progress"
 SHELL_EXECUTOR_WHY = "Shell Executor off — needs enable"
 NEST_GIT_WHY = "Nest git has no credentials"
-NEST_GIT_BAD_CREDS_WHY = "GitHub didn’t accept that access token or SSH key"
+NEST_GIT_BAD_CREDS_WHY = NEST_GIT_AMBIGUOUS_CREDS_WHY
 HOST_DENY_KIND = "blocked_host_deny"
 NO_PROGRESS_KIND = "blocked_no_progress"
 SHELL_EXECUTOR_BLOCK_KIND = "blocked_shell_executor"
@@ -51,6 +52,8 @@ _NEST_GIT_MARKERS = (
     "browser or desktop github login is not the agent's",
     "github didn’t accept that access token",
     "github didn't accept that access token",
+    "github rejected this token",
+    "may not have access to this repo",
 )
 
 
@@ -105,16 +108,35 @@ def is_host_deny_result(cli_result: Any) -> bool:
 
 
 def _nest_git_block_why(cli_result: Any) -> str:
-    """Prefer the bad-creds why when the CLI error names a rejected token."""
+    """Prefer the classified auth-reject why when the CLI error names creds."""
+    from core.models.nest_git import (
+        NEST_GIT_AMBIGUOUS_CREDS_WHY,
+        NEST_GIT_TOKEN_NO_REPO_WHY,
+        NEST_GIT_TOKEN_REJECTED_WHY,
+    )
+
     data = getattr(cli_result, "data", None) or {}
+    kind = str(data.get("nest_git_auth_kind") or "").strip()
+    if kind == "token_rejected":
+        return NEST_GIT_TOKEN_REJECTED_WHY
+    if kind == "repo_access":
+        return NEST_GIT_TOKEN_NO_REPO_WHY
+    if kind == "ambiguous":
+        return NEST_GIT_AMBIGUOUS_CREDS_WHY
     blob = " ".join(
         [
             str(getattr(cli_result, "detail", "") or ""),
             str(data.get("error") or ""),
         ]
     ).lower()
-    if "didn’t accept" in blob or "didn't accept" in blob:
-        return NEST_GIT_BAD_CREDS_WHY
+    rejected = "rejected this token" in blob or "didn’t accept" in blob or "didn't accept" in blob
+    no_repo = "may not have access" in blob
+    if rejected and no_repo:
+        return NEST_GIT_AMBIGUOUS_CREDS_WHY
+    if no_repo:
+        return NEST_GIT_TOKEN_NO_REPO_WHY
+    if rejected:
+        return NEST_GIT_TOKEN_REJECTED_WHY
     return NEST_GIT_WHY
 
 
@@ -158,6 +180,44 @@ def is_shell_executor_deny_result(cli_result: Any) -> bool:
     return any(marker in blob for marker in _SHELL_EXECUTOR_MARKERS)
 
 
+def attach_nest_git_card_pause(
+    result: dict[str, Any],
+    *,
+    agent: Agent,
+    cli_result: Any,
+) -> None:
+    """Pause the turn on a fail-closed Nest git card so prose cannot bury it."""
+    from core.models.host_path_consent import consent_turn_event
+    from core.models.nest_git import NEST_GIT_KIND
+
+    data = getattr(cli_result, "data", None) or {}
+    card = data.get("host_path_consent") if isinstance(data.get("host_path_consent"), dict) else {}
+    if not card or str(card.get("kind") or "") != NEST_GIT_KIND:
+        return
+    result["consent_required"] = True
+    result["consent_request_id"] = getattr(cli_result, "consent_request_id", None)
+    result["consent_reused"] = bool(data.get("consent_reused"))
+    result["host_path_consent"] = card
+    event, detail = consent_turn_event(agent.name, card)
+    result["event"] = event
+    result["detail"] = detail
+    result["suppress_activity_broadcast"] = False
+
+
+def _copy_origin_extras(result: dict[str, Any], data: dict[str, Any]) -> None:
+    extras = result.setdefault("origin_status_messages", [])
+    for item in data.get("origin_status_messages") or []:
+        if isinstance(item, dict) and item not in extras:
+            extras.append(item)
+    chrome = data.get("origin_chrome")
+    if isinstance(chrome, dict) and chrome and chrome not in extras:
+        extras.append(chrome)
+        if chrome.get("channel_id") and not result.get("channel_message"):
+            result["channel_message"] = chrome
+        elif chrome.get("agent_id") and not result.get("chat_message"):
+            result["chat_message"] = chrome
+
+
 def surface_cli_gate_block(
     result: dict[str, Any],
     *,
@@ -185,13 +245,17 @@ def surface_cli_gate_block(
         )
         return
     if is_nest_git_block_result(cli_result):
-        surface_blocked_origin(
-            result,
-            agent=agent,
-            trigger=trigger,
-            why=_nest_git_block_why(cli_result),
-            kind=NEST_GIT_BLOCK_KIND,
-        )
+        data = getattr(cli_result, "data", None) or {}
+        _copy_origin_extras(result, data)
+        if not data.get("nest_git_origin_posted"):
+            surface_blocked_origin(
+                result,
+                agent=agent,
+                trigger=trigger,
+                why=_nest_git_block_why(cli_result),
+                kind=NEST_GIT_BLOCK_KIND,
+            )
+        attach_nest_git_card_pause(result, agent=agent, cli_result=cli_result)
 
 
 def finish_blocked_origin(
