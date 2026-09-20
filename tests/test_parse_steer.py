@@ -139,6 +139,42 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     assert "_needsApproval" not in ConversationDecision.model_fields
 
 
+def test_invented_th2_key_is_invalid_decision_not_schema_key() -> None:
+    raw = (
+        '{"act":"reply","intent":"status","msg":"Continuing.",'
+        '"th2":"need a card"}'
+    )
+    parsed = parse_direct_turn_response(raw)
+    assert parsed["decision"] == "_parse_failed"
+    assert parsed.get("_parse_kind") == "invalid_decision"
+    assert "th2" in str(parsed.get("_raw_snippet") or "")
+    assert "th2" not in parsed or parsed.get("decision") == "_parse_failed"
+    steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""))
+    assert INVALID_DECISION_STEER in steer
+    assert "Do not invent approval fields" in steer
+    assert "Do not park @Operator" in steer
+    assert not steer.startswith("Blocked")
+    assert kind_for_schema_error("unexpected top-level keys: th2") == "invalid_decision"
+    assert kind_for_schema_error(
+        'unexpected top-level keys: th2',
+        {"act": "reply", "intent": "status", "msg": "Continuing.", "th2": "x"},
+    ) == "invalid_decision"
+    valid = parse_direct_turn_response(
+        '{"act":"reply","intent":"status","msg":"Continuing.","th":"ok"}'
+    )
+    assert valid.get("decision") == "answer"
+    assert "th2" not in ConversationDecision.model_fields
+
+
+def test_parse_action_invented_th2_is_invalid_decision() -> None:
+    parsed = parse_action(
+        '{"act":"cli","data":{"cmd":"git push origin main"},"th2":"push"}'
+    )
+    assert parsed["action"] == "_parse_failed"
+    assert parsed.get("_parse_kind") == "invalid_decision"
+    assert "th2" in str(parsed.get("_raw_snippet") or "")
+
+
 def test_parse_action_invented_needs_approval_is_invalid_decision() -> None:
     parsed = parse_action(
         '{"act":"cli","data":{"cmd":"sed -i s/a/b/ tests/x.py"},'
@@ -211,6 +247,41 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
     assert "Do not park @Operator" in detail
     assert "do not invent a desk" in detail.lower()
     assert "_needsApproval" in detail
+    assert not detail.startswith("Blocked")
+    assert outcome.result.get("parse_steer") is True
+
+
+@pytest.mark.asyncio
+async def test_decision_invented_th2_fail_closes_without_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    seen = _script_completions(
+        monkeypatch,
+        [
+            '{"act":"reply","intent":"status","msg":"I will continue.",'
+            '"th2":"waiting"}'
+        ],
+    )
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Continue.",
+            "from_name": "Human",
+            "from_id": HUMAN_SENDER_ID,
+            "source_channel": "chat",
+        },
+    )
+    assert len(seen) == 1
+    assert outcome.result.get("event") == "agent_error"
+    detail = str(outcome.result.get("detail") or "")
+    assert "Do not invent approval fields" in detail
+    assert "Do not park @Operator" in detail
+    assert "th2" in detail
     assert not detail.startswith("Blocked")
     assert outcome.result.get("parse_steer") is True
 

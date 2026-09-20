@@ -67,14 +67,23 @@ transcript.append(list);
 documentStub.body.append(transcript);
 
 const bounceCard = pendingNestCard("nest-bounce", "git push origin main");
-bounceCard.error = "GitHub didn’t accept that access token or SSH key. "
-    + "Paste a GitHub access token on the Nest git card.";
+bounceCard.error = "GitHub rejected this token. "
+    + "Or this token may not have access to this repo — grant it under the token’s repository access. "
+    + "A fine-grained token belongs to one Resource owner — you, or one organization, not both. "
+    + "Personal and organization repos cannot share one fine-grained token. "
+    + "For an organization repo, Resource owner = the org that owns the repo → select that repo → "
+    + "Contents Read and write. Need one key for everything? Use a classic repo token. "
+    + "If the organization uses SAML, open Configure SSO on the token.";
 const bounceEl = paintCard(list, bounceCard);
 const bounceStatus = bounceEl.querySelector(".hpc-status");
+const bounceText = bounceStatus ? bounceStatus.textContent : "";
 const cardShowsAuthBounce = Boolean(bounceStatus)
-    && bounceStatus.textContent.includes("didn’t accept that access token");
+    && bounceText.includes("GitHub rejected this token")
+    && bounceText.includes("this token may not have access to this repo")
+    && bounceText.includes("grant it under the token’s repository access.")
+    && bounceText.includes("Resource owner = the org that owns the repo");
 if (!cardShowsAuthBounce) {
-    throw new Error(`auth bounce error missing on card: ${JSON.stringify(bounceStatus && bounceStatus.textContent)}`);
+    throw new Error(`auth bounce error missing on card: ${JSON.stringify(bounceText)}`);
 }
 
 const origin = pendingNestCard("nest-a", "git push origin main");

@@ -94,6 +94,7 @@ async def _run_execution_turn(
                 approval_request_id=approval_payload.get("approval_request_id", ""),
                 cwd=approval_payload.get("cwd"),
                 trigger_type=trigger_type,
+                channel_id=consent_origin_channel_id(trigger),
             )
             approval_context_msg = cli_result.prompt_content
         else:

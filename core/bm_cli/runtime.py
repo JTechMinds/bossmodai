@@ -435,6 +435,7 @@ def execute_approved_command(
     approval_request_id: str,
     cwd: str | None = None,
     trigger_type: str | None = None,
+    channel_id: str | None = None,
 ) -> BossModCliResult:
     """Execute a previously-approved shell command.
 
@@ -479,7 +480,7 @@ def execute_approved_command(
         content=content,
         cwd_before=cwd_before,
         trigger_type=trigger_type,
-        channel_id=None,
+        channel_id=channel_id,
     )
     if paused is not None:
         return paused
@@ -520,7 +521,7 @@ def execute_approved_command(
         content=content,
         cwd_before=cwd_before,
         trigger_type=trigger_type,
-        channel_id=None,
+        channel_id=channel_id,
         shell_exec=shell_exec,
     )
     if auth_failed is not None:
@@ -621,6 +622,7 @@ def _maybe_nest_git_auth_failure(
     """Map interactive git auth / rejected PAT to Blocked + Nest git card bounce."""
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.nest_git import (
+        classify_git_auth_failure,
         is_git_cli,
         shell_output_looks_like_git_auth_failure,
     )
@@ -640,6 +642,7 @@ def _maybe_nest_git_auth_failure(
         cwd=cwd_before,
         task_id=get_active_task_id(agent.id),
         channel_id=channel_id,
+        auth_kind=classify_git_auth_failure(stdout, stderr),
     )
 
 
@@ -813,6 +816,7 @@ def _apply_locked_clone_shell_outcome(
         cwd_before=cwd_before,
         policy=policy,
         trigger_type=trigger_type,
+        channel_id=channel_id,
     )
 
 

@@ -17,8 +17,12 @@ from api.routes import router
 from core import config
 from core.bm_cli.cli_always import write_nest_always_rule
 from core.bm_cli.filesystem import agent_artifact_dir
+from core.agent_loop.actions import execute_action
+from core.agent_loop.activity_runtime import activate_work_activity
+from core.agent_loop.loop import run_turn
 from core.bm_cli.nest_git import (
     HostGitProbe,
+    classify_git_auth_failure,
     command_needs_nest_git_auth,
     enable_host_git,
     git_subcommand,
@@ -30,6 +34,9 @@ from core.bm_cli.nest_git import (
     shell_output_looks_like_git_auth_failure,
     write_nest_git_secret,
 )
+from core.llm.client import LLMResponse
+from core.models.message import HUMAN_SENDER_ID
+from core.tasking.service import create_or_bind_task
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.session import set_cli_cwd
@@ -37,8 +44,8 @@ from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.shell_executor import ShellExecutionResult, execute_shell_command
 from core.models.nest_git import (
     NEST_GIT_ADD_LABEL,
+    NEST_GIT_AMBIGUOUS_CREDS_WHY,
     NEST_GIT_BAD_CREDS_HOWTO,
-    NEST_GIT_BAD_CREDS_WHY,
     NEST_GIT_BODY,
     NEST_GIT_BOT_EMAIL,
     NEST_GIT_BOT_NAME,
@@ -54,6 +61,12 @@ from core.models.nest_git import (
     NEST_GIT_SAVE_LABEL,
     NEST_GIT_SSH_LABEL,
     NEST_GIT_TOKEN_LABEL,
+    NEST_GIT_TOKEN_NO_REPO_HINT,
+    NEST_GIT_TOKEN_NO_REPO_HOWTO,
+    NEST_GIT_TOKEN_NO_REPO_OWNER,
+    NEST_GIT_TOKEN_NO_REPO_WHY,
+    NEST_GIT_TOKEN_REJECTED_HOWTO,
+    NEST_GIT_TOKEN_REJECTED_WHY,
     nest_git_card_title,
 )
 from core.runtime import runtime_services
@@ -124,9 +137,30 @@ def test_operator_copy_matches_beginner_lock() -> None:
     assert "empty field" in NEST_GIT_EMPTY_CREDS
     # Fail-closed Blocked why + how-to stay on the gate path.
     assert NEST_GIT_NO_CREDS_WHY == "Nest git has no credentials"
-    assert NEST_GIT_BAD_CREDS_WHY == "GitHub didn’t accept that access token or SSH key"
-    assert "Nest git card" in NEST_GIT_BAD_CREDS_HOWTO
+    assert NEST_GIT_TOKEN_REJECTED_WHY == "GitHub rejected this token"
+    assert NEST_GIT_TOKEN_NO_REPO_WHY == "this token may not have access to this repo"
+    assert NEST_GIT_TOKEN_NO_REPO_HINT == "grant it under the token’s repository access."
+    assert NEST_GIT_TOKEN_NO_REPO_HOWTO.startswith(
+        "this token may not have access to this repo — grant it under the token’s repository access."
+    )
+    assert "Resource owner = the org that owns the repo" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "Contents Read and write" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "cannot share one fine-grained token" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "classic repo token" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "SAML" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert "Configure SSO" in NEST_GIT_TOKEN_NO_REPO_OWNER
+    assert NEST_GIT_TOKEN_NO_REPO_OWNER in NEST_GIT_TOKEN_NO_REPO_HOWTO
+    assert NEST_GIT_AMBIGUOUS_CREDS_WHY == (
+        "GitHub rejected this token, or it may not have access to this repo"
+    )
+    assert NEST_GIT_TOKEN_REJECTED_WHY in NEST_GIT_BAD_CREDS_HOWTO
+    assert NEST_GIT_TOKEN_NO_REPO_HOWTO in NEST_GIT_BAD_CREDS_HOWTO
+    assert "Nest git card" in NEST_GIT_TOKEN_REJECTED_HOWTO
     assert "Enable host git" in NEST_GIT_HOWTO
+    assert "PAT" not in NEST_GIT_TOKEN_REJECTED_WHY
+    assert "PAT" not in NEST_GIT_TOKEN_NO_REPO_HOWTO
+    assert "401" not in NEST_GIT_BAD_CREDS_HOWTO
+    assert "403" not in NEST_GIT_BAD_CREDS_HOWTO
 
 
 def test_host_enable_defaults_off_and_auth_is_fail_closed() -> None:
@@ -496,7 +530,8 @@ def test_interactive_username_prompt_fail_closed_not_hang(
     assert result.ok is False
     assert result.kind == "nest_git_block"
     error = (result.data or {}).get("error") or ""
-    assert NEST_GIT_BAD_CREDS_WHY in error
+    assert NEST_GIT_TOKEN_REJECTED_WHY in error
+    assert NEST_GIT_TOKEN_REJECTED_HOWTO in error
     assert token not in error
     assert token not in (result.prompt_content or "")
 
@@ -526,15 +561,16 @@ def test_bad_pat_bounces_nest_git_card(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.ok is False
     assert result.kind == "nest_git_block"
     error = (result.data or {}).get("error") or ""
-    assert NEST_GIT_BAD_CREDS_WHY in error
-    assert NEST_GIT_BAD_CREDS_HOWTO in error
+    assert NEST_GIT_TOKEN_REJECTED_WHY in error
+    assert NEST_GIT_TOKEN_REJECTED_HOWTO in error
+    assert NEST_GIT_TOKEN_NO_REPO_HOWTO not in error
     assert token not in error
     assert nest_git_pat() == token
     card = (result.data or {}).get("host_path_consent") or {}
     assert card.get("kind") == NEST_GIT_KIND
     assert card.get("status") == "pending"
     assert card.get("error")
-    assert NEST_GIT_BAD_CREDS_WHY in str(card.get("error"))
+    assert NEST_GIT_TOKEN_REJECTED_WHY in str(card.get("error"))
     dumped = json.dumps(result.data or {})
     assert token not in dumped
     pending = [
@@ -542,6 +578,224 @@ def test_bad_pat_bounces_nest_git_card(monkeypatch: pytest.MonkeyPatch) -> None:
         if (row.card_kind or "") == NEST_GIT_KIND
     ]
     assert pending
+    focus_notes = [
+        item.content or ""
+        for item in db.list_notifications(agent_id=agent.id, chat_visible=True)
+    ]
+    assert any(item.kind == "host_path_consent" for item in db.list_notifications(agent_id=agent.id, chat_visible=True))
+    assert any("Blocked — GitHub rejected this token" in text for text in focus_notes)
     assert shell_output_looks_like_git_auth_failure(
         "", "fatal: Authentication failed for 'https://github.com/org/repo.git/'"
     )
+
+
+def test_auth_failure_copy_splits_401_vs_403() -> None:
+    assert classify_git_auth_failure(
+        "", "fatal: Authentication failed for 'https://github.com/org/repo.git/'"
+    ) == "token_rejected"
+    assert classify_git_auth_failure(
+        "", "The requested URL returned error: 401"
+    ) == "token_rejected"
+    assert classify_git_auth_failure(
+        "",
+        "remote: Write access to repository not granted.\n"
+        "fatal: unable to access 'https://github.com/org/repo.git/': "
+        "The requested URL returned error: 403",
+    ) == "repo_access"
+    assert classify_git_auth_failure(
+        "", "remote: Resource not accessible by personal access token"
+    ) == "repo_access"
+    assert classify_git_auth_failure("", "Username for 'https://github.com':") == "ambiguous"
+
+
+def _auth_fail_shell(stderr: str):
+    def _run(command: str, **kwargs: Any) -> ShellExecutionResult:
+        del command
+        extra = kwargs.get("extra_env") or {}
+        assert extra.get("GIT_ASKPASS")
+        return ShellExecutionResult(
+            exit_code=128,
+            stdout="",
+            stderr=stderr,
+            timed_out=False,
+            duration_ms=5,
+        )
+
+    return _run
+
+
+def _ready_push_agent(monkeypatch: pytest.MonkeyPatch, stderr: str):
+    monkeypatch.setattr("core.bm_cli.runtime.execute_shell_command", _auth_fail_shell(stderr))
+    token = "ghp_visible-auth-reject-GGGG"
+    write_nest_git_secret(NEST_GIT_PAT_KEY, token)
+    _enable_shell()
+    agent = db.create_agent("Path Clerk", role="Writer", model_work="test/mock")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    cwd = _real_nest_cwd(agent)
+    write_nest_always_rule("git push origin main", cwd)
+    policy_engine.reload()
+    return agent, state, token
+
+
+def test_403_repo_access_copy_on_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, state, token = _ready_push_agent(
+        monkeypatch,
+        "remote: Write access to repository not granted.\n"
+        "The requested URL returned error: 403",
+    )
+    result = execute_bm_cli(agent, state, "git push origin main")
+    error = (result.data or {}).get("error") or ""
+    card = (result.data or {}).get("host_path_consent") or {}
+    assert NEST_GIT_TOKEN_NO_REPO_WHY in error
+    assert NEST_GIT_TOKEN_NO_REPO_HOWTO in error
+    assert NEST_GIT_TOKEN_NO_REPO_HINT in error
+    assert NEST_GIT_TOKEN_REJECTED_WHY not in error
+    assert NEST_GIT_TOKEN_NO_REPO_WHY in str(card.get("error"))
+    assert "Resource owner = the org that owns the repo" in str(card.get("error"))
+    assert "Contents Read and write" in str(card.get("error"))
+    assert "cannot share one fine-grained token" in str(card.get("error"))
+    assert "classic repo token" in str(card.get("error"))
+    assert "SAML" in str(card.get("error"))
+    assert "Configure SSO" in str(card.get("error"))
+    assert token not in error
+    assert token not in json.dumps(result.data or {})
+
+
+def test_ambiguous_auth_fail_shows_both_hints(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, state, token = _ready_push_agent(
+        monkeypatch,
+        "Username for 'https://github.com':\nPassword for 'https://github.com':",
+    )
+    result = execute_bm_cli(agent, state, "git push origin main")
+    error = (result.data or {}).get("error") or ""
+    card = (result.data or {}).get("host_path_consent") or {}
+    assert NEST_GIT_AMBIGUOUS_CREDS_WHY in error
+    assert NEST_GIT_TOKEN_REJECTED_WHY in error
+    assert NEST_GIT_TOKEN_NO_REPO_HOWTO in str(card.get("error"))
+    assert token not in error
+
+
+@pytest.mark.asyncio
+async def test_auth_reject_posts_card_and_in_thread_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state, token = _ready_push_agent(
+        monkeypatch,
+        "fatal: Authentication failed for 'https://github.com/org/repo.git/'",
+    )
+    peer = db.create_agent("Debra", role="Analyst")
+    channel = db.create_channel(
+        name="Push thread",
+        member_agent_ids=[agent.id, peer.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    creation = create_or_bind_task(
+        title="Push the nest",
+        description="Push origin.",
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel="channel",
+        notification_policy="completion_blocked",
+        notification_channel_id=channel.id,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+    activate_work_activity(agent.id, creation.task)
+    trigger = {"type": "channel_response", "channel_id": channel.id}
+    result = await execute_action(
+        {"action": "bm_cli", "command": "git push origin main"},
+        agent,
+        state,
+        trigger,
+    )
+    assert result.get("consent_required") is True
+    assert result.get("event") == "nest_git_consent_required"
+    card = result.get("host_path_consent") or {}
+    assert card.get("kind") == NEST_GIT_KIND
+    assert NEST_GIT_TOKEN_REJECTED_WHY in str(card.get("error"))
+    messages = db.list_channel_messages(channel.id)
+    contents = [item.content or "" for item in messages]
+    assert any(item.consent_id for item in messages)
+    assert any("Blocked — GitHub rejected this token" in text for text in contents)
+    assert token not in json.dumps(result)
+    assert token not in "".join(contents)
+
+
+@pytest.mark.asyncio
+async def test_auth_reject_pauses_before_prose_or_th2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state, token = _ready_push_agent(
+        monkeypatch,
+        "fatal: Authentication failed for 'https://github.com/org/repo.git/'",
+    )
+    queue = [
+        '{"act":"cli","data":{"cmd":"git push origin main"},"th":"push"}',
+        '{"act":"reply","intent":"status","msg":"Still pushing.","th2":"waiting"}',
+        "In progress — GitHub said no. Prose only.",
+    ]
+    seen: list[str] = []
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        del kwargs
+        if not queue:
+            raise AssertionError("turn continued after nest git auth reject")
+        content = queue.pop(0)
+        seen.append(content)
+        return LLMResponse(
+            content=content,
+            model="test/mock",
+            prompt_tokens=8,
+            completion_tokens=4,
+            total_tokens=12,
+        )
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+    peer = db.create_agent("Debra", role="Analyst")
+    channel = db.create_channel(
+        name="Push thread",
+        member_agent_ids=[agent.id, peer.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    creation = create_or_bind_task(
+        title="Push the nest",
+        description="Push origin.",
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel="channel",
+        notification_policy="completion_blocked",
+        notification_channel_id=channel.id,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+    activate_work_activity(agent.id, creation.task)
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "task_id": creation.task.id,
+            "channel_id": channel.id,
+            "source_channel": "channel",
+        },
+    )
+    assert len(seen) == 1
+    assert queue[0].startswith('{"act":"reply"')
+    assert outcome.result.get("event") == "nest_git_consent_required"
+    assert outcome.result.get("consent_required") is True
+    assert outcome.result.get("parse_steer") is not True
+    contents = [item.content or "" for item in db.list_channel_messages(channel.id)]
+    assert any("Blocked — GitHub rejected this token" in text for text in contents)
+    assert any(item.consent_id for item in db.list_channel_messages(channel.id))
+    assert token not in "".join(contents)

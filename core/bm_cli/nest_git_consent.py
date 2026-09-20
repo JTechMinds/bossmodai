@@ -13,7 +13,9 @@ import db
 from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
 from core.bm_cli.nest_git import (
+    GitAuthFailureKind,
     auth_failed_blocked_message,
+    auth_failed_operator_copy,
     command_needs_nest_git_auth,
     enable_host_git,
     nest_git_auth_ready,
@@ -222,8 +224,13 @@ def bounce_nest_git_after_auth_failure(
     cwd: str,
     task_id: str | None,
     channel_id: str | None,
+    auth_kind: GitAuthFailureKind = "ambiguous",
 ) -> BossModCliResult:
-    """Fail-closed Blocked + reopen the Nest git card. Do not wipe secrets."""
+    """Fail-closed Nest git card + short origin note. Do not wipe secrets."""
+    from core.agent_loop.blocked_origin import NEST_GIT_BLOCK_KIND, surface_blocked_origin
+
+    message = auth_failed_blocked_message(auth_kind)
+    why, _howto = auth_failed_operator_copy(auth_kind)
     paused = request_nest_git_consent(
         agent=agent,
         parsed=parsed,
@@ -231,18 +238,38 @@ def bounce_nest_git_after_auth_failure(
         cwd=cwd,
         task_id=task_id,
         channel_id=channel_id,
-        reason=auth_failed_blocked_message(),
+        reason=message,
     )
     blocked = error_result(
         parsed.raw,
-        auth_failed_blocked_message(),
+        message,
         cwd=cwd,
         executor="shell",
         kind="nest_git_block",
     )
-    if not paused.consent_required:
-        return blocked
+    origin: dict[str, Any] = {}
+    surface_blocked_origin(
+        origin,
+        agent=agent,
+        trigger={"channel_id": channel_id} if channel_id else None,
+        why=why,
+        kind=NEST_GIT_BLOCK_KIND,
+    )
     data = dict(blocked.data or {})
+    extras = [
+        _json_safe_chrome(item)
+        for item in origin.get("origin_status_messages") or []
+        if isinstance(item, dict)
+    ]
+    if extras:
+        data["origin_status_messages"] = extras
+    chrome = origin.get("channel_message") or origin.get("chat_message")
+    if isinstance(chrome, dict):
+        data["origin_chrome"] = _json_safe_chrome(chrome)
+    data["nest_git_origin_posted"] = True
+    data["nest_git_auth_kind"] = auth_kind
+    if not paused.consent_required:
+        return replace(blocked, data=data)
     card = (paused.data or {}).get("host_path_consent") or {}
     if card:
         data["host_path_consent"] = card
@@ -313,6 +340,19 @@ def _consent_message(request: HostPathConsentRequest, *, agent_name: str) -> str
     dest = (request.path or "").strip()
     suffix = f" Locked copy: {dest}." if dest and dest != NEST_GIT_GRANT_ROOT else ""
     return f"{name} {NEST_GIT_CARD_COPY}.{suffix}"
+
+
+def _json_safe_chrome(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop non-JSON persist fields so CLI data can be logged without leaking."""
+    safe: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in {"feed_entry", "host_path_consent", "cli_approval"}:
+            continue
+        if hasattr(value, "isoformat"):
+            safe[key] = value.isoformat()
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            safe[key] = value
+    return safe
 
 
 def _blocked_result(command: str, *, cwd: str | None) -> BossModCliResult:
