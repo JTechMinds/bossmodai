@@ -21,6 +21,19 @@ from core.bm_cli.cli_always import is_nest_cwd
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.types import ParsedCliCommand
 from core.models import Agent
+from core.bm_cli.nest_git_store import (
+    NestGitCredential,
+    credential_has_secrets,
+    credential_secrets,
+    ensure_default_from_legacy,
+    load_credentials,
+    migrate_legacy_store,
+    read_secret,
+    redact_credential,
+    resolve_git_remote,
+    select_nest_git_credential,
+    write_secret,
+)
 from core.models.nest_git import (
     NEST_GIT_AMBIGUOUS_CREDS_WHY,
     NEST_GIT_BAD_CREDS_HOWTO,
@@ -30,6 +43,8 @@ from core.models.nest_git import (
     NEST_GIT_HOST_ENABLED_KEY,
     NEST_GIT_HOWTO,
     NEST_GIT_NO_CREDS_WHY,
+    NEST_GIT_NO_MATCH_HOWTO,
+    NEST_GIT_NO_MATCH_WHY,
     NEST_GIT_PAT_KEY,
     NEST_GIT_PROBE_FAIL_WHY,
     NEST_GIT_SSH_KEY,
@@ -38,7 +53,6 @@ from core.models.nest_git import (
     NEST_GIT_TOKEN_REJECTED_HOWTO,
     NEST_GIT_TOKEN_REJECTED_WHY,
 )
-from db.secret_store import decrypt_setting_value
 
 logger = logging.getLogger(__name__)
 
@@ -136,36 +150,47 @@ def host_git_is_enabled() -> bool:
 
 
 def read_nest_git_secret(key: str) -> str:
-    """Return a decrypted nest-git secret. Empty when unset.
-
-    ``config.get_live`` returns ciphertext for secret keys. Settings CRUD
-    decrypts; this path does the same unwrap.
-    """
-    from db.crud import query_one
-
-    row = query_one("SELECT value FROM settings WHERE key = $1", [key])
-    raw = "" if row is None or row.get("value") is None else str(row["value"])
-    return (decrypt_setting_value(key, raw) or "").strip()
+    """Return a decrypted nest-git secret. Empty when unset."""
+    return read_secret(key)
 
 
 def nest_git_pat() -> str:
-    """Return the stored PAT, or empty."""
+    """Return the Default / legacy PAT, or empty."""
+    migrate_legacy_store()
     return read_nest_git_secret(NEST_GIT_PAT_KEY)
 
 
 def nest_git_ssh_key() -> str:
-    """Return the stored SSH private key, or empty."""
+    """Return the Default / legacy SSH private key, or empty."""
+    migrate_legacy_store()
     return read_nest_git_secret(NEST_GIT_SSH_KEY)
 
 
 def nest_git_has_stored_creds() -> bool:
-    """Return True when a PAT or SSH key is saved in Settings."""
+    """Return True when any named (or legacy) PAT/SSH is saved."""
+    migrate_legacy_store()
+    if any(credential_has_secrets(item.id) for item in load_credentials()):
+        return True
     return bool(nest_git_pat() or nest_git_ssh_key())
 
 
-def nest_git_auth_ready() -> bool:
-    """Return True when a usable auth path exists (fail-closed otherwise)."""
-    if nest_git_has_stored_creds():
+def nest_git_auth_ready(
+    *,
+    remote: str | None = None,
+    agent: Agent | None = None,
+    parsed: ParsedCliCommand | None = None,
+    cwd: str | None = None,
+) -> bool:
+    """Return True when a usable auth path exists (fail-closed otherwise).
+
+    With a remote (or command + cwd), only a matching credential or the
+    optional default counts. Host Enable remains a global opt-in.
+    """
+    if parsed is not None or cwd:
+        remote = remote or resolve_git_remote(agent, parsed, cwd)
+    if select_nest_git_credential(remote) is not None:
+        return True
+    if remote is None and nest_git_has_stored_creds():
         return True
     if not host_git_is_enabled():
         return False
@@ -174,8 +199,9 @@ def nest_git_auth_ready() -> bool:
 
 def write_nest_git_secret(key: str, value: str) -> None:
     """Write or clear one nest-git secret through Settings (bm1 wrap)."""
-    db.set_setting(key, value or "", NEST_GIT_CATEGORY)
-    config.reload()
+    write_secret(key, value or "")
+    if key in {NEST_GIT_PAT_KEY, NEST_GIT_SSH_KEY}:
+        ensure_default_from_legacy()
 
 
 def is_git_cli(parsed: ParsedCliCommand) -> bool:
@@ -276,19 +302,35 @@ def disable_host_git() -> None:
 
 def nest_git_status() -> dict[str, object]:
     """Redacted status for Settings. No secret material."""
+    migrate_legacy_store()
+    creds = [redact_credential(item) for item in load_credentials()]
+    default = next((item for item in creds if item.get("is_default")), None)
     pat = nest_git_pat()
     ssh = nest_git_ssh_key()
+    if default is not None:
+        pat_last4 = default.get("pat_last4")
+        ssh_last4 = default.get("ssh_last4")
+        has_pat = bool(default.get("has_pat"))
+        has_ssh = bool(default.get("has_ssh"))
+    else:
+        pat_last4 = pat[-4:] if pat else None
+        ssh_last4 = ssh[-4:] if ssh else None
+        has_pat = bool(pat)
+        has_ssh = bool(ssh)
     probe = probe_host_git_for_shell()
     return {
         "host_enabled": host_git_is_enabled(),
-        "has_pat": bool(pat),
-        "pat_last4": pat[-4:] if pat else None,
-        "has_ssh": bool(ssh),
-        "ssh_last4": ssh[-4:] if ssh else None,
+        "has_pat": has_pat,
+        "pat_last4": pat_last4,
+        "has_ssh": has_ssh,
+        "ssh_last4": ssh_last4,
+        "default_id": next((item["id"] for item in creds if item.get("is_default")), None),
+        "credentials": creds,
         "probe_ok": probe.ok,
         "probe_via": probe.via or None,
         "probe_why": None if probe.ok else probe.why,
         "how_to": NEST_GIT_HOWTO,
+        "match_how_to": NEST_GIT_NO_MATCH_HOWTO,
     }
 
 
@@ -302,18 +344,29 @@ def host_git_passthrough_env() -> dict[str, str]:
     return extra
 
 
-def nest_git_shell_env(agent: Agent) -> dict[str, str]:
+def nest_git_shell_env(
+    agent: Agent,
+    parsed: ParsedCliCommand | None = None,
+    cwd: str | None = None,
+) -> dict[str, str]:
     """Extra env for one nest git Shell invocation. Never log the values.
 
     Applied on the shared Shell path for every git argv — not only when the
     nest-git gate matched — so a saved PAT still reaches ``git push``.
+    The matching credential is chosen by :func:`select_nest_git_credential`.
     """
-    del agent
     extra: dict[str, str] = {}
-    pat = nest_git_pat()
-    ssh = nest_git_ssh_key()
+    remote = resolve_git_remote(agent, parsed, cwd) if (parsed is not None or cwd) else ""
+    chosen = select_nest_git_credential(remote or None)
+    pat = ""
+    ssh = ""
+    if chosen is not None:
+        pat, ssh = credential_secrets(chosen.id)
+    elif parsed is None and cwd is None:
+        pat, ssh = nest_git_pat(), nest_git_ssh_key()
+    host = remote.split("/", 1)[0] if remote else "github.com"
     if pat:
-        extra.update(_pat_env(pat))
+        extra.update(_pat_env(pat, host=host or "github.com"))
     elif ssh:
         extra.update(_ssh_key_env(ssh))
     elif host_git_is_enabled() and probe_host_git_for_shell().ok:
@@ -323,9 +376,24 @@ def nest_git_shell_env(agent: Agent) -> dict[str, str]:
     return extra
 
 
+def chosen_nest_git_credential(
+    agent: Agent | None,
+    parsed: ParsedCliCommand | None,
+    cwd: str | None,
+) -> NestGitCredential | None:
+    """Return the credential the shared match path would inject."""
+    remote = resolve_git_remote(agent, parsed, cwd)
+    return select_nest_git_credential(remote or None)
+
+
 def no_creds_blocked_message() -> str:
     """Return Blocked why + how-to when no auth path is ready."""
     return f"{NEST_GIT_NO_CREDS_WHY}. {NEST_GIT_HOWTO}"
+
+
+def no_match_blocked_message() -> str:
+    """Return Blocked why + how-to when saved creds exist but none match."""
+    return f"{NEST_GIT_NO_MATCH_WHY}. {NEST_GIT_NO_MATCH_HOWTO}"
 
 
 def auth_failed_blocked_message(kind: GitAuthFailureKind = "ambiguous") -> str:
@@ -408,7 +476,7 @@ def _probe_env(extra: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def _pat_env(pat: str) -> dict[str, str]:
+def _pat_env(pat: str, host: str = "github.com") -> dict[str, str]:
     askpass = str(_ensure_askpass())
     extra = {
         "GIT_ASKPASS": askpass,
@@ -423,23 +491,24 @@ def _pat_env(pat: str) -> dict[str, str]:
         "GIT_COMMITTER_NAME": NEST_GIT_BOT_NAME,
         "GIT_COMMITTER_EMAIL": NEST_GIT_BOT_EMAIL,
     }
-    extra.update(_https_username_inject_env())
+    extra.update(_https_username_inject_env(host))
     return extra
 
 
-def _https_username_inject_env() -> dict[str, str]:
+def _https_username_inject_env(host: str = "github.com") -> dict[str, str]:
     """HTTPS username ``x-access-token`` plus no interactive credential helper.
 
     Token stays in askpass env, never in the rewritten URL (no log leak).
     """
+    name = (host or "github.com").strip() or "github.com"
     return {
         "GIT_CONFIG_COUNT": "3",
         "GIT_CONFIG_KEY_0": "credential.helper",
         "GIT_CONFIG_VALUE_0": "",
         "GIT_CONFIG_KEY_1": "credential.username",
         "GIT_CONFIG_VALUE_1": "x-access-token",
-        "GIT_CONFIG_KEY_2": "url.https://x-access-token@github.com/.insteadOf",
-        "GIT_CONFIG_VALUE_2": "https://github.com/",
+        "GIT_CONFIG_KEY_2": f"url.https://x-access-token@{name}/.insteadOf",
+        "GIT_CONFIG_VALUE_2": f"https://{name}/",
     }
 
 

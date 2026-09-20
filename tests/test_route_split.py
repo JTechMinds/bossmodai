@@ -93,8 +93,12 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/shell-executor/{request_id}/enable", "enable_shell_executor"),
     (("POST",), "/api/shell-executor/{request_id}/deny", "deny_shell_executor"),
     (("GET",), "/api/nest-git/status", "nest_git_status"),
+    (("POST",), "/api/nest-git/items", "create_nest_git_item"),
+    (("PUT",), "/api/nest-git/items/{credential_id}", "update_nest_git_item"),
+    (("DELETE",), "/api/nest-git/items/{credential_id}", "delete_nest_git_item"),
     (("POST",), "/api/nest-git/{request_id}/enable", "enable_nest_git"),
     (("POST",), "/api/nest-git/{request_id}/credentials", "add_nest_git_credentials"),
+    (("POST",), "/api/nest-git/{request_id}/use", "use_nest_git_credential"),
     (("PUT",), "/api/nest-git/credentials", "put_nest_git_credentials"),
     (("GET",), "/api/settings", "get_settings"),
     (("GET",), "/api/settings/desktop-open-folder-options", "get_desktop_open_folder_options"),
@@ -135,7 +139,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 111
+    assert len(got) == 115
 
 
 def test_from_api_routes_import_router_still_works() -> None:

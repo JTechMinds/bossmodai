@@ -1,6 +1,6 @@
 /**
  * Nest git in-thread card — GitHub token / SSH key, or use this computer’s Git login.
- * Writes the one Settings store. Loaded before consent-card.js.
+ * Named credentials can be picked when a remote doesn’t match. Loaded before consent-card.js.
  */
 const BossModNestGitCard = (() => {
     function isNestGitCard(card) {
@@ -33,7 +33,7 @@ const BossModNestGitCard = (() => {
     }
 
     function actions(card) {
-        return [
+        const out = [
             {
                 label: (card && card.enable_label) || 'Use this computer’s Git login',
                 path: 'enable',
@@ -44,6 +44,17 @@ const BossModNestGitCard = (() => {
                 path: 'credentials',
             },
         ];
+        const saved = (card && card.credentials) || [];
+        for (const cred of saved) {
+            if (!cred || !cred.id) continue;
+            const name = cred.label || 'saved credential';
+            out.push({
+                label: `Use ${name}`,
+                path: 'use',
+                credential_id: cred.id,
+            });
+        }
+        return out;
     }
 
     function statusLabel(card) {
@@ -53,6 +64,18 @@ const BossModNestGitCard = (() => {
     function showCredentialsForm(container, card, actionsEl, api, afterSave) {
         if (typeof api !== 'function') throw new Error('[consent-card] api is required');
         actionsEl.replaceChildren();
+        const label = document.createElement('input');
+        label.type = 'text';
+        label.placeholder = 'Name';
+        label.setAttribute('aria-label', 'Name');
+        label.value = (card && card.suggested_label) || '';
+        label.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white mb-2';
+        const match = document.createElement('input');
+        match.type = 'text';
+        match.placeholder = 'github.com/Org/* or github.com/Org/repo';
+        match.setAttribute('aria-label', 'Remote match');
+        match.value = (card && card.suggested_match) || '';
+        match.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
         const pat = document.createElement('input');
         pat.type = 'password';
         pat.placeholder = 'GitHub access token';
@@ -85,7 +108,12 @@ const BossModNestGitCard = (() => {
                 const res = await api(`/api/nest-git/${card.id}/credentials`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pat: pat.value, ssh_key: ssh.value }),
+                    body: JSON.stringify({
+                        pat: pat.value,
+                        ssh_key: ssh.value,
+                        label: label.value,
+                        match: match.value,
+                    }),
                 });
                 if (!res.ok) throw new Error((await res.text()) || 'Consent update failed.');
                 const updated = await res.json();
@@ -103,10 +131,33 @@ const BossModNestGitCard = (() => {
         });
         row.appendChild(save);
         row.appendChild(settings);
+        actionsEl.appendChild(label);
+        actionsEl.appendChild(match);
         actionsEl.appendChild(pat);
         actionsEl.appendChild(ssh);
         actionsEl.appendChild(row);
     }
 
-    return { isNestGitCard, title, body, hint, errorText, actions, statusLabel, showCredentialsForm };
+    async function useSaved(container, card, actionsEl, api, item, afterSave) {
+        const credentialId = item && item.credential_id;
+        if (!credentialId || typeof api !== 'function') return;
+        Array.from(actionsEl.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
+        try {
+            const res = await api(`/api/nest-git/${card.id}/use`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential_id: credentialId }),
+            });
+            if (!res.ok) throw new Error((await res.text()) || 'Consent update failed.');
+            afterSave(await res.json());
+        } catch (err) {
+            Array.from(actionsEl.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
+            const note = document.createElement('div');
+            note.className = 'hpc-status';
+            note.textContent = err?.message || 'Consent update failed.';
+            container.appendChild(note);
+        }
+    }
+
+    return { isNestGitCard, title, body, hint, errorText, actions, statusLabel, showCredentialsForm, useSaved };
 })();

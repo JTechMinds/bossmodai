@@ -397,6 +397,7 @@ def test_card_and_settings_harness() -> None:
         "patNotLeftInDom": True,
         "settingsShowsBeginnerCopy": True,
         "cardShowsAuthBounce": True,
+        "cardShowsPickSaved": True,
     }
 
 

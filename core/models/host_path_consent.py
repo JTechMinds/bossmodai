@@ -115,7 +115,43 @@ class HostPathConsentRequest(BaseModel):
             note = (self.reason or "").strip()
             if note and note != NEST_GIT_BODY:
                 card["error"] = note
+            _attach_nest_git_card_choices(card, self)
         return card
+
+
+def _attach_nest_git_card_choices(card: dict[str, Any], request: HostPathConsentRequest) -> None:
+    """List saved credentials and a suggested match. No secret material."""
+    try:
+        from core.bm_cli.nest_git_store import (
+            load_credentials,
+            redact_credential,
+            resolve_git_remote,
+            suggested_label_for_remote,
+            suggested_match_for_remote,
+        )
+        from core.bm_cli.parser import parse_cli_command
+        from core.models.nest_git import NEST_GIT_NO_MATCH_HOWTO, NEST_GIT_NO_MATCH_WHY
+    except Exception:
+        return
+    creds = [redact_credential(item) for item in load_credentials()]
+    if creds:
+        card["credentials"] = creds
+    remote = ""
+    try:
+        import db
+
+        agent = db.get_agent(request.agent_id)
+        parsed = parse_cli_command(request.command or "") if request.command else None
+        remote = resolve_git_remote(agent, parsed, request.cwd)
+    except Exception:
+        remote = ""
+    if remote:
+        card["remote"] = remote
+        card["suggested_match"] = suggested_match_for_remote(remote)
+        card["suggested_label"] = suggested_label_for_remote(remote)
+    note = str(card.get("error") or "")
+    if NEST_GIT_NO_MATCH_WHY in note and NEST_GIT_NO_MATCH_HOWTO not in note:
+        card["error"] = f"{note} {NEST_GIT_NO_MATCH_HOWTO}".strip()
 
 
 def _agent_display_name(agent_id: str | None) -> str:

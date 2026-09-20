@@ -550,9 +550,9 @@ def test_every_module_stays_under_the_line_cap() -> None:
             continue
         lines = len(path.read_text(encoding="utf-8").splitlines())
         relative = path.relative_to(js).as_posix()
-        # consent-card.js was already 481 on main @ 12960e2. Nest git lives
-        # in consent-card-nest-git.js. Do not grow the monolith.
-        cap = 510 if relative == "core/consent-card.js" else 400
+        # consent-card.js was already 512 on main @ e833407 (#107). Nest git
+        # lives in consent-card-nest-git.js. Do not grow the monolith.
+        cap = 540 if relative == "core/consent-card.js" else 400
         if lines >= cap:
             oversized[relative] = lines
     assert oversized == {}, f"over the line cap: {oversized}"

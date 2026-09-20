@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import AIConnection, Setting
-from db.secret_store import SECRET_SETTING_KEYS
+from db.secret_store import is_secret_setting_key
 
 # Never listed on GET /api/settings — injected into the desktop page instead.
 HIDDEN_SETTING_KEYS = frozenset({
@@ -36,7 +36,7 @@ def serialize_setting(setting: Setting) -> dict[str, Any]:
         "category": setting.category,
         "updated_at": setting.updated_at,
     }
-    if setting.key in SECRET_SETTING_KEYS:
+    if is_secret_setting_key(setting.key):
         payload["value"] = ""
         payload["has_value"] = bool(setting.value)
         payload["value_last4"] = secret_last4(setting.value)

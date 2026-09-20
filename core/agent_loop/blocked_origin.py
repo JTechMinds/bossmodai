@@ -54,6 +54,7 @@ _NEST_GIT_MARKERS = (
     "github didn't accept that access token",
     "github rejected this token",
     "may not have access to this repo",
+    "no nest git credential matches this remote",
 )
 
 
@@ -111,6 +112,7 @@ def _nest_git_block_why(cli_result: Any) -> str:
     """Prefer the classified auth-reject why when the CLI error names creds."""
     from core.models.nest_git import (
         NEST_GIT_AMBIGUOUS_CREDS_WHY,
+        NEST_GIT_NO_MATCH_WHY,
         NEST_GIT_TOKEN_NO_REPO_WHY,
         NEST_GIT_TOKEN_REJECTED_WHY,
     )
@@ -131,6 +133,8 @@ def _nest_git_block_why(cli_result: Any) -> str:
     ).lower()
     rejected = "rejected this token" in blob or "didn’t accept" in blob or "didn't accept" in blob
     no_repo = "may not have access" in blob
+    if "no nest git credential matches" in blob:
+        return NEST_GIT_NO_MATCH_WHY
     if rejected and no_repo:
         return NEST_GIT_AMBIGUOUS_CREDS_WHY
     if no_repo:
