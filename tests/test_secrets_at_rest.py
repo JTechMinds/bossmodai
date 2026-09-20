@@ -96,6 +96,15 @@ def test_secret_settings_not_plaintext_in_sqlite() -> None:
     settings = {row.key: row.value for row in db.get_settings()}
     assert settings["nest_git_pat"] == pat
 
+    named = "ghp_named-nest-git-wrap-test"
+    db.set_setting("nest_git_pat_acme1", named, "nest_git")
+    stored_named = _raw_value("SELECT value FROM settings WHERE key = $1", ["nest_git_pat_acme1"])
+    assert stored_named is not None
+    assert named not in stored_named
+    assert is_encrypted(stored_named)
+    settings = {row.key: row.value for row in db.get_settings()}
+    assert settings["nest_git_pat_acme1"] == named
+
     api_token = db.ensure_local_api_token()
     assert api_token
     raw_api = _raw_value("SELECT value FROM settings WHERE key = $1", ["local_api_token"])

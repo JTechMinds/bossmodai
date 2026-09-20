@@ -1,6 +1,8 @@
 """Nest git Settings keys and operator-facing card copy.
 
-One Settings store. Secrets stay on ``nest_git_pat`` / ``nest_git_ssh_key``.
+Named credentials live in ``nest_git_credentials`` (labels + match).
+Secrets stay on ``nest_git_pat`` / ``nest_git_ssh_key`` (Default) or
+``nest_git_pat_<id>`` / ``nest_git_ssh_<id>``.
 """
 
 from __future__ import annotations
@@ -9,6 +11,9 @@ NEST_GIT_CATEGORY = "nest_git"
 NEST_GIT_HOST_ENABLED_KEY = "nest_git_host_enabled"
 NEST_GIT_PAT_KEY = "nest_git_pat"
 NEST_GIT_SSH_KEY = "nest_git_ssh_key"
+NEST_GIT_CREDENTIALS_KEY = "nest_git_credentials"
+NEST_GIT_DEFAULT_CREDENTIAL_ID = "default"
+NEST_GIT_DEFAULT_CREDENTIAL_LABEL = "Default"
 
 NEST_GIT_KIND = "nest_git"
 NEST_GIT_GRANT_ROOT = NEST_GIT_HOST_ENABLED_KEY
@@ -34,6 +39,11 @@ NEST_GIT_OPEN_SETTINGS_LABEL = "Open Nest git settings"
 NEST_GIT_EMPTY_CREDS = (
     "Paste a GitHub access token or an SSH key. An empty field doesn’t save."
 )
+NEST_GIT_LABEL_LABEL = "Name"
+NEST_GIT_MATCH_LABEL = "Remote match"
+NEST_GIT_MATCH_HINT = "github.com/Org/* or github.com/Org/repo"
+NEST_GIT_DEFAULT_TOGGLE_LABEL = "Use for remotes that don’t match another credential"
+NEST_GIT_PICK_PREFIX = "Use"
 
 NEST_GIT_HOWTO = (
     "Configure a git credential helper the Shell can see "
@@ -43,6 +53,7 @@ NEST_GIT_HOWTO = (
     "Browser or desktop GitHub login is not the agent's."
 )
 NEST_GIT_NO_CREDS_WHY = "Nest git has no credentials"
+NEST_GIT_NO_MATCH_WHY = "No Nest git credential matches this remote"
 NEST_GIT_TOKEN_REJECTED_WHY = "GitHub rejected this token"
 NEST_GIT_TOKEN_NO_REPO_WHY = "this token may not have access to this repo"
 NEST_GIT_TOKEN_NO_REPO_HINT = "grant it under the token’s repository access."
@@ -71,6 +82,11 @@ NEST_GIT_TOKEN_NO_REPO_HOWTO = (
 NEST_GIT_BAD_CREDS_HOWTO = (
     f"{NEST_GIT_TOKEN_REJECTED_WHY}. {NEST_GIT_TOKEN_REJECTED_HOWTO} "
     f"Or {NEST_GIT_TOKEN_NO_REPO_HOWTO}"
+)
+NEST_GIT_NO_MATCH_HOWTO = (
+    "Add a credential for this remote, or pick which saved one to use. "
+    f"Match like {NEST_GIT_MATCH_HINT}. "
+    f"{NEST_GIT_TOKEN_NO_REPO_OWNER}"
 )
 NEST_GIT_PROBE_FAIL_WHY = "Host git is not visible to Shell"
 NEST_GIT_BLOCK_KIND = "blocked_nest_git"

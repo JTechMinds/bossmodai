@@ -20,7 +20,18 @@ from core.bm_cli.nest_git import (
     enable_host_git,
     nest_git_auth_ready,
     no_creds_blocked_message,
+    no_match_blocked_message,
     write_nest_git_secret,
+)
+from core.bm_cli.nest_git_store import (
+    add_credential,
+    append_match,
+    load_credentials,
+    resolve_git_remote,
+    select_nest_git_credential,
+    suggested_label_for_remote,
+    suggested_match_for_remote,
+    update_credential,
 )
 from core.bm_cli.results import consent_required_result, error_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
@@ -37,7 +48,7 @@ from core.models.nest_git import (
     NEST_GIT_SSH_KEY,
 )
 
-NestGitDecision = Literal["enable", "credentials"]
+NestGitDecision = Literal["enable", "credentials", "use"]
 
 
 def maybe_pause_for_nest_git(
@@ -53,12 +64,13 @@ def maybe_pause_for_nest_git(
     """Pause for the nest git card when a nest remote-git op has no creds."""
     if not command_needs_nest_git_auth(agent, parsed, cwd):
         return None
-    if nest_git_auth_ready():
+    if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
         return None
     if trigger_type == "host_path_consent_resolved":
-        if nest_git_auth_ready():
+        if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
             return None
-        return _blocked_result(parsed.raw, cwd=cwd)
+        return _blocked_result(parsed.raw, cwd=cwd, unmatched=_unmatched(agent, parsed, cwd))
+    reason = no_match_blocked_message() if _unmatched(agent, parsed, cwd) else None
     return request_nest_git_consent(
         agent=agent,
         parsed=parsed,
@@ -66,6 +78,7 @@ def maybe_pause_for_nest_git(
         cwd=cwd,
         task_id=task_id,
         channel_id=channel_id,
+        reason=reason,
     )
 
 
@@ -155,8 +168,12 @@ async def resume_nest_git_consent(
     omit_origin_channel: bool = False,
     pat: str | None = None,
     ssh_key: str | None = None,
+    label: str | None = None,
+    match: str | None = None,
+    credential_id: str | None = None,
+    is_default: bool | None = None,
 ) -> HostPathConsentRequest | None:
-    """Apply Enable or Add PAT/SSH and wake the waiting agent."""
+    """Apply Enable, Add PAT/SSH, or pick a saved credential."""
     existing = db.get_consent_request(request_id)
     if existing is None or existing.status != "pending":
         return None
@@ -168,14 +185,17 @@ async def resume_nest_git_consent(
         if not probe.ok:
             raise NestGitProbeError(probe.blocked_message())
     elif decision == "credentials":
-        token = (pat or "").strip()
-        key = (ssh_key or "").strip()
-        if not token and not key:
-            raise ValueError(NEST_GIT_EMPTY_CREDS)
-        if token:
-            write_nest_git_secret(NEST_GIT_PAT_KEY, token)
-        if key:
-            write_nest_git_secret(NEST_GIT_SSH_KEY, key)
+        _save_card_credentials(
+            existing,
+            pat=pat,
+            ssh_key=ssh_key,
+            label=label,
+            match=match,
+            credential_id=credential_id,
+            is_default=is_default,
+        )
+    elif decision == "use":
+        _use_saved_credential(existing, credential_id)
     else:
         raise ValueError(f"Unsupported nest git decision: {decision}")
 
@@ -287,7 +307,7 @@ def named_nest_git_block_reason(
     task_id: str | None,
 ) -> str | None:
     """Return the named nest git why when that gate is why work stopped."""
-    from core.models.nest_git import NEST_GIT_NO_CREDS_WHY
+    from core.models.nest_git import NEST_GIT_NO_CREDS_WHY, NEST_GIT_NO_MATCH_WHY
 
     pending = _pending_for_agent(agent.id)
     blob = (reason or "").lower()
@@ -301,6 +321,9 @@ def named_nest_git_block_reason(
     )
     if not myth and pending is None:
         return None
+    pending_note = (pending.reason or "") if pending is not None else ""
+    if NEST_GIT_NO_MATCH_WHY in pending_note:
+        return NEST_GIT_NO_MATCH_WHY
     if nest_git_auth_ready():
         return None
     if pending is not None or myth:
@@ -355,11 +378,95 @@ def _json_safe_chrome(payload: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
-def _blocked_result(command: str, *, cwd: str | None) -> BossModCliResult:
+def _blocked_result(
+    command: str,
+    *,
+    cwd: str | None,
+    unmatched: bool = False,
+) -> BossModCliResult:
+    message = no_match_blocked_message() if unmatched else no_creds_blocked_message()
     return error_result(
         command,
-        no_creds_blocked_message(),
+        message,
         cwd=cwd,
         executor="shell",
         kind="nest_git_block",
     )
+
+
+def _unmatched(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
+    if not load_credentials():
+        return False
+    remote = resolve_git_remote(agent, parsed, cwd)
+    return select_nest_git_credential(remote or None) is None
+
+
+def _request_remote(request: HostPathConsentRequest) -> str:
+    from core.bm_cli.parser import parse_cli_command
+
+    agent = db.get_agent(request.agent_id)
+    try:
+        parsed = parse_cli_command(request.command or "")
+    except ValueError:
+        parsed = None
+    return resolve_git_remote(agent, parsed, request.cwd)
+
+
+def _save_card_credentials(
+    request: HostPathConsentRequest,
+    *,
+    pat: str | None,
+    ssh_key: str | None,
+    label: str | None,
+    match: str | None,
+    credential_id: str | None,
+    is_default: bool | None,
+) -> None:
+    token = (pat or "").strip()
+    key = (ssh_key or "").strip()
+    if not token and not key:
+        raise ValueError(NEST_GIT_EMPTY_CREDS)
+    remote = _request_remote(request)
+    store = load_credentials()
+    target = (credential_id or "").strip()
+    if not target:
+        chosen = select_nest_git_credential(remote or None)
+        if chosen is not None:
+            target = chosen.id
+    if target:
+        update_credential(
+            target,
+            label=label,
+            match=match,
+            pat=token or None,
+            ssh_key=key or None,
+            is_default=is_default,
+        )
+        return
+    if not store:
+        if token:
+            write_nest_git_secret(NEST_GIT_PAT_KEY, token)
+        if key:
+            write_nest_git_secret(NEST_GIT_SSH_KEY, key)
+        return
+    add_credential(
+        label=(label or "").strip() or suggested_label_for_remote(remote) or "GitHub",
+        match=(match or "").strip() or suggested_match_for_remote(remote),
+        pat=token or None,
+        ssh_key=key or None,
+        is_default=is_default,
+    )
+
+
+def _use_saved_credential(request: HostPathConsentRequest, credential_id: str | None) -> None:
+    target = (credential_id or "").strip()
+    if not target:
+        raise ValueError("Pick which saved credential to use.")
+    store = {item.id: item for item in load_credentials()}
+    if target not in store:
+        raise ValueError("That Nest git credential is gone. Add one or pick another.")
+    remote = _request_remote(request)
+    if remote:
+        append_match(target, remote)
+    elif not store[target].is_default:
+        update_credential(target, is_default=True)

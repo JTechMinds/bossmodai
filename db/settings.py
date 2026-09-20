@@ -113,6 +113,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("nest_git_host_enabled", "false", "nest_git"),
     ("nest_git_pat", "", "nest_git"),
     ("nest_git_ssh_key", "", "nest_git"),
+    ("nest_git_credentials", '{"default_id":null,"items":[]}', "nest_git"),
 
     # ── Agent defaults ──
     ("default_spawn_x", "14", "simulation"),

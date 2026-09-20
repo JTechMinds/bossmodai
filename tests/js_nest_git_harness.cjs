@@ -86,6 +86,16 @@ if (!cardShowsAuthBounce) {
     throw new Error(`auth bounce error missing on card: ${JSON.stringify(bounceText)}`);
 }
 
+const pickCard = pendingNestCard("nest-pick", "git push origin main");
+pickCard.credentials = [{ id: "acme", label: "Acme", match: "github.com/Acme/*" }];
+pickCard.error = "No Nest git credential matches this remote. Add a credential for this remote, or pick which saved one to use.";
+const pickEl = paintCard(list, pickCard);
+const pickLabels = actionButtons(pickEl).map((btn) => btn.textContent);
+const cardShowsPickSaved = pickLabels.includes("Use Acme");
+if (!cardShowsPickSaved) {
+    throw new Error(`pick buttons missing: ${JSON.stringify(pickLabels)}`);
+}
+
 const origin = pendingNestCard("nest-a", "git push origin main");
 const sibling = pendingNestCard("nest-b", "git fetch");
 const originEl = paintCard(list, origin);
@@ -112,7 +122,8 @@ Card.renderHostPathConsentCard(originEl, origin, credApi);
 const addBtn = actionButtons(originEl).find((btn) => btn.textContent === ADD_LABEL);
 if (!addBtn) throw new Error("Add token/SSH button missing");
 await addBtn.dispatchClick();
-const tokenField = originEl.querySelector("input");
+const tokenField = originEl.querySelector('input[aria-label="GitHub access token"]')
+    || Array.from(originEl.querySelectorAll("input")).find((node) => node.placeholder === "GitHub access token");
 const sshField = originEl.querySelector("textarea");
 const formLabels = actionButtons(originEl).map((btn) => btn.textContent);
 const cardShowsSaveAndSettings = Boolean(tokenField)
@@ -199,6 +210,9 @@ global.apiFetch = async (url, init) => {
                     probe_via: null,
                     probe_why: "Host git is not visible to Shell",
                     how_to: "Configure a git credential helper the Shell can see.",
+                    credentials: [],
+                    default_id: null,
+                    match_how_to: "Add a credential for this remote, or pick which saved one to use.",
                 };
             },
         };
@@ -258,6 +272,7 @@ process.stdout.write(JSON.stringify({
     patNotLeftInDom: true,
     settingsShowsBeginnerCopy: true,
     cardShowsAuthBounce: true,
+    cardShowsPickSaved: true,
 }));
 })().catch((err) => {
     console.error(err && err.stack ? err.stack : err);

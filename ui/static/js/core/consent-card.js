@@ -141,7 +141,7 @@ const BossModConsentCard = (() => {
                 btn.hidden = true;
                 btn.disabled = true;
             }
-            btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, actions, api));
+            btn.addEventListener('click', () => decideHostPathConsent(container, card, item.path, actions, api, item));
             actions.appendChild(btn);
         });
         container.appendChild(actions);
@@ -376,10 +376,20 @@ const BossModConsentCard = (() => {
         return status;
     }
 
-    async function decideHostPathConsent(container, card, action, actions, api) {
+    async function decideHostPathConsent(container, card, action, actions, api, item) {
         requireApi(api);
         if (isNestGitCard(card) && action === 'credentials') {
             BossModNestGitCard.showCredentialsForm(container, card, actions, api, (updated) => {
+                container.replaceChildren();
+                renderHostPathConsentCard(container, updated, api);
+                collapseRelatedConsentCards(container, updated);
+                collapseGrantedConsentCards(updated);
+                if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
+            });
+            return;
+        }
+        if (isNestGitCard(card) && action === 'use') {
+            await BossModNestGitCard.useSaved(container, card, actions, api, item, (updated) => {
                 container.replaceChildren();
                 renderHostPathConsentCard(container, updated, api);
                 collapseRelatedConsentCards(container, updated);

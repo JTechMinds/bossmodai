@@ -977,9 +977,8 @@ def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[s
     extra = _agent_git_identity_env(agent)
     from core.bm_cli.nest_git import is_git_cli, nest_git_shell_env
 
-    del cwd
     if is_git_cli(parsed):
-        extra.update(nest_git_shell_env(agent))
+        extra.update(nest_git_shell_env(agent, parsed, cwd))
     return extra
 
 

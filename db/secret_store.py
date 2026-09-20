@@ -32,6 +32,18 @@ SECRET_SETTING_KEYS = frozenset({
     "nest_git_pat",
     "nest_git_ssh_key",
 })
+# Named Nest git secrets: nest_git_pat_<id> / nest_git_ssh_<id>.
+_SECRET_SETTING_PREFIXES = ("nest_git_pat_", "nest_git_ssh_")
+
+
+def is_secret_setting_key(key: str) -> bool:
+    """Return True when *key* is wrapped at rest (exact or named nest-git)."""
+    token = (key or "").strip()
+    if not token:
+        return False
+    if token in SECRET_SETTING_KEYS:
+        return True
+    return token.startswith(_SECRET_SETTING_PREFIXES)
 
 _DATA_KEY_NAME = ".bossmod_data_key"
 _NONCE_LEN = 16
@@ -120,7 +132,7 @@ def decrypt_secret(value: str | None) -> str | None:
 
 def encrypt_setting_value(key: str, value: str) -> str:
     """Encrypt ``value`` when ``key`` is a secret setting."""
-    if key not in SECRET_SETTING_KEYS:
+    if not is_secret_setting_key(key):
         return value
     wrapped = encrypt_secret(value)
     return "" if wrapped is None else wrapped
@@ -128,7 +140,7 @@ def encrypt_setting_value(key: str, value: str) -> str:
 
 def decrypt_setting_value(key: str, value: str) -> str:
     """Decrypt ``value`` when ``key`` is a secret setting."""
-    if key not in SECRET_SETTING_KEYS:
+    if not is_secret_setting_key(key):
         return value
     plain = decrypt_secret(value)
     return "" if plain is None else plain
@@ -151,16 +163,14 @@ def migrate_plaintext_secrets() -> int:
                 [encrypt_secret(str(row["api_key"])), row["id"]],
             )
             rewritten += 1
-    placeholders = ", ".join(f"${i + 1}" for i in range(len(SECRET_SETTING_KEYS)))
-    keys = sorted(SECRET_SETTING_KEYS)
-    for row in query(
-        f"SELECT key, value FROM settings WHERE key IN ({placeholders})",
-        keys,
-    ):
+    for row in query("SELECT key, value FROM settings"):
+        key = str(row.get("key") or "")
+        if not is_secret_setting_key(key):
+            continue
         if _needs_wrap(row.get("value")):
             execute(
                 "UPDATE settings SET value = $1 WHERE key = $2",
-                [encrypt_setting_value(str(row["key"]), str(row["value"])), row["key"]],
+                [encrypt_setting_value(key, str(row["value"])), key],
             )
             rewritten += 1
     return rewritten
