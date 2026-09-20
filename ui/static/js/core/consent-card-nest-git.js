@@ -115,17 +115,21 @@ const BossModNestGitCard = (() => {
                         match: match.value,
                     }),
                 });
-                if (!res.ok) throw new Error((await res.text()) || 'Consent update failed.');
-                const updated = await res.json();
+                const bodyText = await res.text();
+                if (!res.ok) {
+                    if (absorbFailure(container, card, res, bodyText)) return;
+                    throw new Error(operatorMessage(bodyText) || 'Consent update failed.');
+                }
                 pat.value = '';
                 ssh.value = '';
-                afterSave(updated);
+                afterSave(bodyText ? JSON.parse(bodyText) : {});
             } catch (err) {
+                if (absorbFailure(container, card, null, err?.message)) return;
                 save.disabled = false;
                 settings.disabled = false;
                 const note = document.createElement('div');
                 note.className = 'hpc-status';
-                note.textContent = err?.message || 'Consent update failed.';
+                note.textContent = operatorMessage(err?.message) || 'Consent update failed.';
                 container.appendChild(note);
             }
         });
@@ -148,16 +152,171 @@ const BossModNestGitCard = (() => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ credential_id: credentialId }),
             });
-            if (!res.ok) throw new Error((await res.text()) || 'Consent update failed.');
-            afterSave(await res.json());
+            const bodyText = await res.text();
+            if (!res.ok) {
+                if (absorbFailure(container, card, res, bodyText)) return;
+                throw new Error(operatorMessage(bodyText) || 'Consent update failed.');
+            }
+            afterSave(bodyText ? JSON.parse(bodyText) : {});
         } catch (err) {
+            if (absorbFailure(container, card, null, err?.message)) return;
             Array.from(actionsEl.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
             const note = document.createElement('div');
             note.className = 'hpc-status';
-            note.textContent = err?.message || 'Consent update failed.';
+            note.textContent = operatorMessage(err?.message) || 'Consent update failed.';
             container.appendChild(note);
         }
     }
 
-    return { isNestGitCard, title, body, hint, errorText, actions, statusLabel, showCredentialsForm, useSaved };
+    function isSchemaMismatch(res, bodyText) {
+        if (res && res.status === 422) return true;
+        const text = String(bodyText || '');
+        return /Field required/i.test(text) && /"body"/.test(text);
+    }
+
+    function isGoneResponse(res, bodyText) {
+        if (res && res.status === 404) return true;
+        return /not found or already resolved/i.test(String(bodyText || ''));
+    }
+
+    function operatorMessage(text) {
+        const raw = String(text || '');
+        if (isSchemaMismatch(null, raw)) return '';
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.detail === 'string') return parsed.detail;
+        } catch (err) {
+            return raw;
+        }
+        return raw;
+    }
+
+    function goneCard(card, note) {
+        return Object.assign({}, card || {}, {
+            kind: 'nest_git',
+            status: 'gone',
+            decision_note: note
+                || (card && card.decision_note)
+                || 'This GitHub permission ask is gone or already resolved.',
+        });
+    }
+
+    function paintGone(container, card) {
+        if (!container) return;
+        container.replaceChildren();
+        container.classList.add('host-path-consent-card', 'is-resolved');
+        container.dataset.cardKind = 'nest_git';
+        const titleEl = document.createElement('div');
+        titleEl.className = 'hpc-title';
+        titleEl.textContent = title(card);
+        const resolved = document.createElement('div');
+        resolved.className = 'hpc-status';
+        resolved.textContent = card.decision_note || '';
+        const row = document.createElement('div');
+        row.className = 'host-path-consent-actions';
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'hpc-action';
+        dismiss.textContent = 'Dismiss';
+        dismiss.addEventListener('click', () => {
+            container.hidden = true;
+            row.remove();
+        });
+        row.appendChild(dismiss);
+        container.appendChild(titleEl);
+        container.appendChild(resolved);
+        container.appendChild(row);
+    }
+
+    function collapseGoneCards(card, root) {
+        const gone = goneCard(card);
+        const doc = root || (typeof document !== 'undefined' ? document : null);
+        if (!doc || typeof doc.querySelectorAll !== 'function') return;
+        const nodes = doc.querySelectorAll('.host-path-consent-card');
+        Array.from(nodes).forEach((el) => {
+            if ((el.dataset.cardKind || '') !== 'nest_git') return;
+            paintGone(el, gone);
+        });
+    }
+
+    function isNeed(need, action) {
+        if (need && need.cardKind === 'nest_git') return true;
+        return Boolean(action && /\/api\/nest-git\//.test(String(action.href || '')));
+    }
+
+    function actionNeedsBody(need, action) {
+        if (!isNeed(need, action)) return false;
+        return /\/(credentials|use)\/?$/.test(String((action && action.href) || ''));
+    }
+
+    function classifyNeedFailure(need, action, res, bodyText) {
+        if (!isNeed(need, action)) return '';
+        if (isGoneResponse(res, bodyText)) return 'gone';
+        if (isSchemaMismatch(res, bodyText)) return 'mismatch';
+        return '';
+    }
+
+    function dismissOnlyNeed(need) {
+        return Object.assign({}, need, {
+            error: '',
+            actions: [{
+                label: 'Dismiss', href: '#', method: 'POST', tone: 'quiet', dismiss: true,
+            }],
+        });
+    }
+
+    function collapseNeed(need) {
+        collapseGoneCards({
+            kind: 'nest_git',
+            status: 'gone',
+            title: (need && need.title) || '',
+            command: (need && need.sub) || '',
+            decision_note: 'This GitHub permission ask is gone or already resolved.',
+        });
+    }
+
+    function absorbFailure(container, card, res, bodyText) {
+        if (isGoneResponse(res, bodyText) || isSchemaMismatch(res, bodyText)) {
+            const note = isSchemaMismatch(res, bodyText)
+                ? 'This GitHub permission ask no longer matches.'
+                : '';
+            const gone = goneCard(card, note);
+            paintGone(container, gone);
+            collapseGoneCards(gone);
+            return true;
+        }
+        return false;
+    }
+
+    async function decideEnable(container, card, actionsEl, api, afterSave) {
+        if (typeof api !== 'function') return;
+        Array.from(actionsEl.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });
+        try {
+            const res = await api(`/api/nest-git/${card.id}/enable`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const bodyText = await res.text();
+            if (!res.ok) {
+                if (absorbFailure(container, card, res, bodyText)) return;
+                throw new Error(operatorMessage(bodyText) || 'Consent update failed.');
+            }
+            afterSave(bodyText ? JSON.parse(bodyText) : {});
+        } catch (err) {
+            if (absorbFailure(container, card, null, err?.message)) return;
+            Array.from(actionsEl.querySelectorAll('button')).forEach((btn) => { btn.disabled = false; });
+            const note = document.createElement('div');
+            note.className = 'hpc-status';
+            note.textContent = operatorMessage(err?.message) || 'Consent update failed.';
+            container.appendChild(note);
+        }
+    }
+
+    return {
+        isNestGitCard, title, body, hint, errorText, actions, statusLabel,
+        showCredentialsForm, useSaved, decideEnable, collapseGoneCards,
+        isSchemaMismatch, absorbFailure, actionNeedsBody, classifyNeedFailure,
+        dismissOnlyNeed, collapseNeed, operatorMessage,
+    };
 })();

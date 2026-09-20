@@ -378,24 +378,23 @@ const BossModConsentCard = (() => {
 
     async function decideHostPathConsent(container, card, action, actions, api, item) {
         requireApi(api);
-        if (isNestGitCard(card) && action === 'credentials') {
-            BossModNestGitCard.showCredentialsForm(container, card, actions, api, (updated) => {
+        if (isNestGitCard(card)) {
+            const afterSave = (updated) => {
                 container.replaceChildren();
                 renderHostPathConsentCard(container, updated, api);
                 collapseRelatedConsentCards(container, updated);
                 collapseGrantedConsentCards(updated);
                 if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
-            });
-            return;
-        }
-        if (isNestGitCard(card) && action === 'use') {
-            await BossModNestGitCard.useSaved(container, card, actions, api, item, (updated) => {
-                container.replaceChildren();
-                renderHostPathConsentCard(container, updated, api);
-                collapseRelatedConsentCards(container, updated);
-                collapseGrantedConsentCards(updated);
-                if (typeof BossModIcons !== 'undefined') BossModIcons.paint(container, 'consent-card');
-            });
+            };
+            if (action === 'credentials') {
+                BossModNestGitCard.showCredentialsForm(container, card, actions, api, afterSave);
+                return;
+            }
+            if (action === 'use') {
+                await BossModNestGitCard.useSaved(container, card, actions, api, item, afterSave);
+                return;
+            }
+            await BossModNestGitCard.decideEnable(container, card, actions, api, afterSave);
             return;
         }
         Array.from(actions.querySelectorAll('button')).forEach((btn) => { btn.disabled = true; });

@@ -39,11 +39,14 @@ from core.bm_cli.runtime import execute_bm_cli
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.shell_executor import ShellExecutionResult
 from core.models.nest_git import (
+    NEST_GIT_ADD_LABEL,
     NEST_GIT_DEFAULT_CREDENTIAL_ID,
     NEST_GIT_DEFAULT_CREDENTIAL_LABEL,
+    NEST_GIT_ENABLE_LABEL,
     NEST_GIT_KIND,
     NEST_GIT_NO_MATCH_WHY,
     NEST_GIT_PAT_KEY,
+    NEST_GIT_PICK_PREFIX,
     NEST_GIT_TOKEN_NO_REPO_OWNER,
 )
 from core.runtime import runtime_services
@@ -312,6 +315,56 @@ def test_pick_saved_credential_appends_remote_match(monkeypatch: pytest.MonkeyPa
         cwd="/me/host-work/sample_repo",
     )
     assert "ghp_pick-acme-JJJJ" not in used.text
+
+
+def test_needs_nest_git_actions_post_multi_cred_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Needs describes Enable / Add / Use with the JSON body those routes require."""
+    add_credential(
+        label="Acme",
+        match="github.com/Acme/*",
+        pat="ghp_needs-body-acme-LLLL",
+        is_default=False,
+    )
+    agent, state = _agent_and_state()
+    _nest_repo(agent, "https://github.com/Widgets/app.git")
+    paused = execute_bm_cli(agent, state, "git push origin main")
+    request_id = paused.consent_request_id
+    assert request_id
+    client = _api_client(monkeypatch)
+    needs = client.get("/api/needs", headers=_headers())
+    assert needs.status_code == 200
+    items = [item for item in needs.json() if item.get("card_kind") == NEST_GIT_KIND]
+    assert len(items) == 1
+    actions = {action["label"]: action for action in items[0]["actions"]}
+    assert actions[NEST_GIT_ENABLE_LABEL]["body"] == {}
+    assert actions[NEST_GIT_ADD_LABEL]["body"] == {}
+    assert actions[f"{NEST_GIT_PICK_PREFIX} Acme"]["body"] == {"credential_id": load_credentials()[0].id}
+    dumped = json.dumps(items)
+    assert "ghp_needs-body-acme-LLLL" not in dumped
+
+    empty = client.post(
+        f"/api/nest-git/{request_id}/credentials",
+        headers=_headers(),
+    )
+    assert empty.status_code == 422
+    assert "Field required" in empty.text
+
+    described = client.post(
+        f"/api/nest-git/{request_id}/credentials",
+        headers=_headers(),
+        json=actions[NEST_GIT_ADD_LABEL]["body"],
+    )
+    assert described.status_code == 400, described.text
+    assert described.status_code != 422
+    assert "Field required" not in described.text
+
+    used = client.post(
+        f"/api/nest-git/{request_id}/use",
+        headers=_headers(),
+        json=actions[f"{NEST_GIT_PICK_PREFIX} Acme"]["body"],
+    )
+    assert used.status_code == 200, used.text
+    assert "ghp_needs-body-acme-LLLL" not in used.text
 
 
 def test_always_allow_unmatched_still_hits_nest_git_card() -> None:

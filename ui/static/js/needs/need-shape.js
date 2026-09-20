@@ -5,8 +5,7 @@
  * application that reads a snake_case backend key, which is what lets
  * test_ui_needs.py assert that nothing downstream of it ever sees one.
  *
- * Split out of needs-store.js so the conversion is testable without a fake bus
- * and so neither half approaches the ~300-line cap.
+ * Split out of needs-store.js so the conversion is testable without a fake bus.
  */
 const BossModNeedShape = (() => {
 
@@ -201,6 +200,9 @@ const BossModNeedShape = (() => {
         'shell_executor_consent_required',
         'shell_executor_enabled',
         'shell_executor_denied',
+        'nest_git_consent_required',
+        'nest_git_enabled',
+        'nest_git_credentials',
         'cli_approval_required',
         'cli_approval_approved',
         'cli_approval_rejected',
@@ -230,6 +232,7 @@ const BossModNeedShape = (() => {
             href: String(raw.href),
             method: String(raw.method || 'POST').toUpperCase(),
             tone: String(raw.tone || 'default'),
+            body: raw.body && typeof raw.body === 'object' ? raw.body : undefined,
         };
     }
 

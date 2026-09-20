@@ -359,6 +359,8 @@ def test_needs_and_status_redact_secrets(monkeypatch: pytest.MonkeyPatch) -> Non
     assert {action["label"] for action in items[0]["actions"]} == {
         NEST_GIT_ENABLE_LABEL, NEST_GIT_ADD_LABEL,
     }
+    for action in items[0]["actions"]:
+        assert isinstance(action.get("body"), dict), action
     assert items[0]["title"] == nest_git_card_title(agent.name)
     status = client.get("/api/nest-git/status", headers=_headers())
     assert status.status_code == 200
@@ -398,6 +400,8 @@ def test_card_and_settings_harness() -> None:
         "settingsShowsBeginnerCopy": True,
         "cardShowsAuthBounce": True,
         "cardShowsPickSaved": True,
+        "enablePostsBody": True,
+        "schemaMismatchDismisses": True,
     }
 
 

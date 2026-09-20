@@ -28,7 +28,7 @@ const pressKey = (key, shiftKey) => {
 
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 const [
-    domPath, storePath, busPath, gatesPath, formatPath, cardsPath, shapePath,
+    domPath, storePath, busPath, gatesPath, formatPath, nestGitPath, cardsPath, shapePath,
     needsPath, popoverPath, barPath, toastPath,
 ] = process.argv.slice(2);
 load(domPath, "BossModDom");
@@ -37,6 +37,7 @@ load(busPath, "BossModBus");
 // needs-store.js guards refresh() with the shared load generation.
 load(gatesPath, "BossModGates");
 load(formatPath, "BossModFormat");
+load(nestGitPath, "BossModNestGitCard");
 load(cardsPath, "BossModEventCards");
 load(shapePath, "BossModNeedShape");
 load(needsPath, "BossModNeeds");
@@ -94,6 +95,30 @@ function blockedRow(id, agentId) {
     };
 }
 
+/** One pending Nest git consent, exactly as api/routes/needs.py emits it. */
+function nestGitRow(id) {
+    return {
+        id,
+        kind: "consent",
+        card_kind: "nest_git",
+        agent_id: "a1",
+        agent_name: "Jim",
+        title: "Jim needs permission to push to GitHub",
+        sub: "git push origin main",
+        created_at: "2026-09-07T12:05:00Z",
+        conversation_id: "a1",
+        grouped_ids: [id],
+        actions: [
+            { label: "Use this computer’s Git login", method: "POST", tone: "primary",
+              href: `/api/nest-git/${id}/enable`, body: {} },
+            { label: "Add a GitHub access token or SSH key", method: "POST", tone: "default",
+              href: `/api/nest-git/${id}/credentials`, body: {} },
+            { label: "Use Acme", method: "POST", tone: "default",
+              href: `/api/nest-git/${id}/use`, body: { credential_id: "acme" } },
+        ],
+    };
+}
+
 /** One pending host-path consent, exactly as api/routes/needs.py emits it. */
 function consentRow(id, conversationId) {
     return {
@@ -124,7 +149,7 @@ async function main() {
     let resolveGone = false;
 
     function api(url, init) {
-        calls.push({ url, method: (init && init.method) || "GET" });
+        calls.push({ url, method: (init && init.method) || "GET", body: init && init.body });
         if (url.startsWith("/api/needs")) {
             if (queueFails) return Promise.resolve({ ok: false, status: 503, text: () => Promise.resolve("down") });
             return Promise.resolve({ ok: true, json: () => Promise.resolve(queue) });
@@ -908,6 +933,115 @@ async function main() {
     }
     const shellNeedPaintsEnableKind = true;
 
+    // ─── 13h. Nest git Needs: POST body, Nest git label, schema mismatch → Dismiss ───
+    const store3 = BossModStore.createStore({ needs: [] });
+    const bus3 = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const nestCalls = [];
+    let nestQueue = [nestGitRow("ng1")];
+    let nestSchema = false;
+    const nestApi = (url, init) => {
+        nestCalls.push({ url, method: (init && init.method) || "GET", body: init && init.body });
+        if (url.startsWith("/api/needs")) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(nestQueue) });
+        }
+        if (nestSchema) {
+            return Promise.resolve({
+                ok: false,
+                status: 422,
+                text: () => Promise.resolve(JSON.stringify({
+                    detail: [{ type: "missing", loc: ["body"], msg: "Field required", input: null }],
+                })),
+            });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    };
+    const nestNeeds = BossModNeeds.createNeedsStore({ store: store3, bus: bus3, api: nestApi });
+    await drain();
+    const nestNeed = store3.getState().needs.find((item) => item.id === "ng1");
+    if (!nestNeed) throw new Error("nest git need must reach the queue");
+    nestCalls.length = 0;
+    await nestNeeds.resolve(nestNeed, nestNeed.actions[0]);
+    await drain();
+    const enableCall = nestCalls.find((item) => String(item.url).endsWith("/enable"));
+    if (!enableCall || enableCall.body !== "{}") {
+        throw new Error(`Enable must POST {{}}, got ${JSON.stringify(enableCall)}`);
+    }
+    nestQueue = [nestGitRow("ng1")];
+    await nestNeeds.refresh();
+    await drain();
+    const nestNeed2 = store3.getState().needs.find((item) => item.id === "ng1");
+    nestCalls.length = 0;
+    await nestNeeds.resolve(nestNeed2, nestNeed2.actions[2]);
+    await drain();
+    const useCall = nestCalls.find((item) => String(item.url).endsWith("/use"));
+    if (!useCall || useCall.body !== JSON.stringify({ credential_id: "acme" })) {
+        throw new Error(`Use must POST credential_id, got ${JSON.stringify(useCall)}`);
+    }
+    nestQueue = [nestGitRow("ng1")];
+    await nestNeeds.refresh();
+    await drain();
+    const nestNeed3 = store3.getState().needs.find((item) => item.id === "ng1");
+    nestCalls.length = 0;
+    await nestNeeds.resolve(nestNeed3, nestNeed3.actions[1]);
+    await drain();
+    const credCall = nestCalls.find((item) => String(item.url).endsWith("/credentials"));
+    if (!credCall || credCall.body !== "{}") {
+        throw new Error(`Add token must POST {{}}, got ${JSON.stringify(credCall)}`);
+    }
+    const nestGitPostsBody = true;
+
+    nestQueue = [nestGitRow("ng-stale")];
+    await nestNeeds.refresh();
+    await drain();
+    const staleNest = store3.getState().needs.find((item) => item.id === "ng-stale");
+    nestSchema = true;
+    let nestThrew = false;
+    try {
+        await nestNeeds.resolve(staleNest, {
+            label: "Add a GitHub access token or SSH key",
+            href: "/api/nest-git/ng-stale/credentials",
+            method: "POST",
+            tone: "default",
+        });
+    } catch (err) {
+        nestThrew = true;
+    }
+    await drain();
+    const staleAfter = store3.getState().needs.find((item) => item.id === "ng-stale");
+    const staleError = staleAfter && staleAfter.error ? String(staleAfter.error) : "";
+    const staleLabels = staleAfter ? staleAfter.actions.map((item) => item.label) : [];
+    if (nestThrew) throw new Error("schema-mismatched nest git must not reject");
+    if (!staleAfter) throw new Error("schema-mismatched nest git must stay as Dismiss, not vanish");
+    if (staleLabels.join(",") !== "Dismiss") {
+        throw new Error(`schema mismatch must be Dismiss only, got ${JSON.stringify(staleLabels)}`);
+    }
+    if (staleError.includes("Field required") || staleError.includes("detail")) {
+        throw new Error(`schema mismatch must not show raw JSON, got ${staleError}`);
+    }
+    nestSchema = false;
+    const nestGitSchemaMismatchDismisses = true;
+
+    const nestBell = documentStub.createElement("button");
+    documentStub.body.append(nestBell);
+    nestQueue = [nestGitRow("ng-label")];
+    await nestNeeds.refresh();
+    await drain();
+    const nestPopover = BossModNeedsPopover.openPopover({
+        store: store3, needs: nestNeeds, anchor: nestBell, navigate: () => {},
+    });
+    await drain();
+    const groupTitles = nestPopover.element.querySelectorAll(".popover-group-title")
+        .map((node) => node.textContent);
+    if (!groupTitles.some((title) => title.startsWith("Nest git"))) {
+        throw new Error(`nest git group must be labeled Nest git, got ${JSON.stringify(groupTitles)}`);
+    }
+    if (groupTitles.some((title) => title.startsWith("Folder access"))) {
+        throw new Error(`nest git must not sit under Folder access, got ${JSON.stringify(groupTitles)}`);
+    }
+    nestPopover.close();
+    nestNeeds.destroy();
+    const nestGitGroupIsLabeled = true;
+
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
     queue2 = [blockedRow("s1", "a1")];
@@ -998,6 +1132,9 @@ async function main() {
         barShowsConsentWhenInlineMissing,
         duplicateConsentsCoalesce,
         shellNeedPaintsEnableKind,
+        nestGitPostsBody,
+        nestGitSchemaMismatchDismisses,
+        nestGitGroupIsLabeled,
         targetsNavigate,
         openFocusNeedTableHolds,
     }));
