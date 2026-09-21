@@ -72,7 +72,8 @@ def test_one_shared_interceptor_and_one_desktop_command() -> None:
     assert "location.assign" not in opener
     assert "window.open(url, '_blank', 'noopener,noreferrer')" in opener
 
-    assert 'pub const COMMAND: &str = "open_external_url"' in rust
+    assert "pub const COMMAND" not in rust
+    assert "open_external_url" in rust
     assert "fn allowed_http_url" in rust
     assert "xdg-open" in rust
     assert "javascript:" in rust
