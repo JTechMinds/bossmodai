@@ -73,6 +73,10 @@ const BossModShell = (() => {
         const needs = BossModNeeds.createNeedsStore({ store, bus, api: apiFetch });
         // Same store slice the bell reads. Not a second counter.
         const attention = BossModNeedsAttention.createHost({ store });
+        // Transcript and composer http(s) clicks share one opener. Installed
+        // for the life of the page; the interceptor does not navigate the
+        // webview.
+        BossModExternalOpen.install();
         const shell = BossModNavigator.createNavigator({
             store,
             bus,

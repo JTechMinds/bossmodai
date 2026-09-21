@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+mod external_open;
 mod needs_attention;
 mod needs_map;
 
@@ -297,6 +298,14 @@ fn wait_for_backend(url: &str, timeout_secs: u64) -> bool {
     false
 }
 
+/// Open an http(s) URL in the system browser. The webview only sends URLs the
+/// JS interceptor already filtered; this re-checks the scheme so javascript:
+/// and file: cannot ride the command.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    external_open::open_http_url(&url)
+}
+
 fn main() {
     // Start the FastAPI backend
     let backend = start_backend();
@@ -314,9 +323,19 @@ fn main() {
     println!("[BossMod] Backend ready");
 
     tauri::Builder::default()
+        .plugin(
+            tauri::plugin::Builder::new("http-nav-guard")
+                .on_navigation(|_webview, url| {
+                    // The JS interceptor is the opener. This is the backstop so a
+                    // missed preventDefault cannot replace the app with github.com.
+                    external_open::allow_webview_navigation(url.as_str())
+                })
+                .build(),
+        )
         .manage(backend_state)
         .invoke_handler(tauri::generate_handler![
-            needs_attention::sync_needs_attention
+            needs_attention::sync_needs_attention,
+            open_external_url,
         ])
         .setup(|app| {
             install_quit_signals();

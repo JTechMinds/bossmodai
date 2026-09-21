@@ -628,6 +628,10 @@
 .composer-input:disabled,
 .composer-input[contenteditable="false"] { opacity: 0.6; cursor: not-allowed; }
 
+/* WebKit turns a pasted URL into an <a>. Paint it like markdown so the
+   operator can see it is a link; the click itself is core/external-open.js. */
+.composer-input a { color: var(--accent); text-decoration: underline; }
+
 /* Send, alone on its side of the row now the clipboard has gone.
  *
  * GREY at rest, --ink under the pointer: the same quiet pair every other
