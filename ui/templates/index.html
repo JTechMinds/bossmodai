@@ -140,6 +140,10 @@
          inertly and sanitises against an allowlist; every surface that renders
          markdown loads after it. -->
     <script src="{{ static_url('js/core/markdown.js') }}"></script>
+    <!-- One click interceptor for http(s) anchors. The Tauri webview does not
+         honour target=_blank, so transcript and composer links share this
+         instead of each growing a handler. -->
+    <script src="{{ static_url('js/core/external-open.js') }}"></script>
     <!-- The one icon painter, over the vendored lucide bundle loaded in the
          head. Every surface below paints through it, so it loads ahead of all
          of them. -->
