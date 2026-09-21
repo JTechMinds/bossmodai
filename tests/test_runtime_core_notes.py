@@ -38,10 +38,17 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     assert "/projects/<project>/notes" not in block
     assert "project facts, decisions, and evidence pointers" in block
     assert "Operator prefs and standing personal context" in block
+    assert "standing preference or style constraint" in block
+    assert "short sticky plus a path pointer under /me/notes" in block
+    assert "not only in chat" in block
     assert "Short sticky bullets" in block
     assert "open and read those project notes" in block
-    assert "standing prefs" in block
+    assert "style, tool choice, or a quality bar" in block
+    assert "Do not treat standing prefs as disposable chat tone" in block
     assert "pointers-first (path + short sticky)" in block
+    assert "standing_pref" not in block
+    assert "sticky-slot" not in block.lower()
+    assert "chat fade" not in block.lower()
     assert "Soft-cap any quote" in block
     assert "Never dump a whole note file into the turn" in block
     assert "Fail and Done still need real evidence paths" in block
