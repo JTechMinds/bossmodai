@@ -363,7 +363,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
 
     # No call site decides anything from a kind. The People row asks the
     # same table rather than naming error/consent itself.
-    for name in ("needs-popover.js", "needs-bar.js", "needs-toast.js"):
+    for name in ("needs-popover.js", "needs-bar.js", "needs-toast.js", "needs-attention.js"):
         source = _read(NEEDS / name)
         for kind in ("'blocked'", "'error'", "'consent'", "'approval'"):
             assert f"kind === {kind}" not in source, f"{name} branches on kind"

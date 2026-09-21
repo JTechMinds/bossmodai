@@ -8,8 +8,10 @@
     "frontendDist": "http://127.0.0.1:38471"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "BossMod AI",
         "width": 1280,
         "height": 800,

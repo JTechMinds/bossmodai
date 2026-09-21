@@ -55,13 +55,16 @@ const BossModHeader = (() => {
      * @param {object} deps.needs            From BossModNeeds.createNeedsStore;
      *   the popover resolves through it. The bell is the one guaranteed path to
      *   the queue, so it is never suppressible (spec 5.5).
+     * @param {object} [deps.attention]      From BossModNeedsAttention.createHost.
+     *   Optional: a browser session and the header harness have no tray. When
+     *   present, tray click opens the popover without toggling it shut.
      * @param {() => void} deps.openSettings Opens the Settings takeover.
      * @returns {() => void} disposer — drains every subscription.
      * @throws {Error} When deps.needs is missing — a bell with no queue behind
      *   it would report "nothing needs you" forever.
      */
     function mount(el, deps) {
-        const { store, apiFetch, navigate, needs, openSettings } = deps;
+        const { store, apiFetch, navigate, needs, openSettings, attention } = deps;
         if (!needs) throw new Error('[header] deps.needs is required');
         const disposers = [];
 
@@ -154,11 +157,12 @@ const BossModHeader = (() => {
          */
         let popover = null;
 
-        function openNeeds() {
-            if (popover) {
-                popover.close();
-                return;
-            }
+        /**
+         * Open the queue without toggling. The tray uses this: a click that
+         * closed an already-open popover would hide the thing it focused.
+         */
+        function showNeeds() {
+            if (popover) return;
             popover = BossModNeedsPopover.openPopover({
                 store,
                 needs,
@@ -166,6 +170,18 @@ const BossModHeader = (() => {
                 navigate,
                 onClose: () => { popover = null; },
             });
+        }
+
+        function openNeeds() {
+            if (popover) {
+                popover.close();
+                return;
+            }
+            showNeeds();
+        }
+
+        if (attention && typeof attention.setShowNeeds === 'function') {
+            attention.setShowNeeds(showNeeds);
         }
 
         // ─── Pause / Resume ───
