@@ -127,11 +127,21 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         logger.warning("Parsed action is not an object: %s", parsed)
         return {"action": "_parse_failed", "thought": "", "_raw_snippet": "Action payload must be a JSON object"}
 
+    original = parsed
     try:
-        parsed = _normalize_action_payload(parsed)
+        from core.agent_loop.parse_steer import (
+            InvalidDecisionEnvelope,
+            peel_decision_envelope,
+        )
+
+        wire = peel_decision_envelope(original)
+        parsed = _normalize_action_payload(wire)
+    except InvalidDecisionEnvelope as exc:
+        logger.warning("Invalid compact action payload: %s", exc)
+        return _schema_failed_action(raw_response, original, exc)
     except ValueError as exc:
         logger.warning("Invalid compact action payload: %s", exc)
-        return _schema_failed_action(raw_response, parsed, exc)
+        return _schema_failed_action(raw_response, original, exc)
 
     if "action" not in parsed:
         logger.warning("No 'action' key in response: %s", parsed)
@@ -166,7 +176,7 @@ def _schema_failed_action(
         raw_response,
         decision=False,
         snippet=error[:200],
-        kind=kind_for_schema_error(error, parsed),
+        kind=kind_for_schema_error(error, parsed, exc),
         thought=_candidate_thought(parsed),
         candidate=parsed,
     )
@@ -175,6 +185,12 @@ def _schema_failed_action(
 def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize the model-facing compact action JSON into canonical runtime fields."""
     if "act" not in payload:
+        from core.agent_loop.parse_steer import InvalidDecisionEnvelope
+
+        if payload.get("msg") not in (None, ""):
+            raise InvalidDecisionEnvelope(
+                'execution turns require a compact "act"; say-only / empty actions is for operator chat'
+            )
         raise ValueError('missing "act"')
     extra_root = set(payload) - {"act", "data", "th"}
     if extra_root:

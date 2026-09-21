@@ -51,9 +51,9 @@ class EmittedShape:
 def extract_emitted_chat(raw: str) -> str:
     """Return the chat text a decision completion actually emitted.
 
-    Decision turns wrap the operator-visible reply in ``msg``. Scoring the
-    wrapper JSON would pass on punctuation the model did not emit as chat.
-    A bare string is treated as the reply itself.
+    Decision turns wrap the operator-visible reply in ``say`` / ``msg``.
+    Scoring the wrapper JSON would pass on punctuation the model did not emit
+    as chat. A bare string is treated as the reply itself.
     """
     text = (raw or "").strip()
     if not text:
@@ -64,7 +64,7 @@ def extract_emitted_chat(raw: str) -> str:
         return raw
     if not isinstance(payload, dict):
         return raw
-    for key in ("msg", "reply"):
+    for key in ("say", "msg", "reply"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value

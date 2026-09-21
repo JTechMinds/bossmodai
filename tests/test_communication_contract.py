@@ -123,6 +123,25 @@ def test_parse_communication_fills_partial_mapping() -> None:
     assert contract.audience == "operator"
 
 
+def test_communication_ignores_say_and_stays_voice_density() -> None:
+    contract = parse_communication(
+        {
+            "tone": "direct",
+            "density": "scannable",
+            "say": "Done. Tests passed.",
+            "actions": [],
+        },
+        specialty="Writer",
+    )
+    assert contract.as_dict() == {
+        "tone": "direct",
+        "density": "scannable",
+        "jargon": "none",
+        "audience": "operator",
+    }
+    assert "say" not in contract.as_dict()
+
+
 def test_parse_communication_rejects_non_mapping() -> None:
     with pytest.raises(CommunicationContractError):
         parse_communication(["precise-but-scannable"])

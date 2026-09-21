@@ -3,6 +3,11 @@
 Prose status and unknown top-level decision keys are not spinning actions
 and must not loop. Soft-block behavior is unchanged — this only stops
 parse-failure from feeding it.
+
+Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
+tools / CLI). Those map onto the existing compact keys ``msg`` and
+``act``/``data`` — not a second protocol. Empty ``actions`` is a valid 1:1
+status wake. ``say`` alone is never Done / Blocked / F.
 """
 
 from __future__ import annotations
@@ -12,20 +17,36 @@ from typing import Any, Literal
 ParseFailureKind = Literal["prose_status", "invalid_json", "invalid_decision"]
 
 PROSE_STATUS_STEER = (
-    "Emit the required JSON decision/action shape for this turn. "
+    "Emit the required JSON decision/action shape for this turn "
+    "(say plus optional actions). "
     "Prose status is not a valid turn result. "
     "Do not park @Operator. Do not invent a desk deny."
 )
 
 INVALID_DECISION_STEER = (
-    "Emit the required JSON decision/action shape for this turn. "
+    "Emit the required JSON decision/action shape for this turn "
+    "(say plus optional actions). "
     "Do not invent approval fields. "
     "Approval comes from approval_required plus a request id from the tool, "
     "not from invented JSON fields. "
     "Do not park @Operator. Do not invent a desk deny."
 )
 
-_COMPACT_ROOT_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th"})
+# Existing compact keys plus the product aliases. Unknown keys stay fail-closed.
+_COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th"})
+_ENVELOPE_KEYS = frozenset({"say", "actions"})
+_COMPACT_ROOT_KEYS = _COMPACT_ACTION_KEYS | _ENVELOPE_KEYS
+_CONVERSATION_ACTS = frozenset(
+    {"reply", "observe", "accept", "clarify", "cancel", "decline", "defer"}
+)
+_LOOKUP_ACTS = frozenset({"cli", "request_host_access"})
+_EXECUTION_CHAT_ACTS = frozenset(
+    {"socialmsg", "taskmsg", "done", "block", "wait", "deleg", "drop"}
+)
+
+
+class InvalidDecisionEnvelope(ValueError):
+    """Fail-closed: invented keys or a malformed say/actions envelope."""
 
 
 def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
@@ -39,10 +60,13 @@ def classify_json_parse_failure(raw_response: str) -> ParseFailureKind:
 def kind_for_schema_error(
     error: str,
     payload: dict[str, Any] | None = None,
+    exc: Exception | None = None,
 ) -> ParseFailureKind:
-    """Unknown top-level keys are an invalid decision, not malformed JSON."""
+    """Unknown top-level keys and bad envelopes are invalid decisions, not malformed JSON."""
     extra = set(payload or ()) - _COMPACT_ROOT_KEYS
     if extra or "unexpected top-level keys" in (error or ""):
+        return "invalid_decision"
+    if isinstance(exc, InvalidDecisionEnvelope):
         return "invalid_decision"
     return "invalid_json"
 
@@ -105,6 +129,119 @@ def parse_failed_payload(
         }
     if candidate is not None:
         payload["_candidate_payload"] = candidate
+    return payload
+
+
+def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map ``say`` / ``actions`` onto the existing compact act/msg object.
+
+    Empty ``actions`` is a no-work chat envelope. One nested compact action
+    unwraps to that same object (not a second schema). Invented keys stay
+    fail-closed.
+    """
+    extra = set(payload) - _COMPACT_ROOT_KEYS
+    if extra:
+        raise InvalidDecisionEnvelope(
+            f'unexpected top-level keys: {", ".join(sorted(extra))}'
+        )
+
+    chat = _resolve_chat_alias(payload.get("say"), payload.get("msg"))
+    action_items = _coerce_actions(payload.get("actions"))
+    remainder = {key: value for key, value in payload.items() if key not in _ENVELOPE_KEYS}
+    if chat is not None:
+        remainder["msg"] = chat
+
+    if action_items:
+        remainder = _unwrap_single_action(remainder, action_items[0], chat)
+
+    return _fold_chat_onto_act(remainder)
+
+
+def _coerce_actions(value: Any) -> list[Any] | None:
+    """Return an actions list, or None when the field is omitted."""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise InvalidDecisionEnvelope('"actions" must be an array when provided')
+    if len(value) > 1:
+        raise InvalidDecisionEnvelope('"actions" may contain at most one compact action')
+    return value
+
+
+def _unwrap_single_action(
+    remainder: dict[str, Any],
+    inner: Any,
+    chat: str | None,
+) -> dict[str, Any]:
+    """Flatten one nested compact action into the existing top-level shape."""
+    if not isinstance(inner, dict):
+        raise InvalidDecisionEnvelope('each item in "actions" must be an object')
+    inner_extra = set(inner) - _COMPACT_ACTION_KEYS
+    if inner_extra:
+        raise InvalidDecisionEnvelope(
+            f'unexpected top-level keys: {", ".join(sorted(inner_extra))}'
+        )
+    if remainder.get("act") not in (None, ""):
+        raise InvalidDecisionEnvelope(
+            'do not combine top-level "act" with non-empty "actions"'
+        )
+
+    merged = dict(inner)
+    inner_chat = _optional_chat_text(merged.get("msg"), "msg")
+    if chat is not None and inner_chat is not None and chat != inner_chat:
+        raise InvalidDecisionEnvelope('"say" and "msg" must match when both are provided')
+    if chat is not None and inner_chat is None:
+        merged["msg"] = chat
+    for key in ("th", "intent", "commit", "data"):
+        if remainder.get(key) not in (None, "", {}) and merged.get(key) in (None, "", {}):
+            merged[key] = remainder[key]
+    return merged
+
+
+def _resolve_chat_alias(say: Any, msg: Any) -> str | None:
+    """Return the operator-visible chat text from ``say`` and/or ``msg``."""
+    say_text = _optional_chat_text(say, "say")
+    msg_text = _optional_chat_text(msg, "msg")
+    if say_text is not None and msg_text is not None and say_text != msg_text:
+        raise InvalidDecisionEnvelope('"say" and "msg" must match when both are provided')
+    return say_text if say_text is not None else msg_text
+
+
+def _optional_chat_text(value: Any, field: str) -> str | None:
+    """Treat omitted/blank chat as absent; reject non-strings."""
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidDecisionEnvelope(f'"{field}" must be a non-empty string when provided')
+    return value
+
+
+def _fold_chat_onto_act(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep ``msg`` on conversation acts; map it onto execution follow-up fields."""
+    act = payload.get("act")
+    chat = payload.get("msg")
+    if not isinstance(chat, str) or not chat.strip():
+        return payload
+    if act in _CONVERSATION_ACTS or act in (None, ""):
+        return payload
+
+    folded = dict(payload)
+    if act in _EXECUTION_CHAT_ACTS:
+        data = folded.get("data")
+        if data in (None, ""):
+            data = {}
+        if isinstance(data, dict) and data.get("msg") in (None, ""):
+            folded["data"] = {**data, "msg": chat}
+        folded.pop("msg", None)
+        return folded
+
+    if act in _LOOKUP_ACTS or isinstance(act, str):
+        if folded.get("th") in (None, ""):
+            folded["th"] = chat
+        folded.pop("msg", None)
+        folded.pop("intent", None)
+        folded.pop("commit", None)
+        return folded
     return payload
 
 

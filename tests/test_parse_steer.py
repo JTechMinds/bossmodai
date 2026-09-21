@@ -10,7 +10,7 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop.actions import parse_action
+from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.decision_contract import ConversationDecision, parse_direct_turn_response
 from core.agent_loop.loop import run_turn
 from core.agent_loop.parse_steer import (
@@ -20,6 +20,7 @@ from core.agent_loop.parse_steer import (
     kind_for_schema_error,
     parse_failure_should_repair,
     parse_failure_steer,
+    peel_decision_envelope,
 )
 from core.bm_cli.policy_engine import policy_engine
 from core.llm.client import LLMResponse
@@ -88,8 +89,13 @@ def test_classify_prose_status_vs_invalid_json() -> None:
         {"decision": "answer", "_needsApproval": True},
     ) == "invalid_decision"
     assert kind_for_schema_error('missing "act"') == "invalid_json"
+    assert kind_for_schema_error(
+        'missing "act"',
+        {"say": "Committed.", "actions": []},
+    ) == "invalid_json"
     steer = parse_failure_steer("prose_status")
     assert PROSE_STATUS_STEER in steer
+    assert "say plus optional actions" in steer
     assert "Do not park @Operator" in steer
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
@@ -131,6 +137,11 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     )
     assert other["decision"] == "_parse_failed"
     assert other.get("_parse_kind") == "invalid_decision"
+    say_extra = parse_direct_turn_response(
+        '{"say":"Committed.","actions":[],"extraField":1}'
+    )
+    assert say_extra["decision"] == "_parse_failed"
+    assert say_extra.get("_parse_kind") == "invalid_decision"
     valid = parse_direct_turn_response(
         '{"act":"reply","intent":"status","msg":"Continuing.","th":"ok"}'
     )
@@ -313,3 +324,137 @@ async def test_execution_prose_fail_closes_without_repair_loop(
     assert "Emit the required JSON" in detail
     assert "Do not park @Operator" in detail
     assert not detail.startswith("Blocked")
+
+
+def test_peel_say_alias_and_empty_actions() -> None:
+    peeled = peel_decision_envelope(
+        {"say": "Committed and pushed.\n\n- Next: pytest.", "actions": []}
+    )
+    assert peeled["msg"] == "Committed and pushed.\n\n- Next: pytest."
+    assert "actions" not in peeled
+    assert "say" not in peeled
+
+
+def test_say_only_decision_is_a_status_reply() -> None:
+    parsed = parse_direct_turn_response(
+        '{"say":"Committed and pushed.\\n\\n- Next: pytest.","actions":[]}'
+    )
+    assert parsed.get("decision") == "answer"
+    assert parsed.get("intentKind") == "status_request"
+    assert parsed.get("reply") == "Committed and pushed.\n\n- Next: pytest."
+    assert parsed.get("commitmentKind") == "none"
+    also = parse_direct_turn_response('{"say":"Still on the clone. No Board change."}')
+    assert also.get("decision") == "answer"
+    assert also.get("reply") == "Still on the clone. No Board change."
+    aliased = parse_direct_turn_response(
+        '{"act":"reply","intent":"status","say":"Continuing.","msg":"Continuing.","th":"ok"}'
+    )
+    assert aliased.get("decision") == "answer"
+    assert aliased.get("reply") == "Continuing."
+    mismatched = parse_direct_turn_response(
+        '{"say":"Committed.","msg":"Something else.","actions":[]}'
+    )
+    assert mismatched["decision"] == "_parse_failed"
+    assert mismatched.get("_parse_kind") == "invalid_decision"
+
+
+def test_say_only_does_not_parse_as_done() -> None:
+    parsed = parse_action('{"say":"Done. Tests passed.","actions":[]}')
+    assert parsed["action"] == "_parse_failed"
+    assert parsed.get("_parse_kind") == "invalid_decision"
+    nested = parse_action(
+        '{"say":"Done. Tests passed.","actions":[{"act":"done","data":{"sum":"Looks good."}}]}'
+    )
+    assert nested["action"] == "complete"
+    assert nested["summary"] == "Looks good."
+    assert nested["followUpMessage"] == "Done. Tests passed."
+    assert nested.get("doneClaim") in (None, "", {})
+
+
+@pytest.mark.asyncio
+async def test_one_to_one_say_only_posts_to_chat_without_board_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    seen = _script_completions(
+        monkeypatch,
+        ['{"say":"Committed and pushed.\\n\\n- Next: pytest on the clone.","actions":[]}'],
+    )
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Status?",
+            "from_name": "Human",
+            "from_id": HUMAN_SENDER_ID,
+            "source_channel": "chat",
+        },
+    )
+    assert len(seen) == 1
+    assert outcome.result.get("event") == "decision_applied"
+    assert outcome.result.get("chat_message")
+    thread = db.get_human_chat_thread(agent.id)
+    assert any(
+        "Committed and pushed" in (item.content or "") and "pytest" in (item.content or "")
+        for item in thread
+    )
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+
+@pytest.mark.asyncio
+async def test_say_only_does_not_complete_or_block_active_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task("Validate clone", assigned_to=agent.id)
+    from core.agent_loop.activity_runtime import activate_work_activity
+
+    activate_work_activity(agent.id, task)
+    seen = _script_completions(
+        monkeypatch,
+        ['{"say":"Done. Tests passed. Waiting on review.","actions":[]}'],
+    )
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "human_chat",
+            "content": "Status?",
+            "from_name": "Human",
+            "from_id": HUMAN_SENDER_ID,
+            "source_channel": "chat",
+        },
+    )
+    assert len(seen) == 1
+    assert outcome.result.get("event") == "decision_applied"
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status != "complete"
+    assert refreshed.status != "blocked"
+    thread = db.get_human_chat_thread(agent.id)
+    assert any("Done. Tests passed." in (item.content or "") for item in thread)
+
+
+@pytest.mark.asyncio
+async def test_envelope_done_without_evidence_still_rejected() -> None:
+    agent = db.create_agent("Jim", role="Engineer", desk_x=1, desk_y=1)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task("Validate clone", assigned_to=agent.id)
+    from core.agent_loop.activity_runtime import activate_work_activity
+
+    activate_work_activity(agent.id, task)
+    parsed = parse_action(
+        '{"say":"Done. Tests passed.","actions":[{"act":"done","data":{"sum":"Looks good."}}]}'
+    )
+    result = await execute_action(parsed, agent, state)
+    assert result["event"] == "world_feedback"
+    assert "checkable claim" in result["detail"].lower() or "claim" in result["detail"].lower()
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status != "complete"

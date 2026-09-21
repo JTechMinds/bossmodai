@@ -12,11 +12,17 @@ Answer naturally, like a competent employee would.
 Return exactly one JSON object.
 Choose the smallest valid object for this turn. Omit unrelated fields.
 Do not combine conversation fields and CLI fields in the same object.
+Operator-visible chat is `say` (alias `msg`). Board / tools / CLI live in `actions` or the compact `act`/`data` object. Empty `actions` is valid on a 1:1 status wake. Raw prose is not a turn result. `say` alone never marks work Done or Blocked.
 
 {{if trigger.type = 'human_chat'}}
 ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | cancel | decline | defer
 
 Use one of these shapes:
+
+For a 1:1 status update with no Board, tool, or CLI work this turn:
+```json
+{"say":"string","actions":[]}
+```
 
 For reply:
 ```json
@@ -46,6 +52,11 @@ For defer:
 ALLOWED conversation act FOR THIS TURN: reply
 
 Use this shape:
+
+For a status update with no Board, tool, or CLI work this turn:
+```json
+{"say":"string","actions":[]}
+```
 
 For reply:
 ```json
@@ -292,6 +303,9 @@ Once you have enough information, end the turn with a final conversation decisio
 
 FIELD NOTES
 
+- `say` is the operator-visible chat text. `msg` is the same field.
+- `actions` is optional. Empty or omitted means no Board, tool, or CLI work this turn.
+- `say` plus empty `actions` is the 1:1 status envelope. It posts to chat. It does not complete, block, or CLEAR work.
 - `intent` describes what the incoming message is about.
 - `th` is a short admin-visible note.
 - Include `commit` only when this turn is creating or changing a durable commitment.
@@ -311,6 +325,7 @@ FIELD NOTES
 TURN GUIDANCE
 
 - `reply` is the normal response mode for direct chat, peer chat, and status answers.
+- A 1:1 operator status wake may emit `{"say":"...","actions":[]}`. Do not emit raw prose.
 - A plain status reply should describe current work naturally without trying to restate the underlying work commitment in JSON.
 - `intent="status"` means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use CLI only if the snapshot still lacks the needed fact.
 - For `watchdog_status_ping`, reply with a concise current status update. The runtime will keep the task active and queue work resumption after your reply.
@@ -492,6 +507,10 @@ EXAMPLES
 ```
 {{end}}
 {{else}}
+```json
+{"say":"Committed and pushed.\n\n- Next: run pytest on the clone.","actions":[]}
+```
+
 ```json
 {"act":"reply","intent":"status","msg":"I am actively drafting the caffeine whitepaper right now.","th":"share status"}
 ```

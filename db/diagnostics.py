@@ -21,10 +21,10 @@ _REPLY_SOURCE_COLUMNS = "parsed_action, raw_response"
 
 
 def extract_reply(*payloads: Any) -> str:
-    """Return the model-facing ``msg`` text from diagnostic payloads.
+    """Return the model-facing ``say`` / ``msg`` text from diagnostic payloads.
 
-    Decision turns store it as top-level ``msg`` (raw) / ``reply`` (parsed).
-    Execution turns store it as ``data.msg`` (raw) or the remapped
+    Decision turns store it as top-level ``say`` or ``msg`` (raw) / ``reply``
+    (parsed). Execution turns store it as ``data.msg`` (raw) or the remapped
     ``content`` / ``followUpMessage`` fields. The first non-empty win is the
     transcript operators need; trigger payloads are never passed in.
     """
@@ -40,7 +40,7 @@ def _reply_from_payload(raw: Any) -> str:
     parsed = _parse_jsonish(raw)
     if parsed is None:
         return ""
-    for key in ("msg", "reply"):
+    for key in ("say", "msg", "reply"):
         value = parsed.get(key)
         if isinstance(value, str) and value.strip():
             return value

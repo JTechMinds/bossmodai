@@ -29,6 +29,9 @@ def test_extract_reply_prefers_wire_msg() -> None:
     raw = json.dumps({"act": "reply", "intent": "info", "msg": "Hello\nthere"})
     parsed = {"decision": "answer", "reply": "Hello\nthere"}
     assert db.extract_reply(raw, parsed) == "Hello\nthere"
+    assert db.extract_reply({"say": "Committed and pushed.", "actions": []}) == (
+        "Committed and pushed."
+    )
     assert db.extract_reply({"data": {"msg": "peer line"}}) == "peer line"
     assert db.extract_reply({"content": "execution note"}) == "execution note"
     assert db.extract_reply("not json", None, "") == ""
