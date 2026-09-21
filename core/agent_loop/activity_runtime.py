@@ -5,8 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import db
-from core.models import Activity, AgentState, Task
-from core.tasking.transitions import transition_task
+from core.models import Activity, Agent, AgentState, Task
+from core.tasking.transitions import is_terminal_task_status, transition_task
+
+TERMINAL_WAKE_WHY = "Board task is already complete"
+TERMINAL_WAKE_LINE = f"Blocked — {TERMINAL_WAKE_WHY}"
+TERMINAL_WAKE_FEEDBACK_CODE = "complete_task_wake"
 
 _VISIBLE_STATUS_BY_KIND = {
     "assignment": "work_active",
@@ -83,6 +87,130 @@ def get_active_task_id(agent_id: str) -> str | None:
     return active.task_id
 
 
+def is_live_work_task(task: Task | None) -> bool:
+    """Return whether ``task`` can legally move on a wake/pause/activate path."""
+    return task is not None and not is_terminal_task_status(task.status)
+
+
+def transition_live_work_task(
+    task_id: str,
+    to_status: str,
+    *,
+    reason: str,
+    actor: str = "BossMod",
+    **fields: Any,
+) -> Task | None:
+    """Transition a live Board task. Terminal rows are a no-op.
+
+    Wake, pause, and activate must never raise ``complete → pending`` or
+    ``complete → active``. Other illegal jumps still go through
+    ``transition_task`` unchanged.
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        return None
+    if is_terminal_task_status(task.status):
+        return task
+    extra = {key: value for key, value in fields.items() if key != "status"}
+    return transition_task(
+        task_id,
+        to_status,
+        reason=reason,
+        actor=actor,
+        **extra,
+    )
+
+
+def resolve_live_wake_task(
+    agent_id: str,
+    *,
+    exclude_task_id: str | None = None,
+) -> Task | None:
+    """Return a live Board task this agent can continue, if any.
+
+    Prefers the current live work activity, then paused work, then any open
+    assigned task. Complete rows are never returned.
+    """
+    active = get_active_work_activity(agent_id)
+    if active and active.task_id and active.task_id != exclude_task_id:
+        task = db.get_task(active.task_id)
+        if is_live_work_task(task):
+            return task
+
+    for task in db.list_tasks(assigned_to=agent_id):
+        if exclude_task_id and task.id == exclude_task_id:
+            continue
+        if not is_live_work_task(task):
+            continue
+        if db.get_resumable_work_activity(agent_id, task.id):
+            return task
+
+    for task in db.list_tasks(assigned_to=agent_id):
+        if exclude_task_id and task.id == exclude_task_id:
+            continue
+        if is_live_work_task(task):
+            return task
+    return None
+
+
+def close_terminal_work_activity(
+    agent_id: str,
+    *,
+    reason: str,
+    task_id: str | None = None,
+) -> Activity | None:
+    """Complete zombie work bound to a terminal Board task. Do not revive it."""
+    closed: Activity | None = None
+    active = get_active_work_activity(agent_id)
+    if active and (task_id is None or active.task_id == task_id):
+        bound = db.get_task(active.task_id) if active.task_id else None
+        if bound is None or is_terminal_task_status(bound.status):
+            closed = complete_activity(active.id, detail=reason)
+
+    if task_id:
+        bound = db.get_task(task_id)
+        if bound is None or is_terminal_task_status(bound.status):
+            resumable = db.get_resumable_work_activity(agent_id, task_id)
+            if resumable:
+                db.update_activity(resumable.id, status="completed", detail=reason)
+                refresh_agent_status(agent_id)
+                closed = db.get_activity(resumable.id) or closed
+    return closed
+
+
+def note_terminal_wake_block(agent_id: str, task: Task | None = None) -> str:
+    """Post ``Blocked — Board task is already complete`` without wiping the row."""
+    from core.agent_loop.task_origin_mirrors import named_origin_line, persist_unbound_status_line
+
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        return TERMINAL_WAKE_LINE
+    channel_id = None
+    if task is not None:
+        raw = getattr(task, "notification_channel_id", None)
+        if isinstance(raw, str) and raw.strip():
+            channel_id = raw.strip()
+    persist_unbound_status_line(
+        agent=agent,
+        content=named_origin_line(agent, TERMINAL_WAKE_LINE),
+        kind="blocked_no_task",
+        channel_id=channel_id,
+    )
+    return TERMINAL_WAKE_LINE
+
+
+def terminal_wake_feedback(agent: Agent, task: Task | None = None) -> dict[str, Any]:
+    """Soft-block payload when a wake would revive a complete Board task."""
+    note_terminal_wake_block(agent.id, task)
+    return {
+        "event": "world_feedback",
+        "feedback_code": TERMINAL_WAKE_FEEDBACK_CODE,
+        "detail": TERMINAL_WAKE_LINE,
+        "agent_name": agent.name,
+        "trigger_requests": [],
+    }
+
+
 def refresh_agent_status(agent_id: str) -> AgentState | None:
     """Derive visible agent status from the active runtime activity."""
     active = get_active_activity(agent_id)
@@ -119,14 +247,23 @@ def reconcile_after_turn_failure(agent_id: str, *, detail: str) -> AgentState | 
 
 
 def pause_active_work(agent_id: str, reason: str, *, task_status: str = "pending") -> Activity | None:
-    """Pause the active work activity and return it."""
+    """Pause the active work activity and return it.
+
+    A complete (or otherwise terminal) Board task is not moved back to
+    ``pending`` / ``blocked``. The zombie work activity is closed instead.
+    """
     active = get_active_work_activity(agent_id)
     if not active:
         return None
 
+    task = db.get_task(active.task_id) if active.task_id else None
+    if task is not None and is_terminal_task_status(task.status):
+        close_terminal_work_activity(agent_id, reason=reason, task_id=task.id)
+        return None
+
     db.update_activity(active.id, status="paused", detail=reason)
     if active.task_id:
-        transition_task(
+        transition_live_work_task(
             active.task_id,
             task_status,
             reason=reason or f"Paused ({task_status}).",
@@ -281,11 +418,25 @@ def activate_work_activity(
     task_status: str = "active",
     supersede_note: str | None = None,
     metadata: dict[str, Any] | None = None,
-) -> Activity:
-    """Create or reactivate the runtime work activity for a task."""
+) -> Activity | None:
+    """Create or reactivate the runtime work activity for a live task.
+
+    Complete Board tasks are never revived (no ``complete → active``). Callers
+    that need work should pass a live task, or let ``prepare_trigger_context``
+    retarget one.
+    """
+    task = db.get_task(task.id) or task
+    if not is_live_work_task(task):
+        close_terminal_work_activity(
+            agent_id,
+            reason=TERMINAL_WAKE_WHY,
+            task_id=task.id,
+        )
+        return get_active_activity(agent_id)
+
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id == task.id:
-        transition_task(
+        transition_live_work_task(
             task.id,
             task_status,
             reason=f"Work activity already active ({task_status}).",
@@ -327,7 +478,7 @@ def activate_work_activity(
             metadata=metadata or {},
         )
 
-    transition_task(
+    transition_live_work_task(
         task.id,
         task_status,
         reason=f"Activated work activity ({task_status}).",

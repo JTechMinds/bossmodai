@@ -82,6 +82,21 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
     ):
         task = db.get_task(trigger["task_id"])
         if task and task.assigned_to == agent_id:
+            if not activity_runtime.is_live_work_task(task):
+                live = activity_runtime.resolve_live_wake_task(
+                    agent_id,
+                    exclude_task_id=task.id,
+                )
+                if live is None:
+                    activity_runtime.close_terminal_work_activity(
+                        agent_id,
+                        reason=activity_runtime.TERMINAL_WAKE_WHY,
+                        task_id=task.id,
+                    )
+                    activity_runtime.note_terminal_wake_block(agent_id, task)
+                    return activity_runtime.get_active_activity(agent_id)
+                task = live
+                trigger["task_id"] = live.id
             already = (
                 active is not None
                 and active.kind == "work"
