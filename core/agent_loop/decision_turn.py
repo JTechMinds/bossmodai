@@ -107,6 +107,7 @@ async def _run_decision_turn(
                 decision_repair_attempts += 1
                 continuation_messages = _build_decision_timeout_repair_messages(
                     timeout_seconds=exc.timeout_seconds,
+                    kind=exc.kind,
                 )
                 step_traces.append(
                     _build_step_trace(
@@ -665,8 +666,12 @@ async def _run_decision_turn(
 
 def _timeout_recovery_error(exc: client.LLMTimeoutError) -> str:
     """Operator-visible steer after the timeout repair budget is spent."""
+    if exc.kind == "stall":
+        when = f"stalled after {exc.timeout_seconds:g}s with no progress"
+    else:
+        when = f"timed out after {exc.timeout_seconds:g}s"
     return (
-        f"The model call timed out after {exc.timeout_seconds:g}s before one JSON envelope. "
+        f"The model call {when} before one JSON envelope. "
         "Retry this turn with one JSON object. "
         "Do not invent Board status or mark the task Done."
     )
