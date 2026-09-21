@@ -18,6 +18,11 @@ from core.bm_cli.host_path_consent import looks_like_command_flag
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
+from core.agent_loop.standing_prefs import (
+    STANDING_PREFS_PATH,
+    is_standing_prefs_path,
+    prepare_standing_prefs_write,
+)
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.bm_cli.workspace_git import auto_commit_workspace_change
 
@@ -510,6 +515,30 @@ def write_virtual_text(
         if append:
             raise ValueError(f"Cannot append directory: {raw_path}")
         raise ValueError(f"Cannot write directory: {raw_path}")
+
+    if is_standing_prefs_path(target.virtual_path):
+        if append:
+            raise ValueError(
+                "Standing prefs cannot be appended. "
+                f"Write {STANDING_PREFS_PATH} with schema_version 1 to add or replace by id."
+            )
+        normalized = prepare_standing_prefs_write(agent.storage_key, content)
+        prepared_bytes = len(normalized.encode("utf-8"))
+        if prepared_bytes > limit:
+            raise ValueError(
+                f"Content exceeds maximum write size ({prepared_bytes:,} bytes > {limit:,} byte limit)."
+            )
+        target.real_path.parent.mkdir(parents=True, exist_ok=True)
+        target.real_path.write_text(normalized, encoding="utf-8")
+        commit_sha = None
+        if auto_commit:
+            commit_reason = reason or f"bm_cli write {target.virtual_path}"
+            commit_sha = auto_commit_workspace_change(agent, target.virtual_path, reason=commit_reason)
+        return FileWriteOutcome(
+            virtual_path=target.virtual_path,
+            chars=len(normalized),
+            commit_sha=commit_sha,
+        )
 
     target.real_path.parent.mkdir(parents=True, exist_ok=True)
     normalized = normalize_write_content(content)

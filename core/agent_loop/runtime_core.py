@@ -2,7 +2,7 @@
 
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
-identity, desk/``/me``, notes store/retrieve, allowed tools, host-path
+identity, desk/``/me``, cold notes, standing prefs, allowed tools, host-path
 consent, workspace preference, checkable done, audience soft-judgment,
 and chat formatting.
 Fan-out still wakes every member; this is not a router and does not
@@ -11,6 +11,7 @@ require @.
 
 from __future__ import annotations
 
+from core.agent_loop.standing_prefs import STANDING_PREFS_PATH
 from core.bm_cli.host_roots import configured_host_roots
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
@@ -39,23 +40,21 @@ AUDIENCE_SOFT_JUDGMENT = (
     "If someone else's specialty clearly fits, stay quiet or post one short pass."
 )
 
+# Cold notes stay on demand. Standing prefs are a separate warm store.
 NOTES_STORE_RETRIEVE = (
-    "Notes: personal notes are markdown under /me/notes "
-    "(the desk surfaces them; soft-empty is normal). "
-    "Project notes are markdown already in the project folder /projects/<project>/. "
-    "Do not open a second notes store.\n"
-    "Store: project facts, decisions, and evidence pointers go in that project folder. "
-    "Operator prefs and standing personal context go in /me/notes. "
-    "When the operator states a standing preference or style constraint, "
-    "write a short sticky plus a path pointer under /me/notes — pointers-first, not only in chat. "
-    "Short sticky bullets. High-value words.\n"
-    "Retrieve: on a work turn for an active project, open and read those project notes. "
-    "On a wake where style, tool choice, or a quality bar matters, open those /me/notes pointers. "
-    "Do not treat standing prefs as disposable chat tone. "
-    "Quote only what this turn needs — pointers-first (path + short sticky). "
-    "Soft-cap any quote. Never dump a whole note file into the turn.\n"
-    "Fail and Done still need real evidence paths. "
-    "Do not invent Board state, move Blocked to Done, or drop open conditions from note text."
+    "Notes (cold): Personal: /me/notes. "
+    "Project: /projects/<project>/. "
+    "Open on demand for how-to. Pointers-first. Never dump. "
+    "Never invent Board/Done from note text.\n"
+    "Standing prefs (warm): "
+    f"Agent prefs store {STANDING_PREFS_PATH} (not notes). "
+    "Kinds: preference / constraint / style / tool_bias. "
+    "On a clear operator statement, write a short sticky + sources there. "
+    "Engine injects those pointers every work turn — "
+    "the agent does not re-open prefs for inject. "
+    "Supersede only when the operator replaces. "
+    "Optional note pointer for prose — warm inject does not scrape notes. "
+    "Invent-key / Board fakes still fail-closed."
 )
 
 CHAT_FORMATTING = (

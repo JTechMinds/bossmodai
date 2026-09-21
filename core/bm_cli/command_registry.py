@@ -175,7 +175,11 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             '  write notes.md   — with body: "# My Notes"\n'
             "  write config.json — with body containing JSON\n"
-            "  write report.md   — no body to let the runtime author the file"
+            "  write report.md   — no body to let the runtime author the file\n"
+            "\n"
+            "Standing prefs are /me/standing_prefs.json (schema_version 1: "
+            "id, kind, text, sources). A write replaces matching ids and keeps "
+            "the rest. Append is rejected."
         ),
         discovery_hint="body = exact file text; no body = runtime-managed full-file authoring",
     ),

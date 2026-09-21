@@ -32,29 +32,28 @@ def teardown_function() -> None:
 def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     block = preview_runtime_core(name="Ada", role="Writer")
     assert NOTES_STORE_RETRIEVE in block
-    assert "/me/notes" in block
-    assert "soft-empty is normal" in block
-    assert "/projects/<project>/" in block
+    assert "Notes (cold):" in block
+    assert "Personal: /me/notes." in block
+    assert "Project: /projects/<project>/." in block
     assert "/projects/<project>/notes" not in block
-    assert "project facts, decisions, and evidence pointers" in block
-    assert "Operator prefs and standing personal context" in block
-    assert "standing preference or style constraint" in block
-    assert "short sticky plus a path pointer under /me/notes" in block
-    assert "not only in chat" in block
-    assert "Short sticky bullets" in block
-    assert "open and read those project notes" in block
-    assert "style, tool choice, or a quality bar" in block
-    assert "Do not treat standing prefs as disposable chat tone" in block
-    assert "pointers-first (path + short sticky)" in block
-    assert "standing_pref" not in block
+    assert "Open on demand for how-to." in block
+    assert "Pointers-first." in block
+    assert "Never dump." in block
+    assert "Never invent Board/Done from note text." in block
+    assert "Standing prefs (warm):" in block
+    assert "Agent prefs store /me/standing_prefs.json (not notes)." in block
+    assert "Kinds: preference / constraint / style / tool_bias." in block
+    assert "On a clear operator statement, write a short sticky + sources there." in block
+    assert "Engine injects those pointers every work turn" in block
+    assert "the agent does not re-open prefs for inject." in block
+    assert "Supersede only when the operator replaces." in block
+    assert "Optional note pointer for prose" in block
+    assert "warm inject does not scrape notes." in block
+    assert "Invent-key / Board fakes still fail-closed." in block
+    assert "standing personal context go in /me/notes" not in block
+    assert "short sticky plus a path pointer under /me/notes" not in block
     assert "sticky-slot" not in block.lower()
     assert "chat fade" not in block.lower()
-    assert "Soft-cap any quote" in block
-    assert "Never dump a whole note file into the turn" in block
-    assert "Fail and Done still need real evidence paths" in block
-    assert "invent Board state" in block
-    assert "Blocked to Done" in block
-    assert "drop open conditions" in block
     lowered = block.lower()
     assert "memory dump" not in lowered
     assert "paste the note" not in lowered
@@ -75,8 +74,9 @@ def test_prompt_assembly_includes_notes_rules_without_a_second_store() -> None:
     assert core_msgs
     assert NOTES_STORE_RETRIEVE in core_msgs[0]
     joined = "\n".join(str(message.get("content") or "") for message in bundle["messages"])
-    assert "pointers-first (path + short sticky)" in joined
-    assert "Never dump a whole note file into the turn" in joined
+    assert "Pointers-first." in joined
+    assert "Never dump." in joined
+    assert "warm inject does not scrape notes." in joined
 
     system_prompt = (_REPO_ROOT / "prompts" / "system_prompt.md").read_text(encoding="utf-8")
     assert "{{runtime_core}}" in system_prompt

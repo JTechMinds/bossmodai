@@ -16,6 +16,8 @@ from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
 from core.agent_loop.runtime_core import format_runtime_core_block, workspace_preference_context
+from core.agent_loop.standing_prefs import read_standing_prefs, render_warm_section
+from core.agent_loop.turn_context import _determine_mode
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
@@ -43,7 +45,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("description", "Casual hire description of what this agent does"),
     ("done_fail_bar", "Hire finish line / done/fail bar — what good and failure look like"),
     ("role_contract", "Formatted role-contract block (specialty + description + done/fail bar + hard rules)"),
-    ("runtime_core", "Shared runtime core (identity, desk, tools, host-path consent, checkable done, audience soft-judgment, chat formatting)"),
+    ("runtime_core", "Shared runtime core (identity, desk, tools, cold notes, standing prefs, host-path consent, checkable done, audience soft-judgment, chat formatting)"),
     ("personality", "Rendered personality prompt text"),
     ("current_date_time", "Current local date/time string for this turn"),
     ("current_time.iso_local", "Current local time in ISO-8601 format"),
@@ -162,6 +164,9 @@ def build_context(
             "content": format_runtime_core_block(turn.agent, task_id=_turn_task_id(turn)),
         }
     )
+    standing_prefs = _standing_prefs_warm_message(turn)
+    if standing_prefs:
+        messages.append(standing_prefs)
     messages.append(
         {
             "role": "system",
@@ -306,6 +311,19 @@ def _current_cli_cwd(agent_id: str) -> str:
     """Return the current BossMod CLI working directory for one agent."""
     cli_state = db.get_agent_cli_state(agent_id)
     return cli_state.cwd if cli_state is not None else "/me"
+
+
+def _standing_prefs_warm_message(turn: TurnContext) -> dict[str, str] | None:
+    """Inject standing prefs on work turns. Social turns and an empty store stay quiet.
+
+    The reader opens ``/me/standing_prefs.json`` only. Note files are not scraped.
+    """
+    if _determine_mode(turn.trigger) != "work":
+        return None
+    section = render_warm_section(read_standing_prefs(turn.agent.storage_key))
+    if not section:
+        return None
+    return {"role": "system", "content": section}
 
 
 def _turn_task_id(turn: TurnContext) -> str | None:
