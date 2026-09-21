@@ -175,7 +175,14 @@ def test_seated_member_can_post_like_other_members() -> None:
     assert "CLEAR" in share["content"]
     peer_ids = {request["agent_id"] for request in wakes}
     assert hugh.id not in peer_ids
-    assert {row["id"] for row in db.list_channel_member_details(channel.id)} - {hugh.id} == peer_ids
+    share_round = wakes[0]["payload"]["round_id"]
+    seated_peers = {
+        candidate.agent_id
+        for candidate in db.list_channel_response_candidates(share_round)
+    }
+    assert seated_peers == {row["id"] for row in db.list_channel_member_details(channel.id)} - {hugh.id}
+    assert peer_ids <= seated_peers
+    assert len(wakes) == 1
 
     human = db.create_channel_message(
         channel_id=channel.id,
@@ -193,8 +200,15 @@ def test_seated_member_can_post_like_other_members() -> None:
         channel_name=channel.name,
     )
     woken = {request["agent_id"] for request in requests}
-    assert hugh.id in woken
-    assert woken == {row["id"] for row in db.list_channel_member_details(channel.id)}
+    round_id = requests[0]["payload"]["round_id"]
+    seated = {
+        candidate.agent_id
+        for candidate in db.list_channel_response_candidates(round_id)
+    }
+    assert hugh.id in seated
+    assert seated == {row["id"] for row in db.list_channel_member_details(channel.id)}
+    assert woken <= seated
+    assert len(requests) == 1
 
 
 def test_service_does_not_mint_a_new_thread() -> None:

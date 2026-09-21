@@ -104,7 +104,7 @@ def _requeue_commitment(agent: Agent, task: Task | None) -> list[dict[str, Any]]
 
     active = activity_runtime.get_active_work_activity(agent.id)
     if active is not None and active.task_id == task.id:
-        return [build_activity_resume_trigger(active, reason=RESUME_REASON)]
+        return [_repair_wake(build_activity_resume_trigger(active, reason=RESUME_REASON))]
 
     # Same resume the status-reply path uses: reactivate paused or
     # soft-blocked work, then queue one activity_resumed wake.
@@ -119,8 +119,15 @@ def _requeue_commitment(agent: Agent, task: Task | None) -> list[dict[str, Any]]
             supersede_note=RESUME_REASON,
         )
         if activated is not None and activated.kind == "work" and activated.task_id == task.id:
-            return [build_activity_resume_trigger(activated, reason=RESUME_REASON)]
-    return [build_task_resume_trigger(task, reason=RESUME_REASON)]
+            return [_repair_wake(build_activity_resume_trigger(activated, reason=RESUME_REASON))]
+    return [_repair_wake(build_task_resume_trigger(task, reason=RESUME_REASON))]
+
+
+def _repair_wake(spec: dict[str, Any]) -> dict[str, Any]:
+    """Mark a commitment resume so it waits behind a live channel lead."""
+    payload = dict(spec.get("payload") or {})
+    payload["repair_wake"] = True
+    return {**spec, "payload": payload}
 
 
 def _post_note(

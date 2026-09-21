@@ -234,15 +234,19 @@ ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | dec
 
 Use one of these shapes:
 
-For observe:
+For observe (pass):
 ```json
 {"act":"observe","intent":"other","th":"string"}
 ```
 
-For reply:
+Pass uses observe and must not include msg. A pass does not post to the channel. Do not write that you will stay quiet.
+
+For reply (speak):
 ```json
 {"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
 ```
+
+One line is enough. This wake is one judgment, not an essay.
 
 In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
 
@@ -260,15 +264,19 @@ ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | dec
 
 Use one of these shapes:
 
-For observe:
+For observe (pass):
 ```json
 {"act":"observe","intent":"other","th":"string"}
 ```
 
-For reply:
+Pass uses observe and must not include msg. A pass does not post to the channel. Do not write that you will stay quiet.
+
+For reply (speak):
 ```json
 {"act":"reply","intent":"question | status | social | other","msg":"string","th":"string"}
 ```
+
+One line is enough. This wake is one judgment, not an essay.
 
 In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
 

@@ -572,6 +572,17 @@ async def _run_decision_turn(
                 message_id=meeting_message.get("message_id"),
                 created_at=meeting_message.get("created_at"),
             )
+        if result.get("round_marker"):
+            round_marker = result["round_marker"]
+            await manager.broadcast_channel_message(
+                channel_id=round_marker["channel_id"],
+                content=round_marker["content"],
+                author_type=round_marker.get("author_type") or "system",
+                author_name=round_marker.get("author_name") or "BossMod",
+                message_id=round_marker.get("message_id"),
+                created_at=round_marker.get("created_at"),
+                notification_kind=round_marker.get("notification_kind"),
+            )
         if result.get("channel_message"):
             channel_message = result["channel_message"]
             await manager.broadcast_channel_message(

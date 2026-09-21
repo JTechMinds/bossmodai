@@ -18,6 +18,7 @@ from core.agent_loop.activity_scheduler import (
     plan_arrival_follow_up,
     prepare_trigger_context,
 )
+from core.agent_loop.channel_round_plan import max_concurrent_agent_turns
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
@@ -520,7 +521,14 @@ class TurnDispatcher:
             self._active_turns[agent.id] = task
 
     def _claim_available_trigger(self):
-        """Claim the next queued trigger that can legally run now."""
+        """Claim the next queued trigger that can legally run now.
+
+        The global cap limits concurrent agent turns. One agent still holds
+        at most one turn. Repair wakes are ordered behind a live channel
+        lead, and they still occupy a slot once claimed.
+        """
+        if len(self._active_turns) >= max_concurrent_agent_turns():
+            return None
         for trigger in db.list_queued_triggers(limit=100):
             if trigger.agent_id in self._active_turns:
                 continue

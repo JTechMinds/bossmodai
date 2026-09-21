@@ -275,6 +275,22 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "tasks", "closed_at", "TIMESTAMP",
     )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "round_index",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "dispatch_mode",
+        "VARCHAR NOT NULL DEFAULT 'fanout'",
+    )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "stepped_out",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "next_mentions",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
     _backfill_task_closed_at(con)
 
 

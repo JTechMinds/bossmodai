@@ -162,6 +162,7 @@ async function main() {
     world.settings = [
         setting("tick_interval", "0.25", "simulation"),
         setting("decision_repair_attempts", "6", "llm"),
+        setting("max_concurrent_agent_turns", "2", "llm"),
         setting("system_ai_connection", "", "llm"),
         setting("compaction_mode", "pressure_only", "llm"),
         setting("compaction_task_budget_headroom_percent", "25", "llm"),

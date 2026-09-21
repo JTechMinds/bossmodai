@@ -54,6 +54,9 @@ def apply_decision(
 ) -> dict[str, Any]:
     """Apply a parsed conversation decision and return the turn result."""
     decision = ConversationDecision.model_validate(decision_payload)
+    reply_text = (decision.reply or "").strip()
+    if reply_text:
+        trigger["spoken_text"] = reply_text
     active_work = activity_runtime.get_active_work_activity(agent.id)
 
     if decision.decision in {"answer", "clarify"}:

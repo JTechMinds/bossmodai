@@ -210,7 +210,7 @@ def list_channel_members(channel_id: str) -> list[ChannelMember]:
         SELECT {_MEMBER_COLUMNS}
         FROM channel_members
         WHERE channel_id = $1
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, agent_id ASC
         """,
         [channel_id],
         ChannelMember,
@@ -508,6 +508,43 @@ def get_later_human_channel_message(
         LIMIT 1
         """,
         [channel_token, after_token],
+        ChannelMessage,
+    )
+
+
+def find_channel_round_marker(
+    *,
+    channel_id: str,
+    after_message_id: str,
+    content: str,
+) -> ChannelMessage | None:
+    """Return one system round marker posted after a human tip, if it exists."""
+    channel_token = (channel_id or "").strip()
+    after_token = (after_message_id or "").strip()
+    marker = (content or "").strip()
+    if not channel_token or not after_token or not marker:
+        return None
+    return fetch_one(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM channel_messages AS marker
+        WHERE marker.channel_id = $1
+          AND marker.author_type = 'system'
+          AND marker.notification_kind = 'channel_round_marker'
+          AND marker.content = $3
+          AND EXISTS (
+              SELECT 1
+              FROM channel_messages AS tip
+              WHERE tip.id = $2
+                AND (
+                    marker.created_at > tip.created_at
+                    OR (marker.created_at = tip.created_at AND marker.rowid > tip.rowid)
+                )
+          )
+        ORDER BY marker.created_at ASC, marker.rowid ASC
+        LIMIT 1
+        """,
+        [channel_token, after_token, marker],
         ChannelMessage,
     )
 

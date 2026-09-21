@@ -6,9 +6,11 @@ from typing import Any
 
 import db
 from core.agent_loop.activity_scheduler import build_task_follow_up_trigger
+from core.agent_loop.channel_round_plan import is_pass_reply
 from core.agent_loop.channel_rounds import (
     begin_channel_response,
     finalize_channel_response,
+    log_channel_pass,
     observe_channel_message,
     post_agent_channel_share,
 )
@@ -36,6 +38,21 @@ def _prepare_shared_response_trigger(
 ) -> dict[str, Any] | None:
     """Prepare shared conversation queueing and return the effective trigger to apply."""
     trigger_type = trigger.get("type")
+    if trigger_type == "channel_response" and (
+        decision.decision == "observe" or is_pass_reply(decision.reply)
+    ):
+        log_channel_pass(agent, trigger, decision.reply or "")
+        followups = finalize_channel_response(
+            agent_id=agent.id,
+            trigger=trigger,
+            responded=False,
+        )
+        result["trigger_requests"].extend(followups)
+        marker = trigger.pop("round_marker", None)
+        if marker:
+            result["round_marker"] = marker
+        result["detail"] = f"{agent.name} passed without posting"
+        return None
     if trigger_type not in {"session_message", "channel_message"}:
         return trigger
 
@@ -50,7 +67,11 @@ def _prepare_shared_response_trigger(
             return None
         return {**trigger, "type": "session_response"}
 
-    if decision.decision == "observe":
+    if decision.decision == "observe" or is_pass_reply(decision.reply):
+        if is_pass_reply(decision.reply) or (decision.reply or "").strip():
+            log_channel_pass(agent, trigger, decision.reply or "")
+        else:
+            log_channel_pass(agent, trigger, "")
         observed_result = observe_channel_message(agent, trigger)
         result.update(observed_result)
         return None
@@ -85,6 +106,9 @@ def _append_shared_response_follow_up(
                 responded=responded,
             )
         )
+        marker = trigger.pop("round_marker", None)
+        if marker and not result.get("round_marker"):
+            result["round_marker"] = marker
 
 def _persist_reply(
     agent: Agent,
