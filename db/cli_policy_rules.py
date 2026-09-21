@@ -236,6 +236,9 @@ _HARDENED_NEVER_ALLOWED: list[tuple[str, str, str, str | None, str, str | None, 
     ("never_allowed", "printenv", "prefix", "Print environment variables (including GitHub tokens).", "system",
      "printenv [name]",
      "Print environment variables. Blocked because it can dump GH_TOKEN / GITHUB_TOKEN into chat. Use Nest git for push, or open the compare URL. Do not retry printenv of those names."),
+    ("never_allowed", "gh auth token", "prefix", "Print the GitHub CLI token.", "system",
+     "gh auth token",
+     "Print the GitHub CLI token. Blocked because it would dump GH_TOKEN into chat. Use Nest git for push, or open the compare URL. Do not retry gh auth token."),
 ]
 
 HARDENED_NEVER_ALLOWED_PATTERNS: frozenset[str] = frozenset(

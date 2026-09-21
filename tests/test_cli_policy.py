@@ -219,6 +219,7 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert POSIX_SHELL_PATTERNS <= never
     assert HARDENED_NEVER_ALLOWED_PATTERNS <= never
     assert "printenv" in never
+    assert "gh auth token" in never
     assert "cat" in always
     assert "uname" in always
     assert "env" in always
@@ -425,6 +426,9 @@ def test_printenv_and_token_env_dumps_are_never_allowed() -> None:
         "env GH_TOKEN",
         "env GH_TOKEN=x true",
         "env GITHUB_TOKEN",
+        "gh auth token",
+        "/usr/bin/gh auth token",
+        "gh --hostname github.com auth token",
     ):
         decision = policy_engine.evaluate(command, frozenset())
         assert decision.allowed is False, command

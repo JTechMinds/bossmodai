@@ -68,6 +68,9 @@ _AUTH_GIT_SUBCOMMANDS = frozenset({
 # gh help/version/completion do not need a GitHub login.
 _GH_LOCAL_SUBCOMMANDS = frozenset({"help", "completion", "version"})
 _GH_LOCAL_FLAGS = frozenset({"--help", "-h", "--version"})
+# Interactive / token-print gh auth verbs are not powered by Nest git inject.
+_GH_AUTH_WRITE_VERBS = frozenset({"login", "logout", "refresh", "setup-git"})
+_PUBLIC_GITHUB_HOSTS = frozenset({"github.com", "www.github.com"})
 
 # Global git options that consume the next argv token.
 _GIT_VALUE_OPTIONS = frozenset({
@@ -96,6 +99,8 @@ _AUTH_FAIL_MARKERS = (
     "write access to repository not granted",
     "resource not accessible by personal access token",
     "bad credentials",
+    "http 401",
+    "http 403",
 )
 
 # Strong 403 / fine-grained PAT-without-repo hints from GitHub.
@@ -233,8 +238,10 @@ def command_needs_gh_auth(parsed: ParsedCliCommand) -> bool:
     """Return True when this gh argv would need a GitHub login in Shell.
 
     Help/version/completion stay off this gate. Everything else is fail-closed
-    because agent HOME is rewritten and GH_TOKEN is not in the Shell allowlist.
-    Nest git → gh inject is parked — do not copy a PAT into gh env.
+    because agent HOME is rewritten and host GH_TOKEN is stripped. A matching
+    Nest git PAT is injected into the gh subprocess via
+    :func:`nest_git_shell_env` — this gate is the miss path when inject
+    cannot run.
     """
     if not is_gh_cli(parsed):
         return False
@@ -245,6 +252,73 @@ def command_needs_gh_auth(parsed: ParsedCliCommand) -> bool:
         return False
     subcommand = gh_subcommand(tokens)
     if subcommand in _GH_LOCAL_SUBCOMMANDS:
+        return False
+    return True
+
+
+def gh_auth_verb(args: tuple[str, ...] | list[str]) -> str:
+    """Return the ``gh auth <verb>`` verb, or empty when this is not ``gh auth``."""
+    tokens = list(args)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            key = token.split("=", 1)[0]
+            if key in _GIT_VALUE_OPTIONS and "=" not in token:
+                index += 2
+                continue
+            index += 1
+            continue
+        break
+    if index >= len(tokens) or tokens[index] != "auth":
+        return ""
+    index += 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            key = token.split("=", 1)[0]
+            if key in _GIT_VALUE_OPTIONS and "=" not in token:
+                index += 2
+                continue
+            index += 1
+            continue
+        return token
+    return tokens[index] if index < len(tokens) else ""
+
+
+def command_is_gh_auth_write(parsed: ParsedCliCommand) -> bool:
+    """Return True for interactive gh auth verbs Nest git must not impersonate."""
+    if not is_gh_cli(parsed):
+        return False
+    return gh_auth_verb(parsed.args) in _GH_AUTH_WRITE_VERBS
+
+
+def nest_git_can_inject_gh(
+    agent: Agent | None,
+    parsed: ParsedCliCommand,
+    cwd: str | None,
+) -> bool:
+    """Return True when a matching Nest git PAT can power this gh argv."""
+    if not _gh_should_inject_pat(parsed):
+        return False
+    pat, _ssh, _host = _chosen_pat_ssh_host(agent, parsed, cwd)
+    return bool(pat)
+
+
+def _gh_should_inject_pat(parsed: ParsedCliCommand) -> bool:
+    from core.bm_cli.secret_env import command_dumps_secret_token_env
+
+    if not command_needs_gh_auth(parsed):
+        return False
+    if command_is_gh_auth_write(parsed):
+        return False
+    if command_dumps_secret_token_env(parsed.raw):
         return False
     return True
 
@@ -388,18 +462,44 @@ def nest_git_shell_env(
     parsed: ParsedCliCommand | None = None,
     cwd: str | None = None,
 ) -> dict[str, str]:
-    """Extra env for one nest git Shell invocation. Never log the values.
+    """Extra env for one nest git / gh Shell invocation. Never log the values.
 
-    Applied on the shared Shell path for every git argv — not only when the
-    nest-git gate matched — so a saved PAT still reaches ``git push``.
-    The matching credential is chosen by :func:`select_nest_git_credential`.
+    Applied on the shared Shell path for every git or gh argv — not only when
+    the nest-git gate matched — so a saved PAT still reaches ``git push`` and
+    ``gh pr create``. The matching credential is chosen by
+    :func:`select_nest_git_credential`.
 
-    Parked: Nest git → gh subprocess inject. Never copy a PAT into ``GH_TOKEN``
-    / ``GITHUB_TOKEN`` for a gh argv.
+    ``GH_TOKEN`` / ``GITHUB_TOKEN`` are copied only into the gh subprocess
+    env (plus git-sibling askpass so ``gh`` can push). They are never
+    returned in tool output.
     """
     extra: dict[str, str] = {}
+    pat, ssh, host = _chosen_pat_ssh_host(agent, parsed, cwd)
     if parsed is not None and is_gh_cli(parsed):
+        extra.setdefault("GIT_TERMINAL_PROMPT", "0")
+        extra.setdefault("GCM_INTERACTIVE", "never")
+        extra.setdefault("GH_PROMPT_DISABLED", "1")
+        if _gh_should_inject_pat(parsed) and pat:
+            extra.update(_gh_subprocess_env(pat, host=host))
+            extra.update(_pat_env(pat, host=host))
         return extra
+    if pat:
+        extra.update(_pat_env(pat, host=host))
+    elif ssh:
+        extra.update(_ssh_key_env(ssh))
+    elif host_git_is_enabled() and probe_host_git_for_shell().ok:
+        extra.update(host_git_passthrough_env())
+    extra.setdefault("GIT_TERMINAL_PROMPT", "0")
+    extra.setdefault("GCM_INTERACTIVE", "never")
+    return extra
+
+
+def _chosen_pat_ssh_host(
+    agent: Agent | None,
+    parsed: ParsedCliCommand | None,
+    cwd: str | None,
+) -> tuple[str, str, str]:
+    """Return ``(pat, ssh, host)`` from the shared match-by-remote store."""
     remote = resolve_git_remote(agent, parsed, cwd) if (parsed is not None or cwd) else ""
     chosen = select_nest_git_credential(remote or None)
     pat = ""
@@ -409,14 +509,20 @@ def nest_git_shell_env(
     elif parsed is None and cwd is None:
         pat, ssh = nest_git_pat(), nest_git_ssh_key()
     host = remote.split("/", 1)[0] if remote else "github.com"
-    if pat:
-        extra.update(_pat_env(pat, host=host or "github.com"))
-    elif ssh:
-        extra.update(_ssh_key_env(ssh))
-    elif host_git_is_enabled() and probe_host_git_for_shell().ok:
-        extra.update(host_git_passthrough_env())
-    extra.setdefault("GIT_TERMINAL_PROMPT", "0")
-    extra.setdefault("GCM_INTERACTIVE", "never")
+    return pat, ssh, host or "github.com"
+
+
+def _gh_subprocess_env(pat: str, host: str = "github.com") -> dict[str, str]:
+    """PAT as GH_TOKEN for one gh subprocess. Public github.com stays impersonal."""
+    extra = {
+        "GH_TOKEN": pat,
+        "GITHUB_TOKEN": pat,
+        "GH_PROMPT_DISABLED": "1",
+    }
+    name = (host or "github.com").strip() or "github.com"
+    if name.lower() not in _PUBLIC_GITHUB_HOSTS:
+        extra["GH_HOST"] = name
+        extra["GH_ENTERPRISE_TOKEN"] = pat
     return extra
 
 

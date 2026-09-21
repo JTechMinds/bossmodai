@@ -21,10 +21,12 @@ from core.bm_cli.nest_git import (
     enable_host_git,
     gh_auth_blocked_message,
     nest_git_auth_ready,
+    nest_git_can_inject_gh,
     no_creds_blocked_message,
     no_match_blocked_message,
     write_nest_git_secret,
 )
+from core.bm_cli.secret_env import command_dumps_secret_token_env
 from core.bm_cli.nest_git_store import (
     add_credential,
     append_match,
@@ -98,14 +100,24 @@ def maybe_block_gh_cli(
 ) -> BossModCliResult | None:
     """Fail-closed one Nest git / compare-URL card for a gh auth miss. No Approve.
 
-    Nest git → gh inject is parked. When Nest git is not ready, reuse the Nest
-    git card. When Nest git already covers push, post one Blocked note with the
-    compare URL (or host ``gh auth login``) instead of Approve spam.
+    A matching Nest git PAT is injected into the gh subprocess — this gate
+    stays off that path. When Nest git is not ready, reuse the Nest git card.
+    When Nest git covers push but has no PAT (SSH / host Enable), post one
+    Blocked note with the compare URL instead of Approve spam.
     """
     if not command_needs_gh_auth(parsed):
         return None
+    if command_dumps_secret_token_env(parsed.raw):
+        return None
+    if nest_git_can_inject_gh(agent, parsed, cwd):
+        return None
     ready = nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd)
     if not ready and trigger_type != "host_path_consent_resolved" and persist_chrome:
+        reason = (
+            no_match_blocked_message()
+            if _unmatched(agent, parsed, cwd)
+            else gh_auth_blocked_message(agent, parsed, cwd, nest_ready=False)
+        )
         return request_nest_git_consent(
             agent=agent,
             parsed=parsed,
@@ -113,7 +125,7 @@ def maybe_block_gh_cli(
             cwd=cwd,
             task_id=task_id,
             channel_id=channel_id,
-            reason=gh_auth_blocked_message(agent, parsed, cwd, nest_ready=False),
+            reason=reason,
         )
     return _gh_blocked_result(
         agent=agent,

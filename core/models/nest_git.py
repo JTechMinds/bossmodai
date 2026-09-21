@@ -91,17 +91,17 @@ NEST_GIT_NO_MATCH_HOWTO = (
 NEST_GIT_PROBE_FAIL_WHY = "Host git is not visible to Shell"
 NEST_GIT_BLOCK_KIND = "blocked_nest_git"
 
-# GitHub CLI has no login in the agent Shell (HOME rewritten; tokens stripped).
-# Nest git → gh subprocess inject is parked — do not copy a PAT into gh env.
+# GitHub CLI has no login in the agent Shell unless Nest git injects a PAT
+# into the gh subprocess (askpass / process env only — never printed).
 GH_CLI_NO_AUTH_WHY = "GitHub CLI has no login in this shell"
 GH_CLI_HOWTO = (
-    "Use Nest git for push, or run `gh auth login` on the host so Shell can see it. "
+    "Add a GitHub access token under Settings → Nest git so Shell can run gh. "
     "Or open the compare URL to open the pull request without gh. "
     "Do not printenv GH_TOKEN or GITHUB_TOKEN."
 )
 GH_CLI_COMPARE_HOWTO = (
-    "Nest git already covers push. Open {url} "
-    "or run `gh auth login` on the host so Shell can see it. "
+    "Nest git already covers push. Add a GitHub access token (not only SSH) "
+    "under Settings → Nest git so gh can open the pull request, or open {url}. "
     "Do not printenv GH_TOKEN or GITHUB_TOKEN."
 )
 
