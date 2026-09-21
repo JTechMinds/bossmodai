@@ -17,6 +17,8 @@ BINARY="desktop/target/release/bossmod-desktop"
 # Only rebuild if binary is missing or source files are newer
 if [ ! -f "$BINARY" ] || \
    [ "desktop/src/main.rs" -nt "$BINARY" ] || \
+   [ "desktop/src/needs_attention.rs" -nt "$BINARY" ] || \
+   [ "desktop/src/needs_map.rs" -nt "$BINARY" ] || \
    [ "desktop/Cargo.toml" -nt "$BINARY" ] || \
    [ "desktop/tauri.conf.json" -nt "$BINARY" ] || \
    [ "desktop/icons/icon.png" -nt "$BINARY" ] || \
