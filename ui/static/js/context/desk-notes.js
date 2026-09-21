@@ -11,10 +11,10 @@
  * migration, no endpoint, no write UI, and no second file viewer.
  *
  * Absent is normal and is NOT an error. A new agent has written nothing, so
- * the folder does not exist and the desk returns 404. That renders the empty
- * state. A 500 or a dead socket renders the error state with a retry. The
- * whole point of separating them is that the operator can tell "nothing here
- * yet" from "we could not look".
+ * GET /me/notes returns an empty directory. A leftover 404 is treated the
+ * same way so a probe never looks like a failure. A 500 or a dead socket
+ * renders the error state with a retry. The whole point of separating them
+ * is that the operator can tell "nothing here yet" from "we could not look".
  */
 const BossModDeskNotes = (() => {
     const { h, clear } = BossModDom;
@@ -155,8 +155,8 @@ const BossModDeskNotes = (() => {
             try {
                 const res = await api(deskUrl(NOTES_PATH), { cache: 'no-store' });
                 if (!load.isCurrent(loadId) || destroyed) return;
-                // 404 is the folder not existing yet, which is what a brand
-                // new agent looks like. It is the empty state, never an error.
+                // Empty directory is absence. A leftover 404 is the same:
+                // Notes was never created, not a failed look.
                 if (res.status === 404) {
                     renderEmpty();
                     return;

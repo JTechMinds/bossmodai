@@ -22,6 +22,7 @@ from core.bm_cli.host_roots import (
 )
 
 DEFAULT_CLI_CWD = "/me"
+NOTES_FOLDER_PATH = "/me/notes"
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,3 +141,18 @@ def virtual_root_entries() -> list[str]:
     for root in configured_host_roots():
         entries.append(f"{root}/")
     return entries
+
+
+def is_notes_folder_path(virtual_path: str) -> bool:
+    """True for the Notes folder itself (`/me/notes` and normalized equivalents)."""
+    return normalize_cli_path("/", virtual_path) == NOTES_FOLDER_PATH
+
+
+def is_soft_empty_virtual_directory(resolved: ResolvedCliPath) -> bool:
+    """True when a known virtual folder was never created and should list empty.
+
+    Nested named files under Notes still 404 when absent.
+    """
+    if resolved.exists:
+        return False
+    return is_notes_folder_path(resolved.virtual_path)

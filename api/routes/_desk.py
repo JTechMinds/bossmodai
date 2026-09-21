@@ -11,7 +11,11 @@ from api.routes._shared import (
     _child_virtual_path,
     _read_desk_file_preview,
 )
-from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
+from core.bm_cli.virtual_fs import (
+    is_soft_empty_virtual_directory,
+    resolve_cli_path,
+    virtual_root_entries,
+)
 from core.models import Agent
 import db
 
@@ -23,9 +27,10 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    if resolved.real_path is None and resolved.virtual_path != "/":
-        raise HTTPException(404, "Path not found")
-    if resolved.real_path is not None and not resolved.exists:
+    missing = (resolved.real_path is None and resolved.virtual_path != "/") or (
+        resolved.real_path is not None and not resolved.exists
+    )
+    if missing and not is_soft_empty_virtual_directory(resolved):
         raise HTTPException(404, "Path not found")
 
     if resolved.real_path is not None and resolved.real_path.is_file():

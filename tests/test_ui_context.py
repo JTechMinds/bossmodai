@@ -160,9 +160,11 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     the panel reads `/me/notes` and opens what it finds in the one viewer.
 
     The half that matters most is the distinction: a new agent has written
-    nothing, so the folder 404s, and that is the EMPTY state. Rendering it as
-    an error would tell every operator their brand new agent was broken. A
-    genuine failure still has to look like one, which is why both are proven.
+    nothing, so Notes is empty, and that is the EMPTY state. The desk GET
+    soft-empties `/me/notes`; a leftover 404 is treated the same way. Rendering
+    either as an error would tell every operator their brand new agent was
+    broken. A genuine failure still has to look like one, which is why both
+    are proven.
     """
     payload = _harness()
     assert payload["readsTheWorkspace"] is True
@@ -174,8 +176,8 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     notes = _read(CONTEXT / "desk-notes.js")
     assert "NOTES_PATH = '/me/notes'" in notes
     assert "No notes yet" in notes
-    # 404 is absence. It must be checked BEFORE the generic !res.ok branch, or
-    # a new agent's desk reports a failure that never happened.
+    # A leftover 404 is still absence. It must be checked BEFORE the generic
+    # !res.ok branch, or a probe reports a failure that never happened.
     assert notes.index("res.status === 404") < notes.index("if (!res.ok)")
     # No schema work: this reads the desk endpoint that already exists.
     assert "/desk?path=" in notes
