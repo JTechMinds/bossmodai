@@ -19,6 +19,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+mod needs_attention;
+mod needs_map;
+
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_quit_signal(_: libc::c_int) {
@@ -312,8 +315,12 @@ fn main() {
 
     tauri::Builder::default()
         .manage(backend_state)
+        .invoke_handler(tauri::generate_handler![
+            needs_attention::sync_needs_attention
+        ])
         .setup(|app| {
             install_quit_signals();
+            needs_attention::install(app);
             let handle = app.handle().clone();
             thread::spawn(move || {
                 while !QUIT_REQUESTED.load(Ordering::SeqCst) {

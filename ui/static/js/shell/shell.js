@@ -71,6 +71,8 @@ const BossModShell = (() => {
         // Built before the frame so the bell, the bar and the toast all read a
         // queue that is already subscribed when the first broadcast lands.
         const needs = BossModNeeds.createNeedsStore({ store, bus, api: apiFetch });
+        // Same store slice the bell reads. Not a second counter.
+        const attention = BossModNeedsAttention.createHost({ store });
         const shell = BossModNavigator.createNavigator({
             store,
             bus,
@@ -106,6 +108,7 @@ const BossModShell = (() => {
             apiFetch,
             navigate,
             needs,
+            attention,
             openSettings: toggleSettings,
         });
         BossModRoster.mount(rosterElement, {
