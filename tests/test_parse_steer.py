@@ -53,6 +53,11 @@ def _llm(content: str) -> LLMResponse:
     )
 
 
+def _limit_decision_repairs(attempts: int) -> None:
+    db.set_setting("decision_repair_attempts", str(attempts), "llm")
+    config.reload()
+
+
 def _script_completions(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[str]:
     queue = list(contents)
     seen: list[str] = []
@@ -80,6 +85,15 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     ) is True
     assert parse_failure_should_repair(
         kind="invalid_decision", repair_attempts=0, max_repairs=2
+    ) is False
+    assert parse_failure_should_repair(
+        kind="prose_status", repair_attempts=0, max_repairs=6, decision=True
+    ) is True
+    assert parse_failure_should_repair(
+        kind="invalid_decision", repair_attempts=5, max_repairs=6, decision=True
+    ) is True
+    assert parse_failure_should_repair(
+        kind="invalid_json", repair_attempts=6, max_repairs=6, decision=True
     ) is False
     assert kind_for_schema_error("unexpected top-level keys: _needsApproval") == (
         "invalid_decision"
@@ -200,6 +214,7 @@ def test_parse_action_invented_needs_approval_is_invalid_decision() -> None:
 async def test_decision_prose_fail_closes_without_repair_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _limit_decision_repairs(0)
     agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
     state = db.get_agent_state(agent.id)
     assert state is not None
@@ -228,6 +243,7 @@ async def test_decision_prose_fail_closes_without_repair_loop(
 async def test_decision_invented_needs_approval_fail_closes_without_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _limit_decision_repairs(0)
     agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
     state = db.get_agent_state(agent.id)
     assert state is not None
@@ -266,6 +282,7 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
 async def test_decision_invented_th2_fail_closes_without_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _limit_decision_repairs(0)
     agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
     state = db.get_agent_state(agent.id)
     assert state is not None

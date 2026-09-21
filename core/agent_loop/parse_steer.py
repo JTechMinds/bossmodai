@@ -1,8 +1,8 @@
 """Fail-closed steer when a turn emits prose or an invalid decision object.
 
-Prose status and unknown top-level decision keys are not spinning actions
-and must not loop. Soft-block behavior is unchanged — this only stops
-parse-failure from feeding it.
+Decision turns may repair prose, invented keys, and broken JSON up to the
+configured attempt limit, then fail-close. Execution turns still fail-close
+prose and invented keys immediately. Soft-block behavior is unchanged.
 
 Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
 tools / CLI). Those map onto the existing compact keys ``msg`` and
@@ -71,16 +71,41 @@ def kind_for_schema_error(
     return "invalid_json"
 
 
+_PARSE_KIND_LABELS = {
+    "prose_status": "prose status instead of a JSON envelope",
+    "invalid_decision": "invented or disallowed keys",
+    "invalid_json": "truncated or broken JSON",
+}
+
+
 def parse_failure_should_repair(
     *,
     kind: str,
     repair_attempts: int,
     max_repairs: int,
+    decision: bool = False,
 ) -> bool:
-    """Prose status and invalid decisions fail-close. Malformed JSON may repair."""
+    """Return whether this parse failure may take another repair wake.
+
+    Decision turns repair every parse kind until ``max_repairs``.
+    Execution turns still fail-close prose and invented keys immediately.
+    """
+    if decision:
+        return repair_attempts < max_repairs
     if kind in {"prose_status", "invalid_decision"}:
         return False
     return repair_attempts < max_repairs
+
+
+def describe_decision_parse_failure(kind: str, snippet: str = "") -> str:
+    """Describe what failed so a repair wake can name it."""
+    label = _PARSE_KIND_LABELS.get(kind, "invalid decision")
+    extra = " ".join((snippet or "").split())
+    if len(extra) > 180:
+        extra = extra[:177].rstrip() + "..."
+    if extra:
+        return f"{label}: {extra}"
+    return label
 
 
 def parse_failure_steer(kind: str, snippet: str = "") -> str:

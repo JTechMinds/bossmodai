@@ -10,6 +10,7 @@ from typing import Any
 
 from core.agent_loop import activity_runtime
 from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.parse_steer import describe_decision_parse_failure
 from core.agent_loop.task_origin_mirrors import format_origin_status_line, persist_origin_status_line
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.bm_cli.managed_writer import ManagedWriteProgress
@@ -125,14 +126,23 @@ def _serialize_trace_value(value: Any) -> str | None:
         return value
     return json.dumps(value, default=str)
 
-def _build_decision_repair_messages(*, parsed_error: str) -> list[dict[str, str]]:
-    """Build one strict repair prompt after invalid conversation JSON."""
+def _build_decision_repair_messages(
+    *,
+    parsed_error: str,
+    kind: str = "",
+) -> list[dict[str, str]]:
+    """Build one strict repair prompt after a bad decision envelope.
+
+    Prose, invented keys, and broken JSON share this steer: what failed,
+    the allowed envelope, and one JSON object with no fences.
+    """
+    described = describe_decision_parse_failure(kind, parsed_error) if kind else parsed_error
     messages = [
         {
             "role": "system",
             "content": _render_loop_prompt(
                 "internal_loop_decision_repair_primary",
-                parsed_error=parsed_error,
+                parsed_error=described,
             ),
         },
         {

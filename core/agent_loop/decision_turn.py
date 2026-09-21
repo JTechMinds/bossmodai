@@ -16,6 +16,10 @@ from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.next_owner import NUDGE_FEEDBACK_CODE, next_owner_nudge_continuation
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
+from core.agent_loop.decision_parse_fail import (
+    decision_repair_attempt_limit,
+    surface_decision_parse_failure,
+)
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.parse_steer import (
@@ -48,9 +52,6 @@ from core.default_prompts import load_default_prompt
 from core.llm import client
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
-
-_MAX_DECISION_REPAIR_ATTEMPTS = 2
-
 
 def _is_decision_turn(trigger: dict[str, Any]) -> bool:
     """Return whether the trigger should use the direct-request decision contract."""
@@ -153,11 +154,13 @@ async def _run_decision_turn(
             if parse_failure_should_repair(
                 kind=parse_kind,
                 repair_attempts=decision_repair_attempts,
-                max_repairs=_MAX_DECISION_REPAIR_ATTEMPTS,
+                max_repairs=decision_repair_attempt_limit(),
+                decision=True,
             ):
                 decision_repair_attempts += 1
                 continuation_messages = _build_decision_repair_messages(
                     parsed_error=parsed.get("_raw_snippet", ""),
+                    kind=str(parse_kind or ""),
                 )
                 step_traces.append(
                     _build_step_trace(
@@ -181,13 +184,26 @@ async def _run_decision_turn(
                 next_context_snapshot = _serialize_trace_value(continuation_messages)
                 continue
 
+            surfaced = surface_decision_parse_failure(agent=agent, trigger=trigger)
             result = {
                 "event": "agent_error",
                 "detail": error,
                 "agent_name": agent.name,
+                "trigger_requests": surfaced.get("trigger_requests") or [],
             }
-            await manager.broadcast_activity(**result)
+            if surfaced.get("chat_message"):
+                result["chat_message"] = surfaced["chat_message"]
+            if surfaced.get("channel_message"):
+                result["channel_message"] = surfaced["channel_message"]
+            await manager.broadcast_activity(
+                event=result["event"],
+                detail=result["detail"],
+                agent_name=result["agent_name"],
+            )
+            await _broadcast_parse_fail_note(agent, result)
             result["parse_steer"] = True
+            # Completing the trigger fail-closes once. The dispatcher then
+            # persists the commitment wake and does not retry into a stall.
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -196,9 +212,11 @@ async def _run_decision_turn(
                 model=model,
                 model_source=model_source,
                 initial_context_json=initial_context_json,
-                outcome=TurnOutcome.failure(
+                outcome=TurnOutcome(
                     result=result,
-                    error=error,
+                    trigger_status="completed",
+                    diagnostic_status="error",
+                    diagnostic_error=error,
                     action=parsed,
                     action_summary=_summarize_action_chain(executed_actions, ""),
                     raw_response=response.content,
@@ -603,6 +621,38 @@ async def _run_decision_turn(
                 steps=step_traces,
             ),
             start=start,
+        )
+
+
+async def _broadcast_parse_fail_note(agent: Agent, result: dict[str, Any]) -> None:
+    """Broadcast the unbound origin note. Task-thread events are already persisted."""
+    chat_message = result.get("chat_message")
+    if isinstance(chat_message, dict):
+        await manager.broadcast_chat_message(
+            agent_id=chat_message.get("agent_id") or agent.id,
+            content=chat_message.get("content") or "",
+            from_type=chat_message.get("from_type") or "system",
+            from_name=chat_message.get("from_name") or agent.name,
+            message_type=chat_message.get("message_type"),
+            message_id=chat_message.get("message_id"),
+            created_at=chat_message.get("created_at"),
+            notification_kind=chat_message.get("notification_kind"),
+            desk_path=chat_message.get("desk_path"),
+            task_id=chat_message.get("task_id"),
+        )
+    channel_message = result.get("channel_message")
+    if isinstance(channel_message, dict) and channel_message.get("channel_id"):
+        await manager.broadcast_channel_message(
+            channel_id=channel_message["channel_id"],
+            content=channel_message.get("content") or "",
+            author_type=channel_message.get("author_type") or "system",
+            author_name=channel_message.get("author_name") or agent.name,
+            author_agent_id=channel_message.get("author_agent_id"),
+            message_id=channel_message.get("message_id"),
+            created_at=channel_message.get("created_at"),
+            notification_kind=channel_message.get("notification_kind"),
+            desk_path=channel_message.get("desk_path"),
+            task_id=channel_message.get("task_id"),
         )
 
 
