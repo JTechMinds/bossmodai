@@ -136,7 +136,8 @@ def test_ai_output_renders_system_ai_and_compaction_knobs() -> None:
     assert system_ai["label"] == "System AI"
     assert system_ai["paragraphs"][0] == (
         "Choose the AI used for system processes. "
-        "This runs in the background for tasks such as compaction."
+        "Channel rounds ask it for one short route. "
+        "Compaction uses the same connection and stays in the background."
     )
     assert "No AI connections yet" not in " ".join(system_ai["paragraphs"])
     assert system_ai["value"] == ""

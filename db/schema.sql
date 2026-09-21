@@ -227,7 +227,10 @@ CREATE TABLE IF NOT EXISTS channel_response_rounds (
     round_index       INTEGER NOT NULL DEFAULT 1,
     dispatch_mode     VARCHAR NOT NULL DEFAULT 'fanout',
     stepped_out       TEXT NOT NULL DEFAULT '[]',
-    next_mentions     TEXT NOT NULL DEFAULT '[]'
+    next_mentions     TEXT NOT NULL DEFAULT '[]',
+    -- system: System AI chose speak vs stay_out. fallback: #124 drain.
+    router_mode       VARCHAR NOT NULL DEFAULT 'fallback',
+    pinned_ids        TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS channel_response_candidates (

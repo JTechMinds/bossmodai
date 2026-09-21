@@ -382,7 +382,8 @@ def channel_round_meta(round_id: str) -> dict[str, Any] | None:
         return None
     row = query_one(
         """
-        SELECT round_index, dispatch_mode, stepped_out, next_mentions
+        SELECT round_index, dispatch_mode, stepped_out, next_mentions,
+               router_mode, pinned_ids
         FROM channel_response_rounds
         WHERE id = $1
         """,
@@ -395,11 +396,16 @@ def channel_round_meta(round_id: str) -> dict[str, Any] | None:
         index = int(row.get("round_index") or 1)
     except (TypeError, ValueError):
         index = 1
+    router_mode = str(row.get("router_mode") or "").strip() or "fallback"
+    if router_mode not in {"system", "fallback"}:
+        router_mode = "fallback"
     return {
         "round_index": index if index > 0 else 1,
         "dispatch_mode": mode,
         "stepped_out": _json_id_list(row.get("stepped_out")),
         "next_mentions": _json_id_list(row.get("next_mentions")),
+        "router_mode": router_mode,
+        "pinned_ids": _json_id_list(row.get("pinned_ids")),
     }
 
 
@@ -410,6 +416,8 @@ def set_channel_round_meta(
     dispatch_mode: str | None = None,
     stepped_out: list[str] | None = None,
     next_mentions: list[str] | None = None,
+    router_mode: str | None = None,
+    pinned_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Update channel round orchestration fields. Omitted fields stay put."""
     token = (round_id or "").strip()
@@ -424,6 +432,10 @@ def set_channel_round_meta(
         fields["stepped_out"] = json.dumps(list(stepped_out))
     if next_mentions is not None:
         fields["next_mentions"] = json.dumps(list(next_mentions))
+    if router_mode is not None:
+        fields["router_mode"] = router_mode
+    if pinned_ids is not None:
+        fields["pinned_ids"] = json.dumps(list(pinned_ids))
     if len(fields) == 1:
         return channel_round_meta(token)
     assignments = ", ".join(f"{key} = ${index + 1}" for index, key in enumerate(fields.keys()))
