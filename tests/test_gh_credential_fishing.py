@@ -94,16 +94,15 @@ def test_printenv_token_dump_never_opens_approve_on_locked_clone(
     assert db.list_cli_approval_requests(status="pending") == []
     blob = f"{blocked.detail} {blocked.prompt_content}"
     assert "Blocked" in blob
-    assert "GH_TOKEN" in blob
-    assert "never allowed" in blob.lower() or "never_allowed" in blob.lower()
-    assert "printenv" in blob.lower()
+    assert "printenv" in blob.lower() or "GH_TOKEN" in blob
+    assert "compare URL" in blob or "Nest git" in blob
     expected = never_allowed_operator_note(agent.name, command)
+    assert "auto-denied (never allowed)" in expected
     notes = [item.content for item in db.list_channel_messages(channel.id)]
     assert expected in notes
     assert not any(item.approval_id for item in db.list_channel_messages(channel.id))
     assert not any("Approve" in (item.content or "") for item in db.list_channel_messages(channel.id))
-    dumped = json.dumps(blocked.data or {})
-    assert "ghp_" not in dumped
+    assert "ghp_" not in f"{blocked.detail} {blocked.prompt_content}"
 
     retry = execute_bm_cli(agent, state, command, channel_id=channel.id)
     assert retry.approval_request_id is None

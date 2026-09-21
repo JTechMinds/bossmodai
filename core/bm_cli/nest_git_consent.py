@@ -460,6 +460,9 @@ def gh_auth_operator_note(agent_name: str, command: str, message: str) -> str:
     else:
         body = f"Blocked — {why}"
     return f"{name} tried `{cmd}` — {body}"
+
+
+def _json_safe_chrome(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop non-JSON persist fields so CLI data can be logged without leaking."""
     safe: dict[str, Any] = {}
     for key, value in payload.items():
