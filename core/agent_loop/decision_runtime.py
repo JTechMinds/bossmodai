@@ -277,6 +277,15 @@ def apply_decision(
         if bound.get("error_result"):
             return bound["error_result"]
         task = bound["task"]
+        if not activity_runtime.is_live_work_task(task):
+            activity_runtime.close_terminal_work_activity(
+                agent.id,
+                reason=activity_runtime.TERMINAL_WAKE_WHY,
+                task_id=task.id,
+            )
+            feedback = activity_runtime.terminal_wake_feedback(agent, task)
+            result.update(feedback)
+            return result
         task = _persist_work_contract(task, agent, decision)
         materialized = _materialize_work_execution_plan(
             agent=agent,
@@ -303,6 +312,10 @@ def apply_decision(
                 delegated_task_ids=[child.id for child in delegated_children],
             ),
         )
+        if work_activity is None:
+            feedback = activity_runtime.terminal_wake_feedback(agent, task)
+            result.update(feedback)
+            return result
         result["detail"] = f'{agent.name} accepted work on "{task.title}"'
         result.setdefault("activity_extra", {})["task_title"] = task.title
         if _should_queue_initial_work_resume(task=task, plan_mode=str(plan_resolution.get("mode") or "self")):

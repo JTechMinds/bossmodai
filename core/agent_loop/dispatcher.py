@@ -28,7 +28,7 @@ from core.agent_loop.task_origin_mirrors import (
 )
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import runtime_events as manager
-from core.tasking.transitions import transition_task
+from core.tasking.transitions import IllegalTaskTransition, is_terminal_task_status, transition_task
 import db
 
 logger = logging.getLogger(__name__)
@@ -464,7 +464,39 @@ class TurnDispatcher:
                 )
                 continue
 
-            prepare_trigger_context(agent.id, payload)
+            try:
+                prepare_trigger_context(agent.id, payload)
+            except IllegalTaskTransition as exc:
+                logger.warning(
+                    "Soft-skipped illegal task wake for %s: %s",
+                    agent.name,
+                    exc,
+                )
+                activity_runtime.close_terminal_work_activity(
+                    agent.id,
+                    reason=activity_runtime.TERMINAL_WAKE_WHY,
+                    task_id=payload.get("task_id") if isinstance(payload.get("task_id"), str) else None,
+                )
+                task = db.get_task(payload["task_id"]) if isinstance(payload.get("task_id"), str) else None
+                activity_runtime.note_terminal_wake_block(agent.id, task)
+                db.complete_agent_trigger(
+                    candidate.id,
+                    claim_generation=candidate.claim_generation,
+                )
+                activity_runtime.refresh_agent_status(agent.id)
+                continue
+
+            if (
+                candidate.trigger_type == "activity_resumed"
+                and _complete_wake_has_no_live_work(agent.id, payload)
+            ):
+                db.complete_agent_trigger(
+                    candidate.id,
+                    claim_generation=candidate.claim_generation,
+                )
+                activity_runtime.refresh_agent_status(agent.id)
+                continue
+
             policy = get_trigger_policy(candidate.trigger_type)
             state = activity_runtime.refresh_agent_status(agent.id)
             if state is None:
@@ -721,6 +753,22 @@ def _channel_id_for_presence(trigger: dict[str, Any]) -> str | None:
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
     return None
+
+
+def _complete_wake_has_no_live_work(agent_id: str, payload: dict[str, Any]) -> bool:
+    """Return whether an activity resume targeted a complete task with nowhere live to continue."""
+    task_id = payload.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return False
+    task = db.get_task(task_id)
+    if task is None or not is_terminal_task_status(task.status):
+        return False
+    live = activity_runtime.get_active_work_activity(agent_id)
+    if live and live.task_id:
+        bound = db.get_task(live.task_id)
+        if bound is not None and not is_terminal_task_status(bound.status):
+            return False
+    return True
 
 
 dispatcher = TurnDispatcher()
