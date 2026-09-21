@@ -12,6 +12,8 @@ REQUIRED JSON SHAPE:
 - Do not output any schema, markdown fences, or extra text.
 - Output exactly one JSON object with this minimal shape:
   {"act":"...","data":{...},"th":"..."}
+- Optional `say` is operator-visible follow-up chat (same as `data.msg` on done/block/wait). It is not a claim.
+- Optional `actions` may wrap one compact act object. Empty `actions` / say-only is not valid on an execution turn and does not mark work Done or Blocked.
 - Include ONLY the keys required for the chosen act.
 
 FIELD VALUES:

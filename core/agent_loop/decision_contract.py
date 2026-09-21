@@ -195,23 +195,30 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         return parsed
 
     assert isinstance(parsed, dict)
+    wire = parsed
+    try:
+        from core.agent_loop.parse_steer import peel_decision_envelope
+
+        wire = peel_decision_envelope(parsed)
+    except ValueError as exc:
+        return _schema_failed_payload(raw_response, parsed, exc)
 
     if allow_cli:
         try:
-            cli_call = maybe_parse_bm_cli_call(parsed)
+            cli_call = maybe_parse_bm_cli_call(wire)
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if cli_call is not None:
             return cli_call.model_dump()
         try:
-            host_call = maybe_parse_host_access_call(parsed)
+            host_call = maybe_parse_host_access_call(wire)
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if host_call is not None:
             return host_call.model_dump()
 
     try:
-        normalized = _normalize_conversation_payload(parsed)
+        normalized = _normalize_conversation_payload(wire)
         decision = ConversationDecision.model_validate(normalized)
     except (ValidationError, ValueError) as exc:
         error = _validation_message(exc)
@@ -234,7 +241,7 @@ def _schema_failed_payload(
         raw_response,
         decision=True,
         snippet=error[:200],
-        kind=kind_for_schema_error(error, parsed),
+        kind=kind_for_schema_error(error, parsed, exc),
         thought=_candidate_thought(parsed),
         candidate=parsed,
     )
@@ -276,6 +283,7 @@ def _parse_json_object(raw_response: str) -> dict[str, Any]:
 
 def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize the model-facing compact conversation payload into canonical fields."""
+    payload = _default_status_reply_if_say_only(payload)
     if "act" not in payload:
         raise ValueError('missing "act"')
     extra_root = set(payload) - {"act", "intent", "msg", "commit", "data", "th"}
@@ -320,6 +328,28 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "proceedUntagged": _as_bool(data.get("proceed")),
         "thought": payload.get("th", ""),
     }
+
+
+def _default_status_reply_if_say_only(payload: dict[str, Any]) -> dict[str, Any]:
+    """Treat chat-only envelopes as ``act=reply`` so 1:1 status needs no Board act."""
+    if payload.get("act") not in (None, ""):
+        return payload
+    chat = payload.get("msg")
+    if not isinstance(chat, str) or not chat.strip():
+        return payload
+    if payload.get("commit") not in (None, ""):
+        return payload
+    data = payload.get("data")
+    if isinstance(data, dict) and any(
+        data.get(key) not in (None, "", {}, [])
+        for key in ("dst", "title", "detail", "task", "plan")
+    ):
+        return payload
+    filled = dict(payload)
+    filled["act"] = "reply"
+    if filled.get("intent") in (None, ""):
+        filled["intent"] = "status"
+    return filled
 
 
 def _normalize_outs(value: Any) -> Any:

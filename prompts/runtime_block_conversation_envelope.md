@@ -18,3 +18,4 @@ participants: none
 {{end}}
 Use this envelope to understand who is speaking, who else is present, and whether this is direct or shared conversation.
 Do not restate these runtime facts unless they matter to your actual reply.
+On a 1:1 operator status wake with no Board or CLI work, emit `{"say":"...","actions":[]}`. Raw prose is not a turn result. `say` is not Done.

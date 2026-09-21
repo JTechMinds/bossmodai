@@ -80,6 +80,9 @@ def test_harness_rejects_single_line_markdown() -> None:
 def test_harness_scores_the_emitted_msg_not_the_json_wrapper() -> None:
     assert extract_emitted_chat(SHAPED_DECISION) == SHAPED_REPLY
     assert assess_emitted_shape(SHAPED_DECISION).passes
+    say_envelope = json.dumps({"say": SHAPED_REPLY, "actions": []})
+    assert extract_emitted_chat(say_envelope) == SHAPED_REPLY
+    assert assess_emitted_shape(say_envelope).passes
     walled = json.dumps({
         "act": "reply",
         "intent": "question",
