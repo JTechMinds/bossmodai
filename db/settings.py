@@ -51,6 +51,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_temperature", "0.7", "llm"),
     ("default_max_tokens", "8192", "llm"),
     ("llm_request_timeout_seconds", "720", "llm"),
+    # Idle silence with no streamed chunk. Not a wall-clock cap on a live
+    # stream. Default 120 seconds. Each chunk resets the timer. A path that
+    # cannot stream uses only llm_request_timeout_seconds.
+    ("llm_stall_timeout_seconds", "120", "llm"),
     ("decision_repair_attempts", "6", "llm"),
     # How many agent turns may call the model at once. Default 2 is safe
     # for a local LLM. One agent still runs at most one turn. Repair wakes

@@ -156,18 +156,27 @@ def _build_decision_repair_messages(
     ]
     return messages
 
-def _build_decision_timeout_repair_messages(*, timeout_seconds: float) -> list[dict[str, str]]:
+def _build_decision_timeout_repair_messages(
+    *,
+    timeout_seconds: float,
+    kind: str = "backstop",
+) -> list[dict[str, str]]:
     """Steer a timed-out decision turn to retry with one JSON envelope.
 
     The same preserve-intent and keys blocks used for parse repair keep the
-    model from inventing Board status or a fake Done.
+    model from inventing Board status or a fake Done. ``kind="stall"`` means
+    the stream went idle; ``backstop`` means the absolute limit.
     """
+    if kind == "stall":
+        parsed_error = f"after {timeout_seconds:g}s with no progress"
+    else:
+        parsed_error = f"after {timeout_seconds:g}s"
     return [
         {
             "role": "system",
             "content": _render_loop_prompt(
                 "internal_loop_decision_repair_timeout",
-                parsed_error=f"after {timeout_seconds:g}s",
+                parsed_error=parsed_error,
             ),
         },
         {

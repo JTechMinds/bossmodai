@@ -115,7 +115,12 @@ const SystemSection = (() => {
         llm_request_timeout_seconds: {
             order: 30,
             label: 'LLM Request Timeout (seconds)',
-            description: 'Maximum time one model call may run before the runtime aborts it. Default 720 seconds (12 minutes). On a decision turn, that abort counts toward Decision Repair Attempts, then the commitment is re-queued.',
+            description: 'Absolute limit for one model call, including a reply that is still producing tokens. Default 720 seconds (12 minutes). Idle silence is LLM Stall Timeout. On a decision turn, either abort counts toward Decision Repair Attempts, then the commitment is re-queued.',
+        },
+        llm_stall_timeout_seconds: {
+            order: 31,
+            label: 'LLM Stall Timeout (seconds)',
+            description: 'Cancel a model call when an open stream produces no chunk for this many seconds, including the wait for the first chunk. Default 120. Chunks that keep arriving reset the timer, so a long reply is not cancelled before LLM Request Timeout. A call that has not opened a stream, and a provider path that cannot stream, use only that absolute limit.',
         },
         decision_repair_attempts: {
             order: 35,
