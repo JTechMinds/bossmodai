@@ -49,11 +49,16 @@ fn owned_image(rgba: Vec<u8>, width: u32, height: u32) -> Image<'static> {
 
 fn tray_icon_for(app: &AppHandle, count: u32) -> Option<Image<'static>> {
     let base = app.default_window_icon()?;
-    if count == 0 {
-        return Some(base.clone());
-    }
-    let rgba = needs_map::composite_badge(base.rgba(), base.width(), base.height(), count)?;
-    Some(owned_image(rgba, base.width(), base.height()))
+    let width = base.width();
+    let height = base.height();
+    // Image::clone keeps the AppHandle borrow. Own the RGBA so the tray
+    // icon is 'static on both the default and badged paths.
+    let rgba = if count == 0 {
+        base.rgba().to_vec()
+    } else {
+        needs_map::composite_badge(base.rgba(), width, height, count)?
+    };
+    Some(owned_image(rgba, width, height))
 }
 
 #[cfg(windows)]

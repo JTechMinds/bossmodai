@@ -117,6 +117,13 @@ def test_windows_overlay_macos_badge_linux_best_effort() -> None:
     assert "TrayIconBuilder::with_id" in rust
     assert "focus_needs" in rust
     assert "needs-focus" in rust
+    # Empty-count tray icon must own RGBA. clone() of default_window_icon
+    # keeps the AppHandle borrow and cannot satisfy Image<'static>.
+    tray_fn = rust.split("fn tray_icon_for", 1)[1].split("fn apply_window_badge", 1)[0]
+    assert "base.clone()" not in tray_fn
+    assert "owned_image" in tray_fn
+    assert "rgba()" in tray_fn
+    assert "to_vec()" in tray_fn
     # No custom star: the overlay is a red marker plus digits.
     assert "no custom" in _read(NEEDS_MAP).lower() or "red marker" in _read(NEEDS_MAP).lower()
 
