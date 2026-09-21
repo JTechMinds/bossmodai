@@ -43,7 +43,7 @@ const BossModLogFilters = (() => {
         let known = [];
 
         const agents = h('select', {
-            class: 'board-select', 'aria-label': 'Filter by agent',
+            class: 'place-select', 'aria-label': 'Filter by agent',
             onchange: (event) => {
                 const id = event.target.value;
                 const match = known.find((agent) => agent.id === id);
@@ -53,7 +53,7 @@ const BossModLogFilters = (() => {
         });
 
         const types = h('select', {
-            class: 'board-select', 'aria-label': 'Filter by type',
+            class: 'place-select', 'aria-label': 'Filter by type',
             onchange: onChange,
         },
             h('option', { value: '' }, 'All types'),
@@ -61,7 +61,7 @@ const BossModLogFilters = (() => {
                 h('option', { value: type }, TYPE_LABELS[type])));
 
         const search = h('input', {
-            type: 'search', class: 'board-search', placeholder: 'Search the log',
+            type: 'search', class: 'place-search', placeholder: 'Search the log',
             'aria-label': 'Search the log',
             oninput: () => {
                 clearTimeout(searchTimer);
@@ -83,7 +83,7 @@ const BossModLogFilters = (() => {
             },
         });
 
-        const element = h('div', { class: 'board-controls' },
+        const element = h('div', { class: 'place-controls' },
             agents, types, search, followSwitch.element);
 
         return {

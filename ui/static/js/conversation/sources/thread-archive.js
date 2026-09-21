@@ -52,7 +52,7 @@ const BossModThreadArchive = (() => {
         }
         return {
             title: 'Archive thread?',
-            body: 'Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board.',
+            body: 'Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay in Tasks.',
             honesty: HONESTY_COPY,
             dismissChoice: 'back',
             buttons: [

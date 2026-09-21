@@ -76,8 +76,8 @@ const BossModMetricsPlace = (() => {
                 'Token use, task counts and error rates appear here once an agent '
                 + 'takes its first turn.'),
             h('button', {
-                class: 'btn', type: 'button', onclick: () => ctxRef.navigate('board'),
-            }, 'Open the board')));
+                class: 'btn', type: 'button', onclick: () => ctxRef.navigate('tasks'),
+            }, 'Open Tasks')));
     }
 
     function paintDashboard(data) {
@@ -141,13 +141,13 @@ const BossModMetricsPlace = (() => {
         mount(el, ctx) {
             ctxRef = ctx;
             load = BossModGates.createLoadGeneration();
-            summaryEl = h('p', { class: 'board-summary' }, '');
+            summaryEl = h('p', { class: 'place-summary' }, '');
             bodyEl = h('div', { class: 'metrics-body' });
 
             clear(el);
             el.append(h('div', { class: 'metrics-place' },
-                h('header', { class: 'board-header' },
-                    h('div', { class: 'board-title' },
+                h('header', { class: 'place-header' },
+                    h('div', { class: 'place-title' },
                         h('h1', { tabindex: '-1' }, 'Metrics'), summaryEl),
                     h('div', { class: 'files-controls' },
                         h('button', {

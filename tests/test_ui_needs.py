@@ -334,7 +334,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     """Hard part 5: no per-kind branch at any call site.
 
     Phase 2B's `blocked` and `error` needs performed the server-described GET
-    and refreshed, because Board and Log did not exist. They do now, so those
+    and refreshed, because Tasks and Log did not exist. They do now, so those
     inspections become navigations — and the destination comes from ONE table
     in need-shape.js. Scattered `if (kind === 'blocked')` branches are how four
     surfaces end up with four opinions about where a blocked task lives.
@@ -344,7 +344,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
     assert "'nest_git_enabled'" in shape
     assert "'nest_git_credentials'" in shape
     assert "const KIND_TARGETS = Object.freeze({" in shape
-    assert "place: 'board', params: { taskId: need.id }" in shape
+    assert "place: 'tasks', params: { taskId: need.id }" in shape
     assert "place: 'log', params: { diagnosticId: need.id }" in shape
     assert "consent: (need) => chatTarget(need.conversationId, need.agentId)" in shape
     assert "approval: (need) => chatTarget(need.conversationId, need.agentId)" in shape
@@ -368,7 +368,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
         for kind in ("'blocked'", "'error'", "'consent'", "'approval'"):
             assert f"kind === {kind}" not in source, f"{name} branches on kind"
             assert f"kind == {kind}" not in source, f"{name} branches on kind"
-        assert "place: 'board'" not in source, f"{name} names a place id of its own"
+        assert "place: 'tasks'" not in source, f"{name} names a place id of its own"
         assert "place: 'log'" not in source, f"{name} names a place id of its own"
     # The bar still groups by kind for the CARD TONE, which is presentation and
     # is a frozen table of its own, not a branch.
@@ -421,7 +421,7 @@ def test_reaching_a_conversation_never_remounts_chat() -> None:
     # the check is no longer spelled against the literal 'chat'. The property is
     # unchanged and now covers every destination — the ONE place with a draft,
     # a transcript cache and a caret to lose is never re-navigated to, while
-    # Board and Log carry what to show in their params and so always are.
+    # Tasks and Log carry what to show in their params and so always are.
     popover = _read(NEEDS / "needs-popover.js")
     go_to = popover.split("function goTo(target) {", 1)[1].split("\n        }", 1)[0]
     assert "const alreadyThere = store.getState().place === target.place;" in go_to

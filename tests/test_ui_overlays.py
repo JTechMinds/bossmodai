@@ -222,7 +222,7 @@ def test_modal_frame_is_the_chat_chrome() -> None:
 
 # Questions with nothing to type: an outside click is a "no", exactly like Esc.
 CONFIRMS = (
-    "shell/header.js", "places/files/file-ops.js", "places/board/board-cancel.js",
+    "shell/header.js", "places/files/file-ops.js", "places/tasks/tasks-cancel.js",
     "context/agent-recovery.js", "context/desk-actions.js",
     "conversation/sources/thread-archive.js", "conversation/sources/thread-seat.js",
 )

@@ -79,6 +79,9 @@
   --r-lg: 12px;   /* Cards and panels. --r is for controls and small chrome. */
   --rail: 220px;
   --ctx: 280px;
+  /* A panel modal's reading column. The task detail and Archive centre their
+   * content in it, so a wide window adds margin rather than line length. */
+  --panel-column: 720px;
 
   /* The two horizontal rules that cross the whole window.
    *

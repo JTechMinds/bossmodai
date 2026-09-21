@@ -135,7 +135,7 @@ const BossModNeedsPopover = (() => {
             // Chat is the one destination with an unsent draft, a transcript
             // cache and a caret to lose, and its target carries no params — so
             // arriving there is a store change, and a navigation only when the
-            // operator is somewhere else. Board and Log carry the thing to show
+            // operator is somewhere else. Tasks and Log carry the thing to show
             // IN their params, so they are navigated to either way.
             const alreadyThere = store.getState().place === target.place;
             // Closed before navigating, so focus ends on the new place's

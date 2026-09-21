@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 HARNESS = Path(__file__).resolve().parent / "js_places_harness.cjs"
 
-EXPECTED_ORDER = ["chat", "office", "board", "files", "metrics", "log"]
+EXPECTED_ORDER = ["chat", "office", "tasks", "files", "metrics", "log"]
 
 
 def _source() -> str:

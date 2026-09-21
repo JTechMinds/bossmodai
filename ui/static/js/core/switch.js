@@ -1,7 +1,7 @@
 /**
  * BossMod AI — the one toggle switch.
  *
- * Three surfaces expressed the same idea three ways: the Board's "Show
+ * Three surfaces expressed the same idea three ways: the Tasks place's "Show
  * subtasks" was a bare checkbox in a label, the Log's "Follow" was a button
  * that rewrote its own text and carried aria-pressed, and the conversation's
  * receipts preference was a second bare checkbox. Nothing was wrong with any

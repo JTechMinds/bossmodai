@@ -94,17 +94,17 @@ API_BY_INJECTION = {
     "conversation/sources/thread-source.js",
     "conversation/sources/thread-archive.js",
     "conversation/sources/thread-seat.js",
-    # The Office and Board places take `api` from the shell's ctx and hand it
+    # The Office and Tasks places take `api` from the shell's ctx and hand it
     # down; none of them names the global.
     "places/office/office-canvas.js",
     "places/office/org-view.js",
     "places/office/office-place.js",
-    "places/board/board-data.js",
-    "places/board/board-place.js",
-    "places/board/task-deliverables.js",
-    "places/board/task-events.js",
-    "places/board/assign-form.js",
-    "places/board/board-cancel.js",
+    "places/tasks/tasks-data.js",
+    "places/tasks/tasks-place.js",
+    "places/tasks/task-deliverables.js",
+    "places/tasks/task-events.js",
+    "places/tasks/assign-form.js",
+    "places/tasks/tasks-cancel.js",
     # The Files place and its dialogs take `api` from the shell's ctx and hand
     # it down; none of them names the global.
     "places/files/file-viewer.js",
@@ -202,12 +202,12 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/office/office-canvas.js",
                  "places/office/org-view.js",
                  "places/office/office-place.js",
-                 "places/board/board-data.js",
-                 "places/board/board-place.js",
-                 "places/board/task-deliverables.js",
-                 "places/board/task-events.js",
-                 "places/board/assign-form.js",
-                 "places/board/board-cancel.js"):
+                 "places/tasks/tasks-data.js",
+                 "places/tasks/tasks-place.js",
+                 "places/tasks/task-deliverables.js",
+                 "places/tasks/task-events.js",
+                 "places/tasks/assign-form.js",
+                 "places/tasks/tasks-cancel.js"):
         source = _read(name)
         assert "apiFetch" not in source, f"{name} must take api from ctx"
 

@@ -209,7 +209,7 @@ async function main() {
         throw new Error("an error card is not an open Focus need");
     }
     if (BossModNeedShape.isOpenFocusNeed({ kind: "blocked", agentId: "a1" })) {
-        throw new Error("a board block is not an open Focus need");
+        throw new Error("a task block is not an open Focus need");
     }
     if (BossModNeedShape.isOpenFocusNeed({ kind: "consent" })) {
         throw new Error("a Focus need without an agent cannot paint a People row");
@@ -533,7 +533,7 @@ async function main() {
         onClose: () => { closes += 1; },
     });
     await drain();
-    store.setState({ place: "board" });
+    store.setState({ place: "tasks" });
     await popover2.element.querySelector(".popover-show-me").dispatchClick();
     if (navigatedTo.join(",") !== "chat") {
         throw new Error(`Show me from another place must navigate, got ${navigatedTo.join(",")}`);
@@ -590,7 +590,7 @@ async function main() {
     const inspectionDoesNotResolve = true;
 
     // ─── 9c. A blocked task and an error turn lead to their place ───
-    // Phase 2B performed the server-described GET and refreshed, because Board
+    // Phase 2B performed the server-described GET and refreshed, because Tasks
     // and Log did not exist. They do now. The destination comes from ONE
     // mapping table in need-shape.js, so the bell cannot form one opinion about
     // where a blocked task lives and the bar another.
@@ -600,11 +600,11 @@ async function main() {
     await drain();
     const blocked = store.getState().needs.find((item) => item.id === "t1");
     if (!blocked) throw new Error("the blocked task must reach the queue");
-    if (!blocked.target || blocked.target.place !== "board") {
-        throw new Error(`a blocked need must lead to the board, got ${JSON.stringify(blocked.target)}`);
+    if (!blocked.target || blocked.target.place !== "tasks") {
+        throw new Error(`a blocked need must lead to Tasks, got ${JSON.stringify(blocked.target)}`);
     }
     if (blocked.target.params.taskId !== "t1") {
-        throw new Error("a blocked need must carry its task id to the board");
+        throw new Error("a blocked need must carry its task id to Tasks");
     }
     // The server-described action is untouched: it is still an inspecting GET.
     if (blocked.actions[0].method !== "GET" || blocked.actions[0].href !== "/api/tasks/t1") {
@@ -637,8 +637,8 @@ async function main() {
     const blockedEntry = popover3.element.querySelector('[data-need-id="t1"]');
     if (!blockedEntry) throw new Error("the popover must list the blocked need");
     await blockedEntry.querySelector(".popover-show-me").dispatchClick();
-    if (wentTo.length !== 1 || wentTo[0].placeId !== "board") {
-        throw new Error(`Show me on a blocked need must open the board, got ${JSON.stringify(wentTo)}`);
+    if (wentTo.length !== 1 || wentTo[0].placeId !== "tasks") {
+        throw new Error(`Show me on a blocked need must open Tasks, got ${JSON.stringify(wentTo)}`);
     }
     if (wentTo[0].params.taskId !== "t1") {
         throw new Error("Show me must carry the task id into placeParams");
@@ -1059,7 +1059,7 @@ async function main() {
     if (bar.element.hidden !== false) throw new Error("re-enabling must show it again");
 
     // The bar reads the same targets. A blocked need in the open conversation
-    // still offers a way to the board; a CLI approval whose target IS the
+    // still offers a way to Tasks; a CLI approval whose target IS the
     // conversation this bar is pinned to is omitted from the bar, because the
     // transcript already carries that ask as a `request`.
     barNavigations.length = 0;
@@ -1073,8 +1073,8 @@ async function main() {
         throw new Error(`the bar must offer exactly one Show me, got ${barButtons().length}`);
     }
     await barButtons()[0].dispatchClick();
-    if (barNavigations.length !== 1 || barNavigations[0].placeId !== "board") {
-        throw new Error(`the bar's Show me must open the board, got ${JSON.stringify(barNavigations)}`);
+    if (barNavigations.length !== 1 || barNavigations[0].placeId !== "tasks") {
+        throw new Error(`the bar's Show me must open Tasks, got ${JSON.stringify(barNavigations)}`);
     }
     if (barNavigations[0].params.taskId !== "s3") {
         throw new Error("the bar's Show me must carry the task id");

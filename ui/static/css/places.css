@@ -1,4 +1,4 @@
-/* BossMod AI — the Office and Board places.
+/* BossMod AI — the Office and Tasks places.
 
    Colour comes from tokens.css and nothing else: there is no hex in this file.
    The status pill's tones mirror STATUS_CONFIG / ACTIVITY_CONFIG in utils.js
@@ -23,6 +23,44 @@
 .place-empty-hint { margin: 0; color: var(--muted); }
 .place-error-panel { border-color: var(--alert-line); background: var(--alert-bg); }
 .place-error-detail { margin: 0 0 12px; color: var(--alert-ink); }
+
+/* ─── Place header ───
+   The title, summary and controls row that Tasks, Files, Metrics and Log
+   all stand under. Generic because four places share it; none owns it. */
+
+.place-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.place-title h1 { margin: 0; font-size: 16px; }
+.place-summary { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+.place-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.place-search,
+.place-select {
+  padding: 4px 8px;
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.place-search { width: 180px; }
 
 .status-pill {
   display: inline-flex;
@@ -72,7 +110,7 @@
 
 /* The concept's `.bar` rhythm: one 48px row. min-height rather than height —
    the tabs wrap onto a second line in a narrow window, and a fixed height would
-   clip them off the bottom of the bar. .board-header, which Board, Metrics and
+   clip them off the bottom of the bar. .place-header, which Tasks, Metrics and
    Log share, already stands taller than 48px unaided; this is the header that
    sat under it. */
 .office-header {
@@ -295,141 +333,69 @@
   white-space: nowrap;
 }
 
-/* ─── Board ─── */
+/* ─── Tasks ─── */
 
-.board-place {
+.tasks-place {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
 }
 
-.board-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
+/* `.btn` sets its own display, which would beat the UA's [hidden] rule; the
+   bulk cancel is hidden this way. (The detail is a modal outside this tree;
+   .task-detail carries the same rule for its clamp toggle.) */
+.tasks-place [hidden] { display: none !important; }
+.tasks-header { position: relative; align-items: center; }            /* the ⋯ panel hangs off it */
+.tasks-header .place-title { display: flex; align-items: baseline; gap: 10px; }
 
-.board-title h1 { margin: 0; font-size: 16px; }
-.board-summary { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+/* Composes .btn.btn-sm from controls.css; what is left is only what makes it
+   the destructive one. */
+.tasks-danger { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-bg); }
 
-.board-controls {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.tasks-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
 
-.board-control { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
-.board-control-label { white-space: nowrap; }
-.board-search,
-.board-select {
-  padding: 4px 8px;
-  border: 1px solid var(--line-control);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.board-search { width: 180px; }
-
-/* All three compose .btn.btn-sm from controls.css. What is left here is only
-   what makes each one different from a plain button. */
-.board-dir { color: var(--muted); }
-
-.board-chip-clear { border-style: dashed; color: var(--accent); border-color: var(--accent); }
-.board-danger { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-bg); }
-.board-danger:disabled { opacity: 0.45; pointer-events: none; }
-.board-chip-clear[hidden] { display: none !important; }
-
-.board-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
-
-.board-columns {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(210px, 1fr));
-  gap: 12px;
-  align-items: start;
-}
-
-.board-column {
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--panel);
-}
-
-.board-column.is-skeleton { min-height: 180px; background: var(--line); }
+.tasks-columns { display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); gap: 16px; align-items: start; }
+.tasks-column { min-width: 0; }                                       /* unboxed: no border, ground or padding */
+.tasks-column.is-skeleton { min-height: 180px; border-radius: var(--r); background: var(--line); }
 
 /* The concept's column heading: quiet, so the cards under it are what the eye
-   lands on. --hint measures 4.83:1 on --panel, which is AA for this 12px text. */
-.board-column-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--hint);
-}
+   lands on. --hint measures 4.51:1 on --bg, which is AA for this 12px text. */
+.tasks-column-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--hint); }
 
 /* The one column that is asking for something says so in words, at the top,
    once. That is what lets the cards beneath it stay bordered rather than
    filled — two alarms for one fact is one alarm too many. */
-.board-column[data-column="needs"] .board-column-title { color: var(--alert); }
-
-.board-column-count {
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 11px;
-  letter-spacing: 0;
-}
-
-.board-column-empty { margin: 0; font-size: 12px; color: var(--hint); }
-
-.board-closed { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
-.board-closed-summary { font-size: 12px; color: var(--muted); cursor: pointer; }
-.board-closed[open] .board-closed-summary { margin-bottom: 8px; }
+.tasks-column[data-column="needs"] .tasks-column-title { color: var(--alert); }
+.tasks-column-count { font-weight: 500; }
+.tasks-column-empty { margin: 0; padding: 14px 10px; text-align: center; font-size: 12px; color: var(--hint); }
+.tasks-day-label { margin: 12px 0 6px; font-size: 11px; font-weight: 600; color: var(--hint); }
+.tasks-days > .tasks-day-label:first-child { margin-top: 0; }
+.tasks-older { display: block; width: 100%; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); text-align: center; }
 
 /* ─── Task card ─── */
 
-.task-card {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--panel);
-}
-
-.task-card + .task-card,
-.board-closed .task-card { margin-top: 8px; }
+.task-card { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.task-card + .task-card, .tasks-day-label + .task-card { margin-top: 8px; }
 
 /* Bordered, never filled: the column header above already carries the alarm.
-   `data-needs` is stamped by task-card.js from board-columns.js's map, so this
+   `data-needs` is stamped by task-card.js from tasks-columns.js's map, so this
    rule cannot disagree with which statuses the Needs column actually holds.
 
    It sits BEFORE hover and selection deliberately. All three have the same
    specificity, so source order decides, and the two that answer what the
-   operator is doing right now should win a border that the column header and
-   the status pill are both still saying anyway. */
+   operator is doing right now should win a border that the column header is
+   still saying anyway. */
 .task-card[data-needs="true"] { border-color: var(--alert-line); }
 
+/* Closed without completing: in Done, never counted as done, and drawn as
+   unfinished — a dashed edge and a struck title, beside words that say so. */
+.task-card[data-closed="true"] { border-style: dashed; }
 .task-card:hover { border-color: var(--line-strong); }
 .task-card.is-selected { border-color: var(--accent); background: var(--accent-bg); }
+.task-card[data-closed="true"] .task-card-title { text-decoration: line-through; color: var(--muted); }
 
 /* Selection swaps the ground under rules that were written for the neutral
    card: --hint measures 4.19:1 on --accent-bg and fails AA there, --muted is
@@ -441,104 +407,84 @@
    two ramps. Same correction .roster-row[data-selected="true"] carries in
    shell.css, for the same reason. */
 .task-card.is-selected .task-card-age,
-.task-card.is-selected .task-card-subs,
-.task-card.is-selected .task-card-parent { color: var(--muted); }
-
-/* Done recedes; it does not vanish. The card keeps its border and its
-   affordances — only the text steps back, at --muted's 6.54:1 on --panel. */
-.board-column[data-column="done"] .task-card { color: var(--muted); }
+.task-card.is-selected .task-card-parent,
+.task-card.is-selected .task-card-glyphs { color: var(--muted); }
 
 /* The checkbox is always in the tab order. It is revealed on hover, on focus
    anywhere in the card, and whenever it is checked — never by hover alone,
-   which would leave it invisible to a keyboard user (SC 2.1.1, SC 2.4.7). */
-.task-card-select { flex: 0 0 auto; opacity: 0; }
-.task-card:hover .task-card-select,
-.task-card:focus-within .task-card-select,
-.task-card.is-selected .task-card-select { opacity: 1; }
+   which would leave it invisible to a keyboard user (SC 2.1.1, SC 2.4.7).
+   Absolutely placed, so a resting card spends no gutter on it. */
+.task-card-select { position: absolute; top: 6px; right: 6px; opacity: 0; }
+.task-card:hover .task-card-select, .task-card:focus-within .task-card-select, .task-card.is-selected .task-card-select { opacity: 1; }
 
-.task-card-open { flex: 1 1 auto; min-width: 0; display: block; text-align: left; }
-.task-card-title { display: block; font-size: 13px; font-weight: 500; }
+.task-card-open { display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left; }
+.task-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  padding-right: 20px; font-size: 13px; font-weight: 500; }            /* clear of the checkbox */
+.task-card-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--alert-ink); }
+.task-card-parent { font-size: 11px; color: var(--hint); }
+.task-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.task-card-meta { display: flex; align-items: center; gap: 5px; min-width: 0; margin: 0; font-size: 11px; color: var(--muted); }
+.task-card-age::before, .task-card-closed::before, .task-card-marker::before { content: '· '; }
+.task-card-glyphs { display: flex; align-items: center; gap: 8px; flex: none; font-size: 11px; color: var(--hint); }
+.task-card-glyph { display: inline-flex; align-items: center; gap: 3px; }
+.task-card-glyph svg { width: 12px; height: 12px; }
+.task-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.task-card-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 4px 0 0;
-  font-size: 11px;
-  color: var(--muted);
-}
+/* Done recedes; it does not vanish. The card keeps its border and its
+   affordances — only the text steps back, at --muted's 6.54:1 on --panel. */
+.tasks-column[data-column="done"] .task-card { color: var(--muted); }
 
-.task-card-age { color: var(--hint); }
-
-.task-card-note {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-card-tags { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
-
-.task-card-marker {
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--pink);
-  color: var(--pink-ink);
-}
-
-.task-card-subs,
-.task-card-parent { font-size: 10px; color: var(--hint); }
+/* No padding of its own: .modal-body already pads a panel by 16px 20px. The
+   same centred reading column as the task detail, so a wide window adds margin
+   rather than stretching one-line cards across it. */
+.tasks-archive { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0;
+  width: 100%; max-width: var(--panel-column); margin: 0 auto; }
+.tasks-archive-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* ─── Task detail ─── */
 
 /* The panel's body is a non-scrolling column; content brings its own
    scroller, as .file-view and .agent-form-host do. */
 .task-detail { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.task-detail [hidden] { display: none !important; }
 
-.task-detail-section + .task-detail-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-.task-detail-heading { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.task-detail-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+/* One centred column. No padding of its own: .modal-body already pads a
+   panel by 16px 20px, and a second gutter here would double it. The gap is
+   what separates the sections; they carry no rules between them. */
+.task-detail-column { display: flex; flex-direction: column; gap: 16px; max-width: var(--panel-column); margin: 0 auto; }
+.task-detail-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.task-detail-heading, .task-detail-section-head { display: flex; justify-content: space-between; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.task-detail-count { font-weight: 500; color: var(--hint); }
+
+/* Small muted lines that are not facts: a child's name above its own
+   deliverables, the assignee's done bar, the activity's loading and empty
+   states. */
 .task-detail-meta { margin: 0; font-size: 12px; color: var(--muted); }
-.task-detail-body { margin: 8px 0 0; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.task-detail-section > .task-detail-meta { margin: 10px 0 4px; }
 
-.task-detail-panel {
-  margin-top: 8px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--bg);
-}
-
-.task-detail-panel[data-tone="ok"] { border-color: var(--ok); background: var(--ok-bg); }
-.task-detail-panel[data-tone="warn"] { border-color: var(--amber-ink); background: var(--amber); }
-.task-detail-panel[data-tone="warn"] p { color: var(--amber-ink); }
-
-.task-detail-file,
-.task-detail-link {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
-  text-align: left;
-  font-size: 12px;
-}
-
+.task-detail-instructions { font-size: 13px; }
+.task-detail-instructions.is-clamped { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.task-detail-file { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); text-align: left; font-size: 13px; }
+.task-detail-file + .task-detail-file { margin-top: 6px; }
+.task-detail-file svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
 .task-detail-file.is-failed { border-color: var(--alert); }
-.task-detail-file-name { display: block; font-weight: 500; color: var(--accent); }
-.task-detail-file-path { display: block; font-size: 10px; color: var(--hint); word-break: break-all; }
-
-.task-detail-event { padding: 6px 0; border-top: 1px solid var(--line); }
-.task-detail-event:first-child { border-top: 0; }
-.task-detail-event-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-.task-detail-event-body { margin: 2px 0 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.task-detail-file-name { font-weight: 500; }
+.task-detail-file-desc { color: var(--muted); font-size: 12px; }
+.task-detail-file-path { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--hint); word-break: break-all; }
+.task-detail-subtask { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 0; text-align: left; font-size: 13px; }
+.task-detail-subtask svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
+.task-detail-subtask[data-state="done"] svg { color: var(--ok); }
+.task-detail-subtask[data-state="done"] .task-detail-subtask-title,
+.task-detail-subtask[data-state="closed"] .task-detail-subtask-title { text-decoration: line-through; color: var(--muted); }
+.task-detail-contract { padding-top: 10px; border-top: 1px solid var(--line); }
+.task-detail-contract > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.task-detail-contract[open] > summary { margin-bottom: 8px; }
+.task-detail-contract > .callout { margin-top: 8px; }
+.task-detail-event { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 4px 0; font-size: 12px; }
+.task-detail-event-time { color: var(--hint); }
+.task-detail-event-text { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; margin: 0; word-break: break-word; }
 
 /* ─── Assign form ─── */
 
@@ -560,20 +506,9 @@
 .assign-textarea { resize: vertical; }
 .assign-hint { margin: 0 0 8px; font-size: 11px; color: var(--hint); }
 
-.assign-panel {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--bg);
-}
-
-.assign-panel[data-tone="ok"] { border-color: var(--ok); background: var(--ok-bg); }
-.assign-panel[data-tone="info"] { border-color: var(--accent); background: var(--accent-bg); }
-.assign-panel[data-tone="warn"] { border-color: var(--amber-ink); background: var(--amber); color: var(--amber-ink); }
-.assign-panel[data-tone="error"] { border-color: var(--alert); background: var(--alert-bg); color: var(--alert-ink); }
-.assign-panel-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; }
-.assign-panel-body { margin: 0; font-size: 12px; }
+/* The outcome panels are the shared .callout (controls.css); the form only
+   keeps the gap they always had above them. */
+.assign-form .callout { margin-top: 10px; }
 
 .assign-pick {
   display: block;
@@ -1177,16 +1112,8 @@
   background: var(--bg);
 }
 
-.log-facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 12px;
-  margin: 0 0 10px;
-  font-size: 12px;
-}
-
-.log-fact-label { color: var(--muted); }
-.log-fact-value { margin: 0; word-break: break-word; }
+/* The layout is the shared .fact-list (controls.css); this is the Log's gap. */
+.log-facts { margin: 0 0 10px; }
 .log-detail-error { margin: 0 0 8px; color: var(--alert); font-size: 12px; }
 
 .log-section { margin-bottom: 10px; }

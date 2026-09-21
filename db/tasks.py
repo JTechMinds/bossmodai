@@ -20,14 +20,14 @@ _TASK_COLUMNS = (
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
-    "t.last_activity, t.created_at"
+    "t.last_activity, t.closed_at, t.created_at"
 )
 
 _TASK_VALID_COLUMNS = {
     "title", "description", "project", "assigned_to", "requester_id", "owner_id",
     "status", "parent_task_id", "cost_ceiling", "completion_summary",
     "status_note", "watchdog_pinged_at", "last_progress_at", "last_heartbeat_at",
-    "last_activity",
+    "last_activity", "closed_at",
 }
 
 
@@ -259,11 +259,17 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
     ``IllegalTaskTransition`` and leave the row unchanged.
     """
     if "status" in fields:
-        from core.tasking.transitions import assert_valid_task_transition
+        from core.tasking.transitions import TERMINAL_TASK_STATUSES, assert_valid_task_transition
 
         current = get_task(task_id)
         if current is not None:
-            assert_valid_task_transition(current.status, str(fields["status"]))
+            target = str(fields["status"])
+            assert_valid_task_transition(current.status, target)
+            # Stamped on the way IN to a finished state, once. Finished states
+            # have no way out (transitions.py), so nothing clears it, and the
+            # identity update complete → complete must not move it either.
+            if target in TERMINAL_TASK_STATUSES and current.status not in TERMINAL_TASK_STATUSES:
+                fields.setdefault("closed_at", datetime.now(timezone.utc))
 
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...

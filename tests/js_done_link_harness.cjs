@@ -1,7 +1,7 @@
 /**
  * Node harness: origin one-liner chrome.
  * Quiet chrome: glyph on the left, blue-link text. No Open pill.
- * Done opens a real file (path only). Created/Accepted open the bound Board task.
+ * Done opens a real file (path only). Created/Accepted open the bound task in Tasks.
  * Invoked by tests/test_ui_conversation.py. Not a browser bundle.
  */
 const fs = require("fs");

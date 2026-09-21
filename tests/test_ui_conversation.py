@@ -341,7 +341,7 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "isSystem || isQueue" in thread
     agent = _read(SOURCES / "agent-source.js")
     assert "taskId: raw.task_id || null" in agent
-    assert "navigate('board', { taskId })" in source
+    assert "navigate('tasks', { taskId })" in source
     assert "const cardCtx = { api, navigate, openDesk };" in controller
     css = (CSS / "conversation.css").read_text(encoding="utf-8")
     assert ".note-glyph" in css
@@ -353,7 +353,7 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
 def test_done_link_harness() -> None:
     """Origin Done tints and links the claim path; prose-only has no chrome.
 
-    Created/Accepted use the Board task glyph and blue-link the one-liner.
+    Created/Accepted use the Tasks task glyph and blue-link the one-liner.
     Done uses the doc glyph and blue-links the path only. No Open pill.
     A Created line must not invent a document link.
     """
@@ -421,9 +421,9 @@ def test_done_link_harness() -> None:
         "writingKind": "",
         "writingOpensFile": False,
         "navigated": [
-            {"place": "board", "params": {"taskId": "task-1"}},
-            {"place": "board", "params": {"taskId": "task-1"}},
-            {"place": "board", "params": {"taskId": "task-1"}},
+            {"place": "tasks", "params": {"taskId": "task-1"}},
+            {"place": "tasks", "params": {"taskId": "task-1"}},
+            {"place": "tasks", "params": {"taskId": "task-1"}},
         ],
     }
 
@@ -433,7 +433,7 @@ def test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it() -> None
     composer.
 
     Phase 2 deliberately did NOT build an assign form, because deduplicating a
-    second one against the Board's in Phase 3 would have been exactly the
+    second one against the Tasks place's in Phase 3 would have been exactly the
     transitional scaffolding this refactor exists to avoid. THAT is the property
     that has always mattered here — one form, reached by whoever needs it — and
     it is the one that survives the button.
@@ -477,31 +477,31 @@ def test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it() -> None
         for path in _app_js()
         if "function openAssignForm(" in _read(path)
     )
-    assert definers == ["places/board/assign-form.js"], definers
+    assert definers == ["places/tasks/assign-form.js"], definers
     callers = sorted(
         path.relative_to(JS).as_posix()
         for path in _app_js()
         if "openAssignForm(" in _read(path) and "function openAssignForm(" not in _read(path)
     )
-    assert callers == ["conversation/conversation.js", "places/board/board-place.js"], callers
+    assert callers == ["conversation/conversation.js", "places/tasks/tasks-place.js"], callers
 
     # It is defined before the two scripts that open it.
     html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
     scripts = re.findall(r"static_url\('([^']+\.js)'\)", html)
-    assert scripts.index("js/places/board/assign-outcomes.js") < scripts.index(
-        "js/places/board/assign-form.js"
+    assert scripts.index("js/places/tasks/assign-outcomes.js") < scripts.index(
+        "js/places/tasks/assign-form.js"
     )
-    assert scripts.index("js/places/board/assign-form.js") < scripts.index(
+    assert scripts.index("js/places/tasks/assign-form.js") < scripts.index(
         "js/conversation/conversation.js"
     )
-    assert scripts.count("js/places/board/assign-form.js") == 1
+    assert scripts.count("js/places/tasks/assign-form.js") == 1
 
 
 def test_conversation_assign_stamps_thread_origin() -> None:
     """Hire → thread → Assign must bind Created/Accepted to that thread.
 
     POST /api/tasks defaults source_channel to `api`, which origin_thread_target
-    treats as Focus. Conversation assign therefore stamps the open room. Board
+    treats as Focus. Conversation assign therefore stamps the open room. Tasks
     assign must not inherit a leftover conversationId from the store.
     """
     controller = _read(CONVERSATION / "conversation.js")
@@ -510,17 +510,17 @@ def test_conversation_assign_stamps_thread_origin() -> None:
     )[0]
     assert "bindOrigin: true" in assign
 
-    form = _read(JS / "places" / "board" / "assign-form.js")
+    form = _read(JS / "places" / "tasks" / "assign-form.js")
     assert "bindOrigin && state.conversationKind === 'thread'" in form
     assert "payload.source_channel = 'channel'" in form
     assert "payload.notification_channel_id = state.conversationId" in form
     assert "payload.source_channel = 'chat'" in form
 
-    board = _read(JS / "places" / "board" / "board-place.js")
-    board_assign = board.split("function openAssign() {", 1)[1].split(
+    tasks_place = _read(JS / "places" / "tasks" / "tasks-place.js")
+    tasks_assign = tasks_place.split("function openAssign() {", 1)[1].split(
         "return {", 1
     )[0]
-    assert "bindOrigin" not in board_assign
+    assert "bindOrigin" not in tasks_assign
 
 
 def test_agent_name_is_chrome_outside_the_paragraph() -> None:

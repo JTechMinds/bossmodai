@@ -5,15 +5,51 @@
  * of the detail panel because it is the only part of that panel that fetches,
  * and because a failed event load must be visible as a failure rather than
  * showing as "no activity recorded yet" — those are different facts.
+ *
+ * Each event reads as a sentence — "Jim marked it blocked · no progress" —
+ * built by the pure describeEvent(), rather than as a type badge over the raw
+ * text the engine wrote.
  */
 const BossModTaskEvents = (() => {
     const { h, clear } = BossModDom;
+    const COLUMNS = BossModTasksColumns;
 
-    /** Event type -> the word shown on its badge. Unknown types show as-is. */
-    const KNOWN_TYPES = Object.freeze([
-        'comment', 'clarification', 'answer', 'status_update', 'blocker',
-        'completion', 'assignment', 'reprioritized', 'system',
-    ]);
+    /** transition_task's own wording: `Status {from} → {to}` then `.` or `: {note}` (core/tasking/transitions.py). */
+    const STATUS_LINE = /^Status (\w+) → (\w+)(?:[:.]\s*)?([\s\S]*)$/;
+
+    /** Event types that read as a verb. Anything else shows its content as written. */
+    const TYPE_VERBS = Object.freeze({
+        comment: 'commented',
+        clarification: 'asked for clarification',
+        answer: 'answered',
+        blocker: 'flagged a blocker',
+        completion: 'reported it done',
+        reprioritized: 'reprioritized it',
+    });
+
+    /**
+     * One event as the parts of a sentence.
+     *
+     * A status change the engine wrote in its own format becomes the status's
+     * verb and whatever note followed; any other shape — including a status
+     * update written some other way — keeps its content as written, so
+     * nothing the engine recorded is dropped by a parse that did not fit.
+     *
+     * @param {object} event  One row from GET /api/tasks/{id}/events.
+     * @returns {{actor: string, verb: string, detail: string}} `verb` and
+     *   `detail` may be empty; the actor never is.
+     */
+    function describeEvent(event) {
+        const actor = String(event.author_name || 'System');
+        const content = String(event.content || '').trim();
+        if (event.event_type === 'status_update') {
+            const match = STATUS_LINE.exec(content);
+            if (match && COLUMNS.STATUS_VERBS[match[2]]) {
+                return { actor, verb: COLUMNS.STATUS_VERBS[match[2]], detail: match[3].trim() };
+            }
+        }
+        return { actor, verb: TYPE_VERBS[event.event_type] || '', detail: content };
+    }
 
     /**
      * Build the activity section for one task.
@@ -21,13 +57,16 @@ const BossModTaskEvents = (() => {
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {string} deps.taskId
+     * @param {(agentId: string) => (string|undefined)} deps.colorOf  An
+     *   author's roster colour, for the avatar beside each sentence.
      * @returns {{element: HTMLElement, destroy: () => void}}
-     * @throws {Error} When api or taskId is missing.
+     * @throws {Error} When api, taskId or colorOf is missing.
      */
     function createTaskEvents(deps) {
-        const { api, taskId } = deps || {};
+        const { api, taskId, colorOf } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-events] deps.api is required');
         if (!taskId) throw new Error('[task-events] deps.taskId is required');
+        if (typeof colorOf !== 'function') throw new Error('[task-events] deps.colorOf is required');
 
         const load = BossModGates.createLoadGeneration();
         const body = h('div', { class: 'task-detail-events' });
@@ -36,18 +75,19 @@ const BossModTaskEvents = (() => {
         let destroyed = false;
 
         function row(event) {
-            const type = String(event.event_type || 'event');
+            const { actor, verb, detail } = describeEvent(event);
             return h('div', { class: 'task-detail-event' },
-                h('div', { class: 'task-detail-event-head' },
-                    h('span', {}, event.author_name || 'System'),
-                    h('span', {
-                        class: 'status-pill',
-                        'data-event-type': KNOWN_TYPES.indexOf(type) === -1 ? 'other' : type,
-                    }, type.replace(/_/g, ' ')),
-                    event.created_at
-                        ? h('span', {}, BossModFormat.formatRelativeTime(event.created_at))
-                        : null),
-                h('p', { class: 'task-detail-event-body' }, event.content || ''));
+                h('span', { class: 'task-detail-event-time' },
+                    BossModFormat.formatRelativeTime(event.created_at)),
+                h('p', { class: 'task-detail-event-text' },
+                    BossModAvatar.create({
+                        name: event.author_name,
+                        color: event.author_agent_id ? colorOf(event.author_agent_id) : undefined,
+                        size: 'chip',
+                    }),
+                    h('strong', {}, actor),
+                    verb ? ` ${verb}` : '',
+                    detail ? ` · ${detail}` : ''));
         }
 
         /**
@@ -113,5 +153,5 @@ const BossModTaskEvents = (() => {
         };
     }
 
-    return { createTaskEvents };
+    return { createTaskEvents, describeEvent };
 })();

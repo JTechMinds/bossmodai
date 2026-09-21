@@ -50,7 +50,7 @@ const BossModEventCards = (() => {
     }
 
     /**
-     * Created/Accepted open the bound Board task. Documents stay on Done.
+     * Created/Accepted open the bound task in Tasks. Documents stay on Done.
      * A Created line must not grow a desk path just to look clickable.
      *
      * @param {object} message
@@ -120,11 +120,11 @@ const BossModEventCards = (() => {
      * @param {(path: string) => void} [ctx.openDesk]  Optional (spec 4.1). Desk
      *   chrome fallback when the deliverable opener is not loaded.
      * @param {(path: string, agentId?: string) => (void|Promise<void>)} [ctx.openDeliverable]
-     *   Same file-open path Board deliverable cards use. The Done path link
+     *   Same file-open path the task deliverable cards use. The Done path link
      *   renders only when this or openDesk is injected — a control that
      *   renders but does nothing is worse than one that is absent.
      * @param {(placeId: string, params?: object) => void} [ctx.navigate]
-     *   Same Board open path blocked needs use: `navigate('board', { taskId })`.
+     *   Same Tasks open path blocked needs use: `navigate('tasks', { taskId })`.
      *   Created/Accepted notes render a task glyph and blue-link text only
      *   when this arrives.
      * @returns {HTMLElement}
@@ -178,7 +178,7 @@ const BossModEventCards = (() => {
                 note.append(
                     originGlyph('task'),
                     h('p', { class: 'note-text' }, originLink(text, () => {
-                        ctx.navigate('board', { taskId });
+                        ctx.navigate('tasks', { taskId });
                     })),
                 );
             } else if (openKind === 'file') {

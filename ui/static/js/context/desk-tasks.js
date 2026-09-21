@@ -17,7 +17,7 @@
 const BossModDeskTasks = (() => {
     const { h, clear } = BossModDom;
 
-    /** The desk is a summary; the Board is the list. */
+    /** The desk is a summary; the Tasks place is the list. */
     const TOP_N = 3;
     const BLOCKED_COPY = 'Blocked — checkable claim missing';
     const NEEDED_COPY = 'What’s needed: tests evidence, an artifact path, or an allow/deny proof.';
@@ -126,8 +126,8 @@ const BossModDeskTasks = (() => {
             if (tasks.length === 0) {
                 // A dashed placeholder, so an empty section still reads as a
                 // section rather than as a gap that failed to render.
-                listEl.append(h('p', { class: 'context-empty desk-empty' },
-                    'No board items for this agent.'));
+                listEl.append(h('p', { class: 'context-empty empty-slot' },
+                    'No tasks for this agent.'));
                 return;
             }
             tasks.slice(0, TOP_N).forEach((task) => listEl.append(card(task)));

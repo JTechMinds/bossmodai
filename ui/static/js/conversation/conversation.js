@@ -91,7 +91,7 @@ const BossModConversation = (() => {
          *
          * The empty state's `Assign a task` is its only caller here now — the
          * composer's clipboard was the other, and it went with the row it sat
-         * in. The Board owns the third door.
+         * in. The Tasks place owns the third door.
          *
          * @returns {object} The open modal, from BossModAssignForm.
          */
@@ -99,7 +99,7 @@ const BossModConversation = (() => {
             return BossModAssignForm.openAssignForm({
                 api,
                 store,
-                bindOrigin: true, onCreated: () => navigate('board'),
+                bindOrigin: true, onCreated: () => navigate('tasks'),
             });
         }
 

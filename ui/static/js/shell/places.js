@@ -9,7 +9,7 @@ const BossModPlaces = (() => {
     const { h, clear } = BossModDom;
 
     /** Nav order, left to right. */
-    const PLACE_IDS = Object.freeze(['chat', 'office', 'board', 'files', 'metrics', 'log']);
+    const PLACE_IDS = Object.freeze(['chat', 'office', 'tasks', 'files', 'metrics', 'log']);
 
     /**
      * Build a placeholder place. Every place — stub or real — renders exactly
@@ -40,7 +40,7 @@ const BossModPlaces = (() => {
         office: Object.assign(stub('Office', 'The office map arrives in Phase 3.'), {
             icon: 'building',
         }),
-        board: Object.assign(stub('Board', 'The task board arrives in Phase 3.'), {
+        tasks: Object.assign(stub('Tasks', 'The task list arrives in Phase 3.'), {
             icon: 'list-todo',
         }),
         files: Object.assign(stub('Files', 'The file browser arrives in Phase 3.'), {

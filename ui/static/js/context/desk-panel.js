@@ -134,7 +134,7 @@ const BossModDeskPanel = (() => {
                 // The panel already takes `navigate`, and where "all of this
                 // agent's tasks" lives is a panel-level fact rather than
                 // something the list that loads three of them should know.
-                onSelect: () => navigate('board', { agentFilter: agentId }),
+                onSelect: () => navigate('tasks', { agentFilter: agentId }),
             }, tasks.element),
             section('Files', null, files.element),
             section('Notes', null, notes.element),

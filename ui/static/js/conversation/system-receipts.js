@@ -53,7 +53,7 @@ const BossModSystemReceipts = (() => {
      * Build the labelled toggle.
      *
      * The control is the shared core/switch.js pill rather than a checkbox of
-     * this module's own: the Board's subtask filter and the Log's Follow are
+     * this module's own: the Tasks place's subtask filter and the Log's Follow are
      * the same idea, and three hand-rolled toggles is what made the surfaces
      * look unrelated.
      *

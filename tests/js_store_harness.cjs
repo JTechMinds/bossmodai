@@ -15,13 +15,13 @@ const store = BossModStore.createStore({ place: "chat", conversationId: null, ro
 const placeCalls = [];
 const offPlace = store.subscribe((s) => s.place, (v, prev) => placeCalls.push([prev, v]));
 
-store.setState({ place: "board" });
-store.setState({ place: "board" });          // no change -> no call
+store.setState({ place: "tasks" });
+store.setState({ place: "tasks" });          // no change -> no call
 store.setState({ conversationId: "abc" });   // different slice -> no call
 if (placeCalls.length !== 1) {
     throw new Error(`expected 1 place call, got ${placeCalls.length}`);
 }
-if (JSON.stringify(placeCalls[0]) !== JSON.stringify(["chat", "board"])) {
+if (JSON.stringify(placeCalls[0]) !== JSON.stringify(["chat", "tasks"])) {
     throw new Error(`bad payload: ${JSON.stringify(placeCalls[0])}`);
 }
 

@@ -9,7 +9,7 @@
  * restore.
  *
  * It owns no data. Every control reports through a callback, the same contract
- * board-toolbar.js follows.
+ * tasks-toolbar.js follows.
  */
 const BossModFilesToolbar = (() => {
     const { h } = BossModDom;

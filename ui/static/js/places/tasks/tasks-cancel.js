@@ -1,13 +1,13 @@
 /**
- * BossMod AI — cancelling tasks from the Board.
+ * BossMod AI — cancelling tasks from the Tasks place.
  *
- * The one destructive path the Board has, kept in one file so the confirmation
+ * The one destructive path the Tasks place has, kept in one file so the confirmation
  * cannot be bypassed by a second caller. Both entry points ask first, through
  * the focus-trapped dialog rather than the browser's native one, which cannot
  * be styled, cannot be tested, and blocks the event loop.
  */
-const BossModBoardCancel = (() => {
-    const COLUMNS = BossModBoardColumns;
+const BossModTasksCancel = (() => {
+    const COLUMNS = BossModTasksColumns;
 
     const ONE_COPY = 'Cancel this task?';
     const BODY_COPY = 'The assignee is told and the work stops. This cannot be undone.';
@@ -24,9 +24,9 @@ const BossModBoardCancel = (() => {
      */
     function createCanceller(deps) {
         const { api, onCancelled, onError } = deps || {};
-        if (typeof api !== 'function') throw new Error('[board-cancel] deps.api is required');
-        if (typeof onCancelled !== 'function') throw new Error('[board-cancel] deps.onCancelled is required');
-        if (typeof onError !== 'function') throw new Error('[board-cancel] deps.onError is required');
+        if (typeof api !== 'function') throw new Error('[tasks-cancel] deps.api is required');
+        if (typeof onCancelled !== 'function') throw new Error('[tasks-cancel] deps.onCancelled is required');
+        if (typeof onError !== 'function') throw new Error('[tasks-cancel] deps.onError is required');
 
         /**
          * POST the cancellations.
@@ -43,7 +43,7 @@ const BossModBoardCancel = (() => {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 onCancelled(ids);
             } catch (err) {
-                console.error('[board-cancel] cancel failed', err);
+                console.error('[tasks-cancel] cancel failed', err);
                 onError(`Could not cancel: ${(err && err.message) || 'the request failed'}.`);
             }
         }

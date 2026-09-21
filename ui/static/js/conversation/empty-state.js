@@ -7,9 +7,9 @@
  * there are to do with a person — say hello, or give them work.
  *
  * It is a view and only a view. The greeting text is composed here because it
- * is copy, but SENDING it is the composer's job and assigning is the Board's
- * form; both arrive as callbacks, so this module cannot become a second send
- * path or a second assign form.
+ * is copy, but SENDING it is the composer's job and assigning is the Tasks
+ * place's form; both arrive as callbacks, so this module cannot become a
+ * second send path or a second assign form.
  *
  * Split out of conversation/transcript.js because the transcript was already at
  * the 300-line cap and the empty state is the one status of the three that has

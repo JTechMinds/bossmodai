@@ -273,6 +273,24 @@ def test_the_formatter_reads_the_operators_clock_not_utc() -> None:
     assert "Pacific/Kiritimati" in zones and "Pacific/Niue" in zones, zones
 
 
+def test_day_labels_and_date_times_read_the_local_calendar() -> None:
+    """The Done column's day labels and the detail's finish time.
+
+    "Yesterday" is the calendar day before today, not "within 24 hours": 23:00
+    last night read at noon is under a day ago and still yesterday. The year
+    appears only off this year, for the reason formatActivityTime carries it,
+    and a missing or unparseable value renders nothing rather than a guess.
+    """
+    payload = _format_payload()
+    assert payload["dayToday"] == "Today"
+    assert payload["dayYesterday"] == "Yesterday"
+    assert payload["dayThisYear"] == "Sep 18"
+    assert payload["dayLastYear"] == "Sep 18, 2025"
+    assert payload["dayNever"] == "|"
+    assert payload["dateTime"] == "Sep 21, 9:35 AM"
+    assert payload["dateTimeLastYear"] == "Sep 21, 2025, 9:05 PM"
+
+
 # ─── Task 1: the thread select mode explains itself ───
 
 # The order tests/js_roster_harness.cjs evaluates its modules in. A third copy

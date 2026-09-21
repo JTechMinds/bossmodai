@@ -172,7 +172,7 @@ const BossModDeskFiles = (() => {
             if (!Array.isArray(entries) || entries.length === 0) {
                 // Dashed, so an empty folder reads as an empty folder rather
                 // than as a section that failed to render.
-                return h('p', { class: 'context-empty desk-empty' }, EMPTY_COPY);
+                return h('p', { class: 'context-empty empty-slot' }, EMPTY_COPY);
             }
             const list = h('div', { class: 'desk-entries' });
             entries.forEach((entry) => {

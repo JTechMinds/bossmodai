@@ -124,11 +124,11 @@ const BossModComposer = (() => {
         const errorEl = h('p', { class: 'composer-error hidden', role: 'alert' });
 
         // The field, then send. The clipboard that used to open this row was a
-        // third front door to the one assign form — the Board's `+ New task`
+        // third front door to the one assign form — the Tasks place's `+ New task`
         // and the empty conversation's `Assign a task` are the other two — and
         // it was the only one sitting in front of the operator every second
         // they were typing a message. Removing it costs no reach: the form is
-        // still one click from the Board, which is where a task goes anyway.
+        // still one click from Tasks, which is where a task goes anyway.
         const element = h('div', { class: 'composer' },
             label,
             h('div', { class: 'composer-row' }, input, sendBtn),

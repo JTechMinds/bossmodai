@@ -7,7 +7,7 @@
  * stating what a checkable done claim looks like.
  *
  * The done-claim copy is behaviourally load-bearing — `test_role_contracts.py`
- * asserts it reaches the Board's task detail and the desk's task cards, and
+ * asserts it reaches the Tasks place's task detail and the desk's task cards, and
  * `core/tasking/board.py` produces the server half of the same rule. This is
  * the client's single copy of it.
  */

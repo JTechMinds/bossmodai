@@ -185,7 +185,7 @@ const BossModLogPlace = (() => {
                 onFollow: (on) => { if (on) scrollEl.scrollTop = 0; },
             });
 
-            summaryEl = h('p', { class: 'board-summary' }, '');
+            summaryEl = h('p', { class: 'place-summary' }, '');
             errorEl = h('p', { class: 'files-error', role: 'alert', hidden: true });
             listEl = h('div', { class: 'log-body' });
             scrollEl = h('div', { class: 'log-scroll' }, listEl);
@@ -196,8 +196,8 @@ const BossModLogPlace = (() => {
 
             clear(el);
             el.append(h('div', { class: 'log-place' },
-                h('header', { class: 'board-header' },
-                    h('div', { class: 'board-title' },
+                h('header', { class: 'place-header' },
+                    h('div', { class: 'place-title' },
                         h('h1', { tabindex: '-1' }, 'Log'), summaryEl),
                     filters.element),
                 errorEl, scrollEl));

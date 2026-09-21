@@ -309,6 +309,7 @@ def test_log_reply_transcript_behaves() -> None:
             "node",
             str(harness),
             str(JS / "core" / "dom.js"),
+            str(JS / "core" / "fact-list.js"),
             str(LOG / "log-shape.js"),
             str(LOG / "diagnostic-detail.js"),
         ],

@@ -251,14 +251,14 @@ const BossModFileGrid = (() => {
      *   setBody: (node: HTMLElement) => void}}
      */
     function createFrame(controls) {
-        const summary = h('p', { class: 'board-summary' }, '');
+        const summary = h('p', { class: 'place-summary' }, '');
         const crumbs = h('div', { class: 'files-crumbs' });
         const notice = h('div', { class: 'files-notice', hidden: true });
         const error = h('p', { class: 'files-error', role: 'alert', hidden: true });
         const body = h('div', { class: 'files-body' });
         const element = h('div', { class: 'files-place' },
-            h('header', { class: 'board-header' },
-                h('div', { class: 'board-title' },
+            h('header', { class: 'place-header' },
+                h('div', { class: 'place-title' },
                     h('h1', { tabindex: '-1' }, 'Files'), summary),
                 controls),
             crumbs, notice, error, body);

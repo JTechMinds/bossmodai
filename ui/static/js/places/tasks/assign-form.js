@@ -56,12 +56,12 @@ const BossModAssignForm = (() => {
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {object} deps.store  Read for the assignee to preselect: the
-     *   Board's agent filter, or the agent whose conversation is open. Both are
+     *   Tasks agent filter, or the agent whose conversation is open. Both are
      *   "the person you were already looking at".
      * @param {string} [deps.taskId]  An existing workstream to bind to, sent as
      *   `bind_task_id`.
      * @param {boolean} [deps.bindOrigin]  Conversation assign stamps the open
-     *   thread (or Focus) so Created/Accepted land there. Board omits this —
+     *   thread (or Focus) so Created/Accepted land there. Tasks omits this —
      *   leftover conversationId in the store is not a bind the operator asked for.
      * @param {(task: object) => void} [deps.onCreated]
      * @param {(taskId: string) => void} [deps.onOpenTask]  Optional capability.
@@ -187,7 +187,7 @@ const BossModAssignForm = (() => {
             if (submitting) return;
             const title = titleInput.value.trim();
             if (!title) {
-                show(BossModAssignOutcomes.renderNotice('error', 'Title is required'));
+                show(BossModAssignOutcomes.renderNotice('alert', 'Title is required'));
                 titleInput.focus();
                 return;
             }
@@ -222,7 +222,7 @@ const BossModAssignForm = (() => {
                 if (settled && body.task && onCreated) onCreated(body.task);
             } catch (err) {
                 console.error('[assign-form] assign failed', err);
-                show(BossModAssignOutcomes.renderNotice('error', 'Assign failed',
+                show(BossModAssignOutcomes.renderNotice('alert', 'Assign failed',
                     (err && err.message) || 'The request failed.'));
             } finally {
                 submitting = false;
@@ -247,7 +247,7 @@ const BossModAssignForm = (() => {
                 refreshSpecialtyHints();
             } catch (err) {
                 console.error('[assign-form] could not load the roster', err);
-                show(BossModAssignOutcomes.renderNotice('error', 'Could not load the roster',
+                show(BossModAssignOutcomes.renderNotice('alert', 'Could not load the roster',
                     'The task can still be created for the unassigned backlog.'));
             }
         }

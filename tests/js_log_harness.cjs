@@ -11,11 +11,12 @@ installDom();
 global.navigator = { clipboard: { writeText: async () => {} } };
 
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
-const [domPath, shapePath, detailPath] = process.argv.slice(2);
-if (!domPath || !shapePath || !detailPath) {
-    throw new Error("expected dom, log-shape, and diagnostic-detail paths");
+const [domPath, factListPath, shapePath, detailPath] = process.argv.slice(2);
+if (!domPath || !factListPath || !shapePath || !detailPath) {
+    throw new Error("expected dom, fact-list, log-shape, and diagnostic-detail paths");
 }
 load(domPath, "BossModDom");
+load(factListPath, "BossModFactList");
 load(shapePath, "BossModLogShape");
 load(detailPath, "BossModDiagnosticDetail");
 

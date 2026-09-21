@@ -2,7 +2,7 @@
  * BossMod AI — the Files place's reads.
  *
  * The two GETs the browser makes and the one path rule it needs, with no state
- * and no DOM. Separated the way board-data.js is: the place owns the load
+ * and no DOM. Separated the way tasks-data.js is: the place owns the load
  * generation and what gets painted, this owns what a request is and what a
  * failure says.
  *

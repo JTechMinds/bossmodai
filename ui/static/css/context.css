@@ -285,14 +285,6 @@
   line-height: 1.5;
 }
 
-/* An empty section is a section. Dashed, so it reads as a placeholder rather
-   than as a gap where something failed to render. */
-.desk-empty {
-  padding: 9px 10px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r);
-}
-
 .desk-task {
   padding: 6px 8px;
   border: 1px solid var(--line);

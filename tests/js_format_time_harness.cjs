@@ -59,6 +59,22 @@ const never = withClock(NOW_MS, () => [fmt(null), fmt(""), fmt(undefined)].join(
 // "Invalid Date", would be worse than the blank a silent conversation gets.
 const unparseable = withClock(NOW_MS, () => fmt("not a timestamp"));
 
+// ─── Day labels and date-times, on the same clock and zone ───
+//
+// The Tasks Done column groups under a day label and the task detail states
+// when a task finished. Both are calendar reads, so both are pinned here with
+// the rail's formatter rather than in a harness of their own.
+const day = (value) => global.BossModFormat.formatDayLabel(value);
+const dateTimeOf = (value) => global.BossModFormat.formatDateTime(value);
+const dayToday = withClock(NOW_MS, () => day(iso(2026, 11, 15, 1, 0, 0)));
+// 23:00 the evening before: yesterday on the calendar, though under a day ago.
+const dayYesterday = withClock(NOW_MS, () => day(iso(2026, 11, 14, 23, 0, 0)));
+const dayThisYear = withClock(NOW_MS, () => day(iso(2026, 8, 18, 9, 0, 0)));
+const dayLastYear = withClock(NOW_MS, () => day(iso(2025, 8, 18, 9, 0, 0)));
+const dayNever = withClock(NOW_MS, () => [day(null), day("nope")].join("|"));
+const dateTime = withClock(NOW_MS, () => dateTimeOf(iso(2026, 8, 21, 9, 35, 0)));
+const dateTimeLastYear = withClock(NOW_MS, () => dateTimeOf(iso(2025, 8, 21, 21, 5, 0)));
+
 // ─── Local midnight, across offsets on both sides of UTC ───
 //
 // Kiritimati is +14 and Niue is -11, which is the widest spread there is. In
@@ -114,6 +130,13 @@ process.stdout.write(JSON.stringify({
     lastYear,
     never: never === "||" ? "" : never,
     unparseable,
+    dayToday,
+    dayYesterday,
+    dayThisYear,
+    dayLastYear,
+    dayNever,
+    dateTime,
+    dateTimeLastYear,
     respectsLocalMidnight,
     midnightDetail,
 }));

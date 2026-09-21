@@ -262,6 +262,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_progress_at TIMESTAMP DEFAULT current_timestamp,
     last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
+    closed_at      TIMESTAMP,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 

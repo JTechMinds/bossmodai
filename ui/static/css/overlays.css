@@ -93,6 +93,9 @@
    — the chevron spent a round as a bordered square in the band below, aligned
    to nothing and filling nothing. */
 .modal-head {
+  /* Positioned so a head tool's `⋯` panel (the task detail's) can hang from
+     it; .menu is placed against its container. */
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -747,6 +750,10 @@
 /* An action already in flight. Same treatment .btn[disabled] carries, so a
    dead control reads the same wherever it is. */
 .menu-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* A count at the row's far end — how much is behind the action, quieter than
+   the label that names it. */
+.menu-action-count { margin-left: auto; color: var(--hint); font-weight: 400; }
 
 /* A LABELLED SETTING inside a menu, and the segmented control that answers it.
  *

@@ -152,7 +152,7 @@ def test_no_notifications_tab_and_consent_stays_in_thread() -> None:
     places = _read("shell/places.js")
     cards = _read("conversation/event-cards.js")
     assert (
-        "PLACE_IDS = Object.freeze(['chat', 'office', 'board', 'files', 'metrics', 'log'])"
+        "PLACE_IDS = Object.freeze(['chat', 'office', 'tasks', 'files', 'metrics', 'log'])"
         in places
     )
     assert "notifications" not in places.lower()
@@ -234,7 +234,7 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "This thread has ${n} open tasks. Sealing stops new posts and access cards." in archive
     assert "Hides it from the active list and seals the room" in archive
     assert "no new messages or access cards" in archive
-    assert "Open tasks stay on the board." in archive
+    assert "Open tasks stay in Tasks." in archive
     assert "Cancel tasks & archive" in archive
     assert "Archive only" in archive
     assert "channel-archive-back" in archive

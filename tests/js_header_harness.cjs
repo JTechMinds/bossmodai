@@ -199,10 +199,10 @@ function apiFetch(url, init) {
     if (current.length !== 1 || current[0].getAttribute("data-place") !== "chat") {
         throw new Error(`aria-current must mark chat alone, got ${current.map((c) => c.getAttribute("data-place")).join(",")}`);
     }
-    store.setState({ place: "board" });
+    store.setState({ place: "tasks" });
     current = byAttr(el, "aria-current", "page", []);
-    if (current.length !== 1 || current[0].getAttribute("data-place") !== "board") {
-        throw new Error("aria-current did not follow the store to board");
+    if (current.length !== 1 || current[0].getAttribute("data-place") !== "tasks") {
+        throw new Error("aria-current did not follow the store to tasks");
     }
     click(navItems[0]);
     if (navigated[navigated.length - 1] !== "chat") throw new Error("nav button must navigate");

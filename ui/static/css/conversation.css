@@ -429,7 +429,7 @@
 
 /* ─── Notes: a centred hairline plus the receipt ───
    Quiet chrome: glyph on the left, blue link on the text. No Open pill.
-   Task glyph → Board (Created/Accepted). Doc glyph → artifact (Done path). */
+   Task glyph → Tasks (Created/Accepted). Doc glyph → artifact (Done path). */
 
 .note {
   display: flex;

@@ -200,7 +200,7 @@ async function main() {
     if (emptySpec.honesty !== HONESTY || openSpec.honesty !== HONESTY) {
         throw new Error("modal honesty copy missing");
     }
-    if (BossModThreadArchive.copy(0) !== `Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay on the board. ${HONESTY}`) {
+    if (BossModThreadArchive.copy(0) !== `Hides it from the active list and seals the room — no new messages or access cards. Open tasks stay in Tasks. ${HONESTY}`) {
         throw new Error("N=0 archive copy mismatch");
     }
     if (BossModThreadArchive.copy(2) !== `This thread has 2 open tasks. Sealing stops new posts and access cards. ${HONESTY}`) {

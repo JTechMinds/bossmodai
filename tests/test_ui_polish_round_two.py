@@ -593,10 +593,17 @@ def test_the_folder_buttons_are_quiet_and_the_footer_is_pinned() -> None:
 
 def test_an_empty_section_still_reads_as_a_section() -> None:
     """A dashed placeholder, so an empty Files section is a section and not a
-    gap the operator reads as a rendering failure."""
-    assert "dashed" in _rule(_read(CSS / "context.css"), ".desk-empty")
+    gap the operator reads as a rendering failure.
+
+    Re-pointed when the placeholder was promoted to the shared `.empty-slot`
+    in controls.css: the Tasks columns became the second surface to need it.
+    The desk's private `.desk-empty` is gone rather than left beside it, so
+    the two cannot drift apart.
+    """
+    assert "dashed" in _rule(_read(CSS / "controls.css"), ".empty-slot")
     for owner in ("context/desk-files.js", "context/desk-notes.js", "context/desk-tasks.js"):
-        assert "desk-empty" in _read(JS / owner), owner
+        assert "empty-slot" in _read(JS / owner), owner
+    assert ".desk-empty" not in _read(CSS / "context.css")
 
 
 def test_the_desk_panel_lost_no_content() -> None:

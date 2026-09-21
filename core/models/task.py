@@ -68,6 +68,7 @@ class Task(BaseModel):
     last_heartbeat_at: datetime | None = None
     last_activity: datetime
     created_at: datetime
+    closed_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------

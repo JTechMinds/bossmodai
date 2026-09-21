@@ -112,11 +112,16 @@ TINTED_SURFACES = (
         "shell.css", '.roster-row[data-selected="true"]', "accent-bg", "roster-row",
         ("roster-name", "roster-status", "roster-time"),
     ),
-    # Selecting a Board card tints the card behind everything task-card.js
+    # Selecting a task card tints the card behind everything task-card.js
     # builds into it.
     TintedSurface("places.css", ".task-card.is-selected", "accent-bg", "task-card"),
-    # The assign sheet's informational outcome (places/board/assign-outcomes.js).
-    TintedSurface("places.css", '.assign-panel[data-tone="info"]', "accent-bg", "assign-panel"),
+    # The shared callout (controls.css), in every tone that paints a ground:
+    # the assign sheet's outcomes (places/tasks/assign-outcomes.js) and the
+    # task detail's status boxes both render text on these.
+    TintedSurface("controls.css", '.callout[data-tone="info"]', "accent-bg", "callout"),
+    TintedSurface("controls.css", '.callout[data-tone="ok"]', "ok-bg", "callout"),
+    TintedSurface("controls.css", '.callout[data-tone="warn"]', "amber", "callout"),
+    TintedSurface("controls.css", '.callout[data-tone="alert"]', "alert-bg", "callout"),
     # The operator's own turn in a transcript (conversation/message.js). Not a
     # colour tint any more but still a ground of its own, and the weaker one:
     # --hint clears AA on the agent's --bg by a hundredth and fails on this.

@@ -62,25 +62,25 @@ BossModPlaces.register("chat", {
     mount(el) { order.push("mount:chat"); el.append(makeEl("h1")); },
     unmount() { order.push("unmount:chat"); },
 });
-BossModPlaces.register("board", {
-    label: "Board",
+BossModPlaces.register("tasks", {
+    label: "Tasks",
     mount(el) {
-        order.push("mount:board");
+        order.push("mount:tasks");
         const heading = makeEl("h1");
         heading.setAttribute("tabindex", "-1");
         el.append(heading);
     },
-    unmount() { order.push("unmount:board"); },
+    unmount() { order.push("unmount:tasks"); },
 });
 
 const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {} });
 
 shell.navigate("chat");
-shell.navigate("board");
+shell.navigate("tasks");
 
 // Unmount MUST precede the next mount — two places must never hold state at once.
 const seq = order.join(",");
-if (seq !== "mount:chat,unmount:chat,mount:board") {
+if (seq !== "mount:chat,unmount:chat,mount:tasks") {
     throw new Error(`bad lifecycle order: ${seq}`);
 }
 
@@ -90,7 +90,7 @@ if (!activeElement || activeElement.tagName !== "H1") {
 }
 
 // Store reflects the active place.
-if (store.getState().place !== "board") throw new Error("store.place not updated");
+if (store.getState().place !== "tasks") throw new Error("store.place not updated");
 
 // LEAK GUARD: a place that subscribes must not leak after unmount.
 const baseline = bus.subscriberCount();
@@ -104,7 +104,7 @@ BossModPlaces.register("log", {
 });
 for (let i = 0; i < 20; i += 1) {
     shell.navigate("log");
-    shell.navigate("board");
+    shell.navigate("tasks");
 }
 if (bus.subscriberCount() !== baseline) {
     throw new Error(`bus leak: baseline ${baseline}, now ${bus.subscriberCount()}`);
@@ -123,8 +123,8 @@ if (!container.textContent.toLowerCase().includes("could not")) {
     throw new Error(`expected an error state, got: ${container.textContent}`);
 }
 // Navigation still works afterwards.
-shell.navigate("board");
-if (store.getState().place !== "board") throw new Error("nav wedged after an error");
+shell.navigate("tasks");
+if (store.getState().place !== "tasks") throw new Error("nav wedged after an error");
 
 process.stdout.write(JSON.stringify({
     ok: true,

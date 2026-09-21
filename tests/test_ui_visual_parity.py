@@ -307,7 +307,7 @@ AVATAR_CALL_SITES = (
     "context/mini-office.js",
     "context/desk-panel.js",
     "places/office/org-view.js",
-    "places/board/task-card.js",
+    "places/tasks/task-card.js",
 )
 
 
@@ -336,7 +336,7 @@ def test_one_avatar_implementation() -> None:
         assert "BossModAvatar.create(" in _read(JS / caller), caller
 
     # task-card.js's private helper is gone, not merely unused.
-    assert "function initial(" not in _read(JS / "places/board/task-card.js")
+    assert "function initial(" not in _read(JS / "places/tasks/task-card.js")
 
 
 # The three surfaces that expressed one idea three ways: a bare checkbox in a
@@ -344,7 +344,7 @@ def test_one_avatar_implementation() -> None:
 # checkbox. One control, three call sites.
 SWITCH_CALL_SITES = (
     "conversation/system-receipts.js",
-    "places/board/board-toolbar.js",
+    "places/tasks/tasks-toolbar.js",
     "places/log/log-filters.js",
 )
 
@@ -360,7 +360,7 @@ def _switch_payload() -> dict:
 
 
 def test_one_toggle_control() -> None:
-    """Board 'Subtasks', Log 'Follow', and the receipts toggle are one control.
+    """Tasks 'Subtasks', Log 'Follow', and the receipts toggle are one control.
 
     Scoped to the tree outside settings/: the Diagnostics and Telegram toggles
     are Tailwind markup inside the declared markup exemption (test_ui_index.py),
@@ -393,7 +393,7 @@ def test_one_toggle_control() -> None:
 
     # And the checkbox it replaces is gone.
     assert "type: 'checkbox'" not in _read(JS / "conversation/system-receipts.js")
-    assert "type: 'checkbox'" not in _read(JS / "places/board/board-toolbar.js")
+    assert "type: 'checkbox'" not in _read(JS / "places/tasks/tasks-toolbar.js")
 
 
 def test_the_switch_row_is_the_target_not_the_pill() -> None:
@@ -1165,7 +1165,7 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
 def test_the_composer_is_the_field_and_send_and_nothing_else() -> None:
     """The clipboard on the left is gone; what is left is quieter than before.
 
-    It was a third front door to the one assign form — the Board's `+ New task`
+    It was a third front door to the one assign form — the Tasks place's `+ New task`
     and the empty conversation's `Assign a task` are the other two — and the
     only one parked in front of the operator for every second they were typing.
 
@@ -1415,14 +1415,14 @@ def test_the_office_state_pill_is_readable_on_its_own_tint() -> None:
     assert "color: var(--ok-ink)" in pill
 
 
-# ─── Board: cards that recede, and one that asks for you ───
+# ─── Tasks: cards that recede, and one that asks for you ───
 
 
-def test_board_cards_match_the_concept() -> None:
+def test_task_cards_match_the_concept() -> None:
     """A card that needs the operator is bordered, not filled.
 
     Filling it would fight the column header, which already says so in words —
-    and a filled card in the Needs column would be the loudest thing on a board
+    and a filled card in the Needs column would be the loudest thing on a page
     whose whole job is to make one column stand out.
     """
     css = _read(CSS / "places.css")
@@ -1437,14 +1437,14 @@ def test_board_cards_match_the_concept() -> None:
     assert css.index(".task-card:hover") < css.index(".task-card.is-selected")
 
     # Done recedes rather than disappearing: the text dims, the card stays.
-    assert '.board-column[data-column="done"] .task-card { color: var(--muted); }' in css
+    assert '.tasks-column[data-column="done"] .task-card { color: var(--muted); }' in css
 
-    head = css.split(".board-column-title {", 1)[1].split("}", 1)[0]
+    head = css.split(".tasks-column-title {", 1)[1].split("}", 1)[0]
     assert "font-size: 12px" in head
     assert "color: var(--hint)" in head
     # The header that "already says so".
     assert (
-        '.board-column[data-column="needs"] .board-column-title { color: var(--alert); }'
+        '.tasks-column[data-column="needs"] .tasks-column-title { color: var(--alert); }'
         in css
     )
 
@@ -1452,15 +1452,15 @@ def test_board_cards_match_the_concept() -> None:
 def test_the_needy_card_reads_the_one_column_map() -> None:
     """`data-needs` is derived, never a second copy of which statuses need you.
 
-    board-columns.js is the only file that knows `blocked` and `stalled` are
-    the Needs column, and test_ui_board.py proves that map total against the
+    tasks-columns.js is the only file that knows `blocked` and `stalled` are
+    the Needs column, and test_ui_tasks.py proves that map total against the
     engine's TaskStatus. Spelling the two statuses again in the card — or in a
     CSS selector on data-status — would be the second copy that map exists to
     prevent, and it would silently stop matching the day the engine adds a
     third blocking status.
     """
-    card = _read(JS / "places/board/task-card.js")
-    assert "BossModBoardColumns.columnFor(task.status) === 'needs'" in card
+    card = _read(JS / "places/tasks/task-card.js")
+    assert "BossModTasksColumns.columnFor(task.status) === 'needs'" in card
     assert "'data-needs':" in card
     # The attribute is absent, not "false", when the task is fine — h() drops a
     # null, so there is nothing to match and nothing to explain.
@@ -1474,8 +1474,8 @@ def test_the_needy_card_reads_the_one_column_map() -> None:
 
     # Load order: the map must be defined before the card that reads it.
     scripts = re.findall(r"static_url\('([^']+\.js)'\)", _read(HTML))
-    assert scripts.index("js/places/board/board-columns.js") < scripts.index(
-        "js/places/board/task-card.js"
+    assert scripts.index("js/places/tasks/tasks-columns.js") < scripts.index(
+        "js/places/tasks/task-card.js"
     )
 
 
@@ -1486,10 +1486,71 @@ def test_new_task_is_a_link_not_a_fifth_bordered_button() -> None:
     `.btn-link` from controls.css — not a bespoke rule, and not a hand-rolled
     <a>.
     """
-    toolbar = _read(JS / "places/board/board-toolbar.js")
+    toolbar = _read(JS / "places/tasks/tasks-toolbar.js")
     new_task = toolbar.split("'+ New task'", 1)[0].rsplit("h('button', {", 1)[1]
     assert "class: 'btn-link'" in new_task, new_task
     assert "onclick: onNewTask" in new_task
+
+
+# ─── Promoted components: one definition each, and the surfaces that use it ───
+
+# Each of these was written twice before it was promoted to controls.css. The
+# caller lists grow as surfaces adopt them; a surface that re-grows a private
+# copy fails the one-definition half, and one that stops using the shared
+# piece fails the caller half.
+FACT_LIST_CALLERS = (
+    "places/log/diagnostic-detail.js",
+    "places/tasks/task-detail-sections.js",
+)
+EMPTY_SLOT_CALLERS = (
+    "context/desk-files.js",
+    "context/desk-notes.js",
+    "context/desk-tasks.js",
+    "places/tasks/tasks-grid.js",
+)
+CALLOUT_CALLERS = (
+    "places/tasks/assign-outcomes.js",
+    "places/tasks/task-detail-sections.js",
+)
+
+
+def test_promoted_components_have_one_definition() -> None:
+    """The fact list, the empty slot and the callout live once, in controls.css.
+
+    Log's `.log-facts` grid, the desk's `.desk-empty`, and the two tinted
+    boxes (`.assign-panel`, `.task-detail-panel`) were each a second copy of
+    a layout another surface already had. Two copies of one layout is how a
+    Log fact and a task fact, or an assign outcome and a task's status note,
+    drift apart without anyone deciding they should.
+    """
+    sheets = {path.name: _read(path) for path in sorted(CSS.glob("*.css"))}
+
+    def definers(cls: str) -> list[str]:
+        # The class as a whole selector, alone or anywhere in a selector list.
+        # A scoped use such as `.assign-form .callout { margin-top: … }` is a
+        # surface spacing the component, not a second definition of it.
+        pattern = re.compile(rf"(?:^|,)\s*{re.escape(cls)}\s*[{{,]", re.M)
+        return sorted(name for name, text in sheets.items()
+                      if pattern.search(re.sub(r"/\*.*?\*/", "", text, flags=re.S)))
+
+    assert definers(".fact-list") == ["controls.css"]
+    assert definers(".empty-slot") == ["controls.css"]
+    assert definers(".callout") == ["controls.css"]
+
+    for caller in FACT_LIST_CALLERS:
+        assert "BossModFactList.create(" in _read(JS / caller), caller
+    for caller in EMPTY_SLOT_CALLERS:
+        assert "empty-slot" in _read(JS / caller), caller
+    for caller in CALLOUT_CALLERS:
+        assert "'callout'" in _read(JS / caller), caller
+
+    # The private copies are gone, not merely unused. `.log-facts` survives as
+    # the Log's spacing only; the grid is the shared list's.
+    for name, text in sheets.items():
+        for block in re.findall(r"\.log-facts\s*\{([^}]*)\}", text):
+            assert "display: grid" not in block, f"{name} re-grows the Log's fact grid"
+        for retired in (".assign-panel", ".task-detail-panel", ".desk-empty"):
+            assert retired not in text, f"{name} still defines {retired}"
 
 
 # ─── Metrics: the health panel, and rows that line up ───

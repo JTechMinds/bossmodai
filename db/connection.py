@@ -272,6 +272,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "cli_policy_rules", "cwd_prefix", "VARCHAR",
     )
+    _add_column_if_missing(
+        con, "tasks", "closed_at", "TIMESTAMP",
+    )
+    _backfill_task_closed_at(con)
 
 
 def _add_column_if_missing(
@@ -283,6 +287,26 @@ def _add_column_if_missing(
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         logger.info("Migration: added column %s.%s", table, column)
+
+
+def _backfill_task_closed_at(con: SQLiteCompatConnection) -> None:
+    """Give every finished task a finish time.
+
+    Rows that ended before ``closed_at`` existed carry NULL. ``last_activity``
+    is the nearest recorded time to their finish, and it is the time the
+    operator was shown for them until now. Only NULLs are written, so this is
+    idempotent and never rewrites a stamp ``update_task`` made.
+    """
+    # Imported here, not at module top: db must be importable before core.tasking.
+    from core.tasking.transitions import TERMINAL_TASK_STATUSES
+
+    statuses = sorted(TERMINAL_TASK_STATUSES)
+    placeholders = ", ".join(f"${index}" for index in range(1, len(statuses) + 1))
+    con.execute(
+        "UPDATE tasks SET closed_at = last_activity "
+        f"WHERE closed_at IS NULL AND status IN ({placeholders})",
+        statuses,
+    )
 
 
 def _create_host_path_consent_tables_if_missing(con: SQLiteCompatConnection) -> None:

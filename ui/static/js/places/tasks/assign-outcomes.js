@@ -11,20 +11,20 @@ const BossModAssignOutcomes = (() => {
     const { h } = BossModDom;
 
     /**
-     * A titled panel in one of the four tones.
+     * A titled panel in one of the four tones: the shared `.callout`.
      *
-     * @param {string} tone  'ok' | 'info' | 'warn' | 'error'.
+     * @param {string} tone  'ok' | 'info' | 'warn' | 'alert'.
      * @param {string} title
      * @param {...(Node|null)} children
      * @returns {HTMLElement}
      */
     function panel(tone, title, ...children) {
-        return h('div', { class: 'assign-panel', 'data-tone': tone },
-            h('p', { class: 'assign-panel-title' }, title), ...children);
+        return h('div', { class: 'callout', 'data-tone': tone },
+            h('p', { class: 'callout-title' }, title), ...children);
     }
 
     function line(text) {
-        return h('p', { class: 'assign-panel-body' }, text);
+        return h('p', { class: 'callout-body' }, text);
     }
 
     function mismatchPanel(body, handlers) {
@@ -103,7 +103,7 @@ const BossModAssignOutcomes = (() => {
         }
         if (body.outcome === 'specialty_mismatch') return mismatchPanel(body, handlers);
         if (body.outcome === 'clarify_ambiguous_match') return clarifyPanel(body, handlers);
-        return panel('error', 'Unexpected outcome', line(String(body.outcome || 'unknown')));
+        return panel('alert', 'Unexpected outcome', line(String(body.outcome || 'unknown')));
     }
 
     /**

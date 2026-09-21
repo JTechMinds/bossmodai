@@ -404,6 +404,45 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   color: var(--hint);
 }
 
+/* ─── Fact list ───
+ *
+ * Label/value pairs as a <dl> (core/fact-list.js). Promoted from the Log's
+ * diagnostic detail when the task detail became the second surface to need
+ * one; the Log keeps only its spacing, as .log-facts in places.css. Two pairs
+ * per row is the task detail's people and dates, folded back to one on a
+ * narrow window where four columns would crush the values.
+ */
+.fact-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; font-size: 12px; }
+.fact-list[data-pairs="2"] { grid-template-columns: auto 1fr auto 1fr; gap: 8px 12px; }
+.fact-label { color: var(--muted); }
+.fact-value { display: flex; align-items: center; gap: 6px; margin: 0; min-width: 0; word-break: break-word; }
+@media (max-width: 640px) { .fact-list[data-pairs="2"] { grid-template-columns: auto 1fr; } }
+
+/* ─── Empty slot ───
+ *
+ * An empty section is a section. Dashed, so it reads as a placeholder rather
+ * than as a gap where something failed to render. Promoted from the desk's
+ * own placeholder when the Tasks columns became the second surface to need it.
+ */
+.empty-slot { padding: 9px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r); }
+
+/* ─── Callout ───
+ *
+ * A titled box in one of four tones. Promoted from the assign sheet's outcome
+ * panels and the task detail's status boxes, which were one layout written
+ * twice. No tone is the quiet --bg box; the ink on each tint is that tint's
+ * own pair, measured in test_ui_tokens.py.
+ */
+.callout { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
+.callout[data-tone="ok"] { border-color: var(--ok); background: var(--ok-bg); }
+.callout[data-tone="info"] { border-color: var(--accent); background: var(--accent-bg); }
+.callout[data-tone="warn"] { border-color: var(--amber-ink); background: var(--amber); color: var(--amber-ink); }
+.callout[data-tone="alert"] { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+.callout-title { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; font-weight: 600; }
+.callout-title svg { width: 14px; height: 14px; flex: none; }
+.callout-body { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.callout-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
 /* ─── Tooltip ───
  *
  * One attribute, every icon-only control: `data-tooltip="Pause the AI runtime"`

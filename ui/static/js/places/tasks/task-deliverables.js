@@ -51,7 +51,8 @@ const BossModTaskDeliverables = (() => {
     }
 
     /**
-     * One deliverable card.
+     * One deliverable row: a file glyph, the file's name, what it is, and the
+     * full path it was recorded under.
      *
      * @param {object} deliverable  `{path, description}`.
      * @param {object} task  The task the deliverable belongs to — its assignee
@@ -79,8 +80,11 @@ const BossModTaskDeliverables = (() => {
                 }
             },
         },
+            h('i', { 'data-lucide': 'file-text', 'aria-hidden': 'true' }),
             h('span', { class: 'task-detail-file-name' }, fileName),
-            deliverable.description ? h('span', {}, deliverable.description) : null,
+            deliverable.description
+                ? h('span', { class: 'task-detail-file-desc' }, deliverable.description)
+                : null,
             h('span', { class: 'task-detail-file-path' }, path));
         return card;
     }

@@ -85,12 +85,8 @@ const BossModDiagnosticDetail = (() => {
     }
 
     function factList(facts) {
-        const list = h('dl', { class: 'log-facts' });
-        facts.forEach((entry) => {
-            list.append(
-                h('dt', { class: 'log-fact-label' }, entry.label),
-                h('dd', { class: 'log-fact-value' }, entry.value));
-        });
+        const list = BossModFactList.create(facts);
+        list.classList.add('log-facts'); // the Log's spacing; the layout is shared
         return list;
     }
 

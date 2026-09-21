@@ -71,14 +71,14 @@ const BossModNeedShape = (() => {
      * about where a need leads.
      *
      * Phase 2B performed the server-described GET for `blocked` and `error` and
-     * refreshed, because Board and Log did not exist yet. They do now, so those
+     * refreshed, because Tasks and Log did not exist yet. They do now, so those
      * two inspections become navigations — without an `if (kind === …)` in the
      * popover or the bar, which is how four surfaces end up with four opinions.
      * The server-described `actions` are untouched: `target` is a client
      * concern and lives client-side.
      */
     const KIND_TARGETS = Object.freeze({
-        blocked: (need) => ({ place: 'board', params: { taskId: need.id },
+        blocked: (need) => ({ place: 'tasks', params: { taskId: need.id },
             conversationId: null, conversationKind: null }),
         error: (need) => ({ place: 'log', params: { diagnosticId: need.id },
             conversationId: null, conversationKind: null }),
@@ -106,8 +106,8 @@ const BossModNeedShape = (() => {
      * People reads live activity first. Only a pending consent or CLI
      * approval paints "Needs you" on a roster row. Error cards are
      * evidence — an old timeout or a denied-consent fallout must not
-     * stick after the agent is writing again. Board blocks live on the
-     * Board, not as a Focus ask.
+     * stick after the agent is writing again. Task blocks live in
+     * Tasks, not as a Focus ask.
      */
     const OPEN_FOCUS_NEED = Object.freeze({
         consent: true,

@@ -98,7 +98,7 @@ const BossModDeskNotes = (() => {
 
         function renderEmpty() {
             clear(listEl);
-            listEl.append(h('div', { class: 'desk-empty' },
+            listEl.append(h('div', { class: 'empty-slot' },
                 h('p', { class: 'context-empty' }, EMPTY_TITLE),
                 h('p', { class: 'context-hint' }, EMPTY_HINT)));
         }

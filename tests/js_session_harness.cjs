@@ -16,12 +16,12 @@ global.window = { document: global.document, localStorage: global.localStorage }
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModSession = BossModSession;\n`);
 
 const S = BossModSession;
-const PLACES = ["chat", "office", "board", "files", "metrics", "log"];
+const PLACES = ["chat", "office", "tasks", "files", "metrics", "log"];
 const ctx = { places: PLACES, agentIds: ["a1"], threadIds: ["t1"] };
 
 // Only the five allowed keys persist.
 S.save({
-    place: "board", conversationId: "a1", conversationKind: "agent",
+    place: "tasks", conversationId: "a1", conversationKind: "agent",
     contextMode: "desk", railCollapsed: true,
     roster: [1, 2, 3], needs: ["secret"],
 });
@@ -34,7 +34,7 @@ if (Object.keys(raw).sort().join(",") !==
 
 // A valid round-trip survives.
 let restored = S.validate(S.load(), ctx);
-if (restored.place !== "board" || restored.conversationId !== "a1") {
+if (restored.place !== "tasks" || restored.conversationId !== "a1") {
     throw new Error("valid session must round-trip");
 }
 

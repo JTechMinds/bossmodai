@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These eight answer one question — how does a value read on screen. They have
+ * These ten answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -78,6 +78,38 @@ const BossModFormat = (() => {
         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     /**
+     * Parse a stored timestamp, or report that there is none.
+     * @param {string|null} isoString
+     * @returns {Date|null} null when missing or unparseable.
+     */
+    function parse(isoString) {
+        if (!isoString) return null;
+        const then = new Date(isoString);
+        return isNaN(then.getTime()) ? null : then;
+    }
+
+    /** Whether two instants share a LOCAL calendar day. */
+    function sameDay(a, b) {
+        return a.getFullYear() === b.getFullYear()
+            && a.getMonth() === b.getMonth()
+            && a.getDate() === b.getDate();
+    }
+
+    /** `9:05 AM`, by hand, for the reason formatActivityTime gives. */
+    function clockTime(date) {
+        const hour24 = date.getHours();
+        const hour = hour24 % 12 === 0 ? 12 : hour24 % 12;
+        const minute = String(date.getMinutes()).padStart(2, '0');
+        return `${hour}:${minute} ${hour24 < 12 ? 'AM' : 'PM'}`;
+    }
+
+    /** `Sep 2` this year, `Sep 2, 2025` in any other. */
+    function calendarDay(date, now) {
+        const day = `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+        return date.getFullYear() === now.getFullYear() ? day : `${day}, ${date.getFullYear()}`;
+    }
+
+    /**
      * When something last happened, absolutely — `10:10 AM` today, `Sep 2`
      * earlier this year, `Sep 2, 2025` before that.
      *
@@ -102,21 +134,51 @@ const BossModFormat = (() => {
      *   caller renders no time at all rather than a fabricated one.
      */
     function formatActivityTime(isoString) {
-        if (!isoString) return '';
-        const then = new Date(isoString);
-        if (isNaN(then.getTime())) return '';
+        const then = parse(isoString);
+        if (!then) return '';
         const now = new Date();
-        const sameYear = then.getFullYear() === now.getFullYear();
-        if (sameYear
-            && then.getMonth() === now.getMonth()
-            && then.getDate() === now.getDate()) {
-            const hour24 = then.getHours();
-            const hour = hour24 % 12 === 0 ? 12 : hour24 % 12;
-            const minute = String(then.getMinutes()).padStart(2, '0');
-            return `${hour}:${minute} ${hour24 < 12 ? 'AM' : 'PM'}`;
-        }
-        const day = `${MONTHS[then.getMonth()]} ${then.getDate()}`;
-        return sameYear ? day : `${day}, ${then.getFullYear()}`;
+        return sameDay(then, now) ? clockTime(then) : calendarDay(then, now);
+    }
+
+    /**
+     * The heading a day's worth of finished work sits under — `Today`,
+     * `Yesterday`, `Sep 18` this year, `Sep 18, 2025` before it.
+     *
+     * "Yesterday" is the local calendar day before today, not "within the last
+     * 24 hours": 23:00 last night read at noon is under a day ago and is still
+     * yesterday on the operator's clock. Local fields throughout, for the
+     * reason formatActivityTime gives.
+     *
+     * @param {string|null} isoString
+     * @returns {string} '' when the timestamp is missing or unparseable — the
+     *   caller decides what an undated item means rather than being handed a
+     *   day nobody recorded.
+     */
+    function formatDayLabel(isoString) {
+        const then = parse(isoString);
+        if (!then) return '';
+        const now = new Date();
+        if (sameDay(then, now)) return 'Today';
+        const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        if (sameDay(then, yesterday)) return 'Yesterday';
+        return calendarDay(then, now);
+    }
+
+    /**
+     * A moment, absolutely and in full — `Sep 21, 9:35 AM`, with the year
+     * added off this year: `Sep 21, 2025, 9:05 PM`.
+     *
+     * For a fact that is read once and must not be worked out, such as when a
+     * task finished; the rail's formatActivityTime drops the date on today's
+     * rows because it is scanned, and this never does.
+     *
+     * @param {string|null} isoString
+     * @returns {string} '' when the timestamp is missing or unparseable.
+     */
+    function formatDateTime(isoString) {
+        const then = parse(isoString);
+        if (!then) return '';
+        return `${calendarDay(then, new Date())}, ${clockTime(then)}`;
     }
 
     /**
@@ -192,6 +254,8 @@ const BossModFormat = (() => {
         escapeAttribute,
         formatRelativeTime,
         formatActivityTime,
+        formatDayLabel,
+        formatDateTime,
         formatNumber,
         formatDuration,
         formatTokenCount,
