@@ -52,6 +52,18 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_max_tokens", "8192", "llm"),
     ("llm_request_timeout_seconds", "120", "llm"),
     ("decision_repair_attempts", "6", "llm"),
+    # System AI + compaction pressure knobs (Settings → System → AI Output).
+    # Compaction never runs every turn, and it never blocks an agent turn.
+    # When compactors exist they queue in the background. These keys only
+    # store the choice and the knobs; no compaction runner ships with them.
+    # system_ai_connection is one AI connection id (empty = unset), not a
+    # per-agent identity model override. compaction_mode is off | pressure_only.
+    ("system_ai_connection", "", "llm"),
+    ("compaction_mode", "pressure_only", "llm"),
+    ("compaction_task_budget_headroom_percent", "25", "llm"),
+    ("compaction_chat_budget_headroom_percent", "35", "llm"),
+    ("compaction_min_turns_between_runs", "8", "llm"),
+    ("compaction_cooldown_minutes", "10", "llm"),
     ("managed_writer_max_batch_files", "8", "llm"),
     ("managed_writer_max_sections_per_file", "8", "llm"),
 
