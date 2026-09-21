@@ -676,13 +676,14 @@ def _maybe_nest_git_auth_failure(
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.nest_git import (
         classify_git_auth_failure,
+        is_gh_cli,
         is_git_cli,
         shell_output_looks_like_git_auth_failure,
     )
     from core.bm_cli.nest_git_consent import bounce_nest_git_after_auth_failure
 
     del trigger_type
-    if not is_git_cli(parsed):
+    if not is_git_cli(parsed) and not is_gh_cli(parsed):
         return None
     stdout = str(getattr(shell_exec, "stdout", "") or "")
     stderr = str(getattr(shell_exec, "stderr", "") or "")
@@ -1062,20 +1063,17 @@ def _agent_git_identity_env(agent: Agent) -> dict[str, str]:
 
 
 def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[str, str]:
-    """Agent git identity, plus nest-git auth env on the shared git Shell path.
+    """Agent git identity, plus nest-git auth env on the shared git/gh Shell path.
 
     PAT/askpass is applied for every git argv so a saved token reaches push
-    even when the gate's cwd/subcommand check missed. Values are never logged.
-
-    Parked: Nest git → gh subprocess inject. Do not copy a PAT into GH_TOKEN
-    or GITHUB_TOKEN for a gh argv.
+    even when the gate's cwd/subcommand check missed. A matching PAT is
+    copied into ``GH_TOKEN`` / ``GITHUB_TOKEN`` only for a gh argv. Values
+    are never logged and never returned in tool output.
     """
     extra = _agent_git_identity_env(agent)
     from core.bm_cli.nest_git import is_gh_cli, is_git_cli, nest_git_shell_env
 
-    if is_gh_cli(parsed):
-        return extra
-    if is_git_cli(parsed):
+    if is_gh_cli(parsed) or is_git_cli(parsed):
         extra.update(nest_git_shell_env(agent, parsed, cwd))
     return extra
 

@@ -1,9 +1,10 @@
 """Hard-deny environment dumps of GitHub / nest-git tokens.
 
 ``printenv`` and ``env`` argv that name ``GH_TOKEN`` / ``GITHUB_TOKEN`` (and
-kin) are ``never_allowed``. The detector is shared policy, not a per-command
-runtime if/else. Token *values* must never enter chat, logs, or prompts —
-this module only matches variable *names*.
+kin) are ``never_allowed``. ``gh auth token`` is the same class of dump.
+The detector is shared policy, not a per-command runtime if/else. Token
+*values* must never enter chat, logs, or prompts — matching uses variable
+*names*; redaction uses values already present on a subprocess env dict.
 """
 
 from __future__ import annotations
@@ -24,6 +25,14 @@ SECRET_TOKEN_ENV_NAMES: frozenset[str] = frozenset({
 })
 
 _DUMP_ARGV0: frozenset[str] = frozenset({"printenv", "env"})
+_GH_ARGV0: frozenset[str] = frozenset({"gh", "gh.exe"})
+_GH_VALUE_OPTIONS: frozenset[str] = frozenset({
+    "-h",
+    "--hostname",
+    "-R",
+    "--repo",
+    "--dir",
+})
 
 _TOKEN_NAME_RE = re.compile(
     r"(?:^|[^A-Za-z0-9_])("
@@ -49,7 +58,8 @@ def command_dumps_secret_token_env(command_str: str) -> bool:
 
     Any ``printenv`` is a dump (including a bare ``printenv``). ``env`` only
     matches when an argv token names one of :data:`SECRET_TOKEN_ENV_NAMES`, so
-    the diagnostic ``env`` seed stays always-allowed.
+    the diagnostic ``env`` seed stays always-allowed. ``gh auth token`` prints
+    the injected token and is the same deny.
     """
     text = (command_str or "").strip()
     if not text:
@@ -60,8 +70,10 @@ def command_dumps_secret_token_env(command_str: str) -> bool:
         tokens = text.split()
     if not tokens:
         return False
-    argv0_names = _argv0_dump_names(tokens[0])
-    if "printenv" in argv0_names:
+    argv0_names = _argv0_names(tokens[0])
+    if argv0_names & _DUMP_ARGV0 and "printenv" in argv0_names:
+        return True
+    if argv0_names & _GH_ARGV0 and _gh_auth_token_dump(tokens[1:]):
         return True
     if "env" not in argv0_names:
         return False
@@ -69,7 +81,60 @@ def command_dumps_secret_token_env(command_str: str) -> bool:
     return bool(_TOKEN_NAME_RE.search(blob))
 
 
-def _argv0_dump_names(argv0: str) -> set[str]:
+def redact_secret_env_values(text: str, extra_env: dict[str, str] | None) -> str:
+    """Replace secret *values* from *extra_env* so they never enter results.
+
+    Only keys in :data:`SECRET_TOKEN_ENV_NAMES` are scrubbed. Empty values
+    are skipped. The env dict itself is never logged.
+    """
+    if not text or not extra_env:
+        return text
+    redacted = text
+    for name, value in extra_env.items():
+        if name not in SECRET_TOKEN_ENV_NAMES:
+            continue
+        secret = (value or "").strip()
+        if secret:
+            redacted = redacted.replace(secret, "***")
+    return redacted
+
+
+def _gh_auth_token_dump(args: list[str]) -> bool:
+    index = 0
+    tokens = list(args)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            key = token.split("=", 1)[0]
+            if key in _GH_VALUE_OPTIONS and "=" not in token:
+                index += 2
+                continue
+            index += 1
+            continue
+        break
+    if index >= len(tokens) or tokens[index] != "auth":
+        return False
+    index += 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            key = token.split("=", 1)[0]
+            if key in _GH_VALUE_OPTIONS and "=" not in token:
+                index += 2
+                continue
+            index += 1
+            continue
+        return token == "token"
+    return index < len(tokens) and tokens[index] == "token"
+
+
+def _argv0_names(argv0: str) -> set[str]:
     token = (argv0 or "").strip()
     if not token:
         return set()
@@ -78,4 +143,4 @@ def _argv0_dump_names(argv0: str) -> set[str]:
         names.add(Path(token).expanduser().name.lower())
     except OSError:
         pass
-    return {name for name in names if name in _DUMP_ARGV0}
+    return names

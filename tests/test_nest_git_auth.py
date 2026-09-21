@@ -291,6 +291,8 @@ def test_pat_uses_bm1_wrap_and_bot_identity() -> None:
     assert extra["GIT_TERMINAL_PROMPT"] == "0"
     assert extra["GIT_CONFIG_VALUE_1"] == "x-access-token"
     assert extra["GIT_CONFIG_VALUE_0"] == ""
+    assert "GH_TOKEN" not in extra
+    assert "GITHUB_TOKEN" not in extra
     status = nest_git_status()
     assert status["has_pat"] is True
     assert status["pat_last4"] == token[-4:]

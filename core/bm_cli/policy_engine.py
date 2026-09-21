@@ -7,7 +7,7 @@ cached until :meth:`PolicyEngine.reload` invalidates them.
 Evaluation order (first match wins):
     1. Virtual commands  -> allowed, executor="virtual"
     2. never_allowed     -> denied
-       (includes printenv / env dumps of GH_TOKEN / GITHUB_TOKEN)
+       (includes printenv / env dumps of GH_TOKEN / GITHUB_TOKEN, and gh auth token)
     3. always_allowed    -> allowed, executor="shell"
     4. approval_required -> denied, approval_required=True
     5. Default policy    -> ``cli_default_policy`` setting ("deny" or "approval_required")

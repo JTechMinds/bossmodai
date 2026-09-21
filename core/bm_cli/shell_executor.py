@@ -225,6 +225,13 @@ def _truncate(text: str, max_bytes: int) -> str:
     return f"{truncated}\n[truncated — {total} bytes total]"
 
 
+def _redact_injected_secrets(text: str, extra_env: dict[str, str] | None) -> str:
+    """Strip Nest git / GH token values from captured output before it leaves."""
+    from core.bm_cli.secret_env import redact_secret_env_values
+
+    return redact_secret_env_values(text, extra_env)
+
+
 def execute_shell_command(
     command: str,
     *,
@@ -311,8 +318,8 @@ def execute_shell_command(
         )
         duration_ms = int((time.monotonic() - start) * 1000)
 
-        stdout = _truncate(proc.stdout, max_output_bytes)
-        stderr = _truncate(proc.stderr, max_output_bytes)
+        stdout = _redact_injected_secrets(_truncate(proc.stdout, max_output_bytes), extra_env)
+        stderr = _redact_injected_secrets(_truncate(proc.stderr, max_output_bytes), extra_env)
 
         logger.info(
             "shell command=%r exit_code=%d duration_ms=%d",
@@ -331,8 +338,14 @@ def execute_shell_command(
 
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
-        stdout = _truncate(exc.stdout or "", max_output_bytes) if exc.stdout else ""
-        stderr = _truncate(exc.stderr or "", max_output_bytes) if exc.stderr else ""
+        stdout = _redact_injected_secrets(
+            _truncate(exc.stdout or "", max_output_bytes) if exc.stdout else "",
+            extra_env,
+        )
+        stderr = _redact_injected_secrets(
+            _truncate(exc.stderr or "", max_output_bytes) if exc.stderr else "",
+            extra_env,
+        )
 
         logger.warning(
             "shell command=%r timed out after %ds", command, timeout_seconds,
