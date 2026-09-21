@@ -115,12 +115,12 @@ const SystemSection = (() => {
         llm_request_timeout_seconds: {
             order: 30,
             label: 'LLM Request Timeout (seconds)',
-            description: 'Maximum time one model call may run before the runtime aborts it and surfaces a timeout error.',
+            description: 'Maximum time one model call may run before the runtime aborts it. Default 720 seconds (12 minutes). On a decision turn, that abort counts toward Decision Repair Attempts, then the commitment is re-queued.',
         },
         decision_repair_attempts: {
             order: 35,
             label: 'Decision Repair Attempts',
-            description: 'How many times a decision turn may ask the model to replace prose, invented keys, or broken JSON with one JSON envelope before the turn fail-closes.',
+            description: 'How many times a decision turn may ask the model to replace a timeout, prose, invented keys, or broken JSON with one JSON envelope before the turn posts one thread note and re-queues the commitment.',
         },
         max_concurrent_agent_turns: {
             order: 36,

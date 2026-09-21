@@ -156,6 +156,30 @@ def _build_decision_repair_messages(
     ]
     return messages
 
+def _build_decision_timeout_repair_messages(*, timeout_seconds: float) -> list[dict[str, str]]:
+    """Steer a timed-out decision turn to retry with one JSON envelope.
+
+    The same preserve-intent and keys blocks used for parse repair keep the
+    model from inventing Board status or a fake Done.
+    """
+    return [
+        {
+            "role": "system",
+            "content": _render_loop_prompt(
+                "internal_loop_decision_repair_timeout",
+                parsed_error=f"after {timeout_seconds:g}s",
+            ),
+        },
+        {
+            "role": "system",
+            "content": load_default_prompt("internal_loop_decision_repair_preserve_intent"),
+        },
+        {
+            "role": "system",
+            "content": load_default_prompt("internal_loop_decision_repair_keys"),
+        },
+    ]
+
 def _build_execution_repair_messages(*, parsed_error: str) -> list[dict[str, str]]:
     """Build one strict repair prompt after invalid execution JSON."""
     return [

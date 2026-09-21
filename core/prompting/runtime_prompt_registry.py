@@ -58,6 +58,7 @@ _RUNTIME_PROMPT_SURFACES: tuple[RuntimePromptSurface, ...] = (
     ),
     RuntimePromptSurface("internal_loop_decision_cli_followup", "Internal Decision CLI Follow-up", "default_file", "internal_loop"),
     RuntimePromptSurface("internal_loop_decision_repair_primary", "Internal Decision Repair Primary", "default_file", "internal_loop"),
+    RuntimePromptSurface("internal_loop_decision_repair_timeout", "Internal Decision Repair Timeout", "default_file", "internal_loop"),
     RuntimePromptSurface(
         "internal_loop_decision_repair_preserve_intent",
         "Internal Decision Repair Preserve Intent",
