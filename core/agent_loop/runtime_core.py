@@ -5,7 +5,7 @@ bars live in Description. This block is the shared operational contract:
 identity, desk/``/me``, cold notes, standing prefs, allowed tools, host-path
 consent, workspace preference, checkable done, audience soft-judgment,
 and chat formatting.
-Fan-out still wakes every member; this is not a router and does not
+Channel discuss wakes run in rounds. This is not a router and does not
 require @.
 """
 
@@ -36,8 +36,10 @@ ALLOWED_TOOLS = (
 _RUNTIME_CORE_TITLE = "# Runtime core"
 
 AUDIENCE_SOFT_JUDGMENT = (
-    "Before you reply, decide if you're the intended audience. "
-    "If someone else's specialty clearly fits, stay quiet or post one short pass."
+    "Before you reply, choose speak or pass. "
+    "Speak only when this wake is for you; one line is enough, not an essay. "
+    "Pass is engine-side: use observe and do not post a chat message. "
+    "Do not write that you will stay quiet."
 )
 
 # Cold notes stay on demand. Standing prefs are a separate warm store.

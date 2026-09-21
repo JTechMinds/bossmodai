@@ -18,6 +18,16 @@ _TRIGGER_COLUMNS = (
     "completed_at, failed_at, created_at"
 )
 
+# Repair wakes sort after every non-repair row, so a live channel lead
+# (channel_message / channel_response) is claimed first. They still use a
+# concurrency slot once they run.
+_REPAIR_WAKE_CASE = """
+CASE
+    WHEN payload LIKE '%"repair_wake": true%' OR payload LIKE '%"repair_wake":true%' THEN 1
+    ELSE 0
+END
+"""
+
 _TRIGGER_PRIORITY_CASE = """
 CASE trigger_type
     WHEN 'human_chat' THEN 0
@@ -106,7 +116,7 @@ def list_queued_triggers(limit: int = 100) -> list[AgentTrigger]:
         SELECT {_TRIGGER_COLUMNS}
         FROM agent_triggers
         WHERE status = 'queued'
-        ORDER BY {_TRIGGER_PRIORITY_CASE}, created_at ASC, id ASC
+        ORDER BY {_REPAIR_WAKE_CASE}, {_TRIGGER_PRIORITY_CASE}, created_at ASC, id ASC
         LIMIT $1
         """,
         [limit],

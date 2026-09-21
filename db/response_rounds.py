@@ -7,6 +7,7 @@ name and parent foreign key (`session_id` vs `channel_id`). Domain façades in
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -353,6 +354,89 @@ def maybe_complete_round(schema: ResponseRoundSchema, round_id: str) -> Any | No
     if row and int(row["open_count"]) == 0:
         return complete_round(schema, round_id)
     return get_round(schema, round_id)
+
+
+def _json_id_list(raw: Any) -> list[str]:
+    """Parse a JSON list of agent ids. Bad payloads become an empty list."""
+    if isinstance(raw, list):
+        return [str(item) for item in raw if str(item).strip()]
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]
+
+
+def channel_round_meta(round_id: str) -> dict[str, Any] | None:
+    """Return channel-only round orchestration fields.
+
+    Meeting rounds do not use these columns. Missing rows return None.
+    ``dispatch_mode`` defaults to the legacy fan-out queue when unset.
+    """
+    token = (round_id or "").strip()
+    if not token:
+        return None
+    row = query_one(
+        """
+        SELECT round_index, dispatch_mode, stepped_out, next_mentions
+        FROM channel_response_rounds
+        WHERE id = $1
+        """,
+        [token],
+    )
+    if row is None:
+        return None
+    mode = str(row.get("dispatch_mode") or "").strip() or "fanout"
+    try:
+        index = int(row.get("round_index") or 1)
+    except (TypeError, ValueError):
+        index = 1
+    return {
+        "round_index": index if index > 0 else 1,
+        "dispatch_mode": mode,
+        "stepped_out": _json_id_list(row.get("stepped_out")),
+        "next_mentions": _json_id_list(row.get("next_mentions")),
+    }
+
+
+def set_channel_round_meta(
+    round_id: str,
+    *,
+    round_index: int | None = None,
+    dispatch_mode: str | None = None,
+    stepped_out: list[str] | None = None,
+    next_mentions: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """Update channel round orchestration fields. Omitted fields stay put."""
+    token = (round_id or "").strip()
+    if not token:
+        return None
+    fields: dict[str, object] = {"updated_at": datetime.now(timezone.utc)}
+    if round_index is not None:
+        fields["round_index"] = round_index
+    if dispatch_mode is not None:
+        fields["dispatch_mode"] = dispatch_mode
+    if stepped_out is not None:
+        fields["stepped_out"] = json.dumps(list(stepped_out))
+    if next_mentions is not None:
+        fields["next_mentions"] = json.dumps(list(next_mentions))
+    if len(fields) == 1:
+        return channel_round_meta(token)
+    assignments = ", ".join(f"{key} = ${index + 1}" for index, key in enumerate(fields.keys()))
+    params = list(fields.values()) + [token]
+    execute(
+        f"""
+        UPDATE channel_response_rounds
+        SET {assignments}
+        WHERE id = ${len(params)}
+        """,
+        params,
+    )
+    return channel_round_meta(token)
 
 
 def delete_rounds_for_parent(schema: ResponseRoundSchema, parent_id: str) -> None:

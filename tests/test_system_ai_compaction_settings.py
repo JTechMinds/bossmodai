@@ -114,6 +114,7 @@ def test_ai_output_renders_system_ai_and_compaction_knobs() -> None:
     order = [row["key"] for row in payload["fresh"]]
     assert order == [
         "decision_repair_attempts",
+        "max_concurrent_agent_turns",
         "system_ai_connection",
         "compaction_mode",
         "compaction_task_budget_headroom_percent",
@@ -124,6 +125,12 @@ def test_ai_output_renders_system_ai_and_compaction_knobs() -> None:
     ]
     for row in rows.values():
         assert row["category"] == "llm"
+
+    turns = rows["max_concurrent_agent_turns"]
+    assert turns["label"] == "Max Concurrent Agent Turns"
+    assert turns["value"] == "2"
+    assert "local LLM" in turns["paragraphs"][0]
+    assert "one turn" in turns["paragraphs"][0]
 
     system_ai = rows["system_ai_connection"]
     assert system_ai["label"] == "System AI"

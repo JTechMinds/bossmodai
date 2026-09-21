@@ -90,6 +90,17 @@ def tokenize(text: str | None) -> set[str]:
     return set(_TOKEN_RE.findall(text.lower()))
 
 
+def work_kind_label(text: str | None) -> SpecialtyFamily | None:
+    """Return the work-kind family named by a short clause, if one is clear."""
+    tokens = tokenize(text)
+    if not tokens:
+        return None
+    hits = [family for family, words in _WORK_KIND_TOKENS.items() if tokens & words]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
 def specialty_family(role: str | None) -> SpecialtyFamily | None:
     """Map a hire specialty (``Agent.role``) onto one v1 family, if clear.
 

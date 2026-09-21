@@ -1,7 +1,7 @@
 """Stale thread race: newer human tip discards in-flight replies at deliver.
 
-Hugh and Debra both wake on one message. A later human tip must not let the
-old prose land. The composer stays unlocked. No LLM. No @-only wake filter.
+A later human tip must not let the old prose land, and it must not leave
+two live snapshots. The composer stays unlocked. No LLM.
 """
 
 from __future__ import annotations
@@ -347,13 +347,19 @@ async def test_new_human_message_cancels_queued_older_rounds_only() -> None:
         agent_id=hugh.id,
     )
     assert hugh_candidate is not None
-    assert hugh_candidate.status == "pending"
+    assert hugh_candidate.status == "queued"
 
     assert any(
         _trigger_payload(row).get("source_message_id") == second["message_id"]
         for row in _queued_channel_rows(hugh.id)
     )
-    assert any(
+    debra_next = db.get_channel_response_candidate(
+        round_id=second["round_id"],
+        agent_id=debra.id,
+    )
+    assert debra_next is not None
+    assert debra_next.status == "pending"
+    assert not any(
         _trigger_payload(row).get("source_message_id") == second["message_id"]
         for row in _queued_channel_rows(debra.id)
     )
@@ -431,7 +437,10 @@ async def test_in_flight_channel_response_is_superseded_before_post() -> None:
         _trigger_payload(row).get("source_message_id") == later.id
         for row in _queued_channel_rows(hugh.id)
     )
-    assert any(
+    debra_next = db.get_channel_response_candidate(round_id=fresh.id, agent_id=debra.id)
+    assert debra_next is not None
+    assert debra_next.status == "pending"
+    assert not any(
         _trigger_payload(row).get("source_message_id") == later.id
         for row in _queued_channel_rows(debra.id)
     )

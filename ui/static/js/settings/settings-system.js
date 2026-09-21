@@ -122,17 +122,22 @@ const SystemSection = (() => {
             label: 'Decision Repair Attempts',
             description: 'How many times a decision turn may ask the model to replace prose, invented keys, or broken JSON with one JSON envelope before the turn fail-closes.',
         },
+        max_concurrent_agent_turns: {
+            order: 36,
+            label: 'Max Concurrent Agent Turns',
+            description: 'How many agent turns may run at once. Default 2 is safe for a local LLM. Each agent still runs at most one turn. Repair wakes use a slot and wait behind a live channel lead.',
+        },
         // Knobs only. Compactors are not wired here: when they exist they
         // queue in the background, never run every turn, and never block the
         // agent turn. system_ai_connection stores one AI connection id.
         system_ai_connection: {
-            order: 36,
+            order: 37,
             control: 'connection',
             label: 'System AI',
             description: 'Choose the AI used for system processes. This runs in the background for tasks such as compaction.',
         },
         compaction_mode: {
-            order: 37,
+            order: 38,
             control: 'select',
             label: 'Compaction Mode',
             description: 'Off disables compaction. Pressure-only queues it when a context budget is tight. Compaction never runs every turn, and it never blocks the agent turn — it queues in the background.',
@@ -142,22 +147,22 @@ const SystemSection = (() => {
             ],
         },
         compaction_task_budget_headroom_percent: {
-            order: 38,
+            order: 39,
             label: 'Task Budget Headroom (%)',
             description: 'How much of the task context budget to leave free before pressure-only compaction may queue.',
         },
         compaction_chat_budget_headroom_percent: {
-            order: 39,
+            order: 40,
             label: 'Chat Budget Headroom (%)',
             description: 'How much of the chat context budget to leave free before pressure-only compaction may queue.',
         },
         compaction_min_turns_between_runs: {
-            order: 40,
+            order: 41,
             label: 'Min Turns Between Runs',
             description: 'Minimum agent turns that must pass between compaction runs. Compaction never runs every turn.',
         },
         compaction_cooldown_minutes: {
-            order: 41,
+            order: 42,
             label: 'Cooldown (minutes)',
             description: 'Minimum minutes between compaction runs. Compaction queues in the background and never blocks the agent turn.',
         },

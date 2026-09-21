@@ -119,3 +119,35 @@ def activate_next_channel_response_candidate(round_id: str) -> ChannelResponseCa
 def maybe_complete_channel_response_round(round_id: str) -> ChannelResponseRound | None:
     """Complete the round once no pending, queued, or responding candidates remain."""
     return shared.maybe_complete_round(_SCHEMA, round_id)
+
+
+def get_channel_round_meta(round_id: str) -> dict:
+    """Return round index, dispatch mode, step-outs, and reserved mentions."""
+    meta = shared.channel_round_meta(round_id)
+    if meta is None:
+        return {
+            "round_index": 1,
+            "dispatch_mode": "fanout",
+            "stepped_out": [],
+            "next_mentions": [],
+        }
+    return meta
+
+
+def set_channel_round_meta(
+    round_id: str,
+    *,
+    round_index: int | None = None,
+    dispatch_mode: str | None = None,
+    stepped_out: list[str] | None = None,
+    next_mentions: list[str] | None = None,
+) -> dict:
+    """Persist channel round orchestration fields."""
+    meta = shared.set_channel_round_meta(
+        round_id,
+        round_index=round_index,
+        dispatch_mode=dispatch_mode,
+        stepped_out=stepped_out,
+        next_mentions=next_mentions,
+    )
+    return meta or get_channel_round_meta(round_id)

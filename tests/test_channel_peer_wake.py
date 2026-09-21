@@ -194,7 +194,8 @@ def test_start_channel_peer_round_excludes_author() -> None:
         channel_name=channel.name,
     )
 
-    assert {item["agent_id"] for item in triggers} == {jim.id, laura.id}
+    assert len(triggers) == 1
+    assert triggers[0]["agent_id"] in {jim.id, laura.id}
     assert all(item["trigger_type"] == "channel_message" for item in triggers)
     assert all(item["payload"]["round_id"] == triggers[0]["payload"]["round_id"] for item in triggers)
     assert all(item["payload"]["from_agent"] == jimothy.id for item in triggers)
@@ -220,7 +221,12 @@ async def test_human_channel_message_still_wakes_every_member() -> None:
     )
 
     assert result["round_id"]
-    assert {call["agent_id"] for call in services.calls} == {jim.id, laura.id, jimothy.id}
+    assert len(services.calls) == 1
+    assert services.calls[0]["agent_id"] in {jim.id, laura.id, jimothy.id}
+    woken = {call["agent_id"] for call in services.calls}
+    seated = {candidate.agent_id for candidate in db.list_channel_response_candidates(result["round_id"])}
+    assert seated == {jim.id, laura.id, jimothy.id}
+    assert woken <= seated
     assert all(call["trigger_type"] == "channel_message" for call in services.calls)
     assert all(call["payload"]["round_id"] == result["round_id"] for call in services.calls)
     assert all(call["payload"]["author_type"] == "human" for call in services.calls)
@@ -239,7 +245,11 @@ async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
         services=services,
     )
     first_round_id = asked["round_id"]
-    assert {call["agent_id"] for call in services.calls} == {jim.id, laura.id, jimothy.id}
+    assert {candidate.agent_id for candidate in db.list_channel_response_candidates(first_round_id)} == {
+        jim.id,
+        laura.id,
+        jimothy.id,
+    }
     for agent_id in (jim.id, laura.id, jimothy.id):
         db.mark_channel_candidate_responded(round_id=first_round_id, agent_id=agent_id)
     db.maybe_complete_channel_response_round(first_round_id)
@@ -273,7 +283,8 @@ async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
     assert "/me/jtech-cli-review-summary.md" in completed["channel_message"]["content"]
 
     peer_wakes = _channel_message_requests(completed)
-    assert {item["agent_id"] for item in peer_wakes} == {jim.id, laura.id}
+    assert len(peer_wakes) == 1
+    assert peer_wakes[0]["agent_id"] in {jim.id, laura.id}
     new_round_ids = {item["payload"]["round_id"] for item in peer_wakes}
     assert len(new_round_ids) == 1
     new_round_id = next(iter(new_round_ids))
@@ -282,12 +293,13 @@ async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
     assert all(item["payload"]["from_agent"] == jimothy.id for item in peer_wakes)
 
     persist_result_triggers(completed)
-    assert _queued_for_round(jim.id, new_round_id)
-    assert _queued_for_round(laura.id, new_round_id)
+    assert _queued_for_round(peer_wakes[0]["agent_id"], new_round_id)
     assert not _queued_for_round(jimothy.id, new_round_id)
+    other_peer = laura.id if peer_wakes[0]["agent_id"] == jim.id else jim.id
+    assert not _queued_for_round(other_peer, new_round_id)
 
     queued, active = begin_channel_response(
-        jim,
+        db.get_agent(peer_wakes[0]["agent_id"]),
         {
             "round_id": new_round_id,
             "channel_id": channel.id,
@@ -423,12 +435,19 @@ def test_task_channel_share_via_decision_reply_opens_peer_round() -> None:
     assert result.get("channel_message")
     assert result["channel_message"]["author_type"] == "agent"
     peer_wakes = _channel_message_requests(result)
-    assert {item["agent_id"] for item in peer_wakes} == {jim.id, laura.id}
+    assert len(peer_wakes) == 1
+    assert peer_wakes[0]["agent_id"] in {jim.id, laura.id}
     new_round_id = peer_wakes[0]["payload"]["round_id"]
     assert new_round_id != first_round.id
+    seated = {
+        candidate.agent_id
+        for candidate in db.list_channel_response_candidates(new_round_id)
+    }
+    assert seated == {jim.id, laura.id}
     persist_result_triggers(result)
-    assert _queued_channel_messages(jim.id)
-    assert _queued_channel_messages(laura.id)
+    assert _queued_channel_messages(peer_wakes[0]["agent_id"])
+    other_peer = laura.id if peer_wakes[0]["agent_id"] == jim.id else jim.id
+    assert not _queued_channel_messages(other_peer)
     assert not _queued_channel_messages(jimothy.id)
 
 

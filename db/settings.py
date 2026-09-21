@@ -52,6 +52,12 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_max_tokens", "8192", "llm"),
     ("llm_request_timeout_seconds", "120", "llm"),
     ("decision_repair_attempts", "6", "llm"),
+    # How many agent turns may call the model at once. Default 2 is safe
+    # for a local LLM. One agent still runs at most one turn. Repair wakes
+    # use a slot and sort behind a live channel lead.
+    ("max_concurrent_agent_turns", "2", "llm"),
+    # Follow-up channel rounds per human message, including round 1.
+    ("channel_response_round_cap", "4", "llm"),
     # System AI + compaction pressure knobs (Settings → System → AI Output).
     # Compaction never runs every turn, and it never blocks an agent turn.
     # When compactors exist they queue in the background. These keys only

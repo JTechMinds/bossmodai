@@ -222,7 +222,12 @@ CREATE TABLE IF NOT EXISTS channel_response_rounds (
                          CHECK (status IN ('active', 'completed')),
     created_at        TIMESTAMP DEFAULT current_timestamp,
     updated_at        TIMESTAMP DEFAULT current_timestamp,
-    completed_at      TIMESTAMP
+    completed_at      TIMESTAMP,
+    -- rounds: one wake at a time. fanout: legacy parallel wake (narrow allowlist).
+    round_index       INTEGER NOT NULL DEFAULT 1,
+    dispatch_mode     VARCHAR NOT NULL DEFAULT 'fanout',
+    stepped_out       TEXT NOT NULL DEFAULT '[]',
+    next_mentions     TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS channel_response_candidates (
