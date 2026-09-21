@@ -237,7 +237,8 @@ def test_apply_decision_soft_blocks_when_bound_task_is_complete() -> None:
     assert db.get_task(done.id).status == "complete"
 
 
-def test_dispatcher_drain_skips_complete_activity_resume() -> None:
+@pytest.mark.asyncio
+async def test_dispatcher_drain_skips_complete_activity_resume() -> None:
     agent = db.create_agent("Ada", role="Engineer", desk_x=1, desk_y=1)
     task = _new_assigned_task(agent.id)
     activate_work_activity(agent.id, task)
@@ -252,7 +253,7 @@ def test_dispatcher_drain_skips_complete_activity_resume() -> None:
 
     dispatcher = TurnDispatcher()
     dispatcher._running = True
-    dispatcher._drain_queue()
+    await dispatcher._drain_queue()
 
     row = db.get_agent_trigger(trigger.id)
     assert row is not None
