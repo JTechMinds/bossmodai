@@ -74,12 +74,11 @@ const BossModMarketplaceView = (() => {
         return ITEMS.categoryLabel(slug);
     }
 
-    // The filter box, the quiet URL door, and the takeover's one exit. The
-    // door stays available while the catalog is down: a URL install does not
-    // need the catalog. The `✕` is last on the line and so sits top-right,
-    // which is both where the reference puts it and where the detail view's
-    // own copy of it is — and it is the browse view's ONLY visible exit now
-    // that the modal footer is gone, so it is never conditional.
+    // The filter box and the quiet URL door. The door stays available while
+    // the catalog is down: a URL install does not need the catalog. The
+    // takeover's exit is not on this line: it is the modal frame's `✕`, in the
+    // head above both views, so neither view builds one of its own and the
+    // browse view is never without it.
     function head(state, handlers) {
         const find = h('input', {
             class: 'market-find field-input', id: 'market-find', type: 'search',
@@ -103,7 +102,6 @@ const BossModMarketplaceView = (() => {
                 'aria-expanded': state.urlOpen ? 'true' : 'false',
                 onclick: () => handlers.onToggleUrl(),
             }, COPY.urlToggle),
-            DETAIL.dismissButton(handlers),
             state.urlOpen ? h('div', { class: 'market-url-row' },
                 h('label', { class: 'field-label', for: 'market-url' }, COPY.urlLabel),
                 url,
@@ -256,7 +254,7 @@ const BossModMarketplaceView = (() => {
      *   holding it; `browseScroll` is the browse view's reading position, read
      *   and written here because this is what destroys and rebuilds it.
      * @param {object} handlers  onQuery, onCategory, onSelect, onSection,
-     *   onBack, onDismiss, onRetry, onToggleUrl, onUrlChange, onInstallUrl,
+     *   onBack, onRetry, onToggleUrl, onUrlChange, onInstallUrl,
      *   onInstall, onUninstall, onUninstallConfirm, onUninstallCancel,
      *   onTrustConfirm, onTrustCancel.
      * @returns {void}

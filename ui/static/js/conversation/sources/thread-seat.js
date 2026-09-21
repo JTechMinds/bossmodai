@@ -122,6 +122,7 @@ const BossModThreadSeat = (() => {
                 });
                 modal = BossModOverlays.createModal({
                     title: 'Add to thread',
+                    closeOnBackdrop: true,
                     body: list,
                     actions: [{
                         id: 'thread-seat-cancel',

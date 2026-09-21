@@ -374,29 +374,44 @@
   color: var(--hint);
 }
 
-/* A tint rather than a solid accent block: a wall of filled blue makes the
-   operator's own turns the loudest thing in a transcript they are reading for
-   the agent's. --blue-ink on --accent-bg measures 6.86:1. */
+/* Neutral, not blue. A wall of filled blue made the operator's own turns the
+   loudest thing in a transcript they are reading for the AGENT's, and the
+   colour carried nothing that the right alignment, the author line and the
+   avatar side were not already saying three times over.
+
+   DARKER than the agent's --bg, though, not lighter. --bg measures 1.07:1 on
+   the --panel canvas: it is already as faint as a fill can be and still read
+   as a surface at all, so "a shade lighter than the agent's" is the one
+   direction with nothing in it — the bubble would dissolve into the page.
+   --btn-face-hover is 1.18 on the canvas and 1.10 against the agent bubble,
+   which is MORE tonal separation than the blue it replaces had (1.08). It
+   reads quieter while being better told apart.
+
+   --btn-face-hover and not --line, which measures much the same: --line is a
+   separator token and this is a surface. --btn-face-hover is a face, and it
+   is already the mention chip's fill, so the bubble joins a neutral family
+   that exists instead of minting a tone for itself. */
 .msg-human {
-  background: var(--accent-bg);
-  color: var(--blue-ink);
+  background: var(--btn-face-hover);
+  color: var(--ink);
 }
 
-/* The name sits outside the bubble tint. Time stays inside: --hint
-   measures only 4.19:1 on --accent-bg. */
-.msg-human .msg-time { color: var(--blue-ink); }
+/* The name sits outside the bubble. The time stays inside it, and --hint does
+   not survive the move: it measures 4.51:1 on the agent's --bg — AA by a
+   hundredth, and only there — against 4.10 here. --muted is 5.55. */
+.msg-human .msg-time { color: var(--muted); }
 
-/* The tint's own ink for everything markdown paints in the operator's bubble
-   too. --accent measures 4.19:1 on --accent-bg, so a link rendered at the
-   shared prose colour would fail AA in exactly the bubble the operator wrote;
-   --blue-ink on --accent-bg is 6.86:1. Inline code takes --panel for the same
-   reason: --bg on --accent-bg is barely a surface at all. */
-.msg-human .md a { color: var(--blue-ink); }
+/* The same story one step deeper. --accent is 4.51 on --bg and 4.10 on this
+   ground, so a link left at the shared prose colour would fail AA in exactly
+   the bubble the operator wrote; --accent-deep is 5.39. Inline code keeps
+   --panel because the default --bg chip lands 1.10 off this fill and stops
+   being a chip, where --panel is 1.18 and still reads as one.
+
+   Blockquotes lose their override entirely: markdown.css already paints
+   --muted inside a --line-strong rule, and --muted is 5.55 here. The old
+   override existed only to escape the blue. */
+.msg-human .md a { color: var(--accent-deep); }
 .msg-human .md :not(pre) > code { background: var(--panel); }
-.msg-human .md blockquote {
-  border-left-color: var(--blue-ink);
-  color: var(--blue-ink);
-}
 
 .msg-agent {
   background: var(--bg);
@@ -686,6 +701,44 @@
    bottom / flex-end is the same miss against a tall composer line box.
    middle is the shared center with body text.
 
+   middle is not the end of it, though, and the leftover is the whole of
+   why the chip read as sitting LOW. middle centers the chip's box on
+   `baseline + half the x-height`, which says nothing about where the
+   chip's own NAME lands: that name has a line box of its own, and its
+   baseline sits below its box's center by roughly half the font's
+   (ascent - descent). Measured on this stack the two stack up to 2.50px
+   at 14px type — the chip's text sat a full 2.5px under the sentence it
+   was sitting in. 2.50 / 14 = 0.179em, so 0.18em is the correction, and
+   it is in em so it survives a change of type size.
+
+   DERIVED, not eyeballed. To re-derive: drop a zero-height inline-block
+   inside .mention-pill-name and another after .mention-host, and read
+   the gap between their two rects. 0.00 means the chip's name is sitting
+   on the sentence's baseline, which is the target.
+
+   align-items:baseline would make that structural rather than a nudge —
+   except .mention-pill-name carries overflow:hidden for its ellipsis,
+   and a box with non-visible overflow does not hand a flex container a
+   real baseline, it synthesizes one from its bottom edge. Measured, it
+   lands 1.25px low: no better than the number it would replace, and it
+   would cost the truncation. So: middle, plus paint.
+
+   translateY, not a margin: the nudge is paint only, so it cannot drag
+   the layout box with it and re-open the jitter the negative margins
+   below are there to close.
+
+   line-height 1.2, not 1: .mention-pill-name clips with overflow:hidden
+   so it can ellipsize, and a 1.0 line box cuts the tail off every
+   descender ("Gregg", "Jayden"). 1.2 is the smallest box that clears the
+   font's descent, and the slack is also what stops the border reading as
+   if it were squeezing the name.
+
+   Vertical padding plus that descender room put the chip near 21px — the
+   whole 14px/1.5 line box. vertical-align:middle sizes the line from the
+   chip's MARGIN box, so -2px top/bottom hands the extra height back: the
+   chip paints at 21px and lays out at 17px, and a paragraph line holding
+   a mention no longer sits wider than its neighbours.
+
    base.css's 24px button floor would grow a transcript pill into a
    floating badge, so min-height/min-width are zeroed here — the chip
    is inline chrome, not a standalone target.
@@ -696,20 +749,21 @@
 .mention-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   max-width: 100%;
   min-height: 0;
   min-width: 0;
-  margin: 0 1px;
-  padding: 0 6px 0 3px;
+  margin: -2px 1px;
+  padding: 1px 8px 1px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   background: var(--btn-face-hover);
   color: inherit;
   font: inherit;
   font-weight: 400;
-  line-height: 1;
+  line-height: 1.2;
   vertical-align: middle;
+  transform: translateY(-0.18em);
   cursor: pointer;
 }
 

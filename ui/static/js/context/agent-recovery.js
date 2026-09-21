@@ -82,6 +82,7 @@ const BossModAgentRecovery = (() => {
     function confirmDestructive(title, body, confirmLabel, onConfirm) {
         BossModOverlays.createModal({
             title,
+            closeOnBackdrop: true,
             body,
             actions: [
                 { label: confirmLabel, tone: 'danger', onSelect: () => onConfirm() },

@@ -32,6 +32,10 @@ function makeEl(tag) {
             if (i !== -1) l.splice(i, 1);
         },
         focus() { activeElement = this; },
+        // A fake element is "rendered" unless it is hidden — the trap asks
+        // this to skip controls a browser would skip. Task 3's ‹ is hidden on
+        // a base layer, and must not become the trap's first stop.
+        getClientRects() { return this.hidden === true ? [] : [{}]; },
         contains(other) {
             if (other === this) return true;
             return this.children.some((c) => c.contains && c.contains(other));
@@ -40,7 +44,7 @@ function makeEl(tag) {
         // TAG rather than by parsing the selector, which is enough for the
         // three shapes here and honest about being a fake. It walks in
         // document order, which is what the trap's first/last depend on. The
-        // wide modal is the case that needs more than buttons: its body is a
+        // panel modal is the case that needs more than buttons: its body is a
         // form, and a trap that only cycled buttons would leak out of it.
         querySelectorAll() {
             const FOCUSABLE_TAGS = ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"];
@@ -142,10 +146,10 @@ yes.listeners.click[0]({ preventDefault() {} });
 if (!fired) throw new Error("primary action must fire onSelect");
 if (document.activeElement !== trigger2) throw new Error("focus must return after action");
 
-// ── The wide variant: the same contract over a body that scrolls ──
+// ── The panel size: the same contract over a body that scrolls ──
 //
 // createModal was built for a short question with two buttons. The agent form
-// is tall, so `size: 'wide'` gives it a scrolling body with the title and the
+// is tall, so `size: 'panel'` gives it a scrolling body with the title and the
 // action row pinned outside — and a scrolling body of form controls is exactly
 // where a focus trap leaks, so the trap is re-proven over one.
 const trigger3 = makeEl("button");
@@ -157,24 +161,24 @@ const area = makeEl("textarea");
 const formBody = makeEl("div");
 formBody.append(field, area);
 
-const wide = BossModOverlays.createModal({
+const panelDialog = BossModOverlays.createModal({
     title: "Edit role",
     body: formBody,
     actions: [{ label: "Cancel", tone: "quiet" }],
-    size: "wide",
+    size: "panel",
 });
 // Read before anything else opens: `plain` below is created and closed while
 // this dialog is up, and closing it hands focus back to whatever held it.
-const wideOpenedOn = document.activeElement;
+const panelOpenedOn = document.activeElement;
 
 const classesOf = (el) => String(el.getAttribute("class") || "").split(/\s+/);
-const wideModalIsMarked = classesOf(wide.element).includes("modal-panel")
-    && wide.element.getAttribute("data-size") === "wide"
-    && wide.element.getAttribute("role") === "dialog"
-    && wide.element.getAttribute("aria-modal") === "true";
-if (!wideModalIsMarked) {
-    throw new Error(`the wide variant must be the same dialog: `
-        + `${wide.element.getAttribute("class")} / ${wide.element.getAttribute("data-size")}`);
+const panelModalIsMarked = classesOf(panelDialog.element).includes("modal-panel")
+    && panelDialog.element.getAttribute("data-size") === "panel"
+    && panelDialog.element.getAttribute("role") === "dialog"
+    && panelDialog.element.getAttribute("aria-modal") === "true";
+if (!panelModalIsMarked) {
+    throw new Error(`the panel size must be the same dialog: `
+        + `${panelDialog.element.getAttribute("class")} / ${panelDialog.element.getAttribute("data-size")}`);
 }
 
 // The default size still says which it is, so the stylesheet never has to
@@ -189,17 +193,17 @@ plain.close();
 
 // The action row is a SIBLING of the body, not inside it: inside the scroller
 // it would scroll away from the form it applies to.
-const wideBody = wide.element.children.filter(
+const panelBody = panelDialog.element.children.filter(
     (c) => c.nodeType === 1 && classesOf(c).includes("modal-body"))[0];
-const wideActions = wide.element.children.filter(
+const panelActions = panelDialog.element.children.filter(
     (c) => c.nodeType === 1 && classesOf(c).includes("modal-actions"))[0];
-const cancelBtn = wideActions && wideActions.children[0];
-const wideModalActionsSitOutsideTheBody = Boolean(wideBody) && Boolean(wideActions)
-    && wideBody.contains(field)
-    && !wideBody.contains(cancelBtn)
-    && wide.element.children.indexOf(wideActions) > wide.element.children.indexOf(wideBody);
-if (!wideModalActionsSitOutsideTheBody) {
-    throw new Error("the wide modal's actions must be pinned outside the scrolling body");
+const cancelBtn = panelActions && panelActions.children[0];
+const panelModalActionsSitOutsideTheBody = Boolean(panelBody) && Boolean(panelActions)
+    && panelBody.contains(field)
+    && !panelBody.contains(cancelBtn)
+    && panelDialog.element.children.indexOf(panelActions) > panelDialog.element.children.indexOf(panelBody);
+if (!panelModalActionsSitOutsideTheBody) {
+    throw new Error("the panel modal's actions must be pinned outside the scrolling body");
 }
 
 // ── Where a form dialog starts ──
@@ -209,36 +213,42 @@ if (!wideModalActionsSitOutsideTheBody) {
 // empty form. A dialog whose BODY holds focusable content starts on the first
 // of those instead — the field the operator came to fill. A dialog whose body
 // holds nothing focusable still starts on its safe last action, which the
-// backdrop block below re-proves on a wide one.
-const wideModalFocusesFirstBodyControl = wideOpenedOn === field;
-const wideModalDoesNotFocusThePrimary = wideOpenedOn !== cancelBtn;
+// backdrop block below re-proves on a panel one.
+const panelModalFocusesFirstBodyControl = panelOpenedOn === field;
+const panelModalDoesNotFocusThePrimary = panelOpenedOn !== cancelBtn;
 
 // Tab wraps through the whole dialog rather than walking into the page behind
-// it. Driven from wherever focus actually opened, so neither leg is a no-op:
-// backwards off the first stop, then forwards off the last.
-if (document.activeElement !== wideOpenedOn) {
-    throw new Error("setup: closing `plain` must hand focus back to the wide modal");
+// it.
+if (document.activeElement !== panelOpenedOn) {
+    throw new Error("setup: closing `plain` must hand focus back to the panel modal");
 }
-const wideKeys = () => document.listeners.keydown || [];
-wideKeys().forEach((fn) => fn({ key: "Tab", shiftKey: true, preventDefault() {} }));
+const panelKeys = () => document.listeners.keydown || [];
+// The head's ✕ is the dialog's FIRST stop now, so the wrap is proven from it:
+// backwards off the ✕ lands on the last action, forwards off that lands on
+// the ✕ again. Neither leg is a no-op.
+const panelClose = panelDialog.element.children[0].children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes("modal-close"))[0];
+if (!panelClose) throw new Error("the panel modal must carry the frame's close button");
+panelClose.focus();
+panelKeys().forEach((fn) => fn({ key: "Tab", shiftKey: true, preventDefault() {} }));
 const wrappedToTheActionRow = document.activeElement === cancelBtn;
-wideKeys().forEach((fn) => fn({ key: "Tab", shiftKey: false, preventDefault() {} }));
-const wideModalTrapsTabAcrossItsBody = wrappedToTheActionRow
-    && document.activeElement === field;
-if (!wideModalTrapsTabAcrossItsBody) {
-    throw new Error(`Tab must stay inside the wide modal, got `
+panelKeys().forEach((fn) => fn({ key: "Tab", shiftKey: false, preventDefault() {} }));
+const panelModalTrapsTabAcrossItsBody = wrappedToTheActionRow
+    && document.activeElement === panelClose;
+if (!panelModalTrapsTabAcrossItsBody) {
+    throw new Error(`Tab must stay inside the panel modal, got `
         + `${document.activeElement && document.activeElement.tagName}`);
 }
 
-wideKeys().forEach((fn) => fn({ key: "Escape", preventDefault() {} }));
-const wideModalEscCloses = body.children.indexOf(wide.element) === -1;
-const wideModalRestoresFocus = document.activeElement === trigger3;
-if (!wideModalEscCloses) throw new Error("Esc must close the wide modal too");
-if (!wideModalRestoresFocus) {
-    throw new Error("the wide modal must return focus to whatever opened it");
+panelKeys().forEach((fn) => fn({ key: "Escape", preventDefault() {} }));
+const panelModalEscCloses = body.children.indexOf(panelDialog.element) === -1;
+const panelModalRestoresFocus = document.activeElement === trigger3;
+if (!panelModalEscCloses) throw new Error("Esc must close the panel modal too");
+if (!panelModalRestoresFocus) {
+    throw new Error("the panel modal must return focus to whatever opened it");
 }
 if ((document.listeners.keydown || []).length !== 0) {
-    throw new Error("the wide modal must unbind keydown on close");
+    throw new Error("the panel modal must unbind keydown on close");
 }
 
 // ── The backdrop: the thing that makes a modal modal ──
@@ -256,14 +266,14 @@ const scrimmed = BossModOverlays.createModal({
     title: "Edit role",
     body: makeEl("div"),
     actions: [{ label: "Cancel", tone: "quiet" }],
-    size: "wide",
+    size: "panel",
 });
-// It is WIDE and its body is empty, so it proves the focus rule keys off what
+// It is a PANEL and its body is empty, so it proves the focus rule keys off what
 // the body holds rather than off the size flag: nothing to type in, so the
 // keyboard lands on the action row exactly as a confirm dialog's does.
 const scrimmedActions = scrimmed.element.children.filter(
     (c) => c.nodeType === 1 && classesOf(c).includes("modal-actions"))[0];
-const bodylessWideModalFocusesLastAction = Boolean(scrimmedActions)
+const bodylessPanelModalFocusesLastAction = Boolean(scrimmedActions)
     && document.activeElement === scrimmedActions.children[scrimmedActions.children.length - 1];
 const scrims = () => body.children.filter(
     (node) => classesOf(node).includes("modal-backdrop"));
@@ -279,12 +289,13 @@ const backdropSitsBehindThePanel =
 if (!backdropSitsBehindThePanel) {
     throw new Error("the backdrop must sit behind the panel, not over it");
 }
-// The wide variant carries a half-filled form, so a stray click outside it
-// must not discard the operator's typing: the scrim carries no dismissal at
-// all. Fired anyway, in case one is ever bound.
+// The panel dialog carries a half-filled form, so a stray click outside it
+// must not discard the operator's typing. The scrim is shared by every layer
+// and always carries one listener, which dismisses only when EVERY open layer
+// opted in to closeOnBackdrop — and this dialog did not. So it is fired, and
+// the dialog must still be standing.
 (backdropNode.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
-const backdropClickDoesNotDismiss = Object.keys(backdropNode.listeners).length === 0
-    && body.children.indexOf(scrimmed.element) !== -1;
+const backdropClickDoesNotDismiss = body.children.indexOf(scrimmed.element) !== -1;
 if (!backdropClickDoesNotDismiss) {
     throw new Error("clicking the backdrop must not throw the operator's typing away");
 }
@@ -299,7 +310,7 @@ if (!closeRemovesBackdrop) {
 
 // ── Two dialogs, one Escape ──
 //
-// Opening the wide agent form and then a Delete confirm leaves TWO
+// Opening the agent form and then a Delete confirm leaves TWO
 // document-level keydown listeners, and every document listener hears every
 // key press. Neither dialog knew the other existed, so one Escape tore down
 // both — the confirm the operator meant to dismiss AND the half-filled form
@@ -333,7 +344,7 @@ const behind = BossModOverlays.createModal({
     title: "Edit role",
     body: stackedFormBody,
     actions: [{ label: "Cancel", tone: "quiet" }],
-    size: "wide",
+    size: "panel",
 });
 const inFront = BossModOverlays.createModal({
     title: "Delete Nadia?",
@@ -346,7 +357,10 @@ const inFront = BossModOverlays.createModal({
 if (panels().length !== 2) {
     throw new Error(`setup: two dialogs must be open, got ${panels().length}`);
 }
-const backdropsAtTwo = backdrops().length === 2;
+// The confirm is a LAYER over the form: one frame on screen, the form kept
+// underneath rather than destroyed.
+const lowerLayerIsHidden = behind.element.hidden === true && !inFront.element.hidden;
+const oneScrimForTwoLayers = backdrops().length === 1;
 
 pressEscape();
 const escapeClosesOnlyTheTopOverlay = panels().length === 1;
@@ -355,7 +369,7 @@ const escapeClosesOnlyTheTopOverlay = panels().length === 1;
 const escapeClosesTheConfirmNotTheFormBehindIt = panels().length === 1
     && panels()[0] === behind.element
     && body.children.indexOf(inFront.element) === -1;
-const backdropsAtOne = backdrops().length === 1;
+const oneScrimForOneLayer = backdrops().length === 1;
 
 // Read BEFORE the second press. Without it "nothing is open afterwards" is
 // true in the buggy world too — the first Escape had already closed both — and
@@ -365,13 +379,242 @@ pressEscape();
 const secondEscapeClosesTheRemainingOverlay = oneWasStillStanding
     && panels().length === 0
     && body.children.indexOf(behind.element) === -1;
-// A scrim that outlives its panel covers the app forever, so the two counts
-// are read at every step of the sequence rather than only at the end.
-const backdropCountTracksPanelCount = backdropsAtTwo && backdropsAtOne
+// One scrim for the whole stack, and none once the last layer goes: a scrim
+// that outlives its panels covers the app forever, so the count is read at
+// every step of the sequence rather than only at the end.
+const oneScrimForTheWholeStack = oneScrimForTwoLayers && oneScrimForOneLayer
     && backdrops().length === 0;
 if ((document.listeners.keydown || []).length !== 0) {
     throw new Error("both stacked dialogs must unbind keydown on close");
 }
+
+// ── The frame: a chat-chrome head on every dialog ──
+//
+// The ‹ (hidden on a base layer), the title, an optional subtitle and tools,
+// and the frame's own ✕, in that order on one row ABOVE the body. The ✕ closes exactly as Esc does, and it is where
+// the keyboard lands when neither the body nor the action row has a stop.
+const trigger6 = makeEl("button");
+body.append(trigger6);
+trigger6.focus();
+let framedClosed = 0;
+const tool = makeEl("button");
+const framed = BossModOverlays.createModal({
+    title: "a1-audit-ruling.md",
+    subtitle: "working",
+    tools: [tool],
+    body: "read-only",
+    actions: [],
+    size: "panel",
+    onClose: () => { framedClosed += 1; },
+});
+const frameHead = framed.element.children[0];
+const headKids = frameHead.children.filter((c) => c.nodeType === 1);
+const headIsFirstAndOrdered = classesOf(frameHead).includes("modal-head")
+    && headKids.length === 5
+    && classesOf(headKids[0]).includes("modal-back") && headKids[0].hidden === true
+    && classesOf(headKids[1]).includes("modal-title")
+    && headKids[1].children[0].textContent === "a1-audit-ruling.md"
+    && classesOf(headKids[2]).includes("modal-subtitle")
+    && classesOf(headKids[3]).includes("modal-tools") && headKids[3].contains(tool)
+    && classesOf(headKids[4]).includes("modal-close")
+    && classesOf(headKids[4]).includes("header-icon-btn");
+if (!headIsFirstAndOrdered) throw new Error("the head must be back, title, subtitle, tools, close");
+const panelSizeIsDeclared = framed.element.getAttribute("data-size") === "panel";
+const closeButtonTakesFocusWhenNothingElseCan = document.activeElement === headKids[4];
+const closeLabelNamesTheDialog =
+    headKids[4].getAttribute("aria-label") === "Close a1-audit-ruling.md";
+headKids[4].listeners.click[0]({ preventDefault() {} });
+const closeButtonCloses = body.children.indexOf(framed.element) === -1
+    && framedClosed === 1
+    && document.activeElement === trigger6
+    && (document.listeners.keydown || []).length === 0
+    && scrims().length === 0;
+if (!closeButtonCloses) throw new Error("the frame's close must close, once, and restore focus");
+
+// ── The backdrop, opted into ──
+//
+// A viewer or a confirm has nothing a stray click can destroy, so it may
+// close on the scrim. A function is asked AT CLICK TIME, which is how the
+// file viewer refuses while an edit is unsaved.
+const trigger7 = makeEl("button");
+body.append(trigger7);
+trigger7.focus();
+const dismissable = BossModOverlays.createModal({
+    title: "Task", body: "x", actions: [], closeOnBackdrop: true,
+});
+scrims()[0].listeners.click[0]({ preventDefault() {} });
+const optedInBackdropCloses = body.children.indexOf(dismissable.element) === -1
+    && scrims().length === 0
+    && document.activeElement === trigger7;
+
+let editing = true;
+const guarded = BossModOverlays.createModal({
+    title: "Viewer", body: "x", actions: [], closeOnBackdrop: () => !editing,
+});
+scrims()[0].listeners.click[0]({ preventDefault() {} });
+const guardRefusesWhileEditing = body.children.indexOf(guarded.element) !== -1;
+editing = false;
+scrims()[0].listeners.click[0]({ preventDefault() {} });
+const guardAllowsOnceClean = body.children.indexOf(guarded.element) === -1
+    && scrims().length === 0;
+
+let rejectsBadBackdropOption = false;
+try {
+    BossModOverlays.createModal({ title: "x", body: "x", actions: [], closeOnBackdrop: "yes" });
+} catch (err) {
+    rejectsBadBackdropOption = true;
+}
+const badOptionMountsNothing = scrims().length === 0
+    && body.children.filter((n) => classesOf(n).includes("modal-panel")).length === 0;
+
+// ── A hidden control is not a place to land ──
+//
+// The file viewer's editor waits in the body, hidden, until Edit. A browser
+// answers focus() on a hidden control by doing nothing, so opening on "the
+// first focusable" left the keyboard on the opener, behind the scrim. The fake
+// models that exactly: a focus() that does not move focus.
+const hiddenLike = (tag) => {
+    const node = makeEl(tag);
+    node.focus = () => {};
+    node.getClientRects = () => [];
+    return node;
+};
+const trigger8 = makeEl("button");
+body.append(trigger8);
+trigger8.focus();
+const hiddenEditor = hiddenLike("textarea");
+const visibleField = makeEl("input");
+const mixedBody = makeEl("div");
+mixedBody.append(hiddenEditor, visibleField);
+const mixed = BossModOverlays.createModal({ title: "Mixed", body: mixedBody, actions: [] });
+const skipsAHiddenFirstControl = document.activeElement === visibleField;
+mixed.close();
+
+const onlyHiddenBody = makeEl("div");
+onlyHiddenBody.append(hiddenLike("textarea"));
+const readOnly = BossModOverlays.createModal({ title: "Read only", body: onlyHiddenBody, actions: [] });
+const readOnlyClose = readOnly.element.children[0].children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes("modal-close"))[0];
+const allHiddenBodyFallsBackToClose = document.activeElement === readOnlyClose;
+readOnly.close();
+if (document.activeElement !== trigger8) throw new Error("setup: focus must return to trigger8");
+
+// ── The trap wraps past a hidden LAST control ──
+//
+// The file viewer ends its body with the editor, hidden until Edit. It matched
+// FOCUSABLE, so the trap took it for the last stop and never saw Tab leave the
+// last VISIBLE control — the browser then walked focus out of the dialog.
+const trigger11 = makeEl("button");
+body.append(trigger11);
+trigger11.focus();
+const readField = makeEl("input");
+const trailingBody = makeEl("div");
+trailingBody.append(readField, hiddenLike("textarea"));
+const trailing = BossModOverlays.createModal({ title: "Viewer", body: trailingBody, actions: [] });
+const trailingClose = trailing.element.children[0].children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes("modal-close"))[0];
+if (document.activeElement !== readField) throw new Error("setup: the visible field must hold focus");
+(document.listeners.keydown || []).forEach((fn) => fn({ key: "Tab", shiftKey: false, preventDefault() {} }));
+const trapWrapsPastAHiddenLastControl = document.activeElement === trailingClose;
+trailing.close();
+
+// ── Layers: one frame on screen, ‹ goes back, ✕ closes all ──
+//
+// A modal opened from a modal is a LAYER in the same frame, not a second
+// dialog on top: the one beneath is hidden (kept, not destroyed), the head
+// grows a ‹ named for it, ‹ and Esc go back one, and ✕ closes every layer.
+const findIn = (node, cls) => node.children.filter(
+    (c) => c.nodeType === 1 && classesOf(c).includes(cls))[0];
+const headOf = (handle) => handle.element.children[0];
+const trigger9 = makeEl("button");
+body.append(trigger9);
+trigger9.focus();
+const closedOrder = [];
+const baseBody = makeEl("div");
+const opener = makeEl("button");
+baseBody.append(makeEl("input"), opener);
+const baseLayer = BossModOverlays.createModal({
+    title: "Open A1 PR", body: baseBody, actions: [], size: "panel",
+    closeOnBackdrop: true, onClose: () => closedOrder.push("base"),
+});
+opener.focus();
+const topLayer = BossModOverlays.createModal({
+    title: "Cancel task?", body: "Stop the work?", actions: [{ label: "Keep it" }],
+    closeOnBackdrop: true, onClose: () => closedOrder.push("top"),
+});
+const topBack = findIn(headOf(topLayer), "modal-back");
+const oneFrameOnScreen = baseLayer.element.hidden === true
+    && !topLayer.element.hidden && scrims().length === 1;
+const backNamesTheLayerBeneath = Boolean(topBack) && topBack.hidden === false
+    && topBack.getAttribute("aria-label") === "Back to Open A1 PR"
+    && findIn(headOf(baseLayer), "modal-back").hidden === true;
+
+topBack.listeners.click[0]({ preventDefault() {} });
+const backReturnsToTheLayerBeneath = body.children.indexOf(topLayer.element) === -1
+    && baseLayer.element.hidden === false
+    && document.activeElement === opener
+    && closedOrder.join(",") === "top"
+    && scrims().length === 1;
+
+const again = BossModOverlays.createModal({
+    title: "Viewer", body: "x", actions: [], onClose: () => closedOrder.push("again"),
+});
+pressEscape();
+const escGoesBackOneLayer = body.children.indexOf(again.element) === -1
+    && body.children.indexOf(baseLayer.element) !== -1
+    && baseLayer.element.hidden === false;
+
+const third = BossModOverlays.createModal({
+    title: "Third", body: "x", actions: [], onClose: () => closedOrder.push("third"),
+});
+findIn(headOf(third), "modal-close").listeners.click[0]({ preventDefault() {} });
+const closeClosesTheWholeStack = panels().length === 0 && scrims().length === 0
+    && closedOrder.join(",") === "top,again,third,base"
+    && document.activeElement === trigger9
+    && (document.listeners.keydown || []).length === 0;
+
+// An outside click closes the stack only when EVERY layer allows it: a form
+// beneath a viewer must not lose its typing to a stray click.
+const formLayer = BossModOverlays.createModal({
+    title: "Edit agent", body: makeEl("div"), actions: [{ label: "Cancel" }],
+});
+const browseLayer = BossModOverlays.createModal({
+    title: "Marketplace", body: "x", actions: [], closeOnBackdrop: true,
+});
+scrims()[0].listeners.click[0]({ preventDefault() {} });
+const scrimSparesAStackHoldingAForm = panels().length === 2;
+findIn(headOf(browseLayer), "modal-close").listeners.click[0]({ preventDefault() {} });
+const formStackClosedByTheX = panels().length === 0 && scrims().length === 0;
+
+// close() removes exactly its own layer. A middle one closing — an action
+// that opened a dialog before its own closed — relabels the ‹ above it, and
+// the top's lost opener falls back to the new top's ✕.
+const layerA = BossModOverlays.createModal({ title: "A", body: "x", actions: [] });
+const layerB = BossModOverlays.createModal({ title: "B", body: "x", actions: [] });
+const layerC = BossModOverlays.createModal({ title: "C", body: "x", actions: [] });
+layerB.close();
+const middleCloseRelabels = findIn(headOf(layerC), "modal-back").getAttribute("aria-label") === "Back to A"
+    && panels().length === 2 && !layerC.element.hidden && layerA.element.hidden === true;
+layerC.close();
+const lostOpenerFallsBackToClose = document.activeElement === findIn(headOf(layerA), "modal-close")
+    && layerA.element.hidden === false;
+layerA.close();
+if (panels().length !== 0 || scrims().length !== 0) throw new Error("layers block must leave nothing open");
+
+// A base closing UNDER a layer — an action that opened a dialog before its own
+// closed — hands its opener up. When the last layer goes, focus returns to the
+// base screen, not to a node that left with the old base.
+const trigger12 = makeEl("button");
+body.append(trigger12);
+trigger12.focus();
+const oldBase = BossModOverlays.createModal({ title: "Old base", body: "x", actions: [] });
+const survivor = BossModOverlays.createModal({ title: "Survivor", body: "x", actions: [] });
+oldBase.close();
+const survivorBecomesTheBase = findIn(headOf(survivor), "modal-back").hidden === true
+    && !survivor.element.hidden && panels().length === 1 && scrims().length === 1;
+survivor.close();
+const baseCloseHandsItsOpenerUp = document.activeElement === trigger12
+    && panels().length === 0 && scrims().length === 0;
 
 // ── The anchored menu: same contract, third shape ──
 //
@@ -448,24 +691,50 @@ process.stdout.write(JSON.stringify({
     escClosesWithoutConfirming: true,
     restoresFocus: true,
     unbindsOnClose: true,
-    wideModalIsMarked,
-    wideModalActionsSitOutsideTheBody,
-    wideModalTrapsTabAcrossItsBody,
-    wideModalEscCloses,
-    wideModalRestoresFocus,
-    wideModalFocusesFirstBodyControl,
-    wideModalDoesNotFocusThePrimary,
+    panelModalIsMarked,
+    panelModalActionsSitOutsideTheBody,
+    panelModalTrapsTabAcrossItsBody,
+    panelModalEscCloses,
+    panelModalRestoresFocus,
+    panelModalFocusesFirstBodyControl,
+    panelModalDoesNotFocusThePrimary,
     confirmModalFocusesLastAction,
-    bodylessWideModalFocusesLastAction,
+    bodylessPanelModalFocusesLastAction,
     escapeClosesOnlyTheTopOverlay,
     escapeClosesTheConfirmNotTheFormBehindIt,
     secondEscapeClosesTheRemainingOverlay,
-    backdropCountTracksPanelCount,
+    oneScrimForTheWholeStack,
+    lowerLayerIsHidden,
     backdropExists,
     backdropSitsBehindThePanel,
     backdropClickDoesNotDismiss,
     closeRemovesBackdrop,
     escStillCloses,
+    headIsFirstAndOrdered,
+    panelSizeIsDeclared,
+    closeButtonTakesFocusWhenNothingElseCan,
+    closeLabelNamesTheDialog,
+    closeButtonCloses,
+    optedInBackdropCloses,
+    guardRefusesWhileEditing,
+    guardAllowsOnceClean,
+    rejectsBadBackdropOption,
+    badOptionMountsNothing,
+    skipsAHiddenFirstControl,
+    allHiddenBodyFallsBackToClose,
+    trapWrapsPastAHiddenLastControl,
+    oneFrameOnScreen,
+    backNamesTheLayerBeneath,
+    backReturnsToTheLayerBeneath,
+    escGoesBackOneLayer,
+    closeClosesTheWholeStack,
+    scrimSparesAStackHoldingAForm,
+    formStackClosedByTheX,
+    middleCloseRelabels,
+    lostOpenerFallsBackToClose,
+    survivorBecomesTheBase,
+    baseCloseHandsItsOpenerUp,
+    slideOverIsGone: typeof BossModOverlays.slideOver === "undefined",
     menuFocusesFirstOption,
     menuTrapsTab,
     menuEscCloses,

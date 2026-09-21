@@ -1,8 +1,10 @@
 """The Office place: one heading, a sized canvas, the pause overlay, and reuse.
 
-Spec 6.2. The Office is the first place to host a second conversation surface,
-so the assertion that matters most here is the one that keeps it from becoming
-one: it opens the shared renderer or it opens nothing.
+Spec 6.2. The Office no longer hosts a conversation surface at all: clicking an
+agent raises a small dialog of doors, so the assertion that matters most here
+is that its agent click routes through the roster's own routes
+(shell/agent-routes.js) — "Open chat" and "View desk" mean one thing
+everywhere — and that no second transcript or composer ever grows beside it.
 """
 
 from __future__ import annotations
@@ -76,18 +78,51 @@ def test_paused_shows_the_overlay_and_dims_the_floor() -> None:
     assert ".office-stage.is-paused .office-canvas" in css, "the dim class must be styled"
 
 
-def test_desk_click_reuses_the_one_conversation_renderer() -> None:
-    """A desk opens the shared conversation; it never builds a second one."""
-    source = _read("office-place.js")
-    assert "BossModConversation.createConversation(" in source
-    assert "deskConversation.open(agentId, 'agent')" in source
+def test_agent_click_offers_chat_and_desk_through_the_shared_routes() -> None:
+    """A click on the floor or the org chart asks where to go; it hosts nothing.
+
+    The Office used to open a whole conversation in a slide-out. Now it raises
+    a small dialog of doors, and each door is the roster's own route — so
+    "Open chat" and "View desk" mean one thing everywhere in the app.
+    """
+    place = _read("office-place.js")
+    actions = _read("agent-actions.js")
+    assert place.count("onAgentClick: openAgentActions") == 2  # map and org chart
+    assert "BossModOfficeAgentActions.open({" in place
+    assert "BossModAgentRoutes.openConversation(routes, agent.id, 'agent')" in place
+    assert "BossModAgentRoutes.openDesk(routes, agent.id)" in place
+    assert "BossModConversation" not in place, "the Office hosts no conversation now"
+    assert "slideOver" not in place
     for internal in CONVERSATION_INTERNALS:
-        assert internal not in source, (
-            f"office-place.js names {internal}; the conversation surface is "
-            f"BossModConversation's, not the Office's"
-        )
-    # The slide-over is the shared, focus-trapped one from core/overlays.js.
-    assert "BossModOverlays.slideOver(" in source
+        assert internal not in place
+    assert "BossModOverlays.createModal({" in actions
+    assert "closeOnBackdrop: true" in actions
+    assert "'Open chat'" in actions and "'View desk'" in actions
+
+
+def test_agent_actions_harness() -> None:
+    harness = Path(__file__).resolve().parent / "js_office_agent_actions_harness.cjs"
+    modules = [
+        JS / "core" / "dom.js", JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js",
+        JS / "core" / "avatar.js", JS / "core" / "agent-status.js", JS / "core" / "store.js",
+        JS / "shell" / "agent-routes.js", OFFICE / "agent-actions.js",
+    ]
+    result = subprocess.run(
+        ["node", str(harness), *map(str, modules)],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "opensOneDialogForTheAgent": True,
+        "openChatRoutesToChat": True,
+        "viewDeskRoutesToTheDesk": True,
+        "backdropCloses": True,
+        "routesDoNotRenavigateInsideChat": True,
+        "refusesAMissingAgent": True,
+        "refusesAnUnknownKind": True,
+    }
 
 
 def test_canvas_motion_harness() -> None:

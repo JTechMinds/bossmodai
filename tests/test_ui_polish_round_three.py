@@ -39,7 +39,7 @@ def _rule(css: str, selector: str) -> str:
     """The declaration block of exactly one rule.
 
     Anchored on a newline and a following `{`, so `.modal-panel` never picks up
-    `.modal-panel[data-size="wide"]` and `.conversation-title` never picks up
+    `.modal-panel[data-size="panel"]` and `.conversation-title` never picks up
     `.conversation-title-edit`.
     """
     opener = re.search(rf"(?m)^{re.escape(selector)}\s*\{{", css)
@@ -492,7 +492,7 @@ def _agent_form_payload() -> dict:
 
 
 def test_one_modal_implementation_with_a_size_variant() -> None:
-    """The wide dialog is a VARIANT, not a second modal.
+    """The panel dialog (born `wide`) is a VARIANT, not a second modal.
 
     createModal was built for a short question with two buttons; the agent
     form is tall enough to need a scrolling body. Forking it would have been
@@ -512,8 +512,8 @@ def test_one_modal_implementation_with_a_size_variant() -> None:
     panel = _rule(css, ".modal-panel")
     assert "position: fixed" in panel
     assert "translate(-50%, -50%)" in panel
-    wide = _rule(css, '.modal-panel[data-size="wide"]')
-    assert "width:" in wide
+    sized = _rule(css, '.modal-panel[data-size="panel"]')
+    assert "width:" in sized
     # The BODY scrolls; the title and the action row are pinned outside it.
     body = _rule(css, ".modal-body")
     assert "overflow-y: auto" in body
@@ -530,12 +530,12 @@ def test_the_wide_modal_keeps_the_shared_keyboard_contract() -> None:
     """
     payload = _run("js_overlays_harness.cjs",
                    [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js"])
-    assert payload["wideModalIsMarked"] is True
-    assert payload["wideModalTrapsTabAcrossItsBody"] is True
-    assert payload["wideModalEscCloses"] is True
-    assert payload["wideModalRestoresFocus"] is True
+    assert payload["panelModalIsMarked"] is True
+    assert payload["panelModalTrapsTabAcrossItsBody"] is True
+    assert payload["panelModalEscCloses"] is True
+    assert payload["panelModalRestoresFocus"] is True
     # The action row is not inside the scroller, or it would scroll away.
-    assert payload["wideModalActionsSitOutsideTheBody"] is True
+    assert payload["panelModalActionsSitOutsideTheBody"] is True
 
 
 def test_both_agent_flows_open_the_centred_modal() -> None:
@@ -546,7 +546,7 @@ def test_both_agent_flows_open_the_centred_modal() -> None:
     """
     edit = _read(JS / "context/agent-edit.js")
     assert "BossModOverlays.createModal(" in edit
-    assert "size: 'wide'" in edit
+    assert "size: 'panel'" in edit
 
     # The context column no longer hosts a form, and the state that reached it
     # is gone rather than left reachable.
@@ -557,8 +557,8 @@ def test_both_agent_flows_open_the_centred_modal() -> None:
     assert "placeParams.hire" not in place
 
     payload = _context_payload()
-    assert payload["editOpensTheWideModal"] is True
-    assert payload["hireOpensTheWideModal"] is True
+    assert payload["editOpensThePanelModal"] is True
+    assert payload["hireOpensThePanelModal"] is True
     assert payload["modalIsAttachedToTheBodyNotTheColumn"] is True
     # The desk comes back when the dialog closes, rather than the column being
     # left holding whatever was there before.

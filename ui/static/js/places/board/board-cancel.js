@@ -61,6 +61,7 @@ const BossModBoardCancel = (() => {
             if (ids.length === 0) return;
             BossModOverlays.createModal({
                 title,
+                closeOnBackdrop: true,
                 body: BODY_COPY,
                 actions: [
                     { label: 'Cancel tasks', tone: 'danger', onSelect: () => { void post(ids); } },

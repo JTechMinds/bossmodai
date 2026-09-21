@@ -224,6 +224,7 @@ const BossModHeader = (() => {
             }
             BossModOverlays.createModal({
                 title: PAUSE_DIALOG_TITLE,
+                closeOnBackdrop: true,
                 body: PAUSE_DIALOG_BODY,
                 actions: [
                     { label: 'Pause everyone', tone: 'danger', onSelect: () => { void setPaused(true); } },

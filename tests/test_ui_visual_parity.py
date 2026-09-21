@@ -1135,8 +1135,12 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     human_turn = css.split(".msg-turn-human {", 1)[1].split("}", 1)[0]
     assert "align-self: flex-end" in human_turn
     human = css.split(".msg-human {", 1)[1].split("}", 1)[0]
-    assert "background: var(--accent-bg)" in human
-    assert "color: var(--blue-ink)" in human
+    # Neutral, and DARKER than the agent's --bg rather than lighter: --bg is
+    # 1.07:1 on the --panel canvas, so anything lighter stops being a surface.
+    assert "background: var(--btn-face-hover)" in human
+    assert "color: var(--ink)" in human
+    assert "var(--accent-bg)" not in human
+    assert "var(--blue-ink)" not in human
 
     agent_turn = css.split(".msg-turn-agent {", 1)[1].split("}", 1)[0]
     assert "align-self: flex-start" in agent_turn
@@ -1147,11 +1151,15 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     time = css.split(".msg-time {", 1)[1].split("}", 1)[0]
     assert "font-size: 10px" in time
     assert "color: var(--hint)" in time
-    # ...except on the tint, where --hint measures 4.19:1 and fails AA.
-    # The quiet name stays the shared muted ink; only the timestamp inside
-    # the operator bubble takes --blue-ink.
+    # ...except in the operator's bubble. --hint clears AA on the agent's --bg
+    # by a hundredth (4.51) and fails on the darker neutral (4.10), so the
+    # timestamp there steps to --muted. The quiet name is outside the bubble
+    # and stays the shared muted ink either way.
     assert ".msg-turn-human .msg-author," not in css
-    assert ".msg-human .msg-time { color: var(--blue-ink); }" in css
+    assert ".msg-human .msg-time { color: var(--muted); }" in css
+    # A link at the shared prose --accent is 4.10 on this ground and fails in
+    # exactly the bubble the operator wrote.
+    assert ".msg-human .md a { color: var(--accent-deep); }" in css
 
 
 def test_the_composer_is_the_field_and_send_and_nothing_else() -> None:
@@ -1750,8 +1758,8 @@ def test_the_a11y_harness_counts_before_it_judges() -> None:
 def test_the_collapse_cannot_follow_the_rail_into_the_mobile_drawer() -> None:
     """Below 768px the rail is MOVED, not copied — and the collapse stays behind.
 
-    responsive.js presents the real `#app-roster` node in a slide-over rather
-    than building a second rail, and core/overlays.js appends that slide-over
+    responsive.js presents the real `#app-roster` node in a modal rather
+    than building a second rail, and core/overlays.js appends that modal
     to <body>. So every collapse rule must be scoped under `#main-layout`: a
     bare `[data-rail="collapsed"] .roster-person` would follow the node into the
     drawer and hide the people inside it, on a screen where the drawer is the
@@ -1769,4 +1777,4 @@ def test_the_collapse_cannot_follow_the_rail_into_the_mobile_drawer() -> None:
 
     js = _read(JS / "shell/responsive.js")
     assert "layoutEl.insertBefore(column, placeEl)" in js, "the node is returned, not rebuilt"
-    assert "BossModOverlays.slideOver(" in js
+    assert "BossModOverlays.createModal({" in js

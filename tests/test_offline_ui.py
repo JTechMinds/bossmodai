@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "ui" / "static"
 
 # Dropped in Phase 4. Its only caller was app.js, deleted in the same phase;
-# the Board uses a slide-over rather than the table/detail divider Split.js was
+# the Board uses a modal rather than the table/detail divider Split.js was
 # retained for (spec 3.1, superseded), so it was a vendored library with zero
 # consumers. Asserted absent from BOTH the manifest and the disk, so it cannot
 # creep back in as a script tag or as an unreferenced file.

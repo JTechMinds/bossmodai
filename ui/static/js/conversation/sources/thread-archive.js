@@ -157,6 +157,7 @@ const BossModThreadArchive = (() => {
                 };
                 BossModOverlays.createModal({
                     title: prompted.title,
+                    closeOnBackdrop: true,
                     body: BossModDom.h('div', {},
                         BossModDom.h('p', {}, prompted.body),
                         BossModDom.h('p', { class: 'modal-honesty' }, prompted.honesty)),

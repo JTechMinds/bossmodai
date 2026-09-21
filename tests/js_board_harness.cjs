@@ -232,7 +232,7 @@ async function main() {
     document.body.append(linkedContainer);
     place.mount(linkedContainer, { store: linkedStore, bus, api, needs: {}, navigate: () => {} });
     await drain();
-    const sheet = document.body.querySelector(".slide-over");
+    const sheet = document.body.querySelector(".modal-panel");
     const opensLinkedTask = Boolean(sheet)
         && String(sheet.getAttribute("aria-label") || "") === "Task accepted";
     if (!opensLinkedTask) {

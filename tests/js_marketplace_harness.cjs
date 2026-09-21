@@ -408,6 +408,13 @@ function focusableStops() {
     return panel ? panel.querySelectorAll(global.BossModOverlayFocus.FOCUSABLE).length : 0;
 }
 
+/** The frame's ✕: the takeover's one exit, in both views. It is createModal's,
+ *  in the panel's head rather than in the host, so it is found from the panel. */
+function frameClose() {
+    const panel = global.document.body.querySelector(".modal-panel");
+    return panel ? panel.querySelector(".modal-close") : null;
+}
+
 function focusIsInThePanel() {
     const panel = global.document.body.querySelector(".modal-panel");
     const active = global.document.activeElement;
@@ -516,7 +523,7 @@ async function main() {
         && count(".market-card") === 0;
     verdict.failedCanBeTabbed = footerButtons() === 0 && focusIsInThePanel()
         && Boolean(host().querySelector("#market-retry"))
-        && Boolean(host().querySelector("#market-close"));
+        && Boolean(frameClose());
     catalogMode = "ready";
     host().querySelector("#market-retry").focus();
     await click(host().querySelector("#market-retry"));
@@ -678,13 +685,14 @@ async function main() {
     const find = host().querySelector("#market-find");
     verdict.findHasALabel = Boolean(host().querySelectorAll("label")
         .find((label) => label.getAttribute("for") === "market-find"));
-    // The footer `Close` is gone, so the browse view carries its own ✕ — a
-    // real button with a real name, reachable by keyboard like any other.
-    const browseCloser = host().querySelector("#market-close");
+    // The footer `Close` is gone, and the browse view's exit is the frame's ✕
+    // — a real button named for the dialog, reachable by keyboard like any
+    // other.
+    const browseCloser = frameClose();
     verdict.browseCarriesTheExit = Boolean(browseCloser)
         && browseCloser.tagName === "BUTTON"
         && browseCloser.getAttribute("type") === "button"
-        && browseCloser.getAttribute("aria-label") === "Close the marketplace"
+        && browseCloser.getAttribute("aria-label") === "Close Agent Marketplace"
         && footerButtons() === 0 && focusableStops() > 0;
 
     // ── The detail is a TAKEOVER of the takeover, and `‹ Templates` undoes it
@@ -959,20 +967,23 @@ async function main() {
     await click(host().querySelector("#market-back"));
     verdict.urlInstallLands = texts(".market-card-title").includes("Imported Agent");
 
-    // ── The detail's own ✕ dismisses the takeover, and it is the ONLY dismiss
-    //    control the view has: there is no footer under it any more.
+    // ── The frame's ✕ dismisses the takeover from the detail too, and it is
+    //    the ONLY dismiss control there: no footer under it, and no hand-built
+    //    `#market-close` beside it any more.
     await click(cardFor("feature-planner"));
-    const closer = host().querySelector("#market-close");
-    verdict.detailCloseIsNamed = closer.getAttribute("aria-label") === "Close the marketplace";
-    verdict.detailHasOneDismissControl = count("#market-close") === 1
+    const closer = frameClose();
+    verdict.detailCloseIsNamed = closer.getAttribute("aria-label") === "Close Agent Marketplace";
+    verdict.detailHasOneDismissControl = global.document.body.querySelector(".modal-panel")
+        .querySelectorAll(".modal-close").length === 1
+        && global.document.body.querySelectorAll("#market-close").length === 0
         && footerButtons() === 0;
     await click(closer);
     verdict.detailCloseDismissesTheTakeover = panels() === 0;
 
-    // And the browse view's own ✕ does the same errand from the other view.
+    // And the same ✕ does the same errand from the browse view.
     handle = await openMarket();
     verdict.browseCloseDismissesTheTakeover = await (async () => {
-        await click(host().querySelector("#market-close"));
+        await click(frameClose());
         return panels() === 0;
     })();
 
@@ -1198,7 +1209,7 @@ async function main() {
     // An empty catalog draws no cards, so the head is all there is — and it
     // still has to hold a keyboard now that the footer holds nothing.
     verdict.emptyCanBeTabbed = footerButtons() === 0 && focusableStops() > 0
-        && focusIsInThePanel() && Boolean(host().querySelector("#market-close"));
+        && focusIsInThePanel() && Boolean(frameClose());
     handle.close();
     verdict.closesCleanly = panels() === 0;
 

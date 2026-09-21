@@ -74,6 +74,23 @@ const BossModMentionDraft = (() => {
 
     /**
      * Character offset of the caret inside a pill-bearing field.
+     *
+     * The live Selection is the only thing that knows where the caret is, and
+     * it is GONE the moment a click moves focus out of the field — which is
+     * every mouse pick from the `@` picker, because the option is not
+     * editable and mousedown blurs the composer before the click handler
+     * runs. So every successful live read is written back to `selectionStart`:
+     * that shim is the fallback, nothing else maintains it (typing does not,
+     * only placeCaret does), and an unmaintained fallback answers with the
+     * caret the field was BOUND with. insertAtCaret then finds no `@query` in
+     * front of that caret, replaces nothing, and the operator's half-typed
+     * `@jo` survives next to the pill they just picked.
+     *
+     * The write is a cache of an authoritative read, not a second source of
+     * truth: the live Selection always wins when there is one. A native
+     * <textarea> never reaches it — its internal caret is not in the DOM
+     * tree, so `inRoot` is false and its real `selectionStart` is untouched.
+     *
      * @param {HTMLElement|null} root
      * @returns {number}
      */
@@ -85,7 +102,10 @@ const BossModMentionDraft = (() => {
             && (root === sel.anchorNode || root.contains(sel.anchorNode));
         if (inRoot) {
             const range = sel.getRangeAt(0);
-            return distanceTo(root, range.startContainer, range.startOffset);
+            const at = distanceTo(root, range.startContainer, range.startOffset);
+            root.selectionStart = at;
+            root.selectionEnd = at;
+            return at;
         }
         if (Number.isInteger(root.selectionStart)) return root.selectionStart;
         return readEditable(root).length;

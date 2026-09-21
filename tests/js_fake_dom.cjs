@@ -308,9 +308,16 @@ class FakeEl {
         this.parent = null;
     }
 
+    /**
+     * A real `contains` walks NODES, not elements: `el.contains(textNode)` is
+     * true for a text child, and a caret lives in a text node. Recursing only
+     * through `nodeType === 1` compared elements and never the text itself, so
+     * anything asking "is the selection inside this field?" got a false no.
+     */
     contains(node) {
         if (node === this) return true;
-        return this.children.some((child) => child.nodeType === 1 && child.contains(node));
+        return this.children.some((child) => child === node
+            || (child.nodeType === 1 && child.contains(node)));
     }
 
     matches(selector) {
@@ -548,9 +555,31 @@ function installDom() {
     const stored = new Map();
     const mediaQueries = new Map();
     global.document = documentStub;
+    // Real browser API, not a module: BossModMentionDraft asks the browser
+    // where the caret is, and a click on a listbox option moves the selection
+    // OUT of the field before the click handler runs. Empty by default, which
+    // is what a document with nothing focused reports, so `caretIn` falls to
+    // its `selectionStart` shim exactly as it did before this existed. A
+    // harness calls `window._setSelection(node, offset)` to park a caret in a
+    // field, and `window._setSelection(null)` to model that blur.
+    const emptySelection = { rangeCount: 0, anchorNode: null, getRangeAt: () => null };
+    let selection = emptySelection;
     global.window = {
         document: documentStub,
         lucide: null,
+        getSelection: () => selection,
+        _setSelection: (node, offset) => {
+            selection = node
+                ? {
+                    rangeCount: 1,
+                    anchorNode: node,
+                    getRangeAt: () => ({
+                        startContainer: node,
+                        startOffset: Number(offset) || 0,
+                    }),
+                }
+                : emptySelection;
+        },
         // Real browser API, not a module: the toast asks whether the operator
         // has asked for reduced motion, and the responsive layer asks which
         // breakpoint is live. Reassign window.matchMedia in a harness to

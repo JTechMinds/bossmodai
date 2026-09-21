@@ -153,17 +153,19 @@ def test_no_gesture_only_controls() -> None:
                 offenders.append(f"{relative} binds {gesture}")
     assert offenders == [], "\n".join(offenders)
 
-    # The overlay is the overlay chain's, with its focus trap and its Esc — not
-    # a third implementation living in the responsive layer. Round five split
+    # The overlay is the modal's, with its focus trap and its Esc — not a
+    # third implementation living in the responsive layer. Round five split
     # the trap into core/overlay-focus.js, so the two halves of that sentence
     # are now read off the two files that own them rather than off one.
     responsive = (JS / "shell" / "responsive.js").read_text(encoding="utf-8")
-    assert "BossModOverlays.slideOver(" in responsive
+    assert "BossModOverlays.createModal({" in responsive
+    assert "size: 'panel'" in responsive
+    assert "slideOver" not in responsive
     assert "addEventListener('keydown'" not in responsive, "the trap is the overlay chain's"
     core = CSS.parent / "js" / "core"
     overlays = (core / "overlays.js").read_text(encoding="utf-8")
     focus = (core / "overlay-focus.js").read_text(encoding="utf-8")
-    assert "trapKeydown" in overlays, "the slide-over must still wire the shared trap"
+    assert "trapKeydown" in overlays, "the modal must still wire the shared trap"
     assert "trapKeydown" in focus and "Escape" in focus
 
 

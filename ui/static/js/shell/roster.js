@@ -99,23 +99,13 @@ const BossModRoster = (() => {
             h('div', { class: 'roster-body' }, people.element, threads.element, errorEl),
             hire);
 
-        /**
-         * Navigation is only how the operator REACHES Chat; the store is what
-         * switches the conversation. Navigating while already there would
-         * remount the place and take the transcript cache, the composer draft,
-         * and the caret with it on every roster click.
-         *
-         * @param {string} id
-         * @param {'agent'|'thread'} kind
-         */
+        /** The roster's doors are the app's doors: see shell/agent-routes.js. */
         function openConversation(id, kind) {
-            store.setState({ conversationId: id, conversationKind: kind });
-            if (store.getState().place !== 'chat') navigate('chat');
+            BossModAgentRoutes.openConversation({ store, navigate }, id, kind);
         }
 
         function openDesk(agentId) {
-            store.setState({ contextMode: 'desk', deskAgentId: agentId });
-            if (store.getState().place !== 'chat') navigate('chat');
+            BossModAgentRoutes.openDesk({ store, navigate }, agentId);
         }
 
         function reportError(message, err) {

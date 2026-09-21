@@ -309,3 +309,42 @@ def test_board_modules_stay_focused() -> None:
         assert "!== 'undefined'" not in text, (
             f"{path.name} guards a global with typeof; deps are injected, not sniffed"
         )
+
+
+def test_task_detail_and_assign_are_modals() -> None:
+    """Task detail reads in a panel modal; Assign is a form modal.
+
+    The detail has nothing to type into, so an outside click closes it.
+    Assign holds a half-written task, so it does not — and its primary is
+    pinned in the footer band through createModal's `form:` action, which
+    submits without closing so an outcome (a mismatch, an ambiguous match) is
+    shown in the dialog rather than lost with it.
+    """
+    board = JS / "places" / "board"
+    detail = (board / "task-detail.js").read_text(encoding="utf-8")
+    assign = (board / "assign-form.js").read_text(encoding="utf-8")
+    assert "BossModOverlays.createModal({" in detail
+    assert "size: 'panel'" in detail
+    assert "closeOnBackdrop: true" in detail
+    assert "BossModOverlays.createModal({" in assign
+    assert "form: 'ct-assign-form'" in assign
+    assert "id: 'ct-assign-submit'" in assign
+    assert "closeOnBackdrop" not in assign
+    for source in (detail, assign):
+        assert "slideOver" not in source
+
+
+def test_a_linked_task_opens_as_a_layer_over_the_one_it_came_from() -> None:
+    """Parent/subtask links push a layer; a board card opens a fresh base.
+
+    From inside a task, following a link is a step deeper — ‹ walks back to the
+    task it came from. Clicking a card on the board is a new errand, so any
+    open task layers close first.
+    """
+    place = (JS / "places" / "board" / "board-place.js").read_text(encoding="utf-8")
+    assert "let details = [];" in place
+    assert "onNavigate: pushDetail," in place
+    open_body = place.split("function openDetail(taskId) {", 1)[1].split("\n    }", 1)[0]
+    assert "closeDetails();" in open_body
+    push_body = place.split("function pushDetail(taskId) {", 1)[1].split("\n    }", 1)[0]
+    assert "closeDetails" not in push_body

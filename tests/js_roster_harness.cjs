@@ -9,6 +9,7 @@
  * Invoked by tests/test_ui_roster.py. Not a browser bundle.
  */
 const fs = require("fs");
+const path = require("path");
 
 let activeElement = null;
 
@@ -105,6 +106,13 @@ eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModThreadCreate 
 // Which list the rail is showing — the header row's third owner.
 eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
 eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+// The rail's doors are the app's shared routes (shell/agent-routes.js),
+// reached at click time. Loaded as roster.js's SIBLING rather than from an
+// argument slot of its own: two Python files drive this harness with one
+// positional list each (tests/test_ui_roster.py and
+// tests/test_ui_visual_parity.py), and a new slot would have to land in both.
+const agentRoutesPath = path.join(path.dirname(process.argv[16]), "agent-routes.js");
+eval(`${fs.readFileSync(agentRoutesPath, "utf8")}\n;global.BossModAgentRoutes = BossModAgentRoutes;\n`);
 eval(`${fs.readFileSync(process.argv[16], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {

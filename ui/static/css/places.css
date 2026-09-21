@@ -166,6 +166,26 @@
   font-weight: 600;
 }
 
+/* The doors an agent click offers. Each tile composes .btn, so its face, its
+   border (the SC 1.4.11 affordance) and its hover are the app's one button;
+   this only stacks the icon over the label, and lets however many doors
+   there are share the row evenly instead of leaving a lopsided grid. */
+.office-agent-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.office-agent-tile {
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 10px;
+  font-weight: 500;
+}
+
+.office-agent-tile svg { width: 20px; height: 20px; color: var(--muted); }
+
 /* ─── Activity ticker ─── */
 
 /* The strip carries the type size for everything in it, so an entry and the
@@ -474,9 +494,12 @@
 .task-card-subs,
 .task-card-parent { font-size: 10px; color: var(--hint); }
 
-/* ─── Task detail slide-over ─── */
+/* ─── Task detail ─── */
 
-.task-detail { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
+/* The panel's body is a non-scrolling column; content brings its own
+   scroller, as .file-view and .agent-form-host do. */
+.task-detail { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
 .task-detail-section + .task-detail-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .task-detail-heading { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .task-detail-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
@@ -519,7 +542,6 @@
 
 /* ─── Assign form ─── */
 
-.assign-form { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
 .assign-field { display: block; margin-bottom: 10px; }
 .assign-field-label { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 500; color: var(--muted); }
 
@@ -536,7 +558,6 @@
 }
 
 .assign-textarea { resize: vertical; }
-.assign-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .assign-hint { margin: 0 0 8px; font-size: 11px; color: var(--hint); }
 
 .assign-panel {
@@ -770,7 +791,6 @@
 
 /* ─── Files: dialogs ─── */
 
-.file-form { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
 .file-form-field { display: block; margin-bottom: 10px; }
 .file-form-label { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 500; color: var(--muted); }
 .file-form-hint { margin: 0 0 10px; font-size: 12px; color: var(--hint); }
@@ -798,7 +818,6 @@
 }
 
 .file-form-error[hidden] { display: none !important; }
-.file-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
 .file-form-crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; }
 .file-form-list { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
@@ -820,14 +839,16 @@
 
 .file-copy-shim { position: fixed; top: 0; left: 0; opacity: 0; pointer-events: none; }
 
-/* ─── Files: the viewer panel ─── */
+/* ─── Files: the viewer ─── */
 
-.slide-over.file-view-panel { width: min(760px, 100vw); }
-
-.file-view { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
+/* The viewer's ONE scroller. It rides the panel modal, whose body is a flex
+   column that does not scroll itself (overlays.css: the agent dialog pins a
+   header over its own scroller there), so the file has to bring its own —
+   the same reason .agent-form-host carries one. No padding: the modal body's
+   is the frame's. */
+.file-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .file-view-crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .file-view-meta { margin: 4px 0 0; font-size: 11px; color: var(--hint); }
-.file-view-controls { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
 
 .file-view-tab {
   padding: 4px 10px;

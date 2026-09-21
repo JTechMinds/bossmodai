@@ -93,7 +93,7 @@ const BossModConversation = (() => {
          * composer's clipboard was the other, and it went with the row it sat
          * in. The Board owns the third door.
          *
-         * @returns {object} The open slide-over, from BossModAssignForm.
+         * @returns {object} The open modal, from BossModAssignForm.
          */
         function openAssign() {
             return BossModAssignForm.openAssignForm({

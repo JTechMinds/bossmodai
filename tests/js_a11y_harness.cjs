@@ -65,7 +65,7 @@ installIconsStub();
 
 const [
     dom, avatar, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta, places, header,
-    rosterPeople, threadCreate, threadViewMenu, rosterThreads, roster, footer,
+    rosterPeople, threadCreate, threadViewMenu, rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
@@ -85,6 +85,8 @@ load(rosterPeople, "BossModRosterPeople");
 load(threadCreate, "BossModThreadCreate");
 load(threadViewMenu, "BossModThreadViewMenu");
 load(rosterThreads, "BossModRosterThreads");
+// The rail's doors are the app's shared routes, reached at click time.
+load(agentRoutes, "BossModAgentRoutes");
 load(roster, "BossModRoster");
 load(footer, "BossModFooter");
 

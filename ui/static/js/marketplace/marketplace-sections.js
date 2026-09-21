@@ -29,7 +29,7 @@ const BossModMarketplaceSections = (() => {
     const { h } = BossModDom;
 
     // The one panel every tab drives. One pack is mounted at a time, so this
-    // id names exactly one node — the same rule `#market-close` is built on.
+    // id names exactly one node.
     const PANEL_ID = 'market-section-panel';
 
     // How long the pointer has to REST on an entry before it selects it.

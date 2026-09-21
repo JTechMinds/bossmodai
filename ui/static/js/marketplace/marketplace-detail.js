@@ -21,13 +21,13 @@
  * at the source and never becomes a card at all; what is still genuinely
  * absent is any SINGLE section inside one, which may be null.
  *
- * It loads BEFORE marketplace-view.js and owns `confirmStrip`, `dismissButton`
- * and `categoryMark` because both views spend them — the trust question is
- * asked in the browse view beside the URL row that raised it, the uninstall
- * question is asked here, the takeover's one `✕` is in the top-right corner of
- * whichever view is up, and the bubble that says which family a pack belongs to
- * leads its card and its hero alike. One builder each, two call sites, and no
- * import cycle for index.html's load order to fail on.
+ * It loads BEFORE marketplace-view.js and owns `confirmStrip` and
+ * `categoryMark` because both views spend them — the trust question is asked
+ * in the browse view beside the URL row that raised it, the uninstall question
+ * is asked here, and the bubble that says which family a pack belongs to leads
+ * its card and its hero alike. One builder each, two call sites, and no import
+ * cycle for index.html's load order to fail on. The takeover's one `✕` is not
+ * built here: it is the modal frame's, in the head above whichever view is up.
  */
 const BossModMarketplaceDetail = (() => {
     const { h } = BossModDom;
@@ -41,7 +41,6 @@ const BossModMarketplaceDetail = (() => {
         // the CATALOG, which is mostly packs that are not installed templates,
         // so it never names the library.
         backLabel: 'Back to the marketplace',
-        dismiss: 'Close the marketplace',
         by: 'By',
         pinned: 'pinned',
         install: 'Install',
@@ -69,9 +68,9 @@ const BossModMarketplaceDetail = (() => {
      * became a third caller — the grid, this hero and the picker must identify
      * a pack the same way, and the module that owns the card is where the mark
      * that leads it belongs. Re-exported here rather than re-pointed at every
-     * call site: this module's `dismissButton` and `confirmStrip` are already
-     * the pair both views reach through, and one of the three names moving
-     * would be the only thing that changed.
+     * call site: this module's `confirmStrip` is already what both views reach
+     * through, and one of the two names moving would be the only thing that
+     * changed.
      *
      * @param {string|null} slug  The catalog's category id.
      * @param {'chip'|'sm'|'md'|'lg'} size
@@ -169,41 +168,20 @@ const BossModMarketplaceDetail = (() => {
         return parts.length ? h('p', { class: 'market-detail-by' }, parts) : null;
     }
 
-    /**
-     * The `✕` that dismisses the whole takeover, for whichever view is up.
-     *
-     * The takeover carries no footer — a full-screen surface puts its exit in
-     * its own top-right corner, and the detail view used to offer that `✕` and
-     * the modal's footer `Close` at once, two controls for one errand. One
-     * builder, so browse cannot end up without an exit and the two cannot
-     * drift; one view is mounted at a time, so the id names exactly one node.
-     *
-     * @param {object} handlers  Reads `onDismiss`.
-     * @returns {HTMLElement} A real button with an accessible name — the glyph
-     *   alone announces as a punctuation mark.
-     */
-    function dismissButton(handlers) {
-        return h('button', {
-            class: 'market-close', id: 'market-close', type: 'button',
-            'aria-label': COPY.dismiss, onclick: () => handlers.onDismiss(),
-        }, '✕');
-    }
-
-    // Two controls, two different errands: `‹` goes back to the grid this
-    // replaced, and `✕` dismisses the takeover. Both are a glyph and nothing
-    // else, and the pair now match: the word `Back` beside the chevron was the
-    // only visible label in the bar, and it said less than the announced name
-    // already does. The mark is aria-hidden, so the button announces as "Back
-    // to the marketplace" rather than as a punctuation mark — the glyph is the
-    // affordance and `aria-label` is the whole of the name.
+    // `‹` goes back to the grid this replaced. Dismissing the takeover is a
+    // different errand and not this bar's: that is the modal frame's `✕`, in
+    // the head above both views. The chevron is a glyph and nothing else — the
+    // word `Back` beside it said less than the announced name already does. The
+    // mark is aria-hidden, so the button announces as "Back to the marketplace"
+    // rather than as a punctuation mark — the glyph is the affordance and
+    // `aria-label` is the whole of the name.
     function bar(handlers) {
         return h('div', { class: 'market-detail-bar' },
             h('button', {
                 class: 'market-detail-back', id: 'market-back', type: 'button',
                 'aria-label': COPY.backLabel, onclick: () => handlers.onBack(),
             },
-            h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')),
-            dismissButton(handlers));
+            h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')));
     }
 
     /**
@@ -217,7 +195,7 @@ const BossModMarketplaceDetail = (() => {
      *   to read, `busyId` gates the two actions, `sectionKey` is which of the
      *   pack's sections is open, and `error`, `notice` and `pendingUninstall`
      *   are the three things that can sit above the hero.
-     * @param {object} handlers  onBack, onDismiss, onInstall, onUninstall,
+     * @param {object} handlers  onBack, onInstall, onUninstall,
      *   onUninstallConfirm, onUninstallCancel, onSection.
      * @returns {HTMLElement} The whole view, ready to replace the browse one.
      * @throws {Error} When nothing is selected. Rendering an empty detail would
@@ -279,5 +257,5 @@ const BossModMarketplaceDetail = (() => {
         reader);
     }
 
-    return { COPY, categoryMark, confirmStrip, dismissButton, render };
+    return { COPY, categoryMark, confirmStrip, render };
 })();

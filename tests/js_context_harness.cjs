@@ -344,6 +344,17 @@ function api(url, init) {
             return jsonResponse({ kind: "directory", path, name: "notes", breadcrumbs: [], entries });
         }
         if (path.startsWith("/me/notes/")) {
+            // Answered as what the notes listing SAYS it is: a folder row is a
+            // directory, not a file. Answering it as a file opened a viewer on
+            // a folder, unseen while the viewer was a slide-over and counted
+            // now that it is a modal.
+            const listed = (Array.isArray(NOTES[agentId]) ? NOTES[agentId] : [])
+                .find((entry) => entry.path === path);
+            if (listed && listed.is_dir) {
+                return jsonResponse({
+                    kind: "directory", path, name: listed.name, breadcrumbs: [], entries: [],
+                });
+            }
             return jsonResponse({
                 kind: "file", path, name: path.split("/").pop(), breadcrumbs: [],
                 artifact: null, content: "# note", truncated: false, size_bytes: 6,
@@ -614,7 +625,10 @@ async function main() {
     // browser stays where the operator left it.
     await notes()[0].dispatchClick();
     await drain();
-    const opensSharedViewer = documentStub.body.querySelectorAll(".file-view-panel").length === 1;
+    // The viewer is a modal now, so it is known by what it holds: the one
+    // panel whose body is the file view.
+    const opensSharedViewer = documentStub.body.querySelectorAll(".modal-panel")
+        .filter((panel) => panel.querySelectorAll(".file-view").length === 1).length === 1;
     if (!opensSharedViewer) {
         throw new Error("clicking a note must open the shared file viewer");
     }
@@ -676,8 +690,8 @@ async function main() {
     await drain();
 
     const modals = () => documentStub.body.querySelectorAll(".modal-panel");
-    const wideModal = () => modals().filter(
-        (node) => node.getAttribute("data-size") === "wide")[0];
+    const panelModal = () => modals().filter(
+        (node) => node.getAttribute("data-size") === "panel")[0];
     if (modals().length !== 0) throw new Error("nothing should be open yet");
 
     const editAction = contextEl.querySelectorAll(".desk-action")
@@ -686,15 +700,15 @@ async function main() {
     await editAction.dispatchClick();
     await drain();
 
-    const opened = wideModal();
-    const editOpensTheWideModal = Boolean(opened)
+    const opened = panelModal();
+    const editOpensThePanelModal = Boolean(opened)
         && opened.getAttribute("role") === "dialog"
         && opened.getAttribute("aria-label") === "Edit role"
         && Boolean(opened.querySelector("#agent-form"))
         // The edit flow keeps its remove path.
         && Boolean(opened.querySelector("#btn-delete-agent"));
-    if (!editOpensTheWideModal) {
-        throw new Error(`Edit role must open the wide dialog with the form in it: `
+    if (!editOpensThePanelModal) {
+        throw new Error(`Edit role must open the panel dialog with the form in it: `
             + `${opened && opened.getAttribute("data-size")} `
             + `form ${Boolean(opened && opened.querySelector("#agent-form"))}`);
     }
@@ -749,13 +763,13 @@ async function main() {
 
     // One at a time. The rail's Hire row is reachable while a desk's Edit
     // dialog is up, and the form's identity is per render — but two stacked
-    // wide modals would still fight over Escape and the focus trap.
+    // agent dialogs would still fight over Escape and the focus trap.
     await editAction.dispatchClick();
     await drain();
-    const first = wideModal();
+    const first = panelModal();
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const onlyOneDialogAtATime = modals().length === 1 && wideModal() === first;
+    const onlyOneDialogAtATime = modals().length === 1 && panelModal() === first;
     if (!onlyOneDialogAtATime) {
         throw new Error(`a second dialog must not stack, got ${modals().length}`);
     }
@@ -767,13 +781,13 @@ async function main() {
     // have no Create Agent either.
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const hire = wideModal();
-    const hireOpensTheWideModal = Boolean(hire)
+    const hire = panelModal();
+    const hireOpensThePanelModal = Boolean(hire)
         && hire.getAttribute("aria-label") === "Add agent"
         && hire.querySelector("#agent-form") === null
         && Boolean(hire.querySelector("#agent-pick-blank"))
         && hire.querySelector("#btn-delete-agent") === null;
-    if (!hireOpensTheWideModal) {
+    if (!hireOpensThePanelModal) {
         throw new Error(`Add agent must open on the picker: `
             + `${hire && hire.getAttribute("aria-label")} `
             + `form ${Boolean(hire && hire.querySelector("#agent-form"))}`);
@@ -893,7 +907,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const create = wideModal();
+    const create = panelModal();
     await create.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const setAll = create.querySelector('select[name="model_all"]');
@@ -943,7 +957,7 @@ async function main() {
     contextEl.querySelectorAll(".desk-action")
         .filter((node) => node.textContent === "Edit role")[0].dispatchClick();
     await drain();
-    const degradedForm = wideModal();
+    const degradedForm = panelModal();
     const feedbackLine = degradedForm.querySelector("#agent-save-feedback");
     const degradedPrimary = documentStub.querySelector("#agent-form-submit");
     const aFailedConnectionsReadStillRendersTheForm =
@@ -993,7 +1007,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const sibling = wideModal();
+    const sibling = panelModal();
     await sibling.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const siblingForm = sibling.querySelector("#agent-form");
@@ -1064,7 +1078,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const quickDialog = wideModal();
+    const quickDialog = panelModal();
     const card = quickDialog.querySelectorAll(".picker-card")[0];
     if (!card) throw new Error("the picker must offer the installed template");
     await card.dispatchClick();
@@ -1189,7 +1203,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const refusal = wideModal();
+    const refusal = panelModal();
     await refusal.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const refusedForm = refusal.querySelector("#agent-form");
@@ -1268,7 +1282,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const blank = wideModal();
+    const blank = panelModal();
     await blank.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const blankForm = blank.querySelector("#agent-form");
@@ -1319,7 +1333,7 @@ async function main() {
     creates.length = 0;
     global.BossModAgentEdit.openAgentModal({ store });
     await drain();
-    const bare = wideModal();
+    const bare = panelModal();
     await bare.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const bareForm = bare.querySelector("#agent-form");
@@ -1392,7 +1406,7 @@ async function main() {
     contextEl.querySelectorAll(".desk-action")
         .filter((node) => node.textContent === "Edit role")[0].dispatchClick();
     await drain();
-    const editing = wideModal();
+    const editing = panelModal();
     const editingForm = editing.querySelector("#agent-form");
     for (const key of MODEL_KEYS) {
         editingForm.querySelector(`select[name="${key}"]`).value = "";
@@ -1452,8 +1466,8 @@ async function main() {
         opensSharedViewer,
         absentIsEmptyNotError,
         failureSurfaces,
-        editOpensTheWideModal,
-        hireOpensTheWideModal,
+        editOpensThePanelModal,
+        hireOpensThePanelModal,
         modalIsAttachedToTheBodyNotTheColumn,
         closingTheModalRestoresTheDesk,
         onlyOneDialogAtATime,

@@ -102,6 +102,18 @@ def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
     assert "align-items: center" in pill
     assert "vertical-align: middle" in pill
     assert "min-height: 0" in pill
+    # The chip paints at ~21px but has to LAY OUT at the 14px/1.5 line box,
+    # or every paragraph line holding a mention spreads wider than its
+    # neighbours. vertical-align:middle sizes the line from the margin box.
+    assert "margin: -2px 1px" in pill
+    # middle centers the chip's BOX, which left the chip's own name 2.50px
+    # under the sentence baseline — the "sits low" read. Paint-only, so the
+    # line box holds. See the derivation above the rule.
+    assert "transform: translateY(-0.18em)" in pill
+    # .mention-pill-name clips for its ellipsis, so a 1.0 line box would cut
+    # the tail off any descender in an agent name.
+    assert "line-height: 1.2" in pill
+    assert "line-height: 1;" not in pill
     assert "vertical-align: baseline" not in pill
     assert "vertical-align: bottom" not in pill
     assert "align-items: flex-end" not in pill
@@ -150,6 +162,9 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "ok": True,
+        # A mouse pick blurs the composer before the option's click handler
+        # runs. The caret shim must still replace the typed "@jo".
+        "insertSurvivesBlur": "@Joey ",
         "filterEmpty": ["joey", "hugh", "debra", "auditor"],
         "filterQuery": ["joey"],
         "filterRole": ["hugh"],

@@ -2,10 +2,10 @@
  * BossMod AI — the Office place.
  *
  * The floor: a live map of who is where, an org chart of the same people, and
- * a ticker of what just happened. Clicking a desk opens that agent's
- * conversation in a slide-over — through BossModConversation, the one
- * conversation renderer, because a second one is exactly what Phase 2A existed
- * to remove.
+ * a ticker of what just happened. Clicking an agent — on the floor or in the
+ * org chart — offers the doors into them (their chat, their desk) in a small
+ * dialog; both are the roster's routes, so the Office hosts no conversation of
+ * its own.
  *
  * It registers itself, so shell/places.js is never edited to add a real place.
  */
@@ -22,8 +22,7 @@ const BossModOfficePlace = (() => {
     let canvas = null;
     let orgView = null;
     let ticker = null;
-    let deskPanel = null;
-    let deskConversation = null;
+    let agentDialog = null;
     let stage = null;
     let mapPane = null;
     let orgPane = null;
@@ -100,31 +99,30 @@ const BossModOfficePlace = (() => {
         return list;
     }
 
-    /** Open one agent's conversation beside the floor. */
-    function openDesk(agentId) {
+    /**
+     * Offer the doors into one agent — their chat, their desk.
+     *
+     * @param {string} agentId  From the floor or the org chart.
+     * @returns {void}
+     * @throws {Error} When the agent is not in the roster: the floor drew
+     *   someone the store no longer knows, which is a bug to see, not a
+     *   dialog to open on nobody.
+     */
+    function openAgentActions(agentId) {
         const agent = (ctxRef.store.getState().roster || []).find((item) => item.id === agentId);
-        closeDesk();
-        deskConversation = BossModConversation.createConversation({
-            store: ctxRef.store,
-            bus: ctxRef.bus,
-            api: ctxRef.api,
-            navigate: ctxRef.navigate,
-            needs: ctxRef.needs,
+        if (!agent) throw new Error(`[office] no agent "${agentId}" in the roster`);
+        closeAgentActions();
+        const routes = { store: ctxRef.store, navigate: ctxRef.navigate };
+        agentDialog = BossModOfficeAgentActions.open({
+            agent,
+            onOpenChat: () => BossModAgentRoutes.openConversation(routes, agent.id, 'agent'),
+            onViewDesk: () => BossModAgentRoutes.openDesk(routes, agent.id),
+            onClose: () => { agentDialog = null; },
         });
-        deskPanel = BossModOverlays.slideOver({
-            title: agent ? agent.name : 'Desk',
-            body: deskConversation.element,
-            onClose: () => {
-                if (deskConversation) deskConversation.destroy();
-                deskConversation = null;
-                deskPanel = null;
-            },
-        });
-        void deskConversation.open(agentId, 'agent');
     }
 
-    function closeDesk() {
-        if (deskPanel) deskPanel.close();
+    function closeAgentActions() {
+        if (agentDialog) agentDialog.close();
     }
 
     function showCanvasError(message) {
@@ -207,12 +205,12 @@ const BossModOfficePlace = (() => {
                 canvas: canvasEl,
                 container: canvasWrap,
                 api: ctx.api,
-                onAgentClick: openDesk,
+                onAgentClick: openAgentActions,
             });
             orgView = BossModOrgView.createOrgView({
                 api: ctx.api,
                 store: ctx.store,
-                onAgentClick: openDesk,
+                onAgentClick: openAgentActions,
             });
             orgPane.append(orgView.element);
 
@@ -244,9 +242,8 @@ const BossModOfficePlace = (() => {
 
         /**
          * Re-fetch after a WebSocket outage without remounting (spec 1.4), so
-         * an open desk conversation and the selected tab both survive. Reached
-         * both from the `resync` topic and, when the shell grows the call, from
-         * the place contract.
+         * the selected tab survives. Reached both from the `resync` topic and,
+         * when the shell grows the call, from the place contract.
          * @returns {void}
          */
         resync() {
@@ -263,7 +260,7 @@ const BossModOfficePlace = (() => {
          */
         unmount() {
             disposers.splice(0).forEach((off) => off());
-            closeDesk();
+            closeAgentActions();
             if (canvas) canvas.destroy();
             if (orgView) orgView.destroy();
             if (ticker) ticker.destroy();

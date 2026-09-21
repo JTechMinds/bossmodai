@@ -4,10 +4,11 @@
  * Split out of core/overlays.js, which had reached exactly 299 lines under a
  * 300-line cap with a bug fix still to land inside createModal. The seam is a
  * real one rather than a line-count convenience: keeping Tab inside a dialog
- * and answering Esc is one responsibility, and building a modal, a slide-over
- * or an anchored menu is another. core/overlays.js keeps all three builders;
- * this file keeps the single rule they must not each own a copy of — because
- * the modal and the slide-over once did, and one of the two copies was broken.
+ * and answering Esc is one responsibility, and building a modal or an anchored
+ * menu is another. core/overlays.js keeps both builders; this file keeps the
+ * single rule they must not each own a copy of — because the modal and the
+ * slide-over it has since replaced once did, and one of the two copies was
+ * broken.
  *
  * It also owns the OVERLAY STACK, which is the answer to a second defect no
  * single overlay could see. Each open overlay binds its own keydown handler on
@@ -85,9 +86,24 @@ const BossModOverlayFocus = (() => {
     }
 
     /**
+     * Whether a control is actually on screen.
+     *
+     * A `hidden` control — or one inside a hidden ancestor — still matches
+     * FOCUSABLE, but it has no boxes and the browser's own Tab order skips it.
+     * Counting it as the first or last stop meant the trap never saw Tab leave
+     * the last VISIBLE control, and focus walked out of the dialog.
+     *
+     * @param {Element} node
+     * @returns {boolean}
+     */
+    function isRendered(node) {
+        return node.getClientRects().length > 0;
+    }
+
+    /**
      * Keep Tab inside one overlay, and let Esc dismiss it.
      *
-     * Shared by all three overlays on purpose. The modal and the slide-over
+     * Shared by both overlays on purpose. The modal and the slide-over
      * previously carried separate implementations and only one of them was a
      * real trap: the modal's cycled over its own action buttons and bailed out
      * when focus was anywhere else, so any focusable content in the body leaked
@@ -115,7 +131,7 @@ const BossModOverlayFocus = (() => {
             return;
         }
         if (event.key !== 'Tab') return;
-        const stops = Array.from(element.querySelectorAll(FOCUSABLE));
+        const stops = Array.from(element.querySelectorAll(FOCUSABLE)).filter(isRendered);
         if (stops.length === 0) return;
         const first = stops[0];
         const last = stops[stops.length - 1];

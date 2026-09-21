@@ -345,6 +345,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "shell" / "thread-create.js"),
             str(JS / "shell" / "thread-view-menu.js"),
             str(JS / "shell" / "roster-threads.js"),
+            str(JS / "shell" / "agent-routes.js"),
             str(JS / "shell" / "roster.js"),
         ],
         check=False,

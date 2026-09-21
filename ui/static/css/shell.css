@@ -2,8 +2,8 @@
    footer, and place placeholders. Colour comes from tokens.css; no value is
    hardcoded here that a token already names.
 
-   Modals, popovers, toasts, and slide-overs live in overlays.css — they float
-   above the frame rather than being part of it. */
+   Modals, popovers, and toasts live in overlays.css — they float above the
+   frame rather than being part of it. */
 
 /* ─── Layout grid ───
    The rail and context widths are tokens so the collapsed rail and the
@@ -569,7 +569,7 @@ body[data-view="settings"] #main-layout { display: none; }
    rather than ported.
 
    Both moved columns keep their identity — the same element is reparented into
-   the slide-over and back — so these rules undo the grid chrome (the column
+   the modal and back — so these rules undo the grid chrome (the column
    borders, the fixed track width) rather than restyling a copy. */
 
 .responsive-menu-btn,
@@ -590,8 +590,16 @@ body[data-view="settings"] #main-layout { display: none; }
 .responsive-menu-btn:hover,
 .responsive-desk-btn:hover { background: var(--bg); color: var(--ink); }
 
-/* A column presented as a panel is no longer a grid track: it fills the
-   slide-over and drops the border that separated it from the centre. */
+/* A column presented in a modal is no longer a grid track: it fills the
+   modal's body edge to edge and drops the border that separated it from the
+   centre. The body's padding is the frame's default for prose; a column
+   brings its own. */
+.responsive-panel .modal-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
 .responsive-panel .app-roster,
 .responsive-panel .app-context {
   display: flex;

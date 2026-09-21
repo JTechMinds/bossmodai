@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the assign-task sheet.
+ * BossMod AI — the assign-task dialog.
  *
  * Ported from the assign section of company-tasks.js. It is the ONE task form
  * in the application: spec 4.4 deferred the composer's clipboard button to this
@@ -51,7 +51,7 @@ const BossModAssignForm = (() => {
     }
 
     /**
-     * Open the assign sheet.
+     * Open the assign dialog.
      *
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
@@ -99,14 +99,13 @@ const BossModAssignForm = (() => {
             oninput: () => refreshSpecialtyHints(),
         });
         const result = h('div', { class: 'assign-result' });
-        const submit = h('button', { class: 'btn', type: 'submit' }, 'Assign');
 
         function field(label, control, extra) {
             return h('label', { class: 'assign-field' },
                 h('span', { class: 'assign-field-label' }, label), control, extra || null);
         }
 
-        const form = h('form', { class: 'assign-form', onsubmit: (event) => {
+        const form = h('form', { class: 'assign-form', id: 'ct-assign-form', onsubmit: (event) => {
             event.preventDefault();
             void send({});
         } },
@@ -114,12 +113,24 @@ const BossModAssignForm = (() => {
             field('Assignee', agentSelect, mismatch),
             field('Description (optional)', description),
             h('p', { class: 'assign-hint' }, HINT_COPY),
-            h('div', { class: 'assign-actions' },
-                h('button', { class: 'btn', type: 'button', onclick: () => sheet.close() }, 'Cancel'),
-                submit),
             result);
 
-        const sheet = BossModOverlays.slideOver({ title: 'Assign a task', body: form });
+        const modal = BossModOverlays.createModal({
+            title: 'Assign a task',
+            body: form,
+            actions: [
+                { label: 'Cancel' },
+                // Submits the form from the footer band and does NOT close: the
+                // outcome — created, reused, a mismatch to confirm — lands in
+                // the dialog, and only a settled one should let it go.
+                { label: 'Assign', tone: 'primary', id: 'ct-assign-submit', form: 'ct-assign-form' },
+            ],
+        });
+
+        /** The pinned submit. In the footer, outside the form, found by id. */
+        function submitButton() {
+            return modal.element.querySelector('#ct-assign-submit');
+        }
 
         /** Repaint the ranked options and the mismatch warning together. */
         function refreshSpecialtyHints() {
@@ -159,7 +170,7 @@ const BossModAssignForm = (() => {
                 // Passed straight through: when the caller cannot open a task,
                 // assign-outcomes.js renders no View button at all.
                 onOpenTask: onOpenTask
-                    ? (candidateId) => { sheet.close(); onOpenTask(candidateId); }
+                    ? (candidateId) => { modal.close(); onOpenTask(candidateId); }
                     : null,
             }));
         }
@@ -170,7 +181,7 @@ const BossModAssignForm = (() => {
          * @param {object} options
          * @param {string} [options.bindTaskId]
          * @param {boolean} [options.confirmSpecialtyMismatch]
-         * @returns {Promise<void>} Never rejects; a failure is shown in the sheet.
+         * @returns {Promise<void>} Never rejects; a failure is shown in the dialog.
          */
         async function send({ bindTaskId, confirmSpecialtyMismatch }) {
             if (submitting) return;
@@ -181,8 +192,8 @@ const BossModAssignForm = (() => {
                 return;
             }
             submitting = true;
-            submit.disabled = true;
-            submit.textContent = 'Assigning…';
+            submitButton().disabled = true;
+            submitButton().textContent = 'Assigning…';
             const payload = { title, description: description.value.trim() || null };
             if (chosen) payload.assigned_to = chosen;
             if (bindTaskId || taskId) payload.bind_task_id = bindTaskId || taskId;
@@ -215,8 +226,8 @@ const BossModAssignForm = (() => {
                     (err && err.message) || 'The request failed.'));
             } finally {
                 submitting = false;
-                submit.disabled = false;
-                submit.textContent = 'Assign';
+                submitButton().disabled = false;
+                submitButton().textContent = 'Assign';
             }
         }
 
@@ -245,7 +256,7 @@ const BossModAssignForm = (() => {
         void loadRoster();
         titleInput.focus();
 
-        return { close: sheet.close };
+        return { close: modal.close };
     }
 
     return { openAssignForm, rankRoster, optionLabel };

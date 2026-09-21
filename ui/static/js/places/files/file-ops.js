@@ -2,10 +2,11 @@
  * BossMod AI — create, rename, delete, move, copy, and copy-path.
  *
  * Ported from company-file-ops.js. Every dialog is built with BossModDom.h and
- * opened through core/overlays.js, which splits along one line: a question with
- * no input is a `createModal` (Delete), and anything the operator types into
- * goes through file-form.js's slide-over, because a modal action always closes
- * and a failed rename must keep the name they typed.
+ * opened through core/overlays.js's modal, which splits along one line: a
+ * question with no input is a `createModal` with two buttons (Delete), and
+ * anything the operator types into goes through file-form.js's form modal,
+ * whose pinned submit does not close — a failed rename must keep the name they
+ * typed.
  *
  * Every call takes the authenticated helper as `api`; this module names no
  * global of its own.
@@ -135,6 +136,7 @@ const BossModFileOps = (() => {
     function showDeleteDialog({ api, path, name, onComplete, onError }) {
         BossModOverlays.createModal({
             title: 'Delete',
+            closeOnBackdrop: true,
             body: h('div', {},
                 h('p', {}, `Delete ${name}?`),
                 FORM.hint('This cannot be undone.')),

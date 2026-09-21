@@ -28,16 +28,12 @@
    same one .roster-hire:hover and the rail's live row already carry — rather
    than the heavy blue edge a border plus an inset rule used to paint. */
 
-/* NO FOOTER. A full-screen takeover carries its controls in its own top-right
-   corner — `‹` and `✕` — which is what the detail view already did while the
-   modal drew a second `Close` under it. createModal still builds the action row
-   it was handed, so the empty one is taken out of the flow along with the gap
-   .modal-body keeps for it — moved onto the row, so a takeover that ever does
-   hand up actions gets its footer and the same gap back without touching
-   this. */
-.modal-panel[data-size="takeover"] .modal-actions:empty { display: none; }
-.modal-panel[data-size="takeover"] .modal-body { margin-bottom: 0; }
-.modal-panel[data-size="takeover"] .modal-actions:not(:empty) { margin-top: 16px; }
+/* NO FOOTER. A full-screen takeover carries its controls in its head, not
+   under its body — a second `Close` in a footer band was what the detail view
+   used to draw beside its own exit. createModal still builds the action row it
+   was handed, and the rule that takes an empty one out of the flow now lives
+   in overlays.css for every size, so a takeover that ever does hand up actions
+   gets the same footer band any other dialog gets, without touching this. */
 
 /* Fills the body it was given, so the scroll belongs to whichever view is up
    rather than to the dialog. */
@@ -452,13 +448,17 @@
   background: var(--panel);
 }
 
-.market-detail-back,
-.market-close {
+/* Icon-only now: the word `Back` is gone and `aria-label` carries the whole
+   name. A chevron is narrower than a word, so the target is squared up rather
+   than left at whatever the glyph happens to measure (SC 2.5.8). */
+.market-detail-back {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-width: 32px;
   min-height: 24px;
-  padding: 4px 10px;
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: var(--r);
   background: transparent;
@@ -469,23 +469,9 @@
 
 /* --accent measures 4.19:1 on --accent-bg and fails AA; --blue-ink is 6.86:1
    there. The same correction .roster-hire and .add-agent-choice carry. */
-.market-detail-back:hover,
-.market-close:hover { background: var(--accent-bg); color: var(--blue-ink); }
-
-/* Icon-only now: the word `Back` is gone and `aria-label` carries the whole
-   name. A chevron is narrower than a word, so the target is squared up rather
-   than left at whatever the glyph happens to measure (SC 2.5.8). */
-.market-detail-back {
-  justify-content: center;
-  min-width: 32px;
-  padding-inline: 6px;
-}
+.market-detail-back:hover { background: var(--accent-bg); color: var(--blue-ink); }
 
 .market-detail-back-mark { font-size: 18px; line-height: 1; }
-
-/* The takeover's one exit, top-right of whichever view is up. Both views build
-   it from the same builder, so it is styled once and not per view. */
-.market-close { font-size: 14px; color: var(--muted); }
 
 /* WHO on the left, WHAT IT COSTS on the right, on one line at the top of the
    read: the mark, the name and everything that identifies the pack, against the

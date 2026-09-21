@@ -370,8 +370,8 @@ def test_a_pack_wears_its_categorys_bubble_in_both_views() -> None:
     # ONE builder, and it now sits with the CARD the mark leads — the Add
     # agent picker draws that same card, so the module both grids share is the
     # seam that carries it. The detail view re-exports it rather than each call
-    # site re-pointing: `dismissButton` and `confirmStrip` are already the pair
-    # both views reach through it for.
+    # site re-pointing: `confirmStrip` is already the builder both views reach
+    # through it for.
     card = _code(JS / "marketplace" / "pack-card.js")
     assert "function categoryMark(slug, size) {" in card
     assert "categoryMark," in card.rsplit("return {", 1)[-1]
@@ -827,7 +827,8 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
     control is packs that are not installed templates — and became `‹ Back`.
     `Back` then said nothing the announced name did not already say better, and
     it was the only visible word in a bar whose other control, the `✕` beside
-    it, is a glyph. The pair match now.
+    it, was a glyph. The pair matched — and that `✕` has since moved up into
+    the modal frame's head, leaving the chevron alone in the bar.
 
     The requirement this test exists for is the half that did NOT change: an
     icon-only control is still a real button with an accessible name that says
@@ -839,9 +840,11 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
     assert "backLabel: 'Back to the marketplace'," in detail
     assert "'aria-label': COPY.backLabel," in detail
-    # The glyph is the button's ONLY child, and it is hidden from the name.
+    # The glyph is the button's ONLY child, and it is hidden from the name. The
+    # button — and, since the frame's ✕ replaced the bar's own, the bar — closes
+    # straight after it.
     assert (
-        "h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')),"
+        "h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')));"
     ) in detail
     # The retired copy is gone rather than merely unrendered — comments
     # stripped, because the prose above quotes both of the words it replaced.
@@ -859,13 +862,12 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
 def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:
     """The detail had a header ✕ AND the modal's footer Close: two, for one errand.
 
-    A full-screen takeover carries its controls in its own top-right corner, so
-    the footer goes and both views build the same `✕` from one builder — browse
-    included, which had no visible exit of its own until now. Removing the
-    footer also removes createModal's fallback of focusing the last action
-    button when the body has nothing focusable, so every state the takeover can
-    open in has to hold a keyboard by itself: loading, ready, empty and failed
-    all do, and the failed one keeps its `Try again` besides.
+    The footer went first. Then every modal gained a frame with its own `✕` in
+    the head, and the takeover's hand-built `✕` became a second exit beside it
+    — so the takeover builds none now, and the frame's is the one exit in both
+    views. Every state the takeover can open in still has to hold a keyboard:
+    loading, ready, empty and failed all do, and the failed one keeps its
+    `Try again` besides.
     """
     payload = _harness()
     for key in (
@@ -877,17 +879,27 @@ def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:
     state = _read(JS / "marketplace" / "marketplace.js")
     assert "actions: []," in state
     assert "COPY.close" not in state, "the footer's Close is gone, and so is its copy"
-    # One builder, spent by both views: browse cannot end up without an exit.
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
-    assert "function dismissButton(handlers)" in detail
-    assert "'aria-label': COPY.dismiss," in detail
-    assert detail.count("id: 'market-close'") == 1
     view = _read(JS / "marketplace" / "marketplace-view.js")
-    assert "DETAIL.dismissButton(handlers)" in view
+    # ONE exit, and it is the frame's: every modal now carries a ✕ in its head,
+    # so a takeover building its own would be a second control for one errand.
+    assert "dismissButton" not in detail
+    assert "dismissButton" not in view
+    assert "market-close" not in detail + view
+    assert "COPY.dismiss" not in detail
+    assert "onDismiss" not in state
+    assert "closeOnBackdrop: true" in state
+    market_css = (ROOT / "ui" / "static" / "css" / "marketplace.css").read_text(encoding="utf-8")
+    assert ".market-close" not in market_css
     # The empty row createModal still builds leaves neither a rule nor a gap.
+    # The rule is overlays.css's now, once for every size, and the body keeps
+    # no margin for a footer to fill: the footer band owns its own spacing.
     css = _read(CSS)
-    assert '.modal-panel[data-size="takeover"] .modal-actions:empty { display: none; }' in css
-    assert '.modal-panel[data-size="takeover"] .modal-body { margin-bottom: 0; }' in css
+    overlays = _read(OVERLAYS)
+    assert ".modal-actions:empty { display: none; }" in overlays
+    assert ".modal-actions:empty" not in css, "one definition, in overlays.css"
+    modal_body = overlays.split(".modal-body {", 1)[1].split("}", 1)[0]
+    assert "margin-bottom" not in modal_body
 
 
 def test_the_heros_primary_slot_only_ever_holds_an_action() -> None:
@@ -1038,9 +1050,12 @@ def test_the_takeover_has_a_height_not_only_a_ceiling() -> None:
     # Anchored to the start of its own line. `height:` is a SUBSTRING of
     # `max-height:`, so a bare `in` here passed with the height deleted — the
     # exact bug this test exists to catch, sitting inside the test itself.
-    assert "\n  height: calc(100vh - 48px);" in block
-    assert "\n  max-height: calc(100vh - 48px);" in block
-    assert "\n  width: min(1180px, calc(100vw - 48px));" in block
+    assert "\n  height: 95vh;" in block
+    assert "\n  width: 95vw;" in block
+    # The ceiling is the base panel's, and it still caps the takeover on a
+    # short window: a height with no ceiling would overflow the viewport.
+    base = _read(OVERLAYS).split("\n.modal-panel {", 1)[1].split("}", 1)[0]
+    assert "\n  max-height: calc(100vh - 32px);" in base
 
 
 def test_the_marketplace_owns_its_own_stylesheet() -> None:
@@ -1103,16 +1118,16 @@ def test_the_takeover_body_carries_the_apps_ink() -> None:
     """.modal-body is muted for a confirm dialog. A browsing surface is not one."""
     css = _read(OVERLAYS)
     assert (
-        '.modal-panel[data-size="wide"] .modal-body,\n'
+        '.modal-panel[data-size="panel"] .modal-body,\n'
         '.modal-panel[data-size="takeover"] .modal-body { color: var(--ink); }'
     ) in css
     # And the takeover's body is the column whose CHILD scrolls, which is what
-    # makes both views' `top: 0` exact rather than measured. The wide dialog
+    # makes both views' `top: 0` exact rather than measured. The panel size
     # joined the same rule when the Add agent picker grew a pinned header over
     # a scrolling card grid — same reasoning, same declarations, one block.
     body_rule = css.split(".modal-action {", 1)[0]
     assert '.modal-panel[data-size="takeover"] .modal-body,' in body_rule
-    assert '.modal-panel[data-size="wide"] .modal-body {' in body_rule
+    assert '.modal-panel[data-size="panel"] .modal-body {' in body_rule
     assert (
         "  display: flex;\n"
         "  flex-direction: column;\n"

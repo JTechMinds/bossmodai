@@ -19,7 +19,8 @@ installIconsStub();
 const [
     agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
     overlayFocusPath, overlaysPath, formatPath, needShapePath, rowMetaPath, archivePath, threadSourcePath,
-    rosterPeoplePath, threadCreatePath, threadViewMenuPath, rosterThreadsPath, rosterPath,
+    rosterPeoplePath, threadCreatePath, threadViewMenuPath, rosterThreadsPath, agentRoutesPath,
+    rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(agentStatusPath, "BossModAgentStatus");
@@ -41,6 +42,8 @@ load(rosterPeoplePath, "BossModRosterPeople");
 load(threadCreatePath, "BossModThreadCreate");
 load(threadViewMenuPath, "BossModThreadViewMenu");
 load(rosterThreadsPath, "BossModRosterThreads");
+// The rail's doors are the app's shared routes, reached at click time.
+load(agentRoutesPath, "BossModAgentRoutes");
 load(rosterPath, "BossModRoster");
 
 const {
@@ -230,7 +233,10 @@ async function main() {
     const openPending = flow.prompt(2);
     const openDialog = modal();
     if (!openDialog) throw new Error("prompt(2) rendered no dialog");
-    const openTasksThreeButtons = openDialog.querySelectorAll("button").length === 3
+    // The CHOICES are the action row's: the frame's ✕ is a button in every
+    // dialog, and it is the same way out Esc is, not a fourth choice.
+    const choicesIn = (dialog) => dialog.querySelector(".modal-actions").querySelectorAll("button");
+    const openTasksThreeButtons = choicesIn(openDialog).length === 3
         && Boolean(modalButton("channel-archive-cancel-tasks"))
         && Boolean(modalButton("channel-archive-only"))
         && Boolean(modalButton("channel-archive-back"));
@@ -249,7 +255,7 @@ async function main() {
     const zeroPending = flow.prompt(0);
     const zeroDialog = modal();
     if (!zeroDialog) throw new Error("prompt(0) rendered no dialog");
-    const zeroOpenTwoButtons = zeroDialog.querySelectorAll("button").length === 2
+    const zeroOpenTwoButtons = choicesIn(zeroDialog).length === 2
         && Boolean(modalButton("channel-archive-confirm"))
         && Boolean(modalButton("channel-archive-back"))
         && !zeroDialog.textContent.includes("Cancel tasks")

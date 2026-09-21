@@ -33,7 +33,7 @@ def _rule(css: str, selector: str) -> str:
 
     Anchored on a newline and a following `{`, so `.connection-select` never
     picks up `.connection-select:focus` and `.modal-panel` never picks up
-    `.modal-panel[data-size="wide"]`.
+    `.modal-panel[data-size="panel"]`.
     """
     opener = re.search(rf"(?m)^{re.escape(selector)}\s*\{{", css)
     assert opener, f"no rule for {selector}"
@@ -70,8 +70,8 @@ def test_a_form_dialog_starts_in_the_form() -> None:
     landed the keyboard on `Create Agent`.
     """
     payload = _overlays_payload()
-    assert payload["wideModalFocusesFirstBodyControl"] is True
-    assert payload["wideModalDoesNotFocusThePrimary"] is True
+    assert payload["panelModalFocusesFirstBodyControl"] is True
+    assert payload["panelModalDoesNotFocusThePrimary"] is True
 
 
 def test_a_confirm_dialog_still_starts_on_the_safe_action() -> None:
@@ -85,7 +85,7 @@ def test_a_confirm_dialog_still_starts_on_the_safe_action() -> None:
     """
     payload = _overlays_payload()
     assert payload["confirmModalFocusesLastAction"] is True
-    assert payload["bodylessWideModalFocusesLastAction"] is True
+    assert payload["bodylessPanelModalFocusesLastAction"] is True
 
 
 # ─── Task 4: Escape closes one overlay, not the stack ───
@@ -110,8 +110,9 @@ def test_escape_closes_only_the_topmost_overlay() -> None:
     # A second Escape then closes the one underneath — the dialog left
     # standing must still be operable, not merely still on screen.
     assert payload["secondEscapeClosesTheRemainingOverlay"] is True
-    # Backdrops track their panels through the whole sequence.
-    assert payload["backdropCountTracksPanelCount"] is True
+    # One scrim for the whole stack through the whole sequence — the confirm
+    # is a layer over the form — and none once the last layer closes.
+    assert payload["oneScrimForTheWholeStack"] is True
 
 
 # ─── Task 1: the connections matrix becomes a three-column grid ───

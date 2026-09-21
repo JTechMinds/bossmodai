@@ -368,8 +368,32 @@ async function main() {
         fail("possessiveDraft", draftName && draftName.textContent);
     }
 
+    // A click on a picker option blurs the composer BEFORE the option's click
+    // handler runs, so the live caret is already gone when insert() asks for
+    // it. The shim's fallback has to answer with the last caret the field
+    // actually had — typing never writes selectionStart, only placeCaret does,
+    // so an uncached fallback answers with the caret the field was BOUND with
+    // (0) and insertText finds no @query to replace. The typed "@jo" then
+    // survives next to the new pill: "@Joey @jo".
+    const blurred = documentStub.createElement("div");
+    Draft.bindEditable(blurred, { agents: LIVE });
+    blurred.value = "@jo";
+    const typedNode = blurred.childNodes[0];
+    if (!typedNode || typedNode.textContent !== "@jo") {
+        fail("blurFieldSetup", typedNode && typedNode.textContent);
+    }
+    // Typing: the caret is live in the field, and the picker's sync() reads it
+    // on every keystroke.
+    global.window._setSelection(typedNode, 3);
+    if (Draft.caretIn(blurred) !== 3) fail("caretWhileTyping", Draft.caretIn(blurred));
+    // The click lands: selection leaves the field.
+    global.window._setSelection(null);
+    const afterBlur = Mentions.insertAtCaret(blurred, "Joey");
+    if (afterBlur.text !== "@Joey ") fail("insertAfterBlur", JSON.stringify(afterBlur.text));
+
     console.log(JSON.stringify({
         ok: true,
+        insertSurvivesBlur: afterBlur.text,
         filterEmpty: filterAll,
         filterQuery: filterJo,
         filterRole: filterQa,

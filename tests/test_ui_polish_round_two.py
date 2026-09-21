@@ -505,8 +505,8 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
     """Esc closes it, Tab stays inside, and focus goes back to the `⋯`.
 
     Proven at the overlay level rather than through the chrome, because that is
-    where the behaviour lives: the menu is core/overlays.js's third shape, and
-    it shares one focus trap with the modal and the slide-over. The payload is
+    where the behaviour lives: the menu is core/overlays.js's other shape, and
+    it shares one focus trap with the modal. The payload is
     tests/test_ui_overlays.py's, which owns the contract; this reads it under
     the name Task 6 gave it.
     """

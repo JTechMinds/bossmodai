@@ -8,13 +8,13 @@
  * 1200px.
  *
  * Both open the column that is already mounted, by MOVING it into
- * core/overlays.js's slide-over and putting it back on close. Rebuilding it
+ * core/overlays.js's modal and putting it back on close. Rebuilding it
  * would throw away whatever the operator had open — the desk folder they had
  * navigated to, the roster search they had typed — and would need a second
  * copy of every view. There is one roster and one context column at every
  * width; only where they sit changes.
  *
- * The slide-over brings the focus trap, Esc, and focus restoration with it, so
+ * The modal brings the focus trap, Esc, and focus restoration with it, so
  * neither of these is a third overlay implementation. Neither is gesture-only
  * either (SC 2.1.1): the opener is a real button, reachable by keyboard, by
  * switch control, and by a pointer that cannot make a gesture.
@@ -55,7 +55,11 @@ const BossModResponsive = (() => {
         }
 
         const disposers = [];
-        /** The one open panel, or null. Only ever one: both are full-height. */
+        /**
+         * The one open panel as `{ close, column }` — the modal's close, and
+         * the column it is holding — or null. Only ever one: opening the other
+         * column puts this one back first.
+         */
         let open = null;
 
         /**
@@ -75,13 +79,13 @@ const BossModResponsive = (() => {
 
         function closeOpen() {
             if (!open) return;
-            const panel = open;
+            const current = open;
             open = null;
-            panel.close();
+            current.close();
         }
 
         /**
-         * Move one column into a slide-over.
+         * Move one column into a modal.
          *
          * @param {HTMLElement} column
          * @param {string} title  The dialog's accessible name.
@@ -89,16 +93,22 @@ const BossModResponsive = (() => {
          */
         function present(column, title) {
             closeOpen();
-            const panel = BossModOverlays.slideOver({
+            const panel = BossModOverlays.createModal({
                 title,
                 body: column,
+                size: 'panel',
+                // A column carries its own controls; there is no footer to pin.
+                actions: [],
+                // Nothing typed here is lost by closing — the column is MOVED,
+                // not rebuilt, so a search or a folder survives the round trip.
+                closeOnBackdrop: true,
                 onClose: () => {
                     open = null;
                     restore(column);
                 },
             });
             panel.element.classList.add('responsive-panel');
-            open = panel;
+            open = { close: panel.close, column };
         }
 
         const menuButton = h('button', {
@@ -135,15 +145,15 @@ const BossModResponsive = (() => {
         deskButton.classList.toggle('is-available', startPlace.hasContext === true);
 
         // Widening the window puts the column back in the grid. Leaving the
-        // slide-over up over a layout that already has room for it would show
-        // the same column twice.
+        // modal up over a layout that already has room for it would show the
+        // same column twice.
         const watchers = [
             [window.matchMedia(NARROW), rosterEl],
             [window.matchMedia(MEDIUM), contextEl],
         ];
         watchers.forEach(([query, column]) => {
             const onChange = (event) => {
-                if (!event.matches && open && open.body === column) closeOpen();
+                if (!event.matches && open && open.column === column) closeOpen();
             };
             query.addEventListener('change', onChange);
             disposers.push(() => query.removeEventListener('change', onChange));

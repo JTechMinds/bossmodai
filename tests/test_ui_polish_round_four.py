@@ -34,7 +34,7 @@ def _rule(css: str, selector: str) -> str:
     """The declaration block of exactly one rule.
 
     Anchored on a newline and a following `{`, so `.modal-panel` never picks
-    up `.modal-panel[data-size="wide"]` and `.conversation-title` never picks
+    up `.modal-panel[data-size="panel"]` and `.conversation-title` never picks
     up `.conversation-title-edit`.
     """
     opener = re.search(rf"(?m)^{re.escape(selector)}\s*\{{", css)

@@ -28,6 +28,7 @@ HARNESS_MODULES = [
     SHELL / "thread-create.js",
     SHELL / "thread-view-menu.js",
     SHELL / "roster-threads.js",
+    SHELL / "agent-routes.js",
     SHELL / "roster.js",
     SHELL / "footer.js",
 ]

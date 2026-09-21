@@ -26,7 +26,8 @@ const BossModBoardPlace = (() => {
     let selected = new Set();
     let summaryLine = null;
     let boardEl = null;
-    let detail = null;
+    /** The open task layers, base first. */
+    let details = [];
     let refreshTimer = null;
     let load = null;
     const disposers = [];
@@ -135,27 +136,44 @@ const BossModBoardPlace = (() => {
         toolbar.setSelectedCount(selected.size);
     }
 
-    function closeDetail() {
-        if (detail) detail.close();
-        detail = null;
+    /** Close every open task layer, top first. */
+    function closeDetails() {
+        details.slice().reverse().forEach((handle) => handle.close());
+        details = [];
     }
 
-    /** Open one task beside the board; opening another replaces it. */
-    function openDetail(taskId) {
-        closeDetail();
-        detail = BossModTaskDetail.openTaskDetail({
+    /**
+     * Open one task as a layer over whatever is on screen.
+     *
+     * @param {string} taskId
+     * @returns {void}
+     */
+    function showDetail(taskId) {
+        const handle = BossModTaskDetail.openTaskDetail({
             api: ctxRef.api,
             taskId,
             tasks,
-            onNavigate: openDetail,
+            onNavigate: pushDetail,
             onCancel: (task) => canceller.cancelOne(task),
-            onClose: () => { detail = null; },
+            onClose: () => { details = details.filter((item) => item !== handle); },
         });
+        details.push(handle);
+    }
+
+    /** A card on the board: a new errand, so any open task layers go first. */
+    function openDetail(taskId) {
+        closeDetails();
+        showDetail(taskId);
+    }
+
+    /** A link inside a task: one step deeper — ‹ walks back to the task it came from. */
+    function pushDetail(taskId) {
+        showDetail(taskId);
     }
 
     /**
      * Same open path blocked needs use: `navigate('board', { taskId })`.
-     * A missing id says so rather than opening an empty slide-over.
+     * A missing id says so rather than opening an empty task dialog.
      */
     function openLinkedDetail(taskId) {
         const id = String(taskId || '').trim();
@@ -262,7 +280,7 @@ const BossModBoardPlace = (() => {
             clearTimeout(refreshTimer);
             if (load) load.next();
             if (toolbar) toolbar.destroy();
-            closeDetail();
+            closeDetails();
             toolbar = null;
             canceller = null;
             tasks = [];

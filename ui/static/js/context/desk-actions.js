@@ -119,6 +119,7 @@ const BossModDeskActions = (() => {
         function confirmThen(spec) {
             BossModOverlays.createModal({
                 title: spec.title,
+                closeOnBackdrop: true,
                 body: spec.body,
                 actions: [
                     { label: spec.confirm, tone: 'danger', onSelect: () => { void spec.run(); } },

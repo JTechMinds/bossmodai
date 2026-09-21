@@ -38,16 +38,13 @@ const BossModMarketplace = (() => {
      *
      * @param {object} [options]
      * @param {() => void} [options.onClosed] Called once after the takeover
-     *   closes, however it closed — Esc, the `✕` in whichever view is up, or
+     *   closes, however it closed — Esc, the frame's `✕`, an outside click, or
      *   `close()`. The add-agent flow reopens its own dialog from here.
      * @returns {{close: () => void}} `close` is idempotent, as createModal's is.
      */
     function open(options) {
         const onClosed = (options && options.onClosed) || null;
         const host = BossModDom.h('div', { class: 'market-host' });
-        // Assigned once createModal has run. `onDismiss` fires only from a
-        // control inside the panel, which cannot exist before then.
-        let handle = null;
         const state = {
             status: 'loading', categories: [], templates: [],
             // Every catalog row that did not become a card, flat and keyed by
@@ -237,13 +234,6 @@ const BossModMarketplace = (() => {
                 Object.assign(state, { detailOpen: false, pendingUninstall: null });
                 rerender();
             },
-            // Only reachable from a control inside the mounted panel, so a
-            // null handle is an impossible state and is reported as one rather
-            // than swallowed into a click that does nothing.
-            onDismiss() {
-                if (!handle) throw new Error('[marketplace] dismissed before it was mounted');
-                handle.close();
-            },
             // The withheld notice's retry passes a landing spot, because a
             // reload that works deletes the very button that was pressed.
             onRetry(focus) {
@@ -297,17 +287,18 @@ const BossModMarketplace = (() => {
         };
 
         rerender();
-        handle = BossModOverlays.createModal({
+        const handle = BossModOverlays.createModal({
             title: COPY.title,
             body: host,
             size: 'takeover',
-            // NO footer. A full-screen takeover carries its exit in its own
-            // top-right corner, and marketplace-detail.js's `dismissButton`
-            // puts it there in both views; a footer `Close` under that was a
-            // second control for one errand. createModal builds the empty row
-            // and the stylesheet takes it out of the flow. Esc still dismisses
-            // through the focus trap, and both views open on something
-            // focusable — the Find box in browse, `‹ Back` in the detail.
+            // NO footer. The frame's `✕` in the head is the takeover's exit in
+            // both views; a footer `Close` under it would be a second control
+            // for one errand. createModal builds the empty row and the
+            // stylesheet takes it out of the flow. Esc (through the focus trap)
+            // and an outside click dismiss it too, and both views open on
+            // something focusable — the Find box in browse, `‹ Back` in the
+            // detail.
+            closeOnBackdrop: true,
             actions: [],
             onClose: () => { if (onClosed) onClosed(); },
         });

@@ -9,11 +9,10 @@
  * h() escapes by construction where the template literals it replaces did not.
  * Deciding a file's kind and turning its bytes into nodes is file-content.js.
  *
- * The hand-rolled overlay became BossModOverlays.slideOver, so the viewer traps
- * focus, answers Esc, and returns focus to whatever opened it. It is a panel of
- * arbitrary content rather than a question with buttons, which is the seam
- * between the module's two overlays; createModal traps only across its own
- * action row and would have left Tab walking out of the editor.
+ * The hand-rolled overlay became core/overlays.js's panel modal, so the viewer
+ * traps focus, answers Esc, and returns focus to whatever opened it. Its
+ * controls — View/Edit/Save/Print — sit in the frame's tools slot, on the head
+ * row beside the ✕, and the body is the file.
  *
  * The authenticated fetch arrives through `deps.api`. An image element pointed
  * straight at an /api path cannot carry the X-BossMod-Token header, so image
@@ -136,8 +135,12 @@ const BossModFileViewer = (() => {
             onclick: () => setMode('edit'),
         }, 'Edit');
 
+        // Read by the backdrop guard at click time: an outside click closes a
+        // file being read and is refused while one is being edited.
+        let editing = false;
+
         function setMode(mode) {
-            const editing = mode === 'edit';
+            editing = mode === 'edit';
             if (editing) editor.value = content;
             else CONTENT.renderInto(rendered, name, content);
             rendered.hidden = editing;
@@ -179,16 +182,14 @@ const BossModFileViewer = (() => {
             }
         }
 
-        const controls = h('div', { class: 'file-view-controls' },
-            h('button', {
-                class: 'file-view-tab', type: 'button', onclick: () => window.print(),
-            }, 'Print'));
-        if (editable) controls.append(view, edit, save);
+        const print = h('button', {
+            class: 'file-view-tab', type: 'button', onclick: () => window.print(),
+        }, 'Print');
+        const tools = editable ? [view, edit, save, print] : [print];
 
         const body = h('div', { class: 'file-view' },
             breadcrumbs(payload.breadcrumbs),
             h('p', { class: 'file-view-meta' }, [size, updated].filter(Boolean).join(' · ')),
-            controls,
             status);
 
         if (image) {
@@ -199,7 +200,9 @@ const BossModFileViewer = (() => {
                 dims.textContent = `${img.naturalWidth} × ${img.naturalHeight} px`;
             });
             body.append(h('div', { class: 'file-view-figure' }, img, loading, dims));
-            openSheet(name, body);
+            // A file being READ closes on an outside click; one being EDITED
+            // refuses, so a stray click cannot discard an unsaved draft.
+            openSheet({ title: name, body, tools, closeOnBackdrop: () => !editing });
             void loadAuthenticatedImage({ api, imgEl: img, statusEl: loading, path: payload.path });
             return;
         }
@@ -211,16 +214,25 @@ const BossModFileViewer = (() => {
             body.append(rendered, editor);
         }
         if (payload.truncated) body.append(h('p', { class: 'file-view-meta' }, TRUNCATED_COPY));
-        openSheet(name, body);
+        openSheet({ title: name, body, tools, closeOnBackdrop: () => !editing });
     }
 
-    function openSheet(title, body) {
-        sheet = BossModOverlays.slideOver({
+    /**
+     * Show one file in the panel modal.
+     * @param {{title: string, body: HTMLElement, tools: HTMLElement[],
+     *   closeOnBackdrop: () => boolean}} options
+     * @returns {void}
+     */
+    function openSheet({ title, body, tools, closeOnBackdrop }) {
+        sheet = BossModOverlays.createModal({
             title,
             body,
+            tools,
+            size: 'panel',
+            actions: [],
+            closeOnBackdrop,
             onClose: () => { revokeImageObjectUrl(); sheet = null; },
         });
-        sheet.element.classList.add('file-view-panel');
     }
 
     // ─── Open / close ───
@@ -260,7 +272,7 @@ const BossModFileViewer = (() => {
      */
     function close() {
         if (sheet) sheet.close();
-        // slideOver's onClose has already run for that path; this covers a
+        // the modal's onClose has already run for that path; this covers a
         // close() with no sheet and keeps the revoke unconditional.
         revokeImageObjectUrl();
         sheet = null;

@@ -15,7 +15,7 @@
  * ONE DIALOG AT A TIME, and its state is per render. The rail's Add agent row
  * is reachable while a desk's Edit dialog is up, so a second dialog would
  * rewrite the first one's identity and turn an edit into a create. Both flows
- * are core/overlays.js's wide modal — one trap, one Esc, the title and the
+ * are core/overlays.js's panel modal — one trap, one Esc, the title and the
  * dismissal pinned outside a body that scrolls.
  *
  * CREATE IS TWO STEPS OVER ONE BODY: the template picker, then the form,
@@ -135,13 +135,13 @@ const BossModAgentEdit = (() => {
 
         const modal = BossModOverlays.createModal({
             title: wasCreating ? HIRE_TITLE : EDIT_TITLE,
-            // The variant, not a second modal: same trap, same Esc, same focus
-            // restoration, more room and a body that scrolls.
+            // The panel size, not a second modal: same trap, same Esc, same
+            // focus restoration, more room and a body that scrolls.
             body,
             // `‹ Add agent`: the chevron sits on the title row, not in the
             // body and not in the footer.
             lead: backBtn,
-            size: 'wide',
+            size: 'panel',
             actions: FOOTER.actionsFor(wasCreating ? 'picker' : 'form', chrome),
             onClose: () => {
                 destroyed = true;

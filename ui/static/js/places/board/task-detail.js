@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the task detail slide-over.
+ * BossMod AI — the task detail dialog.
  *
  * Ported from company-task-detail.js, which was the right panel of the dock-era
  * table. Everything load-bearing is preserved verbatim: the role-contract
@@ -155,7 +155,7 @@ const BossModTaskDetail = (() => {
     }
 
     /**
-     * Open one task in the shared slide-over.
+     * Open one task in the shared modal.
      *
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
@@ -169,7 +169,7 @@ const BossModTaskDetail = (() => {
      * @returns {{close: () => void}}
      * @throws {Error} When a dependency is missing, or when the task id is not
      *   in the list — opening a panel for a task nobody can name would show an
-     *   empty slide-over with no explanation.
+     *   empty modal with no explanation.
      */
     function openTaskDetail(deps) {
         const { api, taskId, tasks, onNavigate, onCancel, onClose } = deps || {};
@@ -201,9 +201,14 @@ const BossModTaskDetail = (() => {
             links(task, tasks, children, onNavigate),
             events.element);
 
-        const panel = BossModOverlays.slideOver({
+        const panel = BossModOverlays.createModal({
             title: task.title || 'Task',
             body,
+            size: 'panel',
+            // Read-only apart from Cancel task, which asks its own question:
+            // nothing here can be lost to an outside click.
+            actions: [],
+            closeOnBackdrop: true,
             onClose: () => {
                 events.destroy();
                 if (onClose) onClose();

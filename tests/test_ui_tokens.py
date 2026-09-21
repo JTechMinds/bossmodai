@@ -117,8 +117,10 @@ TINTED_SURFACES = (
     TintedSurface("places.css", ".task-card.is-selected", "accent-bg", "task-card"),
     # The assign sheet's informational outcome (places/board/assign-outcomes.js).
     TintedSurface("places.css", '.assign-panel[data-tone="info"]', "accent-bg", "assign-panel"),
-    # The operator's own turn in a transcript (conversation/message.js).
-    TintedSurface("conversation.css", ".msg-human", "accent-bg", "msg"),
+    # The operator's own turn in a transcript (conversation/message.js). Not a
+    # colour tint any more but still a ground of its own, and the weaker one:
+    # --hint clears AA on the agent's --bg by a hundredth and fails on this.
+    TintedSurface("conversation.css", ".msg-human", "btn-face-hover", "msg"),
     # Every event card is tinted: EVENT_TONES in conversation/event-cards.js
     # maps all four tones onto these three treatments, so `.event-card`'s own
     # --panel ground never reaches the screen and the error line inside one is

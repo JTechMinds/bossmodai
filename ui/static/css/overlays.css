@@ -1,6 +1,6 @@
 /* BossMod AI — everything that floats above the frame: modals, the needs
-   popover, arrival toasts, and slide-overs. Moved out of shell.css rather than
-   duplicated, so there is one definition of each.
+   popover, and arrival toasts. Moved out of shell.css rather than duplicated,
+   so there is one definition of each.
 
    Colour comes from tokens.css; no value is hardcoded here that a token already
    names. Shadows use a neutral rgba because a shadow is a depth cue, not a
@@ -8,10 +8,12 @@
 
 /* ─── Modal ───
    Three sizes, one implementation (core/overlays.js). All are centred in the
-   viewport by the same transform; `wide` and `takeover` only change how much
-   room the panel is allowed to take. The panel is a flex column so the BODY is
-   the part that scrolls — the title and the action row stay put, which is the
-   whole reason a tall form can live in here at all. */
+   viewport by the same transform; `panel` and `takeover` only change how much
+   room the panel is allowed to take. The panel is a flex column so the
+   BODY is the part that scrolls — the head and the action row stay put, which
+   is the whole reason a tall form can live in here at all. The panel carries no
+   padding of its own: the head, the body and the footer each own their
+   spacing, so the head's hairline and the footer's run edge to edge. */
 
 /* The scrim, between the app and the panel. Until round four there was none,
    so the dialog floated over a live page and clicks reached the controls
@@ -19,14 +21,16 @@
    is progressive enhancement, and where backdrop-filter is unsupported the
    scrim alone still reads. Neutral rgba rather than a token, on the same
    reasoning the shadows below use one: this is a depth cue, not a palette
-   colour. Clicking it does not dismiss — core/overlays.js binds no handler,
-   because a stray click must not discard a half-filled form. */
+   colour. There is ONE scrim for the whole stack of layers, and a click on it
+   closes the stack only when every layer opted in (closeOnBackdrop) — a stray
+   click must not discard a half-filled form anywhere in it. */
 .modal-backdrop {
   position: fixed;
   z-index: 55;
   inset: 0;
   background: rgba(15, 20, 28, 0.42);
   backdrop-filter: blur(2px);
+  animation: modal-scrim-in 160ms ease-out;
 }
 
 .modal-panel {
@@ -39,70 +43,92 @@
   flex-direction: column;
   width: min(440px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
-  padding: 20px;
   border: 1px solid var(--line-strong);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--panel);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  animation: modal-panel-in 160ms ease-out;
 }
 
-/* The agent dialog, and the only caller of this size. Two numbers, each doing a
-   job the 760px/max-height pair it replaces could not.
+/* A layer beneath the one on screen. `.modal-panel` sets `display: flex` — an
+   author declaration that outranks the UA's `[hidden]` — so the hide has to be
+   said here. Un-hiding it replays modal-panel-in, which is the step back. */
+.modal-panel[hidden] { display: none !important; }
 
-   960px, up from 760. This size now carries TWO layouts: step one is a filter
-   rail beside a card grid, which is the pairing the takeover exists for and
-   which 760px puts in one column; step two is the form in two columns, and its
-   right-hand column holds the connection matrix, which needs ~215px per select
-   before a real connection label clips (see .connection-grid below). 960 is
-   160px of rail plus a two-up grid on step one, and 2 x ~450px on step two.
-
-   HEIGHT, not just a ceiling — the same fix, for the same reason, that the
-   takeover already carries. With only max-height the panel was as tall as
-   whichever step was on screen: the picker is short, the form is tall, and the
-   swap between them resized the dialog under the pointer. One box for both
-   steps, and for the edit flow that shares this size. `min()` so a short
-   viewport still gets a panel that fits inside it rather than one clipped by
-   it. */
-.modal-panel[data-size="wide"] {
-  width: min(960px, calc(100vw - 32px));
-  height: min(700px, calc(100vh - 48px));
-  max-height: calc(100vh - 48px);
+/* Opening only. Closing is instant, so a panel never lingers over a page the
+   operator has already returned to. base.css's reduced-motion rule collapses
+   both to a hundredth of a millisecond; nothing here needs its own guard. */
+@keyframes modal-scrim-in { from { opacity: 0; } }
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
 }
 
-/* The takeover: a surface for browsing and reading, where `wide`'s 760px would
-   put a rail of filters and a card grid in one column. 1180px is where that pairing
-   stops being cramped without the eye having to travel the whole of a wide
-   monitor. It is still a PANEL, not a page — the 24px it keeps on each edge is
-   what leaves the scrim visible, so the operator can see there is an app behind
-   this and that Esc belongs to the thing on top. Same flex column as the other
-   two, so the body is still the only part that scrolls. */
+/* The panel: every modal that SHOWS something rather than asks something — a
+   task, a file, the agent form, a column the grid had no room for. It scales
+   with the window, because a fixed box sized for the old 420px slide-out read
+   as tiny on a wide screen: 80% of the width, 85% of the height, and never
+   narrower than 640px unless the window itself is. HEIGHT, not just a
+   ceiling, so content that loads late never resizes the box under the
+   pointer. */
+.modal-panel[data-size="panel"] {
+  width: 80vw;
+  min-width: min(640px, calc(100vw - 32px));
+  height: 85vh;
+  max-height: calc(100vh - 32px);
+}
+
+/* The takeover: a browse-and-read surface wants nearly all of the window, and
+   keeps a sliver of scrim on every edge so the operator can see there is an
+   app behind it and that Esc belongs to the thing on top. */
 .modal-panel[data-size="takeover"] {
-  width: min(1180px, calc(100vw - 48px));
-  /* HEIGHT, not just a ceiling. With only max-height the panel was as tall as
-     the one "Loading…" line the catalog puts up while it fetches, and then
-     jumped to full height the moment the cards landed — a surface that pops
-     cropped and grows under the pointer. Fixing it in CSS rather than by
-     measuring in JS keeps geometry where overlays.js says it belongs, and it
-     is the same number the ceiling already was, so loading, ready, empty and
-     failed all occupy one box. */
-  height: calc(100vh - 48px);
-  max-height: calc(100vh - 48px);
+  width: 95vw;
+  height: 95vh;
 }
 
-/* The title row. A dialog with a `lead` control puts it here, on the heading's
-   own line, so `‹ Add agent` reads as one thing — the chevron spent a round as
-   a bordered square in the band below, aligned to nothing and filling nothing.
-   The margin moves to the ROW so the two shapes leave the same gap under them. */
+/* The head: the conversation header's row, floated. --bar is the app's rhythm
+   line, so a dialog's title bar is the same height as the chat header behind
+   it, and the hairline is the same hairline. Every dialog has one now — the
+   title, then whatever the caller put beside it, then the frame's ✕. A `lead`
+   sits before the title on this same row, so `‹ Add agent` reads as one thing
+   — the chevron spent a round as a bordered square in the band below, aligned
+   to nothing and filling nothing. */
 .modal-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  min-height: var(--bar);
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
-.modal-title { flex: 0 0 auto; margin: 0 0 8px; font-size: 16px; }
-.modal-head .modal-title { margin: 0; }
+/* .conversation-title's size and weight. It shrinks and ellipsizes before the
+   tools or the ✕ give up a pixel: a long file name must not push the exit off
+   the row. */
+.modal-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.modal-subtitle { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+
+/* The auto margin is what sends the tools and the ✕ to the right end. The ✕
+   carries one too, so a head with no tools still ends on it; beside tools it
+   gives the margin back and sits with them. */
+.modal-tools { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.modal-close { flex: 0 0 auto; margin-left: auto; font-size: 16px; line-height: 1; }
+.modal-tools + .modal-close { margin-left: 0; }
+
+/* ‹ — back one layer. The ✕'s shape; the chevron glyph needs a size step to
+   read at the same weight as the ✕ beside it. */
+.modal-back { flex: 0 0 auto; font-size: 20px; line-height: 1; }
 
 /* The lead control is put away with the `hidden` PROPERTY, and `.btn` sets
    `display: inline-flex` — an author declaration, which outranks the UA's
@@ -117,42 +143,60 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  margin-bottom: 16px;
+  padding: 16px 20px;
   color: var(--muted);
 }
 
-/* Pinned below the scroller, not inside it. */
-.modal-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
+/* Pinned below the scroller, not inside it — a band with the head's hairline,
+   so a form's primary reads as the dialog's footer rather than as the last
+   field. Empty on a surface that carries its controls elsewhere, and then it
+   takes no room at all. */
+.modal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.modal-actions:empty { display: none; }
 
 /* .modal-body's muted colour is a CONFIRM dialog's: two lines of question
-   above two buttons. The form the wide variant carries and the catalog the
-   takeover carries are both the app's own ink on the app's own ground, so the
-   override belongs to both sizes — patching colour onto each .market-* class
-   instead would leave every class added later inheriting the wrong one. */
-.modal-panel[data-size="wide"] .modal-body,
+   above two buttons. The task, the file, the form and the column a panel
+   carries, and the catalog the takeover carries, are all the app's own ink on
+   the app's own ground, so the override belongs to both sizes — patching
+   colour onto each class instead would leave every class added later
+   inheriting the wrong one. */
+.modal-panel[data-size="panel"] .modal-body,
 .modal-panel[data-size="takeover"] .modal-body { color: var(--ink); }
 
 /* The takeover's body is a COLUMN, and the part that scrolls is inside it.
-   Every other size lets .modal-body scroll its whole content. The takeover
-   cannot: its header stays put while the grid moves under it, and the rail and
-   the detail pane stick to the top of whatever is actually scrolling — so the
-   scroller has to be the row below the header rather than the body around it.
-   Pinning them by LAYOUT is what leaves no offset to guess; the number that
-   used to be guessed was wrong the moment "Install from URL" wrapped a second
-   row into the header. min-height: 0 is again what lets a flex child shrink
-   instead of pushing the panel past the viewport. */
+   Only a default-size dialog lets .modal-body scroll its whole content. The
+   takeover cannot: its header stays put while the grid moves under it, and the
+   rail and the detail pane stick to the top of whatever is actually scrolling
+   — so the scroller has to be the row below the header rather than the body
+   around it. Pinning them by LAYOUT is what leaves no offset to guess; the
+   number that used to be guessed was wrong the moment "Install from URL"
+   wrapped a second row into the header. min-height: 0 is again what lets a
+   flex child shrink instead of pushing the panel past the viewport. */
 .modal-panel[data-size="takeover"] .modal-body,
-/* The wide dialog joined it when step 1 grew a pinned header over a scrolling
-   card grid. Same reasoning: the part that scrolls has to be INSIDE the body
-   rather than the body itself, or the header scrolls away with the grid and a
-   second scrollbar wraps the one that is already there. Step 2's scroller is
-   .agent-form-host, step 1's is .picker-body, and both are flex children of
-   this. */
-.modal-panel[data-size="wide"] .modal-body {
+/* The panel joined it when the agent dialog's step 1 grew a pinned header over
+   a scrolling card grid. Same reasoning: the part that scrolls has to be
+   INSIDE the body rather than the body itself, or the header scrolls away with
+   the grid and a second scrollbar wraps the one that is already there. So
+   panel content brings its own scroller — .agent-form-host and .picker-body
+   in the agent dialog, .file-view, .task-detail — as a flex child of this. */
+.modal-panel[data-size="panel"] .modal-body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+
+/* A panel is wide now, and a paragraph that runs the full width of 80% of a
+   large monitor is hard to read: prose keeps a measure, while tables, code,
+   grids and lists-of-cards still use the room. */
+.modal-panel[data-size="panel"] .modal-body :is(p, li) { max-width: 100ch; }
 
 /* The dialog's own buttons wear the app's button face, flat — the same fill
    .btn carries, so Cancel in a footer and Try again in a panel are one control
@@ -197,7 +241,7 @@
    :not([hidden]) on each.
 
    FILLS the dialog body rather than sitting inside it at its content height.
-   The panel is a fixed box now (see .modal-panel[data-size="wide"]) and both
+   The panel is a fixed box now (see .modal-panel[data-size="panel"]) and both
    steps have to occupy the whole of it, or the shorter one floats in a
    half-empty dialog — which, before the height was fixed, is what made the
    panel resize on every step swap. */
@@ -314,7 +358,7 @@
    only difference between the two paths. */
 
 /* The host both flows publish the form into, and the scroller of step 2 — the
-   dialog body above it is a flex column that does not scroll (see the wide
+   dialog body above it is a flex column that does not scroll (see the panel
    .modal-body rule), because step 1 pins a header over its own scroller and a
    second scrollbar around it is how a card grid ends up unreachable by wheel. */
 .agent-form-host {
@@ -581,7 +625,7 @@
 }
 
 /* ─── The agent form's AI Connections matrix ───
-   Only ever rendered inside the wide dialog above, which is why it is here and
+   Only ever rendered inside the agent dialog above, which is why it is here and
    not in controls.css: controls.css is the vocabulary several surfaces share,
    and nothing outside this dialog has a connection grid.
 
@@ -1027,57 +1071,12 @@
 
 .toast-action.primary { border-color: var(--accent); color: var(--accent); }
 
-/* ─── Slide-over ───
-   The desk and task detail panels ride this in Phase 3; the needs queue's
-   "Show me" uses it for nothing yet, so it stays minimal rather than invented. */
-
-.slide-over {
-  position: fixed;
-  z-index: 70;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(420px, 100vw);
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--line-strong);
-  background: var(--panel);
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.16);
-  transition: transform 180ms ease;
-}
-
-.slide-over[hidden] { display: none !important; }
-
-.slide-over-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-}
-
-.slide-over-title { flex: 1 1 auto; margin: 0; font-size: 15px; }
-
-.slide-over-close {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r);
-  font-size: 18px;
-  line-height: 1;
-  color: var(--muted);
-}
-
-.slide-over-close:hover { background: var(--line); color: var(--ink); }
-
 /* Motion is decoration here; the information is the copy. */
 @media (prefers-reduced-motion: reduce) {
   .popover,
   .popover-action,
   .popover-show-me,
-  .toast,
-  .slide-over {
+  .toast {
     transition: none;
   }
 }

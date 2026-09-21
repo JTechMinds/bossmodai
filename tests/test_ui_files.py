@@ -104,9 +104,9 @@ def test_destructive_file_actions_confirm_through_a_modal() -> None:
     window.confirm cannot be styled, cannot be tested, and blocks the event
     loop. Delete is a question with no input, so it is a createModal with
     Cancel focused; Rename is a form the operator types into, so it is
-    file-form.js's slide-over — a modal action always closes, and a rename that
-    closed on failure would throw away the name they typed. Both trap focus,
-    answer Esc, and restore focus to their opener.
+    file-form.js's form modal, whose pinned submit does NOT close — a rename
+    that closed on failure would throw away the name they typed. Both trap
+    focus, answer Esc, and restore focus to their opener.
     """
     for path in _modules():
         source = path.read_text(encoding="utf-8")
@@ -131,7 +131,14 @@ def test_destructive_file_actions_confirm_through_a_modal() -> None:
     )[0]
     assert "FORM.openFormPanel({" in rename
     form = _read("file-form.js")
-    assert "BossModOverlays.slideOver({ title, body: form })" in form
+    # A modal now: the form is the body, and its primary is pinned in the footer
+    # band through createModal's `form:` action — a submit that does NOT close,
+    # so a refused rename keeps the name the operator typed.
+    assert "BossModOverlays.createModal({" in form
+    assert "slideOver" not in form
+    assert "form: FORM_ID" in form
+    assert "tone: 'primary'" in form
+    assert "closeOnBackdrop" not in form, "a form must not close on a stray click"
     # The panel stays open on failure with the operator's text intact.
     assert "error((err && err.message) || 'The request failed.');" in form
 
@@ -205,3 +212,21 @@ def test_files_modules_stay_focused() -> None:
         assert f"function {name}(" not in _read("file-grid.js")
     assert "BossModFormat.formatFileSize(" in _read("file-grid.js")
     assert "BossModFormat.formatFileSize(" in _read("file-viewer.js")
+
+
+def test_the_viewer_is_a_wide_modal_that_guards_an_unsaved_edit() -> None:
+    """The viewer reads in a panel modal with its controls in the head.
+
+    View/Edit/Save/Print sit in the frame's tools slot, beside the ✕, which
+    is the chat-chrome row. An outside click closes a file being READ and is
+    refused while one is being EDITED — the guard is asked at click time.
+    """
+    viewer = _read("file-viewer.js")
+    assert "BossModOverlays.createModal({" in viewer
+    assert "slideOver" not in viewer
+    assert "size: 'panel'" in viewer
+    assert "closeOnBackdrop: () => !editing" in viewer
+    assert "tools," in viewer or "tools:" in viewer
+    assert "file-view-panel" not in viewer
+    css = (ROOT / "ui" / "static" / "css" / "places.css").read_text(encoding="utf-8")
+    assert ".slide-over" not in css

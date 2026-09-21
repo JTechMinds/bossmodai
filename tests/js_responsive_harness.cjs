@@ -82,11 +82,11 @@ for (const [name, node] of [["menu", menu], ["desk", desk]]) {
     }
 }
 
-// ─── 2. Opening MOVES the live column into the slide-over ───
+// ─── 2. Opening MOVES the live column into the modal ───
 
 await_(menu.dispatchClick());
 const panel = documentStub.body.querySelector(".responsive-panel");
-if (!panel) throw new Error("the drawer did not open a slide-over");
+if (!panel) throw new Error("the drawer did not open a modal");
 if (!panel.contains(roster)) throw new Error("the drawer must hold the live roster");
 if (layout.children.includes(roster)) throw new Error("the roster is in two places at once");
 // The same element, with what it was holding: a rebuild would have lost this.
@@ -95,7 +95,8 @@ if (!presentsTheLiveColumn) throw new Error("the drawer rebuilt the roster inste
 // The trap is core/overlays.js's, not a third implementation.
 if (panel.getAttribute("role") !== "dialog") throw new Error("the panel must be a dialog");
 if (panel.getAttribute("aria-modal") !== "true") throw new Error("the panel must be modal");
-if (!panel.querySelector(".slide-over-close")) throw new Error("the panel must be dismissible");
+if (panel.getAttribute("data-size") !== "panel") throw new Error("a presented column is a panel modal");
+if (!panel.querySelector(".modal-close")) throw new Error("the panel must be dismissible");
 
 // ─── 3. Only one panel at a time, and closing restores the grid order ───
 
@@ -111,7 +112,7 @@ if (order.join("|") !== "app-roster|app-place") {
 }
 
 // Esc / the close button puts the context back as the LAST child.
-panels[0].querySelector(".slide-over-close").click();
+panels[0].querySelector(".modal-close").click();
 const restored = layout.children.map((child) => child.className);
 const restoresColumnOrder = restored.join("|") === "app-roster|app-place|app-context";
 if (!restoresColumnOrder) throw new Error(`bad restore order: ${restored.join("|")}`);

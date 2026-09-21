@@ -240,7 +240,10 @@ function apiFetch(url, init) {
     // Confirming pauses.
     click(pause);
     dialogs = byAttr(body, "role", "dialog", []);
-    const confirmAction = buttons(dialogs[0], []).filter((b) => b.textLabel !== "Cancel")[0];
+    // By name: the frame's ✕ is a button in every dialog too, so "whatever is
+    // not Cancel" would be the exit, not the confirm.
+    const confirmAction = buttons(dialogs[0], []).filter((b) => b.textLabel === "Pause everyone")[0];
+    if (!confirmAction) throw new Error("the Pause dialog needs a Pause everyone action");
     click(confirmAction);
     await settled();
     await settled();
