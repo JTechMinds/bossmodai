@@ -19,6 +19,7 @@ from core.agent_loop.notifications import broadcast_origin_status_messages, emit
 from core.agent_loop.decision_parse_fail import (
     decision_repair_attempt_limit,
     surface_decision_parse_failure,
+    surface_llm_timeout_failure,
 )
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
@@ -29,6 +30,7 @@ from core.agent_loop.parse_steer import (
 )
 from core.agent_loop.turn_helpers import (
     _build_decision_repair_messages,
+    _build_decision_timeout_repair_messages,
     _build_managed_writer_progress_reporter,
     _build_step_trace,
     _cli_result_to_turn_result,
@@ -94,6 +96,63 @@ async def _run_decision_turn(
                 api_base=api_config.get("api_base"),
                 api_key=api_config.get("api_key"),
                 extra_body=api_config.get("extra_body"),
+            )
+        except client.LLMTimeoutError as exc:
+            if parse_failure_should_repair(
+                kind="llm_timeout",
+                repair_attempts=decision_repair_attempts,
+                max_repairs=decision_repair_attempt_limit(),
+                decision=True,
+            ):
+                decision_repair_attempts += 1
+                continuation_messages = _build_decision_timeout_repair_messages(
+                    timeout_seconds=exc.timeout_seconds,
+                )
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=len(step_traces) + 1,
+                        context_snapshot=next_context_snapshot,
+                        raw_response=None,
+                        action=None,
+                        result={
+                            "event": "decision_repair_requested",
+                            "detail": "LLM call timed out; asked the model to retry with one JSON envelope.",
+                        },
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=str(exc),
+                    )
+                )
+                current_context.extend(continuation_messages)
+                next_context_snapshot = _serialize_trace_value(continuation_messages)
+                continue
+
+            return await _finish_decision_recovery(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                executed_actions=executed_actions,
+                raw_response=last_response_content,
+                total_prompt_tokens=total_prompt_tokens,
+                total_completion_tokens=total_completion_tokens,
+                total_tokens=total_tokens,
+                step_traces=step_traces,
+                next_context_snapshot=next_context_snapshot,
+                step_started=step_started,
+                step_prompt_tokens=0,
+                step_completion_tokens=0,
+                step_total_tokens=0,
+                error=_timeout_recovery_error(exc),
+                surfaced=surface_llm_timeout_failure(agent=agent, trigger=trigger),
+                action=None,
+                flags={"llm_timeout": True},
+                start=start,
             )
         except client.LLMError as exc:
             result = {
@@ -184,27 +243,7 @@ async def _run_decision_turn(
                 next_context_snapshot = _serialize_trace_value(continuation_messages)
                 continue
 
-            surfaced = surface_decision_parse_failure(agent=agent, trigger=trigger)
-            result = {
-                "event": "agent_error",
-                "detail": error,
-                "agent_name": agent.name,
-                "trigger_requests": surfaced.get("trigger_requests") or [],
-            }
-            if surfaced.get("chat_message"):
-                result["chat_message"] = surfaced["chat_message"]
-            if surfaced.get("channel_message"):
-                result["channel_message"] = surfaced["channel_message"]
-            await manager.broadcast_activity(
-                event=result["event"],
-                detail=result["detail"],
-                agent_name=result["agent_name"],
-            )
-            await _broadcast_parse_fail_note(agent, result)
-            result["parse_steer"] = True
-            # Completing the trigger fail-closes once. The dispatcher then
-            # persists the commitment wake and does not retry into a stall.
-            return await _finalize_turn(
+            return await _finish_decision_recovery(
                 agent=agent,
                 trigger=trigger,
                 trigger_type=trigger_type,
@@ -212,32 +251,21 @@ async def _run_decision_turn(
                 model=model,
                 model_source=model_source,
                 initial_context_json=initial_context_json,
-                outcome=TurnOutcome(
-                    result=result,
-                    trigger_status="completed",
-                    diagnostic_status="error",
-                    diagnostic_error=error,
-                    action=parsed,
-                    action_summary=_summarize_action_chain(executed_actions, ""),
-                    raw_response=response.content,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
-                    total_tokens=total_tokens,
-                    steps=step_traces + [
-                        _build_step_trace(
-                            step_index=len(step_traces) + 1,
-                            context_snapshot=next_context_snapshot,
-                            raw_response=response.content,
-                            action=parsed,
-                            result=result,
-                            prompt_tokens=step_prompt_tokens,
-                            completion_tokens=step_completion_tokens,
-                            total_tokens=step_total_tokens,
-                            duration_ms=int((time.monotonic() - step_started) * 1000),
-                            error=error,
-                        )
-                    ],
-                ),
+                executed_actions=executed_actions,
+                raw_response=response.content,
+                total_prompt_tokens=total_prompt_tokens,
+                total_completion_tokens=total_completion_tokens,
+                total_tokens=total_tokens,
+                step_traces=step_traces,
+                next_context_snapshot=next_context_snapshot,
+                step_started=step_started,
+                step_prompt_tokens=step_prompt_tokens,
+                step_completion_tokens=step_completion_tokens,
+                step_total_tokens=step_total_tokens,
+                error=error,
+                surfaced=surface_decision_parse_failure(agent=agent, trigger=trigger),
+                action=parsed,
+                flags={"parse_steer": True},
                 start=start,
             )
 
@@ -635,7 +663,102 @@ async def _run_decision_turn(
         )
 
 
-async def _broadcast_parse_fail_note(agent: Agent, result: dict[str, Any]) -> None:
+def _timeout_recovery_error(exc: client.LLMTimeoutError) -> str:
+    """Operator-visible steer after the timeout repair budget is spent."""
+    return (
+        f"The model call timed out after {exc.timeout_seconds:g}s before one JSON envelope. "
+        "Retry this turn with one JSON object. "
+        "Do not invent Board status or mark the task Done."
+    )
+
+
+async def _finish_decision_recovery(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    trigger_type: str,
+    mode: str,
+    model: str,
+    model_source: str,
+    initial_context_json: str,
+    executed_actions: list[str],
+    raw_response: str,
+    total_prompt_tokens: int,
+    total_completion_tokens: int,
+    total_tokens: int,
+    step_traces: list[dict[str, Any]],
+    next_context_snapshot: str | None,
+    step_started: float,
+    step_prompt_tokens: int,
+    step_completion_tokens: int,
+    step_total_tokens: int,
+    error: str,
+    surfaced: dict[str, Any],
+    action: dict[str, Any] | None,
+    flags: dict[str, Any],
+    start: float,
+) -> TurnOutcome:
+    """Complete the trigger after one note and one commitment wake.
+
+    Completing fail-closes once. The dispatcher persists the wake and does
+    not retry the turn into a stall.
+    """
+    result: dict[str, Any] = {
+        "event": "agent_error",
+        "detail": error,
+        "agent_name": agent.name,
+        "trigger_requests": surfaced.get("trigger_requests") or [],
+    }
+    if surfaced.get("chat_message"):
+        result["chat_message"] = surfaced["chat_message"]
+    if surfaced.get("channel_message"):
+        result["channel_message"] = surfaced["channel_message"]
+    await manager.broadcast_activity(
+        event=result["event"],
+        detail=result["detail"],
+        agent_name=result["agent_name"],
+    )
+    await broadcast_recovery_note(agent, result)
+    result.update(flags)
+    return await _finalize_turn(
+        agent=agent,
+        trigger=trigger,
+        trigger_type=trigger_type,
+        mode=mode,
+        model=model,
+        model_source=model_source,
+        initial_context_json=initial_context_json,
+        outcome=TurnOutcome(
+            result=result,
+            trigger_status="completed",
+            diagnostic_status="error",
+            diagnostic_error=error,
+            action=action,
+            action_summary=_summarize_action_chain(executed_actions, ""),
+            raw_response=raw_response,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            total_tokens=total_tokens,
+            steps=step_traces + [
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=raw_response or None,
+                    action=action,
+                    result=result,
+                    prompt_tokens=step_prompt_tokens,
+                    completion_tokens=step_completion_tokens,
+                    total_tokens=step_total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                    error=error,
+                )
+            ],
+        ),
+        start=start,
+    )
+
+
+async def broadcast_recovery_note(agent: Agent, result: dict[str, Any]) -> None:
     """Broadcast the unbound origin note. Task-thread events are already persisted."""
     chat_message = result.get("chat_message")
     if isinstance(chat_message, dict):

@@ -50,7 +50,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_model_self_queue", "", "llm"),
     ("default_temperature", "0.7", "llm"),
     ("default_max_tokens", "8192", "llm"),
-    ("llm_request_timeout_seconds", "120", "llm"),
+    ("llm_request_timeout_seconds", "720", "llm"),
     ("decision_repair_attempts", "6", "llm"),
     # How many agent turns may call the model at once. Default 2 is safe
     # for a local LLM. One agent still runs at most one turn. Repair wakes

@@ -131,7 +131,7 @@ async def completion(
             )
     except asyncio.TimeoutError as exc:
         logger.error("LLM call timed out (model=%s) after %ss", model, timeout_seconds)
-        raise LLMError(f"LLM call timed out after {timeout_seconds:g}s") from exc
+        raise LLMTimeoutError(timeout_seconds) from exc
     except Exception as exc:
         logger.error("LLM call failed (model=%s): %s", model, exc)
         raise LLMError(f"LLM call failed: {exc}") from exc
@@ -166,3 +166,11 @@ def count_tokens(text: str, model: str | None = None) -> int:
 
 class LLMError(Exception):
     """Raised when an LLM call fails."""
+
+
+class LLMTimeoutError(LLMError):
+    """Raised when one model call exceeds ``llm_request_timeout_seconds``."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+        super().__init__(f"LLM call timed out after {timeout_seconds:g}s")

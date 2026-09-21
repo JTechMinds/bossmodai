@@ -1,7 +1,8 @@
-"""Fail-closed decision parse: one operator note and one commitment wake.
+"""Fail-closed decision recovery: one operator note and one commitment wake.
 
-Runs only after the decision repair budget is spent. Does not wipe runtime,
-open an Approve card, or enqueue another decision turn.
+Parse failures and LLM timeouts share this path after the decision repair
+budget is spent. It does not wipe runtime, open an Approve card, or enqueue
+another decision turn.
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ PARSE_FAIL_NOTE = (
 )
 RESUME_REASON = "Decision parse failed. Continue the committed work."
 
+TIMEOUT_NOTE = (
+    "LLM request timed out — the turn did not return one JSON envelope. "
+    "The commitment was re-queued."
+)
+TIMEOUT_RESUME_REASON = "LLM request timed out. Continue the committed work."
+
 _COMMITMENT_STATUSES = frozenset({"accepted", "active", "waiting", "blocked", "stalled"})
 _NOTE_STATUSES = _COMMITMENT_STATUSES | {"pending"}
 
@@ -45,14 +52,44 @@ def surface_decision_parse_failure(
     agent: Agent,
     trigger: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    """Post one parse-fail note and re-queue an open work commitment."""
+    return surface_commitment_recovery(
+        agent=agent,
+        trigger=trigger,
+        note=PARSE_FAIL_NOTE,
+        resume_reason=RESUME_REASON,
+    )
+
+
+def surface_llm_timeout_failure(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Post one timeout note and re-queue an open work commitment."""
+    return surface_commitment_recovery(
+        agent=agent,
+        trigger=trigger,
+        note=TIMEOUT_NOTE,
+        resume_reason=TIMEOUT_RESUME_REASON,
+    )
+
+
+def surface_commitment_recovery(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any] | None,
+    note: str,
+    resume_reason: str,
+) -> dict[str, Any]:
     """Post one operator-visible note and re-queue an open work commitment.
 
     A second call for the same task does not post another copy of the note.
     A commitment wake is skipped when that resume is already queued.
     """
     task = _task_for_note(agent, trigger)
-    posted = _post_note(agent, trigger, task)
-    requests = _requeue_commitment(agent, task)
+    posted = _post_note(agent, trigger, task, note=note)
+    requests = _requeue_commitment(agent, task, resume_reason=resume_reason)
     result: dict[str, Any] = {"trigger_requests": requests}
     if posted.get("chat_message"):
         result["chat_message"] = posted["chat_message"]
@@ -82,7 +119,12 @@ def _task_for_note(agent: Agent, trigger: dict[str, Any] | None) -> Task | None:
     return None
 
 
-def _requeue_commitment(agent: Agent, task: Task | None) -> list[dict[str, Any]]:
+def _requeue_commitment(
+    agent: Agent,
+    task: Task | None,
+    *,
+    resume_reason: str,
+) -> list[dict[str, Any]]:
     """Queue one activity resume for an open commitment.
 
     A pending assignment with no paused work is left alone so this path
@@ -104,7 +146,7 @@ def _requeue_commitment(agent: Agent, task: Task | None) -> list[dict[str, Any]]
 
     active = activity_runtime.get_active_work_activity(agent.id)
     if active is not None and active.task_id == task.id:
-        return [_repair_wake(build_activity_resume_trigger(active, reason=RESUME_REASON))]
+        return [_repair_wake(build_activity_resume_trigger(active, reason=resume_reason))]
 
     # Same resume the status-reply path uses: reactivate paused or
     # soft-blocked work, then queue one activity_resumed wake.
@@ -116,11 +158,11 @@ def _requeue_commitment(agent: Agent, task: Task | None) -> list[dict[str, Any]]
             title=task.title,
             detail=task.description,
             task_status="active",
-            supersede_note=RESUME_REASON,
+            supersede_note=resume_reason,
         )
         if activated is not None and activated.kind == "work" and activated.task_id == task.id:
-            return [_repair_wake(build_activity_resume_trigger(activated, reason=RESUME_REASON))]
-    return [_repair_wake(build_task_resume_trigger(task, reason=RESUME_REASON))]
+            return [_repair_wake(build_activity_resume_trigger(activated, reason=resume_reason))]
+    return [_repair_wake(build_task_resume_trigger(task, reason=resume_reason))]
 
 
 def _repair_wake(spec: dict[str, Any]) -> dict[str, Any]:
@@ -134,10 +176,12 @@ def _post_note(
     agent: Agent,
     trigger: dict[str, Any] | None,
     task: Task | None,
+    *,
+    note: str,
 ) -> dict[str, Any]:
     """One task-thread event when a task is bound; otherwise one origin note."""
     if task is not None:
-        if _task_already_noted(task.id):
+        if _task_already_noted(task.id, note):
             return {}
         append_task_event(
             task_id=task.id,
@@ -145,7 +189,7 @@ def _post_note(
             author_name="BossMod",
             author_agent_id=agent.id,
             event_type="system",
-            content=PARSE_FAIL_NOTE,
+            content=note,
             source_trigger_id=_trigger_id(trigger),
         )
         return {}
@@ -156,15 +200,15 @@ def _post_note(
             channel_id = raw.strip()
     return persist_unbound_status_line(
         agent=agent,
-        content=PARSE_FAIL_NOTE,
+        content=note,
         kind="task_update",
         channel_id=channel_id,
     )
 
 
-def _task_already_noted(task_id: str) -> bool:
+def _task_already_noted(task_id: str, note: str) -> bool:
     for event in db.list_task_events(task_id, limit=30):
-        if (event.content or "").strip() == PARSE_FAIL_NOTE:
+        if (event.content or "").strip() == note:
             return True
     return False
 

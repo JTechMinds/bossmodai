@@ -40,6 +40,14 @@ _WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 LEASE_HEARTBEAT_SECONDS = 10.0
 
 
+def _is_decision_llm_timeout(exc: Exception, trigger: dict[str, Any]) -> bool:
+    """Return whether an escaped error is a decision-turn model timeout."""
+    from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
+    from core.llm.client import LLMTimeoutError
+
+    return isinstance(exc, LLMTimeoutError) and trigger.get("type") in _DECISION_TRIGGER_TYPES
+
+
 class TurnDispatcher:
     """Claims queued triggers and launches agent turns."""
 
@@ -376,6 +384,49 @@ class TurnDispatcher:
         if persisted:
             self.notify()
 
+    async def _recover_escaped_decision_timeout(
+        self,
+        *,
+        agent: Any,
+        trigger: dict[str, Any],
+        exc: Exception,
+    ) -> None:
+        """Note and re-queue when a decision-turn timeout escapes the repair loop.
+
+        This is the same commitment wake as an in-turn timeout fail-close.
+        It does not retry through ``_supervise_failed_turn``, which would
+        stall the task after the trigger retry budget.
+        """
+        from core.agent_loop.decision_parse_fail import surface_llm_timeout_failure
+        from core.agent_loop.decision_turn import broadcast_recovery_note
+
+        surfaced = surface_llm_timeout_failure(agent=agent, trigger=trigger)
+        result: dict[str, Any] = {
+            "event": "agent_error",
+            "detail": str(exc),
+            "agent_name": agent.name,
+            "trigger_requests": surfaced.get("trigger_requests") or [],
+            "llm_timeout": True,
+        }
+        if surfaced.get("chat_message"):
+            result["chat_message"] = surfaced["chat_message"]
+        if surfaced.get("channel_message"):
+            result["channel_message"] = surfaced["channel_message"]
+        await manager.broadcast_activity(
+            event=result["event"],
+            detail=result["detail"],
+            agent_name=result["agent_name"],
+        )
+        await broadcast_recovery_note(agent, result)
+        await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
+        trigger_id = trigger["trigger_id"]
+        db.complete_agent_trigger(
+            trigger_id,
+            claim_generation=self._claim_generation_for(trigger),
+        )
+        self._enqueue_result_triggers(result)
+        activity_runtime.refresh_agent_status(agent.id)
+
     async def _record_dispatcher_exception(self, *, agent: Any, trigger: dict[str, Any], exc: Exception) -> None:
         """Persist a diagnostic row for exceptions raised outside normal turn finalization."""
         diag = db.create_diagnostic(
@@ -619,13 +670,20 @@ class TurnDispatcher:
         except Exception as exc:
             logger.exception("Trigger execution failed for %s", agent.name)
             try:
-                await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
-                await self._supervise_failed_turn(
-                    agent=agent,
-                    trigger=trigger,
-                    failure_detail=str(exc),
-                    retryable=True,
-                )
+                if _is_decision_llm_timeout(exc, trigger):
+                    await self._recover_escaped_decision_timeout(
+                        agent=agent,
+                        trigger=trigger,
+                        exc=exc,
+                    )
+                else:
+                    await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
+                    await self._supervise_failed_turn(
+                        agent=agent,
+                        trigger=trigger,
+                        failure_detail=str(exc),
+                        retryable=True,
+                    )
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
         finally:
