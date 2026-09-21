@@ -278,6 +278,31 @@ def repo_remote_url(agent: Agent | None, cwd: str | None, name: str = "origin") 
     return _parse_git_config_remote(text, name)
 
 
+def repo_current_branch(agent: Agent | None, cwd: str | None) -> str:
+    """Return the current branch name from ``HEAD``, or empty when detached."""
+    repo = _repo_root(agent, cwd)
+    if repo is None:
+        return ""
+    git_dir = _git_dir(repo)
+    if git_dir is None:
+        return ""
+    head = git_dir / "HEAD"
+    if not head.is_file():
+        return ""
+    try:
+        text = head.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    prefix = "ref: refs/heads/"
+    if text.lower().startswith(prefix):
+        return text[len(prefix):].strip()
+    if text.lower().startswith("ref:"):
+        ref = text.split(":", 1)[1].strip()
+        if ref.startswith("refs/heads/"):
+            return ref[len("refs/heads/"):]
+    return ""
+
+
 def load_credentials() -> list[NestGitCredential]:
     """Return named credentials, migrating the single store when needed."""
     migrate_legacy_store()
@@ -549,7 +574,7 @@ def _repo_root(agent: Agent | None, cwd: str | None) -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _git_config_path(repo: Path) -> Path | None:
+def _git_dir(repo: Path) -> Path | None:
     git = repo / ".git"
     if git.is_file():
         try:
@@ -560,14 +585,23 @@ def _git_config_path(repo: Path) -> Path | None:
             if line.lower().startswith("gitdir:"):
                 pointer = Path(line.split(":", 1)[1].strip())
                 if not pointer.is_absolute():
-                    pointer = (repo / pointer).resolve()
-                config = pointer / "config"
-                return config if config.is_file() else None
+                    try:
+                        pointer = (repo / pointer).resolve()
+                    except OSError:
+                        return None
+                return pointer if pointer.exists() else None
         return None
     if git.is_dir():
-        config = git / "config"
-        return config if config.is_file() else None
+        return git
     return None
+
+
+def _git_config_path(repo: Path) -> Path | None:
+    git_dir = _git_dir(repo)
+    if git_dir is None:
+        return None
+    config = git_dir / "config"
+    return config if config.is_file() else None
 
 
 def _parse_git_config_remote(text: str, name: str) -> str:

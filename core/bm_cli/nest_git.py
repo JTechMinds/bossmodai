@@ -30,11 +30,15 @@ from core.bm_cli.nest_git_store import (
     migrate_legacy_store,
     read_secret,
     redact_credential,
+    repo_current_branch,
     resolve_git_remote,
     select_nest_git_credential,
     write_secret,
 )
 from core.models.nest_git import (
+    GH_CLI_COMPARE_HOWTO,
+    GH_CLI_HOWTO,
+    GH_CLI_NO_AUTH_WHY,
     NEST_GIT_AMBIGUOUS_CREDS_WHY,
     NEST_GIT_BAD_CREDS_HOWTO,
     NEST_GIT_BOT_EMAIL,
@@ -60,6 +64,10 @@ logger = logging.getLogger(__name__)
 _AUTH_GIT_SUBCOMMANDS = frozenset({
     "push", "fetch", "pull", "clone", "ls-remote",
 })
+
+# gh help/version/completion do not need a GitHub login.
+_GH_LOCAL_SUBCOMMANDS = frozenset({"help", "completion", "version"})
+_GH_LOCAL_FLAGS = frozenset({"--help", "-h", "--version"})
 
 # Global git options that consume the next argv token.
 _GIT_VALUE_OPTIONS = frozenset({
@@ -210,6 +218,37 @@ def is_git_cli(parsed: ParsedCliCommand) -> bool:
     return name in {"git", "git.exe"}
 
 
+def is_gh_cli(parsed: ParsedCliCommand) -> bool:
+    """Return True when argv0 is the GitHub CLI (path-stripped)."""
+    name = Path(parsed.name).name.lower()
+    return name in {"gh", "gh.exe"}
+
+
+def gh_subcommand(args: tuple[str, ...] | list[str]) -> str:
+    """Return the gh subcommand, skipping leading global options."""
+    return git_subcommand(args)
+
+
+def command_needs_gh_auth(parsed: ParsedCliCommand) -> bool:
+    """Return True when this gh argv would need a GitHub login in Shell.
+
+    Help/version/completion stay off this gate. Everything else is fail-closed
+    because agent HOME is rewritten and GH_TOKEN is not in the Shell allowlist.
+    Nest git → gh inject is parked — do not copy a PAT into gh env.
+    """
+    if not is_gh_cli(parsed):
+        return False
+    tokens = list(parsed.args)
+    if any(token in _GH_LOCAL_FLAGS for token in tokens) and not any(
+        not token.startswith("-") for token in tokens
+    ):
+        return False
+    subcommand = gh_subcommand(tokens)
+    if subcommand in _GH_LOCAL_SUBCOMMANDS:
+        return False
+    return True
+
+
 def git_subcommand(args: tuple[str, ...] | list[str]) -> str:
     """Return the git subcommand, skipping leading global options.
 
@@ -354,8 +393,13 @@ def nest_git_shell_env(
     Applied on the shared Shell path for every git argv — not only when the
     nest-git gate matched — so a saved PAT still reaches ``git push``.
     The matching credential is chosen by :func:`select_nest_git_credential`.
+
+    Parked: Nest git → gh subprocess inject. Never copy a PAT into ``GH_TOKEN``
+    / ``GITHUB_TOKEN`` for a gh argv.
     """
     extra: dict[str, str] = {}
+    if parsed is not None and is_gh_cli(parsed):
+        return extra
     remote = resolve_git_remote(agent, parsed, cwd) if (parsed is not None or cwd) else ""
     chosen = select_nest_git_credential(remote or None)
     pat = ""
@@ -374,6 +418,49 @@ def nest_git_shell_env(
     extra.setdefault("GIT_TERMINAL_PROMPT", "0")
     extra.setdefault("GCM_INTERACTIVE", "never")
     return extra
+
+
+def github_compare_url(
+    agent: Agent | None,
+    parsed: ParsedCliCommand | None = None,
+    cwd: str | None = None,
+) -> str:
+    """Return a public github.com compare URL, or empty when unknown.
+
+    Branch and remote are read from the nest clone. No token material.
+    """
+    from urllib.parse import quote
+
+    remote = resolve_git_remote(agent, parsed, cwd) if (parsed is not None or cwd) else ""
+    if not remote.lower().startswith("github.com/"):
+        return ""
+    path = remote.split("/", 1)[1] if "/" in remote else ""
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return ""
+    owner, repo = parts[0], parts[1]
+    branch = repo_current_branch(agent, cwd)
+    if not branch:
+        return ""
+    return f"https://github.com/{owner}/{repo}/compare/{quote(branch, safe='/@')}"
+
+
+def gh_auth_blocked_message(
+    agent: Agent | None = None,
+    parsed: ParsedCliCommand | None = None,
+    cwd: str | None = None,
+    *,
+    nest_ready: bool = False,
+) -> str:
+    """Return Blocked why + how-to for a gh auth miss. No token values."""
+    url = github_compare_url(agent, parsed, cwd)
+    if nest_ready and url:
+        howto = GH_CLI_COMPARE_HOWTO.format(url=url)
+    else:
+        howto = GH_CLI_HOWTO
+        if url and url not in howto:
+            howto = f"{howto} Compare URL: {url}."
+    return f"{GH_CLI_NO_AUTH_WHY}. {howto}"
 
 
 def chosen_nest_git_credential(

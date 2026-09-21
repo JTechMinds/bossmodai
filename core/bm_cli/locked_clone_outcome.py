@@ -302,7 +302,17 @@ def blocked_never_allowed_message(
     rule_steer = _steer_from_policy(policy)
     if rule_steer and rule_steer not in line:
         parts.append(rule_steer)
-    if LOCKED_CLONE_DEFAULT_STEER not in " ".join(parts):
+    from core.bm_cli.secret_env import (
+        SECRET_TOKEN_ENV_DUMP_STEER,
+        command_dumps_secret_token_env,
+    )
+
+    joined = " ".join(parts)
+    if command_dumps_secret_token_env(parsed.raw):
+        if SECRET_TOKEN_ENV_DUMP_STEER not in joined:
+            parts.append(SECRET_TOKEN_ENV_DUMP_STEER)
+        return " ".join(parts)
+    if LOCKED_CLONE_DEFAULT_STEER not in joined:
         parts.append(LOCKED_CLONE_DEFAULT_STEER)
     return " ".join(parts)
 

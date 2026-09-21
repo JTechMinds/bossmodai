@@ -218,8 +218,10 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert INTERPRETER_AND_XARGS_PATTERNS <= never
     assert POSIX_SHELL_PATTERNS <= never
     assert HARDENED_NEVER_ALLOWED_PATTERNS <= never
+    assert "printenv" in never
     assert "cat" in always
     assert "uname" in always
+    assert "env" in always
     assert "pytest" in always
     assert "uv run pytest" in always
     assert "uv pip" in always
@@ -411,6 +413,27 @@ def test_validate_on_clone_pytest_and_local_git_are_allowed_python_stays_blocked
         assert decision.allowed is False, command
         assert decision.approval_required is False, command
         assert decision.tier == "never_allowed", command
+
+
+def test_printenv_and_token_env_dumps_are_never_allowed() -> None:
+    _enable_shell()
+    for command in (
+        "printenv",
+        "printenv GH_TOKEN",
+        "printenv GH_TOKEN GITHUB_TOKEN",
+        "/usr/bin/printenv GITHUB_TOKEN",
+        "env GH_TOKEN",
+        "env GH_TOKEN=x true",
+        "env GITHUB_TOKEN",
+    ):
+        decision = policy_engine.evaluate(command, frozenset())
+        assert decision.allowed is False, command
+        assert decision.approval_required is False, command
+        assert decision.tier == "never_allowed", command
+
+    diagnostic = policy_engine.evaluate("env", frozenset())
+    assert diagnostic.allowed is True
+    assert diagnostic.tier == "always_allowed"
 
 
 def test_reconcile_inserts_missing_validate_on_clone_rules() -> None:

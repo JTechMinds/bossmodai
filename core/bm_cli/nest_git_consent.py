@@ -16,8 +16,10 @@ from core.bm_cli.nest_git import (
     GitAuthFailureKind,
     auth_failed_blocked_message,
     auth_failed_operator_copy,
+    command_needs_gh_auth,
     command_needs_nest_git_auth,
     enable_host_git,
+    gh_auth_blocked_message,
     nest_git_auth_ready,
     no_creds_blocked_message,
     no_match_blocked_message,
@@ -38,6 +40,7 @@ from core.bm_cli.types import BossModCliResult, ParsedCliCommand
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
 from core.models.nest_git import (
+    GH_CLI_NO_AUTH_WHY,
     NEST_GIT_BODY,
     NEST_GIT_CARD_COPY,
     NEST_GIT_EMPTY_CREDS,
@@ -79,6 +82,46 @@ def maybe_pause_for_nest_git(
         task_id=task_id,
         channel_id=channel_id,
         reason=reason,
+    )
+
+
+def maybe_block_gh_cli(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd: str,
+    task_id: str | None,
+    channel_id: str | None,
+    trigger_type: str | None = None,
+    persist_chrome: bool = True,
+) -> BossModCliResult | None:
+    """Fail-closed one Nest git / compare-URL card for a gh auth miss. No Approve.
+
+    Nest git → gh inject is parked. When Nest git is not ready, reuse the Nest
+    git card. When Nest git already covers push, post one Blocked note with the
+    compare URL (or host ``gh auth login``) instead of Approve spam.
+    """
+    if not command_needs_gh_auth(parsed):
+        return None
+    ready = nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd)
+    if not ready and trigger_type != "host_path_consent_resolved" and persist_chrome:
+        return request_nest_git_consent(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd=cwd,
+            task_id=task_id,
+            channel_id=channel_id,
+            reason=gh_auth_blocked_message(agent, parsed, cwd, nest_ready=False),
+        )
+    return _gh_blocked_result(
+        agent=agent,
+        parsed=parsed,
+        cwd=cwd,
+        channel_id=channel_id,
+        nest_ready=ready,
+        persist_chrome=persist_chrome,
     )
 
 
@@ -363,6 +406,60 @@ def _consent_message(request: HostPathConsentRequest, *, agent_name: str) -> str
     dest = (request.path or "").strip()
     suffix = f" Locked copy: {dest}." if dest and dest != NEST_GIT_GRANT_ROOT else ""
     return f"{name} {NEST_GIT_CARD_COPY}.{suffix}"
+
+
+def _gh_blocked_result(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str | None,
+    channel_id: str | None,
+    nest_ready: bool,
+    persist_chrome: bool,
+) -> BossModCliResult:
+    """One Blocked origin note. No Approve card. Do not wipe Nest git secrets."""
+    from core.agent_loop.notifications import persist_origin_system_note
+
+    message = gh_auth_blocked_message(agent, parsed, cwd, nest_ready=nest_ready)
+    blocked = error_result(
+        parsed.raw,
+        message,
+        cwd=cwd,
+        executor="shell",
+        kind="nest_git_block",
+    )
+    data = dict(blocked.data or {})
+    data["nest_git_auth_kind"] = "gh_cli"
+    if not persist_chrome:
+        data["nest_git_origin_posted"] = True
+        return replace(blocked, data=data)
+    origin_channel = _clean_channel_id(channel_id)
+    note = persist_origin_system_note(
+        agent,
+        gh_auth_operator_note(agent.name, parsed.raw, message),
+        channel_id=origin_channel,
+        kind="blocked",
+        source_channel="channel" if origin_channel else "chat",
+        policy="all",
+    )
+    chrome = note.get("channel_message") or note.get("chat_message")
+    if isinstance(chrome, dict) and chrome:
+        data["origin_chrome"] = _json_safe_chrome(chrome)
+        data["origin_status_messages"] = [_json_safe_chrome(chrome)]
+    data["nest_git_origin_posted"] = True
+    return replace(blocked, data=data)
+
+
+def gh_auth_operator_note(agent_name: str, command: str, message: str) -> str:
+    """Return the in-thread system note for a gh auth miss. Not an Approve card."""
+    name = (agent_name or "").strip() or "Agent"
+    cmd = (command or "").strip() or "gh"
+    why = (message or GH_CLI_NO_AUTH_WHY).strip()
+    if why.lower().startswith("blocked"):
+        body = why
+    else:
+        body = f"Blocked — {why}"
+    return f"{name} tried `{cmd}` — {body}"
 
 
 def _json_safe_chrome(payload: dict[str, Any]) -> dict[str, Any]:
