@@ -2,8 +2,9 @@
 
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
-identity, desk/``/me``, allowed tools, host-path consent, workspace
-preference, checkable done, audience soft-judgment, and chat formatting.
+identity, desk/``/me``, notes store/retrieve, allowed tools, host-path
+consent, workspace preference, checkable done, audience soft-judgment,
+and chat formatting.
 Fan-out still wakes every member; this is not a router and does not
 require @.
 """
@@ -36,6 +37,22 @@ _RUNTIME_CORE_TITLE = "# Runtime core"
 AUDIENCE_SOFT_JUDGMENT = (
     "Before you reply, decide if you're the intended audience. "
     "If someone else's specialty clearly fits, stay quiet or post one short pass."
+)
+
+NOTES_STORE_RETRIEVE = (
+    "Notes: personal notes are markdown under /me/notes "
+    "(the desk surfaces them; soft-empty is normal). "
+    "Project notes are markdown already in the project folder /projects/<project>/. "
+    "Do not open a second notes store.\n"
+    "Store: project facts, decisions, and evidence pointers go in that project folder. "
+    "Operator prefs and standing personal context go in /me/notes. "
+    "Short sticky bullets. High-value words.\n"
+    "Retrieve: on a work turn for an active project, open and read those project notes. "
+    "When the wake is about the operator or standing prefs, open /me/notes. "
+    "Quote only what this turn needs — pointers-first (path + short sticky). "
+    "Soft-cap any quote. Never dump a whole note file into the turn.\n"
+    "Fail and Done still need real evidence paths. "
+    "Do not invent Board state, move Blocked to Done, or drop open conditions from note text."
 )
 
 CHAT_FORMATTING = (
@@ -125,6 +142,7 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
         "Thread-origin work: Done must point at a path peers can open "
         "(project/docs/ or a host path under the shared grant). "
         "/me is desk-private scratch, not a handoff.\n"
+        f"{NOTES_STORE_RETRIEVE}\n"
         f"{LOCKED_WORKSPACE_COPY_STEER}\n"
         f"{dest_suffix}"
         f"{AUDIENCE_SOFT_JUDGMENT}\n"
