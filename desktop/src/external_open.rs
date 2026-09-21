@@ -14,9 +14,6 @@
 
 use std::process::{Command, Stdio};
 
-/// The invoke name the webview uses. One command, one implementation.
-pub const COMMAND: &str = "open_external_url";
-
 /// An http(s) URL the desktop opener may launch.
 ///
 /// The raw string is returned unchanged so the opener sees what was clicked,
