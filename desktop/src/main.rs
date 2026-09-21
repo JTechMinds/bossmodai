@@ -324,7 +324,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(
-            tauri::plugin::Builder::new("http-nav-guard")
+            tauri::plugin::Builder::<_, ()>::new("http-nav-guard")
                 .on_navigation(|_webview, url| {
                     // The JS interceptor is the opener. This is the backstop so a
                     // missed preventDefault cannot replace the app with github.com.
