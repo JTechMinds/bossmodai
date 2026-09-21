@@ -78,8 +78,7 @@ const BossModConnectionForm = (() => {
                                value="${BossModFormat.escapeAttribute(conn?.name || '')}"
                                placeholder="e.g. OpenAI Production"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                                      bg-bm-bg">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Base URL</label>
@@ -88,8 +87,7 @@ const BossModConnectionForm = (() => {
                                value="${BossModFormat.escapeAttribute(conn?.api_base_url || '')}"
                                placeholder="https://api.openai.com/v1"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                                      bg-bm-bg">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
@@ -101,8 +99,7 @@ const BossModConnectionForm = (() => {
                                    value=""
                                    placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModFormat.escapeAttribute(conn.api_key_last4 || '') : 'sk-...'}"
                                    class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                          focus:border-bm-accent">
+                                          bg-bm-bg">
                             <button type="button"
                                     data-toggle-api-key="connection-api-key-input"
                                     class="px-3 py-2 border border-bm-border rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">
@@ -124,8 +121,7 @@ const BossModConnectionForm = (() => {
                                value="${BossModFormat.escapeAttribute(conn?.model || '')}"
                                placeholder="e.g. llama3 or openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                                      bg-bm-bg">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Extra Body Params</label>
@@ -133,8 +129,7 @@ const BossModConnectionForm = (() => {
                         <textarea name="extra_body" rows="3"
                                   placeholder='e.g. {"stream": false, "thinking": {"type": "disabled"}}'
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                         bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                         focus:border-bm-accent font-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
+                                         bg-bm-bg font-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
                     <div id="connection-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>

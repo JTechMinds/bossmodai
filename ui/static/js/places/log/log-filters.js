@@ -9,12 +9,16 @@
  * place never reads a control's value out of the DOM.
  */
 const BossModLogFilters = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
 
     const SEARCH_DELAY_MS = 300;
     const TYPE_LABELS = Object.freeze({
         agent: 'Agents', task: 'Tasks', error: 'Errors', system: 'System',
     });
+
+    /** Each dropdown's first option: no filter at all. */
+    const ALL_AGENTS = Object.freeze({ value: '', label: 'All agents' });
+    const ALL_TYPES = Object.freeze({ value: '', label: 'All types' });
 
     /**
      * Build the bar.
@@ -42,28 +46,30 @@ const BossModLogFilters = (() => {
         let searchTimer = null;
         let known = [];
 
-        const agents = h('select', {
-            class: 'place-select', 'aria-label': 'Filter by agent',
-            onchange: (event) => {
-                const id = event.target.value;
+        // Starts on "All agents" even for a deep link: the agent's name is not
+        // known until setAgents(), which the place calls before its first read
+        // and which then shows the choice `chosen` already holds.
+        const agents = BossModMenuSelect.create({
+            label: 'Filter by agent',
+            options: [ALL_AGENTS],
+            onChange: (id) => {
                 const match = known.find((agent) => agent.id === id);
                 chosen = { id, name: match ? match.name : '' };
                 onChange();
             },
         });
 
-        const types = h('select', {
-            class: 'place-select', 'aria-label': 'Filter by type',
-            onchange: onChange,
-        },
-            h('option', { value: '' }, 'All types'),
-            ...BossModLogShape.TYPES.map((type) =>
-                h('option', { value: type }, TYPE_LABELS[type])));
+        const types = BossModMenuSelect.create({
+            label: 'Filter by type',
+            options: [ALL_TYPES, ...BossModLogShape.TYPES.map((type) =>
+                ({ value: type, label: TYPE_LABELS[type] }))],
+            onChange,
+        });
 
-        const search = h('input', {
-            type: 'search', class: 'place-search', placeholder: 'Search the log',
-            'aria-label': 'Search the log',
-            oninput: () => {
+        const search = BossModSearchField.create({
+            placeholder: 'Search the log',
+            label: 'Search the log',
+            onInput: () => {
                 clearTimeout(searchTimer);
                 searchTimer = setTimeout(onChange, SEARCH_DELAY_MS);
             },
@@ -84,7 +90,7 @@ const BossModLogFilters = (() => {
         });
 
         const element = h('div', { class: 'place-controls' },
-            agents, types, search, followSwitch.element);
+            agents.element, types.element, search.element, followSwitch.element);
 
         return {
             element,
@@ -97,8 +103,8 @@ const BossModLogFilters = (() => {
                 return {
                     agentId: chosen.id,
                     agentName: chosen.name,
-                    type: types.value,
-                    search: search.value,
+                    type: types.getValue(),
+                    search: search.input.value,
                 };
             },
 
@@ -110,29 +116,34 @@ const BossModLogFilters = (() => {
             /**
              * Repopulate the agent options, keeping the current choice — which
              * may be a deep link to someone who has not appeared in the rows
-             * yet, so the id is honoured whether or not it is in the list.
+             * yet, so the id is honoured whether or not it is in the list: it
+             * is added as its own option, named "Unknown agent" until a row or
+             * the roster names it, so the dropdown shows the filter applied.
              *
              * @param {Array<{id: string, name: string}>} list
              * @returns {void}
              */
             setAgents(list) {
                 known = list;
-                clear(agents);
-                agents.append(h('option', { value: '' }, 'All agents'));
-                list.forEach((agent) => {
-                    agents.append(h('option', { value: agent.id }, agent.name));
-                });
-                agents.value = chosen.id;
                 const match = list.find((agent) => agent.id === chosen.id);
                 if (match) chosen = { id: match.id, name: match.name };
+                const options = list.map((agent) => ({
+                    value: agent.id,
+                    label: agent.name,
+                    avatar: { name: agent.name, color: agent.color },
+                }));
+                if (chosen.id && !match) options.push({ value: chosen.id, label: 'Unknown agent' });
+                agents.setOptions([ALL_AGENTS, ...options], chosen.id);
             },
 
             /**
-             * Cancel the pending search debounce.
+             * Cancel the pending search debounce and put the dropdowns away.
              * @returns {void}
              */
             destroy() {
                 clearTimeout(searchTimer);
+                agents.destroy();
+                types.destroy();
             },
         };
     }

@@ -751,6 +751,11 @@
    dead control reads the same wherever it is. */
 .menu-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* A dropdown's rows (core/menu-select.js): the label takes the room, so the
+   chosen row's check sits at the far end, and a long name ellipsizes rather
+   than widening the panel. */
+.menu-select-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* A count at the row's far end — how much is behind the action, quieter than
    the label that names it. */
 .menu-action-count { margin-left: auto; color: var(--hint); font-weight: 400; }
@@ -760,41 +765,33 @@
  * The rail's thread list was a row that renamed itself — `View archives`, then
  * `View active threads` once you were there. Correct, and too quiet: a control
  * whose only statement of the current state is which words it is currently
- * wearing makes you read it to find out where you are. A segment shows both
- * options at once and fills the one you are on, so the answer is a shape
+ * wearing makes you read it to find out where you are. A segment shows every
+ * option at once and outlines the one you are on, so the answer is a shape
  * rather than a sentence.
  *
  * The caption is a real <p> with an id, and the group points at it with
  * aria-labelledby rather than repeating itself in an aria-label — one string
- * on screen and in the accessibility tree, never two that can drift.
+ * on screen and in the accessibility tree, never two that can drift. Sentence
+ * case, as the rest of the panel's rows are: an uppercase caption was the one
+ * shouting line in a quiet panel.
  *
- * These pills live in the MENU rather than in the rail. That is what the last
+ * These chips live in the MENU rather than in the rail. That is what the last
  * round was actually about: the choice is `Active` almost every time it is
  * looked at, so it does not earn a permanent row of a 220px column — but once
  * the operator has opened the menu to change it, it should be unmissable. */
 
 .menu-group { display: flex; flex-direction: column; gap: 6px; }
 
-.menu-label {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--hint);
-}
+.menu-label { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
 
-.menu-segment {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
+.menu-segment { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* Each option is its own chip. --line-control, not --line: the edge is what
+   identifies each chip as a separate control (SC 1.4.11, 3.10:1). */
 .menu-segment-option {
-  flex: 1 1 0;
-  padding: 4px 10px;
+  min-width: 40px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-control);
   border-radius: var(--r);
   color: var(--muted);
   font-size: 12px;
@@ -803,11 +800,11 @@
 
 .menu-segment-option:hover { color: var(--ink); }
 
-/* Filled with the surface, not with accent. Two pills where one is a solid
-   blue block reads as a primary action rather than as which list you are
-   looking at — --ink on --bg measures 15.45:1 and says it more quietly. */
+/* Outlined in ink, not filled with accent. A solid blue chip reads as a
+   primary action rather than as which option you are on; an ink edge and ink
+   text say it more quietly, and the edge change is not colour alone. */
 .menu-segment-option[aria-pressed="true"] {
-  background: var(--bg);
+  border-color: var(--ink);
   color: var(--ink);
 }
 
@@ -836,6 +833,19 @@
   bottom: 58px;
   min-width: 0;
   width: min(260px, calc(100vw - 24px));
+}
+
+/* A dropdown (core/menu-select.js). It hangs off its trigger with the left
+   edges aligned, the way the mention menu hangs off its pill; .menu-select is
+   the positioned host. Capped and scrolling, because a roster can outgrow the
+   window where a fixed list of options cannot. */
+.menu[data-menu="select"] {
+  top: calc(100% + 4px);
+  left: 0;
+  right: auto;
+  min-width: 180px;
+  max-height: min(320px, 60vh);
+  overflow-y: auto;
 }
 
 /* The doors read as the row that opens them. .roster-hire is --accent at

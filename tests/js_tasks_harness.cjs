@@ -20,9 +20,10 @@ global.lucide = null;
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore",
+    "BossModDom", "BossModFactList", "BossModAvatar", "BossModSwitch",
+    "BossModSearchField", "BossModStore",
     "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModOverlays", "BossModPlaces", "BossModAgentRoutes",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenuSelect", "BossModPlaces", "BossModAgentRoutes",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
@@ -370,7 +371,7 @@ async function main() {
     if (container.querySelector("#tasks-sort")) fail("the ⋯ did not close its panel");
 
     // ── searchSurvivesRefresh ───────────────────────────────────────────
-    const search = container.querySelector(".tasks-search");
+    const search = container.querySelector(".tasks-search").querySelector(".search-field-input");
     if (!search) fail("no search input rendered");
     search.value = "blocked";
     const searchBefore = search;
@@ -382,7 +383,7 @@ async function main() {
     await drain();
     if (taskFetches <= fetchesBefore) fail("a task event did not refresh the list");
 
-    const searchAfter = container.querySelector(".tasks-search");
+    const searchAfter = container.querySelector(".tasks-search").querySelector(".search-field-input");
     const searchSurvivesRefresh = searchAfter === searchBefore && searchAfter.value === "blocked";
     if (!searchSurvivesRefresh) fail("the refresh replaced the search input or its value");
 

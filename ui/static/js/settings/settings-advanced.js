@@ -98,8 +98,7 @@ const AdvancedSystemSection = (() => {
                            value="${BossModFormat.escapeAttribute(diagLimit?.value || '5000')}"
                            min="100" max="50000" step="100"
                            class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                  focus:border-bm-accent">
+                                  bg-bm-bg">
                 </div>
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <label class="block text-sm font-medium mb-1">CLI Read Range Limit (lines)</label>
@@ -108,8 +107,7 @@ const AdvancedSystemSection = (() => {
                            value="${BossModFormat.escapeAttribute(cliReadLimit?.value || '200')}"
                            min="10" max="5000" step="10"
                            class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                  focus:border-bm-accent">
+                                  bg-bm-bg">
                 </div>
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <div class="flex items-start justify-between gap-4">
@@ -124,8 +122,7 @@ const AdvancedSystemSection = (() => {
                             <span class="block mb-1">Detected openers</span>
                             <select id="desktop-folder-opener-select"
                                     class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
-                                           bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                           focus:border-bm-accent">
+                                           bg-bm-bg">
                                 <option value="">Ask on first use</option>
                                 ${folderOpenerOptions.map(option => `
                                     <option value="${BossModFormat.escapeAttribute(option.value)}" ${folderOpenerMode === 'preset' && currentFolderOpener === option.value ? 'selected' : ''}>
@@ -141,8 +138,7 @@ const AdvancedSystemSection = (() => {
                                    value="${folderOpenerMode === 'custom' ? BossModFormat.escapeAttribute(currentFolderOpener) : ''}"
                                    placeholder="e.g. thunar"
                                    class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
-                                          bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                          focus:border-bm-accent">
+                                          bg-bm-bg">
                             <p class="text-xs text-bm-muted mt-1">Use this if your preferred file manager is not in the detected list.</p>
                         </label>
                         <div class="flex items-center gap-2">

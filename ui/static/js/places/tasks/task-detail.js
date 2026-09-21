@@ -2,7 +2,7 @@
  * BossMod AI — the task detail dialog.
  *
  * A panel modal whose body is one centred column: the status line, the facts,
- * the one callout the state calls for, what to do, the deliverables, the
+ * the one callout the state calls for, the task itself, the deliverables, the
  * subtasks, what counts as done, and the activity. The title is the modal's
  * own head and is not repeated below it. The sections are pure builders in
  * task-detail-sections.js; this file composes them, owns the modal, and owns

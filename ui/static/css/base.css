@@ -17,6 +17,30 @@ input, select, textarea { font: inherit; }
 /* Visible focus on every control. Never remove without a replacement. */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Text fields show focus by their border, not a ring (SC 2.4.7). A browser
+   treats a focused text field as needing an indicator even after a mouse
+   click, so the accent ring landed on every click into every field. The
+   operator wants the layout smooth: a field rests on the light --line-field
+   (tokens.css) and turns --line-control when focused — a grey step, not a
+   ring, and 3.10:1 against --panel, the contrast SC 1.4.11 asks of a focus
+   indicator. The border colour fades rather than snapping; base.css flattens
+   the fade under prefers-reduced-motion.
+
+   Specificity is deliberate. input:focus-visible (0,1,1) outranks a field's
+   own `.class { border: … }` (0,1,0), which would otherwise put the resting
+   border back; it stays below any component's own `.class:focus-visible`
+   (0,2,0), so the composer's and the rail search's hairlines still apply.
+   :where() keeps the checkbox/radio exclusion weightless: those have no border
+   to change, and a browser shows their ring on keyboard focus only. A <select>
+   is included, and a browser matches it on keyboard focus only as well. */
+input, select, textarea { transition: border-color 0.15s ease; }
+input:where(:not([type="checkbox"], [type="radio"])):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--line-control);
+}
+
 /* Place headings receive programmatic focus on navigation (spec 3.2).
    They must not show a focus ring when focused this way. */
 h1[tabindex="-1"]:focus { outline: none; }

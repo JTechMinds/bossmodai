@@ -12,7 +12,10 @@
  * Done window and sort, which this module has no business holding.
  */
 const BossModTasksToolbar = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
+
+    /** The assignee dropdown's first option: no filter at all. */
+    const EVERYONE = Object.freeze({ value: '', label: 'Everyone' });
 
     const SEARCH_DELAY_MS = 200;
 
@@ -24,6 +27,9 @@ const BossModTasksToolbar = (() => {
      *   which arrives as a place param rather than as a click.
      * @param {HTMLElement} deps.menuButton  The `⋯` (BossModTasksMenu), placed
      *   between the subtask toggle and `+ New task`.
+     * @param {(agentId: string) => ({name: string, color: string}|null)} deps.rosterAgent
+     *   The roster's entry for an id, or null: the avatars' colours, and the
+     *   name of a preset assignee who holds no task in the list.
      * @param {() => void} deps.onChange  A filter moved; repaint.
      * @param {() => void} deps.onNewTask
      * @param {() => void} deps.onCancelSelected
@@ -34,9 +40,10 @@ const BossModTasksToolbar = (() => {
      */
     function createToolbar(deps) {
         const {
-            agentId = null, menuButton, onChange, onNewTask, onCancelSelected,
+            agentId = null, menuButton, rosterAgent, onChange, onNewTask, onCancelSelected,
         } = deps || {};
         if (!menuButton) throw new Error('[tasks-toolbar] deps.menuButton is required');
+        if (typeof rosterAgent !== 'function') throw new Error('[tasks-toolbar] deps.rosterAgent is required');
         if (typeof onChange !== 'function') throw new Error('[tasks-toolbar] deps.onChange is required');
         if (typeof onNewTask !== 'function') throw new Error('[tasks-toolbar] deps.onNewTask is required');
         if (typeof onCancelSelected !== 'function') {
@@ -47,21 +54,26 @@ const BossModTasksToolbar = (() => {
         let showChildren = false;
         let searchTimer = null;
 
-        const search = h('input', {
-            type: 'search', class: 'place-search tasks-search', placeholder: 'Search all tasks',
-            'aria-label': 'Search tasks by title',
-            oninput: () => {
+        const search = BossModSearchField.create({
+            placeholder: 'Search all tasks',
+            label: 'Search tasks by title',
+            className: 'tasks-search',
+            onInput: () => {
                 clearTimeout(searchTimer);
                 searchTimer = setTimeout(onChange, SEARCH_DELAY_MS);
             },
         });
 
         // "Everyone" is the first option and the way back from a filter, so
-        // there is no separate clear-filter chip to keep in step with it.
-        const agents = h('select', {
-            class: 'place-select', 'aria-label': 'Filter by assignee',
-            onchange: (event) => {
-                currentAgent = event.target.value || null;
+        // there is no separate clear-filter chip to keep in step with it. It
+        // starts on Everyone even when the Desk preset an agent: the name is
+        // not known until the tasks load, and setAgents() then shows the
+        // choice `currentAgent` already holds.
+        const agents = BossModMenuSelect.create({
+            label: 'Filter by assignee',
+            options: [EVERYONE],
+            onChange: (value) => {
+                currentAgent = value || null;
                 onChange();
             },
         });
@@ -77,8 +89,8 @@ const BossModTasksToolbar = (() => {
         });
 
         const element = h('div', { class: 'place-controls' },
-            search,
-            agents,
+            search.element,
+            agents.element,
             children.element,
             menuButton,
             h('button', { class: 'btn-link', type: 'button', onclick: onNewTask }, '+ New task'),
@@ -104,29 +116,45 @@ const BossModTasksToolbar = (() => {
              * @returns {{agentId: string|null, query: string, showChildren: boolean}}
              */
             filters() {
-                return { agentId: currentAgent, query: search.value, showChildren };
+                return { agentId: currentAgent, query: search.input.value, showChildren };
             },
 
             /**
              * Repopulate the assignee options, keeping the current choice.
+             *
+             * The choice is kept even when that assignee holds no task in the
+             * list — the Desk's "See all" can preset one — so it is added as an
+             * option under its roster name, and the dropdown names the filter
+             * that is actually applied.
+             *
              * @param {Array<{id: string, name: string}>} list
              * @returns {void}
              */
             setAgents(list) {
-                clear(agents);
-                agents.append(h('option', { value: '' }, 'Everyone'));
-                list.forEach((agent) => agents.append(h('option', { value: agent.id }, agent.name)));
-                agents.value = currentAgent || '';
+                const people = list.slice();
+                if (currentAgent && !people.some((agent) => agent.id === currentAgent)) {
+                    const known = rosterAgent(currentAgent);
+                    people.push({ id: currentAgent, name: known ? known.name : 'Unknown agent' });
+                }
+                agents.setOptions([EVERYONE, ...people.map((agent) => {
+                    const known = rosterAgent(agent.id);
+                    return {
+                        value: agent.id,
+                        label: agent.name,
+                        avatar: { name: agent.name, color: known ? known.color : undefined },
+                    };
+                })], currentAgent || '');
             },
 
             setSelectedCount,
 
             /**
-             * Cancel the pending search debounce.
+             * Cancel the pending search debounce and put the dropdown away.
              * @returns {void}
              */
             destroy() {
                 clearTimeout(searchTimer);
+                agents.destroy();
             },
         };
     }

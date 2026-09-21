@@ -50,17 +50,9 @@
   flex-wrap: wrap;
 }
 
-.place-search,
-.place-select {
-  padding: 4px 8px;
-  border: 1px solid var(--line-control);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.place-search { width: 180px; }
+/* The controls themselves are shared (controls.css): the search field and the
+   menu-select dropdown. A place toolbar only sets the search's width. */
+.place-controls .search-field { width: 180px; }
 
 .status-pill {
   display: inline-flex;
@@ -439,6 +431,7 @@
    rather than stretching one-line cards across it. */
 .tasks-archive { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0;
   width: 100%; max-width: var(--panel-column); margin: 0 auto; }
+.tasks-archive .search-field { align-self: flex-start; width: 240px; }
 .tasks-archive-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* ─── Task detail ─── */
@@ -496,7 +489,7 @@
 .assign-textarea {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--line-field);
   border-radius: 6px;
   background: var(--panel);
   color: var(--ink);
@@ -544,7 +537,7 @@
 .files-path,
 .files-search {
   padding: 4px 8px;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--line-field);
   border-radius: 6px;
   background: var(--panel);
   color: var(--ink);
@@ -733,7 +726,7 @@
 .file-form-input {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--line-field);
   border-radius: 6px;
   background: var(--panel);
   color: var(--ink);
@@ -816,7 +809,7 @@
   width: 100%;
   min-height: 40vh;
   padding: 10px;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--line-field);
   border-radius: var(--r);
   background: var(--panel);
   color: var(--ink);

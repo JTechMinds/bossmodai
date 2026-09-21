@@ -37,11 +37,11 @@ const BossModLogPlace = (() => {
         errorEl.hidden = !message;
     }
 
-    /** Everyone the rows or the roster know about, for the agent select. */
+    /** Everyone the rows or the roster know about, for the agent dropdown. */
     function agentOptions(rows) {
         const seen = new Map();
         ctxRef.store.getState().roster.forEach((agent) => {
-            seen.set(agent.id, { id: agent.id, name: agent.name });
+            seen.set(agent.id, { id: agent.id, name: agent.name, color: agent.color });
         });
         rows.forEach((row) => {
             if (row.agentId && !seen.has(row.agentId)) {
@@ -82,8 +82,8 @@ const BossModLogPlace = (() => {
 
         const options = agentOptions(source.rows());
         const signature = options.map((agent) => agent.id).join('|');
-        // Rebuilding a <select> closes it. A row landing while the operator has
-        // the agent list open must not take it away from them.
+        // Only when the set changed: a row landing while the operator reads the
+        // agent list must not reshuffle the options under them.
         if (signature !== agentSignature) {
             agentSignature = signature;
             filters.setAgents(options);

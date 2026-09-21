@@ -30,16 +30,17 @@ const BossModTasksArchive = (() => {
 
         let current = tasks;
 
-        const search = h('input', {
-            type: 'search', class: 'place-search tasks-archive-search',
-            placeholder: 'Search the archive', 'aria-label': 'Search archived tasks by title',
-            oninput: () => paintList(),
+        const search = BossModSearchField.create({
+            placeholder: 'Search the archive',
+            label: 'Search archived tasks by title',
+            className: 'tasks-archive-search',
+            onInput: () => paintList(),
         });
         const list = h('div', { class: 'tasks-archive-list' });
 
         /** Repaint the list from the held tasks and the current query. */
         function paintList() {
-            const query = search.value.trim();
+            const query = search.input.value.trim();
             // The page's own matcher, so Archive and the page agree about what
             // a search hits; subtasks are shown because the page's filters
             // have already decided which of them belong here.
@@ -61,7 +62,7 @@ const BossModTasksArchive = (() => {
             title: 'Archive',
             subtitle: `${current.length} finished`,
             size: 'panel',
-            body: h('div', { class: 'tasks-archive' }, search, list),
+            body: h('div', { class: 'tasks-archive' }, search.element, list),
             actions: [],
             // A search box is not a form; nothing typed there is lost work.
             closeOnBackdrop: true,

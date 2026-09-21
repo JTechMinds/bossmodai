@@ -37,8 +37,13 @@ const control = BossModSwitch.create({
     onChange: (pressed) => { reported.push(pressed); },
 });
 const row = control.element;
-const pill = row.children[0];
-const labelNode = row.children[1];
+// Found by class, not by position, so the order check below is what decides
+// the order rather than an index that would simply read the wrong node.
+const pill = row.querySelector(".switch");
+const labelNode = row.querySelector(".switch-label");
+// Label then pill — "Subtasks [toggle]", the order the owner's mockup draws.
+const labelComesFirst = row.children.length === 2
+    && row.children[0] === labelNode && row.children[1] === pill;
 
 const startsUnchecked = row.getAttribute("aria-checked") === "false";
 
@@ -84,6 +89,7 @@ process.stdout.write(JSON.stringify({
         labelNode.getAttribute("class") === "switch-label"
         && labelNode.textContent === "Show subtasks",
     accessibleName: accessibleText(row).trim(),
+    labelComesFirst,
 
     startsUnchecked,
     clickChecksAndReports,

@@ -416,6 +416,9 @@ def test_the_switch_row_is_the_target_not_the_pill() -> None:
     # makes the row wide enough to be a legal target.
     assert payload["labelIsInsideTheRow"] is True
     assert payload["accessibleName"] == "Show subtasks"
+    # Label first, then the pill: the setting, then its state (the owner's
+    # Tasks mockup, 2026-09-21). One control, so every switch follows.
+    assert payload["labelComesFirst"] is True
 
     # State is announced as checked/unchecked, and it is the row that carries it.
     assert payload["startsUnchecked"] is True
@@ -676,6 +679,60 @@ def test_neither_borderless_field_lost_its_focus_indicator() -> None:
         # prefers-reduced-motion, so the rule needs no opt-out of its own.
         rest = css.split(f"\n{rule} {{", 1)[1].split("}", 1)[0]
         assert "transition: box-shadow" in rest, rule
+
+
+def test_text_fields_step_grey_instead_of_ringing() -> None:
+    """The operator hates the blue ring on inputs, and a dark border in its
+    place was "just as bad": the layout is meant to be smooth.
+
+    A browser fires :focus-visible on a text field for a MOUSE click, so the
+    global accent ring landed on every click into every field. It is replaced,
+    never removed (SC 2.4.7): a text field rests on the light --line-field and
+    steps to --line-control when focused — 3.10:1 on --panel, the contrast
+    SC 1.4.11 asks of a focus indicator — and the step fades. The resting edge
+    may be light because each field is identified by its label, placeholder or
+    glyph (W3C Understanding, SC 1.4.11). Checkboxes and radios keep the ring,
+    which a browser shows for them on keyboard focus only.
+
+    Settings carried the blue as a Tailwind blob on every field
+    (`focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent`), which
+    outranks any stylesheet rule; one rule in base.css covers them all now, and
+    no Tailwind focus utility may come back to draw a second indicator.
+    """
+    base = _read(CSS / "base.css")
+    head, block = base.split("select:focus-visible {", 1)
+    selectors = head.rsplit("*/", 1)[1]
+    assert 'input:where(:not([type="checkbox"], [type="radio"])):focus-visible' in selectors
+    assert "textarea:focus-visible" in selectors
+    block = block.split("}", 1)[0]
+    assert "outline: none" in block
+    # Removed only because something visible takes its place, at the 3:1 token.
+    assert "border-color: var(--line-control)" in block
+    assert "var(--accent)" not in block and "rgba" not in block
+    assert "transition: border-color" in base, "the step fades rather than snapping"
+
+    # Light at rest: one token, spent by every text field.
+    tokens = _read(CSS / "tokens.css")
+    assert "--line-field: var(--line-strong);" in tokens
+    fields = (
+        ("controls.css", ".field-input,\n.field-select,\n.field-textarea {"),
+        ("controls.css", ".search-field {"),
+        ("context.css", ".desk-opener-custom {"),
+        ("places.css", ".assign-input,\n.assign-select,\n.assign-textarea {"),
+        ("places.css", ".files-path,\n.files-search {"),
+        ("places.css", ".file-form-input {"),
+        ("places.css", ".file-view-editor {"),
+    )
+    for sheet, rule in fields:
+        body = _read(CSS / sheet).split(rule, 1)[1].split("}", 1)[0]
+        assert "border: 1px solid var(--line-field)" in body, rule
+
+    tailwind_focus = re.compile(r"focus:(?:ring|outline|border)")
+    offenders = []
+    for path in list(_app_js()) + [HTML]:
+        if tailwind_focus.search(_read(path)):
+            offenders.append(path.name)
+    assert offenders == [], f"Tailwind focus utilities draw a second indicator: {offenders}"
 
 
 def test_one_header_icon_button() -> None:
@@ -1042,7 +1099,11 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     overlays = _read(CSS / "overlays.css")
     pressed = overlays.split('.menu-segment-option[aria-pressed="true"] {', 1)[1].split("}", 1)[0]
     assert "var(--accent)" not in pressed
-    assert "background: var(--bg)" in pressed and "color: var(--ink)" in pressed
+    # Outlined in ink rather than filled (the owner's Tasks mockup): the edge
+    # changes as well as the text, so the state is not carried by colour alone.
+    assert "border-color: var(--ink)" in pressed and "color: var(--ink)" in pressed
+    option = overlays.split(".menu-segment-option {", 1)[1].split("}", 1)[0]
+    assert "border: 1px solid var(--line-control)" in option, "each chip is its own control"
 
     # A menu panel is DETACHED while it is closed, so the document sweep that
     # paints the rail can never reach a glyph inside it. Both menus paint what

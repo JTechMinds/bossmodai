@@ -220,8 +220,7 @@ const SystemSection = (() => {
                                data-setting-category="${BossModFormat.escapeAttribute(s.category)}"
                                value="${BossModFormat.escapeAttribute(s.value)}"
                                class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-white focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                                      bg-white">
                     </div>`;
         }
 

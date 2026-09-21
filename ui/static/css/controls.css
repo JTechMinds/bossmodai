@@ -278,22 +278,23 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
  * same control from tokens. Four definitions of one input, and they did not
  * agree.
  *
- * They disagreed on the ONE declaration that is not cosmetic. Tailwind's
- * `bm-border` mirrors --line, which measures 1.42:1 on --panel; tokens.css
- * reserves --line-control (3.10:1) for "interactive borders that are the sole
- * affordance of a control" precisely because SC 1.4.11 asks 3:1 of exactly this
- * edge. An input whose only boundary is --line is an input you cannot locate,
- * so every field in the agent form was under the non-text contrast floor. The
- * border here is --line-control, which is what makes this a fix rather than a
- * tidy-up.
+ * They disagreed on the one declaration that is not cosmetic, the border:
+ * Tailwind's `bm-border` mirrors --line, the token copies used --line-control,
+ * and nothing said which a field should be. It is --line-field now, one token
+ * for every text field: light at rest, because the operator wants forms to read
+ * smooth, and --line-control (3.10:1) once focused (base.css). The resting edge
+ * may be light because it is not what identifies the field — its label and its
+ * --bg fill do, which W3C's Understanding for SC 1.4.11 accepts in place of a
+ * 3:1 boundary; the 3:1 is spent on the focus indicator, where 1.4.11 does ask
+ * for it.
  *
  * --bg rather than --panel for the fill: these sit on --panel (the dialog, the
  * takeover, a settings card), so a filled control reads as one at a glance
  * instead of relying on the border alone. --ink measures 14.5:1 on --bg.
  *
- * base.css already paints :focus-visible with a 2px --accent outline on every
- * control in the app, so there is no focus ring declared here — a second one
- * would be the Tailwind `focus:ring` this replaces, drawn twice.
+ * No focus rule here: base.css turns every focused text field's border from
+ * --line-field to --line-control, and a ring declared here would be the
+ * Tailwind `focus:ring` this replaces, drawn back in.
  */
 
 /* The label/control/hint stack. `gap` rather than margins on the children, so
@@ -330,7 +331,7 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   min-width: 0;
   min-height: 28px;
   padding: 4px 10px;
-  border: 1px solid var(--line-control);
+  border: 1px solid var(--line-field);
   border-radius: var(--r);
   background: var(--bg);
   font-size: 13px;
@@ -403,6 +404,54 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   text-transform: uppercase;
   color: var(--hint);
 }
+
+/* ─── Search field ───
+ *
+ * A magnifier and an input in one bordered box (core/search-field.js), so the
+ * two read as one control. The box owns the border, so it owns the focus
+ * change every text field makes (base.css): --line-field at rest, --line-control
+ * while the input inside is focused. appearance: none because WebKit paints a
+ * type=search with native chrome of its own, which differs by engine.
+ */
+.search-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-field);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--hint);
+  cursor: text;
+  transition: border-color 0.15s ease;
+}
+.search-field:focus-within { border-color: var(--line-control); }
+.search-field svg { width: 14px; height: 14px; flex: none; }
+.search-field-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 12px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.search-field-input::placeholder { color: var(--hint); }
+.search-field-input::-webkit-search-decoration { -webkit-appearance: none; }
+
+/* ─── Menu select ───
+ *
+ * A dropdown's trigger (core/menu-select.js): a .btn.btn-sm that names the
+ * choice, with a chevron that says it opens. The host is positioned so the
+ * panel hangs off it. 28px, the search field's height, so a toolbar's controls
+ * stand on one line.
+ */
+.menu-select { position: relative; display: inline-flex; }
+.menu-select-trigger { min-height: 28px; gap: 6px; }
+.menu-select-trigger svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
 
 /* ─── Fact list ───
  *

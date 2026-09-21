@@ -222,7 +222,7 @@ const BossModTaskDetailSections = (() => {
         // more than there is.
         more.hidden = true;
         return h('section', { class: 'task-detail-section' },
-            h('p', { class: 'task-detail-heading' }, 'What to do'), text, more);
+            h('p', { class: 'task-detail-heading' }, 'Task'), text, more);
     }
 
     /**

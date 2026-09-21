@@ -323,8 +323,14 @@ def test_focus_stays_visible_after_the_outline_is_replaced() -> None:
     # still paints a ring and that this round added no second suppression.
     base = _read(CSS / "base.css")
     assert "outline: 2px solid var(--accent)" in _rule(base, ":focus-visible")
-    assert base.count("outline: none") == 1
+    # Two suppressions in base.css, each with a replacement or a reason: place
+    # headings focused by navigation, and text fields, which swap the ring for
+    # a grey step in their border (the operator hates the ring on inputs,
+    # 2026-09-21; test_ui_visual_parity.py asserts the swap itself).
+    assert base.count("outline: none") == 2
     assert 'h1[tabindex="-1"]:focus' in base
+    fields = base.split("select:focus-visible {", 1)[1].split("}", 1)[0]
+    assert "outline: none" in fields and "border-color: var(--line-control)" in fields
 
 
 # ─── Task 5: the idle middle slot is empty ───

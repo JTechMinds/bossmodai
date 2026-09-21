@@ -110,8 +110,7 @@ const PersonalitiesSection = (() => {
                                value="${BossModFormat.escapeAttribute(p?.name || '')}"
                                placeholder="e.g. Product Manager, Code Reviewer"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                      focus:border-bm-accent">
+                                      bg-bm-bg">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Prompt Template</label>
@@ -119,8 +118,7 @@ const PersonalitiesSection = (() => {
                         <textarea name="prompt_template" required rows="12"
                                   placeholder="You are a senior product manager focused on clarity, prioritization, and stakeholder communication..."
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                         bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30
-                                         focus:border-bm-accent resize-y font-mono">${BossModFormat.escapeHtml(p?.prompt_template || '')}</textarea>
+                                         bg-bm-bg resize-y font-mono">${BossModFormat.escapeHtml(p?.prompt_template || '')}</textarea>
                     </div>
                     <div id="personality-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">

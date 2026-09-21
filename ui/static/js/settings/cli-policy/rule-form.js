@@ -123,7 +123,7 @@ const BossModCliPolicyRuleForm = (() => {
                     <div class="md:col-span-2 flex items-center gap-4">
                         <label class="flex items-center gap-2 text-sm">
                             <input type="checkbox" name="enabled" ${rule?.enabled !== false ? 'checked' : ''}
-                                   class="rounded border-bm-border text-bm-accent focus:ring-bm-accent/30">
+                                   class="rounded border-bm-border text-bm-accent">
                             Enabled
                         </label>
                     </div>

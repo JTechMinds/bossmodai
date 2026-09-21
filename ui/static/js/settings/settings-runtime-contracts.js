@@ -12,10 +12,9 @@
 
 const RuntimeContractsSection = (() => {
     const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
-        + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 '
-        + 'focus:border-bm-accent resize-none font-mono leading-relaxed';
+        + 'bg-bm-bg resize-none font-mono leading-relaxed';
     const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
-        + 'bg-bm-bg focus:outline-none focus:ring-2 focus:ring-bm-accent/30 focus:border-bm-accent';
+        + 'bg-bm-bg';
 
 
     const { renderPromptHealth } = BossModRuntimeContractActions;

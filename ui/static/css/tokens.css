@@ -15,6 +15,13 @@
   --line: #e6e8ec;
   --line-strong: #cfd3da;
   --line-control: #8b939e;  /* 3.10 on white */
+  /* A text field's resting border: lighter, so a form reads smooth, and
+     --line-control is what the field turns to when focused. Lawful because
+     every field is identified by what it shows — a label, a placeholder or a
+     glyph — which W3C's Understanding for SC 1.4.11 accepts in place of a 3:1
+     boundary; the 3:1 is spent where 1.4.11 does require it, on the focus
+     indicator. */
+  --line-field: var(--line-strong);
 
   --accent: #2d6be5;        /* 4.51 on --bg  (was #2f6fed at 4.24 — failed) */
   --accent-bg: #e8effd;

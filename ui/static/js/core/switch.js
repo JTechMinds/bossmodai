@@ -56,8 +56,10 @@ const BossModSwitch = (() => {
                 opts.onChange(pressed);
             },
         },
-            h('span', { class: 'switch', 'aria-hidden': 'true' }),
-            h('span', { class: 'switch-label' }, label));
+            // Label first, then the pill: "Subtasks [toggle]" reads as the
+            // setting and then its state, the order the owner's mockup draws.
+            h('span', { class: 'switch-label' }, label),
+            h('span', { class: 'switch', 'aria-hidden': 'true' }));
 
         return {
             element,

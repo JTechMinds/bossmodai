@@ -61,13 +61,14 @@ const BossModTasksPlace = (() => {
             h('button', { class: 'btn', type: 'button', onclick: openAssign }, '+ New task')));
     }
 
-    /**
-     * @param {string} agentId
-     * @returns {string|undefined} The roster colour; undefined (an agent the
-     *   roster lacks) is BossModAvatar's documented neutral treatment.
-     */
+    /** @returns {object|null} The roster's entry for an agent id, or null. */
+    function rosterAgent(agentId) {
+        return ctxRef.store.getState().roster.find((entry) => entry.id === agentId) || null;
+    }
+
+    /** The roster colour; undefined (not rostered) is the avatar's neutral treatment. */
     function colorOf(agentId) {
-        const agent = ctxRef.store.getState().roster.find((entry) => entry.id === agentId);
+        const agent = rosterAgent(agentId);
         return agent ? agent.color : undefined;
     }
 
@@ -303,6 +304,7 @@ const BossModTasksPlace = (() => {
                 // The Desk's "See all" arrives as a place param, not as a click.
                 agentId: ctx.store.getState().placeParams.agentFilter || null,
                 menuButton: menu.button,
+                rosterAgent,
                 onChange: paint,
                 onNewTask: openAssign,
                 onCancelSelected: () => canceller.cancelMany(
