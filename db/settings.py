@@ -51,6 +51,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_temperature", "0.7", "llm"),
     ("default_max_tokens", "8192", "llm"),
     ("llm_request_timeout_seconds", "120", "llm"),
+    ("decision_repair_attempts", "6", "llm"),
     ("managed_writer_max_batch_files", "8", "llm"),
     ("managed_writer_max_sections_per_file", "8", "llm"),
 

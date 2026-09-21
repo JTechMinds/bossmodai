@@ -117,6 +117,11 @@ const SystemSection = (() => {
             label: 'LLM Request Timeout (seconds)',
             description: 'Maximum time one model call may run before the runtime aborts it and surfaces a timeout error.',
         },
+        decision_repair_attempts: {
+            order: 35,
+            label: 'Decision Repair Attempts',
+            description: 'How many times a decision turn may ask the model to replace prose, invented keys, or broken JSON with one JSON envelope before the turn fail-closes.',
+        },
         max_concurrent_llm_calls: {
             order: 40,
             label: 'Max Concurrent LLM Calls',
