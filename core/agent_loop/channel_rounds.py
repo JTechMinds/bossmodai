@@ -1,9 +1,13 @@
 """BossMod AI — Shared channel response-round coordination.
 
-Discuss and status messages wake one member at a time (mentioned first,
-then a stable lead / round-robin). Pass stays off the channel and steps
-that member out of later rounds for this human snapshot. Fan-out remains
-only for the narrow allowlist in ``channel_round_plan``.
+Discuss and status messages wake one member at a time. When System AI is
+set, one short route per round chooses an ordered speak list and a
+stay-out list. Human @ mentions stay first and are never dropped. Stay-out
+members are an engine pass: the queue advances, nothing is posted, and the
+identity model is not called. A failed or unset route keeps the #124 drain
+(mentioned first, then a stable lead / round-robin) and each of those wakes
+is a normal soft-judge turn. Fan-out remains only for the narrow allowlist
+in ``channel_round_plan``.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from core.agent_loop.channel_round_plan import (
     mention_ids_in_order,
     order_round_members,
 )
+from core.agent_loop.channel_router import RoundPlan, plan_channel_route
 from core.agent_loop.response_rounds import (
     SharedRoundBinding,
     begin_shared_response,
@@ -93,6 +98,16 @@ def start_channel_peer_round(
     )
     if not ordered_ids:
         return []
+    # Mentions on the message that opens the round are required. A human @
+    # is the case that must never be dropped; the same pin covers every
+    # @ on that opening message.
+    plan = _plan_for_members(
+        mode=mode,
+        members=members,
+        fallback_order=ordered_ids,
+        latest_message=content,
+        required_ids=mentioned,
+    )
 
     round_record = db.create_channel_response_round(
         channel_id=channel_id,
@@ -102,16 +117,18 @@ def start_channel_peer_round(
         round_record.id,
         round_index=1,
         dispatch_mode=mode,
-        stepped_out=[],
+        stepped_out=list(plan.stay_out),
         next_mentions=[],
+        router_mode=plan.mode if mode == DISPATCH_ROUNDS else "fallback",
+        pinned_ids=list(plan.pinned) if mode == DISPATCH_ROUNDS else [],
     )
-    for position, agent_id in enumerate(ordered_ids, start=1):
-        db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
-        db.update_channel_response_candidate(
-            round_id=round_record.id,
-            agent_id=agent_id,
-            queue_position=position,
-        )
+    wake_ids = _install_round_queue(
+        round_id=round_record.id,
+        channel_id=channel_id,
+        speak_ids=plan.speak,
+        stay_out_ids=plan.stay_out if mode == DISPATCH_ROUNDS else [],
+        wake_all=mode == DISPATCH_FANOUT,
+    )
 
     payload: dict[str, Any] = {
         "content": content,
@@ -127,14 +144,8 @@ def start_channel_peer_round(
     if isinstance(from_agent, str) and from_agent.strip():
         payload["from_agent"] = from_agent
 
-    wake_ids = ordered_ids if mode == DISPATCH_FANOUT else ordered_ids[:1]
-    if mode == DISPATCH_ROUNDS and wake_ids:
-        db.update_channel_response_candidate(
-            round_id=round_record.id,
-            agent_id=wake_ids[0],
-            status="queued",
-            queue_position=1,
-        )
+    if mode == DISPATCH_ROUNDS and not wake_ids:
+        db.maybe_complete_channel_response_round(round_record.id)
     triggers: list[dict[str, Any]] = []
     for agent_id in wake_ids:
         triggers.append(
@@ -290,12 +301,16 @@ def advance_channel_round(
     candidates = db.list_channel_response_candidates(round_id)
     if any(str(candidate.status or "") in {"queued", "responding"} for candidate in candidates):
         return empty
-    pending = [
-        candidate
-        for candidate in candidates
-        if str(candidate.status or "") == "pending"
-    ]
-    pending.sort(key=lambda candidate: (candidate.queue_position or 9999, candidate.created_at))
+    pending = _pending_candidates(candidates)
+    if pending and spoke and str(meta.get("router_mode") or "") == "system":
+        pending = _redecide_remaining(
+            round_id=round_id,
+            channel_id=channel_id,
+            pending=pending,
+            pinned_ids=list(meta.get("pinned_ids") or []),
+            opening_message=str(trigger.get("content") or ""),
+            latest_message=spoken_text or str(trigger.get("spoken_text") or ""),
+        )
     if pending:
         nxt = pending[0]
         db.update_channel_response_candidate(
@@ -315,6 +330,178 @@ def advance_channel_round(
         meta=channel_round_db.get_channel_round_meta(round_id),
         participants=[candidate.agent_id for candidate in candidates],
     )
+
+
+def _plan_for_members(
+    *,
+    mode: str,
+    members: list[dict[str, str]],
+    fallback_order: list[str],
+    latest_message: str,
+    required_ids: list[str],
+    opening_message: str = "",
+) -> RoundPlan:
+    """Route a rounds queue. Fan-out and an unset router keep the drain order."""
+    if mode != DISPATCH_ROUNDS:
+        return RoundPlan(
+            speak=list(fallback_order),
+            stay_out=[],
+            mode="fallback",
+            pinned=[],
+        )
+    return plan_channel_route(
+        members=members,
+        fallback_order=fallback_order,
+        latest_message=latest_message,
+        pending_mention_ids=list(required_ids),
+        forced_ids=list(required_ids),
+        opening_message=opening_message,
+    )
+
+
+def _install_round_queue(
+    *,
+    round_id: str,
+    channel_id: str,
+    speak_ids: list[str],
+    stay_out_ids: list[str],
+    wake_all: bool,
+) -> list[str]:
+    """Create the queue. Stay-out members are an engine pass and are not woken."""
+    wakes: list[str] = []
+    position = 1
+    for agent_id in speak_ids:
+        db.create_channel_response_candidate(round_id=round_id, agent_id=agent_id)
+        status = "pending"
+        if not wake_all and not wakes:
+            status = "queued"
+        db.update_channel_response_candidate(
+            round_id=round_id,
+            agent_id=agent_id,
+            status=status,
+            queue_position=position,
+        )
+        if wake_all or status == "queued":
+            wakes.append(agent_id)
+        position += 1
+    for agent_id in stay_out_ids:
+        db.create_channel_response_candidate(round_id=round_id, agent_id=agent_id)
+        db.update_channel_response_candidate(
+            round_id=round_id,
+            agent_id=agent_id,
+            status="pending",
+            queue_position=position,
+        )
+        position += 1
+        _engine_pass(agent_id, round_id=round_id, channel_id=channel_id)
+    return wakes
+
+
+def _engine_pass(agent_id: str, *, round_id: str, channel_id: str) -> None:
+    """Advance one unselected member without an identity-model turn.
+
+    Same record as a #124 pass: no channel line, no warm context, no model.
+    """
+    db.mark_channel_candidate_observed(round_id=round_id, agent_id=agent_id)
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        return
+    log_channel_pass(
+        agent,
+        {
+            "type": "channel_message",
+            "round_id": round_id,
+            "channel_id": channel_id,
+        },
+        "",
+    )
+
+
+def _redecide_remaining(
+    *,
+    round_id: str,
+    channel_id: str,
+    pending: list[Any],
+    pinned_ids: list[str],
+    opening_message: str,
+    latest_message: str,
+) -> list[Any]:
+    """Optionally re-route members still waiting after a speak.
+
+    One wake is issued by the caller. A failed re-route leaves the remaining
+    drain in place and stops further routes for this round. Required @ ids
+    that are still waiting stay in speak. @ ids stored from the speak wait
+    for the next round and are not pulled ahead here.
+    """
+    remaining_ids = [candidate.agent_id for candidate in pending]
+    remaining_set = set(remaining_ids)
+    forced = [agent_id for agent_id in pinned_ids if agent_id in remaining_set]
+    voluntary = [agent_id for agent_id in remaining_ids if agent_id not in set(forced)]
+    if not voluntary:
+        return pending
+    latest = (latest_message or "").strip() or opening_message
+    plan = plan_channel_route(
+        members=_members_in_order(channel_id, remaining_ids),
+        fallback_order=remaining_ids,
+        latest_message=latest,
+        pending_mention_ids=forced,
+        forced_ids=forced,
+        opening_message=opening_message,
+    )
+    if plan.mode != "system":
+        channel_round_db.set_channel_round_meta(round_id, router_mode="fallback")
+        return pending
+    meta = channel_round_db.get_channel_round_meta(round_id)
+    stepped = list(meta.get("stepped_out") or [])
+    for agent_id in plan.stay_out:
+        if agent_id not in remaining_set:
+            continue
+        _engine_pass(agent_id, round_id=round_id, channel_id=channel_id)
+        if agent_id not in stepped:
+            stepped.append(agent_id)
+    start_at = min(candidate.queue_position or 1 for candidate in pending)
+    for offset, agent_id in enumerate(plan.speak):
+        if agent_id not in remaining_set:
+            continue
+        db.update_channel_response_candidate(
+            round_id=round_id,
+            agent_id=agent_id,
+            status="pending",
+            queue_position=start_at + offset,
+        )
+    channel_round_db.set_channel_round_meta(
+        round_id,
+        stepped_out=stepped,
+        router_mode="system",
+        pinned_ids=[agent_id for agent_id in plan.pinned if agent_id in remaining_set],
+    )
+    return _pending_candidates(db.list_channel_response_candidates(round_id))
+
+
+def _pending_candidates(candidates: list[Any]) -> list[Any]:
+    pending = [
+        candidate
+        for candidate in candidates
+        if str(candidate.status or "") == "pending"
+    ]
+    pending.sort(key=lambda candidate: (candidate.queue_position or 9999, candidate.created_at))
+    return pending
+
+
+def _members_in_order(channel_id: str, agent_ids: list[str]) -> list[dict[str, str]]:
+    by_id = {member["id"]: member for member in _ordered_members(channel_id, set())}
+    return [by_id[agent_id] for agent_id in agent_ids if agent_id in by_id]
+
+
+def _latest_channel_text(channel_id: str, fallback: str) -> str:
+    """Newest transcript line, skipping round-boundary markers."""
+    for row in reversed(db.list_channel_messages(channel_id, limit=12)):
+        if row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND:
+            continue
+        text = (row.content or "").strip()
+        if text:
+            return text
+    return fallback
 
 
 def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
@@ -425,7 +612,11 @@ def _open_follow_up_round(
     meta: dict[str, Any],
     participants: list[str],
 ) -> dict[str, Any]:
-    """Full re-wake of whoever has not stepped out, up to the soft cap."""
+    """Open the next round for members who have not stepped out, up to the soft cap.
+
+    System AI may narrow that pool to a short speak list. A failed route
+    wakes the #124 drain order, one member at a time, for a soft-judge turn.
+    """
     empty: dict[str, Any] = {"trigger_requests": []}
     index = int(meta.get("round_index") or 1)
     if index >= channel_response_round_cap():
@@ -468,6 +659,30 @@ def _open_follow_up_round(
     if not ordered:
         return empty
 
+    responded = {
+        candidate.agent_id
+        for candidate in db.list_channel_response_candidates(round_id)
+        if str(candidate.status or "") == "responded"
+    }
+    required: list[str] = []
+    for agent_id in list(meta.get("pinned_ids") or []) + list(mention_ids):
+        if agent_id in set(ordered) and agent_id not in responded and agent_id not in required:
+            required.append(agent_id)
+    roster = _members_in_order(channel_id, ordered)
+    latest = _latest_channel_text(channel_id, str(trigger.get("content") or ""))
+    plan = _plan_for_members(
+        mode=DISPATCH_ROUNDS,
+        members=roster,
+        fallback_order=ordered,
+        latest_message=latest,
+        required_ids=required,
+        opening_message=str(trigger.get("content") or ""),
+    )
+    stepped_now = list(stepped)
+    for agent_id in plan.stay_out:
+        if agent_id not in stepped_now:
+            stepped_now.append(agent_id)
+
     round_record = db.create_channel_response_round(
         channel_id=channel_id,
         source_message_id=source_id or str(trigger.get("source_message_id") or ""),
@@ -476,25 +691,28 @@ def _open_follow_up_round(
         round_record.id,
         round_index=next_index,
         dispatch_mode=DISPATCH_ROUNDS,
-        stepped_out=list(stepped),
+        stepped_out=stepped_now,
         next_mentions=[],
+        router_mode=plan.mode,
+        pinned_ids=list(plan.pinned),
     )
-    for position, agent_id in enumerate(ordered, start=1):
-        db.create_channel_response_candidate(round_id=round_record.id, agent_id=agent_id)
-        status = "queued" if position == 1 else "pending"
-        db.update_channel_response_candidate(
-            round_id=round_record.id,
-            agent_id=agent_id,
-            status=status,
-            queue_position=position,
-        )
+    follow_wake = _install_round_queue(
+        round_id=round_record.id,
+        channel_id=channel_id,
+        speak_ids=plan.speak,
+        stay_out_ids=plan.stay_out,
+        wake_all=False,
+    )
+    if not follow_wake:
+        db.maybe_complete_channel_response_round(round_record.id)
+        return empty
     follow_trigger = dict(trigger)
     follow_trigger["round_id"] = round_record.id
     follow_trigger["round_index"] = next_index
     follow_trigger["dispatch_mode"] = DISPATCH_ROUNDS
     progress: dict[str, Any] = {
         "trigger_requests": [
-            _wake_trigger(follow_trigger, ordered[0], round_record.id, {"round_index": next_index})
+            _wake_trigger(follow_trigger, follow_wake[0], round_record.id, {"round_index": next_index})
         ]
     }
     marker = _post_round_marker(channel_id, source_id, next_index)

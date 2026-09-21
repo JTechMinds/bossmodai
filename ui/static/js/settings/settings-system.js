@@ -17,7 +17,7 @@ const SystemSection = (() => {
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
         context: 'Controls how much recent conversation and work history is included in each agent turn.',
-        llm: 'Controls global completion behavior, the AI used for system processes, and compaction pressure.',
+        llm: 'Controls global completion behavior, the AI used for system processes and channel routing, and compaction pressure.',
         desk: 'Controls Desk preview behavior and filesystem browsing limits.',
     };
 
@@ -132,14 +132,14 @@ const SystemSection = (() => {
             label: 'Max Concurrent Agent Turns',
             description: 'How many agent turns may run at once. Default 2 is safe for a local LLM. Each agent still runs at most one turn. Repair wakes use a slot and wait behind a live channel lead.',
         },
-        // Knobs only. Compactors are not wired here: when they exist they
-        // queue in the background, never run every turn, and never block the
-        // agent turn. system_ai_connection stores one AI connection id.
+        // system_ai_connection stores one AI connection id. Channel rounds
+        // use it for one short route. Compactors, when they exist, queue in
+        // the background, never run every turn, and never block an agent turn.
         system_ai_connection: {
             order: 37,
             control: 'connection',
             label: 'System AI',
-            description: 'Choose the AI used for system processes. This runs in the background for tasks such as compaction.',
+            description: 'Choose the AI used for system processes. Channel rounds ask it for one short route. Compaction uses the same connection and stays in the background.',
         },
         compaction_mode: {
             order: 38,

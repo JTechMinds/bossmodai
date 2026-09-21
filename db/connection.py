@@ -291,6 +291,14 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "channel_response_rounds", "next_mentions",
         "TEXT NOT NULL DEFAULT '[]'",
     )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "router_mode",
+        "VARCHAR NOT NULL DEFAULT 'fallback'",
+    )
+    _add_column_if_missing(
+        con, "channel_response_rounds", "pinned_ids",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
     _backfill_task_closed_at(con)
 
 

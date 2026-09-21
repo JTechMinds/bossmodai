@@ -5,8 +5,9 @@ bars live in Description. This block is the shared operational contract:
 identity, desk/``/me``, cold notes, standing prefs, allowed tools, host-path
 consent, workspace preference, checkable done, audience soft-judgment,
 and chat formatting.
-Channel discuss wakes run in rounds. This is not a router and does not
-require @.
+Channel discuss wakes run in rounds. System AI may choose who is woken
+before this prompt runs. This prompt is not that route, and a pass does
+not require @.
 """
 
 from __future__ import annotations

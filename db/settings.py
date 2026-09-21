@@ -67,7 +67,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # When compactors exist they queue in the background. These keys only
     # store the choice and the knobs; no compaction runner ships with them.
     # system_ai_connection is one AI connection id (empty = unset), not a
-    # per-agent identity model override. compaction_mode is off | pressure_only.
+    # per-agent identity model override. Channel rounds use it for one short
+    # route. compaction_mode is off | pressure_only.
     ("system_ai_connection", "", "llm"),
     ("compaction_mode", "pressure_only", "llm"),
     ("compaction_task_budget_headroom_percent", "25", "llm"),
