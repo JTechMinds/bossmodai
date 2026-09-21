@@ -233,6 +233,9 @@ _HARDENED_NEVER_ALLOWED: list[tuple[str, str, str, str | None, str, str | None, 
     ("never_allowed", "node", "prefix", "Run the Node.js runtime.", "development",
      "node [options] [script]",
      "Run the Node.js runtime. Blocked because -e and required modules can read or write any host path, bypassing the path jail."),
+    ("never_allowed", "printenv", "prefix", "Print environment variables (including GitHub tokens).", "system",
+     "printenv [name]",
+     "Print environment variables. Blocked because it can dump GH_TOKEN / GITHUB_TOKEN into chat. Use Nest git for push, or open the compare URL. Do not retry printenv of those names."),
 ]
 
 HARDENED_NEVER_ALLOWED_PATTERNS: frozenset[str] = frozenset(

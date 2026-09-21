@@ -7,6 +7,7 @@ cached until :meth:`PolicyEngine.reload` invalidates them.
 Evaluation order (first match wins):
     1. Virtual commands  -> allowed, executor="virtual"
     2. never_allowed     -> denied
+       (includes printenv / env dumps of GH_TOKEN / GITHUB_TOKEN)
     3. always_allowed    -> allowed, executor="shell"
     4. approval_required -> denied, approval_required=True
     5. Default policy    -> ``cli_default_policy`` setting ("deny" or "approval_required")
@@ -253,7 +254,12 @@ class PolicyEngine:
                 message=f'"{command_name}" is not a built-in command and shell execution is not enabled. Type "help" to discover available commands.',
             )
 
-        # 3. Walk tiers in strict order; first matching rule wins.
+        # 3. Token env dumps — never_allowed before always_allowed ``env``.
+        dump_deny = self._secret_token_env_dump_decision(command_str, agent_id, cwd=cwd)
+        if dump_deny is not None:
+            return dump_deny
+
+        # 4. Walk tiers in strict order; first matching rule wins.
         self._ensure_loaded()
         for tier in _TIER_ORDER:
             rules = self._rules_for_tier(tier, agent_id)
@@ -261,7 +267,7 @@ class PolicyEngine:
                 if self._match_rule(command_str, rule, cwd=cwd):
                     return self._decision_for_tier(tier, rule)
 
-        # 4. No rule matched — fall through to the default policy.
+        # 5. No rule matched — fall through to the default policy.
         return self._default_decision(command_str)
 
     def evaluate_dry_run(
@@ -298,6 +304,32 @@ class PolicyEngine:
                 self._rules = rules_by_tier
                 total = sum(len(v) for v in rules_by_tier.values())
                 logger.debug("PolicyEngine loaded %d rules across %d tiers", total, len(_TIER_ORDER))
+
+    def _secret_token_env_dump_decision(
+        self,
+        command_str: str,
+        agent_id: str | None,
+        *,
+        cwd: str | None,
+    ) -> CommandPolicyDecision | None:
+        """Fail-closed never_allowed for printenv / env dumps of GitHub tokens."""
+        from core.bm_cli.secret_env import (
+            SECRET_TOKEN_ENV_DUMP_MESSAGE,
+            command_dumps_secret_token_env,
+        )
+
+        if not command_dumps_secret_token_env(command_str):
+            return None
+        self._ensure_loaded()
+        for rule in self._rules_for_tier("never_allowed", agent_id):
+            if self._match_rule(command_str, rule, cwd=cwd):
+                return self._decision_for_tier("never_allowed", rule)
+        return CommandPolicyDecision(
+            allowed=False,
+            tier="never_allowed",
+            executor="shell",
+            message=f"Command blocked by policy rule: {SECRET_TOKEN_ENV_DUMP_MESSAGE}",
+        )
 
     def _rules_for_tier(
         self,

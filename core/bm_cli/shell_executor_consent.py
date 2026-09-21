@@ -78,6 +78,20 @@ def maybe_pause_for_shell_executor(
         return None
     if not command_needs_shell_executor(agent, parsed, cwd):
         return None
+    from core.bm_cli.nest_git import command_needs_gh_auth
+
+    if command_needs_gh_auth(parsed):
+        from core.bm_cli.nest_git_consent import maybe_block_gh_cli
+
+        return maybe_block_gh_cli(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd=cwd,
+            task_id=task_id,
+            channel_id=channel_id,
+            trigger_type=trigger_type,
+        )
     if not locked_workspace_copies_for_turn(agent.id, task_id):
         return None
 

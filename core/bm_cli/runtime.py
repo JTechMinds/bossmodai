@@ -122,6 +122,19 @@ def preview_bm_cli(
 
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
+    from core.bm_cli.nest_git_consent import maybe_block_gh_cli
+
+    gh_preview = maybe_block_gh_cli(
+        agent=agent,
+        parsed=parsed,
+        content=None,
+        cwd=cwd_before,
+        task_id=get_active_task_id(agent.id),
+        channel_id=None,
+        persist_chrome=False,
+    )
+    if gh_preview is not None:
+        return gh_preview
 
     preview_outcome = decide_locked_clone_shell_outcome(
         agent,
@@ -266,6 +279,17 @@ def _execute_bm_cli_inner(
             trigger_type=trigger_type,
         )
         return result
+
+    paused = _maybe_gh_cli_block(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if paused is not None:
+        return paused
 
     paused = _maybe_shell_executor_consent(
         agent=agent,
@@ -463,6 +487,24 @@ def execute_approved_command(
         return prepared_clone
     parsed = prepared_clone
 
+    peek = policy_engine.evaluate(
+        parsed.raw,
+        VIRTUAL_COMMANDS,
+        agent_id=agent.id,
+        assume_shell=True,
+        cwd=cwd_before,
+    )
+    if peek.tier == "never_allowed":
+        return _deny_policy_never_allowed(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd_before=cwd_before,
+            policy=peek,
+            trigger_type=trigger_type,
+            channel_id=channel_id,
+        )
+
     gated = _gate_locked_clone_project_env(
         agent,
         parsed,
@@ -484,6 +526,17 @@ def execute_approved_command(
     )
     if paused is not None:
         return paused
+
+    blocked = _maybe_gh_cli_block(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if blocked is not None:
+        return blocked
 
     prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
@@ -684,6 +737,46 @@ def _maybe_nest_git_consent(
         trigger_type=trigger_type,
     )
     return paused
+
+
+def _maybe_gh_cli_block(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Fail-closed one Nest git / compare-URL card for gh. No Approve spam."""
+    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.bm_cli.nest_git_consent import maybe_block_gh_cli
+
+    blocked = maybe_block_gh_cli(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd_before,
+        task_id=get_active_task_id(agent.id),
+        channel_id=channel_id,
+        trigger_type=trigger_type,
+    )
+    if blocked is None:
+        return None
+    data = blocked.data or {}
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=blocked.executor,
+        cwd_before=cwd_before,
+        cwd_after=blocked.cwd,
+        policy_tier=str(data.get("policy_tier") or "nest_git"),
+        decision="approval_required" if blocked.consent_required else "denied",
+        result=blocked,
+        trigger_type=trigger_type,
+    )
+    return blocked
 
 
 def _deny_policy_never_allowed(
@@ -973,10 +1066,15 @@ def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[s
 
     PAT/askpass is applied for every git argv so a saved token reaches push
     even when the gate's cwd/subcommand check missed. Values are never logged.
+
+    Parked: Nest git → gh subprocess inject. Do not copy a PAT into GH_TOKEN
+    or GITHUB_TOKEN for a gh argv.
     """
     extra = _agent_git_identity_env(agent)
-    from core.bm_cli.nest_git import is_git_cli, nest_git_shell_env
+    from core.bm_cli.nest_git import is_gh_cli, is_git_cli, nest_git_shell_env
 
+    if is_gh_cli(parsed):
+        return extra
     if is_git_cli(parsed):
         extra.update(nest_git_shell_env(agent, parsed, cwd))
     return extra
@@ -1347,6 +1445,16 @@ def _execute_shell(
     )
     if paused is not None:
         return paused
+    blocked = _maybe_gh_cli_block(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if blocked is not None:
+        return blocked
     prepared = _prepare_native_shell(agent, parsed, cwd_before)
     if isinstance(prepared, BossModCliResult):
         return prepared

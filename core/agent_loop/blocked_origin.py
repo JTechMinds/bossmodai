@@ -55,6 +55,7 @@ _NEST_GIT_MARKERS = (
     "github rejected this token",
     "may not have access to this repo",
     "no nest git credential matches this remote",
+    "github cli has no login in this shell",
 )
 
 
@@ -119,6 +120,10 @@ def _nest_git_block_why(cli_result: Any) -> str:
 
     data = getattr(cli_result, "data", None) or {}
     kind = str(data.get("nest_git_auth_kind") or "").strip()
+    if kind == "gh_cli":
+        from core.models.nest_git import GH_CLI_NO_AUTH_WHY
+
+        return GH_CLI_NO_AUTH_WHY
     if kind == "token_rejected":
         return NEST_GIT_TOKEN_REJECTED_WHY
     if kind == "repo_access":
