@@ -43,7 +43,7 @@ const BossModCliPolicySettings = (() => {
         cli_default_policy: {
             order: 50,
             label: 'Default Policy',
-            description: 'What happens when a command does not match any rule. "deny" blocks the command, "approval_required" pauses for human approval.',
+            description: 'What happens when a command does not match any rule. "approval_required" pauses for human approval, "deny" blocks the command. Default approval_required.',
             type: 'select',
             options: [
                 { value: 'deny', label: 'Deny' },

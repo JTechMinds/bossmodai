@@ -24,7 +24,7 @@ const CliPolicySimulator = (() => {
     let simCommandHistory = [];
     let simHistoryIdx = -1;
     let simShellEnabled = false;
-    let simDefaultPolicy = 'deny';
+    let simDefaultPolicy = 'approval_required';
 
     /**
      * @returns {Element|null} The output pane. Resolved at every write, not
@@ -54,7 +54,7 @@ const CliPolicySimulator = (() => {
             const settings = await res.json();
             for (const s of settings) {
                 if (s.key === 'cli_shell_enabled') simShellEnabled = s.value === 'true';
-                if (s.key === 'cli_default_policy') simDefaultPolicy = s.value || 'deny';
+                if (s.key === 'cli_default_policy') simDefaultPolicy = s.value || 'approval_required';
             }
             return true;
         } catch (err) {

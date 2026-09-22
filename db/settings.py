@@ -133,7 +133,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_shell_timeout_seconds", "30", "cli_policy"),
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),
     ("cli_approval_timeout_minutes", "60", "cli_policy"),
-    ("cli_default_policy", "deny", "cli_policy"),
+    # Unmatched commands. Prior factory default was deny;
+    # reconcile_factory_cli_default_policy moves an untouched deny once.
+    ("cli_default_policy", "approval_required", "cli_policy"),
     # Extra host directories a named absolute path may open/read/edit.
     # Empty = no extra host access (fail-closed). Not a full host mount.
     ("workspace_host_roots", "", "cli_policy"),
@@ -198,6 +200,7 @@ def seed_defaults() -> None:
     reconcile_catalog_pin()
     reconcile_factory_round_cap()
     reconcile_factory_max_tokens()
+    reconcile_factory_cli_default_policy()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -210,6 +213,13 @@ _LAST_RESORT_ROUND_CAP = "64"
 # An operator who set a different budget keeps it.
 _FACTORY_MAX_TOKENS = "8192"
 _DEFAULT_MAX_TOKENS = "16384"
+
+# Prior shipped cli_default_policy. Only this factory value moves to
+# approval_required, and only once. An operator who set a different policy
+# keeps it. After the pass, a saved deny is an operator choice.
+_FACTORY_CLI_DEFAULT_POLICY = "deny"
+_DEFAULT_CLI_POLICY = "approval_required"
+_CLI_DEFAULT_POLICY_FACTORY_RECONCILED = "cli_default_policy_factory_reconciled"
 
 
 def reconcile_factory_round_cap() -> None:
@@ -238,6 +248,27 @@ def reconcile_factory_max_tokens() -> None:
     if row is None or str(row.get("value") or "") != _FACTORY_MAX_TOKENS:
         return
     set_setting("default_max_tokens", _DEFAULT_MAX_TOKENS, "llm")
+
+
+def reconcile_factory_cli_default_policy() -> None:
+    """Move an untouched factory CLI default from deny to approval_required once.
+
+    A stored value other than the prior factory ``deny`` is left alone.
+    After this pass, a saved ``deny`` is an operator choice and is not rewritten.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_CLI_DEFAULT_POLICY_FACTORY_RECONCILED],
+    )
+    if seen is not None:
+        return
+    row = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        ["cli_default_policy"],
+    )
+    if row is not None and str(row.get("value") or "") == _FACTORY_CLI_DEFAULT_POLICY:
+        set_setting("cli_default_policy", _DEFAULT_CLI_POLICY, "cli_policy")
+    set_setting(_CLI_DEFAULT_POLICY_FACTORY_RECONCILED, "true", "cli_policy")
 
 
 def ensure_local_api_token() -> str:
