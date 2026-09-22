@@ -22,8 +22,9 @@ from core.agent_loop.decision_parse_fail import (
     surface_llm_timeout_failure,
 )
 from core.agent_loop.promise_lock import (
+    commitment_signal,
     promise_fail_why,
-    say_commits_to_work,
+    response_commits_to_work,
     surface_promise_gap,
 )
 from core.agent_loop.outcomes import TurnOutcome
@@ -232,7 +233,7 @@ async def _run_decision_turn(
         total_completion_tokens += response.completion_tokens
         total_tokens += response.total_tokens
         last_response_content = response.content
-        if say_commits_to_work(response.content):
+        if commitment_signal(response.content)[1] is True:
             promised_work = True
         step_prompt_tokens = response.prompt_tokens
         step_completion_tokens = response.completion_tokens
@@ -306,7 +307,7 @@ async def _run_decision_turn(
                             kind=str(parse_kind or ""),
                         ),
                     )
-                    if promised_work
+                    if promised_work or response_commits_to_work(response.content)
                     else surface_decision_parse_failure(agent=agent, trigger=trigger)
                 ),
                 action=parsed,

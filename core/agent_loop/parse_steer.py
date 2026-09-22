@@ -8,6 +8,8 @@ Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
 tools / CLI). Those map onto the existing compact keys ``msg`` and
 ``act``/``data`` — not a second protocol. Empty ``actions`` is a valid 1:1
 status wake. ``say`` alone is never Done / Blocked / F.
+Optional ``work_commit`` is a boolean intent flag on that envelope. It is
+not a phrase list and it is not Board Done.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ INVALID_DECISION_STEER = (
 # Existing compact keys plus the product aliases. Unknown keys stay fail-closed.
 # ``next_owners`` is the structured handoff pin. It is not a second protocol.
 _COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th", "next_owners"})
-_ENVELOPE_KEYS = frozenset({"say", "actions", "next_owners"})
+_ENVELOPE_KEYS = frozenset({"say", "actions", "next_owners", "work_commit"})
 _COMPACT_ROOT_KEYS = _COMPACT_ACTION_KEYS | _ENVELOPE_KEYS
 _CONVERSATION_ACTS = frozenset(
     {"reply", "observe", "accept", "clarify", "cancel", "decline", "defer"}
@@ -186,18 +188,34 @@ def resolve_operator_chat(payload: dict[str, Any]) -> str | None:
     return _resolve_chat_alias(payload.get("say"), payload.get("msg"))
 
 
+def read_work_commit(payload: dict[str, Any]) -> bool | None:
+    """Return the envelope ``work_commit`` flag.
+
+    Omitted is ``None`` (intent was not declared). A non-boolean is
+    fail-closed. This does not read the say text.
+    """
+    if "work_commit" not in payload:
+        return None
+    value = payload.get("work_commit")
+    if isinstance(value, bool):
+        return value
+    raise InvalidDecisionEnvelope('"work_commit" must be a boolean when provided')
+
+
 def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Map ``say`` / ``actions`` onto the existing compact act/msg object.
 
     Empty ``actions`` is a no-work chat envelope. One nested compact action
     unwraps to that same object (not a second schema). Invented keys stay
-    fail-closed.
+    fail-closed. ``work_commit`` is validated and stripped here so lookup
+    acts keep their existing shape; the conversation parser reattaches it.
     """
     extra = set(payload) - _COMPACT_ROOT_KEYS
     if extra:
         raise InvalidDecisionEnvelope(
             f'unexpected top-level keys: {", ".join(sorted(extra))}'
         )
+    read_work_commit(payload)
 
     chat = _resolve_chat_alias(payload.get("say"), payload.get("msg"))
     owners = parse_next_owner_ids(payload.get("next_owners")) if "next_owners" in payload else None

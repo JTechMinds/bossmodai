@@ -13,6 +13,7 @@ Return exactly one JSON object.
 Choose the smallest valid object for this turn. Omit unrelated fields.
 Do not combine conversation fields and CLI fields in the same object.
 Operator-visible chat is `say` (alias `msg`). Board / tools / CLI live in `actions` or the compact `act`/`data` object. Empty `actions` is valid on a 1:1 status wake. Raw prose is not a turn result. `say` alone never marks work Done or Blocked.
+Optional boolean `work_commit` is true only when this say commits to doing the work on this turn. Omit it for status, questions, and finished reports. `work_commit` is not Board Done.
 Optional top-level `next_owners` is an array of agent ids who should act next. Ids only. An @ in the message is not required.
 
 {{if trigger.type = 'human_chat'}}
