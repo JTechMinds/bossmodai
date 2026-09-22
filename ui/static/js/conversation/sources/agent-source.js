@@ -123,11 +123,33 @@ const BossModAgentSource = (() => {
         }
 
         /**
+         * The server's reason, when it sent one. Otherwise the standing line.
+         *
+         * @param {Response} res
+         * @returns {Promise<string>}
+         */
+        async function refusal(res) {
+            const fallback = 'Failed to reach agent.';
+            let raw = '';
+            try { raw = await res.text(); } catch { raw = ''; }
+            const text = String(raw || '').trim();
+            if (text.startsWith('{')) {
+                try {
+                    const data = JSON.parse(text);
+                    const detail = data && data.detail;
+                    if (typeof detail === 'string' && detail.trim()) return detail.trim();
+                } catch { /* keep the fallback */ }
+            }
+            return text || fallback;
+        }
+
+        /**
          * Wake the agent with a message.
          *
          * The indicator is cleared in a `finally` because an agent that
          * produced no reply (walk_to, idle) fires no WebSocket event at all —
-         * without this it would appear to be thinking forever.
+         * without this it would appear to be thinking forever. A refusal
+         * throws the server's reason so the composer can show it.
          *
          * @param {string} text
          * @returns {Promise<void>}
@@ -142,7 +164,7 @@ const BossModAgentSource = (() => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text }),
                 });
-                if (!res.ok) throw new Error('Failed to reach agent.');
+                if (!res.ok) throw new Error(await refusal(res));
             } finally {
                 presence.stop(agentId, agentId);
                 signal('presence');

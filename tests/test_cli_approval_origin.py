@@ -79,6 +79,39 @@ def _api_client() -> TestClient:
     return TestClient(app)
 
 
+def test_git_dash_c_status_opens_an_approval_card_when_default_is_live() -> None:
+    """Unmatched ``git -C … status`` follows the database default, not the worker cache.
+
+    The virtual handler rejects ``-C``, then shell policy finds no rule.
+    A stale ``deny`` cache must not hard-deny that command.
+    """
+    db.set_setting("cli_default_policy", "approval_required", "cli_policy")
+    with config._lock:
+        config._cache["cli_default_policy"] = "deny"
+        config._loaded = True
+    assert config.get("cli_default_policy") == "deny"
+
+    agent, state = _agent_and_state()
+    channel = _channel_for(agent.id)
+    command = "git -C /tmp/not-a-clone status"
+    paused = execute_bm_cli(agent, state, command, channel_id=channel.id)
+
+    assert paused.approval_required is True
+    assert paused.approval_request_id
+    assert "denied by default policy" not in (paused.detail or "")
+    assert "denied by default policy" not in (paused.prompt_content or "")
+    stored = db.get_cli_approval_request(paused.approval_request_id)
+    assert stored is not None
+    assert stored.command == command
+    cards = [
+        item
+        for item in db.list_channel_messages(channel.id)
+        if item.approval_id == stored.id
+    ]
+    assert len(cards) == 1
+    assert cards[0].notification_kind == CLI_APPROVAL_KIND
+
+
 def test_approval_create_stamps_channel_id() -> None:
     agent, state = _agent_and_state()
     channel = _channel_for(agent.id)

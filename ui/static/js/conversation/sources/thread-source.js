@@ -136,11 +136,34 @@ const BossModThreadSource = (() => {
         }
 
         /**
+         * The server's reason, when it sent one. Raw JSON is not a reason.
+         *
+         * @param {Response} res
+         * @param {string} fallback
+         * @returns {Promise<string>}
+         */
+        async function refusal(res, fallback) {
+            let raw = '';
+            try { raw = await res.text(); } catch { raw = ''; }
+            const text = String(raw || '').trim();
+            if (text.startsWith('{')) {
+                try {
+                    const data = JSON.parse(text);
+                    const detail = data && data.detail;
+                    if (typeof detail === 'string' && detail.trim()) return detail.trim();
+                } catch { /* keep the raw body */ }
+            }
+            return text || fallback;
+        }
+
+        /**
          * Post to the thread.
          *
          * Every member is marked mid-turn before the request, because the round
          * starts server-side the moment it lands. A failure clears them again,
-         * so a rejected post never leaves the room looking busy.
+         * so a rejected post never leaves the room looking busy. The thrown
+         * error is the server's reason, so the composer can show it and keep
+         * the text.
          *
          * @param {string} text
          * @returns {Promise<void>}
@@ -165,7 +188,7 @@ const BossModThreadSource = (() => {
             if (!res.ok) {
                 roster.forEach((member) => presence.stop(threadId, member.id));
                 signal('presence');
-                throw new Error((await res.text()) || 'Could not post to this thread.');
+                throw new Error(await refusal(res, 'Could not post to this thread.'));
             }
         }
 

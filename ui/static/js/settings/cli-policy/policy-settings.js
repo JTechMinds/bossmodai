@@ -13,7 +13,7 @@
 const BossModCliPolicySettings = (() => {
     const esc = BossModFormat.escapeHtml;
     const escAttr = BossModFormat.escapeAttribute;
-    const { icons, applySettingSaveResult } = BossModCliPolicyShared;
+    const { icons, applySettingSaveResult, announceApplied } = BossModCliPolicyShared;
 
     const SETTINGS_META = {
         cli_shell_enabled: {
@@ -185,6 +185,10 @@ const BossModCliPolicySettings = (() => {
                         method: 'PUT',
                     });
                     applySettingSaveResult(card, true, '');
+                    // Autosave already wrote the key. Default Policy is the
+                    // one change the operator needs confirmed in a toast;
+                    // timeout and host-root edits keep the card flash only.
+                    if (key === 'cli_default_policy') announceApplied();
                 } catch (err) {
                     applySettingSaveResult(card, false, err.message || 'Save failed');
                 }

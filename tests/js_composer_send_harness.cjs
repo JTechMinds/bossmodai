@@ -1,5 +1,6 @@
 /**
- * Node harness: composer send keeps the draft until ack and blocks double-submit.
+ * Node harness: composer send stays editable, queues a second line, and
+ * puts a rejected line back when the box is empty.
  * Invoked by tests/test_ui_composer_send.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -52,49 +53,63 @@ async function main() {
     const gate = BossModGates.createComposerSendGate();
     const input = new FakeEl({ value: "keep this draft" });
     const sendBtn = new FakeEl();
-    let sends = 0;
+    const sent = [];
     let release;
     const pending = new Promise((resolve) => {
         release = resolve;
     });
+    const queuedCounts = [];
 
     const first = gate.submit({
         input,
         sendBtn,
-        async send() {
-            sends += 1;
+        onQueued(count) { queuedCounts.push(count); },
+        async send(text) {
+            sent.push(text);
             await pending;
         },
     });
 
     if (!gate.busy()) throw new Error("submit must mark the gate busy");
-    if (!sendBtn.disabled || !input.disabled) {
-        throw new Error("controls must disable while in-flight");
+    if (sendBtn.disabled || input.disabled) {
+        throw new Error("controls must stay enabled while a send is in flight");
     }
-    if (input.value !== "keep this draft") {
-        throw new Error("draft must stay until ack");
+    if (input.value !== "") {
+        throw new Error("accepted send must free the field so the next line can be typed");
     }
 
-    const second = await gate.submit({
+    input.value = "next line";
+    const secondPromise = gate.submit({
         input,
         sendBtn,
-        async send() {
-            sends += 1;
+        onQueued(count) { queuedCounts.push(count); },
+        async send(text) {
+            sent.push(text);
         },
     });
-    if (second.submitted !== false || second.reason !== "in-flight") {
-        throw new Error("second submit must no-op while in-flight");
+    if (sendBtn.disabled || input.disabled) {
+        throw new Error("a queued follow-up must not gray the field");
+    }
+    if (input.value !== "") {
+        throw new Error("queued follow-up must also free the field");
     }
 
     release();
     const firstResult = await first;
-    if (firstResult.ok !== true || sends !== 1) {
-        throw new Error(`expected one successful send, got sends=${sends} ok=${firstResult.ok}`);
+    const second = await secondPromise;
+    if (firstResult.ok !== true || second.ok !== true) {
+        throw new Error(`expected both sends to post, got ${firstResult.ok} ${second.ok}`);
     }
-    if (input.value !== "") throw new Error("success must clear the composer");
+    if (sent.join("|") !== "keep this draft|next line") {
+        throw new Error(`sends must post in order, got ${sent.join("|")}`);
+    }
+    if (input.value !== "") throw new Error("success must leave the freed composer clear");
     if (gate.busy()) throw new Error("gate must idle after ack");
     if (sendBtn.disabled || input.disabled) {
-        throw new Error("controls must re-enable after ack");
+        throw new Error("controls must stay enabled after ack");
+    }
+    if (!queuedCounts.includes(2) || queuedCounts[queuedCounts.length - 1] !== 0) {
+        throw new Error(`queued hint counts must rise and clear, got ${queuedCounts.join(",")}`);
     }
 
     input.value = "retry me";
@@ -104,7 +119,7 @@ async function main() {
         sendBtn,
         async send() {
             await delay(1);
-            throw new Error("agent unreachable");
+            throw new Error("Channel has no members");
         },
         onError(_err, draft) {
             failedDraft = draft;
@@ -114,22 +129,49 @@ async function main() {
         throw new Error("failed send must report submitted + not ok");
     }
     if (input.value !== "retry me") {
-        throw new Error("failure must restore/keep the typed draft");
+        throw new Error("failure must restore the typed draft when the box is empty");
     }
     if (failedDraft !== "retry me") {
         throw new Error("onError must receive the kept draft");
     }
+    const keptDraftOnFailure = true;
 
+    input.value = "first fails";
+    let releaseFail;
+    const holdFail = new Promise((resolve) => {
+        releaseFail = resolve;
+    });
+    const failing = gate.submit({
+        input,
+        sendBtn,
+        async send() {
+            await holdFail;
+            throw new Error("queue full");
+        },
+    });
+    input.value = "newer draft";
+    releaseFail();
+    const failResult = await failing;
+    if (failResult.ok !== false) throw new Error("held send must fail");
+    if (input.value !== "newer draft") {
+        throw new Error("failure must leave a newer draft intact");
+    }
+    const leftNewerDraftIntact = true;
+
+    const sendsBeforeBlock = sent.length;
     const blocked = await gate.submit({
         input,
         sendBtn,
         canSubmit: () => false,
-        async send() {
-            sends += 1;
+        async send(text) {
+            sent.push(text);
         },
     });
-    if (blocked.reason !== "blocked" || sends !== 1) {
+    if (blocked.reason !== "blocked" || sent.length !== sendsBeforeBlock) {
         throw new Error("canSubmit false must not send");
+    }
+    if (input.value !== "newer draft") {
+        throw new Error("a blocked send must leave the text intact");
     }
 
     const errorEl = new FakeEl({ class: "hidden" });
@@ -147,10 +189,12 @@ async function main() {
 
     process.stdout.write(JSON.stringify({
         ok: true,
-        keptDraftOnFailure: input.value === "retry me",
-        clearedOnSuccess: firstResult.ok === true,
-        blockedDoubleSubmit: second.reason === "in-flight",
-        surfacedError: true,
+        keptDraftOnFailure,
+        leftNewerDraftIntact,
+        clearedOnSuccess: firstResult.ok === true && second.ok === true,
+        queuedSecondSend: sent.join("|") === "keep this draft|next line",
+        stayedEnabled: sendBtn.disabled === false && input.disabled === false,
+        surfacedError: failedDraft === "retry me",
     }));
 }
 

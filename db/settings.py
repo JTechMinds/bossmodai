@@ -135,6 +135,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_approval_timeout_minutes", "60", "cli_policy"),
     # Unmatched commands. Prior factory default was deny;
     # reconcile_factory_cli_default_policy moves an untouched deny once.
+    # seed_defaults inserts this row only when it is missing, so an
+    # operator Deny pick is not overwritten by the insert.
     ("cli_default_policy", "approval_required", "cli_policy"),
     # Extra host directories a named absolute path may open/read/edit.
     # Empty = no extra host access (fail-closed). Not a full host mount.

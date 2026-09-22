@@ -185,16 +185,18 @@ def decide_locked_clone_shell_outcome(
             blocked_why=why,
         )
 
+    # Unmatched commands use the locked-clone steer whether the global
+    # default is deny or approval_required. A matching approval rule keeps
+    # that rule's own message.
+    if policy.tier == "default":
+        return LockedCloneShellOutcome(
+            kind="approval_required",
+            parsed=parsed,
+            policy=_approval_from_default(parsed, policy),
+            message=DEFAULT_APPROVAL_MESSAGE,
+        )
+
     if policy.approval_required:
-        # Factory default is approval_required. Keep the locked-clone steer
-        # for an unmatched command; a matched approval rule keeps its message.
-        if policy.tier == "default":
-            return LockedCloneShellOutcome(
-                kind="approval_required",
-                parsed=parsed,
-                policy=_approval_from_default(parsed, policy),
-                message=DEFAULT_APPROVAL_MESSAGE,
-            )
         return LockedCloneShellOutcome(
             kind="approval_required",
             parsed=parsed,

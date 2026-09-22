@@ -44,10 +44,10 @@ def test_cli_default_policy_seed_is_approval_required() -> None:
     assert "Default deny" not in settings_js
     assert "Default is Deny" not in settings_js
     policy_source = Path("core/bm_cli/policy_engine.py").read_text(encoding="utf-8")
-    assert 'config.get("cli_default_policy") or "approval_required"' in policy_source
+    assert 'config.get_live("cli_default_policy") or "approval_required"' in policy_source
     assert 'or "deny"' not in policy_source
     help_source = Path("core/bm_cli/help_commands.py").read_text(encoding="utf-8")
-    assert 'config.get("cli_default_policy") or "approval_required"' in help_source
+    assert 'config.get_live("cli_default_policy") or "approval_required"' in help_source
     assert 'or "deny"' not in help_source
     simulator_js = Path("ui/static/js/settings/cli-policy/simulator.js").read_text(
         encoding="utf-8"

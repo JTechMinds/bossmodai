@@ -1,10 +1,10 @@
 /**
  * BossMod AI — the conversation composer.
  *
- * One rule dominates: the draft is never cleared before the server
- * acknowledges. A composer that empties itself on a failed request destroys
- * work the operator cannot get back, so clearing is the send gate's job and
- * happens only after `onSend` resolves.
+ * The field stays editable while agents think. A send takes that line out of
+ * the box so the next one can be typed, and a rejection puts it back when
+ * the operator has not started a newer draft. The send gate owns that, and
+ * it never grays the field out to do it.
  *
  * The composer is built once per Chat mount and reused across conversations.
  * Rebuilding it on every switch would kill the draft and the caret, which is
@@ -122,6 +122,7 @@ const BossModComposer = (() => {
             onclick: onSendClick,
         }, h('i', { 'data-lucide': 'send', 'aria-hidden': 'true' }));
         const errorEl = h('p', { class: 'composer-error hidden', role: 'alert' });
+        const hintEl = h('p', { class: 'composer-hint hidden', role: 'status' });
 
         // The field, then send. The clipboard that used to open this row was a
         // third front door to the one assign form — the Tasks place's `+ New task`
@@ -132,20 +133,22 @@ const BossModComposer = (() => {
         const element = h('div', { class: 'composer' },
             label,
             h('div', { class: 'composer-row' }, input, sendBtn),
+            hintEl,
             errorEl);
 
         /**
          * Recompute enablement, placeholder, and title from current state.
          *
-         * Called from the send gate's `finally`, so a failed request can never
-         * strand the composer disabled.
+         * A send in flight does not disable the field. Agents thinking is not
+         * a lock: the operator can type and send the next line, which posts
+         * as its own message. No model and a sealed thread still disable.
          *
          * @returns {void}
          */
         function applyState() {
             const hasUsableModel = store.getState().hasUsableModel === true;
             const allowed = canSend();
-            const enabled = hasUsableModel && allowed && !sendGate.busy();
+            const enabled = hasUsableModel && allowed;
             sendBtn.disabled = !enabled;
             input.disabled = !enabled;
             input.setAttribute('contenteditable', enabled ? 'true' : 'false');
@@ -154,6 +157,19 @@ const BossModComposer = (() => {
             if (!hasUsableModel) input.placeholder = NO_MODEL_PLACEHOLDER;
             else if (!allowed) input.placeholder = disabledReason();
             else input.placeholder = READY_PLACEHOLDER;
+        }
+
+        /**
+         * Quiet confirmation that a line is waiting on the server.
+         * An empty count hides it. It is not an error.
+         *
+         * @param {number} count
+         * @returns {void}
+         */
+        function setQueued(count) {
+            const waiting = Number(count) > 0;
+            hintEl.textContent = waiting ? 'Queued' : '';
+            hintEl.classList.toggle('hidden', !waiting);
         }
 
         /**
@@ -170,18 +186,24 @@ const BossModComposer = (() => {
          * @returns {Promise<object>} The gate's verdict; never rejects.
          */
         async function submit() {
-            return sendGate.submit({
+            const result = await sendGate.submit({
                 input,
-                sendBtn,
                 applyIdleState: applyState,
                 canSubmit: () => store.getState().hasUsableModel === true && canSend(),
                 send: (text) => onSend(text),
+                onQueued: setQueued,
                 onSuccess: () => {
                     setError('');
                     grow();
                 },
                 onError: (err) => setError((err && err.message) || 'Failed to send.'),
             });
+            // A gate that refuses still leaves the text. Say why here too,
+            // so Enter and the button match sendText().
+            if (result && result.submitted === false && result.reason === 'blocked') {
+                setError(input.placeholder || disabledReason() || 'Cannot send.');
+            }
+            return result;
         }
 
         /**

@@ -363,7 +363,7 @@ def test_cli_policy_helpers_have_exactly_one_home() -> None:
     """
     files = sorted((JS / "settings" / "cli-policy").glob("*.js"))
     assert files, "no cli-policy modules found"
-    for helper in ("statusBadge", "applySettingSaveResult"):
+    for helper in ("statusBadge", "applySettingSaveResult", "announceApplied"):
         definers = [
             path.name for path in files
             if f"function {helper}(" in path.read_text(encoding="utf-8")
@@ -377,6 +377,8 @@ def test_cli_policy_helpers_have_exactly_one_home() -> None:
     shared = _read("settings/cli-policy/shared.js")
     assert "function flashBorder(" in shared
     assert "        flashBorder,\n" not in shared, "flashBorder is exported again"
+    assert "const APPLIED_COPY = 'Saved / Applied';" in shared
+    assert "announceApplied," in shared
     for path in files:
         if path.name == "shared.js":
             continue

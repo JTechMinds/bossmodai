@@ -1090,6 +1090,28 @@
 
 .toast-action.primary { border-color: var(--accent); color: var(--accent); }
 
+/* CLI policy autosave confirmation. Its own host, above the needs-arrival
+   toasts, so "Saved / Applied" is not an arrival and does not cover one. */
+.cli-applied-toast-host {
+  position: fixed;
+  z-index: 81;
+  top: 16px;
+  right: 16px;
+  width: min(280px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.cli-applied-toast {
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
 /* Motion is decoration here; the information is the copy. */
 @media (prefers-reduced-motion: reduce) {
   .popover,

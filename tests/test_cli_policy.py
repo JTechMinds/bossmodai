@@ -432,6 +432,104 @@ def test_printenv_and_token_env_dumps_are_never_allowed() -> None:
     assert diagnostic.tier == "always_allowed"
 
 
+def test_seed_default_is_approval_required_and_an_existing_deny_stays() -> None:
+    """New databases seed Approval required.
+
+    ``seed_defaults`` inserts the row only when it is missing. After
+    ``reconcile_factory_cli_default_policy`` has recorded its one bump,
+    a later ``init_db`` leaves an operator Deny pick alone. The bump
+    itself is ``test_factory_cli_default_policy_bump_leaves_a_custom_value``.
+    """
+    from db.settings import _CLI_DEFAULT_POLICY_FACTORY_RECONCILED
+
+    fresh = next(item for item in db.get_settings() if item.key == "cli_default_policy")
+    assert fresh.value == "approval_required"
+    marker = next(
+        item for item in db.get_settings()
+        if item.key == _CLI_DEFAULT_POLICY_FACTORY_RECONCILED
+    )
+    assert marker.value == "true"
+
+    db.set_setting("cli_default_policy", "deny", "cli_policy")
+    db.init_db()
+    kept = next(item for item in db.get_settings() if item.key == "cli_default_policy")
+    assert kept.value == "deny"
+
+
+def test_rule_tier_edits_are_visible_without_reloading_the_engine() -> None:
+    """The worker must not keep the rule list it cached at boot."""
+    _enable_shell()
+    warmed = policy_engine.evaluate("cat notes.md", frozenset())
+    assert warmed.allowed is True
+    assert warmed.tier == "always_allowed"
+
+    cat = next(
+        rule for rule in db.list_cli_policy_rules()
+        if rule.pattern == "cat" and rule.agent_id is None
+    )
+    db.update_cli_policy_rule(cat.id, tier="never_allowed")
+    again = policy_engine.evaluate("cat notes.md", frozenset())
+    assert again.allowed is False
+    assert again.approval_required is False
+    assert again.tier == "never_allowed"
+
+
+def test_approval_required_default_is_read_live_and_reconcile_keeps_it() -> None:
+    """Settings writes do not reload the runtime worker cache.
+
+    Unmatched commands must follow the database value. A stale ``deny``
+    cache must not hard-deny, and a stale ``approval_required`` cache must
+    not open a card when the database says deny. After the one-time factory
+    bump has been recorded, re-init leaves the operator's default and a
+    customized tier alone. ``never_allowed`` still hard-denies.
+    """
+    _enable_shell()
+    db.set_setting("cli_default_policy", "approval_required", "cli_policy")
+    python3 = next(
+        rule for rule in db.list_cli_policy_rules()
+        if rule.pattern == "python3" and rule.agent_id is None
+    )
+    db.update_cli_policy_rule(python3.id, tier="approval_required")
+    policy_engine.reload()
+
+    db.init_db()
+    policy_engine.reload()
+
+    stored = next(item for item in db.get_settings() if item.key == "cli_default_policy")
+    assert stored.value == "approval_required"
+    kept = next(
+        rule for rule in db.list_cli_policy_rules()
+        if rule.pattern == "python3" and rule.agent_id is None
+    )
+    assert kept.tier == "approval_required"
+
+    with config._lock:
+        config._cache["cli_default_policy"] = "deny"
+        config._loaded = True
+    assert config.get("cli_default_policy") == "deny"
+
+    unmatched = policy_engine.evaluate("zz-unmatched-cmd --flag", frozenset())
+    assert unmatched.allowed is False
+    assert unmatched.approval_required is True
+    assert unmatched.tier == "default"
+    assert unmatched.message is not None
+    assert "requires approval" in unmatched.message
+    assert "denied by default policy" not in unmatched.message
+
+    blocked = policy_engine.evaluate("bash -c id", frozenset())
+    assert blocked.allowed is False
+    assert blocked.approval_required is False
+    assert blocked.tier == "never_allowed"
+
+    db.set_setting("cli_default_policy", "deny", "cli_policy")
+    assert config.get("cli_default_policy") == "approval_required"
+    denied = policy_engine.evaluate("zz-unmatched-cmd --flag", frozenset())
+    assert denied.approval_required is False
+    assert denied.tier == "default"
+    assert denied.message is not None
+    assert "denied by default policy" in denied.message
+
+
 def test_reconcile_inserts_missing_validate_on_clone_rules() -> None:
     for pattern in ("pytest", "uv run pytest", "uv pip", ".venv/bin/pip"):
         db.execute("DELETE FROM cli_policy_rules WHERE pattern = $1", [pattern])
