@@ -137,6 +137,8 @@ class ConversationDecision(BaseModel):
     proceedUntagged: bool = False
     nextOwners: list[str] = Field(default_factory=list)
     thought: str = Field(default="")
+    # Envelope intent. None means the model omitted work_commit.
+    workCommit: bool | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ConversationDecision":
@@ -199,9 +201,11 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
     # Capture operator say before peel folds lookup acts (cli) onto ``th``.
     operator_say = _operator_say_before_peel(parsed)
     wire = parsed
+    work_commit: bool | None = None
     try:
-        from core.agent_loop.parse_steer import peel_decision_envelope
+        from core.agent_loop.parse_steer import peel_decision_envelope, read_work_commit
 
+        work_commit = read_work_commit(parsed)
         wire = peel_decision_envelope(parsed)
     except ValueError as exc:
         return _schema_failed_payload(raw_response, parsed, exc)
@@ -234,7 +238,10 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         logger.warning("Invalid decision payload: %s", error)
         return _schema_failed_payload(raw_response, parsed, exc)
 
-    return decision.model_dump()
+    dumped = decision.model_dump()
+    if work_commit is not None:
+        dumped["workCommit"] = work_commit
+    return dumped
 
 
 def _operator_say_before_peel(payload: dict[str, Any]) -> str | None:

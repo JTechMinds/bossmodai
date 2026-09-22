@@ -343,6 +343,35 @@ async def test_execution_prose_fail_closes_without_repair_loop(
     assert not detail.startswith("Blocked")
 
 
+def test_work_commit_flag_is_intent_not_an_invented_key() -> None:
+    parsed = parse_direct_turn_response(
+        '{"say":"Committing now to land the notes","actions":[],"work_commit":true}'
+    )
+    assert parsed.get("decision") == "answer"
+    assert parsed.get("workCommit") is True
+    assert parsed.get("reply") == "Committing now to land the notes"
+    assert parsed.get("commitmentKind") == "none"
+    omitted = parse_direct_turn_response('{"say":"Still reading the brief.","actions":[]}')
+    assert omitted.get("decision") == "answer"
+    assert omitted.get("workCommit") is None
+    compact = parse_direct_turn_response(
+        '{"act":"reply","intent":"status","msg":"Committing now to land the notes",'
+        '"work_commit":false,"th":"status"}'
+    )
+    assert compact.get("decision") == "answer"
+    assert compact.get("workCommit") is False
+    rejected = parse_direct_turn_response(
+        '{"say":"Committing now to land the notes","actions":[],"work_commit":"yes"}'
+    )
+    assert rejected["decision"] == "_parse_failed"
+    assert rejected.get("_parse_kind") == "invalid_decision"
+    peeled = peel_decision_envelope(
+        {"say": "Committing now to land the notes", "actions": [], "work_commit": True}
+    )
+    assert "work_commit" not in peeled
+    assert peeled["msg"] == "Committing now to land the notes"
+
+
 def test_peel_say_alias_and_empty_actions() -> None:
     peeled = peel_decision_envelope(
         {"say": "Committed and pushed.\n\n- Next: pytest.", "actions": []}

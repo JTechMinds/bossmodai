@@ -136,7 +136,7 @@ def apply_decision(
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
-        if say_commits_to_work(decision.reply):
+        if say_commits_to_work(decision.reply, work_commit=decision.workCommit):
             merge_promise_gap(
                 result,
                 surface_promise_gap(
