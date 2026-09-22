@@ -535,11 +535,10 @@ def _attach_reply_artifacts(
     decision: ConversationDecision,
 ) -> None:
     """Persist reply side effects after the decision state change succeeds."""
+    from core.agent_loop.say_before_actions import merge_say_artifacts, say_already_posted
+
+    # Already flushed before actions on Talk/status/channel — do not double-post.
+    if say_already_posted(result):
+        return
     reply_artifacts = _persist_reply(agent, state, trigger, decision)
-    if reply_artifacts.get("chat_message"):
-        result["chat_message"] = reply_artifacts["chat_message"]
-    if reply_artifacts.get("meeting_message"):
-        result["meeting_message"] = reply_artifacts["meeting_message"]
-    if reply_artifacts.get("channel_message"):
-        result["channel_message"] = reply_artifacts["channel_message"]
-    result["trigger_requests"].extend(reply_artifacts.get("trigger_requests", []))
+    merge_say_artifacts(result, reply_artifacts)

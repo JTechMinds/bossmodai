@@ -22,6 +22,10 @@ from core.agent_loop.decision_parse_fail import (
     surface_llm_timeout_failure,
 )
 from core.agent_loop.outcomes import TurnOutcome
+from core.agent_loop.say_before_actions import (
+    early_say_fail_result,
+    persist_operator_say,
+)
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.parse_steer import (
     classify_json_parse_failure,
@@ -58,6 +62,27 @@ from core.runtime.events import runtime_events as manager
 def _is_decision_turn(trigger: dict[str, Any]) -> bool:
     """Return whether the trigger should use the direct-request decision contract."""
     return trigger.get("type") in _DECISION_TRIGGER_TYPES
+
+
+async def _flush_say_before_lookup_action(
+    *,
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+    operator_say: str | None,
+) -> dict[str, Any] | None:
+    """Post operator say before CLI / host-access. Return a fail result, or None to proceed.
+
+    Actions-only (blank say) and non-Talk/status/channel wakes post nothing early.
+    """
+    artifacts = persist_operator_say(agent, state, trigger, operator_say)
+    if artifacts is None:
+        return early_say_fail_result(agent)
+    if not artifacts:
+        return None
+    await broadcast_recovery_note(agent, artifacts)
+    return None
+
 
 async def _run_decision_turn(
     *,
@@ -272,6 +297,48 @@ async def _run_decision_turn(
 
         cli_call = BossModCliCall.model_validate(parsed) if parsed.get("action") == "bm_cli" else None
         if cli_call is not None:
+            early_fail = await _flush_say_before_lookup_action(
+                agent=agent,
+                state=state,
+                trigger=trigger,
+                operator_say=cli_call.operator_say,
+            )
+            if early_fail is not None:
+                await manager.broadcast_activity(**early_fail)
+                return await _finalize_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    outcome=TurnOutcome.failure(
+                        result=early_fail,
+                        error=early_fail.get("detail") or "say could not post before actions",
+                        action=cli_call.model_dump(),
+                        action_summary=_summarize_action_chain(executed_actions, ""),
+                        raw_response=response.content,
+                        prompt_tokens=total_prompt_tokens,
+                        completion_tokens=total_completion_tokens,
+                        total_tokens=total_tokens,
+                        steps=step_traces + [
+                            _build_step_trace(
+                                step_index=len(step_traces) + 1,
+                                context_snapshot=next_context_snapshot,
+                                raw_response=response.content,
+                                action=cli_call.model_dump(),
+                                result=early_fail,
+                                prompt_tokens=step_prompt_tokens,
+                                completion_tokens=step_completion_tokens,
+                                total_tokens=step_total_tokens,
+                                duration_ms=int((time.monotonic() - step_started) * 1000),
+                                error=early_fail.get("detail"),
+                            )
+                        ],
+                    ),
+                    start=start,
+                )
             executed_actions.append("bm_cli")
             peek_verdict = peek_budget.consider(cli_call.command, cli_call.content)
             if not peek_verdict.allowed:
@@ -424,6 +491,48 @@ async def _run_decision_turn(
 
         if parsed.get("action") == "request_host_access":
             host_call = HostAccessCall.model_validate(parsed)
+            early_fail = await _flush_say_before_lookup_action(
+                agent=agent,
+                state=state,
+                trigger=trigger,
+                operator_say=host_call.operator_say,
+            )
+            if early_fail is not None:
+                await manager.broadcast_activity(**early_fail)
+                return await _finalize_turn(
+                    agent=agent,
+                    trigger=trigger,
+                    trigger_type=trigger_type,
+                    mode=mode,
+                    model=model,
+                    model_source=model_source,
+                    initial_context_json=initial_context_json,
+                    outcome=TurnOutcome.failure(
+                        result=early_fail,
+                        error=early_fail.get("detail") or "say could not post before actions",
+                        action=host_call.model_dump(),
+                        action_summary=_summarize_action_chain(executed_actions, ""),
+                        raw_response=response.content,
+                        prompt_tokens=total_prompt_tokens,
+                        completion_tokens=total_completion_tokens,
+                        total_tokens=total_tokens,
+                        steps=step_traces + [
+                            _build_step_trace(
+                                step_index=len(step_traces) + 1,
+                                context_snapshot=next_context_snapshot,
+                                raw_response=response.content,
+                                action=host_call.model_dump(),
+                                result=early_fail,
+                                prompt_tokens=step_prompt_tokens,
+                                completion_tokens=step_completion_tokens,
+                                total_tokens=step_total_tokens,
+                                duration_ms=int((time.monotonic() - step_started) * 1000),
+                                error=early_fail.get("detail"),
+                            )
+                        ],
+                    ),
+                    start=start,
+                )
             executed_actions.append("request_host_access")
             if host_call.thought:
                 await manager.broadcast_thought(

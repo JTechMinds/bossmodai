@@ -195,6 +195,8 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         return parsed
 
     assert isinstance(parsed, dict)
+    # Capture operator say before peel folds lookup acts (cli) onto ``th``.
+    operator_say = _operator_say_before_peel(parsed)
     wire = parsed
     try:
         from core.agent_loop.parse_steer import peel_decision_envelope
@@ -209,13 +211,19 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if cli_call is not None:
-            return cli_call.model_dump()
+            payload = cli_call.model_dump()
+            if operator_say and not payload.get("operator_say"):
+                payload["operator_say"] = operator_say
+            return payload
         try:
             host_call = maybe_parse_host_access_call(wire)
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if host_call is not None:
-            return host_call.model_dump()
+            payload = host_call.model_dump()
+            if operator_say and not payload.get("operator_say"):
+                payload["operator_say"] = operator_say
+            return payload
 
     try:
         normalized = _normalize_conversation_payload(wire)
@@ -226,6 +234,16 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         return _schema_failed_payload(raw_response, parsed, exc)
 
     return decision.model_dump()
+
+
+def _operator_say_before_peel(payload: dict[str, Any]) -> str | None:
+    """Return product-envelope / compact operator chat before lookup fold drops it."""
+    from core.agent_loop.parse_steer import InvalidDecisionEnvelope, resolve_operator_chat
+
+    try:
+        return resolve_operator_chat(payload)
+    except InvalidDecisionEnvelope:
+        return None
 
 
 def _schema_failed_payload(

@@ -16,6 +16,8 @@ class BossModCliCall(BaseModel):
     command: str
     content: str | None = None
     thought: str = Field(default="")
+    # Operator-visible say from the product envelope; host posts before CLI.
+    operator_say: str | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "BossModCliCall":
@@ -23,6 +25,10 @@ class BossModCliCall(BaseModel):
             raise ValueError('"bm_cli" requires a non-empty "command"')
         if self.content is not None and not isinstance(self.content, str):
             raise ValueError('"bm_cli" content must be a string when provided')
+        if self.operator_say is not None and (
+            not isinstance(self.operator_say, str) or not self.operator_say.strip()
+        ):
+            raise ValueError('"operator_say" must be a non-empty string when provided')
         return self
 
 
@@ -32,7 +38,9 @@ def maybe_parse_bm_cli_call(payload: Any) -> BossModCliCall | None:
         return None
 
     if payload.get("act") == "cli":
-        extra_root = set(payload) - {"act", "data", "th"}
+        # ``msg`` is folded away for wire CLI; decision parse may reattach as
+        # ``operator_say`` after peel. Reject other invented keys.
+        extra_root = set(payload) - {"act", "data", "th", "msg"}
         if extra_root:
             raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
         data = payload.get("data") or {}
@@ -41,12 +49,16 @@ def maybe_parse_bm_cli_call(payload: Any) -> BossModCliCall | None:
         extra_data = set(data) - {"cmd", "body"}
         if extra_data:
             raise ValueError(f'unexpected cli data keys: {", ".join(sorted(extra_data))}')
+        operator_say = payload.get("msg")
+        if operator_say in (None, ""):
+            operator_say = None
         return BossModCliCall.model_validate(
             {
                 "action": "bm_cli",
                 "command": data.get("cmd"),
                 "content": data.get("body"),
                 "thought": payload.get("th", ""),
+                "operator_say": operator_say,
             }
         )
 

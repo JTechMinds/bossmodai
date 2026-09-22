@@ -19,6 +19,12 @@ from core.agent_loop.decision_replies import (
     _attach_reply_artifacts,
     _prepare_shared_response_trigger,
 )
+from core.agent_loop.say_before_actions import (
+    early_say_fail_result,
+    merge_say_artifacts,
+    persist_operator_say,
+    should_post_say_before_actions,
+)
 from core.agent_loop.thread_supersede import supersede_stale_thread_turn
 from core.agent_loop.next_owner import maybe_next_owner_nudge
 from core.agent_loop.decision_resume import (
@@ -86,6 +92,13 @@ def apply_decision(
     skipped = supersede_stale_thread_turn(agent, trigger, will_post=True)
     if skipped is not None:
         return skipped
+
+    # Talk / status / channel: flush non-empty say before Board / commitment actions.
+    if should_post_say_before_actions(trigger, decision):
+        early = persist_operator_say(agent, state, trigger, decision.reply)
+        if early is None:
+            return early_say_fail_result(agent)
+        merge_say_artifacts(result, early)
 
     if decision.decision == "observe":
         result["detail"] = f"{agent.name} chose to observe"
