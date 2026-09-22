@@ -170,7 +170,16 @@ const BossModCliPolicyShared = (() => {
             host = document.createElement('div');
             host.setAttribute('data-cli-applied-toast-host', '');
             host.className = 'cli-applied-toast-host';
-            document.body.appendChild(host);
+            // Inline, not only the stylesheet: the Settings frame is a
+            // full-height flex column with overflow hidden, and a host that
+            // misses `position: fixed` is clipped under that column. The
+            // class still carries the same placement for the stylesheet.
+            host.style.position = 'fixed';
+            host.style.zIndex = '10000';
+            host.style.top = '16px';
+            host.style.right = '16px';
+            host.style.pointerEvents = 'none';
+            (document.documentElement || document.body).appendChild(host);
         }
         host.replaceChildren();
         const toast = document.createElement('div');
@@ -178,6 +187,12 @@ const BossModCliPolicyShared = (() => {
         toast.setAttribute('role', 'status');
         toast.setAttribute('aria-live', 'polite');
         toast.textContent = APPLIED_COPY;
+        toast.style.background = '#111827';
+        toast.style.color = '#ffffff';
+        toast.style.padding = '10px 14px';
+        toast.style.borderRadius = '12px';
+        toast.style.font = '600 14px/1.3 system-ui, sans-serif';
+        toast.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
         host.appendChild(toast);
         if (appliedTimer) clearTimeout(appliedTimer);
         appliedTimer = setTimeout(() => {

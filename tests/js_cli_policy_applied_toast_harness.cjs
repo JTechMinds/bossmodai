@@ -13,6 +13,7 @@ class FakeNode {
         this.className = "";
         this.textContent = "";
         this.removed = false;
+        this.style = {};
     }
     setAttribute(name, value) {
         this.attrs[name] = value;
@@ -63,6 +64,9 @@ const host = documentStub.querySelector("[data-cli-applied-toast-host]");
 if (!host) throw new Error("toast host was not mounted");
 if (host.className !== "cli-applied-toast-host") {
     throw new Error(`host class is ${host.className}`);
+}
+if (host.style.position !== "fixed") {
+    throw new Error(`host is not fixed (${host.style.position})`);
 }
 if (host.children.length !== 1) throw new Error("expected one toast");
 const first = host.children[0];
