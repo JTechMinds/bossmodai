@@ -49,7 +49,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_model_extraction", "", "llm"),
     ("default_model_self_queue", "", "llm"),
     ("default_temperature", "0.7", "llm"),
-    ("default_max_tokens", "8192", "llm"),
+    # Output-token budget for one model completion. Prior factory default
+    # was 8192; reconcile_factory_max_tokens raises an untouched 8192 only.
+    ("default_max_tokens", "16384", "llm"),
     ("llm_request_timeout_seconds", "720", "llm"),
     # Idle silence with no streamed chunk. Not a wall-clock cap on a live
     # stream. Default 120 seconds. Each chunk resets the timer. A path that
@@ -192,6 +194,7 @@ def seed_defaults() -> None:
     ensure_local_api_token()
     reconcile_catalog_pin()
     reconcile_factory_round_cap()
+    reconcile_factory_max_tokens()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -199,6 +202,11 @@ def seed_defaults() -> None:
 # An operator who set a different cap keeps it.
 _FACTORY_ROUND_CAP = "4"
 _LAST_RESORT_ROUND_CAP = "64"
+
+# Prior shipped default_max_tokens. Only this factory value is raised to 16384.
+# An operator who set a different budget keeps it.
+_FACTORY_MAX_TOKENS = "8192"
+_DEFAULT_MAX_TOKENS = "16384"
 
 
 def reconcile_factory_round_cap() -> None:
@@ -213,6 +221,20 @@ def reconcile_factory_round_cap() -> None:
     if row is None or str(row.get("value") or "") != _FACTORY_ROUND_CAP:
         return
     set_setting("channel_response_round_cap", _LAST_RESORT_ROUND_CAP, "llm")
+
+
+def reconcile_factory_max_tokens() -> None:
+    """Raise the untouched factory max-tokens budget from 8k to 16k.
+
+    Does not overwrite a value the operator changed away from ``8192``.
+    """
+    row = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        ["default_max_tokens"],
+    )
+    if row is None or str(row.get("value") or "") != _FACTORY_MAX_TOKENS:
+        return
+    set_setting("default_max_tokens", _DEFAULT_MAX_TOKENS, "llm")
 
 
 def ensure_local_api_token() -> str:

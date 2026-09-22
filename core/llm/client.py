@@ -338,7 +338,7 @@ async def completion(
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7
     if max_tokens is None:
-        max_tokens = config.get_int("default_max_tokens") or 8192
+        max_tokens = config.get_int("default_max_tokens") or 16384
 
     kwargs: dict[str, Any] = {
         "model": canonicalize_openai_compatible_model(model, api_base=api_base),
