@@ -202,8 +202,9 @@ async def test_missing_status_stays_rejected_and_nested_approved_still_executes(
         },
     )
     assert executed == []
+    assert _REJECT_MARK in prompts[0]
     assert "No reason given." in prompts[0]
-    assert "command: unknown" in prompts[0]
+    assert f"command: {COMMAND}" in prompts[0]
 
     await run_turn(
         agent,
