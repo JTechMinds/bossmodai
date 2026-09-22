@@ -483,6 +483,7 @@ def execute_approved_command(
     cwd: str | None = None,
     trigger_type: str | None = None,
     channel_id: str | None = None,
+    system_audit: str | None = None,
 ) -> BossModCliResult:
     """Execute a previously-approved shell command.
 
@@ -637,6 +638,10 @@ def execute_approved_command(
         duration_ms=shell_exec.duration_ms,
         cwd=cwd_before,
     )
+    if system_audit:
+        from core.bm_cli.cli_auto_approve import attach_system_audit
+
+        result = attach_system_audit(result, system_audit)
     record_bm_cli_event(
         agent_id=agent.id,
         command=parsed.raw,
@@ -1245,6 +1250,91 @@ def _execute_shell_policy(
     )
 
 
+def _maybe_thread_auto_approve(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    policy: object,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Auto-approve one opted-in approval_required command, or return None to card.
+
+    A host-guardrail refusal is a path-jail block. System AI never sees it.
+    """
+    from core.bm_cli.cli_auto_approve import (
+        audit_line,
+        log_system_auto_approve,
+        plan_thread_auto_approve,
+    )
+
+    plan = plan_thread_auto_approve(
+        agent,
+        parsed,
+        cwd_before,
+        policy_tier=str(getattr(policy, "tier", "") or ""),
+        channel_id=channel_id,
+    )
+    if plan.action == "card":
+        return None
+    if plan.action == "block":
+        result = _path_jail_cli_result(agent, parsed, cwd_before, plan.jail_message)
+        record_bm_cli_event(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            executor=getattr(policy, "executor", "shell"),
+            cwd_before=cwd_before,
+            cwd_after=result.cwd,
+            policy_tier=getattr(policy, "tier", "approval_required"),
+            decision="denied",
+            result=result,
+            trigger_type=trigger_type,
+        )
+        return result
+
+    timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
+    try:
+        approval = db.create_cli_approval_request(
+            agent_id=agent.id,
+            command=parsed.raw,
+            content=content,
+            cwd=cwd_before,
+            matched_rule_id=getattr(policy, "matched_rule_id", None),
+            expires_at=expires_at,
+            channel_id=channel_id,
+        )
+    except Exception:
+        logger.exception("CLI auto-approve create failed for %s", parsed.raw)
+        return None
+    line = audit_line(plan.why)
+    approved = db.approve_cli_approval_request(
+        approval.id,
+        decision_by="system",
+        decision_note=line,
+    )
+    if approved is None:
+        return None
+    log_system_auto_approve(agent.name, f"{line} — {parsed.raw}")
+    state = db.get_agent_state(agent.id)
+    if state is None:
+        return None
+    return execute_approved_command(
+        agent,
+        state,
+        parsed.raw,
+        content,
+        approval_request_id=approved.id,
+        cwd=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+        system_audit=plan.why,
+    )
+
+
 def _handle_approval_required(
     *,
     agent: Agent,
@@ -1286,6 +1376,18 @@ def _handle_approval_required(
             cwd=cwd_before,
             executor=getattr(policy, "executor", "shell"),
         )
+
+    auto = _maybe_thread_auto_approve(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        policy=policy,
+        trigger_type=trigger_type,
+        channel_id=origin_channel,
+    )
+    if auto is not None:
+        return auto
 
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)

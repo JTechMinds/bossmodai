@@ -88,10 +88,15 @@ def _cli_action_result(
             cli_result.approval_required or cli_result.consent_required
         ),
     }
-    chrome = (cli_result.data or {}).get("origin_chrome")
+    data = cli_result.data or {}
+    chrome = data.get("origin_chrome")
     if isinstance(chrome, dict) and chrome:
         extras = result.setdefault("origin_status_messages", [])
         extras.append(chrome)
+    audit = data.get("audit")
+    if isinstance(audit, str) and audit.strip():
+        result["audit"] = audit
+        result["approved_by"] = "system"
     surface_cli_gate_block(
         result, agent=agent, trigger=trigger, cli_result=cli_result
     )

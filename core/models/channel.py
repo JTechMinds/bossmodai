@@ -39,6 +39,7 @@ class Channel(BaseModel):
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+    cli_auto_approve: bool = False
 
 
 class ChannelMember(BaseModel):

@@ -185,6 +185,45 @@ const BossModConversationChrome = (() => {
         let avatarKey = null;
 
         /**
+         * One reused switch for a menu setting.
+         *
+         * The pill is core/switch.js. The handler is rewritten every paint
+         * because the open conversation changes and the node does not: a
+         * switch built for the previous thread must not keep that thread's
+         * callback. `set` restores the server's value, so a failed save
+         * puts the pill back.
+         *
+         * @param {object} action
+         * @returns {HTMLElement}
+         */
+        function ensureMenuSwitch(action) {
+            let row = actionNodes.get(action.id);
+            if (!row) {
+                const control = BossModSwitch.create({
+                    label: action.label,
+                    pressed: action.pressed === true,
+                    onChange: (pressed) => {
+                        const current = actionNodes.get(action.id);
+                        const select = current && current._onSelect;
+                        closeMenu();
+                        if (typeof select !== 'function') return;
+                        void run(current, {
+                            label: action.label,
+                            onSelect: () => select(pressed),
+                        });
+                    },
+                });
+                row = control.element;
+                row.id = action.id;
+                row._switch = control;
+                actionNodes.set(action.id, row);
+            }
+            row._onSelect = action.onSelect;
+            row._switch.set(action.pressed === true);
+            return row;
+        }
+
+        /**
          * Paint the identity, but only when it actually changed.
          *
          * apply() runs on every presence signal and every roster tick, and
@@ -265,6 +304,13 @@ const BossModConversationChrome = (() => {
             let inMenu = 0;
             actions.forEach((action) => {
                 wanted.add(action.id);
+                if (action.kind === 'switch' && action.slot === 'menu') {
+                    const row = ensureMenuSwitch(action);
+                    row.disabled = gate.busy();
+                    menuActionsEl.append(row);
+                    inMenu += 1;
+                    return;
+                }
                 const menuAction = action.slot === 'menu';
                 let btn = actionNodes.get(action.id);
                 if (!btn) {

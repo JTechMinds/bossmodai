@@ -198,6 +198,41 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
+def _auto_approve_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
+    """Recent System AI approvals, so the audit line is visible in Needs."""
+    from core.bm_cli.cli_auto_approve import AUDIT_PREFIX
+
+    items = []
+    for request in db.list_cli_approval_requests(
+        status="approved",
+        decision_by="system",
+        limit=8,
+    ):
+        note = (request.decision_note or "").strip()
+        if AUDIT_PREFIX not in note:
+            continue
+        name = _agent_name(request.agent_id, cache)
+        when = request.decided_at or request.created_at
+        items.append({
+            "id": request.id,
+            "kind": "audit",
+            "card_kind": "cli_auto_approve",
+            "agent_id": request.agent_id,
+            "agent_name": name,
+            "title": f"{name} auto-approved a command",
+            "sub": f"{note} — {request.command}",
+            "cwd": request.cwd,
+            "created_at": when.isoformat(),
+            "conversation_id": request.channel_id or request.agent_id,
+            "grouped_ids": [request.id],
+            "actions": [
+                {"label": "Open log", "method": "GET", "tone": "quiet",
+                 "href": "/api/diagnostics"},
+            ],
+        })
+    return items
+
+
 def _blocked_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     items = []
     for status in BLOCKED_STATUSES:
@@ -234,6 +269,11 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     :param limit: maximum items returned, clamped to 200.
     """
     cache: dict[str, str] = {}
-    needs = _consent_needs(cache) + _approval_needs(cache) + _blocked_needs(cache)
+    needs = (
+        _consent_needs(cache)
+        + _approval_needs(cache)
+        + _auto_approve_needs(cache)
+        + _blocked_needs(cache)
+    )
     needs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
     return needs[:min(max(limit, 0), MAX_LIMIT)]

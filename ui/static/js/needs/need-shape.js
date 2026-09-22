@@ -84,6 +84,7 @@ const BossModNeedShape = (() => {
             conversationId: null, conversationKind: null }),
         consent: (need) => chatTarget(need.conversationId, need.agentId),
         approval: (need) => chatTarget(need.conversationId, need.agentId),
+        audit: (need) => chatTarget(need.conversationId, need.agentId),
     });
 
     /**
@@ -204,6 +205,7 @@ const BossModNeedShape = (() => {
         'nest_git_enabled',
         'nest_git_credentials',
         'cli_approval_required',
+        'cli_auto_approved',
         'cli_approval_approved',
         'cli_approval_rejected',
         'cli_approval_resolved',

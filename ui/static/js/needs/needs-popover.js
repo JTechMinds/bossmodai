@@ -18,13 +18,14 @@ const BossModNeedsPopover = (() => {
     const FOCUSABLE = 'button, input';
 
     /** Rendering order. Decisions the operator owes come before reports. */
-    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'blocked', 'error']);
+    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'blocked', 'error', 'audit']);
     const KIND_LABELS = Object.freeze({
         consent: 'Folder access',
         nest_git: 'Nest git',
         approval: 'Command approval',
         blocked: 'Blocked work',
         error: 'Errors',
+        audit: 'Auto-approved',
     });
 
     function groupKey(need) {

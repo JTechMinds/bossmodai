@@ -187,7 +187,9 @@ CREATE TABLE IF NOT EXISTS channels (
     created_by  VARCHAR,
     created_at  TIMESTAMP DEFAULT current_timestamp,
     updated_at  TIMESTAMP DEFAULT current_timestamp,
-    archived_at TIMESTAMP
+    archived_at TIMESTAMP,
+    -- Per-thread opt-in. Off leaves approval_required on the Approve card.
+    cli_auto_approve INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS channel_members (

@@ -106,6 +106,7 @@ def list_approval_requests(
     *,
     status: str | None = None,
     agent_id: str | None = None,
+    decision_by: str | None = None,
     limit: int = 50,
 ) -> list[CliApprovalRequest]:
     """Return approval requests, newest first, with optional filters."""
@@ -118,6 +119,9 @@ def list_approval_requests(
     if agent_id is not None:
         params.append(agent_id)
         conditions.append(f"agent_id = ${len(params)}")
+    if decision_by is not None:
+        params.append(decision_by)
+        conditions.append(f"decision_by = ${len(params)}")
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)

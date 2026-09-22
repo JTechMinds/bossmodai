@@ -344,6 +344,7 @@ def test_one_avatar_implementation() -> None:
 # checkbox. One control, three call sites.
 SWITCH_CALL_SITES = (
     "conversation/system-receipts.js",
+    "conversation/chrome.js",
     "places/tasks/tasks-toolbar.js",
     "places/log/log-filters.js",
     # The People header's "Show roles" — a fourth call site, not a fourth toggle.

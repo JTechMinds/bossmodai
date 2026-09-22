@@ -813,6 +813,19 @@
 
 .menu-actions { display: flex; flex-direction: column; gap: 2px; }
 
+/* A per-thread setting in the same panel as Archive. The row is the target;
+   the pill is the state. Full width so it lines up with the menu actions. */
+.menu-actions .switch-row {
+  width: 100%;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: var(--r);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.menu-actions .switch-row:hover { background: var(--bg); }
+
 .menu-action {
   display: flex;
   align-items: center;
