@@ -12,7 +12,8 @@ from api.routes._shared import (
 )
 from api.websocket import manager
 from core import config
-from core.llm.connection_url import ConnectionUrlError, validate_connection_test_url
+from core.llm.call_budget import local_capacity_warning, slots_from_payload
+from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
 from core.models import (
     AIConnectionCreate,
@@ -256,19 +257,47 @@ async def test_connection(body: TestConnectionBody):
         return {"ok": False, "error": "Response missing 'data' array — may not be OpenAI-compatible"}
 
     model_ids = [m.get("id", "") for m in models_list]
+    capacity_note = await _local_capacity_note(base, headers)
 
     if body.model and body.model not in model_ids:
+        warning = f"Connected, but model '{body.model}' not found in {len(model_ids)} available models"
+        if capacity_note:
+            warning = f"{warning} {capacity_note}"
         return {
             "ok": True,
-            "warning": f"Connected, but model '{body.model}' not found in {len(model_ids)} available models",
+            "warning": warning,
             "models": model_ids[:20],
         }
 
-    return {
+    payload = {
         "ok": True,
         "models_count": len(model_ids),
         "models": model_ids[:20],
     }
+    if capacity_note:
+        payload["warning"] = capacity_note
+    return payload
+
+
+async def _local_capacity_note(base: str, headers: dict[str, str]) -> str | None:
+    """Warn when a local server reports fewer parallel slots than the knob.
+
+    A missing or unreadable slot list is not a capacity. The probe is not a setting.
+    """
+    if not is_loopback_base(base):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get(base + "/slots", headers=headers)
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        payload = resp.json()
+    except Exception:
+        return None
+    return local_capacity_warning(slots_from_payload(payload))
 
 
 # ─── AI Personalities CRUD ───

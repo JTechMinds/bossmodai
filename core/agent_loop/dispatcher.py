@@ -18,8 +18,14 @@ from core.agent_loop.activity_scheduler import (
     plan_arrival_follow_up,
     prepare_trigger_context,
 )
-from core.agent_loop.channel_round_plan import max_concurrent_agent_turns
 from core.agent_loop.loop import run_turn
+from core.llm.call_budget import (
+    Lane,
+    bind_turn_lane,
+    budget,
+    max_concurrent_model_calls,
+    reset_turn_lane,
+)
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.agent_loop.task_origin_mirrors import (
@@ -56,6 +62,8 @@ class TurnDispatcher:
         self._task: asyncio.Task[None] | None = None
         self._wake_event = asyncio.Event()
         self._active_turns: dict[str, asyncio.Task[Any]] = {}
+        self._turn_lanes: dict[str, Lane] = {}
+        self._queue_notices: list[dict[str, Any]] = []
         self._social_timers: dict[str, asyncio.TimerHandle] = {}
 
     def start(self) -> None:
@@ -489,101 +497,114 @@ class TurnDispatcher:
     async def _drain_queue(self) -> None:
         while self._running:
             candidate = self._claim_available_trigger()
+            await self._emit_queue_notices()
             if not candidate:
                 return
 
-            payload = json.loads(candidate.payload) if candidate.payload else {}
-            payload.update({
-                "type": candidate.trigger_type,
-                "trigger_id": candidate.id,
-                "task_id": candidate.task_id,
-                "source_channel": candidate.source_channel,
-                "claim_generation": candidate.claim_generation,
-            })
-            if db.payload_targets_archived_channel(payload):
-                db.complete_agent_trigger(
-                    candidate.id,
-                    claim_generation=candidate.claim_generation,
-                )
-                continue
-
-            agent = db.get_agent(candidate.agent_id)
-            if not agent:
-                db.fail_agent_trigger(
-                    candidate.id,
-                    "Agent not found",
-                    claim_generation=candidate.claim_generation,
-                )
-                continue
-
             try:
-                prepare_trigger_context(agent.id, payload)
-            except IllegalTaskTransition as exc:
-                logger.warning(
-                    "Soft-skipped illegal task wake for %s: %s",
-                    agent.name,
-                    exc,
-                )
-                activity_runtime.close_terminal_work_activity(
-                    agent.id,
-                    reason=activity_runtime.TERMINAL_WAKE_WHY,
-                    task_id=payload.get("task_id") if isinstance(payload.get("task_id"), str) else None,
-                )
-                task = db.get_task(payload["task_id"]) if isinstance(payload.get("task_id"), str) else None
-                activity_runtime.note_terminal_wake_block(agent.id, task)
-                db.complete_agent_trigger(
-                    candidate.id,
-                    claim_generation=candidate.claim_generation,
-                )
-                activity_runtime.refresh_agent_status(agent.id)
-                continue
+                started = await self._launch_claimed_trigger(candidate)
+            except Exception:
+                self._release_turn_lane(candidate.agent_id)
+                raise
+            if not started:
+                self._release_turn_lane(candidate.agent_id)
 
-            if (
-                candidate.trigger_type == "activity_resumed"
-                and _complete_wake_has_no_live_work(agent.id, payload)
-            ):
-                db.complete_agent_trigger(
-                    candidate.id,
-                    claim_generation=candidate.claim_generation,
-                )
-                activity_runtime.refresh_agent_status(agent.id)
-                continue
+    async def _launch_claimed_trigger(self, candidate: Any) -> bool:
+        """Start one claimed trigger. False means the lane should be released."""
+        payload = json.loads(candidate.payload) if candidate.payload else {}
+        payload.update({
+            "type": candidate.trigger_type,
+            "trigger_id": candidate.id,
+            "task_id": candidate.task_id,
+            "source_channel": candidate.source_channel,
+            "claim_generation": candidate.claim_generation,
+        })
+        if db.payload_targets_archived_channel(payload):
+            db.complete_agent_trigger(
+                candidate.id,
+                claim_generation=candidate.claim_generation,
+            )
+            return False
 
-            policy = get_trigger_policy(candidate.trigger_type)
-            state = activity_runtime.refresh_agent_status(agent.id)
-            if state is None:
-                db.fail_agent_trigger(
-                    candidate.id,
-                    "Agent state not found",
-                    claim_generation=candidate.claim_generation,
-                )
-                continue
+        agent = db.get_agent(candidate.agent_id)
+        if not agent:
+            db.fail_agent_trigger(
+                candidate.id,
+                "Agent not found",
+                claim_generation=candidate.claim_generation,
+            )
+            return False
 
-            if policy.require_work_activity and not activity_runtime.get_active_task_id(agent.id):
-                db.fail_agent_trigger(
-                    candidate.id,
-                    "Trigger requires active work activity",
-                    claim_generation=candidate.claim_generation,
-                )
-                activity_runtime.refresh_agent_status(agent.id)
-                continue
+        try:
+            prepare_trigger_context(agent.id, payload)
+        except IllegalTaskTransition as exc:
+            logger.warning(
+                "Soft-skipped illegal task wake for %s: %s",
+                agent.name,
+                exc,
+            )
+            activity_runtime.close_terminal_work_activity(
+                agent.id,
+                reason=activity_runtime.TERMINAL_WAKE_WHY,
+                task_id=payload.get("task_id") if isinstance(payload.get("task_id"), str) else None,
+            )
+            task = db.get_task(payload["task_id"]) if isinstance(payload.get("task_id"), str) else None
+            activity_runtime.note_terminal_wake_block(agent.id, task)
+            db.complete_agent_trigger(
+                candidate.id,
+                claim_generation=candidate.claim_generation,
+            )
+            activity_runtime.refresh_agent_status(agent.id)
+            return False
 
-            task = asyncio.create_task(self._run_trigger(agent, state, payload))
-            self._active_turns[agent.id] = task
+        if (
+            candidate.trigger_type == "activity_resumed"
+            and _complete_wake_has_no_live_work(agent.id, payload)
+        ):
+            db.complete_agent_trigger(
+                candidate.id,
+                claim_generation=candidate.claim_generation,
+            )
+            activity_runtime.refresh_agent_status(agent.id)
+            return False
+
+        policy = get_trigger_policy(candidate.trigger_type)
+        state = activity_runtime.refresh_agent_status(agent.id)
+        if state is None:
+            db.fail_agent_trigger(
+                candidate.id,
+                "Agent state not found",
+                claim_generation=candidate.claim_generation,
+            )
+            return False
+
+        if policy.require_work_activity and not activity_runtime.get_active_task_id(agent.id):
+            db.fail_agent_trigger(
+                candidate.id,
+                "Trigger requires active work activity",
+                claim_generation=candidate.claim_generation,
+            )
+            activity_runtime.refresh_agent_status(agent.id)
+            return False
+
+        task = asyncio.create_task(self._run_trigger(agent, state, payload))
+        self._active_turns[agent.id] = task
+        return True
 
     def _claim_available_trigger(self):
         """Claim the next queued trigger that can legally run now.
 
-        The global cap limits concurrent agent turns. One agent still holds
-        at most one turn. Repair wakes are ordered behind a live channel
-        lead, and they still occupy a slot once claimed.
+        A lane is acquired before the trigger is claimed, and thinking is
+        broadcast only after that. No lane leaves the trigger queued and
+        records ``Queued (n ahead)``. One agent still holds at most one turn.
+        Repair wakes are ordered behind a live channel lead and use a lane
+        from the same budget once claimed.
         """
-        if len(self._active_turns) >= max_concurrent_agent_turns():
-            return None
+        self._queue_notices = []
+        eligible = []
         for trigger in db.list_queued_triggers(limit=100):
             if trigger.agent_id in self._active_turns:
                 continue
-
             state = db.get_agent_state(trigger.agent_id)
             active_activity = activity_runtime.get_active_activity(trigger.agent_id)
             if not can_dispatch_trigger(
@@ -592,12 +613,97 @@ class TurnDispatcher:
                 active_activity=active_activity,
             ):
                 continue
+            eligible.append(trigger)
 
+        limit = max_concurrent_model_calls()
+        if len(self._active_turns) >= limit:
+            self._note_waiting(eligible, 0)
+            return None
+
+        for index, trigger in enumerate(eligible):
+            lane = budget.try_acquire(kind="turn", owner=trigger.agent_id)
+            if lane is None:
+                self._note_waiting(eligible, index)
+                return None
             claimed = db.claim_trigger(trigger.id)
-            if claimed is not None:
-                schedule_queue_visibility(claimed.agent_id)
-                return claimed
+            if claimed is None:
+                budget.release(lane)
+                continue
+            self._turn_lanes[claimed.agent_id] = lane
+            schedule_queue_visibility(claimed.agent_id)
+            return claimed
         return None
+
+    def _note_waiting(self, triggers: list[Any], start: int) -> None:
+        """Record Queued (n ahead) for triggers that did not get a lane."""
+        ahead_base = max(budget.inflight(), len(self._active_turns))
+        for offset, trigger in enumerate(triggers[start:]):
+            self._queue_notices.append(self._queue_notice(trigger, ahead_base + offset))
+
+    def _queue_notice(self, trigger: Any, ahead: int) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if trigger.payload:
+            try:
+                loaded = json.loads(trigger.payload)
+            except json.JSONDecodeError:
+                loaded = {}
+            if isinstance(loaded, dict):
+                payload = loaded
+        agent = db.get_agent(trigger.agent_id)
+        channel_id = _channel_id_for_presence({
+            "type": trigger.trigger_type,
+            "channel_id": payload.get("channel_id"),
+        })
+        return {
+            "agent_id": trigger.agent_id,
+            "agent_name": agent.name if agent is not None else trigger.agent_id,
+            "channel_id": channel_id,
+            "phase": "queued",
+            "ahead": ahead,
+        }
+
+    def _release_turn_lane(self, agent_id: str) -> None:
+        lane = self._turn_lanes.pop(agent_id, None)
+        if lane is not None:
+            budget.release(lane)
+
+    async def _emit_queue_notices(self) -> None:
+        notices = self._queue_notices
+        self._queue_notices = []
+        for notice in notices:
+            await self._broadcast_presence(
+                agent_id=str(notice["agent_id"]),
+                agent_name=str(notice["agent_name"]),
+                phase="queued",
+                channel_id=notice.get("channel_id"),
+                ahead=int(notice["ahead"]),
+            )
+
+    async def _broadcast_presence(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        phase: str,
+        channel_id: str | None,
+        ahead: int | None = None,
+    ) -> None:
+        """Tell the desk and, when this turn has a channel, the thread."""
+        await manager.broadcast_agent_presence(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            phase=phase,
+            ahead=ahead,
+            channel_id=channel_id,
+        )
+        if channel_id and not db.is_channel_archived(channel_id):
+            await manager.broadcast_channel_presence(
+                channel_id=channel_id,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                phase=phase,
+                ahead=ahead,
+            )
 
     async def _heartbeat_claim_lease(self, trigger_id: str, claim_generation: int) -> None:
         """Keep ``claimed_at`` fresh for the duration of a long LLM/shell turn."""
@@ -627,12 +733,16 @@ class TurnDispatcher:
             )
 
         channel_id = _channel_id_for_presence(trigger)
-        if channel_id and not db.is_channel_archived(channel_id):
-            await manager.broadcast_channel_presence(
-                channel_id=channel_id,
+        lane = self._turn_lanes.get(agent.id)
+        lane_token = bind_turn_lane(lane) if lane is not None else None
+        # Thinking is broadcast only after a lane is held. A direct test call
+        # with no lane does not pretend the model is running.
+        if lane is not None:
+            await self._broadcast_presence(
                 agent_id=agent.id,
                 agent_name=agent.name,
                 phase="thinking",
+                channel_id=channel_id,
             )
 
         try:
@@ -687,13 +797,16 @@ class TurnDispatcher:
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
         finally:
-            if channel_id and not db.is_channel_archived(channel_id):
-                await manager.broadcast_channel_presence(
-                    channel_id=channel_id,
+            if lane_token is not None:
+                reset_turn_lane(lane_token)
+            if lane is not None:
+                await self._broadcast_presence(
                     agent_id=agent.id,
                     agent_name=agent.name,
                     phase="idle",
+                    channel_id=channel_id,
                 )
+            self._release_turn_lane(agent.id)
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
                 with suppress(asyncio.CancelledError):

@@ -19,6 +19,7 @@ const BossModBus = (() => {
         'meeting_message',
         'channel_message',
         'channel_presence',
+        'agent_presence',
         'channel_updated',
         'diagnostic',
         'agent_thought',

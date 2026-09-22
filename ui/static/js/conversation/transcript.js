@@ -203,6 +203,10 @@ const BossModTranscript = (() => {
          * @returns {string}
          */
         function presenceText(member) {
+            if (member.phase === 'queued') {
+                const ahead = Math.max(0, Number(member.ahead) || 0);
+                return `Queued (${ahead} ahead)`;
+            }
             const since = activitySince(member.agentId);
             const startedAt = since ? new Date(since).getTime() : NaN;
             if (!Number.isNaN(startedAt)) {

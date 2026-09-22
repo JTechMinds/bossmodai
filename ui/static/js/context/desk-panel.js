@@ -107,6 +107,8 @@ const BossModDeskPanel = (() => {
         });
         /** The open role dialog, or null. One at a time. */
         let edit = null;
+        /** Server lane note. Queued replaces the status pill until a lane frees. */
+        let laneNote = '';
         /** Set before teardown closes the dialog, so its onClosed does nothing. */
         let destroyed = false;
 
@@ -182,7 +184,7 @@ const BossModDeskPanel = (() => {
                     ? h('p', { class: 'desk-about' }, String(who.description))
                     : null,
                 h('span', { class: 'desk-state-pill' },
-                    BossModAgentStatus.getStatusLabel(who.status, who.currentActivityKind))));
+                    laneNote || BossModAgentStatus.getStatusLabel(who.status, who.currentActivityKind))));
             // The contract itself, inside the disclosure above the tasks it
             // qualifies. Unchanged copy; only its volume changed.
             contractEl.append(bar ? `${DONE_BAR_TITLE} ${bar}` : NO_DONE_BAR);
@@ -223,6 +225,16 @@ const BossModDeskPanel = (() => {
         }
 
         disposers.push(store.subscribe((s) => s.roster, () => { renderProfile(); }));
+        disposers.push(bus.subscribe('agent_presence', (data) => {
+            if (!data || data.agent_id !== agentId) return;
+            if (data.phase === 'queued') {
+                const ahead = Math.max(0, Number(data.ahead) || 0);
+                laneNote = `Queued (${ahead} ahead)`;
+            } else {
+                laneNote = '';
+            }
+            renderProfile();
+        }));
         // "Open in Desk" on a note for the agent whose desk is ALREADY open
         // changes only the path, so the column never rebuilds this panel and
         // nothing else would move the browser to the file.

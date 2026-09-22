@@ -60,6 +60,15 @@ def validate_connection_test_url(raw: str) -> str:
     return url
 
 
+def is_loopback_base(url: str) -> bool:
+    """Return whether a base URL points at the local machine."""
+    parsed = urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        return False
+    return _is_loopback_host(host, _parse_ip(host))
+
+
 def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
         return ipaddress.ip_address(host)

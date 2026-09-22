@@ -25,6 +25,9 @@ LOCAL_API_TOKEN_KEY = "local_api_token"
 
 _OBSOLETE_SETTING_KEYS = {
     "action_contract_template",
+    # Hidden second cap. Agent turns, System AI routes, and repairs share
+    # max_concurrent_agent_turns. This seed used to allow 5 calls above that knob.
+    "max_concurrent_llm_calls",
 }
 
 
@@ -58,9 +61,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # cannot stream uses only llm_request_timeout_seconds.
     ("llm_stall_timeout_seconds", "120", "llm"),
     ("decision_repair_attempts", "6", "llm"),
-    # How many agent turns may call the model at once. Default 2 is safe
-    # for a local LLM. One agent still runs at most one turn. Repair wakes
-    # use a slot and sort behind a live channel lead.
+    # One budget for inflight model calls: agent turns, System AI routes,
+    # and repairs. Default 2. One agent still runs at most one turn.
+    # Repair wakes use a lane and sort behind a live channel lead.
+    # The operator-facing label is "Max concurrent model calls".
     ("max_concurrent_agent_turns", "2", "llm"),
     # Last-resort safety cap on channel rounds for one human message,
     # including round 1. Empty speak, Pause, demotion, and narrow dup-ack
@@ -96,9 +100,6 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("diagnostics_enabled", "false", "advanced"),
     ("diagnostics_retention_limit", "5000", "advanced"),
     ("desktop_open_folder_handler", "", "advanced"),
-
-    # ── Concurrency ──
-    ("max_concurrent_llm_calls", "5", "llm"),
 
     # ── Simulation resilience ──
     ("sim_error_threshold", "10", "simulation"),

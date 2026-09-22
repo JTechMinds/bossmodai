@@ -187,12 +187,16 @@ const BossModGates = (() => {
             return `${channelId}::${agentId}`;
         }
 
-        function start(channelId, agentId, agentName) {
+        function start(channelId, agentId, agentName, options) {
             if (!channelId || !agentId) return false;
+            const opts = options || {};
+            const ahead = Number(opts.ahead);
             members.set(key(channelId, agentId), {
                 channelId: String(channelId),
                 agentId: String(agentId),
                 name: agentName || 'Agent',
+                phase: opts.phase === 'queued' ? 'queued' : 'thinking',
+                ahead: Number.isFinite(ahead) ? Math.max(0, ahead) : 0,
             });
             return true;
         }

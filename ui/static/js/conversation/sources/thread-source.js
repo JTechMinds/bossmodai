@@ -159,35 +159,22 @@ const BossModThreadSource = (() => {
         /**
          * Post to the thread.
          *
-         * Every member is marked mid-turn before the request, because the round
-         * starts server-side the moment it lands. A failure clears them again,
-         * so a rejected post never leaves the room looking busy. The thrown
-         * error is the server's reason, so the composer can show it and keep
-         * the text.
+         * Presence waits for the server. A lane is claimed before thinking is
+         * broadcast; a turn with no lane arrives as Queued, not as thinking.
+         * The thrown error is the server's reason, so the composer can show it
+         * and keep the text.
          *
          * @param {string} text
          * @returns {Promise<void>}
          * @throws {Error} On any failure, so the send gate keeps the draft.
          */
         async function send(text) {
-            const roster = members().filter((member) => member && member.id);
-            roster.forEach((member) => presence.start(threadId, member.id, member.name));
-            signal('presence');
-            let res;
-            try {
-                res = await api(`/api/channels/${threadId}/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text }),
-                });
-            } catch (err) {
-                roster.forEach((member) => presence.stop(threadId, member.id));
-                signal('presence');
-                throw err;
-            }
+            const res = await api(`/api/channels/${threadId}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: text }),
+            });
             if (!res.ok) {
-                roster.forEach((member) => presence.stop(threadId, member.id));
-                signal('presence');
                 throw new Error(await refusal(res, 'Could not post to this thread.'));
             }
         }
@@ -221,7 +208,12 @@ const BossModThreadSource = (() => {
                         return;
                     }
                     if (data.phase === 'thinking') {
-                        presence.start(threadId, data.agent_id, data.agent_name);
+                        presence.start(threadId, data.agent_id, data.agent_name, { phase: 'thinking' });
+                    } else if (data.phase === 'queued') {
+                        presence.start(threadId, data.agent_id, data.agent_name, {
+                            phase: 'queued',
+                            ahead: data.ahead,
+                        });
                     } else {
                         presence.stop(threadId, data.agent_id);
                     }
