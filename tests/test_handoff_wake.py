@@ -21,13 +21,16 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.channel_router import build_router_messages
-from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.agent_loop.channel_host import note_human_snapshot
+from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.decision_contract import parse_decision
 from core.agent_loop.decision_runtime import apply_decision
+from core.default_prompts import load_default_prompt
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.board import next_board_owner_id
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import transition_task
+from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 
 
@@ -578,3 +581,127 @@ def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> 
     wakes = _channel_wakes(result)
     assert wakes[0]["agent_id"] == laura.id
     assert "@" not in result["channel_message"]["content"]
+
+
+_ECHO_PASS = (
+    "You were nudged. If you would only restate what is already in the thread, pass. New substance only."
+)
+
+
+def test_awoken_channel_turn_has_a_soft_pass_line() -> None:
+    decision = load_default_prompt("runtime_contract_decision")
+    assert decision.count(_ECHO_PASS) == 2
+    assert _ECHO_PASS not in Path("prompts/system_prompt.md").read_text(encoding="utf-8")
+    for path in Path("prompts/personalities").glob("*.md"):
+        assert _ECHO_PASS not in path.read_text(encoding="utf-8")
+
+
+def test_channel_accept_records_a_sticky_work_bind() -> None:
+    jim, _laura, _jimothy, channel = _trio()
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Please take the notes.",
+        source_channel="channel",
+    )
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+    )
+    state = db.get_agent_state(jim.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Write the notes",
+            "reply": "I'll take the notes task.",
+        },
+        jim,
+        state,
+        {
+            "type": "channel_message",
+            "channel_id": channel.id,
+            "channel_name": channel.name,
+            "round_id": triggers[0]["payload"]["round_id"],
+            "source_message_id": message.id,
+            "content": message.content,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "dispatch_mode": "rounds",
+        },
+    )
+    kinds = [item.get("trigger_type") for item in result["trigger_requests"]]
+    assert "channel_message" not in kinds
+    round_id = triggers[0]["payload"]["round_id"]
+    meta = channel_round_db.get_channel_round_meta(round_id)
+    assert meta["work_bind_ids"] == [jim.id]
+    task_id = meta["work_binds"][0]["task_id"]
+    assert db.get_task(task_id).status == "accepted"
+    note_human_snapshot(channel.id, [])
+    assert channel_round_db.get_channel_round_meta(round_id)["work_bind_ids"] == []
+    assert db.get_task(task_id).status == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_work_bind_stays_out_across_later_talk_slices(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, jimothy, channel = _trio()
+    ada = db.create_agent("Ada", role="QA", desk_x=4, desk_y=1, model_work="identity-big")
+    db.add_channel_members(channel.id, [ada.id])
+    _enable_system_ai()
+    prompts: list[str] = []
+    replies = [
+        _payload([jim.id, laura.id], [ada.id]),
+        _payload([laura.id, ada.id], [jim.id]),
+        _payload([laura.id], [jim.id, ada.id]),
+    ]
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        prompts.append("\n".join(item.get("content") or "" for item in messages))
+        if len(prompts) > len(replies):
+            raise AssertionError("router was called more times than scripted")
+        return replies[len(prompts) - 1]
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
+    assert audit.task is not None
+    _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
+    assert [item["agent_id"] for item in _channel_wakes(completed)] == [jim.id]
+    assert [item["agent_id"] for item in _work_wakes(completed)] == [laura.id]
+    first_id = _channel_wakes(completed)[0]["payload"]["round_id"]
+    assert channel_round_db.get_channel_round_meta(first_id)["work_bind_ids"] == [laura.id]
+    db.mark_channel_candidate_responded(round_id=first_id, agent_id=jim.id)
+    progress = advance_channel_round(
+        _channel_wakes(completed)[0]["payload"],
+        spoke=True,
+        speaker_id=jim.id,
+        spoken_text="The plan is filed.",
+    )
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [ada.id]
+    follow_id = progress["trigger_requests"][0]["payload"]["round_id"]
+    assert follow_id != first_id
+    assert channel_round_db.get_channel_round_meta(follow_id)["work_bind_ids"] == [laura.id]
+    assert laura.id not in host_db.get_channel_host_state(channel.id)["pass_streaks"]
+    assert "Work-bound:" in prompts[1]
+    assert laura.id in prompts[1].split("Work-bound:", 1)[1]
+    assert "If you are unsure whether an already-spoke id would add new substance" in prompts[1]
+    transition_task(
+        audit.task.id,
+        "blocked",
+        reason="Needs a different pass.",
+        actor="BossMod",
+    )
+    db.mark_channel_candidate_responded(round_id=follow_id, agent_id=ada.id)
+    progress = advance_channel_round(
+        progress["trigger_requests"][0]["payload"],
+        spoke=True,
+        speaker_id=ada.id,
+        spoken_text="New question on the fixture.",
+    )
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [laura.id]
+    assert channel_round_db.get_channel_round_meta(follow_id)["work_bind_ids"] == []

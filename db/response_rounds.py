@@ -356,6 +356,52 @@ def maybe_complete_round(schema: ResponseRoundSchema, round_id: str) -> Any | No
     return get_round(schema, round_id)
 
 
+def _normalize_binds(pairs: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep one pair per agent. A later pair with a task id replaces an empty one."""
+    found: list[dict[str, str]] = []
+    index: dict[str, int] = {}
+    for pair in pairs:
+        agent_id = str(pair.get("agent_id") or "").strip()
+        task_id = str(pair.get("task_id") or "").strip()
+        if not agent_id:
+            continue
+        item = {"agent_id": agent_id, "task_id": task_id}
+        if agent_id in index:
+            if task_id:
+                found[index[agent_id]] = item
+            continue
+        index[agent_id] = len(found)
+        found.append(item)
+    return found
+
+
+def _json_binds(raw: Any) -> list[dict[str, str]]:
+    """Parse stored work binds. A bare id list has no task id yet."""
+    if isinstance(raw, list):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    else:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    pairs: list[dict[str, str]] = []
+    for item in parsed:
+        if isinstance(item, str):
+            pairs.append({"agent_id": item, "task_id": ""})
+        elif isinstance(item, dict):
+            pairs.append(
+                {
+                    "agent_id": str(item.get("agent_id") or ""),
+                    "task_id": str(item.get("task_id") or ""),
+                }
+            )
+    return _normalize_binds(pairs)
+
+
 def _json_id_list(raw: Any) -> list[str]:
     """Parse a JSON list of agent ids. Bad payloads become an empty list."""
     if isinstance(raw, list):
@@ -383,7 +429,7 @@ def channel_round_meta(round_id: str) -> dict[str, Any] | None:
     row = query_one(
         """
         SELECT round_index, dispatch_mode, stepped_out, next_mentions,
-               router_mode, pinned_ids
+               router_mode, pinned_ids, work_bind_ids
         FROM channel_response_rounds
         WHERE id = $1
         """,
@@ -399,6 +445,7 @@ def channel_round_meta(round_id: str) -> dict[str, Any] | None:
     router_mode = str(row.get("router_mode") or "").strip() or "fallback"
     if router_mode not in {"system", "fallback"}:
         router_mode = "fallback"
+    binds = _json_binds(row.get("work_bind_ids"))
     return {
         "round_index": index if index > 0 else 1,
         "dispatch_mode": mode,
@@ -406,6 +453,8 @@ def channel_round_meta(round_id: str) -> dict[str, Any] | None:
         "next_mentions": _json_id_list(row.get("next_mentions")),
         "router_mode": router_mode,
         "pinned_ids": _json_id_list(row.get("pinned_ids")),
+        "work_binds": binds,
+        "work_bind_ids": [pair["agent_id"] for pair in binds],
     }
 
 
@@ -418,6 +467,7 @@ def set_channel_round_meta(
     next_mentions: list[str] | None = None,
     router_mode: str | None = None,
     pinned_ids: list[str] | None = None,
+    work_binds: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     """Update channel round orchestration fields. Omitted fields stay put."""
     token = (round_id or "").strip()
@@ -436,6 +486,8 @@ def set_channel_round_meta(
         fields["router_mode"] = router_mode
     if pinned_ids is not None:
         fields["pinned_ids"] = json.dumps(list(pinned_ids))
+    if work_binds is not None:
+        fields["work_bind_ids"] = json.dumps(_normalize_binds(work_binds))
     if len(fields) == 1:
         return channel_round_meta(token)
     assignments = ", ".join(f"{key} = ${index + 1}" for index, key in enumerate(fields.keys()))

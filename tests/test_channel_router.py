@@ -880,6 +880,142 @@ def test_system_completion_uses_the_connection_model_not_an_identity_model(
     assert "identity-big" not in str(seen["model"])
 
 
+def test_reroute_prompt_states_echo_fail_closed() -> None:
+    routed = build_router_messages(
+        members=[{"id": "jim", "name": "Jim", "role": "PM"}],
+        latest_message="The plan is filed.",
+        pending_mention_ids=[],
+        sticky="",
+        snapshot_id="snap-1",
+        round_id="round-1",
+        already_spoke_ids=["jim"],
+        work_bind_ids=["laura"],
+    )
+    blob = "\n".join(item["content"] for item in routed)
+    assert "Human snapshot:" in blob and "snap-1" in blob
+    assert "round-1" in blob
+    assert "jim | Jim" in blob.split("Already spoke:", 1)[1].split("Work-bound:", 1)[0]
+    assert "laura" in blob.split("Work-bound:", 1)[1]
+    assert "If you are unsure whether an already-spoke id would add new substance" in blob
+    assert "Do not name someone because they might have something" in blob
+    assert "An id that has not spoken may still be named" in blob
+    plain = build_router_messages(
+        members=[{"id": "jim", "name": "Jim", "role": "PM"}],
+        latest_message="Where are we?",
+        pending_mention_ids=[],
+        sticky="",
+    )
+    plain_blob = "\n".join(item["content"] for item in plain)
+    assert "If you are unsure whether an already-spoke id would add new substance" not in plain_blob
+    assert "Already spoke:" not in plain_blob
+
+
+def _scripted_route(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> list[str]:
+    prompts: list[str] = []
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        prompts.append("\n".join(item.get("content") or "" for item in messages))
+        if len(prompts) > len(replies):
+            raise AssertionError("router was called more times than scripted")
+        return replies[len(prompts) - 1]
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    return prompts
+
+
+def _human_round(channel, content: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    message = _message(channel.id, content)
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    base = {
+        "content": message.content,
+        "channel_id": channel.id,
+        "from_name": "Human Operator",
+        "author_type": "human",
+        "source_message_id": message.id,
+        "channel_name": channel.name,
+        "dispatch_mode": DISPATCH_ROUNDS,
+    }
+    return base, triggers
+
+
+def test_reroute_after_speakers_stays_out_on_echo(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    prompts = _scripted_route(
+        monkeypatch,
+        [
+            _payload([jim.id, laura.id], [ada.id]),
+            _payload([laura.id], [ada.id]),
+            _payload([], [jim.id, laura.id, ada.id]),
+            _payload([], [jim.id, laura.id, ada.id]),
+        ],
+    )
+    base, triggers = _human_round(channel, "Where are we?")
+    assert [item["agent_id"] for item in triggers] == [jim.id]
+    round_id = triggers[0]["payload"]["round_id"]
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=jim.id)
+    current = dict(base)
+    current["round_id"] = round_id
+    progress = advance_channel_round(current, spoke=True, speaker_id=jim.id, spoken_text="Plan: ship the notes.")
+    assert progress["trigger_requests"][0]["agent_id"] == laura.id
+    laura_round = progress["trigger_requests"][0]["payload"]["round_id"]
+    db.mark_channel_candidate_responded(round_id=laura_round, agent_id=laura.id)
+    spoken = dict(base)
+    spoken["round_id"] = laura_round
+    progress = advance_channel_round(spoken, spoke=True, speaker_id=laura.id, spoken_text="Plan: ship the notes.")
+    assert progress["trigger_requests"] == []
+    both = []
+    for blob in prompts:
+        if "Already spoke:" not in blob:
+            continue
+        spoke = blob.split("Already spoke:", 1)[1].split("Work-bound:", 1)[0]
+        if jim.id in spoke and laura.id in spoke:
+            both.append(blob)
+    assert both
+    assert any(
+        "If you are unsure whether an already-spoke id would add new substance" in blob for blob in both
+    )
+
+
+def test_reroute_still_speaks_for_new_substance(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    prompts = _scripted_route(
+        monkeypatch,
+        [
+            _payload([jim.id, laura.id], [ada.id]),
+            _payload([laura.id], [ada.id]),
+            _payload([jim.id], [laura.id, ada.id]),
+        ],
+    )
+    base, triggers = _human_round(channel, "Where are we?")
+    round_id = triggers[0]["payload"]["round_id"]
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=jim.id)
+    current = dict(base)
+    current["round_id"] = round_id
+    progress = advance_channel_round(current, spoke=True, speaker_id=jim.id, spoken_text="Plan: ship the notes.")
+    assert progress["trigger_requests"][0]["agent_id"] == laura.id
+    laura_round = progress["trigger_requests"][0]["payload"]["round_id"]
+    db.mark_channel_candidate_responded(round_id=laura_round, agent_id=laura.id)
+    spoken = dict(base)
+    spoken["round_id"] = laura_round
+    progress = advance_channel_round(
+        spoken,
+        spoke=True,
+        speaker_id=laura.id,
+        spoken_text="The fixture failed. Who takes the fix?",
+    )
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [jim.id]
+    assert any("If you are unsure whether an already-spoke id would add new substance" in blob for blob in prompts)
+
+
 def test_system_completion_failure_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_system_ai()
 
