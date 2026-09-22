@@ -120,6 +120,18 @@ def preview_bm_cli(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
 
+    from core.bm_cli.project_git_fence import project_git_block
+
+    fenced = project_git_block(
+        agent,
+        parsed,
+        cwd_before,
+        channel_id=None,
+        persist=False,
+    )
+    if fenced is not None:
+        return fenced
+
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
     from core.bm_cli.nest_git_consent import maybe_block_gh_cli
@@ -279,6 +291,17 @@ def _execute_bm_cli_inner(
             trigger_type=trigger_type,
         )
         return result
+
+    fenced = _maybe_project_git_fence(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if fenced is not None:
+        return fenced
 
     paused = _maybe_gh_cli_block(
         agent=agent,
@@ -465,14 +488,26 @@ def execute_approved_command(
 
     Command-tier policy is not re-evaluated (the operator already approved
     this argv), but the path jail still applies. Approval is not a jailbreak.
-    Host pip on a locked clone is also not an approval bypass — rewrite to
-    the clone uv/venv or deny.
+    Agent git that resolves to the application install or another repository
+    is still refused. Host pip on a locked clone is also not an approval
+    bypass — rewrite to the clone uv/venv or deny.
     """
     cwd_before = cwd or get_cli_cwd(agent.id)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
+
+    fenced = _maybe_project_git_fence(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        trigger_type=trigger_type,
+        channel_id=channel_id,
+    )
+    if fenced is not None:
+        return fenced
 
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
@@ -774,6 +809,42 @@ def _maybe_gh_cli_block(
         cwd_after=blocked.cwd,
         policy_tier=str(data.get("policy_tier") or "nest_git"),
         decision="approval_required" if blocked.consent_required else "denied",
+        result=blocked,
+        trigger_type=trigger_type,
+    )
+    return blocked
+
+
+def _maybe_project_git_fence(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    trigger_type: str | None,
+    channel_id: str | None,
+) -> BossModCliResult | None:
+    """Refuse agent git that resolves to the app install or another repository."""
+    from core.bm_cli.project_git_fence import project_git_block
+
+    blocked = project_git_block(
+        agent,
+        parsed,
+        cwd_before,
+        channel_id=channel_id,
+        persist=True,
+    )
+    if blocked is None:
+        return None
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=blocked.executor,
+        cwd_before=cwd_before,
+        cwd_after=blocked.cwd,
+        policy_tier="project_git_fence",
+        decision="denied",
         result=blocked,
         trigger_type=trigger_type,
     )

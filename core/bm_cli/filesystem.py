@@ -5,11 +5,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from core.bm_cli.install_layout import default_projects_root, require_projects_root
+
 
 _ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACTS_ROOT = _ROOT / "artifacts"
 _AGENTS_ROOT = _ARTIFACTS_ROOT / "agents"
-_PROJECTS_ROOT = _ARTIFACTS_ROOT / "projects"
+# Live project mount. Tests replace this. The default is outside the checkout;
+# ``BOSSMOD_PROJECTS_ROOT`` re-binds it. The in-tree artifacts/projects tree
+# is not rewritten.
+_DEFAULT_PROJECTS_ROOT = default_projects_root()
+_PROJECTS_ROOT = _DEFAULT_PROJECTS_ROOT
 
 # Backup / database files must never be served by the company browser,
 # even if a later change widens the company root back to artifacts/.
@@ -19,7 +25,15 @@ DENIED_COMPANY_FILE_SUFFIXES = frozenset({".bak", ".sqlite3", ".db"})
 def ensure_artifact_roots() -> None:
     """Create the top-level artifact directories when missing."""
     _AGENTS_ROOT.mkdir(parents=True, exist_ok=True)
-    _PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    projects_artifact_root()
+
+
+def _live_projects_root() -> Path:
+    """Return the project mount, honoring a monkeypatched ``_PROJECTS_ROOT``."""
+    candidate = _PROJECTS_ROOT
+    if candidate == _DEFAULT_PROJECTS_ROOT:
+        candidate = default_projects_root()
+    return require_projects_root(Path(candidate))
 
 
 def artifacts_root() -> Path:
@@ -35,18 +49,20 @@ def agents_artifact_root() -> Path:
 
 
 def projects_artifact_root() -> Path:
-    """Return the bounded BossMod per-project artifact root."""
-    ensure_artifact_roots()
-    return _PROJECTS_ROOT
+    """Return the shared project root, outside the application install."""
+    root = _live_projects_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def company_files_root() -> Path:
     """Return the company file browser root (shared projects only).
 
     ``artifacts/db_backups`` and ``artifacts/agents`` stay outside this tree.
+    Project directories live in the separated data root, not the checkout.
     """
-    ensure_artifact_roots()
-    return _PROJECTS_ROOT
+    _AGENTS_ROOT.mkdir(parents=True, exist_ok=True)
+    return projects_artifact_root()
 
 
 def is_denied_company_file(path: Path) -> bool:
@@ -98,8 +114,7 @@ def agent_artifact_dir(storage_key: str) -> Path:
 
 def project_artifact_dir(project_name: str) -> Path:
     """Return the shared artifact directory for a project."""
-    ensure_artifact_roots()
-    return _PROJECTS_ROOT / slugify_name(project_name)
+    return projects_artifact_root() / slugify_name(project_name)
 
 
 def resolve_relative_path(root: Path, relative_path: str) -> Path:

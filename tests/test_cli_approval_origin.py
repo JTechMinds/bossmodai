@@ -80,10 +80,11 @@ def _api_client() -> TestClient:
 
 
 def test_git_dash_c_status_opens_an_approval_card_when_default_is_live() -> None:
-    """Unmatched ``git -C … status`` follows the database default, not the worker cache.
+    """Unmatched ``git -C . status`` follows the database default, not the worker cache.
 
-    The virtual handler rejects ``-C``, then shell policy finds no rule.
-    A stale ``deny`` cache must not hard-deny that command.
+    ``-C .`` stays inside the agent workspace, so the project-git fence does
+    not apply. No seed rule matches this form. A stale ``deny`` cache must
+    not hard-deny it.
     """
     db.set_setting("cli_default_policy", "approval_required", "cli_policy")
     with config._lock:
@@ -93,7 +94,7 @@ def test_git_dash_c_status_opens_an_approval_card_when_default_is_live() -> None
 
     agent, state = _agent_and_state()
     channel = _channel_for(agent.id)
-    command = "git -C /tmp/not-a-clone status"
+    command = "git -C . status"
     paused = execute_bm_cli(agent, state, command, channel_id=channel.id)
 
     assert paused.approval_required is True

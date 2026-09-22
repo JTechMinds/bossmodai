@@ -261,6 +261,12 @@ def handle_mkdir(context: CliExecutionContext, parsed: ParsedCliCommand, content
     if target.exists and target.real_path.is_file():
         return error_result(parsed.raw, f"Cannot create directory over file: {parsed.args[0]}", cwd=context.cwd)
     target.real_path.mkdir(parents=True, exist_ok=True)
+    try:
+        from core.bm_cli.project_repo import ensure_project_repository
+
+        ensure_project_repository(target.real_path)
+    except ValueError as exc:
+        return error_result(parsed.raw, str(exc), cwd=context.cwd)
     commit_sha = auto_commit_workspace_change(
         context.agent,
         target.virtual_path,
@@ -541,6 +547,9 @@ def write_virtual_text(
         )
 
     target.real_path.parent.mkdir(parents=True, exist_ok=True)
+    from core.bm_cli.project_repo import ensure_project_repository
+
+    ensure_project_repository(target.real_path.parent)
     normalized = normalize_write_content(content)
     if append:
         with target.real_path.open("a", encoding="utf-8") as handle:

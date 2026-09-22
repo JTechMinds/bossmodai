@@ -285,7 +285,7 @@ async def get_company_file_raw(path: str = Query(..., min_length=1)):
 
 
 def _company_files_root() -> Path:
-    """Return the company browser root (``artifacts/projects``)."""
+    """Return the company browser root (the separated project data root)."""
     from core.bm_cli.filesystem import company_files_root
     return company_files_root()
 
@@ -481,12 +481,14 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
 def _company_workspace_note(extras) -> str:
     if extras:
         return (
-            "Company Files is artifacts/projects plus the configured host roots "
-            "shown below. Manage them here or under Settings → CLI Policy. "
+            "Company Files is the shared project workspace (outside the application "
+            "install) plus the configured host roots shown below. Manage them here "
+            "or under Settings → CLI Policy. "
             "This is not a full unrestricted host mount."
         )
     return (
-        "Company Files is artifacts/projects only. Use Add host folder on this "
+        "Company Files is the shared project workspace only (outside the application "
+        "install). Use Add host folder on this "
         "page (same allowlist as Settings → CLI Policy → Host workspace roots) "
         "to open a named path on disk. This is not a full unrestricted host mount."
     )

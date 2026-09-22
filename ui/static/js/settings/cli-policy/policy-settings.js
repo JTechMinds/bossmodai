@@ -53,7 +53,7 @@ const BossModCliPolicySettings = (() => {
         workspace_host_roots: {
             order: 60,
             label: 'Host workspace roots',
-            description: 'Optional extra directories a named absolute path may open, read, or edit. One absolute directory per line. Empty means no extra host access — Company Files stays artifacts/projects. This is not a full host mount. / , /etc, /proc, /sys, /dev, and /root are rejected.',
+            description: 'Optional extra directories a named absolute path may open, read, or edit. One absolute directory per line. Empty means no extra host access — Company Files stays the shared project workspace outside the application install. This is not a full host mount. / , /etc, /proc, /sys, /dev, and /root are rejected.',
             type: 'textarea',
         },
     };
