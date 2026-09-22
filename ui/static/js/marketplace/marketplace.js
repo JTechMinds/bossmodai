@@ -1,15 +1,25 @@
 /**
  * BossMod AI — the agent marketplace: browse the catalog, install, uninstall.
  *
- * A full-screen takeover rather than a nav place. Browsing packs is a rare,
- * deep-reading task and BossModPlaces' six place ids are frozen, so widening
- * the top-level nav for a monthly action is the wrong trade. It is also the
- * only route into the local template library, which is why "Install from URL"
- * lives here — as an inline row in the header, and its trust question as an
- * inline strip beside it. Neither opens a second dialog: a focus trap stacked
- * over a focus trap is the failure the one-dialog guard exists for.
+ * The Agents dialog's Marketplace pane (context/agents-dialog.js), beside its
+ * Add agent pane — not a nav place: browsing packs is a rare, deep-reading
+ * task and BossModPlaces' six place ids are frozen, so widening the top-level
+ * nav for a monthly action is the wrong trade. It is also the only route into
+ * the local template library, which is why "Install from URL" lives here — as
+ * an inline row in the header, and its trust question as an inline strip
+ * beside it. Neither opens a second dialog: a focus trap stacked over a focus
+ * trap is the failure the one-dialog guard exists for.
  *
- * The takeover holds TWO views and this owns which one is up: the browse grid,
+ * NO MODAL OF ITS OWN. It used to be a takeover that Add agent closed itself
+ * to open, and reopened itself behind when the takeover's `✕` was pressed —
+ * the one `✕` in the app that meant "back" instead of "close everything", and
+ * a marketplace opened from the rail menu had no way to Add agent at all. The
+ * dialog owns the frame, its `✕` and the tabs now; this owns the host element
+ * and everything drawn in it. Two things cross that seam, both as callbacks
+ * the dialog hands in: a template the operator wants to start an agent from,
+ * and "the library just changed".
+ *
+ * The pane holds TWO views and this owns which one is up: the browse grid,
  * and — once a card is picked — marketplace-detail.js's full-width reading
  * view of one pack. State and the three calls that change it live here; the
  * items both views read are marketplace-items.js's, and every node either puts
@@ -21,7 +31,6 @@ const BossModMarketplace = (() => {
     const VIEW = BossModMarketplaceView;
 
     const COPY = Object.freeze({
-        title: 'Agent Marketplace',
         loadFailed: 'Couldn’t load the catalog.',
         installFailed: 'Install failed.',
         uninstallFailed: 'Uninstall failed.',
@@ -30,21 +39,40 @@ const BossModMarketplace = (() => {
     });
 
     /**
-     * Open the marketplace takeover.
+     * Build the Marketplace pane.
      *
-     * Loads the remote catalog and the local library in parallel, then renders
-     * from one state object on every change. Returns immediately; the surface
-     * shows its loading state until both reads land.
+     * Renders its browse view at once — so the dialog it is placed in finds
+     * the Find box to put the keyboard on — but READS NOTHING until the first
+     * `activate()`: the catalog is a remote read, and an operator who only
+     * opened Add agent must not pay for it. From then on it loads the remote
+     * catalog and the local library in parallel and renders from one state
+     * object on every change.
      *
-     * @param {object} [options]
-     * @param {() => void} [options.onClosed] Called once after the takeover
-     *   closes, however it closed — Esc, the frame's `✕`, an outside click, or
-     *   `close()`. The add-agent flow reopens its own dialog from here.
-     * @returns {{close: () => void}} `close` is idempotent, as createModal's is.
+     * @param {object} deps
+     * @param {(template: object) => void} deps.onUseTemplate  "Add agent from
+     *   this": called with the installed `AgentTemplate` row of the pack being
+     *   read (`item.template`), for the dialog to start a create form from.
+     * @param {() => void} deps.onLibraryChanged  Called after a successful
+     *   install or uninstall, once the local library has been re-read, so the
+     *   Add agent picker can re-read it too. Never after a failure.
+     * @returns {{element: HTMLElement, activate: () => void}} `element` is the
+     *   `.market-host` to place. `activate` is "this pane is on screen": the
+     *   first call starts the first load, and every later call does nothing —
+     *   the pane keeps its catalog, its scroll and its open pack across a tab
+     *   switch rather than reading them all again.
+     * @throws {Error} When either callback is missing. A bridge that answers
+     *   to nobody is a button that does nothing, and a silent one.
      */
-    function open(options) {
-        const onClosed = (options && options.onClosed) || null;
+    function createPane(deps) {
+        if (!deps || typeof deps.onUseTemplate !== 'function') {
+            throw new Error('[marketplace] deps.onUseTemplate is required');
+        }
+        if (typeof deps.onLibraryChanged !== 'function') {
+            throw new Error('[marketplace] deps.onLibraryChanged is required');
+        }
         const host = BossModDom.h('div', { class: 'market-host' });
+        /** Set by the first activate(); the catalog is read once, lazily. */
+        let started = false;
         const state = {
             status: 'loading', categories: [], templates: [],
             // Every catalog row that did not become a card, flat and keyed by
@@ -129,9 +157,14 @@ const BossModMarketplace = (() => {
         async function runInstall(body, busyKey) {
             Object.assign(state, { busyId: busyKey, error: null, notice: '', trustPrompt: null });
             rerender();
+            // Whether the library changed AND was re-read. The dialog is told
+            // after the finally rather than from inside the try, so a callback
+            // that threw could never be reported as the install failing.
+            let changed = false;
             try {
                 const template = await API.installTemplate(body);
                 state.templates = await API.listTemplates();
+                changed = true;
                 Object.assign(state, ITEMS.indexInstalled(
                     state.templates, state.categories, state.withheld,
                 ));
@@ -165,6 +198,9 @@ const BossModMarketplace = (() => {
                 state.busyId = null;
                 rerender();
             }
+            // The Add agent picker reads the same library; the template it
+            // just gained is there when the operator switches back.
+            if (changed) deps.onLibraryChanged();
         }
 
         async function runUninstall(templateId) {
@@ -172,9 +208,11 @@ const BossModMarketplace = (() => {
                 busyId: templateId, error: null, notice: '', pendingUninstall: null,
             });
             rerender();
+            let changed = false;
             try {
                 await API.uninstallTemplate(templateId);
                 state.templates = await API.listTemplates();
+                changed = true;
                 Object.assign(state, ITEMS.indexInstalled(
                     state.templates, state.categories, state.withheld,
                 ));
@@ -196,6 +234,7 @@ const BossModMarketplace = (() => {
                 state.focusRequest = state.detailOpen ? '#market-detail' : '#market-find';
                 rerender();
             }
+            if (changed) deps.onLibraryChanged();
         }
 
         const handlers = {
@@ -274,6 +313,15 @@ const BossModMarketplace = (() => {
                 state.focusRequest = '#market-detail';
                 rerender();
             },
+            // "Add agent from this". Only drawn for a pack the library holds,
+            // so a pack without its installed row here is a detail view that
+            // offered a button it had no template for — a bug, said as one.
+            onUseTemplate(item) {
+                if (!item.template) {
+                    throw new Error(`[marketplace] "${item.key}" has no installed template to start from`);
+                }
+                deps.onUseTemplate(item.template);
+            },
             onTrustConfirm() {
                 const prompt = state.trustPrompt;
                 if (!prompt) throw new Error('[marketplace] trust confirmed with no prompt open');
@@ -286,25 +334,18 @@ const BossModMarketplace = (() => {
             },
         };
 
+        // Drawn now, read later: the browse view is up (in its loading state)
+        // before the dialog places focus, so the Find box is there to take it.
         rerender();
-        const handle = BossModOverlays.createModal({
-            title: COPY.title,
-            body: host,
-            size: 'takeover',
-            // NO footer. The frame's `✕` in the head is the takeover's exit in
-            // both views; a footer `Close` under it would be a second control
-            // for one errand. createModal builds the empty row and the
-            // stylesheet takes it out of the flow. Esc (through the focus trap)
-            // and an outside click dismiss it too, and both views open on
-            // something focusable — the Find box in browse, `‹ Back` in the
-            // detail.
-            closeOnBackdrop: true,
-            actions: [],
-            onClose: () => { if (onClosed) onClosed(); },
-        });
-        void load();
-        return { close: handle.close };
+        return {
+            element: host,
+            activate() {
+                if (started) return;
+                started = true;
+                void load();
+            },
+        };
     }
 
-    return { COPY, open };
+    return { COPY, createPane };
 })();

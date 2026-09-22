@@ -1,13 +1,20 @@
 /**
  * Node harness: Add agent — the picker's four states, the two steps, and the
- * quick layout a template gets.
+ * quick layout a template gets — inside the Agents dialog, whose other tab is
+ * the Marketplace.
  *
  * Invoked by tests/test_add_agent_modal.py. Not a browser bundle.
  *
+ * The DIALOG is real (context/agents-dialog.js, its tabs, the one-form slot)
+ * and so is the Add agent pane. The Marketplace pane is STUBBED: it is
+ * tests/js_marketplace_harness.cjs's subject, and what this one needs from it
+ * is the seam — the two callbacks the dialog hands it, captured so a test can
+ * press "Add agent from this" or report a library change, and how often the
+ * dialog asked it to start reading.
+ *
  * The roster row's two-door menu is in here too: it is the other half of "add
  * an agent", it hangs off core/overlays.js's menu the way the dialog hangs off
- * the modal, and both stubs it needs — BossModMarketplace and the store — are
- * already standing for the dialog's own Browse door.
+ * the modal, and both doors open this same dialog.
  *
  * The FORM is stubbed and the dialog is real. context/agent-form.js builds its
  * markup as a string and the shared fake parses no HTML, so this hands
@@ -35,11 +42,14 @@ const NAMES = [
     "BossModAgentFormConnections", "BossModAgentFormBindings",
     "BossModAgentFormHydrate", "BossModAgentRecovery", "BossModAgentFormSave",
     // The picker draws the local library with the marketplace's own card and
-    // rail builders, so its dependencies load ahead of it.
+    // rail builders, so its dependencies load ahead of it — and filters it
+    // with the app's toolbar search.
     "BossModAvatar", "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
+    "BossModSearchField", "BossModTabs",
     "BossModAgentTemplatePicker",
     "BossModAgentFormTemplate", "BossModAgentDialogFooter",
-    "BossModAgentEdit", "BossModAddAgentMenu",
+    "BossModAgentAddPane", "BossModAgentDialogSlot",
+    "BossModAgentEdit", "BossModAgentsDialog", "BossModAddAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -217,8 +227,11 @@ let connectionMode = "ready";
 // the form says when the operator has none configured.
 let connectionsApiMode = "ready";
 let formMode = "ready";
-let marketOpens = 0;
-let marketOnClosed = null;
+// The Marketplace pane the dialog built last: the callbacks it was handed, and
+// how many times the dialog told it that it is on screen.
+let marketDeps = null;
+let marketPanes = 0;
+let marketActivations = 0;
 // Resolved by the test that holds a save open, so the in-flight footer can be
 // read before the server answers.
 let holdCreate = null;
@@ -308,10 +321,14 @@ global.BossModAgentSubmit = {
     },
 };
 global.BossModMarketplace = {
-    open(options) {
-        marketOpens += 1;
-        marketOnClosed = (options && options.onClosed) || null;
-        return { close() {} };
+    createPane(deps) {
+        marketPanes += 1;
+        marketDeps = deps;
+        // One control, the way the real browse head has its filter, so a test
+        // can tell which pane holds the keyboard.
+        const element = h("div", { class: "market-host" },
+            h("input", { id: "market-find", type: "search" }));
+        return { element, activate() { marketActivations += 1; } };
     },
 };
 
@@ -326,6 +343,11 @@ const footer = () => dialog().querySelectorAll(".modal-actions")[0];
 const footerNames = () => footer().querySelectorAll("button").map((b) => b.textContent);
 const find = (selector) => dialog().querySelector(selector);
 const cards = () => dialog().querySelectorAll(".picker-card");
+// The Agents dialog's two tabs, and the panel each one controls.
+const tabOf = (id) => find(`#agents-tab-${id}`);
+const panelOf = (id) => find(`#agents-panel-${id}`);
+const selectedTab = () => ["add", "marketplace"]
+    .filter((id) => tabOf(id).getAttribute("aria-selected") === "true").join("|");
 
 /** Type into a field the way an operator does: value, then the event. */
 async function type(input, value) {
@@ -352,8 +374,21 @@ async function answerAi() {
     await choose(find('select[name="model_work"]'), "c1");
 }
 
-async function open() {
-    global.BossModAgentEdit.openAgentModal({ store });
+async function open(tab = "add") {
+    const handle = global.BossModAgentsDialog.open({ store, tab });
+    await drain();
+    return handle;
+}
+
+/** Operator clicks a tab of the Agents dialog. */
+async function clickTab(id) {
+    await tabOf(id).dispatchClick();
+    await drain();
+}
+
+/** The frame's ✕: the exit on every tab, and the only one on step one. */
+async function closeByX() {
+    await dialog().querySelector(".modal-close").dispatchClick();
     await drain();
 }
 
@@ -423,15 +458,10 @@ async function main() {
     verdict.emptyState = dialog().textContent.includes("No templates installed yet.")
         && Boolean(find("#agent-pick-blank"))
         && Boolean(find("#agent-template-browse"));
-    // The primary belongs to a form, and step one has none. The footer is
-    // dismissal alone now — `Browse marketplace` is a control in the picker's
-    // the LEAD of the row, pushed to its left edge by a rule of its own, with
-    // the dismissal at the other end — side by side they read as two ways to
-    // leave, and beside the filter box they read as part of the filter.
-    // BACK IS ON THE TITLE ROW — `‹ Add agent` — and it is not drawn on step
-    // one, which has nowhere to go back to. It spent a round as a bordered
-    // square floating in the band under the title, aligned to nothing, and a
-    // round before that as a footer action beside Cancel.
+    // BACK IS ON THE TITLE ROW — the dialog's `lead` — and it is not drawn on
+    // step one, which has nowhere to go back to. It spent a round as a
+    // bordered square floating in the band under the title, aligned to
+    // nothing, and a round before that as a footer action beside Cancel.
     verdict.backLeadsTheTitleRowAndNotStepOne =
         Boolean(dialog().querySelector(".modal-head"))
         && Boolean(find("#agent-add-back"))
@@ -440,24 +470,69 @@ async function main() {
         // failed build and the row is rebuilt on every step swap.
         && Boolean(dialog().querySelector(".modal-head").querySelector("#agent-add-back"))
         && footer().querySelector("#agent-add-back") === null;
-    verdict.noCreateOnStepOne = footerNames().join("|") === "Browse marketplace|Cancel"
-        && Boolean(find("#agent-add-browse"))
+    // Step one's row is EMPTY now: no primary (there is no form for it to
+    // submit), no `Browse marketplace` (the Marketplace is the tab beside this
+    // one), and no Cancel (the frame's ✕ is the exit on every tab).
+    verdict.noCreateOnStepOne = footerNames().join("|") === ""
+        && documentStub.querySelector("#agent-add-browse") === null
         && documentStub.querySelector("#agent-form-submit") === null
         && find("#agent-form") === null;
 
-    // ─── 2. Browse closes this dialog, and its return reopens it, refreshed ───
+    // ONE takeover, titled for both errands, with the two tabs in its head —
+    // the Office header's quiet group — and a panel per tab, named by it. The
+    // Marketplace pane was BUILT, hidden, and not yet told to read anything.
+    const tools = dialog().querySelector(".modal-tools");
+    const tablist = tools ? tools.querySelector(".tabs") : null;
+    verdict.theDialogIsOneTakeoverWithTwoTabs = dialogs().length === 1
+        && dialog().getAttribute("data-size") === "takeover"
+        && dialog().getAttribute("aria-label") === "Agents"
+        && dialog().getAttribute("data-dialog") === "agents"
+        && Boolean(tablist)
+        && tablist.getAttribute("role") === "tablist"
+        && tablist.querySelectorAll(".tab").map((t) => t.textContent).join("|")
+            === "Add agent|Marketplace"
+        && selectedTab() === "add"
+        && tabOf("add").getAttribute("aria-controls") === "agents-panel-add"
+        && panelOf("add").getAttribute("role") === "tabpanel"
+        && panelOf("add").getAttribute("aria-labelledby") === "agents-tab-add"
+        && panelOf("marketplace").getAttribute("aria-labelledby") === "agents-tab-marketplace"
+        && panelOf("add").hidden === false
+        && panelOf("marketplace").hidden === true
+        && marketPanes === 1
+        && marketActivations === 0
+        // No footer of the dialog's own: an empty action row.
+        && footer().children.length === 0;
+
+    // ─── 2. The empty library's door SWITCHES TABS; nothing closes ───
+    //
+    // It used to close this dialog and open the marketplace takeover, whose
+    // ✕ then reopened this one behind it. The Marketplace is the other tab of
+    // the same dialog now, so the door selects it: one panel still open, the
+    // picker hidden rather than destroyed, the pane told it is on screen, and
+    // the keyboard on the tab — the button that was pressed has just been put
+    // away with its pane.
     await find("#agent-template-browse").dispatchClick();
     await drain();
-    const closedForMarketplace = dialogs().length === 0 && marketOpens === 1;
+    verdict.emptyLibraryBrowseSwitchesTab = dialogs().length === 1
+        && selectedTab() === "marketplace"
+        && panelOf("add").hidden === true
+        && panelOf("marketplace").hidden === false
+        && marketActivations === 1
+        && documentStub.activeElement === tabOf("marketplace")
+        && footerNames().join("|") === ""
+        // Hidden, never destroyed.
+        && Boolean(find("#agent-template-browse"));
+    // An install over there re-reads the library over here, so the template
+    // is in the picker when the operator switches back.
     libraryMode = "ready";
-    marketOnClosed();
+    marketDeps.onLibraryChanged();
     await drain();
-    verdict.browseClosesAndReopens = closedForMarketplace
-        && dialogs().length === 1
-        && footerNames().join("|") === "Browse marketplace|Cancel"
-        && Boolean(find("#agent-add-browse"))
-        && cards().length === 2;
-    await close();
+    await clickTab("add");
+    verdict.libraryChangedRefreshesPicker = cards().length === 2
+        && selectedTab() === "add"
+        && panelOf("add").hidden === false
+        && panelOf("marketplace").hidden === true;
+    await closeByX();
 
     // ─── 3. A library that could not be READ says so, and retries ───
     libraryMode = "fail";
@@ -638,7 +713,7 @@ async function main() {
     await find("#agent-add-back").dispatchClick();
     await drain();
     const backedOut = dialogs().length === 1
-        && footerNames().join("|") === "Browse marketplace|Cancel"
+        && footerNames().join("|") === ""
         && documentStub.activeElement === find("#agent-template-find");
     await cards()[0].dispatchClick();
     await drain();
@@ -958,11 +1033,12 @@ async function main() {
     await drain();
     formMode = "ready";
     verdict.aBuildFailingAfterBackLeavesThePickerAlone =
-        footerNames().join("|") === "Browse marketplace|Cancel"
-        // The door out of an empty library is still there — it leads step
-        // one's row, and a failure that rewrote step one would take it with
-        // the rest of the picker.
-        && Boolean(find("#agent-add-browse"))
+        // Step one's row is empty, and a failure that rewrote step one would
+        // have put the recovery row's `Cancel` into it.
+        footerNames().join("|") === ""
+        // The way to the marketplace is still where it lives — the dialog's
+        // tab — and still not selected.
+        && selectedTab() === "add"
         && !dialog().textContent.includes("The agent editor failed to load.")
         && cards().length === 2
         && documentStub.activeElement === find("#agent-template-find");
@@ -1069,13 +1145,239 @@ async function main() {
         && marks[0].getAttribute("data-lucide") !== "building"
         && doors[1].textContent === "Add Agent"
         && marks[1].getAttribute("data-lucide") === "plus";
-    // And the door still opens what it names, with the panel away first.
-    const openedBefore = marketOpens;
+    // And the door still opens what it names, with the panel away first: the
+    // Agents takeover, on its Marketplace tab, the pane told it is on screen.
+    const activatedBefore = marketActivations;
     await doors[0].dispatchClick();
     await drain();
-    verdict.theMarketplaceDoorStillOpensTheTakeover = marketOpens === openedBefore + 1
+    verdict.theMarketplaceDoorStillOpensTheTakeover = dialogs().length === 1
+        && dialog().getAttribute("data-size") === "takeover"
+        && selectedTab() === "marketplace"
+        && panelOf("marketplace").hidden === false
+        && panelOf("add").hidden === true
+        && marketActivations === activatedBefore + 1
         && railHost.querySelectorAll(".add-agent-choice").length === 0
         && hireRow.getAttribute("aria-expanded") === "false";
+    await closeByX();
+    // The other door opens the SAME dialog, on the other tab.
+    addAgent.toggle();
+    await drain();
+    await railHost.querySelectorAll(".add-agent-choice")[1].dispatchClick();
+    await drain();
+    verdict.theAddAgentDoorOpensTheSameDialogOnItsTab = dialogs().length === 1
+        && dialog().getAttribute("aria-label") === "Agents"
+        && selectedTab() === "add"
+        && panelOf("add").hidden === false
+        && Boolean(find("#agent-pick-blank"));
+    // Each tab wears the mark of the door that opens it — one definition,
+    // the dialog's ICONS, so a door and its tab cannot drift apart. Icon
+    // first and decorative; the label is still the tab's whole text.
+    const tabMark = (id) => tabOf(id).querySelector("i");
+    verdict.eachTabWearsItsDoorsMark = Boolean(tabMark("add"))
+        && Boolean(tabMark("marketplace"))
+        && tabMark("marketplace").getAttribute("data-lucide")
+            === marks[0].getAttribute("data-lucide")
+        && tabMark("add").getAttribute("data-lucide") === marks[1].getAttribute("data-lucide")
+        && ["add", "marketplace"].every((id) => tabMark(id).getAttribute("aria-hidden") === "true"
+            && tabOf(id).children[0] === tabMark(id))
+        && tabOf("add").textContent === "Add agent"
+        && tabOf("marketplace").textContent === "Marketplace";
+    await closeByX();
+
+    // ─── 22. The picker filters with the app's toolbar search ───
+    //
+    // A magnifier inside one bordered box, the words that were a visible
+    // <label> now the input's accessible name — the control Tasks and the Log
+    // already use, and the one the Marketplace tab puts in the same place.
+    await open();
+    const pickerHead = find(".picker-head");
+    const pickerBox = pickerHead.querySelector(".search-field");
+    verdict.thePickerFilterIsTheToolbarSearch = Boolean(pickerBox)
+        && pickerBox.querySelector("#agent-template-find") === find("#agent-template-find")
+        && find("#agent-template-find").getAttribute("aria-label") === "Find a template"
+        && find("#agent-template-find").getAttribute("type") === "search"
+        && pickerBox.querySelector("i").getAttribute("data-lucide") === "search"
+        && pickerHead.querySelectorAll(".field-label").length === 0
+        && pickerHead.querySelectorAll("label")
+            .every((label) => label.getAttribute("for") === null);
+
+    // ─── 23. "Add agent from this": the Marketplace hands over a template ───
+    //
+    // From the Marketplace tab, the bridge switches to Add agent and starts
+    // the form from that template — the same form a picker cell builds, chip
+    // and all — with the keyboard on Name.
+    await clickTab("marketplace");
+    marketDeps.onUseTemplate(TEMPLATES[0]);
+    await drain();
+    verdict.useTemplateOpensTheForm = selectedTab() === "add"
+        && panelOf("add").hidden === false
+        && panelOf("marketplace").hidden === true
+        && Boolean(find("#agent-form"))
+        && chipText() === "Code Auditor · JTech Minds · pinned aa11bb2"
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && find("#agent-add-back").hidden === false
+        && documentStub.activeElement === find('input[name="name"]');
+    // A form has landed, so there is a draft an outside click could lose.
+    await documentStub.body.querySelector(".modal-backdrop").dispatchClick();
+    await drain();
+    const refusedWithADraft = dialogs().length === 1;
+    await close();
+    // ...and before a form lands there is nothing to lose, so it closes.
+    await open();
+    await documentStub.body.querySelector(".modal-backdrop").dispatchClick();
+    await drain();
+    verdict.draftBlocksBackdropClose = refusedWithADraft && dialogs().length === 0;
+
+    // ─── 24. A build that lands while the Marketplace is up (spec §3.1) ───
+    //
+    // The row is empty while the other tab is up, so the build's `ready`
+    // found no button — and a primary that recorded only what it PAINTED
+    // remembered `building`, and the row that came back was `Loading…` and
+    // disabled for good.
+    await open();
+    let releaseAway;
+    nextBuildHold = new Promise((resolve) => { releaseAway = resolve; });
+    await cards()[0].dispatchClick();
+    await drain();
+    const buildingBeforeLeaving = documentStub.querySelector("#agent-form-submit").textContent
+        === "Loading…";
+    await clickTab("marketplace");
+    const emptiedWhileAway = footerNames().join("|") === ""
+        && find("#agent-add-back").hidden === true;
+    tabOf("marketplace").focus();
+    releaseAway();
+    await drain();
+    // Landed while away: nothing in the Marketplace's footer, and the
+    // keyboard where the operator left it rather than on a hidden Name field.
+    const stillEmpty = footerNames().join("|") === ""
+        && documentStub.activeElement === tabOf("marketplace");
+    await clickTab("add");
+    const live = documentStub.querySelector("#agent-form-submit");
+    verdict.buildLandingWhileAwayLeavesPrimaryLive = buildingBeforeLeaving
+        && emptiedWhileAway && stillEmpty
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && live.disabled === false
+        && live.textContent === "Create Agent"
+        && find("#agent-add-back").hidden === false
+        && chipText().startsWith("Code Auditor");
+    await close();
+
+    // ─── 25. A build that FAILS while the Marketplace is up (spec §3.2) ───
+    //
+    // The recovery row is owed, not written: `Cancel` must not appear in the
+    // Marketplace tab's footer, and the keyboard must not be taken from it.
+    // Coming back puts the owed row up without moving the keyboard either.
+    await open();
+    let releaseDoomedAway;
+    nextBuildHold = new Promise((resolve) => { releaseDoomedAway = resolve; });
+    await cards()[0].dispatchClick();
+    await drain();
+    await clickTab("marketplace");
+    tabOf("marketplace").focus();
+    formMode = "fail";
+    releaseDoomedAway();
+    await drain();
+    formMode = "ready";
+    const marketplaceLeftAlone = footerNames().join("|") === ""
+        && documentStub.activeElement === tabOf("marketplace");
+    tabOf("add").focus();
+    await clickTab("add");
+    verdict.failureWhileAwayLeavesMarketplaceAlone = marketplaceLeftAlone
+        && footerNames().join("|") === "Cancel"
+        && dialog().textContent.includes("The agent editor failed to load.")
+        && documentStub.querySelector("#agent-form-submit") === null
+        // resume() put the row back without taking the keyboard off the tab.
+        && documentStub.activeElement === tabOf("add");
+
+    // ─── 26. "Add agent from this" onto that failed form step (spec §3.3) ───
+    //
+    // The pane is already on the form step, whose row is `Cancel` alone, so
+    // the step swap is a no-op — and a build that started there painted a
+    // primary that was not in the row. Every build now starts with the row it
+    // owes rebuilt.
+    await clickTab("marketplace");
+    marketDeps.onUseTemplate(TEMPLATES[1]);
+    await drain();
+    const restored = documentStub.querySelector("#agent-form-submit");
+    verdict.useTemplateAfterAFailedBuildRestoresTheFormRow = selectedTab() === "add"
+        && footerNames().join("|") === "Cancel|Create Agent"
+        && Boolean(restored) && restored.disabled === false
+        && restored.textContent === "Create Agent"
+        && chipText().startsWith("Feature Planner")
+        && !dialog().textContent.includes("The agent editor failed to load.");
+    await close();
+
+    // ─── 27. One agent form at a time, across both dialogs ───
+    //
+    // `#agent-form` is one id for the whole document and the primary submits
+    // it by that id, so the Agents dialog and the Edit role dialog share one
+    // slot: whichever is open is handed back, and nothing second is built.
+    const agentsHandle = await open();
+    const editOverAgents = global.BossModAgentEdit.openAgentModal({
+        store, agent: { id: "a9", name: "Ada" },
+    });
+    await drain();
+    const agentsBlocksEdit = editOverAgents === agentsHandle && dialogs().length === 1
+        && dialog().getAttribute("aria-label") === "Agents";
+    // A second open of the Agents dialog is the same dialog, switched.
+    const reopened = global.BossModAgentsDialog.open({ store, tab: "marketplace" });
+    await drain();
+    const reopenSwitches = reopened === agentsHandle && dialogs().length === 1
+        && selectedTab() === "marketplace";
+    await closeByX();
+    const editHandle = global.BossModAgentEdit.openAgentModal({
+        store, agent: { id: "a9", name: "Ada" },
+    });
+    await drain();
+    const agentsOverEdit = global.BossModAgentsDialog.open({ store, tab: "add" });
+    await drain();
+    verdict.oneAgentFormAtATime = agentsBlocksEdit && reopenSwitches
+        && agentsOverEdit === editHandle
+        && dialogs().length === 1
+        && dialog().getAttribute("aria-label") === "Edit role"
+        && dialog().querySelectorAll(".tabs").length === 0;
+    await close();
+    verdict.theSlotIsFreeOnceBothHaveClosed = dialogs().length === 0
+        && global.BossModAgentDialogSlot.current() === null;
+
+    // ─── 28. The Edit role dialog is edit-only ───
+    //
+    // One step, the panel size, no tabs, no picker — and no create path at
+    // all: a call without the agent it edits is a caller that wanted the
+    // Agents dialog, and it is told so instead of being handed a create form
+    // with no picker in front of it.
+    let refusal = "";
+    try {
+        global.BossModAgentEdit.openAgentModal({ store });
+    } catch (err) {
+        refusal = String((err && err.message) || err);
+    }
+    verdict.theEditDialogRefusesToCreate = refusal.includes("deps.agent is required")
+        && dialogs().length === 0;
+    global.BossModAgentEdit.openAgentModal({ store, agent: { id: "a9", name: "Ada" } });
+    await drain();
+    verdict.theEditDialogIsOneStep = dialog().getAttribute("data-size") === "panel"
+        && dialog().getAttribute("aria-label") === "Edit role"
+        && footerNames().join("|") === "Cancel|Save Changes"
+        && find("#agent-pick-blank") === null
+        && find("#agent-add-back") === null
+        && Boolean(find("#agent-form"));
+    await close();
+
+    // ─── 29. Both doors refuse what they cannot open ───
+    const refuses = (build, fragment) => {
+        try {
+            build();
+            return false;
+        } catch (err) {
+            return String((err && err.message) || err).includes(fragment);
+        }
+    };
+    verdict.theAgentsDialogRefusesAnUnknownTab =
+        refuses(() => global.BossModAgentsDialog.open({ store, tab: "hire" }), "unknown tab")
+        && refuses(() => global.BossModAgentsDialog.open({ store }), "unknown tab")
+        && refuses(() => global.BossModAgentsDialog.open({ tab: "add" }), "deps.store")
+        && dialogs().length === 0;
 
     process.stdout.write(JSON.stringify(Object.assign({ ok: true }, verdict)));
 }

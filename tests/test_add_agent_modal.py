@@ -3,8 +3,13 @@
 Rewritten, not extended. The dialog this file used to describe had a browse
 panel and the create form in one scrolling body, with "Browse packs" and
 "Start blank" doors above them. Browsing is the marketplace's now, the doors
-are a menu on the roster row, and the dialog is two steps over one body — so
-every assertion about that copy is gone rather than re-pointed.
+are a menu on the roster row, and the create flow is two steps over one body —
+so every assertion about that copy is gone rather than re-pointed.
+
+The create flow is the Add agent TAB of the Agents dialog now, beside the
+Marketplace tab (context/agents-dialog.js over context/agent-add-pane.js), and
+the Edit role dialog (context/agent-edit.js) is edit-only. The source-string
+assertions below follow the code to the module each fact moved into.
 """
 
 from __future__ import annotations
@@ -40,12 +45,21 @@ HARNESS_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "core" / "search-field.js",
+    JS / "core" / "tabs.js",
     CONTEXT / "agent-template-picker.js",
     CONTEXT / "agent-form-template.js",
     CONTEXT / "agent-dialog-footer.js",
+    CONTEXT / "agent-add-pane.js",
+    CONTEXT / "agent-dialog-slot.js",
     CONTEXT / "agent-edit.js",
+    CONTEXT / "agents-dialog.js",
     JS / "shell" / "add-agent-menu.js",
 ]
+
+# The two modules the create flow lives in now.
+ADD_PANE = CONTEXT / "agent-add-pane.js"
+AGENTS_DIALOG = CONTEXT / "agents-dialog.js"
 
 
 def _read(path: Path) -> str:
@@ -83,8 +97,10 @@ def test_picker_states_two_steps_and_the_quick_layout() -> None:
         "emptyState", "failedThenRetry", "categories", "cardsPrintTheAuthorName",
         "railNarrowsTheGridAndKeepsFocus", "railReturnsToAll",
         "filterNarrowsTheGrid", "noMatchCopy",
-        # Step 1 — the footer, and the door to the marketplace.
-        "noCreateOnStepOne", "browseClosesAndReopens",
+        # Step 1 — the footer, and the door to the marketplace: the other tab
+        # of the same dialog, which an install there refreshes this one from.
+        "noCreateOnStepOne", "emptyLibraryBrowseSwitchesTab",
+        "libraryChangedRefreshesPicker", "thePickerFilterIsTheToolbarSearch",
         "backLeadsTheTitleRowAndNotStepOne", "backShowsOnStepTwo",
         # Step 2 — what a template fills, what it must never fill, and what it
         # is no longer allowed to hide.
@@ -98,8 +114,163 @@ def test_picker_states_two_steps_and_the_quick_layout() -> None:
         "bothMenuDoorsCarryALucideIcon", "neitherMenuDoorCarriesATrailingArrow",
         "theMarketplaceDoorIsBlocksAndNotTheOfficesIcon",
         "theMarketplaceDoorStillOpensTheTakeover",
+        "theAddAgentDoorOpensTheSameDialogOnItsTab",
     ):
         assert payload[key] is True, key
+
+
+def test_add_agent_and_the_marketplace_are_two_tabs_of_one_dialog() -> None:
+    """They were two look-alike modals, and the way between them was a hop.
+
+    `Browse marketplace` closed Add agent and opened the marketplace takeover,
+    whose `✕` reopened Add agent behind it — the one `✕` in the app that meant
+    "back" — and a marketplace opened from the rail menu had no way to Add
+    agent at all. One takeover now, `Agents`, with the Office header's quiet
+    tab group in its head. The empty picker's door switches tabs; "Add agent
+    from this" in the Marketplace switches back and starts the form; an
+    install or uninstall re-reads the picker's library. Nothing closes to get
+    from one errand to the other.
+    """
+    payload = _harness()
+    for key in (
+        "theDialogIsOneTakeoverWithTwoTabs", "emptyLibraryBrowseSwitchesTab",
+        "libraryChangedRefreshesPicker", "useTemplateOpensTheForm",
+        "theAgentsDialogRefusesAnUnknownTab",
+    ):
+        assert payload[key] is True, key
+    dialog = _read(AGENTS_DIALOG)
+    assert dialog.count("BossModOverlays.createModal({") == 1
+    assert "size: 'takeover'," in dialog
+    assert "tools: [tabs.element]," in dialog
+    assert "lead: addPane.lead," in dialog
+    assert "actions: []," in dialog
+    # The bridge switches tabs FIRST, so the pane is live before the pick
+    # lands in it, and a library change refreshes the picker.
+    use = dialog.split("onUseTemplate: (template) => {", 1)[1].split("},", 1)[0]
+    assert use.index("selectTab('add');") < use.index("void addPane.pick(template);")
+    assert "onLibraryChanged: () => { void addPane.refresh(); }," in dialog
+    assert "onBrowse: () => selectTab('marketplace')," in dialog
+    # A programmatic switch hands the keyboard to the tab: the control that
+    # asked has just been put away with its pane.
+    select = dialog.split("function selectTab(id) {", 1)[1].split("\n        }", 1)[0]
+    assert select.index("tabs.select(id);") < select.index("showTab(id);")
+    assert select.index("showTab(id);") < select.index("tabs.focus();")
+
+
+def test_a_hidden_pane_s_async_work_lands_where_it_belongs() -> None:
+    """The Add agent pane can finish its own work while the Marketplace is up.
+
+    Spec §3, the three shapes it takes:
+
+    * a build that LANDS while away recorded nothing — the primary remembered
+      only what it painted, the row was empty, so the row that came back was
+      `Loading…` and disabled for good (`buildLandingWhileAwayLeavesPrimaryLive`);
+    * a build that FAILS while away put `Cancel` into the Marketplace's footer
+      and took the keyboard to it (`failureWhileAwayLeavesMarketplaceAlone`);
+    * "Add agent from this" onto a failed form step painted a primary that was
+      not in the row (`useTemplateAfterAFailedBuildRestoresTheFormRow`).
+    """
+    payload = _harness()
+    for key in (
+        "buildLandingWhileAwayLeavesPrimaryLive",
+        "failureWhileAwayLeavesMarketplaceAlone",
+        "useTemplateAfterAFailedBuildRestoresTheFormRow",
+    ):
+        assert payload[key] is True, key
+    footer = _read(CONTEXT / "agent-dialog-footer.js")
+    # §3.1: the state is recorded once the claim and the dialog are good, and
+    # BEFORE the button is looked for.
+    write = footer.split("function set(token, {", 1)[1].split("\n        }", 1)[0]
+    assert write.index("if (!writable(token)) return false;") < write.index(
+        "painted = { token, state: { label, disabled, reason } };")
+    assert write.index("painted = { token, state: { label, disabled, reason } };") < write.index(
+        "if (!button) return false;")
+    # §3.2: a suspended footer only records the row it owes.
+    for method in ("show(step) {", "recovery() {"):
+        body = footer.split(method, 1)[1].split("},", 1)[0]
+        assert body.index("if (suspended) return;") < body.index("modal.setActions("), method
+    resume = footer.split("resume() {", 1)[1].split("\n            },", 1)[0]
+    assert "focus" not in resume, "coming back must not move the keyboard"
+    # §3.3 and §3.4: every build starts owing the form row, and nothing in the
+    # pane moves the keyboard while it is away.
+    pane = _read(ADD_PANE)
+    picked = pane.split("async function pickTemplate(template) {", 1)[1]
+    assert picked.index("footer.show('form');") < picked.index("renderInline(")
+    assert picked.index("if (!active) return;") < picked.index("name.focus()")
+    assert "if (active) lead.focus();" in pane
+
+
+def test_a_landed_draft_refuses_an_outside_click() -> None:
+    """A stray click on the scrim must not throw away a form.
+
+    Before a form has landed there is nothing to lose, so the Agents dialog
+    closes on an outside click the way the marketplace takeover did; once a
+    build has landed — the same sentinel that keeps the draft across Back —
+    it refuses.
+    """
+    assert _harness()["draftBlocksBackdropClose"] is True
+    assert "closeOnBackdrop: () => !addPane.holdsDraft()," in _read(AGENTS_DIALOG)
+    assert "holdsDraft: () => builtFor !== undefined," in _read(ADD_PANE)
+
+
+def test_one_agent_form_at_a_time_across_both_dialogs() -> None:
+    """`#agent-form` is one id for the whole document.
+
+    The footer's primary submits it by that id from outside the form, so two
+    live forms would let one dialog's button submit the other's draft. The
+    rule each dialog used to keep as a module-level `openDialog` is one shared
+    slot now: whichever agent dialog is open is handed back, and a second open
+    of the Agents dialog switches the one that is already up.
+    """
+    payload = _harness()
+    assert payload["oneAgentFormAtATime"] is True
+    assert payload["theSlotIsFreeOnceBothHaveClosed"] is True
+    slot = _read(CONTEXT / "agent-dialog-slot.js")
+    for fn in ("function current()", "function claim(handle)", "function release(handle)"):
+        assert fn in slot, fn
+    for path in (CONTEXT / "agent-edit.js", AGENTS_DIALOG):
+        source = _read(path)
+        assert "SLOT.current()" in source, path.name
+        # Claimed straight after the dialog exists, released as it closes.
+        assert source.index("BossModOverlays.createModal({") < source.index("SLOT.claim(handle);")
+        assert "SLOT.release(handle);" in source, path.name
+        assert "openDialog" not in source, path.name
+
+
+def test_the_edit_role_dialog_is_edit_only() -> None:
+    """One step, the panel size, no picker, no tabs — and no create path.
+
+    A call without the agent it edits is a caller that wanted the Agents
+    dialog, so it throws and says so rather than opening a form that would
+    create an agent with no picker in front of it.
+    """
+    payload = _harness()
+    assert payload["theEditDialogRefusesToCreate"] is True
+    assert payload["theEditDialogIsOneStep"] is True
+    edit = _read(CONTEXT / "agent-edit.js")
+    assert "if (!agent) {" in edit
+    assert "size: 'panel'," in edit
+    for gone in ("BossModAgentTemplatePicker", "wasCreating", "browsing", "showStep",
+                 "pickTemplate", "agent-add-back", "BossModMarketplace"):
+        assert gone not in edit, gone
+
+
+def test_the_picker_filter_is_the_toolbar_search() -> None:
+    """A visible label beside a stretched field; now the app's search box.
+
+    The same control Tasks, the Log and the Marketplace tab use: a magnifier
+    inside one bordered box, the words the label carried now the input's
+    accessible name.
+    """
+    assert _harness()["thePickerFilterIsTheToolbarSearch"] is True
+    picker = _read(CONTEXT / "agent-template-picker.js")
+    assert "BossModSearchField.create({" in picker
+    assert "find.input.id = 'agent-template-find';" in picker
+    assert "picker-find-row" not in picker
+    overlays = _read(ROOT / "ui" / "static" / "css" / "overlays.css")
+    assert ".picker-find-row" not in overlays
+    assert ".picker-head .field-label" not in overlays
+    assert '.modal-panel[data-dialog="agents"] .search-field { flex: 0 1 280px; min-width: 0; }' in overlays
 
 
 def test_the_connection_guard_tracks_the_answer_not_the_disclosure() -> None:
@@ -221,9 +392,11 @@ def test_a_failed_form_render_leaves_a_footer_that_can_recover() -> None:
     for key in ("failedRenderDropsTheDeadPrimary",
                 "pickingAgainAfterAFailedRenderRetries"):
         assert payload[key] is True, key
-    dialog = _read(CONTEXT / "agent-edit.js")
-    assert "Refresh the page" not in dialog
-    assert "Go back and pick again." in dialog
+    # The create flow's failure copy moved with it into the Add agent pane.
+    pane = _read(ADD_PANE)
+    assert "Refresh the page" not in pane
+    assert "Refresh the page" not in _read(CONTEXT / "agent-edit.js")
+    assert "Go back and pick again." in pane
 
 
 def test_a_pick_that_is_still_building_cannot_save_the_one_before_it() -> None:
@@ -269,7 +442,9 @@ def test_a_superseded_build_never_lands_on_the_pick_that_won() -> None:
     for key in ("aSupersededBuildNeverLands", "theRecordedBuildIsTheOneOnScreen",
                 "theLosingPickRebuilds"):
         assert payload[key] is True, key
-    dialog = _read(CONTEXT / "agent-edit.js")
+    # The pick lives in the Add agent pane now, which is where the create
+    # flow moved when it became a tab of the Agents dialog.
+    dialog = _read(ADD_PANE)
     # Cleared before the build, recorded only once it has landed AND is still
     # the step on screen.
     picked = dialog.split("async function pickTemplate(template) {", 1)[1]
@@ -400,7 +575,12 @@ def test_a_build_cannot_repaint_a_dialog_that_is_not_its_own() -> None:
     """
     assert _harness()["anOrphanedBuildLeavesTheOpenDialogAlone"] is True
     footer = _read(CONTEXT / "agent-dialog-footer.js")
-    assert "if (!document.body.contains(root)) return null;" in footer
+    # The refusal is `writable`'s now, which every write and the one lookup go
+    # through — a primary with no button in its row still records the state it
+    # is owed (spec §3.1), so "may this write" and "find the button" are two
+    # questions.
+    assert "if (!document.body.contains(root)) return false;" in footer
+    assert "if (!writable(token)) return null;" in footer
     assert "return root.querySelector(`#${ID}`);" in footer
     # Nothing else in the agent modules LOOKS that button up, by any root.
     # Naming it in a docstring is how a reader finds its owner; querying for it
@@ -425,12 +605,14 @@ def test_a_build_that_fails_after_back_leaves_step_one_alone() -> None:
     payload = _harness()
     assert payload["aBuildFailingAfterBackLeavesThePickerAlone"] is True
     assert payload["pickingAgainAfterABuriedFailureRetries"] is True
-    dialog = _read(CONTEXT / "agent-edit.js")
+    # The create variant of failed() moved into the Add agent pane, which has
+    # no edit branch to guard — so the check is on the step alone.
+    dialog = _read(ADD_PANE)
     failed = dialog.split("function failed(err) {", 1)[1]
     # Nothing is written before the step is checked, and the record is cleared
     # before it — a build that failed is never a build that landed.
     assert failed.index("builtFor = undefined;") < failed.index("step !== 'form'")
-    assert failed.index("if (wasCreating && step !== 'form') return;") < failed.index("clear(formEl)")
+    assert failed.index("if (step !== 'form') return;") < failed.index("clear(formEl)")
     # And the docstring no longer claims a repair it does not always make.
     doc = dialog.split("function failed(err) {", 1)[0].rsplit("/**", 1)[1]
     assert "ONLY ON THE STEP THAT ASKED FOR IT" in doc
@@ -505,12 +687,13 @@ def test_the_roster_row_opens_two_doors() -> None:
     """
     menu = _read(JS / "shell" / "add-agent-menu.js")
     # The operator's copy: the door that leaves says where it goes, and the one
-    # that stays here is named for the thing it makes.
+    # that stays here is named for the thing it makes. Both open the Agents
+    # dialog now, each on its own tab.
     assert "'Agent Marketplace'" in menu
     assert "'Add Agent'" in menu
     assert "BossModOverlays.createMenu({" in menu
-    assert "BossModMarketplace.open()" in menu
-    assert "BossModAgentEdit.openAgentModal({ store })" in menu
+    assert "BossModAgentsDialog.open({ store, tab: 'marketplace' })" in menu
+    assert "BossModAgentsDialog.open({ store, tab: 'add' })" in menu
     assert "aria-haspopup" in menu and "aria-expanded" in menu
     # Closed before either door opens, so focus returns to the row and the
     # dialog that follows captures the row rather than the vanished panel.
@@ -520,6 +703,7 @@ def test_the_roster_row_opens_two_doors() -> None:
     assert "addAgent.toggle();" in shell
     assert "BossModAddAgentMenu.createAddAgentMenu({" in shell
     assert "BossModAgentEdit" not in shell, "the shell reaches the dialog through the menu"
+    assert "BossModAgentsDialog" not in shell, "the shell reaches the dialog through the menu"
 
 
 def test_the_browse_door_and_its_copy_are_gone() -> None:
@@ -543,12 +727,15 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     assert "agent-form-quick.js" not in index
     assert "agent-quick-connection.js" not in index
 
-    # Load order: the picker and the template marker are called by the dialog.
+    # Load order: the picker and the template marker are called by the create
+    # pane — the dialog's steps moved there — and the Agents dialog hosts it.
     def at(name: str) -> int:
         return index.index(f"static_url('js/{name}')")
 
-    assert at("context/agent-template-picker.js") < at("context/agent-edit.js")
-    assert at("context/agent-form-template.js") < at("context/agent-edit.js")
+    assert at("context/agent-template-picker.js") < at("context/agent-add-pane.js")
+    assert at("context/agent-form-template.js") < at("context/agent-add-pane.js")
+    assert at("context/agent-dialog-footer.js") < at("context/agent-add-pane.js")
+    assert at("context/agent-add-pane.js") < at("context/agents-dialog.js")
     assert at("context/agent-templates-api.js") < at("context/agent-template-picker.js")
     # The picker draws the library with the marketplace's own two builders.
     assert at("marketplace/pack-card.js") < at("context/agent-template-picker.js")
@@ -559,12 +746,27 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     # connections module, which loads with the rest of the field groups.
     assert at("context/agent-form-connections.js") < at("context/agent-form-save.js")
     assert at("context/agent-edit.js") < at("shell/add-agent-menu.js")
+    assert at("context/agents-dialog.js") < at("shell/add-agent-menu.js")
 
     joined = "\n".join(_read(p) for p in sorted(CONTEXT.glob("agent-*.js")))
     for gone in ("Browse packs", "Start blank", "Loading packs…",
                  "pack-url-input", "btn-import-pack-url", "pack-url-import-status",
                  "applyImport", "bindUrlImport", "pack-browse"):
         assert gone not in joined, gone
+    # ...and the close-and-reopen hop between Add agent and the marketplace:
+    # the footer door, the flag that sequenced it, and the takeover's own open.
+    # Read off the CODE of every module that took part in it, comments
+    # stripped: prose elsewhere in context/ says "browsing" about the catalog,
+    # which is not this.
+    hop = "\n".join(
+        re.sub(r"/\*.*?\*/|//[^\n]*", "", _read(p), flags=re.S)
+        for p in [*sorted(CONTEXT.glob("agent-*.js")), AGENTS_DIALOG,
+                  JS / "shell" / "add-agent-menu.js", JS / "marketplace" / "marketplace.js"]
+    )
+    for gone in ("agent-add-browse", "browsing", "BossModMarketplace.open"):
+        assert gone not in hop, gone
+    overlays_css = _read(ROOT / "ui" / "static" / "css" / "overlays.css")
+    assert "#agent-add-browse" not in overlays_css
     assert "pack-url-input" not in _read(CONTEXT / "agent-form-advanced.js")
 
     # What the hydrate module is left with is its whole job.
@@ -655,13 +857,23 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
         "bothMenuDoorsCarryALucideIcon", "neitherMenuDoorCarriesATrailingArrow",
         "theMarketplaceDoorIsBlocksAndNotTheOfficesIcon",
         "theMarketplaceDoorStillOpensTheTakeover",
+        "theAddAgentDoorOpensTheSameDialogOnItsTab",
+        "eachTabWearsItsDoorsMark",
     ):
         assert payload[key] is True, key
     menu = _read(JS / "shell" / "add-agent-menu.js")
     assert "h('i', { 'data-lucide': icon, 'aria-hidden': 'true' })," in menu
     assert "BossModIcons.paint(menu.element, 'add-agent-menu');" in menu
-    assert "door('blocks', 'Agent Marketplace'" in menu
-    assert "door('plus', 'Add Agent'," in menu
+    # The marks are the Agents dialog's, spent by its tabs and by these doors
+    # alike, so a door and the tab it opens cannot come to wear different ones.
+    assert "const ICONS = BossModAgentsDialog.ICONS;" in menu
+    assert "door(ICONS.marketplace, 'Agent Marketplace'," in menu
+    assert "door(ICONS.add, 'Add Agent'," in menu
+    agents = _read(JS / "context" / "agents-dialog.js")
+    icons = "const ICONS = Object.freeze({ add: 'plus', marketplace: 'blocks' });"
+    assert icons in agents
+    assert "icon: ICONS.add," in agents and "icon: ICONS.marketplace," in agents
+    assert "return { ICONS, open };" in agents
     # The copy the rows actually render, comments stripped: the prose above
     # quotes both retired labels.
     code = re.sub(r"/\*.*?\*/|//[^\n]*", "", menu, flags=re.S)
@@ -672,6 +884,7 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
     places = _read(JS / "shell" / "places.js")
     office = places.split("office: Object.assign(", 1)[1].split("}),", 1)[0]
     assert "icon: 'building'," in office, "places.js changed under this test"
+    assert "'building'" not in icons, "the Office already wears that mark"
     assert "door('building'" not in menu, "the Office already wears that mark"
     # An icon slot both rows fill, so the labels start on the same edge.
     overlays = _read(ROOT / "ui" / "static" / "css" / "overlays.css")

@@ -1,9 +1,12 @@
 /**
  * BossMod AI — the agent dialog's pinned action row, and everything in it.
  *
- * Split out of context/agent-edit.js, which owns the dialog and its two steps.
- * This owns the row underneath: which actions each step offers, the Back that
- * core/overlays.js cannot declare, and the STATE of the primary.
+ * Split out of context/agent-edit.js when that owned the whole create flow.
+ * Two dialogs spend it now: the Edit role dialog (context/agent-edit.js, one
+ * step) and the Agents dialog's Add agent pane (context/agent-add-pane.js,
+ * the picker and then the form). Each says which step is on screen; this owns
+ * the row underneath — which actions each step offers — and the STATE of the
+ * primary.
  *
  * ONE SURFACE, ONE OWNER. `#agent-form-submit` is a
  * `<button type="submit" form="agent-form">` living in the footer, outside the
@@ -18,16 +21,26 @@
  * NEXT dialog's primary. Splitting the row's buttons from one button's state
  * would rebuild that defect in miniature, so both live here.
  *
- * BACK IS BUILT, NOT DECLARED: overlays.js closes the dialog after every
- * action that is not a form submit, and Back must leave it open with the draft
- * still in it. Delete did not travel up here at all — it is destructive and
- * stays in the form body, away from the primary.
+ * BACK IS NOT IN THE ROW: overlays.js closes the dialog after every action
+ * that is not a form submit, and Back must leave it open with the draft still
+ * in it — so it is the pane's own chevron on the title row. Delete did not
+ * travel up here at all — it is destructive and stays in the form body, away
+ * from the primary.
+ *
+ * THE ROW CAN BE SUSPENDED. The Agents dialog has two tabs over one footer
+ * band, and the Add agent pane's async work — a build landing, a build
+ * failing, a save settling — can finish while the Marketplace tab is up. A
+ * suspended footer keeps the row EMPTY and only records which row the pane is
+ * owed; resuming applies that row without moving the keyboard. The Edit
+ * dialog never suspends, so for it nothing here changes.
  *
  * THE PRIMARY'S FIVE STATES, and who enters each:
  *
  *  absent    no primary in the row at all — step one of the create flow, which
- *            has no form for a `form=` button to submit, and the row the
- *            failure path leaves. Every write finds nothing and says so.
+ *            has no form for a `form=` button to submit, the row the failure
+ *            path leaves, and a suspended row. A write still RECORDS the
+ *            state it would have painted, so the button a later row builds
+ *            comes back in it; it only has nothing to paint now.
  *  building  `Loading…`, disabled — a render, before it publishes.
  *  ready     `Create Agent` / `Save Changes`, live — a render that landed, and
  *            a save on its way out.
@@ -67,24 +80,25 @@ const BossModAgentDialogFooter = (() => {
     /**
      * The actions one step offers, left to right.
      *
-     * `Browse marketplace` is step one's LEAD action: in the row, but pushed to
-     * the left edge by `#agent-add-browse`'s own rule, away from the dismissal
-     * on the right. It sat beside the filter box in the picker's header for one
-     * round and read as part of the filter — "find a template" and "browse the
-     * marketplace" are not the same errand, and putting them on one line said
-     * they were. The row's two ends are the app's own division: what takes you
-     * somewhere else on the left, what ends the task on the right.
+     * The PICKER offers none. Its only way anywhere else is the Marketplace
+     * tab beside it in the Agents dialog's head — the footer `Browse
+     * marketplace` that used to lead this row closed the dialog and reopened
+     * it behind the marketplace, which is gone with it — and its exit is the
+     * frame's `✕`. A Cancel here would be a second control for that one
+     * errand.
      *
-     * BACK IS NOT HERE. It is the chevron at the top-left of step two's body
-     * (context/agent-edit.js), which is where every other back control in this
-     * app lives — the desk's, and the marketplace detail's.
+     * BACK IS NOT HERE. It is the chevron on the title row of the form step
+     * (context/agent-add-pane.js), which is where every other back control in
+     * this app lives — the desk's, and the marketplace detail's.
      *
      * @param {'picker'|'form'} step
-     * @param {{creating: boolean, onBrowse: () => void}} chrome
+     * @param {{creating: boolean}} chrome
      * @returns {Array<object>} core/overlays.js action descriptors. The
      *   primary carries `form`, which is both what makes it submit a form it
      *   is not inside and what tells overlays.js this action must NOT close
      *   the dialog — a refused save keeps the draft on screen.
+     * @throws {Error} For any other step: a row nobody declared is a footer
+     *   that silently shows the wrong thing.
      */
     function actionsFor(step, chrome) {
         if (step === 'form') {
@@ -93,13 +107,8 @@ const BossModAgentDialogFooter = (() => {
                 label: words.resting, tone: 'primary', id: ID, form: FORM_ID,
             }];
         }
-        return [
-            {
-                label: 'Browse marketplace', tone: 'quiet', id: 'agent-add-browse',
-                onSelect: () => chrome.onBrowse(),
-            },
-            CANCEL,
-        ];
+        if (step === 'picker') return [];
+        throw new Error(`[agent-dialog-footer] no row for step "${step}"`);
     }
 
     /**
@@ -117,7 +126,10 @@ const BossModAgentDialogFooter = (() => {
      *   in, which is how a caller that takes focus away knows to give it back.
      *   `false` also covers "there was nothing to paint" — an absent primary,
      *   a superseded claim, a closed dialog — and none of those are errors:
-     *   they are the states this owner exists to tell apart.
+     *   they are the states this owner exists to tell apart. An ABSENT
+     *   primary is the one of the three that still records the state: the
+     *   claim is live and the dialog is open, so the row that next holds a
+     *   primary is owed it.
      */
     function createPrimary(root, creating) {
         const words = creating ? WORDS.create : WORDS.edit;
@@ -126,7 +138,8 @@ const BossModAgentDialogFooter = (() => {
         let holder = null;
 
         /**
-         * The last state actually painted, so a REBUILT row can be put back
+         * The last state written — painted, or owed to a row that held no
+         * primary when it was written — so a REBUILT row can be put back
          * into it. setActions makes a new button at the resting label and
          * enabled, and Back then re-picking the same template rebuilds the row
          * without rebuilding the form — so a primary the current render is
@@ -144,14 +157,25 @@ const BossModAgentDialogFooter = (() => {
             return Boolean(token) && token === holder;
         }
 
-        /** This dialog's primary, or null when it may not be written. */
-        function resolve(token) {
-            if (!holds(token)) return null;
+        /**
+         * Whether `token` may write this dialog's primary at all: it holds
+         * the claim, and the dialog is still in the document. Separate from
+         * FINDING the button, because a row that holds no primary right now
+         * is still owed the state.
+         */
+        function writable(token) {
+            if (!holds(token)) return false;
             // A closed dialog is detached with its row inside it. Painting
             // that button changes nothing anyone can see, but refusing here is
             // what makes "this owner writes to the screen or not at all" a
             // property rather than a coincidence.
-            if (!document.body.contains(root)) return null;
+            if (!document.body.contains(root)) return false;
+            return true;
+        }
+
+        /** This dialog's primary, or null when it may not be written. */
+        function resolve(token) {
+            if (!writable(token)) return null;
             return root.querySelector(`#${ID}`);
         }
 
@@ -162,7 +186,16 @@ const BossModAgentDialogFooter = (() => {
          * @returns {boolean} Whether it held the keyboard on the way in.
          */
         function set(token, { label, disabled, reason = null, refocus = false }) {
-            const button = resolve(token);
+            if (!writable(token)) return false;
+            // Remembered BEFORE the button is looked for, and without the
+            // focus move: a repaint restores what the button says, never where
+            // the keyboard is. Recording it only once a button was found lost
+            // every state that landed while the row held none — a build that
+            // finished while the Agents dialog's Marketplace tab was up left
+            // `building` as the last thing remembered, and the row the Add
+            // agent tab got back came up `Loading…` and disabled for good.
+            painted = { token, state: { label, disabled, reason } };
+            const button = root.querySelector(`#${ID}`);
             if (!button) return false;
             const held = document.activeElement === button;
             button.disabled = disabled;
@@ -173,9 +206,6 @@ const BossModAgentDialogFooter = (() => {
             // enabled control with a stale refusal.
             if (reason) button.setAttribute('aria-describedby', reason.id);
             else button.removeAttribute('aria-describedby');
-            // Remembered without the focus move: a repaint restores what the
-            // button says, never where the keyboard is.
-            painted = { token, state: { label, disabled, reason } };
             if (refocus) {
                 if (!disabled) button.focus();
                 else if (reason) reason.focus();
@@ -211,21 +241,36 @@ const BossModAgentDialogFooter = (() => {
     /**
      * The footer of one open dialog.
      *
+     * It remembers which row it OWES — `null` until a step is shown, then
+     * `'picker'`, `'form'` or `'recovery'` — separately from what is on
+     * screen, because a suspended footer shows nothing and must still know
+     * what to put back.
+     *
      * @param {object} modal  From core/overlays.js. Needed for its `element`
      *   and `setActions`, which is why this is built after the dialog while
      *   `actionsFor` — the row it opens with — is a plain function.
-     * @param {{creating: boolean, onBack: () => void}} chrome
-     * @returns {{show: (step: string) => void, recovery: () => void,
-     *   primary: object}}
+     * @param {{creating: boolean}} chrome  Which flow, and so which words the
+     *   primary says.
+     * @returns {{show: (step: 'picker'|'form') => void, recovery: () => void,
+     *   suspend: () => void, resume: () => void, primary: object}}
+     *   `show` and `recovery` write the row while the footer is live and only
+     *   record it while suspended; `suspend` empties the row; `resume` puts
+     *   the owed row back without moving the keyboard.
      * @throws {Error} Without a modal: a footer that could not scope its
      *   lookups would be the document-wide one this replaces.
      */
     function createFooter(modal, chrome) {
         if (!modal) throw new Error('[agent-dialog-footer] a modal is required');
         const primary = createPrimary(modal.element, chrome.creating);
+        /** The row the pane is owed: null, 'picker', 'form' or 'recovery'. */
+        let owed = null;
+        /** True while another tab is up and the row belongs to it. */
+        let suspended = false;
         return {
             /** Swap the row for `step`. setActions rebuilds it in place. */
             show(step) {
+                owed = step;
+                if (suspended) return;
                 modal.setActions(actionsFor(step, chrome));
                 // The button in that row is a new one and knows nothing, so
                 // the state its current render is holding is put back on it.
@@ -236,13 +281,48 @@ const BossModAgentDialogFooter = (() => {
              * `#agent-form` by id and the host no longer holds one, so the row
              * keeps only the dismissal, and takes the focus that rebuilding it
              * destroyed. Back is not rebuilt here because it is not in this
-             * row: it is the body's own chevron and survives the failure, so
-             * a create still has its way back — context/agent-edit.js is what
-             * puts the keyboard on it.
+             * row: it is the pane's own chevron and survives the failure, so
+             * a create still has its way back — context/agent-add-pane.js is
+             * what puts the keyboard on it.
+             *
+             * While SUSPENDED it only records the debt. A build that fails
+             * while the Marketplace tab is up must not put `Cancel` into that
+             * tab's footer, and must not take the keyboard from it.
              */
             recovery() {
+                owed = 'recovery';
+                if (suspended) return;
                 modal.setActions([CANCEL]);
                 modal.element.querySelector('.modal-actions').children[0].focus();
+            },
+            /**
+             * Another tab is up: the row is its, and it has none.
+             *
+             * @returns {void}
+             */
+            suspend() {
+                suspended = true;
+                modal.setActions([]);
+            },
+            /**
+             * This pane's tab is back: put up the row it is owed. The keyboard
+             * is NOT moved — it is on the tab the operator just chose, and the
+             * row coming back is not something they asked to be taken to.
+             *
+             * @returns {void}
+             */
+            resume() {
+                suspended = false;
+                if (owed === null) {
+                    modal.setActions([]);
+                    return;
+                }
+                if (owed === 'recovery') {
+                    modal.setActions([CANCEL]);
+                    return;
+                }
+                modal.setActions(actionsFor(owed, chrome));
+                primary.repaint();
             },
             primary,
         };

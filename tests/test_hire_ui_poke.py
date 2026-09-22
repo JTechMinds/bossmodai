@@ -138,10 +138,16 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
     assert "const ID = 'agent-form-submit';" in footer
     assert "const FORM_ID = 'agent-form';" in footer
     assert "id: ID, form: FORM_ID," in footer
-    # ...and the dialog is what asks that row for its actions, rather than
-    # describing a second primary of its own.
-    assert "FOOTER.actionsFor(wasCreating ? 'picker' : 'form', chrome)" in dialog
+    # ...and the dialogs are what ask that row for its actions, rather than
+    # describing a second primary of their own: the Edit role dialog opens on
+    # the form row, and the Agents dialog's Add agent pane owes the picker row
+    # from the moment it is attached (its dialog opens with none).
+    pane = _read("context/agent-add-pane.js")
+    assert "FOOTER.actionsFor('form', chrome)" in dialog
+    assert "footer.show('picker');" in pane
+    assert "actions: []," in _read("context/agents-dialog.js")
     assert "agent-form-submit" not in dialog
+    assert "agent-form-submit" not in pane
     overlays_css = (ROOT / "ui" / "static" / "css" / "overlays.css").read_text(encoding="utf-8")
     assert "pointer-events: none" in overlays_css
     assert "busy: 'Creating…'" in footer
@@ -164,29 +170,39 @@ def test_create_agent_submit_is_gated_and_warns_on_duplicate_name() -> None:
 def test_successful_create_dismisses_hire_form() -> None:
     """Re-pointed to context/agent-edit.js, which hosts the form in Phase 2B.
 
-    Same property, same order: whether this was a CREATE is captured before the
-    save, and only a create closes the form and selects the new agent. Editing
-    must leave the operator where they were.
+    Same property, same order: only a create closes the form AND selects the
+    new agent; editing must leave the operator where they were.
+
+    Re-pointed again when the two flows became two dialogs (spec 2026-09-22):
+    the create is the Agents dialog's Add agent pane, the edit is
+    context/agent-edit.js alone. Which flow a save belongs to used to be
+    captured as `wasCreating`; it is now WHICH MODULE the save lands in, so
+    the property is pinned on each side of that seam.
     """
-    source = _read("context/agent-edit.js")
-    # Phase 4 split agent-panel.js away; renderInline is this module's own now.
-    assert "void renderInline({ container: formEl, agent: agent || null, primary, onSave, onDelete })" in source
-    # Captured at construction, before any save can land.
-    assert "const wasCreating = !agent;" in source
-    on_save = source.split("function onSave(savedAgent) {", 1)[1].split(
-        "function onDelete()", 1
+    pane = _read("context/agent-add-pane.js")
+    # A create builds with no agent, and its save routes to the new one.
+    assert "renderInline({ container: formEl, agent: null, primary, onSave })" in pane
+    on_save = pane.split("function onSave(savedAgent) {", 1)[1].split(
+        "function failed(err)", 1
     )[0]
-    assert "savedAgent && wasCreating" in on_save
+    assert "if (savedAgent) {" in on_save
     assert "conversationId: savedAgent.id" in on_save
     assert "conversationKind: 'agent'" in on_save
-    # The form closes either way; only a create moves the conversation. Round
-    # three made the form a dialog, so "the form closes" is the dialog closing
-    # rather than the host being told to put its own view back.
-    assert "modal.close();" in on_save
-    assert on_save.index("savedAgent && wasCreating") < on_save.index("modal.close();")
-    assert source.index("const wasCreating = !agent;") < source.index(
-        "function onSave(savedAgent) {"
-    )
+    # The form closes either way; only a create moves the conversation. The
+    # pane has no modal of its own, so "the form closes" is the dialog's
+    # onDone closing it.
+    assert "onDone();" in on_save
+    assert on_save.index("if (savedAgent) {") < on_save.index("onDone();")
+    assert "onDone: () => modal.close()," in _read("context/agents-dialog.js")
+
+    source = _read("context/agent-edit.js")
+    # Phase 4 split agent-panel.js away; renderInline is this module's own now.
+    assert "void renderInline({ container: formEl, agent, primary, onSave, onDelete })" in source
+    edit_save = source.split("function onSave() {", 1)[1].split("function onDelete()", 1)[0]
+    # An edit closes and routes nowhere: the operator stays where they were.
+    assert "modal.close();" in edit_save
+    assert "setState" not in edit_save
+    assert "conversationId" not in edit_save
 
 
 def test_directory_and_org_upsert_world_roster() -> None:

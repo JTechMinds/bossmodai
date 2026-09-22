@@ -62,8 +62,19 @@ def test_office_sizes_the_canvas_on_mount() -> None:
     assert "addEventListener('resize'" not in canvas
     assert 'addEventListener("resize"' not in canvas
     # Switching back to the Map tab is the other moment the canvas is revealed
-    # at a size it has never measured.
+    # at a size it has never measured. The tabs are core/tabs.js's now; the
+    # pane swap and this resize are the half the Office kept, and the builder
+    # calls it back on every tab the operator picks.
     assert "canvas.resize()" in place
+    show = place.split("function showPane(id) {", 1)[1].split("\n    }", 1)[0]
+    assert "if (id === 'map' && canvas) canvas.resize();" in show
+    assert "BossModTabs.create({" in place
+    assert "onSelect: showPane," in place
+    # Tab and pane ids are unchanged: each pane is still named by its tab.
+    assert "idPrefix: 'office-tab'," in place
+    assert "panelId: `office-pane-${tab.id}`" in place
+    assert "'aria-labelledby': 'office-tab-map'" in place
+    assert "'aria-labelledby': 'office-tab-org'" in place
 
 
 def test_paused_shows_the_overlay_and_dims_the_floor() -> None:

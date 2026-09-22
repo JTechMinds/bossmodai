@@ -667,6 +667,34 @@ def test_every_module_global_a_loaded_script_calls_is_actually_loaded() -> None:
     assert not problems, "\n".join(problems)
 
 
+def test_the_agents_dialog_modules_load_where_the_design_put_them() -> None:
+    """Four modules arrived with the Agents dialog; each loads after what it calls.
+
+    The global-resolution test above catches a module calling one that loads
+    LATER. This pins the placement the design chose (spec 2026-09-22, 4.14),
+    so a move that still resolves but splits a block is a decision rather than
+    an accident: the tab group with the other shared controls, the one-form
+    slot before the first dialog that takes it, the create pane straight after
+    the footer it drives, and the Agents dialog after both the Edit role
+    dialog it shares that slot with and the Marketplace pane it hosts.
+    """
+    order = {name: index for index, name in enumerate(_scripts())}
+    for name in ("js/core/tabs.js", "js/context/agent-dialog-slot.js",
+                 "js/context/agent-add-pane.js", "js/context/agents-dialog.js"):
+        assert name in order, f"index.html does not load {name}"
+    assert order["js/core/search-field.js"] < order["js/core/tabs.js"]
+    assert order["js/core/tabs.js"] < order["js/places/office/office-place.js"]
+    assert order["js/core/search-field.js"] < order["js/context/agent-template-picker.js"]
+    assert order["js/core/search-field.js"] < order["js/marketplace/marketplace-view.js"]
+    assert order["js/context/agent-dialog-slot.js"] < order["js/context/agent-edit.js"]
+    assert order["js/context/agent-dialog-footer.js"] < order["js/context/agent-add-pane.js"]
+    assert order["js/context/agent-edit.js"] < order["js/context/agents-dialog.js"]
+    for dependency in ("js/core/tabs.js", "js/context/agent-add-pane.js",
+                       "js/context/agent-dialog-slot.js", "js/marketplace/marketplace.js"):
+        assert order[dependency] < order["js/context/agents-dialog.js"], dependency
+    assert order["js/context/agents-dialog.js"] < order["js/shell/add-agent-menu.js"]
+
+
 def test_shell_stylesheets_are_linked() -> None:
     html = _html()
     for sheet in ("css/tokens.css", "css/base.css", "css/shell.css"):

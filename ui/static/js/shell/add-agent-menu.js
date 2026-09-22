@@ -7,6 +7,12 @@
  * "find an agent to start from" and "author one" are separate errands and the
  * row must not silently pick one.
  *
+ * Both doors lead into the SAME dialog — context/agents-dialog.js, with Add
+ * agent and the Marketplace as two tabs of it — and each opens it on its own
+ * tab. The operator can cross to the other errand from inside without coming
+ * back here, which the two separate modals these doors used to open could not
+ * offer: the marketplace opened from this menu had no way to Add agent at all.
+ *
  * Click-triggered and toggling, following conversation/chrome.js's `⋯`. A
  * hover-only menu is unreachable by keyboard and by touch, and the panel
  * itself is core/overlays.js's — one focus trap, Esc, and focus returned to
@@ -31,8 +37,8 @@ const BossModAddAgentMenu = (() => {
      * @param {HTMLElement} deps.anchor     The row. Focus returns here, and
      *   the panel hangs off it.
      * @param {HTMLElement} deps.container  What the panel is positioned in.
-     * @param {object} deps.store           Handed to the create dialog, which
-     *   writes the new agent into it.
+     * @param {object} deps.store           Handed to the Agents dialog, whose
+     *   Add agent tab writes the new agent into it.
      * @returns {{toggle: () => void}} `toggle` is what the roster's onHire
      *   calls: it opens the menu, or puts away the one already open.
      * @throws {Error} When any of the three is missing. A menu with no anchor
@@ -68,8 +74,8 @@ const BossModAddAgentMenu = (() => {
             return h('button', {
                 class: 'add-agent-choice', type: 'button',
                 // Closed FIRST, on purpose: close() puts focus back on the
-                // row, so the dialog or takeover that follows captures the row
-                // as the thing to return focus to when it closes in turn.
+                // row, so the dialog that follows captures the row as the
+                // thing to return focus to when it closes in turn.
                 onclick: () => { menu.close(); open(); },
             },
             h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }),
@@ -81,21 +87,20 @@ const BossModAddAgentMenu = (() => {
                 menu.close();
                 return;
             }
+            // Each door wears the mark of the tab it opens — one definition,
+            // the Agents dialog's, so the two can never drift apart. Why
+            // `blocks` and a drawn `plus` is said there.
+            const ICONS = BossModAgentsDialog.ICONS;
             menu = BossModOverlays.createMenu({
                 anchor,
                 label: 'Add agent',
                 items: [
-                    // `blocks`, never `building`: shell/places.js already
-                    // spends that mark on the Office, and two doors in one
-                    // shell wearing the same icon is an icon that identifies
-                    // neither of them.
-                    door('blocks', 'Agent Marketplace', () => BossModMarketplace.open()),
-                    // A drawn `plus`, not the literal `+` this used to type
-                    // into the label: the two rows have to line their labels
-                    // up on one left edge, and a character has the metrics of
-                    // whatever font renders it while an icon has the icon's.
-                    door('plus', 'Add Agent',
-                        () => BossModAgentEdit.openAgentModal({ store })),
+                    // The Agents dialog, on its Marketplace tab.
+                    door(ICONS.marketplace, 'Agent Marketplace',
+                        () => BossModAgentsDialog.open({ store, tab: 'marketplace' })),
+                    // The same dialog, on its Add agent tab.
+                    door(ICONS.add, 'Add Agent',
+                        () => BossModAgentsDialog.open({ store, tab: 'add' })),
                 ],
                 container,
                 onClose: () => {

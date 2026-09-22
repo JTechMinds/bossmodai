@@ -1,10 +1,13 @@
-"""Agent marketplace: takeover states, card staleness, install, uninstall, trust.
+"""Agent marketplace: pane states, card staleness, install, uninstall, trust.
 
-The behavioural half runs in tests/js_marketplace_harness.cjs — a fake DOM, the
-real modules eval'd in load order, one JSON verdict on stdout. The static half
-pins the rules a harness cannot see: the API client is under the token wrap,
-remote data never reaches a markup-string path, the stylesheet spends tokens
-rather than hex, and index.html loads the six modules after what they call.
+The marketplace is the Agents dialog's Marketplace tab now — a pane with no
+modal of its own (context/agents-dialog.js owns the frame). The behavioural
+half runs in tests/js_marketplace_harness.cjs — a fake DOM, the real modules
+eval'd in load order, the pane in a stand-in for the dialog's takeover frame,
+one JSON verdict on stdout. The static half pins the rules a harness cannot
+see: the API client is under the token wrap, remote data never reaches a
+markup-string path, the stylesheet spends tokens rather than hex, and
+index.html loads the modules after what they call.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 CSS = ROOT / "ui" / "static" / "css" / "marketplace.css"
 OVERLAYS = ROOT / "ui" / "static" / "css" / "overlays.css"
+TOKENS = ROOT / "ui" / "static" / "css" / "tokens.css"
 SHELL_CSS = ROOT / "ui" / "static" / "css" / "shell.css"
 HTML = ROOT / "ui" / "templates" / "index.html"
 HERE = Path(__file__).resolve().parent
@@ -29,6 +33,7 @@ HARNESS_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "search-field.js",
     JS / "context" / "agent-api.js",
     JS / "context" / "agent-templates-api.js",
     JS / "marketplace" / "marketplace-withheld.js",
@@ -40,6 +45,10 @@ HARNESS_MODULES = [
     JS / "marketplace" / "marketplace-view.js",
     JS / "marketplace" / "marketplace.js",
 ]
+
+# The dialog the pane rides in: the one createModal the marketplace used to
+# make for itself is this module's now.
+AGENTS_DIALOG = JS / "context" / "agents-dialog.js"
 
 MARKETPLACE_MODULES = [
     JS / "context" / "agent-templates-api.js",
@@ -105,8 +114,10 @@ def test_marketplace_behaviour() -> None:
     expected = [
         # Loading, failed and empty are three different answers.
         "loadingCopy", "loadingClears", "failedIsAlert", "retryRecovers", "emptyCopy",
-        # Shape and semantics.
-        "isTakeover", "railCounts", "railIsAList", "cardsAreButtons", "findHasALabel",
+        # Shape and semantics. The filter is the app's toolbar search, named by
+        # its aria-label, and typing into it keeps the keyboard and the caret.
+        "isTakeover", "railCounts", "railIsAList", "cardsAreButtons",
+        "findIsTheSearchField", "typingKeepsFocusAndCaret",
         # The rail's two kinds of row, told apart.
         "railGroupsScopesApartFromCategories", "railKeyboardCrossesBothGroups",
         # The decision this whole surface exists to get right.
@@ -152,8 +163,18 @@ def test_marketplace_behaviour() -> None:
         # Install, at the pin that was displayed.
         "selectFocusesDetail", "detailShowsInstall", "installUsedDisplayedPin",
         "installFlipsCardState", "installAnnounces",
-        # The hero's primary slot holds an action or nothing at all.
+        # The hero's primary slot holds an action or nothing at all — and on an
+        # installed pack that action is "Add agent from this".
         "installedIsStatedNotOffered", "uninstallStaysQuiet", "updateKeepsThePrimary",
+        "useIsThePrimaryOnAnInstalledPack", "useIsASecondaryBesideUpdate",
+        "useIsAbsentOnAnUninstalledPack", "useHandsOverTheInstalledRow",
+        # ...and it cannot be pressed while its own pack's update or uninstall
+        # is in flight: the row it would hand over is the one being replaced.
+        "useIsWithheldWhileItsPackIsWritten",
+        # The pane reads the catalog lazily, and tells the dialog when the
+        # library changed — only when it did.
+        "theCatalogIsReadOnFirstActivateOnly",
+        "theLibraryChangeIsToldOncePerSuccessAndNeverOnFailure",
         # URL installs live only under Installed; the pane shows the done bar
         # and the tools the row carries.
         "extrasOnlyUnderInstalled", "detailShowsTheDoneBarAndTools",
@@ -868,6 +889,12 @@ def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:
     views. Every state the takeover can open in still has to hold a keyboard:
     loading, ready, empty and failed all do, and the failed one keeps its
     `Try again` besides.
+
+    Re-pointed when the marketplace became a pane: the frame, its empty footer
+    and its outside-click rule are the Agents dialog's now, so the declarations
+    are read off agents-dialog.js. An outside click still closes it — until an
+    Add agent form has landed, which is the one thing on either tab a stray
+    click could throw away.
     """
     payload = _harness()
     for key in (
@@ -877,7 +904,8 @@ def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:
     ):
         assert payload[key] is True, key
     state = _read(JS / "marketplace" / "marketplace.js")
-    assert "actions: []," in state
+    dialog = _read(AGENTS_DIALOG)
+    assert "actions: []," in dialog
     assert "COPY.close" not in state, "the footer's Close is gone, and so is its copy"
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
     view = _read(JS / "marketplace" / "marketplace-view.js")
@@ -888,7 +916,8 @@ def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:
     assert "market-close" not in detail + view
     assert "COPY.dismiss" not in detail
     assert "onDismiss" not in state
-    assert "closeOnBackdrop: true" in state
+    assert "closeOnBackdrop" not in state, "the frame is the dialog's, and so is its scrim rule"
+    assert "closeOnBackdrop: () => !addPane.holdsDraft()," in dialog
     market_css = (ROOT / "ui" / "static" / "css" / "marketplace.css").read_text(encoding="utf-8")
     assert ".market-close" not in market_css
     # The empty row createModal still builds leaves neither a rule nor a gap.
@@ -913,7 +942,14 @@ def test_the_heros_primary_slot_only_ever_holds_an_action() -> None:
     is the destructive action and must not be the most prominent thing here.
     """
     payload = _harness()
-    for key in ("installedIsStatedNotOffered", "uninstallStaysQuiet", "updateKeepsThePrimary"):
+    for key in (
+        "installedIsStatedNotOffered", "uninstallStaysQuiet", "updateKeepsThePrimary",
+        # "Add agent from this" is the ACTION an installed-and-current pack
+        # has, so it is what fills the slot `primary()` leaves empty; beside
+        # `Update` it is a secondary, and with nothing installed it is absent.
+        "useIsThePrimaryOnAnInstalledPack", "useIsASecondaryBesideUpdate",
+        "useIsAbsentOnAnUninstalledPack", "useHandsOverTheInstalledRow",
+    ):
         assert payload[key] is True, key
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
     primary = detail.split("function primary(item, state, handlers) {", 1)[1]
@@ -921,6 +957,16 @@ def test_the_heros_primary_slot_only_ever_holds_an_action() -> None:
     assert "if (item.state === 'installed') return null;" in primary
     assert "market-action-lead" in primary
     assert "COPY.uninstall" not in primary, "the destructive action is not the primary"
+    use = detail.split("function use(item, state, handlers) {", 1)[1].split("\n    }", 1)[0]
+    assert "const lead = item.state === 'installed';" in use
+    assert "id: 'market-use'" in use
+    assert "COPY.uninstall" not in use, "the destructive action is not the primary"
+    # Withheld while its own pack is written — useIsWithheldWhileItsPackIsWritten.
+    assert "state.busyId === item.key || state.busyId === item.template.id" in use
+    assert "disabled: writing," in use
+    assert "use: 'Add agent from this'," in detail
+    actions = detail.split("function actions(item, state, handlers) {", 1)[1]
+    assert "template ? use(item, state, handlers) : null," in actions
     # The state moved to the metadata line, and it is a span there, not a slab.
     assert "h('span', { class: 'market-detail-installed' }, COPY.installed)" in detail
     assert "market-detail-state" not in detail
@@ -942,10 +988,17 @@ def test_staleness_is_content_hash_never_commit_sha() -> None:
 
 
 def test_the_takeover_is_the_only_dialog_the_marketplace_opens() -> None:
-    """Install-from-URL and both confirms are inline. No nested focus trap."""
+    """Install-from-URL and both confirms are inline. No nested focus trap.
+
+    Re-pointed when the marketplace became a pane: it opens NO dialog now, not
+    even its own — the one takeover it rides in is the Agents dialog's, and
+    that dialog makes exactly one.
+    """
     state = _read(JS / "marketplace" / "marketplace.js")
-    assert state.count("createModal(") == 1
-    assert "size: 'takeover'" in state
+    assert "createModal(" not in state
+    dialog = _read(AGENTS_DIALOG)
+    assert dialog.count("createModal(") == 1
+    assert "size: 'takeover'" in dialog
     for path in MARKETPLACE_MODULES:
         source = _code(path)
         assert "slideOver" not in source, path.name
@@ -1082,6 +1135,41 @@ def test_the_marketplace_owns_its_own_stylesheet() -> None:
     assert html.index("css/overlays.css") < html.index("css/marketplace.css")
 
 
+def test_both_tabs_are_one_grid() -> None:
+    """The Add agent picker and the Marketplace are one layout in one dialog.
+
+    They were tuned for two dialogs — the picker's 160px rail and 240px cards
+    for a 960px panel, the Marketplace's 180px and 260px for the takeover —
+    and once they became two tabs of the same takeover, every tab switch moved
+    the rail edge and resized every card. The two numbers are tokens both
+    grids read, and the two heads stand the same height: the Marketplace's
+    `Install from URL` was taller than the search field beside it, which put
+    its grid 2px lower than the picker's.
+    """
+    tokens = _read(TOKENS)
+    assert "--filter-rail: 180px;" in tokens
+    assert "--pack-card-min: 260px;" in tokens
+    market = _read(CSS)
+    overlays = _read(OVERLAYS)
+    rail = "grid-template-columns: var(--filter-rail) minmax(0, 1fr);"
+    cards = "grid-template-columns: repeat(auto-fill, minmax(var(--pack-card-min), 1fr));"
+    for sheet, body, grid in ((market, ".market-body {", ".market-cards {"),
+                              (overlays, ".picker-body {", ".picker-cards {")):
+        assert rail in sheet.split(body, 1)[1].split("}", 1)[0], body
+        assert cards in sheet.split(grid, 1)[1].split("}", 1)[0], grid
+    for gone in ("160px minmax(0, 1fr)", "minmax(240px, 1fr)"):
+        assert gone not in overlays, gone
+    # One toolbar height: the URL door is the search field's 28px.
+    toggle = market.split(".market-url-toggle {", 1)[1].split("}", 1)[0]
+    assert "min-height: 28px;" in toggle and "padding: 0 12px;" in toggle
+    assert "min-height: 28px;" in _read(
+        ROOT / "ui" / "static" / "css" / "controls.css").split(".search-field {", 1)[1].split("}", 1)[0]
+    # And they fold together on a narrow window, at the Marketplace's breakpoint.
+    narrow = overlays.split("@media (max-width: 700px) {", 1)[1].split("}\n}", 1)[0]
+    assert ".picker-body { grid-template-columns: minmax(0, 1fr); }" in narrow
+    assert "@media (max-width: 700px) {" in market
+
+
 def test_marketplace_styles_are_tokens_only() -> None:
     """No hex, no rgba, no magic colour in the sheet this surface owns."""
     css = _read(CSS)
@@ -1099,8 +1187,11 @@ def test_marketplace_styles_are_tokens_only() -> None:
     assert "background: var(--accent-bg);" in selected
     assert "color: var(--blue-ink); }" in css.split(
         '.market-card[aria-current="true"] .market-card-author', 1)[1]
-    # Two columns now, not three: the detail is a view, not a gutter.
-    assert "grid-template-columns: 180px minmax(0, 1fr);" in css
+    # Two columns now, not three: the detail is a view, not a gutter. The rail
+    # column is a token the Add agent picker shares (see
+    # test_both_tabs_are_one_grid); 180px is still its width.
+    assert "grid-template-columns: var(--filter-rail) minmax(0, 1fr);" in css
+    assert "--filter-rail: 180px;" in _read(TOKENS)
     assert "320px" not in css
     assert 'data-detail="open"' not in css, "the pushed view is retired"
     # Each view owns exactly one scroller, and both stick at an exact 0.
@@ -1158,8 +1249,12 @@ def test_index_loads_the_six_modules_after_what_they_call() -> None:
         "js/context/agent-api.js", "js/context/agent-templates-api.js",
     ):
         assert order[dependency] < order["js/marketplace/marketplace-detail.js"], dependency
-    # agent-edit.js opens the takeover in step 4, so it must load after it.
-    assert order["js/marketplace/marketplace.js"] < order["js/context/agent-edit.js"]
+    # The browse head's filter is the app's toolbar search, and it paints its
+    # own magnifier on every render.
+    for dependency in ("js/core/search-field.js", "js/core/icons.js"):
+        assert order[dependency] < order["js/marketplace/marketplace-view.js"], dependency
+    # The Agents dialog builds the pane, so it must load after it.
+    assert order["js/marketplace/marketplace.js"] < order["js/context/agents-dialog.js"]
 
 
 def test_the_rail_groups_scopes_apart_from_the_catalogs_categories() -> None:

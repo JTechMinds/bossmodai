@@ -75,10 +75,15 @@ CONTEXT_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "core" / "search-field.js",
+    JS / "core" / "tabs.js",
     CONTEXT / "agent-template-picker.js",
     CONTEXT / "agent-form-template.js",
     CONTEXT / "agent-dialog-footer.js",
+    CONTEXT / "agent-add-pane.js",
+    CONTEXT / "agent-dialog-slot.js",
     CONTEXT / "agent-edit.js",
+    CONTEXT / "agents-dialog.js",
     CONTEXT / "desk-panel.js",
     CONTEXT / "context-column.js",
     JS / "places" / "chat" / "chat-place.js",
@@ -549,7 +554,8 @@ def test_agent_edit_modules_stay_focused() -> None:
     modules = sorted(CONTEXT.glob("agent-*.js"))
     names = [path.name for path in modules]
     assert names == [
-        "agent-api.js", "agent-dialog-footer.js", "agent-edit.js",
+        "agent-add-pane.js", "agent-api.js", "agent-dialog-footer.js",
+        "agent-dialog-slot.js", "agent-edit.js",
         "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
         "agent-form-connections.js", "agent-form-fields.js",
@@ -729,13 +735,18 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "function openDeskFrom(store, target)" in column
     assert "deskPath: typeof target === 'string' && target.startsWith('/')" in column
 
-    # Hiring selects the new agent and opens their desk.
+    # Hiring selects the new agent and opens their desk. The create flow is
+    # the Agents dialog's Add agent pane now, and the Edit role dialog is
+    # edit-only, so the routing lives in the pane and the edit's save routes
+    # nowhere.
     edit = _read(CONTEXT / "agent-edit.js")
     # Phase 4 split agent-panel.js away; renderInline is this module's own now.
-    assert "void renderInline({ container: formEl, agent: agent || null, primary, onSave, onDelete })" in edit
-    assert "const wasCreating = !agent;" in edit
-    saved = edit.split("function onSave(savedAgent) {", 1)[1]
-    assert "savedAgent && wasCreating" in saved
+    assert "void renderInline({ container: formEl, agent, primary, onSave, onDelete })" in edit
+    assert "conversationId" not in edit, "an edit leaves the operator where they were"
+    pane = _read(CONTEXT / "agent-add-pane.js")
+    assert "const landed = await renderInline({ container: formEl, agent: null, primary, onSave });" in pane
+    saved = pane.split("function onSave(savedAgent) {", 1)[1]
+    assert "if (savedAgent) {" in saved
     assert "conversationKind: 'agent'" in saved
     assert "deskAgentId: savedAgent.id" in saved
 
@@ -751,7 +762,7 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     # The row opens the two-door menu; the dialog is one of the doors, and the
     # menu module is where that call now lives.
     assert "addAgent.toggle();" in shell_source
-    assert "BossModAgentEdit.openAgentModal({ store })" in _read(
+    assert "BossModAgentsDialog.open({ store, tab: 'add' })" in _read(
         JS / "shell" / "add-agent-menu.js")
 
     # deskPath is a real store key with a real consumer, not dead state.

@@ -154,6 +154,7 @@
     <script src="{{ static_url('js/core/avatar.js') }}"></script>
     <script src="{{ static_url('js/core/switch.js') }}"></script>
     <script src="{{ static_url('js/core/search-field.js') }}"></script>
+    <script src="{{ static_url('js/core/tabs.js') }}"></script>
     <script src="{{ static_url('js/core/store.js') }}"></script>
     <script src="{{ static_url('js/core/bus.js') }}"></script>
     <!-- The one focus trap the three overlays share, before the file that
@@ -271,11 +272,12 @@
     <script src="{{ static_url('js/context/agent-api.js') }}"></script>
     <script src="{{ static_url('js/context/agent-templates-api.js') }}"></script>
 
-    <!-- Marketplace: the takeover that installs agent templates. It reads the
-         catalog through agent-api.js and the library through
-         agent-templates-api.js, and context/agent-edit.js opens it, so it
-         loads INSIDE this block rather than before it — after the two clients
-         it calls, before the dialog that calls it.
+    <!-- Marketplace: the pane that installs agent templates, one of the
+         Agents dialog's two tabs. It reads the catalog through agent-api.js
+         and the library through agent-templates-api.js, and
+         context/agents-dialog.js builds it, so it loads INSIDE this block
+         rather than before it — after the two clients it calls, before the
+         dialog that builds it.
 
          Eight files, in dependency order and no cycle between them: what the
          app says about packs it will not offer first (both views spend it),
@@ -312,15 +314,18 @@
     <script src="{{ static_url('js/context/agent-recovery.js') }}"></script>
 
     <!-- Add agent, in dependency order: the form's save wiring, then the two
-         halves of the create dialog's steps, then the dialog's pinned footer,
-         then the dialog that swaps between them.
+         halves of the create pane's steps, then the pinned footer, then the
+         create pane that swaps between them, then the one-form-at-a-time slot
+         the two agent dialogs share.
 
          The picker reads the local library through agent-templates-api.js and
          draws it with the two builders the marketplace block above already
          defined, so it loads after both. agent-form-template.js only marks the
          form agent-form.js built, and agent-dialog-footer.js owns the primary
-         the save wiring is handed — agent-edit.js is what hands it over, so it
-         loads last.
+         the save wiring is handed — agent-add-pane.js hands it over for a
+         create and agent-edit.js for an edit, so both load after it. The
+         Agents dialog, which hosts the create pane beside the Marketplace
+         pane, loads straight after agent-edit.js.
 
          The module that used to lead this block is gone: the save wiring's
          refusal still ASKS which shape the form's connection question is in,
@@ -330,9 +335,12 @@
     <script src="{{ static_url('js/context/agent-template-picker.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-template.js') }}"></script>
     <script src="{{ static_url('js/context/agent-dialog-footer.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-add-pane.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-dialog-slot.js') }}"></script>
 
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
+    <script src="{{ static_url('js/context/agents-dialog.js') }}"></script>
     <script src="{{ static_url('js/context/desk-files.js') }}"></script>
     <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
     <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
@@ -383,8 +391,8 @@
     <script src="{{ static_url('js/places/log/log-place.js') }}"></script>
 
 
-    <!-- The rail's Add agent menu opens either the marketplace or the create
-         dialog, so it loads after both rather than with the rest of shell/. -->
+    <!-- The rail's Add agent menu opens the Agents dialog on either of its
+         two tabs, so it loads after it rather than with the rest of shell/. -->
     <script src="{{ static_url('js/shell/add-agent-menu.js') }}"></script>
 
     <!-- Boots last: every module it wires must already be defined. -->

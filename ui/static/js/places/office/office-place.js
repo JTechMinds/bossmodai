@@ -28,8 +28,8 @@ const BossModOfficePlace = (() => {
     let orgPane = null;
     let statePill = null;
     let countsLine = null;
-    let tabButtons = new Map();
-    let activeTab = 'map';
+    /** Map | Org — core/tabs.js, which owns the tabs; the panes are this file's. */
+    let tabs = null;
     const disposers = [];
 
     /**
@@ -51,52 +51,18 @@ const BossModOfficePlace = (() => {
         mapPane.querySelector('.office-paused').hidden = !paused;
     }
 
-    /** Show one pane and mark its tab selected; both render into the stage. */
-    function selectTab(id) {
-        activeTab = id;
-        for (const [tabId, button] of tabButtons) {
-            const on = tabId === id;
-            button.setAttribute('aria-selected', on ? 'true' : 'false');
-            // Roving tabindex: one tab stop for the group, arrows move within.
-            button.setAttribute('tabindex', on ? '0' : '-1');
-        }
+    /**
+     * Show one pane; both render into the stage. Which TAB is selected is
+     * BossModTabs' to mark — this is the half only the Office knows about.
+     *
+     * @param {'map'|'org'} id
+     * @returns {void}
+     */
+    function showPane(id) {
         mapPane.hidden = id !== 'map';
         orgPane.hidden = id !== 'org';
         // A canvas sized while hidden is a canvas sized to zero.
         if (id === 'map' && canvas) canvas.resize();
-    }
-
-    function onTabKeydown(event) {
-        const order = TABS.map((tab) => tab.id);
-        const at = order.indexOf(activeTab);
-        let next = null;
-        if (event.key === 'ArrowRight') next = order[(at + 1) % order.length];
-        if (event.key === 'ArrowLeft') next = order[(at - 1 + order.length) % order.length];
-        if (event.key === 'Home') next = order[0];
-        if (event.key === 'End') next = order[order.length - 1];
-        if (!next) return;
-        event.preventDefault();
-        selectTab(next);
-        tabButtons.get(next).focus();
-    }
-
-    function buildTabs() {
-        const list = h('div', { class: 'office-tabs', role: 'tablist', 'aria-label': 'Office view' });
-        tabButtons = new Map();
-        TABS.forEach((tab) => {
-            const button = h('button', {
-                class: 'office-tab',
-                type: 'button',
-                role: 'tab',
-                id: `office-tab-${tab.id}`,
-                'aria-controls': `office-pane-${tab.id}`,
-                onclick: () => selectTab(tab.id),
-                onkeydown: onTabKeydown,
-            }, tab.label);
-            tabButtons.set(tab.id, button);
-            list.append(button);
-        });
-        return list;
     }
 
     /**
@@ -166,7 +132,6 @@ const BossModOfficePlace = (() => {
          */
         mount(el, ctx) {
             ctxRef = ctx;
-            activeTab = 'map';
             clear(el);
 
             statePill = h('span', { class: 'office-state', 'data-state': 'live' }, 'live');
@@ -191,13 +156,21 @@ const BossModOfficePlace = (() => {
 
             ticker = BossModTicker.createTicker({ bus: ctx.bus, navigate: ctx.navigate });
 
+            tabs = BossModTabs.create({
+                label: 'Office view',
+                idPrefix: 'office-tab',
+                tabs: TABS.map((tab) => ({ ...tab, panelId: `office-pane-${tab.id}` })),
+                selected: 'map',
+                onSelect: showPane,
+            });
+
             el.append(h('div', { class: 'office-place' },
                 h('header', { class: 'office-header' },
                     h('div', { class: 'office-title' },
                         h('h1', { tabindex: '-1' }, 'Office'),
                         statePill),
                     countsLine,
-                    buildTabs()),
+                    tabs.element),
                 stage,
                 ticker.element));
 
@@ -214,7 +187,7 @@ const BossModOfficePlace = (() => {
             });
             orgPane.append(orgView.element);
 
-            selectTab('map');
+            showPane('map');
             paintRuntimeState(ctx.store.getState().runtimePaused);
 
             disposers.push(ctx.store.subscribe((s) => s.roster, (roster) => {
@@ -272,7 +245,7 @@ const BossModOfficePlace = (() => {
             orgPane = null;
             statePill = null;
             countsLine = null;
-            tabButtons = new Map();
+            tabs = null;
             ctxRef = null;
         },
     };

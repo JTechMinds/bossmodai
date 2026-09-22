@@ -158,10 +158,15 @@ CONTEXT_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "core" / "search-field.js",
+    JS / "core" / "tabs.js",
     JS / "context" / "agent-template-picker.js",
     JS / "context" / "agent-form-template.js",
     JS / "context" / "agent-dialog-footer.js",
+    JS / "context" / "agent-add-pane.js",
+    JS / "context" / "agent-dialog-slot.js",
     JS / "context" / "agent-edit.js",
+    JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
     JS / "context" / "context-column.js",
     JS / "places" / "chat" / "chat-place.js",
@@ -181,17 +186,18 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     the standard answer and this is it.
     """
     payload = _agent_dialog_payload()
-    # The create dialog carries a footer per step now. Step one has no form, so
-    # it has no primary either; it LEADS with the marketplace door and ends with
-    # the dismissal, which the row's own rule pushes to opposite ends — side by
-    # side they read as two ways to leave, and beside the filter box (where the
-    # door sat for one round) it read as part of the filter.
+    # The create flow carries a footer per step now. Step one has no form, so
+    # it has no primary either — and since Add agent became a tab of the
+    # Agents dialog it pins nothing at all: the marketplace door that led the
+    # row is the Marketplace tab in the dialog's head, and the exit is the
+    # frame's ✕ on every tab. The primary is pinned on the step that HAS a
+    # form, which is this test's subject.
     #
-    # Step two no longer pins Back: it is the chevron at the top-left of the
-    # step's body, which is where .desk-back and the marketplace detail's `‹`
-    # already are. Its presence there is pinned in the harness and in
+    # Step two no longer pins Back: it is the chevron on the title row, which
+    # is where .desk-back and the marketplace detail's `‹` already are. Its
+    # presence there is pinned in the harness and in
     # tests/test_add_agent_modal.py.
-    assert payload["stepOnePinned"] == ["Browse marketplace", "Cancel"]
+    assert payload["stepOnePinned"] == []
     assert payload["stepTwoPinned"] == ["Cancel", "Create Agent"]
     assert payload["editPinnedActions"] == ["Cancel", "Save Changes"]
     # It submits the form it is no longer inside.

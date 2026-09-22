@@ -188,8 +188,9 @@
    a scrolling card grid. Same reasoning: the part that scrolls has to be
    INSIDE the body rather than the body itself, or the header scrolls away with
    the grid and a second scrollbar wraps the one that is already there. So
-   panel content brings its own scroller — .agent-form-host and .picker-body
-   in the agent dialog, .file-view, .task-detail — as a flex child of this. */
+   panel content brings its own scroller — .agent-form-host in the Edit role
+   dialog, .file-view, .task-detail — as a flex child of this. (The picker has
+   since moved into the Agents dialog, a takeover, under the rule above.) */
 .modal-panel[data-size="panel"] .modal-body {
   display: flex;
   flex-direction: column;
@@ -227,13 +228,39 @@
    the Tailwind `disabled:` pair on the old in-form button carried. */
 .modal-action:disabled { opacity: 0.55; pointer-events: none; }
 
-/* THE ROW'S LEFT END. .modal-actions is `justify-content: flex-end`, so an
-   auto margin on the first child is what splits the row in two: everything
-   that takes the operator somewhere else on the left, everything that ends the
-   task on the right. Step one's `Browse marketplace` is the only one so far —
-   it read as a second Cancel while it sat against one, and as part of the
-   filter while it sat beside the search box. */
-#agent-add-browse { margin-right: auto; }
+/* ─── The Agents dialog ───
+   Add agent and the Marketplace as two tabs of one takeover
+   (context/agents-dialog.js). The body holds both panes; the one that is away
+   is `hidden`, never destroyed. Each panel FILLS the body, so the child it
+   holds — .agent-add-body, .market-host — still owns its scroller exactly as
+   it did when each was a dialog of its own. */
+.agents-body,
+.agents-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The pane that is away is put away with the `hidden` PROPERTY, and the
+   `display: flex` above is an author declaration that outranks the UA's
+   `[hidden] { display: none }` — the same guard .agent-add-body carries. */
+.agents-panel[hidden] { display: none !important; }
+
+/* Both panes filter with the app's toolbar search (core/search-field.js), at
+   one width rather than stretched across the row: "Find agents" beside a
+   field that ran the whole row wrapped onto two lines. `Install from URL`
+   takes the row's other end. */
+.modal-panel[data-dialog="agents"] .search-field { flex: 0 1 280px; min-width: 0; }
+
+/* The form, held to a measure and centred. It filled an 80vw panel before; a
+   95vw takeover would put its two columns a room apart. `<form id="agent-form">`
+   is the host's DIRECT child — context/agent-form.js writes it as the host's
+   markup, and context/agent-form-save.js publishes it with replaceChildren. */
+.modal-panel[data-dialog="agents"] .agent-form-host > form {
+  max-width: var(--form-measure);
+  margin-inline: auto;
+}
 
 /* ─── Add agent: the two steps ───
    One body, two children, one on screen at a time. The step that is away is
@@ -244,9 +271,9 @@
    :not([hidden]) on each.
 
    FILLS the dialog body rather than sitting inside it at its content height.
-   The panel is a fixed box now (see .modal-panel[data-size="panel"]) and both
-   steps have to occupy the whole of it, or the shorter one floats in a
-   half-empty dialog — which, before the height was fixed, is what made the
+   The Agents dialog is a fixed box (see .modal-panel[data-size="takeover"])
+   and both steps have to occupy the whole of it, or the shorter one floats in
+   a half-empty dialog — which, before the height was fixed, is what made the
    panel resize on every step swap. */
 
 .agent-add-body {
@@ -259,12 +286,12 @@
 
 .agent-add-body [hidden] { display: none !important; }
 
-/* Step 1 — the picker, organised the way the marketplace takeover is: a header
-   that stays put, a rail of filters, and a card grid that scrolls under them.
-   The classes the rail and the cards themselves wear are marketplace.css's,
-   because they are the same builders (marketplace/pack-card.js,
-   marketplace/filter-rail.js); what is here is the FRAME around them, which is
-   this dialog's and not the takeover's. */
+/* Step 1 — the picker, organised the way the Marketplace tab beside it is: a
+   header that stays put, a rail of filters, and a card grid that scrolls under
+   them. The classes the rail and the cards themselves wear are
+   marketplace.css's, because they are the same builders
+   (marketplace/pack-card.js, marketplace/filter-rail.js); what is here is the
+   FRAME around them, which is this pane's and not the Marketplace's. */
 
 .picker {
   display: flex;
@@ -274,9 +301,8 @@
   gap: 12px;
 }
 
-/* Outside the scroller, so the filter and the door to the marketplace stay
-   reachable from the bottom of a long grid — the same reasoning, and the same
-   treatment, as .market-head. */
+/* Outside the scroller, so the filter stays reachable from the bottom of a
+   long grid — the same reasoning, and the same treatment, as .market-head. */
 .picker-head {
   flex: 0 0 auto;
   display: flex;
@@ -287,17 +313,18 @@
   border-bottom: 1px solid var(--line);
 }
 
-.picker-find-row { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; }
-.picker-head .field-label { flex: 0 0 auto; }
-
 /* The ONE scroller of this step. Two over one card grid is how a grid ends up
-   unreachable by wheel, which is why the grid inside it nests none. */
+   unreachable by wheel, which is why the grid inside it nests none.
+
+   The Marketplace tab's .market-body column exactly (tokens.css): the two
+   tabs are one layout, and a rail that changed width on a tab switch moved
+   every card beside it. */
 .picker-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
+  grid-template-columns: var(--filter-rail) minmax(0, 1fr);
   align-items: start;
   gap: 20px;
 }
@@ -315,14 +342,24 @@
 
 .picker-grid { min-width: 0; }
 
-/* Auto-filled on the same rhythm as the marketplace's grid, one step narrower:
-   this panel is 960px against the takeover's 1180, so 240px is what keeps two
-   cards per row at full width and folds to one on a narrow window without a
-   breakpoint per step. */
+/* Auto-filled on the Marketplace grid's rhythm and at its card width. It was a
+   step narrower while this picker lived in a 960px panel beside a 1180px
+   takeover; both are tabs of one takeover now, so a card is the same width on
+   either tab. */
 .picker-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--pack-card-min), 1fr));
   gap: 12px;
+}
+
+/* Narrow: folded at the Marketplace's own breakpoint (marketplace.css,
+   "Narrow"), the rail becoming the row above the grid. The rail's rows are
+   filter-rail.js's `.market-rail-*` and already wrap there; this is the frame
+   around them, which is this pane's. A media query cannot read a custom
+   property, so the width is the number marketplace.css states. */
+@media (max-width: 700px) {
+  .picker-body { grid-template-columns: minmax(0, 1fr); }
+  .picker-rail-host { position: static; }
 }
 
 /* The cell that is offered in EVERY state, including the two where there is

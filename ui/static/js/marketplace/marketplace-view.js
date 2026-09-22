@@ -76,16 +76,26 @@ const BossModMarketplaceView = (() => {
 
     // The filter box and the quiet URL door. The door stays available while
     // the catalog is down: a URL install does not need the catalog. The
-    // takeover's exit is not on this line: it is the modal frame's `✕`, in the
+    // dialog's exit is not on this line: it is the modal frame's `✕`, in the
     // head above both views, so neither view builds one of its own and the
     // browse view is never without it.
+    //
+    // The filter is the app's toolbar search (core/search-field.js) — the
+    // magnifier inside one bordered box — which Tasks and the Log already
+    // spend. It was a visible `<label>` beside a stretched text field, and
+    // "Find agents" wrapped onto two lines; the words are the input's
+    // accessible name now, and the placeholder says what to type.
     function head(state, handlers) {
-        const find = h('input', {
-            class: 'market-find field-input', id: 'market-find', type: 'search',
+        const find = BossModSearchField.create({
             placeholder: COPY.findHint,
-            oninput: (event) => handlers.onQuery(event.target.value),
+            label: COPY.find,
+            onInput: (event) => handlers.onQuery(event.target.value),
         });
-        find.value = state.query;
+        // By id, as before: render() hands focus and the caret back to the
+        // element with the same id after every rebuild — which is every
+        // keystroke — and every focusRequest that lands on the filter names it.
+        find.input.id = 'market-find';
+        find.input.value = state.query;
         const url = h('input', {
             class: 'market-url-input field-input', id: 'market-url', type: 'url',
             placeholder: 'https://github.com/owner/repo/blob/<sha>/packs/name.yaml',
@@ -94,9 +104,7 @@ const BossModMarketplaceView = (() => {
         url.value = state.urlValue;
         const busy = state.busyId === 'url';
         return h('div', { class: 'market-head' },
-            h('div', { class: 'market-find-row' },
-                h('label', { class: 'field-label', for: 'market-find' }, COPY.find),
-                find),
+            find.element,
             h('button', {
                 class: 'market-url-toggle', id: 'market-url-toggle', type: 'button',
                 'aria-expanded': state.urlOpen ? 'true' : 'false',
@@ -255,8 +263,8 @@ const BossModMarketplaceView = (() => {
      *   and written here because this is what destroys and rebuilds it.
      * @param {object} handlers  onQuery, onCategory, onSelect, onSection,
      *   onBack, onRetry, onToggleUrl, onUrlChange, onInstallUrl,
-     *   onInstall, onUninstall, onUninstallConfirm, onUninstallCancel,
-     *   onTrustConfirm, onTrustCancel.
+     *   onInstall, onUseTemplate, onUninstall, onUninstallConfirm,
+     *   onUninstallCancel, onTrustConfirm, onTrustCancel.
      * @returns {void}
      */
     function render(host, state, handlers) {
@@ -280,6 +288,11 @@ const BossModMarketplaceView = (() => {
         }
         const scroller = host.querySelector('.market-body');
         if (scroller) scroller.scrollTop = state.browseScroll;
+        // The head is rebuilt on every render, so the filter's magnifier is a
+        // fresh placeholder every time. Scoped to this host, never the
+        // document; placed before the focus hand-back only because that half
+        // returns early when there is nothing to hand focus to.
+        BossModIcons.paint(host, 'marketplace-view');
         const target = state.focusRequest
             ? host.querySelector(state.focusRequest)
             : (keep ? host.querySelector(`#${keep}`) : null);

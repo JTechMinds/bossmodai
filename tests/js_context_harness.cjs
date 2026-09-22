@@ -130,11 +130,15 @@ const NAMES = [
     "BossModAgentForm",
     "BossModAgentSubmit", "BossModAgentRecovery", "BossModAgentFormSave",
     // The picker draws the local library with the marketplace's own card and
-    // rail builders, so its dependencies load ahead of it.
+    // rail builders, so its dependencies load ahead of it — and filters it
+    // with the app's toolbar search. The Agents dialog that hosts it puts its
+    // two tabs up with core/tabs.js.
     "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
+    "BossModSearchField", "BossModTabs",
     "BossModAgentTemplatePicker",
     "BossModAgentFormTemplate", "BossModAgentDialogFooter",
-    "BossModAgentEdit", "BossModDeskPanel",
+    "BossModAgentAddPane", "BossModAgentDialogSlot",
+    "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
     "BossModContextColumn", "BossModChatPlace",
 ];
 if (paths.length !== NAMES.length) {
@@ -157,6 +161,15 @@ const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
 // dialog only runs for real if the harness provides it. Pointed at the same
 // scripted API the column is injected with, so both see one world.
 global.apiFetch = (...args) => api(...args);
+
+// The Agents dialog builds its Marketplace pane beside the Add agent pane.
+// The marketplace is tests/js_marketplace_harness.cjs's subject and nothing
+// here opens that tab, so it stands in with the shape the dialog places.
+global.BossModMarketplace = {
+    createPane() {
+        return { element: global.BossModDom.h("div", { class: "market-host" }), activate() {} };
+    },
+};
 
 // The floor plan GET /api/map answers with, trimmed to what the summary reads.
 // The names are core/world/tilemap.py's DEFAULT_ROOMS, because the join between
@@ -692,6 +705,13 @@ async function main() {
     const modals = () => documentStub.body.querySelectorAll(".modal-panel");
     const panelModal = () => modals().filter(
         (node) => node.getAttribute("data-size") === "panel")[0];
+    // Creating is the Agents dialog's Add agent tab now: a takeover, marked
+    // for its stylesheet, and the only modal that carries that mark.
+    const agentsModal = () => modals().filter(
+        (node) => node.getAttribute("data-dialog") === "agents")[0];
+    const openAddAgent = () => global.BossModAgentsDialog.open({ store, tab: "add" });
+    // The frame's ✕ — the only exit on step one, whose footer row is empty.
+    const closeByX = (dialog) => dialog.querySelector(".modal-close").dispatchClick();
     if (modals().length !== 0) throw new Error("nothing should be open yet");
 
     const editAction = contextEl.querySelectorAll(".desk-action")
@@ -763,46 +783,55 @@ async function main() {
 
     // One at a time. The rail's Hire row is reachable while a desk's Edit
     // dialog is up, and the form's identity is per render — but two stacked
-    // agent dialogs would still fight over Escape and the focus trap.
+    // agent dialogs would still fight over Escape and the focus trap, and two
+    // live `#agent-form`s would let one primary submit the other's draft.
+    // The Hire door is the Agents dialog now; it hands back the Edit dialog
+    // that holds the one-form slot and builds nothing of its own.
     await editAction.dispatchClick();
     await drain();
     const first = panelModal();
-    global.BossModAgentEdit.openAgentModal({ store });
+    const handedBack = openAddAgent();
     await drain();
-    const onlyOneDialogAtATime = modals().length === 1 && panelModal() === first;
+    const onlyOneDialogAtATime = modals().length === 1 && panelModal() === first
+        && agentsModal() === undefined && typeof handedBack.close === "function";
     if (!onlyOneDialogAtATime) {
         throw new Error(`a second dialog must not stack, got ${modals().length}`);
     }
     await first.querySelectorAll(".modal-action")[0].dispatchClick();
     await drain();
 
-    // Creating is the SAME dialog, minus the remove path — there is nothing to
-    // remove yet — and it opens on the PICKER: step one has no form, so it can
-    // have no Create Agent either.
-    global.BossModAgentEdit.openAgentModal({ store });
+    // Creating is the Agents dialog's Add agent tab: the same centred modal
+    // floating over the app, a takeover now so the Marketplace tab beside it
+    // has room, minus the remove path — there is nothing to remove yet — and
+    // it opens on the PICKER: step one has no form, so it can have no Create
+    // Agent either.
+    openAddAgent();
     await drain();
-    const hire = panelModal();
-    const hireOpensThePanelModal = Boolean(hire)
-        && hire.getAttribute("aria-label") === "Add agent"
+    const hire = agentsModal();
+    const hireOpensTheAgentsDialog = Boolean(hire)
+        && hire.getAttribute("aria-label") === "Agents"
+        && hire.getAttribute("data-size") === "takeover"
+        && hire.getAttribute("role") === "dialog"
+        && documentStub.body.children.indexOf(hire) !== -1
+        && contextEl.querySelectorAll(".modal-panel").length === 0
+        && hire.querySelector("#agents-tab-add").getAttribute("aria-selected") === "true"
         && hire.querySelector("#agent-form") === null
         && Boolean(hire.querySelector("#agent-pick-blank"))
         && hire.querySelector("#btn-delete-agent") === null;
-    if (!hireOpensThePanelModal) {
-        throw new Error(`Add agent must open on the picker: `
+    if (!hireOpensTheAgentsDialog) {
+        throw new Error(`Add agent must open the Agents dialog on the picker: `
             + `${hire && hire.getAttribute("aria-label")} `
             + `form ${Boolean(hire && hire.querySelector("#agent-form"))}`);
     }
-    // The marketplace door LEADS the row and the dismissal ends it: the two
-    // are at opposite ends rather than side by side, which is what stopped
-    // `Browse marketplace` reading as a second Cancel. It sat in the picker's
-    // header for one round and read as part of the filter instead.
+    // Step one pins NOTHING. The marketplace door that used to lead this row
+    // is the Marketplace tab in the dialog's head, and the exit is the frame's
+    // ✕ on every tab — a Cancel here would be a second control for it.
     const stepOnePinned = pinnedNamesIn(hire);
-    if (stepOnePinned.join("|") !== "Browse marketplace|Cancel") {
-        throw new Error(`step one leads with the marketplace door, got `
-            + stepOnePinned.join("|"));
+    if (stepOnePinned.join("|") !== "") {
+        throw new Error(`step one pins nothing, got ${stepOnePinned.join("|")}`);
     }
-    if (!hire.querySelector("#agent-add-browse")) {
-        throw new Error("step one lost its door to the marketplace");
+    if (hire.querySelector("#agent-add-browse")) {
+        throw new Error("the footer's marketplace door is gone; the tab replaced it");
     }
 
     // Picking Blank builds the form in the same body and swaps the footer.
@@ -873,19 +902,16 @@ async function main() {
     await hire.querySelector("#agent-add-back").dispatchClick();
     await drain();
     if (modals().length !== 1) throw new Error("Back must not close the dialog");
-    // Returning to step one is proven by the row swapping back to the
-    // marketplace-door-plus-dismissal pair AND by the picker being on screen.
-    if (pinnedNamesIn(hire).join("|") !== "Browse marketplace|Cancel") {
+    // Returning to step one is proven by the row emptying again AND by the
+    // picker being on screen.
+    if (pinnedNamesIn(hire).join("|") !== "") {
         throw new Error("Back must return to step one");
     }
     if (!hire.querySelector("#agent-pick-blank")) {
         throw new Error("Back must put the picker back on screen");
     }
-    // BY NAME, like every other dismissal in this harness: step one's row
-    // leads with `Browse marketplace` now, so `[0]` opened the marketplace
-    // instead of closing the dialog.
-    await hire.querySelectorAll(".modal-actions")[0]
-        .querySelectorAll("button").find((b) => b.textContent === "Cancel").dispatchClick();
+    // Step one's row is empty, so the dismissal is the frame's ✕.
+    await closeByX(hire);
     await drain();
     if (modals().length !== 0) throw new Error("the hire dialog must close");
     store.setState({ contextMode: "office" });
@@ -905,9 +931,9 @@ async function main() {
     // path: every stub in that chain is a place this hid behind once already.
     createSucceeds = true;
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const create = panelModal();
+    const create = agentsModal();
     await create.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const setAll = create.querySelector('select[name="model_all"]');
@@ -1005,9 +1031,9 @@ async function main() {
     personalitiesFail = true;
     createSucceeds = true;
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const sibling = panelModal();
+    const sibling = agentsModal();
     await sibling.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const siblingForm = sibling.querySelector("#agent-form");
@@ -1076,9 +1102,9 @@ async function main() {
     // the attribute itself is therefore what is read here.
     createSucceeds = true;
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const quickDialog = panelModal();
+    const quickDialog = agentsModal();
     const card = quickDialog.querySelectorAll(".picker-card")[0];
     if (!card) throw new Error("the picker must offer the installed template");
     await card.dispatchClick();
@@ -1201,9 +1227,9 @@ async function main() {
     // against an endpoint that refuses anyway proves nothing.
     createSucceeds = true;
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const refusal = panelModal();
+    const refusal = agentsModal();
     await refusal.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const refusedForm = refusal.querySelector("#agent-form");
@@ -1280,9 +1306,9 @@ async function main() {
     // form says which shape it is in and the handler picks; asserted per path,
     // because a single substring both variants satisfy would pin nothing.
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const blank = panelModal();
+    const blank = agentsModal();
     await blank.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const blankForm = blank.querySelector("#agent-form");
@@ -1331,9 +1357,9 @@ async function main() {
     // An empty list is a HEALTHY read, so this is not CONNECTIONS_FAILED.
     connectionsEmpty = true;
     creates.length = 0;
-    global.BossModAgentEdit.openAgentModal({ store });
+    openAddAgent();
     await drain();
-    const bare = panelModal();
+    const bare = agentsModal();
     await bare.querySelectorAll(".picker-card")[0].dispatchClick();
     await drain();
     const bareForm = bare.querySelector("#agent-form");
@@ -1467,7 +1493,7 @@ async function main() {
         absentIsEmptyNotError,
         failureSurfaces,
         editOpensThePanelModal,
-        hireOpensThePanelModal,
+        hireOpensTheAgentsDialog,
         modalIsAttachedToTheBodyNotTheColumn,
         closingTheModalRestoresTheDesk,
         onlyOneDialogAtATime,

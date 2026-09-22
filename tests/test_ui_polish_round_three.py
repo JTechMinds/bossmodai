@@ -477,10 +477,15 @@ CONTEXT_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "core" / "search-field.js",
+    JS / "core" / "tabs.js",
     JS / "context" / "agent-template-picker.js",
     JS / "context" / "agent-form-template.js",
     JS / "context" / "agent-dialog-footer.js",
+    JS / "context" / "agent-add-pane.js",
+    JS / "context" / "agent-dialog-slot.js",
     JS / "context" / "agent-edit.js",
+    JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
     JS / "context" / "context-column.js",
     JS / "places" / "chat" / "chat-place.js",
@@ -557,14 +562,24 @@ def test_the_wide_modal_keeps_the_shared_keyboard_contract() -> None:
 
 
 def test_both_agent_flows_open_the_centred_modal() -> None:
-    """Hire and Edit are the same dialog — the operator's decision.
+    """Hire and Edit are centred modals over the app — the operator's decision.
 
     Proven on built nodes: the column hosted the form for one of the two and
     a source check would not notice if only one flow had moved.
+
+    Re-pointed when Add agent became a tab of the Agents dialog (spec
+    2026-09-22, approved by the operator): Hire opens that dialog — the same
+    createModal, centred the same way, at the takeover size its Marketplace
+    tab needs — and Edit keeps its own panel. The property held here is the
+    one round three decided: neither flow is hosted by the context column any
+    more, and both float over the app with the desk still mounted beneath.
     """
     edit = _read(JS / "context/agent-edit.js")
     assert "BossModOverlays.createModal(" in edit
     assert "size: 'panel'" in edit
+    agents = _read(JS / "context/agents-dialog.js")
+    assert "BossModOverlays.createModal(" in agents
+    assert "size: 'takeover'" in agents
 
     # The context column no longer hosts a form, and the state that reached it
     # is gone rather than left reachable.
@@ -576,7 +591,7 @@ def test_both_agent_flows_open_the_centred_modal() -> None:
 
     payload = _context_payload()
     assert payload["editOpensThePanelModal"] is True
-    assert payload["hireOpensThePanelModal"] is True
+    assert payload["hireOpensTheAgentsDialog"] is True
     assert payload["modalIsAttachedToTheBodyNotTheColumn"] is True
     # The desk comes back when the dialog closes, rather than the column being
     # left holding whatever was there before.

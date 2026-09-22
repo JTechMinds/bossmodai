@@ -89,6 +89,16 @@
   /* A panel modal's reading column. The task detail and Archive centre their
    * content in it, so a wide window adds margin rather than line length. */
   --panel-column: 720px;
+  /* The agent form's measure in the Agents dialog. The form filled an 80vw
+   * panel before it moved into a 95vw takeover; this is that panel's width on
+   * a 1400px window, so the form reads as it did rather than sprawling. */
+  --form-measure: 1120px;
+  /* The Agents dialog's two card grids — the Add agent picker and the
+   * Marketplace — are one layout: the filter rail's column and the narrowest a
+   * pack card may get. Shared so switching tabs moves nothing; they were 160
+   * and 240 on the picker, from when it lived in a narrower dialog. */
+  --filter-rail: 180px;
+  --pack-card-min: 260px;
 
   /* The two horizontal rules that cross the whole window.
    *

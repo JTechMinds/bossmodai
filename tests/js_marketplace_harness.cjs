@@ -4,17 +4,36 @@
  * that must never become a second modal.
  *
  * Invoked by tests/test_marketplace.py. Not a browser bundle.
+ *
+ * The marketplace is a PANE now — the Agents dialog's Marketplace tab — with
+ * no modal of its own. `openMarket` stands the dialog's frame in with the same
+ * createModal, at the size and with the empty footer the Agents dialog opens
+ * with, so every "one exit, no footer, something to Tab to" verdict below
+ * still reads a real frame; the real dialog around it is
+ * tests/js_add_agent_harness.cjs's subject.
  */
 const fs = require("fs");
-const { installDom } = require("./js_fake_dom.cjs");
+const { installDom, FakeEl } = require("./js_fake_dom.cjs");
+const { installIconsStub } = require("./js_icons_stub.cjs");
 
 installDom();
 global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
+// The browse head is rebuilt on every render and paints its own magnifier.
+installIconsStub();
+// A real input's caret API, which the shared fake does not carry. render()
+// hands the caret back with it after the rebuild every keystroke causes; a
+// fake without it could only prove focus, not the caret.
+FakeEl.prototype.setSelectionRange = function setSelectionRange(start, end) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+};
 
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays",
+    // The browse head's filter is the app's toolbar search.
+    "BossModSearchField",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModMarketplaceWithheld", "BossModMarketplaceItems",
     // The card anatomy and the filter rail the takeover shares with the Add
@@ -276,6 +295,18 @@ let lastInstall = null;
 let lastDelete = null;
 let catalogMode = "ready";
 let holdCatalog = null;
+// Every GET of the catalog, so the pane can be shown to read it lazily.
+let catalogReads = 0;
+// Flipped to make every install and uninstall answer a 500: the library did
+// not change, and the dialog must not be told that it did.
+let failWrites = false;
+// A promise that the NEXT install or uninstall waits on before it answers, so
+// a verdict can read the detail view while that write is still in flight.
+// Spent by the write it holds.
+let holdWrite = null;
+// What the pane handed the dialog across its two wires.
+const used = [];
+let libraryChanges = 0;
 
 function resetServer() {
     installed = [
@@ -303,6 +334,8 @@ function resetServer() {
     lastDelete = null;
     catalogMode = "ready";
     holdCatalog = null;
+    failWrites = false;
+    holdWrite = null;
 }
 
 function jsonResponse(body, status = 200) {
@@ -326,6 +359,7 @@ global.apiFetch = (url, init) => {
     const method = (init && init.method) || "GET";
     const path = String(url);
     if (path.startsWith("/api/agent-packs")) {
+        catalogReads += 1;
         if (catalogMode === "fail") {
             return jsonResponse({ detail: { code: "fetch_failed", message: "GitHub said no." } }, 502);
         }
@@ -339,6 +373,12 @@ global.apiFetch = (url, init) => {
     }
     if (path.startsWith("/api/agent-templates")) {
         if (method === "GET") return jsonResponse(installed);
+        if (holdWrite) {
+            const gate = holdWrite;
+            holdWrite = null;
+            return gate.then(() => global.apiFetch(url, init));
+        }
+        if (failWrites) return jsonResponse({ detail: { code: "boom", message: "The write failed." } }, 500);
         if (method === "DELETE") {
             lastDelete = decodeURIComponent(path.split("/").pop());
             const before = installed.length;
@@ -483,9 +523,33 @@ async function click(el) {
     await drain();
 }
 
+/**
+ * The pane in a stand-in for the Agents dialog's frame, NOT yet on screen as
+ * far as the pane knows: nothing is read until `activate()`.
+ *
+ * @returns {{close: () => void, pane: object}}
+ */
+function mountMarket() {
+    const pane = global.BossModMarketplace.createPane({
+        onUseTemplate: (template) => { used.push(template); },
+        onLibraryChanged: () => { libraryChanges += 1; },
+    });
+    const modal = global.BossModOverlays.createModal({
+        title: "Agents", body: pane.element, size: "takeover", actions: [],
+    });
+    return { close: modal.close, pane };
+}
+
+/** Mounted and activated: the Marketplace tab, up. Nothing awaited. */
+function showMarket() {
+    const handle = mountMarket();
+    handle.pane.activate();
+    return handle;
+}
+
 async function openMarket() {
     resetServer();
-    const handle = global.BossModMarketplace.open({});
+    const handle = showMarket();
     await drain();
     return handle;
 }
@@ -497,7 +561,7 @@ async function main() {
     resetServer();
     let release;
     holdCatalog = new Promise((resolve) => { release = resolve; });
-    let handle = global.BossModMarketplace.open({});
+    let handle = showMarket();
     verdict.loadingCopy = host().textContent.includes(global.BossModMarketplaceView.COPY.loading)
         && count(".market-card") === 0;
     verdict.isTakeover = global.document.body.querySelector(".modal-panel")
@@ -515,7 +579,7 @@ async function main() {
     // ── Failure is not emptiness: an alert and a retry, and cards after it.
     resetServer();
     catalogMode = "fail";
-    handle = global.BossModMarketplace.open({});
+    handle = showMarket();
     await drain();
     const failed = host().querySelector(".market-failed");
     verdict.failedIsAlert = Boolean(failed) && failed.getAttribute("role") === "alert"
@@ -682,9 +746,24 @@ async function main() {
 
     verdict.cardsAreButtons = host().querySelectorAll(".market-card")
         .every((card) => card.tagName === "BUTTON" && card.getAttribute("type") === "button");
-    const find = host().querySelector("#market-find");
-    verdict.findHasALabel = Boolean(host().querySelectorAll("label")
-        .find((label) => label.getAttribute("for") === "market-find"));
+    // The filter is the app's toolbar search: the magnifier and the input in
+    // one box, the words that used to be a visible <label> now the input's
+    // accessible name. Found by walking, because the fake matches one simple
+    // selector at a time.
+    const marketHead = host().querySelector(".market-head");
+    const findBox = marketHead ? marketHead.querySelector(".search-field") : null;
+    const find = findBox ? findBox.querySelector("#market-find") : null;
+    verdict.findIsTheSearchField = Boolean(find)
+        && find === host().querySelector("#market-find")
+        && find.getAttribute("type") === "search"
+        && find.getAttribute("aria-label") === "Find agents"
+        && find.getAttribute("placeholder") === global.BossModMarketplaceView.COPY.findHint
+        && findBox.querySelector("i").getAttribute("data-lucide") === "search"
+        && !host().querySelectorAll("label")
+            .some((label) => label.getAttribute("for") === "market-find")
+        // First in the head, and `Install from URL` beside it on one row.
+        && marketHead.children[0] === findBox
+        && marketHead.children[1] === host().querySelector("#market-url-toggle");
     // The footer `Close` is gone, and the browse view's exit is the frame's ✕
     // — a real button named for the dialog, reachable by keyboard like any
     // other.
@@ -692,7 +771,7 @@ async function main() {
     verdict.browseCarriesTheExit = Boolean(browseCloser)
         && browseCloser.tagName === "BUTTON"
         && browseCloser.getAttribute("type") === "button"
-        && browseCloser.getAttribute("aria-label") === "Close Agent Marketplace"
+        && browseCloser.getAttribute("aria-label") === "Close Agents"
         && footerButtons() === 0 && focusableStops() > 0;
 
     // ── The detail is a TAKEOVER of the takeover, and `‹ Templates` undoes it
@@ -844,6 +923,16 @@ async function main() {
         && Boolean(host().querySelector("#market-uninstall"))
         && !host().querySelector("#market-uninstall")
             .classList.contains("market-action-lead");
+    // The installed template is usable already, so "Add agent from this" is
+    // offered here too — as a quiet secondary: updating is the better errand
+    // and keeps the slot. Between the primary and the destructive action.
+    const useBeside = host().querySelector("#market-use");
+    const heroActions = host().querySelector(".market-detail-actions").children;
+    verdict.useIsASecondaryBesideUpdate = Boolean(useBeside)
+        && useBeside.textContent === "Add agent from this"
+        && useBeside.getAttribute("class") === "market-action"
+        && heroActions.map((node) => node.id).join("|")
+            === "market-install|market-use|market-uninstall";
     verdict.detailAuthorLinkIsSafe = (() => {
         const link = host().querySelector(".market-detail-author");
         return Boolean(link) && link.getAttribute("rel") === "noopener noreferrer"
@@ -876,6 +965,8 @@ async function main() {
         sectionTabs()[0].getAttribute("aria-selected") === "true"
         && sectionPanel().textContent === "Regressions.";
     verdict.detailShowsInstall = host().querySelector("#market-install").textContent === "Install";
+    // Nothing in the library to start from, so no bridge to offer.
+    verdict.useIsAbsentOnAnUninstalledPack = count("#market-use") === 0;
     await click(host().querySelector("#market-install"));
     verdict.installUsedDisplayedPin = lastInstall.id === "test-writer"
         && lastInstall.ref === PIN
@@ -898,6 +989,22 @@ async function main() {
             && !remove.classList.contains("primary")
             && !remove.classList.contains("danger");
     })();
+    // Installed and current: nothing to install, so the slot `primary()` left
+    // empty holds the one thing left to do with the pack — start an agent.
+    const usePrimary = host().querySelector("#market-use");
+    verdict.useIsThePrimaryOnAnInstalledPack = Boolean(usePrimary)
+        && usePrimary.textContent === "Add agent from this"
+        && usePrimary.classList.contains("primary")
+        && usePrimary.classList.contains("market-action-lead")
+        && host().querySelector(".market-detail-actions").children[0] === usePrimary;
+    // ...and pressing it hands the dialog the INSTALLED row, not the catalog
+    // card: the create form is built from what is in the library.
+    used.length = 0;
+    await click(usePrimary);
+    verdict.useHandsOverTheInstalledRow = used.length === 1
+        && used[0].id === "t-test-writer"
+        && used[0].pack_id === "test-writer"
+        && used[0].source === "catalog";
     await click(host().querySelector("#market-back"));
     verdict.installFlipsCardState = cardState("test-writer") === "Installed";
 
@@ -972,7 +1079,7 @@ async function main() {
     //    `#market-close` beside it any more.
     await click(cardFor("feature-planner"));
     const closer = frameClose();
-    verdict.detailCloseIsNamed = closer.getAttribute("aria-label") === "Close Agent Marketplace";
+    verdict.detailCloseIsNamed = closer.getAttribute("aria-label") === "Close Agents";
     verdict.detailHasOneDismissControl = global.document.body.querySelector(".modal-panel")
         .querySelectorAll(".modal-close").length === 1
         && global.document.body.querySelectorAll("#market-close").length === 0
@@ -992,7 +1099,7 @@ async function main() {
     resetServer();
     installed = [];
     catalogMode = "absent";
-    handle = global.BossModMarketplace.open({});
+    handle = showMarket();
     await drain();
     await click(cardFor("thin-pack"));
     // A section the pack does not carry gets no tab — and, because the list is
@@ -1097,7 +1204,7 @@ async function main() {
             source_url: "github.com/acme/packs/notes.yaml", title: "Release Notes Writer",
         }),
     ];
-    handle = global.BossModMarketplace.open({});
+    handle = showMarket();
     await drain();
     const notice = host().querySelector(".market-withheld");
     verdict.withheldNoticeNamesBothKinds = Boolean(notice)
@@ -1202,7 +1309,7 @@ async function main() {
     resetServer();
     catalogMode = "empty";
     installed = [];
-    handle = global.BossModMarketplace.open({});
+    handle = showMarket();
     await drain();
     verdict.emptyCopy = host().textContent.includes(global.BossModMarketplaceView.COPY.empty)
         && !host().querySelector(".market-failed");
@@ -1212,6 +1319,100 @@ async function main() {
         && focusIsInThePanel() && Boolean(frameClose());
     handle.close();
     verdict.closesCleanly = panels() === 0;
+
+    // ── The catalog is read LAZILY. It is a remote read, and the pane is built
+    //    whenever the Agents dialog opens — including on the Add agent tab, by
+    //    an operator who never looks at the marketplace at all.
+    resetServer();
+    catalogReads = 0;
+    handle = mountMarket();
+    await drain();
+    const readsBeforeActivate = catalogReads;
+    const drawnBeforeActivate = count(".market-head") === 1;
+    handle.pane.activate();
+    await drain();
+    const readsAfterActivate = catalogReads;
+    handle.pane.activate();
+    await drain();
+    verdict.theCatalogIsReadOnFirstActivateOnly = readsBeforeActivate === 0
+        // Drawn all the same, so the dialog finds the filter to focus.
+        && drawnBeforeActivate
+        && readsAfterActivate === 1
+        && catalogReads === 1
+        && count(".market-card") === 3;
+    handle.close();
+
+    // ── "The library changed": once per install or uninstall that landed, so
+    //    the Add agent picker re-reads it, and never for one that did not.
+    handle = await openMarket();
+    libraryChanges = 0;
+    await click(cardFor("test-writer"));
+    await click(host().querySelector("#market-install"));
+    const afterInstall = libraryChanges;
+    await click(host().querySelector("#market-uninstall"));
+    await click(host().querySelector("#market-uninstall-confirm"));
+    const afterUninstall = libraryChanges;
+    failWrites = true;
+    await click(host().querySelector("#market-install"));
+    const installRefused = Boolean(host().querySelector(".market-error"));
+    await click(host().querySelector("#market-back"));
+    await click(cardFor("feature-planner"));
+    await click(host().querySelector("#market-uninstall"));
+    await click(host().querySelector("#market-uninstall-confirm"));
+    const uninstallRefused = Boolean(host().querySelector(".market-error"));
+    failWrites = false;
+    verdict.theLibraryChangeIsToldOncePerSuccessAndNeverOnFailure = afterInstall === 1
+        && afterUninstall === 2
+        && installRefused && uninstallRefused
+        && libraryChanges === 2;
+    handle.close();
+
+    // ── "Add agent from this" cannot be pressed while its own pack is being
+    //    written. The row it would hand over is the one an update is replacing
+    //    or an uninstall is removing, so a click mid-write started a form from
+    //    the version on its way out.
+    handle = await openMarket();
+    // Installed at an older hash: `Update` leads, and the bridge sits beside it.
+    await click(cardFor("code-auditor"));
+    const idleBeforeWriting = host().querySelector("#market-use").disabled === false;
+    let releaseWrite;
+    holdWrite = new Promise((resolve) => { releaseWrite = resolve; });
+    await click(host().querySelector("#market-install"));
+    const withheldWhileUpdating = host().querySelector("#market-use").disabled === true
+        && host().querySelector("#market-install").textContent === "Installing…";
+    releaseWrite();
+    await drain();
+    // Updated: current now, so the bridge is the primary, and live again.
+    const liveOnceUpdated = host().querySelector("#market-use").disabled === false
+        && host().querySelector("#market-use").classList.contains("primary");
+    holdWrite = new Promise((resolve) => { releaseWrite = resolve; });
+    await click(host().querySelector("#market-uninstall"));
+    await click(host().querySelector("#market-uninstall-confirm"));
+    const withheldWhileRemoving = host().querySelector("#market-use").disabled === true;
+    releaseWrite();
+    await drain();
+    verdict.useIsWithheldWhileItsPackIsWritten = idleBeforeWriting
+        && withheldWhileUpdating && liveOnceUpdated && withheldWhileRemoving
+        // Uninstalled: nothing left in the library to start from.
+        && host().querySelector("#market-use") === null;
+    handle.close();
+
+    // ── The filter keeps the keyboard AND the caret. Every keystroke rebuilds
+    //    the head, so the input being typed into is replaced each time; the
+    //    search field keeping `#market-find` as its id is what lets render()
+    //    hand both back.
+    handle = await openMarket();
+    const typedInto = host().querySelector("#market-find");
+    typedInto.focus();
+    typedInto.selectionStart = 2;
+    await typeInto(typedInto, "pl");
+    const retyped = host().querySelector("#market-find");
+    verdict.typingKeepsFocusAndCaret = retyped !== typedInto
+        && global.document.activeElement === retyped
+        && retyped.selectionStart === 2
+        && retyped.value === "pl"
+        && count(".market-card") === 1;
+    handle.close();
 
     verdict.ok = true;
     process.stdout.write(JSON.stringify(verdict));

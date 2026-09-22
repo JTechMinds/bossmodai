@@ -47,6 +47,7 @@ const BossModMarketplaceDetail = (() => {
         update: 'Update',
         installed: 'Installed',
         installing: 'Installing…',
+        use: 'Add agent from this',
         uninstall: 'Uninstall',
         removing: 'Removing…',
         uninstallAsk: 'Remove this template from your library? Agents already '
@@ -105,10 +106,11 @@ const BossModMarketplaceDetail = (() => {
     }
 
     // The hero's top-right slot, and only ever an ACTION. An installed-and
-    // -current pack has none — its state moved to the byline — because the
-    // biggest, most prominent element on the screen must not be the one thing
-    // that cannot be pressed. `Uninstall` does not inherit the slot: it is the
-    // destructive action and stays a quiet secondary beside it.
+    // -current pack has nothing to install — its state moved to the byline —
+    // because the biggest, most prominent element on the screen must not be
+    // the one thing that cannot be pressed. This leaves the slot EMPTY for such
+    // a pack, and `use()` below is what fills it. `Uninstall` never inherits
+    // it: it is the destructive action and stays a quiet secondary beside it.
     function primary(item, state, handlers) {
         if (item.state === 'installed') return null;
         const busy = state.busyId === item.key;
@@ -118,11 +120,34 @@ const BossModMarketplaceDetail = (() => {
         }, busy ? COPY.installing : (item.state === 'update' ? COPY.update : COPY.install));
     }
 
+    // "Add agent from this": the bridge from reading a pack to hiring from it,
+    // on any pack the library already holds. On an installed-and-current pack
+    // it IS the primary — the slot `primary()` leaves empty, and the one
+    // thing left to do with that pack. Beside `Update` it is a quiet
+    // secondary: bringing the template up to date is the better errand, but
+    // the installed one is already usable. The dialog switches to its Add
+    // agent tab and starts the create form from the installed row.
+    //
+    // WITHHELD while this pack is being written — its update or install
+    // (`busyId` is the item's key) or its uninstall (the template's id). The
+    // row it would hand over is the one that write is replacing or removing,
+    // so a click mid-update started a form from the version being retired.
+    function use(item, state, handlers) {
+        const lead = item.state === 'installed';
+        const writing = state.busyId === item.key || state.busyId === item.template.id;
+        return h('button', {
+            class: lead ? 'market-action primary market-action-lead' : 'market-action',
+            id: 'market-use', type: 'button', disabled: writing,
+            onclick: () => handlers.onUseTemplate(item),
+        }, COPY.use);
+    }
+
     function actions(item, state, handlers) {
         const template = item.template;
         const removing = Boolean(template) && state.busyId === template.id;
         const rows = [
             primary(item, state, handlers),
+            template ? use(item, state, handlers) : null,
             template ? h('button', {
                 class: 'market-action', id: 'market-uninstall', type: 'button',
                 disabled: removing, onclick: () => handlers.onUninstall(template.id),
@@ -192,10 +217,10 @@ const BossModMarketplaceDetail = (() => {
      * BossModDom.h as a text node. There is no markup-string path in this file.
      *
      * @param {object} state  BossModMarketplace's state. `selected` is the item
-     *   to read, `busyId` gates the two actions, `sectionKey` is which of the
+     *   to read, `busyId` gates install and uninstall, `sectionKey` is which of the
      *   pack's sections is open, and `error`, `notice` and `pendingUninstall`
      *   are the three things that can sit above the hero.
-     * @param {object} handlers  onBack, onInstall, onUninstall,
+     * @param {object} handlers  onBack, onInstall, onUseTemplate, onUninstall,
      *   onUninstallConfirm, onUninstallCancel, onSection.
      * @returns {HTMLElement} The whole view, ready to replace the browse one.
      * @throws {Error} When nothing is selected. Rendering an empty detail would

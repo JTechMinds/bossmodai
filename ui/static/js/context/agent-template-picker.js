@@ -1,10 +1,11 @@
 /**
  * BossMod AI — step 1 of Add agent: pick a template, or start blank.
  *
- * The create dialog's first step. Its whole input is the LOCAL template
- * library, read through context/agent-templates-api.js in one indexed query, so
- * it knows nothing about GitHub, refs, catalogs or trust; that is the
- * marketplace's job, and this offers the door to it rather than a copy of it.
+ * The create pane's first step (context/agent-add-pane.js). Its whole input is
+ * the LOCAL template library, read through context/agent-templates-api.js in
+ * one indexed query, so it knows nothing about GitHub, refs, catalogs or trust;
+ * that is the marketplace's job — the other tab of the same Agents dialog —
+ * and this offers the door to it rather than a copy of it.
  *
  * ORGANISED LIKE THE MARKETPLACE, and built from the same two modules: the
  * cards are marketplace/pack-card.js and the filters are
@@ -73,9 +74,10 @@ const BossModAgentTemplatePicker = (() => {
      * @param {(template: object|null) => void} deps.onPick  Called with the
      *   chosen `AgentTemplate` row, or NULL for Blank. Null is a real answer,
      *   not an absent one — the dialog builds a different form for it.
-     * @param {() => void} deps.onBrowse  Opens the marketplace. Reachable from
-     *   the header in every state, and from the empty state's own button, which
-     *   is the only door a first-run operator can see.
+     * @param {() => void} deps.onBrowse  Switches the Agents dialog to its
+     *   Marketplace tab. Reached from the empty state's own button: the tab
+     *   itself is in the dialog's head in every state, but a first-run operator
+     *   with nothing installed is looking at the middle of this pane.
      * @returns {{element: HTMLElement, refresh: () => Promise<void>,
      *   focus: () => void}} `refresh` re-reads the library and repaints;
      *   `focus` puts the keyboard on the Find box, or on the Blank cell when
@@ -103,22 +105,25 @@ const BossModAgentTemplatePicker = (() => {
         let rail = null;
 
         // ─── The head, built once and never rebuilt ───
-        const findInput = h('input', {
-            class: 'field-input', id: 'agent-template-find', type: 'search',
+        //
+        // The app's toolbar search (core/search-field.js), the same control
+        // the Marketplace tab puts in the same place: a magnifier inside one
+        // bordered box. It was a visible `<label>` beside a stretched text
+        // field; the words are the input's accessible name now. Its glyph is
+        // painted by the dialog, which paints the whole panel once it is up.
+        const find = BossModSearchField.create({
             placeholder: COPY.findHint,
-            oninput: (event) => { query = event.target.value; renderCards(); },
+            label: COPY.findLabel,
+            onInput: (event) => { query = event.target.value; renderCards(); },
         });
-        const findRow = h('div', { class: 'picker-find-row' },
-            h('label', { class: 'field-label', for: 'agent-template-find' },
-                COPY.findLabel),
-            findInput);
+        find.input.id = 'agent-template-find';
         // THE FILTER ALONE. `Browse marketplace` sat here for one round and
         // read as part of the filter — "find a template" and "go somewhere
         // else to get one" are different errands, and one line said they were
-        // the same. It is the footer's lead action now
-        // (context/agent-dialog-footer.js); the empty state below keeps its own
-        // copy, which is the door a first-run operator can actually see.
-        const head = h('div', { class: 'picker-head' }, findRow);
+        // the same. The marketplace is the dialog's other tab now; the empty
+        // state below keeps its own door, which is the one a first-run
+        // operator can actually see.
+        const head = h('div', { class: 'picker-head' }, find.element);
 
         const railHost = h('div', { class: 'picker-rail-host' });
         const cardsEl = h('div', { class: 'picker-cards' });
@@ -263,7 +268,7 @@ const BossModAgentTemplatePicker = (() => {
             clear(statusEl);
             // The filter box has nothing to filter unless the library both read
             // and holds something, so it is hidden rather than offered empty.
-            findRow.hidden = !(status === 'ready' && templates.length > 0);
+            find.element.hidden = !(status === 'ready' && templates.length > 0);
             cardsEl.append(blankCell());
             if (status === 'loading') {
                 statusEl.append(statusLine(COPY.reading, 'status'));
@@ -339,7 +344,7 @@ const BossModAgentTemplatePicker = (() => {
         }
 
         function focus() {
-            if (!findRow.hidden) findInput.focus();
+            if (!find.element.hidden) find.input.focus();
             else element.querySelector('#agent-pick-blank').focus();
         }
 

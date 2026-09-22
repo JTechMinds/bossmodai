@@ -135,32 +135,9 @@
 
 .office-counts { margin: 0; color: var(--muted); font-size: 12px; }
 
-.office-tabs {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-
-.office-tab {
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-.office-tab:hover { background: var(--bg); color: var(--ink); }
-
-/* Quiet, the way .place-nav-item[aria-current] is quiet: the tab you are on is
-   the strongest TEXT in the group (--ink on --bg, 15.45:1), not the loudest
-   fill. Two blue pills competing in one window was the redesign's complaint. */
-.office-tab[aria-selected="true"] {
-  background: var(--bg);
-  color: var(--ink);
-}
+/* The Map | Org group is core/tabs.js, styled once in controls.css; what is
+   the header's alone is where it sits — the right end of the bar. */
+.office-header .tabs { margin-left: auto; }
 
 .office-stage { flex: 1 1 auto; min-height: 0; position: relative; }
 .office-pane { height: 100%; min-height: 0; overflow: auto; }

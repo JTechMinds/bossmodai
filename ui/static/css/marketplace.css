@@ -61,21 +61,31 @@
   background: var(--panel);
 }
 
-.market-find-row { flex: 1 1 280px; display: flex; align-items: center; gap: 8px; }
+/* The filter is core/search-field.js's box, styled once in controls.css and
+   sized for this dialog in overlays.css; nothing about it is this sheet's.
 
-/* APPEARANCE IS `.field-input`'s (controls.css) — the app's one text-control
-   rule, which the agent form and the Add agent picker also spend. This block
-   used to redeclare all of it and differed in exactly one declaration, a
-   --panel ground against the shared --bg, so the same search box read as two
-   different controls depending on which surface it was on. What is left here
-   is the only thing that is this layout's business: how the control flexes
-   inside its row. */
-.market-find,
+   The URL field's APPEARANCE is `.field-input`'s (controls.css) — the app's
+   one text-control rule, which the agent form also spends. This block used to
+   redeclare all of it and differed in exactly one declaration, a --panel
+   ground against the shared --bg, so the same control read as two different
+   ones depending on which surface it was on. What is left here is the only
+   thing that is this layout's business: how the control flexes inside its
+   row. */
 .market-url-input { flex: 1 1 auto; }
 
+/* The row's other end: the filter keeps its width on the left, and the door
+   that installs from outside the catalog sits against the right edge.
+
+   28px, the search field's height, as .menu-select-trigger is: a toolbar's
+   controls stand on one line. Sized by its 5px padding round a 12px line, it
+   stood taller than the field and made this head 2px taller than the Add
+   agent tab's, which moved the grid under it on every tab switch. */
 .market-url-toggle {
-  min-height: 24px;
-  padding: 5px 12px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
   border: 1px solid var(--line-control);
   border-radius: var(--r);
   background: var(--btn-face);
@@ -119,7 +129,9 @@
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  /* The picker beside it uses the same column (tokens.css), so a tab switch
+     does not move the grid. */
+  grid-template-columns: var(--filter-rail) minmax(0, 1fr);
   align-items: start;
   gap: 20px;
 }
@@ -197,7 +209,7 @@
    to one on a narrow window without a breakpoint per step. */
 .market-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--pack-card-min), 1fr));
   gap: 12px;
 }
 

@@ -442,6 +442,47 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .search-field-input::placeholder { color: var(--hint); }
 .search-field-input::-webkit-search-decoration { -webkit-appearance: none; }
 
+/* ─── Tabs ───
+ *
+ * A quiet tab group (core/tabs.js): the Office's Map | Org and the Agents
+ * dialog's Add agent | Marketplace. Moved here from places.css when the second
+ * surface arrived; where a group sits in its row is that row's business, so
+ * nothing here pushes it anywhere.
+ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* A tab that leads with an icon (the Agents dialog's): the search field's
+   glyph size, and it takes the tab's colour so the selected one darkens with
+   its label. */
+.tab svg { width: 14px; height: 14px; flex: none; }
+
+.tab:hover { background: var(--bg); color: var(--ink); }
+
+/* Quiet, the way .place-nav-item[aria-current] is quiet: the tab you are on is
+   the strongest TEXT in the group (--ink on --bg, 15.45:1), not the loudest
+   fill. Two blue pills competing in one window was the redesign's complaint. */
+.tab[aria-selected="true"] {
+  background: var(--bg);
+  color: var(--ink);
+}
+
 /* ─── Menu select ───
  *
  * A dropdown's trigger (core/menu-select.js): a .btn.btn-sm that names the

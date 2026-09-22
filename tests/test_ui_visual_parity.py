@@ -1463,8 +1463,13 @@ def test_office_header_and_ticker_match_the_concept() -> None:
     assert "font-size: 12px" in ticker
 
     # Quiet, exactly as the place nav is quiet: the tab you are on is the
-    # strongest TEXT in the group, not the loudest fill.
-    tab = css.split('.office-tab[aria-selected="true"] {', 1)[1].split("}", 1)[0]
+    # strongest TEXT in the group, not the loudest fill. The Office's tabs are
+    # core/tabs.js now — shared with the Agents dialog — so the rule is the
+    # shared control's, in controls.css, and the header keeps only where the
+    # group sits.
+    assert ".office-header .tabs { margin-left: auto; }" in css
+    controls = _read(CSS / "controls.css")
+    tab = controls.split('.tab[aria-selected="true"] {', 1)[1].split("}", 1)[0]
     assert "var(--accent-bg)" not in tab
     assert "background: var(--bg)" in tab
     assert "color: var(--ink)" in tab
