@@ -215,8 +215,15 @@ def _sanitize_env(cwd: Path) -> dict[str, str]:
     return env
 
 
-def _truncate(text: str, max_bytes: int) -> str:
-    """Truncate *text* to *max_bytes* (UTF-8), appending a notice if trimmed."""
+def _truncate(text: str | bytes, max_bytes: int) -> str:
+    """Truncate *text* to *max_bytes* (UTF-8), appending a notice if trimmed.
+
+    POSIX ``TimeoutExpired`` stdout and stderr are ``bytes`` even when the
+    child was started in text mode. Decode those as UTF-8 with replacement
+    before measuring and trimming.
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     encoded = text.encode("utf-8", errors="replace")
     if len(encoded) <= max_bytes:
         return text
