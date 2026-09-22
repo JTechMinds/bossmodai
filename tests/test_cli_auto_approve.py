@@ -15,7 +15,15 @@ from api.auth import LOCAL_API_TOKEN_HEADER, ensure_local_api_token, install_loc
 from api.routes import router
 from core import config
 from core.agent_loop.actions_cli import _cli_action_result
-from core.bm_cli.cli_auto_approve import AUDIT_PREFIX, parse_review_payload
+from core.bm_cli.cli_auto_approve import (
+    AUDIT_PREFIX,
+    NOT_ASKED_OPAQUE,
+    NOT_ASKED_SCOPE,
+    REVIEW_ERROR_PREFIX,
+    UNSURE_PREFIX,
+    command_shape,
+    parse_review_payload,
+)
 from core.bm_cli.filesystem import agent_artifact_dir, project_artifact_dir
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
@@ -118,6 +126,8 @@ def test_toggle_off_keeps_the_approval_card(monkeypatch: pytest.MonkeyPatch) -> 
     assert result.approval_required is True
     assert result.ok is False
     assert notes.read_text(encoding="utf-8") == "keep"
+    card = (result.data or {}).get("cli_approval") or {}
+    assert not card.get("review_note")
     pending = db.list_cli_approval_requests(status="pending", agent_id=agent.id)
     assert len(pending) == 1
     assert pending[0].decision_by is None
@@ -185,6 +195,9 @@ def test_bad_json_stays_on_the_approval_card(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.approval_required is True
     assert notes.read_text(encoding="utf-8") == "keep"
+    card = (result.data or {}).get("cli_approval") or {}
+    assert str(card.get("review_note") or "").startswith(REVIEW_ERROR_PREFIX)
+    assert "not a review" in str(card.get("review_note") or "")
     assert db.list_cli_approval_requests(status="approved", decision_by="system") == []
 
 
@@ -250,6 +263,8 @@ def test_write_outside_the_bound_project_stays_a_card(monkeypatch: pytest.Monkey
 
     assert result.approval_required is True
     assert secret.read_text(encoding="utf-8") == "nope"
+    card = (result.data or {}).get("cli_approval") or {}
+    assert card.get("review_note") == NOT_ASKED_SCOPE
 
 
 def test_me_delete_can_auto_approve(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -329,5 +344,194 @@ def test_thread_toggle_is_off_in_the_menu_until_the_flag_is_set() -> None:
     assert "/cli-auto-approve" in thread
     popover = (ROOT / "ui/static/js/needs/needs-popover.js").read_text(encoding="utf-8")
     assert "audit: 'Auto-approved'" in popover
+    assert "popover-need-review" in popover
     shape = (ROOT / "ui/static/js/needs/need-shape.js").read_text(encoding="utf-8")
     assert "'cli_auto_approved'" in shape
+    assert "reviewNote: raw.review_note" in shape
+    assert "review_note: need.reviewNote" in shape
+    card_js = (ROOT / "ui/static/js/core/consent-card.js").read_text(encoding="utf-8")
+    assert "hpc-review" in card_js
+
+
+def _user_payload(messages: list) -> dict:
+    user = next(item for item in messages if item.get("role") == "user")
+    return json.loads(user["content"])
+
+
+def test_command_shape_collapses_paths() -> None:
+    assert command_shape("rm notes.txt") == command_shape("rm other.txt")
+    assert command_shape("rm notes.txt") != command_shape("rm -f notes.txt")
+    assert command_shape("rm notes.txt") != command_shape("mv notes.txt other.txt")
+    assert command_shape("not a \"command") is None
+
+
+def test_unsure_review_shows_why_on_the_card(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    """Toggle on, and a refusal still paints the reason beside Approve."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    reason = "deletes more than the notes file"
+    monkeypatch.setattr(
+        "core.bm_cli.cli_auto_approve.complete_text",
+        lambda _messages: json.dumps({"allow": False, "why": reason}),
+    )
+
+    result = execute_bm_cli(agent, state, "rm notes.txt", channel_id=channel.id)
+
+    assert result.approval_required is True
+    assert notes.read_text(encoding="utf-8") == "keep"
+    expected = f"{UNSURE_PREFIX}{reason}"
+    card = (result.data or {}).get("cli_approval") or {}
+    assert card.get("review_note") == expected
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    approvals = [item for item in res.json() if item["kind"] == "approval"]
+    assert len(approvals) == 1
+    assert approvals[0]["review_note"] == expected
+    assert approvals[0]["sub"] == "rm notes.txt"
+
+
+def test_review_call_failure_shows_why_on_the_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+
+    def _boom(_messages):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr("core.bm_cli.cli_auto_approve.complete_text", _boom)
+    result = execute_bm_cli(agent, state, "rm notes.txt", channel_id=channel.id)
+
+    assert result.approval_required is True
+    assert notes.read_text(encoding="utf-8") == "keep"
+    card = (result.data or {}).get("cli_approval") or {}
+    note = str(card.get("review_note") or "")
+    assert note.startswith(REVIEW_ERROR_PREFIX)
+    assert "review call failed" in note
+
+
+def test_opaque_command_says_why_without_asking(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    set_cli_cwd(agent.id, "/projects/demo")
+
+    def _boom(_messages):
+        raise AssertionError("an opaque command is not sent to System AI")
+
+    monkeypatch.setattr("core.bm_cli.cli_auto_approve.complete_text", _boom)
+    result = execute_bm_cli(agent, state, "curl https://example.com", channel_id=channel.id)
+
+    assert result.approval_required is True
+    card = (result.data or {}).get("cli_approval") or {}
+    assert card.get("review_note") == NOT_ASKED_OPAQUE
+
+
+def test_manual_approve_is_advisory_for_a_similar_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A human Approve is context for the next review. It does not skip it."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    root = _project_file().parent
+    for name in ("extra.txt", "spare.txt", "other.txt"):
+        (root / name).write_text("keep", encoding="utf-8")
+    set_cli_cwd(agent.id, "/projects/demo")
+    cwd = "/projects/demo"
+
+    def _remember(command: str, *, decision_by: str, note: str | None = None):
+        row = db.create_cli_approval_request(
+            agent_id=agent.id,
+            command=command,
+            cwd=cwd,
+            channel_id=channel.id,
+        )
+        updated = db.approve_cli_approval_request(
+            row.id,
+            decision_by=decision_by,
+            decision_note=note,
+        )
+        assert updated is not None
+        return updated
+
+    _remember("rm notes.txt", decision_by="human")
+    _remember("rm system-only.txt", decision_by="system", note=f"{AUDIT_PREFIX} earlier")
+    _remember("rm always.txt", decision_by="human", note="Always allowed")
+
+    seen: list = []
+
+    def _refuse(messages):
+        seen.append(messages)
+        return json.dumps({"allow": False, "why": "still no"})
+
+    monkeypatch.setattr("core.bm_cli.cli_auto_approve.complete_text", _refuse)
+    result = execute_bm_cli(agent, state, "rm extra.txt", channel_id=channel.id)
+
+    assert seen, "remembered Approves must not skip System AI"
+    priors = _user_payload(seen[0])["prior_manual_approves"]
+    assert [item["command"] for item in priors] == ["rm notes.txt"]
+    assert priors[0]["cwd"] == cwd
+    assert result.approval_required is True
+    assert (root / "extra.txt").read_text(encoding="utf-8") == "keep"
+    card = (result.data or {}).get("cli_approval") or {}
+    assert str(card.get("review_note") or "").startswith(UNSURE_PREFIX)
+
+    seen.clear()
+    elsewhere = _thread(agent.id, enabled=True)
+    other_thread = execute_bm_cli(agent, state, "rm spare.txt", channel_id=elsewhere.id)
+    assert _user_payload(seen[0])["prior_manual_approves"] == []
+    assert other_thread.approval_required is True
+    assert (root / "spare.txt").read_text(encoding="utf-8") == "keep"
+
+    seen.clear()
+    moved = execute_bm_cli(agent, state, "mv other.txt renamed.txt", channel_id=channel.id)
+    assert _user_payload(seen[0])["prior_manual_approves"] == []
+    assert moved.approval_required is True
+    assert (root / "other.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_never_allow_and_fence_ignore_thread_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A remembered Approve does not open a never-allow, a fence, or a jail."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    remembered = db.create_cli_approval_request(
+        agent_id=agent.id,
+        command="rm notes.txt",
+        cwd="/projects/demo",
+        channel_id=channel.id,
+    )
+    assert db.approve_cli_approval_request(remembered.id, decision_by="human") is not None
+
+    def _boom(_messages):
+        raise AssertionError("hard blocks must not reach System AI")
+
+    monkeypatch.setattr("core.bm_cli.cli_auto_approve.complete_text", _boom)
+
+    blocked = execute_bm_cli(agent, state, "bash -c 'echo hi'", channel_id=channel.id)
+    assert blocked.ok is False
+    assert blocked.approval_required is False
+    assert "Blocked" in blocked.detail
+
+    made = execute_bm_cli(agent, state, "mkdir /projects/bound-poc", channel_id=channel.id)
+    assert made.ok is True, made.detail
+    entered = execute_bm_cli(agent, state, "cd /projects/bound-poc", channel_id=channel.id)
+    assert entered.ok is True, entered.detail
+    parent = execute_bm_cli(agent, state, "cd ..", channel_id=channel.id)
+    assert parent.ok is True, parent.detail
+    fenced = execute_bm_cli(agent, state, "git checkout -b escaped", channel_id=channel.id)
+    assert fenced.ok is False
+    assert fenced.kind == "project_git_fence"
+    assert fenced.approval_required is False
+
+    set_cli_cwd(agent.id, "/projects/demo")
+    jailed = execute_bm_cli(agent, state, "rm /etc/passwd", channel_id=channel.id)
+    assert jailed.ok is False
+    assert jailed.approval_required is False
+    assert "Path jail" in jailed.detail
+    assert db.list_cli_approval_requests(status="approved", decision_by="system") == []

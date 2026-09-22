@@ -190,6 +190,13 @@ const BossModConsentCard = (() => {
             container.appendChild(resolved);
             return;
         }
+        const reviewNote = String(card.review_note || '').trim();
+        if (reviewNote) {
+            const whyEl = document.createElement('div');
+            whyEl.className = 'hpc-reason hpc-review';
+            whyEl.textContent = reviewNote;
+            container.appendChild(whyEl);
+        }
         const actions = document.createElement('div');
         actions.className = 'host-path-consent-actions';
         [

@@ -158,6 +158,9 @@ const BossModNeedsPopover = (() => {
             return h('article', { class: 'popover-need', 'data-need-id': need.id },
                 h('p', { class: 'popover-need-title' }, need.title),
                 h('p', { class: 'popover-need-sub' }, need.sub),
+                need.reviewNote
+                    ? h('p', { class: 'popover-need-review' }, need.reviewNote)
+                    : null,
                 h('p', { class: 'popover-need-time' },
                     BossModFormat.formatRelativeTime(need.createdAt)),
                 need.error

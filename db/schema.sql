@@ -454,6 +454,7 @@ CREATE TABLE IF NOT EXISTS cli_approval_requests (
                         CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
     decision_by     VARCHAR,
     decision_note   TEXT,
+    review_note     TEXT,
     decided_at      TIMESTAMP,
     expires_at      TIMESTAMP,
     created_at      TIMESTAMP DEFAULT current_timestamp

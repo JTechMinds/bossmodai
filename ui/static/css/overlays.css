@@ -1090,6 +1090,13 @@
 
 .popover-need-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink); }
 .popover-need-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: break-word; }
+
+.popover-need-review {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+}
 .popover-need-time { margin: 2px 0 0; font-size: 11px; color: var(--hint); }
 
 .popover-need-error {

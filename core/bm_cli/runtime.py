@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -1250,6 +1251,14 @@ def _execute_shell_policy(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ThreadAutoGate:
+    """A finished auto-approve, or the reason a card must still be shown."""
+
+    result: BossModCliResult | None = None
+    card_why: str = ""
+
+
 def _maybe_thread_auto_approve(
     *,
     agent: Agent,
@@ -1259,10 +1268,12 @@ def _maybe_thread_auto_approve(
     policy: object,
     trigger_type: str | None,
     channel_id: str | None,
-) -> BossModCliResult | None:
-    """Auto-approve one opted-in approval_required command, or return None to card.
+) -> _ThreadAutoGate:
+    """Auto-approve one opted-in approval_required command, or leave a card.
 
     A host-guardrail refusal is a path-jail block. System AI never sees it.
+    A card keeps ``card_why`` when the thread flag is on, so the operator
+    sees why the toggle did not run the command.
     """
     from core.bm_cli.cli_auto_approve import (
         audit_line,
@@ -1278,7 +1289,7 @@ def _maybe_thread_auto_approve(
         channel_id=channel_id,
     )
     if plan.action == "card":
-        return None
+        return _ThreadAutoGate(card_why=plan.card_why)
     if plan.action == "block":
         result = _path_jail_cli_result(agent, parsed, cwd_before, plan.jail_message)
         record_bm_cli_event(
@@ -1293,7 +1304,7 @@ def _maybe_thread_auto_approve(
             result=result,
             trigger_type=trigger_type,
         )
-        return result
+        return _ThreadAutoGate(result=result)
 
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
@@ -1309,7 +1320,7 @@ def _maybe_thread_auto_approve(
         )
     except Exception:
         logger.exception("CLI auto-approve create failed for %s", parsed.raw)
-        return None
+        return _ThreadAutoGate(card_why=plan.card_why)
     line = audit_line(plan.why)
     approved = db.approve_cli_approval_request(
         approval.id,
@@ -1317,12 +1328,12 @@ def _maybe_thread_auto_approve(
         decision_note=line,
     )
     if approved is None:
-        return None
+        return _ThreadAutoGate(card_why=plan.card_why)
     log_system_auto_approve(agent.name, f"{line} — {parsed.raw}")
     state = db.get_agent_state(agent.id)
     if state is None:
-        return None
-    return execute_approved_command(
+        return _ThreadAutoGate(card_why=plan.card_why)
+    return _ThreadAutoGate(result=execute_approved_command(
         agent,
         state,
         parsed.raw,
@@ -1332,7 +1343,7 @@ def _maybe_thread_auto_approve(
         trigger_type=trigger_type,
         channel_id=channel_id,
         system_audit=plan.why,
-    )
+    ))
 
 
 def _handle_approval_required(
@@ -1386,8 +1397,8 @@ def _handle_approval_required(
         trigger_type=trigger_type,
         channel_id=origin_channel,
     )
-    if auto is not None:
-        return auto
+    if auto.result is not None:
+        return auto.result
 
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
@@ -1401,6 +1412,7 @@ def _handle_approval_required(
             matched_rule_id=policy.matched_rule_id,
             expires_at=expires_at,
             channel_id=origin_channel,
+            review_note=auto.card_why or None,
         )
     except Exception:
         logger.exception("CLI approval create failed for %s", parsed.raw)

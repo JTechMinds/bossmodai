@@ -101,6 +101,7 @@ from db.cli_approval_requests import (
     expire_stale_requests as expire_stale_cli_approval_requests,
     get_approval_request as get_cli_approval_request,
     list_approval_requests as list_cli_approval_requests,
+    list_thread_manual_approvals,
     reject_request as reject_cli_approval_request,
 )
 from db.notifications import (
@@ -614,6 +615,7 @@ __all__ = [
     "expire_stale_cli_approval_requests",
     "get_cli_approval_request",
     "list_cli_approval_requests",
+    "list_thread_manual_approvals",
     "reject_cli_approval_request",
     # Metrics
     "get_agent_stats_batch",

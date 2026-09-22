@@ -13,7 +13,8 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 
 _ALL_COLUMNS = (
     "id, agent_id, trigger_id, command, content, cwd, matched_rule_id, "
-    "channel_id, status, decision_by, decision_note, decided_at, expires_at, created_at"
+    "channel_id, status, decision_by, decision_note, review_note, "
+    "decided_at, expires_at, created_at"
 )
 
 
@@ -31,22 +32,42 @@ def create_approval_request(
     trigger_id: str | None = None,
     expires_at: datetime | None = None,
     channel_id: str | None = None,
+    review_note: str | None = None,
 ) -> CliApprovalRequest:
     """Insert a new approval request, or reuse a pending row for this command."""
     origin = (channel_id or "").strip() or None
+    note = (review_note or "").strip() or None
     existing = get_pending_for_command(agent_id, command, cwd=cwd)
     if existing is not None:
+        if note and not (existing.review_note or "").strip():
+            updated = _set_review_note(existing.id, note)
+            if updated is not None:
+                return updated
         return existing
     return insert_returning(
         f"""
         INSERT INTO cli_approval_requests (
             agent_id, command, content, cwd,
-            matched_rule_id, trigger_id, expires_at, channel_id
+            matched_rule_id, trigger_id, expires_at, channel_id, review_note
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING {_ALL_COLUMNS}
         """,
-        [agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin],
+        [agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin, note],
+        CliApprovalRequest,
+    )
+
+
+def _set_review_note(request_id: str, review_note: str) -> CliApprovalRequest | None:
+    """Stamp a pending card with the reason it was not auto-approved."""
+    return fetch_one(
+        f"""
+        UPDATE cli_approval_requests
+        SET review_note = $1
+        WHERE id = $2 AND status = 'pending'
+        RETURNING {_ALL_COLUMNS}
+        """,
+        [review_note, request_id],
         CliApprovalRequest,
     )
 
@@ -135,6 +156,37 @@ def list_approval_requests(
         LIMIT ${len(params)}
         """,
         params,
+        CliApprovalRequest,
+    )
+
+
+def list_thread_manual_approvals(
+    channel_id: str,
+    *,
+    excluded_note: str,
+    limit: int = 40,
+) -> list[CliApprovalRequest]:
+    """Return recent human Approves in one thread, newest first.
+
+    System rows are not manual. ``excluded_note`` drops Always-allow, which
+    is a policy rule rather than thread advice.
+    """
+    token = (channel_id or "").strip()
+    if not token:
+        return []
+    return fetch_all(
+        f"""
+        SELECT {_ALL_COLUMNS}
+        FROM cli_approval_requests
+        WHERE channel_id = $1
+          AND status = 'approved'
+          AND decision_by IS NOT NULL
+          AND decision_by != 'system'
+          AND (decision_note IS NULL OR decision_note != $2)
+        ORDER BY decided_at DESC, id DESC
+        LIMIT $3
+        """,
+        [token, excluded_note, limit],
         CliApprovalRequest,
     )
 

@@ -169,7 +169,7 @@ const BossModNeedsBar = (() => {
             return {
                 tone: BAR_CARDS[need.kind] || FALLBACK_CARDS[need.kind],
                 title: need.title,
-                sub: need.sub,
+                sub: need.reviewNote ? `${need.sub} — ${need.reviewNote}` : need.sub,
                 error: need.error || '',
                 actions,
             };

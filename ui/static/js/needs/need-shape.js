@@ -151,6 +151,7 @@ const BossModNeedShape = (() => {
                 id: need.id, kind: flavor, status: 'pending',
                 title: need.title || 'Approve this command?', command: need.sub || '',
                 cwd: need.cwd || '',
+                review_note: need.reviewNote || '',
                 always_allow: (need.actions || []).some((item) => item.label === 'Always allow'),
             }
             : {
@@ -264,6 +265,7 @@ const BossModNeedShape = (() => {
             cardKind: raw.card_kind == null ? '' : String(raw.card_kind),
             groupedIds: (Array.isArray(raw.grouped_ids) ? raw.grouped_ids : [raw.id]).map((id) => String(id)),
             cwd: raw.cwd == null ? '' : String(raw.cwd),
+            reviewNote: raw.review_note == null ? '' : String(raw.review_note),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
         need.target = targetFor(need);
