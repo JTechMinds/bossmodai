@@ -155,12 +155,12 @@ def _build_delegated_board(agent_id: str) -> dict[str, Any]:
     }
 
 
-def next_board_owner_id(task: Any, *, author_id: str | None = None) -> str | None:
-    """Return who should wake for the next open card after ``task``.
+def next_board_task(task: Any, *, author_id: str | None = None) -> Task | None:
+    """Return the next open card after ``task``.
 
     A later open sibling comes first. Otherwise the next open card on the
-    same channel, in created order. The assignee is that owner. There is
-    no chat-text match.
+    same channel, in created order. The author and the human operator are
+    not that owner. There is no chat-text match.
     """
     if task is None:
         return None
@@ -168,21 +168,60 @@ def next_board_owner_id(task: Any, *, author_id: str | None = None) -> str | Non
     parent_id = str(getattr(task, "parent_task_id", None) or "").strip()
     channel_id = str(getattr(task, "notification_channel_id", None) or "").strip()
     if parent_id:
-        owner = _later_card_owner(task, author_id=author, parent_task_id=parent_id)
-        if owner:
-            return owner
+        card = _later_open_card(task, author_id=author, parent_task_id=parent_id)
+        if card is not None:
+            return card
     if not channel_id:
         return None
-    return _later_card_owner(task, author_id=author, notification_channel_id=channel_id)
+    return _later_open_card(task, author_id=author, notification_channel_id=channel_id)
 
 
-def _later_card_owner(
+def next_board_owner_id(task: Any, *, author_id: str | None = None) -> str | None:
+    """Return who should wake for the next open card after ``task``."""
+    card = next_board_task(task, author_id=author_id)
+    if card is None:
+        return None
+    return str(card.assigned_to or "").strip() or str(card.owner_id or "").strip() or None
+
+
+def pending_channel_card_for_owner(
+    channel_id: str,
+    owner_id: str,
+    *,
+    exclude_task_ids: set[str] | None = None,
+) -> Task | None:
+    """Earliest pending channel card already assigned to ``owner_id``.
+
+    Pending is the Work bind. Accepted, active, and Soft-blocked cards are
+    left alone.
+    """
+    token = (channel_id or "").strip()
+    owner = (owner_id or "").strip()
+    if not token or not owner or owner == HUMAN_SENDER_ID:
+        return None
+    skipped = exclude_task_ids or set()
+    rows = [
+        item
+        for item in db.list_tasks(
+            notification_channel_id=token,
+            assigned_to=owner,
+            status="pending",
+        )
+        if item.id not in skipped and getattr(item, "source_channel", None) == "channel"
+    ]
+    if not rows:
+        return None
+    rows.sort(key=lambda item: (item.created_at, item.id))
+    return rows[0]
+
+
+def _later_open_card(
     task: Any,
     *,
     author_id: str,
     parent_task_id: str | None = None,
     notification_channel_id: str | None = None,
-) -> str | None:
+) -> Task | None:
     """First open card strictly after ``task`` in this pool, skipping the author."""
     rows: list[Task] = []
     seen: set[str] = set()
@@ -203,7 +242,7 @@ def _later_card_owner(
         owner = str(item.assigned_to or "").strip() or str(item.owner_id or "").strip()
         if not owner or owner == author_id or owner == HUMAN_SENDER_ID:
             continue
-        return owner
+        return item
     return None
 
 

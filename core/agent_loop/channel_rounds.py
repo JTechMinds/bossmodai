@@ -88,6 +88,7 @@ def start_channel_peer_round(
     handoff: bool = False,
     required_ids: list[str] | None = None,
     board_owner_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Open a new channel response round so peers can react to one message.
 
@@ -120,10 +121,18 @@ def start_channel_peer_round(
         return []
     mode = classify_channel_dispatch(content, members)
     # Operator @ is an override pin. Agent @ in prose is not. Structured
-    # next_owners and Board next-card owners are hard pins of the same kind.
+    # next_owners and Board next-card owners are hard pins of the same kind,
+    # except owners this Done round is already binding into Work: they are
+    # not Talk-woken here.
     operator_pins = mention_ids_in_order(content, members) if author_type == "human" else []
     member_ids = {member["id"] for member in members}
     board_ids = [agent_id for agent_id in (board_owner_ids or []) if agent_id in member_ids]
+    # Work-bound owners stay in the Board sticky so the route can see them,
+    # and stay out of the Talk queue. A Done round that already has one
+    # does not spend the empty-speak repair on a status fan-out.
+    bound = {agent_id for agent_id in (work_bind_ids or []) if agent_id in member_ids}
+    talk_board_ids = [agent_id for agent_id in board_ids if agent_id not in bound]
+    talk_required = [agent_id for agent_id in (required_ids or []) if agent_id not in bound]
     reopen_id = ""
     if author_type != "system":
         reopen_id = _blocked_reply_reopen_id(
@@ -139,8 +148,8 @@ def start_channel_peer_round(
     pins = _merge_ids(
         operator_pins,
         [reopen_id] if reopen_id else [],
-        list(required_ids or []),
-        board_ids,
+        talk_required,
+        talk_board_ids,
         allowed=member_ids,
     )
     lead_id = _lead_id(channel, [member["id"] for member in members])
@@ -166,6 +175,7 @@ def start_channel_peer_round(
         handoff=handoff,
         agent_line=author_type == "agent",
         sticky_note=sticky,
+        repair_empty=not (handoff and bound),
     )
 
     round_record = db.create_channel_response_round(
@@ -173,11 +183,20 @@ def start_channel_peer_round(
         source_message_id=message_id,
     )
     speak_ids = _serial_speak_ids(plan) if mode == DISPATCH_ROUNDS else list(plan.speak)
+    if bound:
+        speak_ids = [agent_id for agent_id in speak_ids if agent_id not in bound]
     stay_ids = (
-        [agent_id for agent_id in plan.stay_out if agent_id not in set(speak_ids)]
+        [
+            agent_id
+            for agent_id in plan.stay_out
+            if agent_id not in set(speak_ids) and agent_id not in bound
+        ]
         if mode == DISPATCH_ROUNDS
         else []
     )
+    # The named owner went to Work. Do not pass the rest of the room for that.
+    if bound and not speak_ids:
+        stay_ids = []
     if reopen_id and reopen_id in set(speak_ids):
         _resume_blocked_agent(reopen_id)
     channel_round_db.set_channel_round_meta(
@@ -187,7 +206,11 @@ def start_channel_peer_round(
         stepped_out=list(stay_ids),
         next_mentions=[],
         router_mode=plan.mode if mode == DISPATCH_ROUNDS else "fallback",
-        pinned_ids=list(plan.pinned) if mode == DISPATCH_ROUNDS else [],
+        pinned_ids=(
+            [agent_id for agent_id in plan.pinned if agent_id not in bound]
+            if mode == DISPATCH_ROUNDS
+            else []
+        ),
     )
     wake_ids = _install_round_queue(
         round_id=round_record.id,
@@ -235,6 +258,7 @@ def post_agent_channel_share(
     handoff: bool = False,
     required_ids: list[str] | None = None,
     board_owner_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Persist an agent-authored channel share and open a peer response round.
 
@@ -274,6 +298,7 @@ def post_agent_channel_share(
         handoff=handoff,
         required_ids=required_ids,
         board_owner_ids=board_owner_ids,
+        work_bind_ids=work_bind_ids,
     )
 
 
@@ -433,6 +458,7 @@ def _plan_for_members(
     handoff: bool = False,
     agent_line: bool = False,
     sticky_note: str = "",
+    repair_empty: bool = True,
 ) -> RoundPlan:
     """Route a rounds queue. Fan-out and an unset router keep the drain order."""
     if mode != DISPATCH_ROUNDS:
@@ -452,6 +478,7 @@ def _plan_for_members(
         handoff=handoff,
         agent_line=agent_line,
         sticky_note=sticky_note,
+        repair_empty=repair_empty,
     )
 
 

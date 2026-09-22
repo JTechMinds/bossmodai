@@ -104,6 +104,7 @@ def _append_task_follow_up_message(
     handoff: bool = False,
     required_ids: list[str] | None = None,
     board_owner_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> set[str]:
     """Persist one natural follow-up message for a task lifecycle update."""
     if task is None or not isinstance(content, str) or not content.strip():
@@ -117,6 +118,7 @@ def _append_task_follow_up_message(
             handoff=handoff,
             required_ids=required_ids,
             board_owner_ids=board_owner_ids,
+            work_bind_ids=work_bind_ids,
         )
         result["channel_message"] = channel_message
         result.setdefault("trigger_requests", []).extend(peer_wakes)
