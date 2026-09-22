@@ -384,9 +384,12 @@ def test_validate_on_clone_pytest_and_local_git_are_allowed_python_stays_blocked
     assert host_pip.approval_required is True
     assert host_pip.tier == "approval_required"
 
+    # No seed rule matches `uv run python`. The factory default pauses for
+    # approval instead of hard-denying. Direct python/python3 stay never_allowed.
     uv_python = policy_engine.evaluate("uv run python -c 'print(1)'", frozenset())
     assert uv_python.allowed is False
-    assert uv_python.approval_required is False
+    assert uv_python.approval_required is True
+    assert uv_python.tier == "default"
 
     for command in ("git add tests/test_ok.py", "git commit -m validate", "git status --short"):
         decision = policy_engine.evaluate(command, frozenset())

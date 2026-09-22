@@ -10,7 +10,8 @@ Evaluation order (first match wins):
        (includes printenv / env dumps of GH_TOKEN / GITHUB_TOKEN, and gh auth token)
     3. always_allowed    -> allowed, executor="shell"
     4. approval_required -> denied, approval_required=True
-    5. Default policy    -> ``cli_default_policy`` setting ("deny" or "approval_required")
+    5. Default policy    -> ``cli_default_policy`` setting
+       (factory approval_required; deny remains selectable)
 """
 
 from __future__ import annotations
@@ -412,7 +413,7 @@ class PolicyEngine:
     @staticmethod
     def _default_decision(command_str: str) -> CommandPolicyDecision:
         """Apply the default policy when no rule matches."""
-        default_policy = config.get("cli_default_policy") or "deny"
+        default_policy = config.get("cli_default_policy") or "approval_required"
 
         if default_policy == "approval_required":
             return CommandPolicyDecision(

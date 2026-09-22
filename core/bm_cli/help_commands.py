@@ -31,11 +31,11 @@ def _shell_enabled() -> bool:
 
 
 def _default_policy() -> str:
-    """Return the configured default shell policy (deny when unset)."""
+    """Return the configured default shell policy (approval_required when unset)."""
     try:
-        return config.get("cli_default_policy") or "deny"
+        return config.get("cli_default_policy") or "approval_required"
     except Exception:
-        return "deny"
+        return "approval_required"
 
 
 def _get_shell_rules() -> list[CliPolicyRule]:

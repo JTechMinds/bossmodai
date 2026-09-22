@@ -7,7 +7,7 @@ Every locked-clone shell command maps to exactly one of:
 - ``approval_required`` — real request id + in-thread chrome
 - ``never_allowed`` — explicit ``Blocked — {why}`` plus a steer
 
-Silent deny is a bug. Unmatched default-deny on a locked clone becomes
+Silent deny is a bug. An unmatched command on a locked clone becomes
 approval_required so the operator gets a card, not a quiet drop.
 Host writes outside the nest stay ``never_allowed``.
 """
@@ -186,6 +186,15 @@ def decide_locked_clone_shell_outcome(
         )
 
     if policy.approval_required:
+        # Factory default is approval_required. Keep the locked-clone steer
+        # for an unmatched command; a matched approval rule keeps its message.
+        if policy.tier == "default":
+            return LockedCloneShellOutcome(
+                kind="approval_required",
+                parsed=parsed,
+                policy=_approval_from_default(parsed, policy),
+                message=DEFAULT_APPROVAL_MESSAGE,
+            )
         return LockedCloneShellOutcome(
             kind="approval_required",
             parsed=parsed,
