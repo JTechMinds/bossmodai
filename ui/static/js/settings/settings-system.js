@@ -105,7 +105,7 @@ const SystemSection = (() => {
         default_max_tokens: {
             order: 10,
             label: 'Default Max Completion Tokens',
-            description: 'Global fallback output-token budget for one model completion when no provider-specific override is supplied.',
+            description: 'Global fallback output-token budget for one model completion when no provider-specific override is supplied. Default 16384.',
         },
         default_temperature: {
             order: 20,
