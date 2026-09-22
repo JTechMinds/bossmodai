@@ -1,7 +1,8 @@
 /**
- * Node harness: Settings → System → AI Output renders System AI and the
- * compaction knobs, and a change saves through the existing settings PUT.
- * Invoked by tests/test_system_ai_compaction_settings.py. Not a browser bundle.
+ * Node harness: Settings → System → AI Output renders the compaction knobs,
+ * and a change saves through the existing settings PUT. System AI lives
+ * under AI Connections. Invoked by tests/test_system_ai_compaction_settings.py.
+ * Not a browser bundle.
  */
 const fs = require("fs");
 const { FakeEl, installDom } = require("./js_fake_dom.cjs");
@@ -85,20 +86,12 @@ const fetches = [];
 const saves = [];
 const world = {
     settings: [],
-    connections: [],
-    connectionsOk: true,
 };
 
 global.apiFetch = async (url) => {
     fetches.push(url);
     if (url === "/api/settings") {
         return { ok: true, status: 200, json: async () => world.settings };
-    }
-    if (url === "/api/connections") {
-        if (!world.connectionsOk) {
-            return { ok: false, status: 500, json: async () => ({}) };
-        }
-        return { ok: true, status: 200, json: async () => world.connections };
     }
     throw new Error(`unexpected fetch ${url}`);
 };
@@ -171,11 +164,6 @@ async function main() {
         setting("compaction_cooldown_minutes", "10", "llm"),
         setting("max_concurrent_llm_calls", "5", "llm"),
     ];
-    world.connections = [
-        { id: "conn-plain", name: "Local", model: "mock-small", api_base_url: "http://127.0.0.1:9" },
-        { id: 'conn-quote', name: 'Bob "fast" <Local>', model: "gpt-4", api_base_url: "http://127.0.0.1:9" },
-    ];
-
     const root = new FakeEl("div");
     await SystemSection.render(root);
     const openedOnSimulation = snapshot(root).some((row) => row.key === "tick_interval")
@@ -187,18 +175,12 @@ async function main() {
     const heading = root.querySelector("h3") ? root.querySelector("h3").textContent.trim() : "";
     const intro = root.querySelectorAll("p").map((node) => node.textContent.trim());
 
-    const systemAi = root.querySelectorAll(".setting-input")
-        .find((control) => control.dataset.settingKey === "system_ai_connection");
     const mode = root.querySelectorAll(".setting-input")
         .find((control) => control.dataset.settingKey === "compaction_mode");
-    systemAi.value = "conn-quote";
-    await dispatchChange(systemAi);
     mode.value = "off";
     await dispatchChange(mode);
 
-    world.connectionsOk = false;
     world.settings = world.settings.map((row) => {
-        if (row.key === "system_ai_connection") return { ...row, value: "stale-id" };
         if (row.key === "compaction_mode") return { ...row, value: "custom_mode" };
         return row;
     });

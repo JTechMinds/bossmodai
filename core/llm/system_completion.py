@@ -2,9 +2,11 @@
 
 This is not an agent turn. It does not select an identity model, build a
 turn context, or inject standing-pref warm text into a member prompt.
-Channel routing uses it for one small JSON completion. An unset
-connection, a missing model, or a failed call returns ``None`` so the
-caller can fall back.
+Channel routing uses it for one small JSON completion. A missing model
+or a failed call returns ``None`` so the caller can fall back. An unset
+id, or a saved id that no longer names a connection, uses the first
+connection. This module does not write the setting, so an operator's
+saved pick stays put on upgrade.
 """
 
 from __future__ import annotations
@@ -28,12 +30,7 @@ SYSTEM_COMPLETION_TIMEOUT_SECONDS = 20
 SYSTEM_COMPLETION_MAX_TOKENS = 256
 
 
-def resolve_system_connection() -> AIConnection | None:
-    """Return the configured System AI connection, or None when it cannot be used."""
-    connection_id = config.get("system_ai_connection")
-    if not connection_id:
-        return None
-    connection = db.get_connection_by_id(connection_id)
+def _usable(connection: AIConnection | None) -> AIConnection | None:
     if connection is None:
         return None
     if not str(connection.model or "").strip():
@@ -41,8 +38,27 @@ def resolve_system_connection() -> AIConnection | None:
     return connection
 
 
+def resolve_system_connection() -> AIConnection | None:
+    """Return the System AI connection, or None when it cannot be used.
+
+    A saved connection id that still exists is used as stored. This read
+    does not write the setting. When the id is unset, or that connection
+    is gone, the first connection in list order (name) is used instead.
+    A saved connection that exists but has no model is not replaced.
+    """
+    connection_id = config.get("system_ai_connection")
+    if connection_id:
+        connection = db.get_connection_by_id(connection_id)
+        if connection is not None:
+            return _usable(connection)
+    connections = db.list_connections()
+    if not connections:
+        return None
+    return _usable(connections[0])
+
+
 def system_ai_is_configured() -> bool:
-    """Return whether a System AI connection with a model is selected."""
+    """Return whether a System AI connection with a model can be used."""
     return resolve_system_connection() is not None
 
 
@@ -51,10 +67,10 @@ def complete_text(
     *,
     max_tokens: int = SYSTEM_COMPLETION_MAX_TOKENS,
 ) -> str | None:
-    """Run one short non-streaming completion. None means unset or failed."""
+    """Run one short non-streaming completion. None means no usable connection or a failed call."""
     connection = resolve_system_connection()
     if connection is None:
-        logger.debug("system completion skipped: system AI unset")
+        logger.debug("system completion skipped: system AI unavailable")
         return None
     model = str(connection.model or "").strip()
     api_base = str(connection.api_base_url or "").strip() or None

@@ -17,7 +17,7 @@ const SystemSection = (() => {
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
         context: 'Controls how much recent conversation and work history is included in each agent turn.',
-        llm: 'Controls global completion behavior, the AI used for system processes and channel routing, and compaction pressure.',
+        llm: 'Controls global completion behavior and compaction pressure.',
         desk: 'Controls Desk preview behavior and filesystem browsing limits.',
     };
 
@@ -132,15 +132,6 @@ const SystemSection = (() => {
             label: 'Max Concurrent Agent Turns',
             description: 'How many agent turns may run at once. Default 2 is safe for a local LLM. Each agent still runs at most one turn. Repair wakes use a slot and wait behind a live channel lead.',
         },
-        // system_ai_connection stores one AI connection id. Channel rounds
-        // use it for one short route. Compactors, when they exist, queue in
-        // the background, never run every turn, and never block an agent turn.
-        system_ai_connection: {
-            order: 37,
-            control: 'connection',
-            label: 'System AI',
-            description: 'Choose the AI used for system processes. Channel rounds ask it for one short route. Compaction uses the same connection and stays in the background.',
-        },
         compaction_mode: {
             order: 38,
             control: 'select',
@@ -195,37 +186,6 @@ const SystemSection = (() => {
 
     const INPUT_CLASS = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white';
 
-    /**
-     * One System AI dropdown. Options are AI connections, labeled the same way
-     * as the agent connection matrix (`name (model)`). The saved value is the
-     * connection id, not a per-activation-type model override.
-     */
-    function connectionControl(setting, connectionsState) {
-        const current = setting.value || '';
-        const connections = connectionsState.connections || [];
-        let matched = current === '';
-        let options = '<option value="">None</option>';
-        for (const conn of connections) {
-            const label = conn.model ? `${conn.name} (${conn.model})` : conn.name;
-            const selected = current === conn.id;
-            if (selected) matched = true;
-            options += `<option value="${BossModFormat.escapeAttribute(conn.id)}" title="${BossModFormat.escapeAttribute(label)}"${selected ? ' selected' : ''}>${BossModFormat.escapeHtml(label)}</option>`;
-        }
-        if (current && !matched) {
-            const missing = 'Saved connection unavailable';
-            options += `<option value="${BossModFormat.escapeAttribute(current)}" title="${BossModFormat.escapeAttribute(missing)}" selected>${BossModFormat.escapeHtml(missing)}</option>`;
-        }
-        let hint = '';
-        if (connectionsState.failed) {
-            hint = '<p class="text-xs text-bm-muted mt-1.5">AI connections could not be loaded.</p>';
-        } else if (connections.length === 0) {
-            hint = '<p class="text-xs text-bm-muted mt-1.5">No AI connections yet. Add one under AI Connections.</p>';
-        }
-        return `<select data-setting-key="${BossModFormat.escapeAttribute(setting.key)}"
-                        data-setting-category="${BossModFormat.escapeAttribute(setting.category)}"
-                        class="${INPUT_CLASS}">${options}</select>${hint}`;
-    }
-
     function selectControl(setting, meta) {
         const options = meta.options || [];
         const known = options.some(opt => opt.value === setting.value);
@@ -241,9 +201,8 @@ const SystemSection = (() => {
                         class="${INPUT_CLASS}">${html}</select>`;
     }
 
-    function settingControl(setting, connectionsState) {
+    function settingControl(setting) {
         const meta = SETTING_META[setting.key] || {};
-        if (meta.control === 'connection') return connectionControl(setting, connectionsState);
         if (meta.control === 'select') return selectControl(setting, meta);
         return `<input type="text"
                         data-setting-key="${BossModFormat.escapeAttribute(setting.key)}"
@@ -254,7 +213,6 @@ const SystemSection = (() => {
 
     async function render(el) {
         let settings = [];
-        const connectionsState = { connections: [], failed: false };
         try {
             const res = await apiFetch('/api/settings');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -262,14 +220,6 @@ const SystemSection = (() => {
         } catch (err) {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
             return;
-        }
-        try {
-            const connRes = await apiFetch('/api/connections');
-            if (!connRes.ok) throw new Error(`HTTP ${connRes.status}`);
-            const body = await connRes.json();
-            connectionsState.connections = Array.isArray(body) ? body : [];
-        } catch {
-            connectionsState.failed = true;
         }
 
         // Group by category, only show non-advanced categories
@@ -337,7 +287,7 @@ const SystemSection = (() => {
                     <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
                         <label class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(label)}</label>
                         <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(description)}</p>
-                        ${settingControl(s, connectionsState)}
+                        ${settingControl(s)}
                     </div>`;
         }
 

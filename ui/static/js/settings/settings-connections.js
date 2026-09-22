@@ -14,6 +14,73 @@
 const ConnectionsSection = (() => {
     let container = null;
 
+    const SYSTEM_AI_COPY = 'Choose the AI used for system processes (compaction, channel router, etc.).';
+    const INPUT_CLASS = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white';
+
+    function connectionLabel(conn) {
+        return conn.model ? `${conn.name} (${conn.model})` : conn.name;
+    }
+
+    /**
+     * System AI dropdown. Options are the current connections, labeled
+     * `name (model)`. A saved id that is still in the list stays selected.
+     * An unset id, or one that is no longer listed, shows the first
+     * connection. This render does not write the setting.
+     *
+     * @param {string} savedId
+     * @param {object[]} connections
+     * @param {boolean} connectionsFailed
+     * @returns {string}
+     */
+    function systemAiControl(savedId, connections, connectionsFailed) {
+        const current = savedId || '';
+        const known = connections.some(conn => conn.id === current);
+        const fallback = !connectionsFailed && connections.length ? connections[0].id : '';
+        const selectedId = known ? current : (connectionsFailed ? current : fallback);
+        let options = '';
+        if (connectionsFailed) {
+            if (current) {
+                const missing = 'Saved connection unavailable';
+                options += `<option value="${BossModFormat.escapeAttribute(current)}" title="${BossModFormat.escapeAttribute(missing)}" selected>${BossModFormat.escapeHtml(missing)}</option>`;
+            }
+        } else {
+            for (const conn of connections) {
+                const label = connectionLabel(conn);
+                const selected = selectedId === conn.id ? ' selected' : '';
+                options += `<option value="${BossModFormat.escapeAttribute(conn.id)}" title="${BossModFormat.escapeAttribute(label)}"${selected}>${BossModFormat.escapeHtml(label)}</option>`;
+            }
+            if (!connections.length && current) {
+                const missing = 'Saved connection unavailable';
+                options += `<option value="${BossModFormat.escapeAttribute(current)}" title="${BossModFormat.escapeAttribute(missing)}" selected>${BossModFormat.escapeHtml(missing)}</option>`;
+            }
+        }
+        let hint = '';
+        if (connectionsFailed) {
+            hint = '<p class="text-xs text-bm-muted mt-1.5">AI connections could not be loaded.</p>';
+        } else if (!connections.length) {
+            hint = '<p class="text-xs text-bm-muted mt-1.5">No AI connections yet.</p>';
+        }
+        const disabled = options ? '' : ' disabled';
+        return `<select data-setting-key="system_ai_connection"
+                        data-setting-category="llm"
+                        class="${INPUT_CLASS}"${disabled}>${options}</select>${hint}`;
+    }
+
+    /**
+     * @param {{savedId: string, connections: object[], connectionsFailed: boolean, settingsFailed: boolean}} state
+     * @returns {string}
+     */
+    function systemAiBlock(state) {
+        const body = state.settingsFailed
+            ? '<p class="text-xs text-bm-muted">System AI could not be loaded.</p>'
+            : systemAiControl(state.savedId, state.connections, state.connectionsFailed);
+        return `
+            <div class="mt-3 max-w-2xl" data-system-ai>
+                <label class="block text-sm font-medium mb-1">System AI</label>
+                <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(SYSTEM_AI_COPY)}</p>
+                ${body}
+            </div>`;
+    }
 
     async function render(el) {
         container = el;
@@ -21,30 +88,50 @@ const ConnectionsSection = (() => {
     }
 
     async function renderList() {
-        let connections = [];
+        const state = {
+            connections: [],
+            connectionsFailed: false,
+            savedId: '',
+            settingsFailed: false,
+        };
         try {
             const res = await apiFetch('/api/connections');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            connections = await res.json();
+            const body = await res.json();
+            state.connections = Array.isArray(body) ? body : [];
         } catch (err) {
-            container.innerHTML = '<p class="text-red-500 text-sm">Failed to load connections.</p>';
-            return;
+            state.connectionsFailed = true;
+        }
+        try {
+            const res = await apiFetch('/api/settings');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const settings = await res.json();
+            const row = Array.isArray(settings)
+                ? settings.find(item => item.key === 'system_ai_connection')
+                : null;
+            state.savedId = row && row.value ? String(row.value) : '';
+        } catch (err) {
+            state.settingsFailed = true;
         }
 
+        const connections = state.connections;
         let html = `
-            <div class="flex items-center justify-between mb-6">
-                <div>
+            <div class="flex items-start justify-between gap-4 mb-6">
+                <div class="min-w-0 flex-1">
                     <h2 class="text-lg font-semibold">AI Connections</h2>
-                    <p class="text-sm text-bm-muted mt-0.5">Manage your LLM provider API connections.</p>
+                    ${systemAiBlock(state)}
+                    <p class="text-sm text-bm-muted mt-4">Manage your LLM provider API connections.</p>
                 </div>
                 <button id="btn-add-connection"
                         class="flex items-center gap-2 px-3 py-2 bg-bm-accent text-white rounded-lg
-                               hover:bg-bm-accent-hover transition-colors text-sm font-medium">
+                               hover:bg-bm-accent-hover transition-colors text-sm font-medium shrink-0">
                     <i data-lucide="plus" class="w-4 h-4"></i> Add Connection
                 </button>
             </div>`;
 
-        if (connections.length === 0) {
+        if (state.connectionsFailed) {
+            html += '<p class="text-red-500 text-sm">Failed to load connections.</p>';
+        } else if (connections.length === 0) {
             html += `<div class="text-center py-12 text-bm-muted">
                 <i data-lucide="plug" class="w-10 h-10 mx-auto mb-3 opacity-40"></i>
                 <p class="text-sm">No connections yet. Add your first AI provider.</p>
@@ -95,9 +182,29 @@ const ConnectionsSection = (() => {
         container.innerHTML = html;
         BossModIcons.paint(container, 'settings-connections');
 
-        // Bind events
+        // Bind events. The System AI select saves only after the operator
+        // changes it. Painting a fallback does not write the stored pick.
         const addBtn = document.getElementById('btn-add-connection');
         if (addBtn) addBtn.addEventListener('click', () => openForm(null));
+
+        container.querySelectorAll('.setting-input').forEach(input => {
+            input.addEventListener('change', async (e) => {
+                const key = e.target.dataset.settingKey;
+                const category = e.target.dataset.settingCategory;
+                const value = e.target.value;
+                try {
+                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
+                        method: 'PUT',
+                    });
+                    e.target.classList.add('border-emerald-400');
+                    setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
+                } catch {
+                    e.target.classList.add('border-red-400');
+                    showRowError(container, 'System AI could not be saved.');
+                    setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
+                }
+            });
+        });
 
         container.querySelectorAll('[data-edit-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {
