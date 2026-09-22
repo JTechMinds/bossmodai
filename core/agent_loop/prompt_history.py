@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import db
+from core.agent_loop.chat_fade import apply_channel_chat_fade, consider_channel_chat_fade
 from core.agent_loop.task_thread_history import load_task_thread_history
 from core.llm.client import count_tokens
 from core.models import Agent, Notification
@@ -95,6 +96,14 @@ def _load_conversation_history(
                 limit=fetch_limit,
             )
             thread = _exclude_source_message(thread, trigger.get("source_message_id"))
+            thread = apply_channel_chat_fade(str(channel_id), thread, policy)
+            consider_channel_chat_fade(
+                str(channel_id),
+                thread,
+                policy,
+                agent_id=agent.id,
+                token_model=token_model,
+            )
             return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
 
     if trigger_type in {"session_message", "session_response"}:
