@@ -166,6 +166,27 @@ def _trigger_payload(raw: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+_CHANNEL_PEER_TRIGGER_TYPES = frozenset({"channel_message", "channel_response"})
+
+
+def channel_peer_snapshot_is_drafting(channel_id: str) -> bool:
+    """Return whether a claimed channel peer is already drafting this room.
+
+    One snapshot, one drafter. A second peer stays queued until that claim
+    ends. Other rooms and non-channel turns are not blocked.
+    """
+    token = (channel_id or "").strip()
+    if not token:
+        return False
+    for row in query("SELECT trigger_type, payload FROM agent_triggers WHERE status = 'claimed'"):
+        if str(row.get("trigger_type") or "") not in _CHANNEL_PEER_TRIGGER_TYPES:
+            continue
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("channel_id") or "").strip() == token:
+            return True
+    return False
+
+
 def list_claimed_agent_ids_for_round(round_id: str) -> set[str]:
     """Return agents with a claimed trigger still bound to one response round."""
     token = (round_id or "").strip()

@@ -98,6 +98,8 @@ def _statuses(round_id: str) -> dict[str, str]:
 
 def test_runtime_core_prefers_an_engine_pass_when_nothing_changed() -> None:
     assert "When nothing changed, prefer an engine pass over a status essay." in AUDIENCE_SOFT_JUDGMENT
+    assert "The recent thread is already in this prompt." in AUDIENCE_SOFT_JUDGMENT
+    assert "Repeating that thread is not new work." in AUDIENCE_SOFT_JUDGMENT
     assert "@" not in AUDIENCE_SOFT_JUDGMENT
 
 
@@ -200,7 +202,7 @@ def test_settled_essay_is_empty_speak_and_stay_out(monkeypatch: pytest.MonkeyPat
     )
     assert calls["n"] == 2
     assert "Who speaks next?" in calls["prompts"][-1]
-    assert "Settled status, an echo, or a no-op" in calls["prompts"][0]
+    assert "Settled status, an echo of a line the thread already shows, or a no-op" in calls["prompts"][0]
     assert laura.id not in _pending_block(calls["prompts"][0])
     assert triggers == []
     rounds = db.list_channel_response_rounds(channel.id)

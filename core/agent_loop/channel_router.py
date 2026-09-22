@@ -56,7 +56,7 @@ _ROLE_BLURB_CHARS = 80
 AGENT_LINE_ROUTE = (
     "The latest message is an agent speak. Judge that line, not the opening sticky. "
     "Put an id in speak only when the line adds new work, a question, or a handoff. "
-    "Settled status, an echo, or a no-op is an empty speak array, with every member id in stay_out. "
+    "Settled status, an echo of a line the thread already shows, or a no-op is an empty speak array, with every member id in stay_out. "
     "A peer @ on that line is not a pending pin and does not open another round."
 )
 

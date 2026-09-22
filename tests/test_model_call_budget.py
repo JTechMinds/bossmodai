@@ -239,10 +239,13 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
     ada = _agent("Ada")
     bea = _agent("Bea")
     cy = _agent("Cy")
-    channel = db.create_channel(name="Room", member_agent_ids=[ada.id, bea.id, cy.id])
-    ada_row = _enqueue(ada.id, channel_id=channel.id, when="2026-01-01 00:00:01")
-    bea_row = _enqueue(bea.id, channel_id=channel.id, when="2026-01-01 00:00:02")
-    cy_row = _enqueue(cy.id, channel_id=channel.id, when="2026-01-01 00:00:03")
+    # Different rooms. The knob still allows two drafters; one room does not.
+    room_a = db.create_channel(name="Room A", member_agent_ids=[ada.id])
+    room_b = db.create_channel(name="Room B", member_agent_ids=[bea.id])
+    room_c = db.create_channel(name="Room C", member_agent_ids=[cy.id])
+    ada_row = _enqueue(ada.id, channel_id=room_a.id, when="2026-01-01 00:00:01")
+    bea_row = _enqueue(bea.id, channel_id=room_b.id, when="2026-01-01 00:00:02")
+    cy_row = _enqueue(cy.id, channel_id=room_c.id, when="2026-01-01 00:00:03")
     assert ada_row is not None and bea_row is not None and cy_row is not None
 
     phases: list[tuple[str, str, int | None]] = []
@@ -301,13 +304,42 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
         "task_id": opened.task_id,
         "source_channel": opened.source_channel,
         "claim_generation": opened.claim_generation,
-        "channel_id": channel.id,
+        "channel_id": room_c.id,
         "content": "go",
     }
     await dispatcher._run_trigger(cy, state, payload)
     assert ("channel", "thinking", None) in phases
     assert ("desk", "thinking", None) in phases
     assert phases.index(("channel", "queued", 2)) < phases.index(("channel", "thinking", None))
+
+
+def test_same_snapshot_peers_do_not_draft_in_parallel() -> None:
+    """A free lane starts another room, not a second drafter on this snapshot."""
+    _set_knob("2")
+    ada = _agent("Ada")
+    bea = _agent("Bea")
+    dee = _agent("Dee")
+    room = db.create_channel(name="Room", member_agent_ids=[ada.id, bea.id])
+    other = db.create_channel(name="Other", member_agent_ids=[dee.id])
+    ada_row = _enqueue(ada.id, channel_id=room.id, when="2026-01-01 00:00:01")
+    bea_row = _enqueue(bea.id, channel_id=room.id, when="2026-01-01 00:00:02")
+    _enqueue(dee.id, channel_id=other.id, when="2026-01-01 00:00:03")
+    assert ada_row is not None and bea_row is not None
+
+    dispatcher = TurnDispatcher()
+    first = dispatcher._claim_available_trigger()
+    second = dispatcher._claim_available_trigger()
+    assert first is not None and first.agent_id == ada.id
+    assert second is not None and second.agent_id == dee.id
+    assert db.get_agent_trigger(bea_row.id).status == "queued"
+    assert budget.inflight() == 2
+    assert dispatcher._claim_available_trigger() is None
+
+    db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
+    dispatcher._release_turn_lane(ada.id)
+    opened = dispatcher._claim_available_trigger()
+    assert opened is not None and opened.agent_id == bea.id
+    assert budget.inflight() == 2
 
 
 def test_send_does_not_paint_thinking_before_a_lane() -> None:

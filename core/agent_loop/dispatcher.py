@@ -597,8 +597,10 @@ class TurnDispatcher:
         A lane is acquired before the trigger is claimed, and thinking is
         broadcast only after that. No lane leaves the trigger queued and
         records ``Queued (n ahead)``. One agent still holds at most one turn.
-        Repair wakes are ordered behind a live channel lead and use a lane
-        from the same budget once claimed.
+        A second channel peer on a snapshot that already has a drafter stays
+        queued and does not take a lane. Another room still can. Repair wakes
+        are ordered behind a live channel lead and use a lane from the same
+        budget once claimed.
         """
         self._queue_notices = []
         eligible = []
@@ -621,6 +623,11 @@ class TurnDispatcher:
             return None
 
         for index, trigger in enumerate(eligible):
+            # A free lane must not start a second peer on a snapshot that
+            # already has a drafter. They stay queued and are not marked
+            # thinking. Another room, or a non-channel turn, can take the lane.
+            if _peer_snapshot_is_drafting(trigger):
+                continue
             lane = budget.try_acquire(kind="turn", owner=trigger.agent_id)
             if lane is None:
                 self._note_waiting(eligible, index)
@@ -922,6 +929,22 @@ class TurnDispatcher:
                 "nearby_names": [eligible_peer["name"]],
             },
         )
+
+
+def _peer_snapshot_is_drafting(trigger: Any) -> bool:
+    """Return whether this queued channel peer must wait for the room's drafter."""
+    if getattr(trigger, "trigger_type", None) not in {"channel_message", "channel_response"}:
+        return False
+    try:
+        payload = json.loads(trigger.payload) if trigger.payload else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        return False
+    channel_id = str(payload.get("channel_id") or "").strip()
+    if not channel_id:
+        return False
+    return db.channel_peer_snapshot_is_drafting(channel_id)
 
 
 def _channel_id_for_presence(trigger: dict[str, Any]) -> str | None:
