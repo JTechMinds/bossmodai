@@ -10,11 +10,16 @@
  * building the form and saving through it is context/agent-form-save.js, which
  * this hosts and calls but does not re-export.
  *
- * TWO STEPS OVER ONE BODY: the template picker, then the form, swapped with
- * `hidden`. The form is built on the first pick and rebuilt only when the
- * picked template CHANGES, so a draft survives Back and re-picking the same
- * cell and no "discard your draft?" prompt has to exist. A second stacked
- * dialog for step two was rejected: two focus traps over one task.
+ * TWO STEPS OVER ONE BODY: the picker, then the form, swapped with `hidden`.
+ * The form is built on the first pick and rebuilt only when the CHOICE changes,
+ * so a draft survives Back and re-picking the same cell and no "discard your
+ * draft?" prompt has to exist. A second stacked dialog for step two was
+ * rejected: two focus traps over one task.
+ *
+ * THREE KINDS OF PICK, one form. Blank builds it empty, a template hydrates
+ * the role contract into it, and a RECENT agent — a snapshot — is built from
+ * as `prefill`: values only, never identity, so the form creates a NEW agent
+ * rather than editing the one it came from (context/agent-form.js).
  *
  * The footer is PER STEP, and it is context/agent-dialog-footer.js's — the row
  * itself and the state of the primary inside it. This says which step is on
@@ -61,35 +66,45 @@ const BossModAgentAddPane = (() => {
      *   dialog switches to its Marketplace tab.
      * @param {() => void} deps.onDone  The create finished (or a recovery tool
      *   saved); the dialog closes.
+     * @param {(template: object) => void} deps.onTemplateSaved  The form's
+     *   role contract was saved as a local template; every library view the
+     *   dialog holds has to re-read.
      * @returns {{element: HTMLElement, lead: HTMLElement,
      *   attach: (modal: object) => void, activate: () => void,
      *   deactivate: () => void, refresh: () => Promise<void>,
-     *   pick: (template: object|null) => Promise<void>,
+     *   pick: (choice: object) => Promise<void>,
      *   holdsDraft: () => boolean, dispose: () => void}}
      *   `element` is the body (`.agent-add-body`: picker and form host);
      *   `lead` is the `#agent-add-back` chevron for the dialog's title row,
      *   hidden until the form step is up. `attach` builds the footer on the
      *   dialog, once. `activate`/`deactivate` say whether this pane is the
-     *   visible tab. `refresh` re-reads the template library. `pick` is a cell
-     *   click by another name — the Marketplace's "Add agent from this" — and
-     *   never rejects: a failed build becomes the in-pane recovery state.
-     *   `holdsDraft` answers whether a form build has landed (a draft exists
-     *   to lose). `dispose` is the dialog closing: a save or a failure that
-     *   settles afterwards routes nowhere and repairs nothing.
-     * @throws {Error} When store, onBrowse or onDone is missing. `attach`
-     *   throws when called twice; `pick`, `activate` and `deactivate` throw
-     *   before `attach` — each needs the footer that only it can build.
+     *   visible tab. `refresh` re-reads the picker's two lists. `pick` is a
+     *   cell click by another name — the Marketplace's "Add agent from this"
+     *   — and never rejects: a failed build becomes the in-pane recovery
+     *   state. `holdsDraft` answers whether a form build has landed (a draft
+     *   exists to lose). `dispose` is the dialog closing: a save or a failure
+     *   that settles afterwards routes nowhere and repairs nothing.
+     * @throws {Error} When store, onBrowse, onDone or onTemplateSaved is
+     *   missing. `attach` throws when called twice; `pick`, `activate` and
+     *   `deactivate` throw before `attach` — each needs the footer that only
+     *   it can build — and `pick` throws on a choice that is none of the three.
      */
     function create(deps) {
-        const { store, onBrowse, onDone } = deps || {};
+        const { store, onBrowse, onDone, onTemplateSaved } = deps || {};
         if (!store) throw new Error('[agent-add-pane] deps.store is required');
         if (typeof onBrowse !== 'function') throw new Error('[agent-add-pane] deps.onBrowse is required');
         if (typeof onDone !== 'function') throw new Error('[agent-add-pane] deps.onDone is required');
+        if (typeof onTemplateSaved !== 'function') {
+            throw new Error('[agent-add-pane] deps.onTemplateSaved is required');
+        }
 
         let destroyed = false;
-        /** Which template the form on screen holds; `null` is Blank, and the
-         *  sentinel is "no form built yet". */
+        /** Which CHOICE the form on screen was built from — `keyOf`'s string,
+         *  `null` for Blank — and the sentinel is "no form built yet". */
         let builtFor;
+        /** That choice itself, for what the key cannot carry: the category a
+         *  template was filed under, which Save as template starts from. */
+        let builtFrom = null;
         /** Step one is on screen from the start; the form host is hidden. */
         let step = 'picker';
         /** Whether this pane is the visible tab. The dialog's first showTab
@@ -102,7 +117,7 @@ const BossModAgentAddPane = (() => {
         const formEl = h('div', { class: 'agent-form-host' });
         formEl.hidden = true;
         const picker = BossModAgentTemplatePicker.createPicker({
-            onPick: (template) => { void pick(template); },
+            onPick: (choice) => { void pick(choice); },
             // The picker's EMPTY state carries its own door, in the middle of
             // the pane where a first-run operator with nothing installed is
             // actually looking. It switches tabs now; it used to close this
@@ -154,9 +169,28 @@ const BossModAgentAddPane = (() => {
         }
 
         /**
+         * What identifies the form one choice builds, so the same cell picked
+         * twice is the same form and a different one rebuilds it.
+         *
+         * @param {object} choice  `{kind: 'blank'|'template'|'snapshot', row?}`.
+         * @returns {string|null} null for Blank; `tpl:`/`snap:` prefixed
+         *   otherwise, so a template and a snapshot sharing an id cannot read
+         *   as one build.
+         * @throws {Error} On a kind this pane cannot build a form from — a
+         *   caller's bug, and a silent no-op would look like a dead cell.
+         */
+        function keyOf(choice) {
+            const kind = choice && choice.kind;
+            if (kind === 'blank') return null;
+            if (kind === 'template') return `tpl:${choice.row.id}`;
+            if (kind === 'snapshot') return `snap:${choice.row.id}`;
+            throw new Error(`[agent-add-pane] no form for a "${kind}" pick`);
+        }
+
+        /**
          * A cell was picked. The form is rebuilt only for a DIFFERENT pick, so
          * Back and re-picking the same cell keep the draft; picking another
-         * template replaces its fields wholesale and is meant to lose it.
+         * cell replaces its fields wholesale and is meant to lose it.
          *
          * ONE PICK OWNS THE PANE: renderInline answers whether this build is
          * still the one being waited for, and a pick that lost writes nothing —
@@ -164,11 +198,11 @@ const BossModAgentAddPane = (() => {
          * build that LANDED and is on screen, so a lost pick retries, not
          * no-ops.
          *
-         * @param {object|null} template  null is Blank.
+         * @param {object} choice  Blank, a template, or a snapshot to recreate.
          * @returns {Promise<void>}
          */
-        async function pickTemplate(template) {
-            const key = template ? template.id : null;
+        async function pickChoice(choice) {
+            const key = keyOf(choice);
             // The pane swaps FIRST, so the pick is acknowledged while the form
             // loads rather than after it. The primary that swap pins is
             // withheld by renderInline until the form it submits is on screen.
@@ -182,12 +216,24 @@ const BossModAgentAddPane = (() => {
             footer.show('form');
             if (key !== builtFor) {
                 builtFor = undefined;
-                const landed = await renderInline({ container: formEl, agent: null, primary, onSave });
+                // A snapshot is VALUES: the form it fills creates a new agent,
+                // which is why it is a prefill and never an `agent`.
+                const prefill = choice.kind === 'snapshot' ? choice.row : null;
+                const landed = await renderInline({
+                    container: formEl, agent: null, prefill, primary, onSave,
+                });
                 if (!landed || step !== 'form') return;
                 builtFor = key;
-                if (template) {
-                    HYDRATE.applyHireFields(formEl, TEMPLATE.templateFields(template));
-                    TEMPLATE.applyTemplate(formEl, template);
+                builtFrom = choice;
+                if (choice.kind === 'template') {
+                    HYDRATE.applyHireFields(formEl, TEMPLATE.templateFields(choice.row));
+                    TEMPLATE.applyTemplate(formEl, choice.row);
+                } else if (choice.kind === 'snapshot') {
+                    // Start blank is a PICK, not a field-by-field undo: every
+                    // field is the snapshot's, so half-clearing them would
+                    // leave a form that is neither agent.
+                    TEMPLATE.applySnapshotChip(formEl, choice.row,
+                        () => { void pick({ kind: 'blank' }); });
                 }
             }
             // A build can land while the Marketplace tab is up; the keyboard
@@ -200,15 +246,49 @@ const BossModAgentAddPane = (() => {
         /**
          * A cell was picked, from the grid or from the Marketplace.
          *
-         * @param {object|null} template  The `AgentTemplate` row, or null for
-         *   Blank.
+         * @param {object} choice  `{kind: 'blank'}`, `{kind: 'template', row}`
+         *   or `{kind: 'snapshot', row}`.
          * @returns {Promise<void>} Never rejects: a build that fails is
          *   `failed`'s to show.
-         * @throws {Error} Before attach(): there is no footer to swap.
+         * @throws {Error} Before attach() — there is no footer to swap — and
+         *   on an unknown choice, which is checked before anything is swapped
+         *   so a caller's bug is not shown to the operator as a failed build.
          */
-        function pick(template) {
+        function pick(choice) {
             requireFooter('pick()');
-            return pickTemplate(template).catch(failed);
+            keyOf(choice);
+            return pickChoice(choice).catch(failed);
+        }
+
+        /**
+         * The footer's `Save as template`: the form's role contract into the
+         * library (context/agent-save-template.js).
+         *
+         * The CURRENT form, read at click time, so what is saved is what is on
+         * screen. It cannot be a form that is still building: the row withholds
+         * this action for exactly as long as it withholds the primary
+         * (context/agent-dialog-footer.js), because the host still holds the
+         * pick the operator just left.
+         *
+         * @returns {void}
+         * @throws {Error} With no form on screen at all — the action should not
+         *   have been live, and saving nothing is worse than saying so.
+         */
+        function saveTemplate() {
+            const form = formEl.querySelector('#agent-form');
+            if (!form) throw new Error('[agent-add-pane] Save as template with no form');
+            // Named at CLICK time, not aliased at the top with the rest: this
+            // is the one thing here nothing in a build reaches, and a pane
+            // built in a harness that never opens the layer needs no stub.
+            const SAVE_TEMPLATE = BossModAgentSaveTemplate;
+            void SAVE_TEMPLATE.open({
+                form,
+                defaultTitle: SAVE_TEMPLATE.defaultTitle(form),
+                // The library shelf this form came off, when it came off one.
+                defaultCategory: builtFrom && builtFrom.kind === 'template'
+                    ? builtFrom.row.category : SAVE_TEMPLATE.CUSTOM,
+                onSaved: onTemplateSaved,
+            });
         }
 
         /**
@@ -261,6 +341,7 @@ const BossModAgentAddPane = (() => {
         function failed(err) {
             console.error('[agent-add-pane] the agent form failed to render', err);
             builtFor = undefined;
+            builtFrom = null;
             if (destroyed) return;
             if (step !== 'form') return;
             clear(formEl);
@@ -280,7 +361,9 @@ const BossModAgentAddPane = (() => {
             lead,
             attach(modal) {
                 if (footer) throw new Error('[agent-add-pane] attach() was called twice');
-                footer = FOOTER.createFooter(modal, { creating: true });
+                footer = FOOTER.createFooter(modal, {
+                    creating: true, onSaveTemplate: saveTemplate,
+                });
                 primary = footer.primary;
                 // Owed from the start, so a tab switch before the first pick
                 // has a row to put back — an empty one, on step one. The pane

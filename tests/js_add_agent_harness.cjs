@@ -16,6 +16,11 @@
  * an agent", it hangs off core/overlays.js's menu the way the dialog hangs off
  * the modal, and both doors open this same dialog.
  *
+ * RECENT and SAVE AS TEMPLATE are here for the same reason: what the PANE does
+ * with a snapshot pick — which arguments reach the form build, what the footer
+ * offers, what reaches the server — rather than what the form renders from it,
+ * which is the real form's and is driven in tests/js_context_harness.cjs.
+ *
  * The FORM is stubbed and the dialog is real. context/agent-form.js builds its
  * markup as a string and the shared fake parses no HTML, so this hands
  * buildFormHTML a hand-built form with the same SHAPE the real one has — the
@@ -34,7 +39,7 @@ installIconsStub();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus",
-    "BossModOverlayFocus", "BossModOverlays", "BossModGates",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenuSelect", "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
     "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape
@@ -46,8 +51,11 @@ const NAMES = [
     // with the app's toolbar search.
     "BossModAvatar", "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
     "BossModSearchField", "BossModTabs",
+    // Save as template asks its one question with the strip the marketplace
+    // detail builds, so that view and the two modules it leans on load too.
+    "BossModMarketplaceWithheld", "BossModMarketplaceSections", "BossModMarketplaceDetail",
     "BossModAgentTemplatePicker",
-    "BossModAgentFormTemplate", "BossModAgentDialogFooter",
+    "BossModAgentFormTemplate", "BossModAgentSaveTemplate", "BossModAgentDialogFooter",
     "BossModAgentAddPane", "BossModAgentDialogSlot",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModAddAgentMenu",
 ];
@@ -100,6 +108,42 @@ function template(overrides) {
     return Object.assign(row, { sections: sectionsFor(row) }, overrides.sections
         ? { sections: overrides.sections } : {});
 }
+
+/**
+ * One agent snapshot, as GET /api/agent-snapshots answers. No api_key, no
+ * api_base_url and no extra_body — the table has no column for them — so a
+ * fixture that carried one would be a shape the route cannot produce.
+ */
+function snapshot(overrides) {
+    return Object.assign({
+        id: "s1", agent_id: "a1", name: "Ada", role: "Code Auditor",
+        description: "Reads a diff and reports what is not true.",
+        done_fail_bar: "A checkable allow/deny exists.",
+        communication: {
+            tone: "direct", density: "compact", jargon: "light", audience: "operator",
+        },
+        prompt_template: "You are terse.", color: "#1d4ed8",
+        model_social: null, model_work: "llama3.1:8b", model_reasoning: null,
+        model_extraction: null, model_self_queue: null,
+        desk_x: 3, desk_y: 4,
+        prompt_history_policy: {
+            last_n_histories: 7, max_allowed_history_tokens: 900,
+            earliest_ts_allowed: null, include_notifications: false,
+        },
+        captured_at: "2026-09-20T09:00:00Z",
+        deleted_at: "2026-09-21T10:30:00Z",
+    }, overrides);
+}
+
+const SNAPSHOTS = [
+    snapshot({}),
+    // Still on the roster: saved, not deleted.
+    snapshot({
+        id: "s2", agent_id: "a2", name: "Bo", role: "Writer",
+        description: "Drafts release notes.", deleted_at: null,
+        model_work: "gpt-4o-mini", prompt_template: null,
+    }),
+];
 
 const TEMPLATES = [
     template({}),
@@ -220,6 +264,12 @@ function buildForm() {
 // ─── Stubs the dialog reaches for ───
 
 let libraryMode = "ready";
+let snapshotMode = "ready";
+// How POST /api/agent-templates/local answers: "ready", "taken" (the 409 the
+// Replace question is raised by, once) or "fail".
+let localSaveMode = "ready";
+// Every local-template body the layer posted, in order.
+const localSaves = [];
 let connectionMode = "ready";
 // How GET /api/connections answers the read the SUBMIT path resolves against:
 // "reject" is the offline shape, "error" the 500 whose body is an object and
@@ -232,6 +282,8 @@ let formMode = "ready";
 let marketDeps = null;
 let marketPanes = 0;
 let marketActivations = 0;
+// How often the dialog told the Marketplace pane the library had changed.
+let marketRefreshes = 0;
 // Resolved by the test that holds a save open, so the in-flight footer can be
 // read before the server answers.
 let holdCreate = null;
@@ -242,6 +294,9 @@ let nextBuildHold = null;
 // Every agent POST /api/agents was asked to create, in order. WHICH draft
 // reached the server is the whole subject of the pick-race tests.
 const creates = [];
+// Every PATCH /api/agents/{id}. A recreate must never be one: the form it
+// fills creates a NEW agent, and the snapshot is values, not identity.
+const updates = [];
 // What GET /api/connections answers with when it answers at all. It is what
 // the five stub selects offer, so the submit stub resolves a real value rather
 // than a placeholder.
@@ -259,6 +314,35 @@ function jsonResponse(body, status = 200) {
 }
 
 global.apiFetch = (url, init) => {
+    if (String(url) === "/api/agent-templates/local") {
+        localSaves.push(JSON.parse(init.body));
+        if (localSaveMode === "fail") {
+            return jsonResponse({ detail: { code: "boom", message: "The write failed." } }, 500);
+        }
+        if (localSaveMode === "taken" && !JSON.parse(init.body).replace) {
+            return jsonResponse({
+                detail: {
+                    code: "local_title_taken",
+                    message: 'A local template named "Code Auditor" already exists.',
+                },
+            }, 409);
+        }
+        const body = JSON.parse(init.body);
+        return jsonResponse(template({
+            id: "t-local", source: "local", pack_id: null, source_url: null,
+            category: body.category, title: body.title, specialty: body.specialty,
+            description: body.description,
+            what_done_looks_like: body.what_done_looks_like,
+            personality_hint: body.personality_hint, tools_hint: [],
+            author_name: null, author_url: null, commit_sha: null, content_hash: null,
+        }), 201);
+    }
+    if (String(url).startsWith("/api/agent-snapshots")) {
+        if (snapshotMode === "fail") {
+            return jsonResponse({ detail: { code: "read_failed", message: "boom" } }, 500);
+        }
+        return jsonResponse(snapshotMode === "empty" ? [] : SNAPSHOTS);
+    }
     if (String(url).startsWith("/api/agent-templates")) {
         if (libraryMode === "fail") {
             return jsonResponse({ detail: { code: "read_failed", message: "boom" } }, 500);
@@ -273,6 +357,11 @@ global.apiFetch = (url, init) => {
         const refuse = () => jsonResponse({ detail: "Name already taken" }, 409);
         return holdCreate ? holdCreate.then(refuse) : refuse();
     }
+    const agentPatch = String(url).match(/^\/api\/agents\/([^/]+)$/);
+    if (agentPatch && init && init.method === "PATCH") {
+        updates.push({ id: agentPatch[1], body: JSON.parse(init.body) });
+        return jsonResponse({ id: agentPatch[1] });
+    }
     if (String(url) === "/api/connections") {
         if (connectionsApiMode === "reject") return Promise.reject(new Error("offline"));
         if (connectionsApiMode === "error") return jsonResponse({ detail: "boom" }, 500);
@@ -285,8 +374,13 @@ global.apiFetch = (url, init) => {
     }
     return jsonResponse([]);
 };
+// What the last build was handed. `agent` is IDENTITY and `prefill` is
+// VALUES, and a recreate must pass the snapshot as the second: the real form
+// decides everything else from which of the two it got.
+let builtWith = null;
 global.BossModAgentForm = {
-    buildFormHTML: async (container) => {
+    buildFormHTML: async (container, agent = null, prefill = null) => {
+        builtWith = { agent, prefill };
         if (formMode === "fail") throw new Error("the form could not be built");
         const hold = nextBuildHold;
         nextBuildHold = null;
@@ -328,7 +422,11 @@ global.BossModMarketplace = {
         // can tell which pane holds the keyboard.
         const element = h("div", { class: "market-host" },
             h("input", { id: "market-find", type: "search" }));
-        return { element, activate() { marketActivations += 1; } };
+        return {
+            element,
+            activate() { marketActivations += 1; },
+            refreshLibrary() { marketRefreshes += 1; return Promise.resolve(); },
+        };
     },
 };
 
@@ -414,6 +512,24 @@ function chipText() {
     const node = find(".template-chip-text");
     return node ? node.textContent : "";
 }
+
+/** The Recent cards on screen. They are `.picker-card`s like the templates —
+ *  one grid — and `.picker-recent` is what tells the two apart. */
+const recentCards = () => dialog().querySelectorAll(".picker-recent");
+
+/** One rail row, by its visible label. */
+function railRow(label) {
+    return dialog().querySelectorAll(".market-rail-item")
+        .find((node) => node.querySelector(".market-rail-label").textContent === label) || null;
+}
+
+/** The layer on top: Save as template opens one over the dialog beneath it. */
+const layer = () => dialogs()[dialogs().length - 1] || null;
+const layerButton = (label) => layer().querySelectorAll("button")
+    .find((button) => button.textContent === label) || null;
+
+/** The footer action that opens the Save as template layer. */
+const saveTemplateAction = () => footer().querySelector("#agent-save-template");
 
 /**
  * Open a blank create form while the connections read is failing, and report
@@ -537,7 +653,8 @@ async function main() {
     // ─── 3. A library that could not be READ says so, and retries ───
     libraryMode = "fail";
     await open();
-    const failedCopy = dialog().textContent.includes("Couldn’t read your template library.")
+    const failedCopy = dialog().textContent
+        .includes("Couldn’t read your templates or your recent agents.")
         && Boolean(find("#agent-template-retry"));
     // A retry that fails again rebuilds the button that was clicked, so focus
     // has to land on its replacement rather than on <body>.
@@ -579,12 +696,15 @@ async function main() {
     // an empty band.
     verdict.cardsPrintTheAuthorName = cardAuthors() === "JTech Minds|"
         && !cardAuthors().includes("object Object");
-    verdict.categories = railLabels() === "All|Engineering|Product Design"
+    // `Recent` joins `All` in the Show group — the two SCOPES — and the
+    // catalog's own buckets stay under Categories.
+    verdict.categories = railLabels() === "All|Recent|Engineering|Product Design"
         && dialog().querySelectorAll(".market-rail-title")
             .map((node) => node.textContent).join("|") === "Show|Categories"
-        // Counted, so the rail says how much is behind each row.
+        // Counted, so the rail says how much is behind each row: two
+        // templates, two snapshots, and the categories the templates are in.
         && dialog().querySelectorAll(".market-rail-count")
-            .map((node) => node.textContent).join("|") === "2|1|1";
+            .map((node) => node.textContent).join("|") === "2|2|1|1";
 
     // A rail row narrows the grid, and the row that was clicked keeps the
     // keyboard — the rail repaints its live mark in place rather than being
@@ -614,7 +734,7 @@ async function main() {
     verdict.filterNarrowsTheGrid = cardTitles() === "Code Auditor"
         // The rail counts the LIBRARY, not the filter — the same rule the
         // marketplace's rail follows, so a count never moves under a keystroke.
-        && railLabels() === "All|Engineering|Product Design";
+        && railLabels() === "All|Recent|Engineering|Product Design";
     await type(find("#agent-template-find"), "zzz");
     verdict.noMatchCopy = dialog().textContent.includes("No template matches “zzz”.")
         && cards().length === 0
@@ -627,7 +747,8 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     verdict.backShowsOnStepTwo = find("#agent-add-back").hidden === false;
-    verdict.stepTwoFooter = footerNames().join("|") === "Cancel|Create Agent"
+    verdict.stepTwoFooter = footerNames().join("|")
+        === "Save as template|Cancel|Create Agent"
         // Back left the row for the top-left of the step body, which is
         // where every other back control in this app lives.
         && Boolean(find("#agent-add-back"));
@@ -761,7 +882,7 @@ async function main() {
     verdict.blankIsThePlainForm = blank.querySelector(".template-chip") === null
         && blank.querySelector(".template-tools") === null
         && blank.querySelector("#role-contract-card") !== null
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && Boolean(find("#agent-add-back"));
     // Same sections, same order, whichever cell was picked — and the guard is
     // armed on BOTH, because an agent with no connection fails on its first
@@ -827,7 +948,7 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     verdict.pickingAgainAfterAFailedRenderRetries = Boolean(find("#agent-form"))
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && Boolean(find("#agent-add-back"));
     await close();
 
@@ -1046,7 +1167,7 @@ async function main() {
     await cards()[0].dispatchClick();
     await drain();
     verdict.pickingAgainAfterABuriedFailureRetries = Boolean(find("#agent-form"))
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && Boolean(find("#agent-add-back"));
     await close();
 
@@ -1214,7 +1335,7 @@ async function main() {
         && panelOf("marketplace").hidden === true
         && Boolean(find("#agent-form"))
         && chipText() === "Code Auditor · JTech Minds · pinned aa11bb2"
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && find("#agent-add-back").hidden === false
         && documentStub.activeElement === find('input[name="name"]');
     // A form has landed, so there is a draft an outside click could lose.
@@ -1255,7 +1376,7 @@ async function main() {
     const live = documentStub.querySelector("#agent-form-submit");
     verdict.buildLandingWhileAwayLeavesPrimaryLive = buildingBeforeLeaving
         && emptiedWhileAway && stillEmpty
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && live.disabled === false
         && live.textContent === "Create Agent"
         && find("#agent-add-back").hidden === false
@@ -1300,7 +1421,7 @@ async function main() {
     await drain();
     const restored = documentStub.querySelector("#agent-form-submit");
     verdict.useTemplateAfterAFailedBuildRestoresTheFormRow = selectedTab() === "add"
-        && footerNames().join("|") === "Cancel|Create Agent"
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && Boolean(restored) && restored.disabled === false
         && restored.textContent === "Create Agent"
         && chipText().startsWith("Feature Planner")
@@ -1358,7 +1479,7 @@ async function main() {
     await drain();
     verdict.theEditDialogIsOneStep = dialog().getAttribute("data-size") === "panel"
         && dialog().getAttribute("aria-label") === "Edit role"
-        && footerNames().join("|") === "Cancel|Save Changes"
+        && footerNames().join("|") === "Save as template|Cancel|Save Changes"
         && find("#agent-pick-blank") === null
         && find("#agent-add-back") === null
         && Boolean(find("#agent-form"));
@@ -1378,6 +1499,196 @@ async function main() {
         && refuses(() => global.BossModAgentsDialog.open({ store }), "unknown tab")
         && refuses(() => global.BossModAgentsDialog.open({ tab: "add" }), "deps.store")
         && dialogs().length === 0;
+
+    // ─── 30. Recent: the scope, its cards, and what a pick builds from ───
+    //
+    // A snapshot is the setup of an agent made here — deleted or not — and the
+    // form it fills CREATES. The pane hands it to the build as `prefill`,
+    // never as `agent`: the second is identity, and identity is what would
+    // turn the save into a PATCH of the agent the operator is recreating.
+    creates.length = 0;
+    updates.length = 0;
+    await open();
+    await railRow("Recent").dispatchClick();
+    await drain();
+    const first = recentCards()[0];
+    verdict.recentListsTheSnapshots = recentCards().length === 2
+        && cards().length === 2
+        // Newest first, as the server ordered them.
+        && first.querySelector(".market-card-title").textContent === "Ada"
+        // Blank is still the first cell of the grid, in this scope too.
+        && Boolean(find("#agent-pick-blank"));
+    // The card's anatomy: the agent's OWN avatar rather than a category
+    // bubble, no category chip, its role, its description, and the one date
+    // that says whether it is still on the roster.
+    verdict.aRecentCardIsTheAgentNotAPack =
+        first.querySelector(".market-card-category") === null
+        && first.querySelector(".market-card-specialty").textContent === "Code Auditor"
+        && first.querySelector(".market-card-intro").textContent
+            .startsWith("Reads a diff")
+        && first.querySelector(".avatar").textContent === "A"
+        && first.querySelector(".market-card-state").textContent.startsWith("Deleted ")
+        && recentCards()[1].querySelector(".market-card-state").textContent
+            .startsWith("Saved ");
+    // The filter reads a snapshot's own three fields.
+    await type(find("#agent-template-find"), "release notes");
+    const filteredRecent = recentCards()
+        .map((node) => node.querySelector(".market-card-title").textContent).join("|");
+    await type(find("#agent-template-find"), "zzz");
+    verdict.theFilterSearchesRecentTooAndSaysSoWhenItMisses = filteredRecent === "Bo"
+        && dialog().textContent.includes("No recent agent matches “zzz”.");
+    await type(find("#agent-template-find"), "");
+
+    await recentCards()[0].dispatchClick();
+    await drain();
+    verdict.aRecentPickBuildsFromValuesNotIdentity = builtWith.agent === null
+        && builtWith.prefill === SNAPSHOTS[0]
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent"
+        // No Delete and no recovery tools: they are the edit form's, and this
+        // one creates. (The stub form carries neither either way; what this
+        // pins is the argument that decides it.)
+        && find("#btn-delete-agent") === null;
+    // The chip says whose setup this is, and when they went.
+    verdict.theRecentChipNamesTheAgentAndWhenItWent =
+        chipText().startsWith("Recreating Ada")
+        && chipText().includes("deleted ")
+        && Boolean(find("#snapshot-provenance-blank"));
+    // ...and it SAVES as a create. Never a PATCH of the agent it came from.
+    await type(find('input[name="name"]'), "Ada II");
+    await answerAi();
+    await documentStub.querySelector("#agent-form-submit").dispatchClick();
+    await drain();
+    verdict.recreatingPostsANewAgent = creates.length === 1
+        && creates[0].name === "Ada II"
+        && updates.length === 0;
+
+    // Start blank throws the recreate away for an empty form — it is a PICK,
+    // not a field-by-field undo.
+    await find("#snapshot-provenance-blank").dispatchClick();
+    await drain();
+    verdict.startBlankLeavesTheRecreate = builtWith.prefill === null
+        && builtWith.agent === null
+        && chipText() === ""
+        && Boolean(find("#agent-form"))
+        && footerNames().join("|") === "Save as template|Cancel|Create Agent";
+    await close();
+
+    // ...and with no snapshots there is no scope row to reach: a rail row that
+    // filters to nothing is furniture.
+    snapshotMode = "empty";
+    await open();
+    verdict.noRecentAgentsNoRecentRow = railRow("Recent") === null
+        && railRow("All") !== null;
+    await closeByX();
+    snapshotMode = "ready";
+
+    // ─── 31. Save as template: the form's role contract, into the library ───
+    //
+    // It opens a LAYER over the form — the dialog beneath must still be there
+    // when it closes — and it reads the form at the moment it is pressed.
+    localSaves.length = 0;
+    await open();
+    await cards()[0].dispatchClick();
+    await drain();
+    await type(find('input[name="role"]'), "Release Notes Writer");
+    await type(find('textarea[name="description"]'), "Turns merged PRs into notes.");
+    await saveTemplateAction().dispatchClick();
+    await drain();
+    const saveLayer = layer();
+    verdict.saveAsTemplateOpensALayerAndKeepsTheForm = dialogs().length === 2
+        && saveLayer.getAttribute("aria-label") === "Save as template"
+        && Boolean(saveLayer.querySelector("#agent-save-template-title"))
+        // The form is still underneath, hidden rather than gone.
+        && Boolean(dialogs()[0].querySelector("#agent-form"))
+        // Defaulted to the specialty on the form, not to the template's title.
+        && saveLayer.querySelector("#agent-save-template-title").value
+            === "Release Notes Writer"
+        // The category is the app's dropdown, never a native <select>.
+        && Boolean(saveLayer.querySelector(".menu-select"))
+        && saveLayer.querySelectorAll("select").length === 0;
+
+    // A taken title is a question, not an overwrite: Replace re-posts.
+    localSaveMode = "taken";
+    await layerButton("Save").dispatchClick();
+    await drain();
+    const asked = Boolean(layer().querySelector("#agent-save-template-replace"))
+        && layer().textContent.includes("already exists")
+        && localSaves.length === 1
+        && localSaves[0].replace === false;
+    await layer().querySelector("#agent-save-template-replace").dispatchClick();
+    await drain();
+    verdict.aTakenTitleAsksBeforeItReplaces = asked
+        && localSaves.length === 2
+        && localSaves[1].replace === true;
+    // What was sent is what the form was carrying, and nothing the operator
+    // owns: no name, no colour, no connection.
+    const sent = localSaves[1];
+    verdict.theSavedTemplateIsTheFormsContract = sent.title === "Release Notes Writer"
+        && sent.specialty === "Release Notes Writer"
+        && sent.description === "Turns merged PRs into notes."
+        && sent.category === "engineering"
+        && typeof sent.communication === "object"
+        && !("name" in sent) && !("color" in sent) && !("model_work" in sent);
+    // It landed: the layer says where it went and offers one way out, and the
+    // dialog's other views are told to re-read.
+    verdict.aSavedTemplateSaysWhereItWentAndRefreshesBoth =
+        layer().textContent.includes("Saved “Release Notes Writer” to your templates")
+        && layer().textContent.includes("tagged Local")
+        && layerButton("Done") !== null
+        && documentStub.activeElement === layerButton("Done")
+        && marketRefreshes === 1;
+    await layerButton("Done").dispatchClick();
+    await drain();
+    verdict.doneClosesOnlyTheLayer = dialogs().length === 1
+        && Boolean(find("#agent-form"));
+    localSaveMode = "ready";
+
+    // A contract with nothing in it is refused before any layer opens, on the
+    // form, with the keyboard on the field that is missing.
+    await type(find('textarea[name="description"]'), "");
+    await saveTemplateAction().dispatchClick();
+    await drain();
+    verdict.anEmptyContractIsRefusedOnTheForm = dialogs().length === 1
+        && Boolean(find("#agent-save-template-refused"))
+        && find("#agent-save-template-refused").textContent.includes("a description")
+        && documentStub.activeElement === find('textarea[name="description"]');
+    await close();
+
+    // ...and while a build is still running there is no form to read, so the
+    // action is withheld exactly as the primary is.
+    let releaseSaveTemplate;
+    await open();
+    nextBuildHold = new Promise((resolve) => { releaseSaveTemplate = resolve; });
+    await cards()[0].dispatchClick();
+    await drain();
+    const withheldWhileBuilding = saveTemplateAction().disabled === true
+        && documentStub.querySelector("#agent-form-submit").disabled === true;
+    releaseSaveTemplate();
+    await drain();
+    verdict.saveAsTemplateIsWithheldWhileAFormIsBuilding = withheldWhileBuilding
+        && saveTemplateAction().disabled === false;
+    await close();
+
+    // The Edit role dialog offers it too: a contract worth keeping is as
+    // likely to be one already in front of the operator.
+    localSaves.length = 0;
+    global.BossModAgentEdit.openAgentModal({ store, agent: { id: "a9", name: "Ada" } });
+    await drain();
+    await type(find('input[name="role"]'), "Code Auditor");
+    await type(find('textarea[name="description"]'), "Reads a diff.");
+    await saveTemplateAction().dispatchClick();
+    await drain();
+    await layerButton("Save").dispatchClick();
+    await drain();
+    verdict.theEditDialogSavesTemplatesToo = localSaves.length === 1
+        && localSaves[0].specialty === "Code Auditor"
+        // Nothing to re-read on this side: the library views are the Agents
+        // dialog's, and one agent form is open at a time.
+        && marketRefreshes === 1;
+    await layerButton("Done").dispatchClick();
+    await drain();
+    await close();
+    verdict.everythingClosed = dialogs().length === 0;
 
     process.stdout.write(JSON.stringify(Object.assign({ ok: true }, verdict)));
 }

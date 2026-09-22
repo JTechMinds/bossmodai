@@ -245,6 +245,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "agent_templates", "communication", "TEXT",
     )
+    # After the column above, never before it: the rebuild copies every
+    # column by name, `communication` included, and a library older than that
+    # column would otherwise fail the copy.
+    _ensure_agent_template_local_source(con)
     _add_column_if_missing(
         con, "agents", "description", "TEXT",
     )
@@ -799,6 +803,108 @@ def _ensure_cli_approval_origin_schema(con: SQLiteCompatConnection) -> None:
             logger.info("Migration: rebuilt notification_links to add cli_approval")
         finally:
             con.execute("PRAGMA foreign_keys = ON")
+
+
+_AGENT_TEMPLATE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_pack "
+    "ON agent_templates(pack_id) WHERE pack_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_url "
+    "ON agent_templates(source_url) WHERE pack_id IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_local "
+    "ON agent_templates(title) WHERE source = 'local'",
+)
+
+
+def _ensure_agent_template_local_source(con: SQLiteCompatConnection) -> None:
+    """Rebuild agent_templates so it can hold the operator's own templates.
+
+    A local template (``source = 'local'``) is saved from an agent form, so it
+    was never fetched and has no ``commit_sha`` or ``content_hash`` — both
+    were ``NOT NULL`` — and the ``source`` CHECK allowed only ``'catalog'``
+    and ``'url'``. SQLite cannot alter a CHECK or drop a NOT NULL in place, so
+    the table is rebuilt: a new table with the current DDL, every row copied
+    column by column, the old table dropped, the new one renamed.
+
+    Idempotent: a table whose DDL already names ``'local'`` (every fresh
+    database, and any database this has already run on) is left alone.
+    Preserves every row, and never deletes the database.
+
+    The three indexes are recreated here because ``init_db`` applies
+    schema.sql BEFORE the migrations: the indexes schema.sql created were on
+    the old table and were dropped with it.
+
+    Two things beyond the file's other rebuilds. It runs inside one
+    transaction, so a failure between the drop and the rename rolls back to
+    the old table instead of leaving the library without one. And the new
+    table is created WITHOUT ``IF NOT EXISTS``: a stray
+    ``agent_templates__new`` is a state this migration cannot have produced,
+    and copying rows into a table of unknown shape would be a silent guess.
+
+    Raises ``sqlite3.Error`` from whichever statement failed, after rolling
+    the transaction back.
+    """
+    sql = _table_sql(con, "agent_templates")
+    if "'local'" in sql:
+        return
+    # A no-op inside a transaction, so it is switched off before BEGIN.
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute(
+                """
+                CREATE TABLE agent_templates__new (
+                    id                   VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                    source               VARCHAR NOT NULL CHECK (source IN ('catalog', 'url', 'local')),
+                    pack_id              VARCHAR,
+                    source_url           TEXT,
+                    category             VARCHAR NOT NULL,
+                    title                VARCHAR NOT NULL,
+                    specialty            TEXT NOT NULL,
+                    description          TEXT NOT NULL,
+                    what_done_looks_like TEXT NOT NULL,
+                    personality_hint     VARCHAR,
+                    tools_hint           TEXT NOT NULL DEFAULT '[]',
+                    communication        TEXT,
+                    author_name          VARCHAR,
+                    author_url           TEXT,
+                    commit_sha           VARCHAR,
+                    content_hash         VARCHAR,
+                    installed_at         TIMESTAMP DEFAULT current_timestamp,
+                    updated_at           TIMESTAMP DEFAULT current_timestamp,
+                    CHECK ((source = 'local') = (commit_sha IS NULL)),
+                    CHECK ((source = 'local') = (content_hash IS NULL)),
+                    CHECK (source <> 'local' OR (pack_id IS NULL AND source_url IS NULL))
+                )
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO agent_templates__new (
+                    id, source, pack_id, source_url, category, title, specialty,
+                    description, what_done_looks_like, personality_hint, tools_hint,
+                    communication, author_name, author_url, commit_sha, content_hash,
+                    installed_at, updated_at
+                )
+                SELECT
+                    id, source, pack_id, source_url, category, title, specialty,
+                    description, what_done_looks_like, personality_hint, tools_hint,
+                    communication, author_name, author_url, commit_sha, content_hash,
+                    installed_at, updated_at
+                FROM agent_templates
+                """
+            )
+            con.execute("DROP TABLE agent_templates")
+            con.execute("ALTER TABLE agent_templates__new RENAME TO agent_templates")
+            for index_sql in _AGENT_TEMPLATE_INDEXES:
+                con.execute(index_sql)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        logger.info("Migration: rebuilt agent_templates to allow local templates")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:

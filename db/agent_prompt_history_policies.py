@@ -60,7 +60,13 @@ def ensure_agent_prompt_history_policy(agent_id: str) -> AgentPromptHistoryPolic
 
 
 def update_agent_prompt_history_policy(agent_id: str, **fields: Any) -> AgentPromptHistoryPolicy:
-    """Patch the prompt-history policy for one agent."""
+    """Patch the prompt-history policy for one agent.
+
+    A patch that wrote anything re-captures the agent's snapshot, because the
+    policy is part of the setup Recent keeps and the create form saves it
+    AFTER creating the agent — the create's own capture holds the default.
+    Skipped when the agent no longer exists.
+    """
     policy = ensure_agent_prompt_history_policy(agent_id)
     valid_fields = {
         key: value
@@ -84,6 +90,14 @@ def update_agent_prompt_history_policy(agent_id: str, **fields: Any) -> AgentPro
     refreshed = get_agent_prompt_history_policy(agent_id)
     if refreshed is None:
         raise RuntimeError(f"Failed to reload prompt-history policy for agent {agent_id}")
+    # Imported here, not at module top: db.agents imports this module inside
+    # its own snapshot hook, so the two import each other.
+    from db.agent_snapshots import capture_agent_snapshot
+    from db.agents import get_agent
+
+    agent = get_agent(agent_id)
+    if agent is not None:
+        capture_agent_snapshot(agent, refreshed, deleted=False)
     return refreshed
 
 

@@ -148,6 +148,18 @@ NAMES.forEach((name, index) => {
     eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
 });
 
+// WHAT THE FORM RENDERED, as a string. The builders write their markup into
+// the host and the fake creates one node per `id=`/`name=` from it (see
+// stubControls above), so the VALUES — a filled field, a checked radio, a
+// selected option — exist only in the markup. This keeps the last one written,
+// and it wraps the real builder rather than replacing it.
+let formMarkup = "";
+const realBuildFormHTML = global.BossModAgentForm.buildFormHTML;
+global.BossModAgentForm.buildFormHTML = async (container, agent, prefill) => {
+    await realBuildFormHTML(container, agent, prefill);
+    formMarkup = container.innerHTML;
+};
+
 // Read off `global` rather than destructured into module-scope consts: a
 // `const` here would be in its temporal dead zone while the evals above run,
 // and chat-place.js calls BossModPlaces.register() at load time.
@@ -263,6 +275,13 @@ let connectionsFail = false;
 // whole batch, which erased three healthy reads — a 500 did not, because the
 // assignment it broke happened after the ones before it had already landed.
 let personalitiesFail = false;
+// What /api/personalities answers when it answers at all. Empty for most of
+// this file — the form then renders its link to Settings — and filled by the
+// recreate section, which is about matching a stored prompt against them.
+let personalities = [];
+// The agent snapshots Add agent's Recent lists. Filled by the recreate
+// section; empty everywhere else, so no other section grows a rail row.
+let snapshots = [];
 // ...and by the section that reaches the refusal with NOTHING configured,
 // which is a healthy read of an empty list and not a failure at all.
 let connectionsEmpty = false;
@@ -323,7 +342,15 @@ function api(url, init) {
     }
     if (String(url) === "/api/personalities") {
         if (personalitiesFail) return Promise.reject(new Error("network is down"));
-        return jsonResponse([]);
+        return jsonResponse(personalities);
+    }
+    if (String(url).startsWith("/api/agent-snapshots")) {
+        return jsonResponse(snapshots);
+    }
+    const personality = String(url).match(/^\/api\/personalities\/([^/]+)$/);
+    if (personality) {
+        const row = personalities.find((item) => item.id === personality[1]);
+        return row ? jsonResponse(row) : jsonResponse({ detail: "no such personality" }, 404);
     }
     if (String(url) === "/api/agents" && init && init.method === "POST") {
         creates.push(JSON.parse(init.body));
@@ -753,11 +780,16 @@ async function main() {
 
     // Round four pinned the PRIMARY beside the dismissal. The operator could
     // not find `Save Changes` at the bottom of a scrolling form while Cancel
-    // sat pinned and obvious. Cancel first, primary last.
+    // sat pinned and obvious. Cancel first, primary last — and `Save as
+    // template` leads the row, at the other end of it: it is about the form
+    // rather than about finishing the dialog.
     const pinnedNamesIn = (dialog) => dialog.querySelectorAll(".modal-actions")[0]
         .querySelectorAll("button").map((btn) => btn.textContent);
+    /** One footer button, by the words on it. */
+    const pinnedAction = (dialog, label) => dialog.querySelectorAll(".modal-actions")[0]
+        .querySelectorAll("button").find((btn) => btn.textContent === label);
     const editPinnedActions = pinnedNamesIn(opened);
-    if (editPinnedActions.join("|") !== "Cancel|Save Changes") {
+    if (editPinnedActions.join("|") !== "Save as template|Cancel|Save Changes") {
         throw new Error(`the edit dialog pins Cancel then the primary, got `
             + editPinnedActions.join("|"));
     }
@@ -769,8 +801,9 @@ async function main() {
         throw new Error("Delete must stay in the form body, not beside the primary");
     }
 
-    // Dismissing puts the desk back in front and repaints it.
-    await modalActions.querySelectorAll(".modal-action")[0].dispatchClick();
+    // Dismissing puts the desk back in front and repaints it. BY NAME: the
+    // first action in the row is Save as template, which opens a layer.
+    await pinnedAction(opened, "Cancel").dispatchClick();
     await drain();
     const closingTheModalRestoresTheDesk = modals().length === 0
         && contextEl.querySelectorAll(".desk-panel").length === 1
@@ -797,7 +830,7 @@ async function main() {
     if (!onlyOneDialogAtATime) {
         throw new Error(`a second dialog must not stack, got ${modals().length}`);
     }
-    await first.querySelectorAll(".modal-action")[0].dispatchClick();
+    await pinnedAction(first, "Cancel").dispatchClick();
     await drain();
 
     // Creating is the Agents dialog's Add agent tab: the same centred modal
@@ -838,7 +871,7 @@ async function main() {
     await hire.querySelector("#agent-pick-blank").dispatchClick();
     await drain();
     const stepTwoPinned = pinnedNamesIn(hire);
-    if (stepTwoPinned.join("|") !== "Cancel|Create Agent") {
+    if (stepTwoPinned.join("|") !== "Save as template|Cancel|Create Agent") {
         throw new Error(`step two pins Cancel and the primary, got `
             + stepTwoPinned.join("|"));
     }
@@ -1452,6 +1485,150 @@ async function main() {
     store.setState({ contextMode: "office", deskAgentId: null });
     await drain();
 
+    // ─── 3i. Recreating a RECENT agent, through the real form ───
+    //
+    // A snapshot is the setup of an agent made here, one that may since have
+    // been deleted, and the form it fills CREATES. So it reaches the builders
+    // as `prefill` — values — and everything the old single `agent` argument
+    // also decided (Delete, the recovery tools, the policy read by id, the
+    // duplicate-name self-exclusion, whether the save creates) keeps reading
+    // the one that means IDENTITY. This drives the real builders and reads
+    // the markup they wrote, because that is where a filled field lives.
+    personalities = [
+        { id: "p1", name: "Terse", prompt_template: "Be terse." },
+    ];
+    snapshots = [{
+        id: "s1", agent_id: "gone-1", name: "Ada", role: "Code Auditor",
+        description: "Reads a diff and reports what is not true.",
+        done_fail_bar: "A checkable allow/deny exists.",
+        communication: {
+            tone: "direct", density: "compact", jargon: "light", audience: "operator",
+        },
+        // Matches no personality: the dropdown gets the kept option.
+        prompt_template: "You are terse, and you cite files.",
+        color: "#1d4ed8",
+        model_social: null, model_work: "llama3.1:8b",
+        // No connection offers this one any more.
+        model_reasoning: "qwen3.8-27b",
+        model_extraction: null, model_self_queue: null,
+        desk_x: 3, desk_y: 4,
+        prompt_history_policy: {
+            last_n_histories: 7, max_allowed_history_tokens: 900,
+            earliest_ts_allowed: null, include_notifications: false,
+        },
+        captured_at: "2026-09-20T09:00:00Z", deleted_at: "2026-09-21T10:30:00Z",
+    }];
+    createSucceeds = true;
+    creates.length = 0;
+    updates.length = 0;
+    openAddAgent();
+    await drain();
+    const recreate = agentsModal();
+    const recentRow = recreate.querySelectorAll(".market-rail-item")
+        .find((node) => node.querySelector(".market-rail-label").textContent === "Recent");
+    await recentRow.dispatchClick();
+    await drain();
+    await recreate.querySelector("#picker-recent-0").dispatchClick();
+    await drain();
+
+    // Every field the snapshot carries, filled — and the three it never
+    // carries (the connection secrets) are not in the markup to fill.
+    const filled = [
+        'name="name"', 'value="Ada"',
+        'value="Code Auditor"',
+        "Reads a diff and reports what is not true.",
+        'value="A checkable allow/deny exists."',
+        'value="#1d4ed8"',
+    ].every((fragment) => formMarkup.includes(fragment));
+    const recreateFillsTheFormFromTheSnapshot = filled
+        // The colour it had comes back CHECKED, so a save does not recolour it.
+        && /value="#1d4ed8"[^>]*\s+checked/.test(formMarkup)
+        // The communication block, and the desk it sat at.
+        && /<option value="direct"\s+selected>/.test(formMarkup)
+        && /<option value="compact"\s+selected>/.test(formMarkup)
+        && /<option value="3,4"\s+selected>/.test(formMarkup)
+        // The connection it can still be linked to, by model name.
+        && /<option value="c1"[^>]*selected>/.test(formMarkup)
+        && !formMarkup.includes("api_key")
+        && !formMarkup.includes("api_base_url");
+    if (!recreateFillsTheFormFromTheSnapshot) {
+        throw new Error("a recreate must fill every field the snapshot carries");
+    }
+
+    // A create, not an edit: no Delete, no recovery tools, no runtime pill.
+    const recreateIsACreateNotAnEdit = recreate.querySelector("#btn-delete-agent") === null
+        && recreate.querySelector("#btn-clear-chat-history") === null
+        && recreate.querySelector("#btn-reset-runtime") === null
+        && recreate.querySelector("#agent-runtime-status-pill") === null;
+    if (!recreateIsACreateNotAnEdit) {
+        throw new Error("a recreate must render no Delete and no recovery tools");
+    }
+
+    // The model no connection offers any more is NAMED, under the matrix it
+    // is missing from — an empty select would lose the choice in silence.
+    const theMissingModelIsNamed = formMarkup.includes('id="agent-connection-missing"')
+        && formMarkup.includes("Reasoning: qwen3.8-27b — no connection offers this model now")
+        // Only the missing one.
+        && !formMarkup.includes("Work: llama3.1:8b");
+    if (!theMissingModelIsNamed) {
+        throw new Error(`the missing model must be named under the matrix`);
+    }
+
+    // The prompt no personality carries any more rides in on its own option,
+    // with the text itself in a hidden input for the save to send.
+    const keptOptionCarriesThePrompt = formMarkup.includes('value="__kept__" selected>Kept from Ada<')
+        && formMarkup.includes('name="prompt_template_kept" '
+            + 'value="You are terse, and you cite files."');
+    if (!keptOptionCarriesThePrompt) {
+        throw new Error("a prompt no personality matches must be kept on the form");
+    }
+
+    // ...and the save sends THAT text, as a create.
+    const recreateForm = recreate.querySelector("#agent-form");
+    recreateForm.querySelector('select[name="personality_id"]').value = "__kept__";
+    recreateForm.querySelector('[name="prompt_template_kept"]').value =
+        "You are terse, and you cite files.";
+    recreateForm.querySelector('select[name="model_work"]').value = "c1";
+    recreateForm.querySelector('input[name="name"]').value = "Ada II";
+    await documentStub.querySelector("#agent-form-submit").dispatchClick();
+    await drain();
+    const recreateSavesAsACreateWithTheKeptPrompt = creates.length === 1
+        && updates.length === 0
+        && creates[0].name === "Ada II"
+        && creates[0].prompt_template === "You are terse, and you cite files."
+        && creates[0].model_work === "llama3.1:8b";
+    if (!recreateSavesAsACreateWithTheKeptPrompt) {
+        throw new Error(`a recreate must POST a new agent carrying the kept prompt, got `
+            + `${creates.length} creates ${JSON.stringify(creates[0] || {})}`);
+    }
+    if (modals().length !== 0) throw new Error("a successful create must close the dialog");
+
+    // A prompt a personality DOES still carry is that personality, not a kept
+    // option: the dropdown matches by text, exactly as it does for an edit.
+    snapshots = [{ ...snapshots[0], id: "s2", prompt_template: "Be terse." }];
+    openAddAgent();
+    await drain();
+    const matched = agentsModal();
+    await matched.querySelectorAll(".market-rail-item")
+        .find((node) => node.querySelector(".market-rail-label").textContent === "Recent")
+        .dispatchClick();
+    await drain();
+    await matched.querySelector("#picker-recent-0").dispatchClick();
+    await drain();
+    const aMatchedPromptIsJustThatPersonality = !formMarkup.includes("__kept__")
+        && !formMarkup.includes("prompt_template_kept")
+        && /<option value="p1"\s+selected>/.test(formMarkup);
+    if (!aMatchedPromptIsJustThatPersonality) {
+        throw new Error("a prompt a personality still carries must select that personality");
+    }
+    await closeByX(matched);
+    await drain();
+    createSucceeds = false;
+    personalities = [];
+    snapshots = [];
+    store.setState({ contextMode: "office", deskAgentId: null });
+    await drain();
+
     // ─── 4. Navigating away from Chat takes the column with it ───
 
     chat.unmount();
@@ -1479,6 +1656,12 @@ async function main() {
 
     process.stdout.write(JSON.stringify({
         ok: true,
+        recreateFillsTheFormFromTheSnapshot,
+        recreateIsACreateNotAnEdit,
+        theMissingModelIsNamed,
+        keptOptionCarriesThePrompt,
+        recreateSavesAsACreateWithTheKeptPrompt,
+        aMatchedPromptIsJustThatPersonality,
         switchesModes,
         drainsOnDestroy,
         rendersUnknownRoom,

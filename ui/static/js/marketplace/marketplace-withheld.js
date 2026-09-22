@@ -37,7 +37,7 @@ const BossModMarketplaceWithheld = (() => {
     const REFUSED = 'refused';
     const UNAVAILABLE = 'unavailable';
 
-    // Every state an installed row can be in relative to the catalog, as
+    // Every state a library row can be in relative to the catalog, as
     // marketplace-items.js projects them. `catalog` and `url` are listed with
     // an explicit null rather than left out: a card-backed row is fine and a
     // URL install was never in this catalog, and saying so here is what lets
@@ -45,6 +45,9 @@ const BossModMarketplaceWithheld = (() => {
     const NOTE = Object.freeze({
         catalog: null,
         url: null,
+        // Not an absence to explain, but the one fact that is not obvious: it
+        // is here and nowhere else, so no catalog can update or replace it.
+        local: 'Saved on this machine.',
         gone: 'This pack is no longer in the catalog at this pin.',
         refused: 'The catalog still lists this pack and the app now refuses it. '
             + 'It is named under the grid, with the reason.',

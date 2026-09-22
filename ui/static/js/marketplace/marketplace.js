@@ -15,9 +15,10 @@
  * the one `✕` in the app that meant "back" instead of "close everything", and
  * a marketplace opened from the rail menu had no way to Add agent at all. The
  * dialog owns the frame, its `✕` and the tabs now; this owns the host element
- * and everything drawn in it. Two things cross that seam, both as callbacks
- * the dialog hands in: a template the operator wants to start an agent from,
- * and "the library just changed".
+ * and everything drawn in it. Three things cross that seam: two callbacks the
+ * dialog hands in — a template the operator wants to start an agent from, and
+ * "the library just changed" — and `refreshLibrary`, which is that same
+ * sentence said the other way, for a row the Add agent tab saved.
  *
  * The pane holds TWO views and this owns which one is up: the browse grid,
  * and — once a card is picked — marketplace-detail.js's full-width reading
@@ -34,6 +35,7 @@ const BossModMarketplace = (() => {
         loadFailed: 'Couldn’t load the catalog.',
         installFailed: 'Install failed.',
         uninstallFailed: 'Uninstall failed.',
+        libraryFailed: 'Couldn’t re-read your template library.',
         urlRequired: 'Paste a GitHub URL to a pack file first.',
         removed: 'Template removed.',
     });
@@ -55,11 +57,13 @@ const BossModMarketplace = (() => {
      * @param {() => void} deps.onLibraryChanged  Called after a successful
      *   install or uninstall, once the local library has been re-read, so the
      *   Add agent picker can re-read it too. Never after a failure.
-     * @returns {{element: HTMLElement, activate: () => void}} `element` is the
-     *   `.market-host` to place. `activate` is "this pane is on screen": the
-     *   first call starts the first load, and every later call does nothing —
-     *   the pane keeps its catalog, its scroll and its open pack across a tab
-     *   switch rather than reading them all again.
+     * @returns {{element: HTMLElement, activate: () => void,
+     *   refreshLibrary: () => Promise<void>}} `element` is the `.market-host`
+     *   to place. `activate` is "this pane is on screen": the first call
+     *   starts the first load, and every later call does nothing — the pane
+     *   keeps its catalog, its scroll and its open pack across a tab switch
+     *   rather than reading them all again. `refreshLibrary` is the other
+     *   tab telling this one that the library gained a row.
      * @throws {Error} When either callback is missing. A bridge that answers
      *   to nobody is a button that does nothing, and a silent one.
      */
@@ -334,6 +338,36 @@ const BossModMarketplace = (() => {
             },
         };
 
+        /**
+         * Re-read the local library, for a change this pane did not make.
+         *
+         * Save as template writes a row from the Add agent tab beside this
+         * one, so `Installed`, the extras and every card's state are stale
+         * until this runs. It re-reads the LIBRARY only: the catalog did not
+         * change, and refetching it would put a remote read behind a local
+         * write.
+         *
+         * @returns {Promise<void>} A no-op before the first `activate()` —
+         *   this pane has read nothing yet, and reading now would be the eager
+         *   fetch `activate` exists to avoid. Never rejects: a failed re-read
+         *   keeps what is on screen and says so in the pane's error line.
+         */
+        async function refreshLibrary() {
+            if (!started) return;
+            try {
+                state.templates = await API.listTemplates();
+            } catch (err) {
+                console.error('[marketplace] the library could not be re-read', err);
+                state.error = (err && err.message) || COPY.libraryFailed;
+                rerender();
+                return;
+            }
+            Object.assign(state, ITEMS.indexInstalled(
+                state.templates, state.categories, state.withheld,
+            ));
+            rerender();
+        }
+
         // Drawn now, read later: the browse view is up (in its loading state)
         // before the dialog places focus, so the Find box is there to take it.
         rerender();
@@ -344,6 +378,7 @@ const BossModMarketplace = (() => {
                 started = true;
                 void load();
             },
+            refreshLibrary,
         };
     }
 

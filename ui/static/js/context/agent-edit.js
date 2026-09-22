@@ -26,7 +26,9 @@
  * the dismissal pinned outside a body that scrolls.
  *
  * The footer is context/agent-dialog-footer.js's — the row itself, and the
- * state of the primary inside it.
+ * state of the primary inside it. `Save as template` is in that row here too:
+ * a role contract worth keeping is as likely to be one already in front of the
+ * operator as one they are typing (context/agent-save-template.js).
  */
 const BossModAgentEdit = (() => {
     const { h, clear } = BossModDom;
@@ -73,10 +75,36 @@ const BossModAgentEdit = (() => {
 
         let destroyed = false;
         const formEl = h('div', { class: 'agent-form-host' });
+
+        /**
+         * The footer's `Save as template`: this agent's role contract into the
+         * library, read off the CURRENT form at click time
+         * (context/agent-save-template.js). No `onSaved`: nothing this dialog
+         * shows lists the library, and only one agent dialog is open at a time.
+         *
+         * @returns {void}
+         * @throws {Error} With no form on screen — the row withholds this
+         *   action while one is building, so there should always be one.
+         */
+        function saveTemplate() {
+            const form = formEl.querySelector('#agent-form');
+            if (!form) throw new Error('[agent-edit] Save as template with no form');
+            // Named at click time, like the add pane's: nothing in this
+            // dialog's build path reaches it.
+            const SAVE_TEMPLATE = BossModAgentSaveTemplate;
+            void SAVE_TEMPLATE.open({
+                form,
+                defaultTitle: SAVE_TEMPLATE.defaultTitle(form),
+                // An edit came off no library shelf, so it starts on the one
+                // every saved template can go on.
+                defaultCategory: SAVE_TEMPLATE.CUSTOM,
+            });
+        }
+
         // What the pinned row offers, and what its primary is allowed to say,
         // is one owner's — scoped to THIS dialog, so a build that outlives its
         // own cannot repaint the next one's button.
-        const chrome = { creating: false };
+        const chrome = { creating: false, onSaveTemplate: saveTemplate };
         const handle = { close: () => modal.close() };
 
         const modal = BossModOverlays.createModal({

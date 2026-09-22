@@ -31,6 +31,7 @@ HARNESS_MODULES = [
     JS / "core" / "agent-status.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu-select.js",
     JS / "core" / "gates.js",
     CONTEXT / "agent-api.js",
     CONTEXT / "agent-templates-api.js",
@@ -47,8 +48,12 @@ HARNESS_MODULES = [
     JS / "marketplace" / "filter-rail.js",
     JS / "core" / "search-field.js",
     JS / "core" / "tabs.js",
+    JS / "marketplace" / "marketplace-withheld.js",
+    JS / "marketplace" / "marketplace-sections.js",
+    JS / "marketplace" / "marketplace-detail.js",
     CONTEXT / "agent-template-picker.js",
     CONTEXT / "agent-form-template.js",
+    CONTEXT / "agent-save-template.js",
     CONTEXT / "agent-dialog-footer.js",
     CONTEXT / "agent-add-pane.js",
     CONTEXT / "agent-dialog-slot.js",
@@ -147,7 +152,10 @@ def test_add_agent_and_the_marketplace_are_two_tabs_of_one_dialog() -> None:
     # The bridge switches tabs FIRST, so the pane is live before the pick
     # lands in it, and a library change refreshes the picker.
     use = dialog.split("onUseTemplate: (template) => {", 1)[1].split("},", 1)[0]
-    assert use.index("selectTab('add');") < use.index("void addPane.pick(template);")
+    # The pick is a CHOICE now — blank, a template, or a recent agent — so the
+    # bridge names which kind it is handing over.
+    assert use.index("selectTab('add');") < use.index(
+        "void addPane.pick({ kind: 'template', row: template });")
     assert "onLibraryChanged: () => { void addPane.refresh(); }," in dialog
     assert "onBrowse: () => selectTab('marketplace')," in dialog
     # A programmatic switch hands the keyboard to the tab: the control that
@@ -194,7 +202,7 @@ def test_a_hidden_pane_s_async_work_lands_where_it_belongs() -> None:
     # §3.3 and §3.4: every build starts owing the form row, and nothing in the
     # pane moves the keyboard while it is away.
     pane = _read(ADD_PANE)
-    picked = pane.split("async function pickTemplate(template) {", 1)[1]
+    picked = pane.split("async function pickChoice(choice) {", 1)[1]
     assert picked.index("footer.show('form');") < picked.index("renderInline(")
     assert picked.index("if (!active) return;") < picked.index("name.focus()")
     assert "if (active) lead.focus();" in pane
@@ -359,7 +367,8 @@ def test_no_configured_connection_is_said_in_front_and_refused() -> None:
     # The shape is one module's — the one that RENDERS it — and it names the
     # rule it exists for.
     conn = _read(CONTEXT / "agent-form-connections.js")
-    assert "function connectionsSection(agent, connections)" in conn
+    assert ("function connectionsSection(values, connections, "
+            "{ reportMissing = false } = {})") in conn
     assert 'id="btn-goto-connections"' in conn
     assert "const noConnections = connections.length === 0;" in conn
     # No stand-in control: the empty shape offers the link to Settings and
@@ -447,7 +456,7 @@ def test_a_superseded_build_never_lands_on_the_pick_that_won() -> None:
     dialog = _read(ADD_PANE)
     # Cleared before the build, recorded only once it has landed AND is still
     # the step on screen.
-    picked = dialog.split("async function pickTemplate(template) {", 1)[1]
+    picked = dialog.split("async function pickChoice(choice) {", 1)[1]
     assert picked.index("builtFor = undefined;") < picked.index("renderInline(")
     assert picked.index("renderInline(") < picked.index("builtFor = key;")
     assert "if (!landed || step !== 'form') return;" in picked
@@ -554,7 +563,7 @@ def test_a_refused_save_cannot_revive_a_build_s_withheld_primary() -> None:
     # second claim of the save's own, which is how the two could disagree.
     save = _read(CONTEXT / "agent-form-save.js")
     assert "const token = primary.claim();" in save
-    assert "stageForm({ agent, primary, token, onSave, onDelete })" in save
+    assert "stageForm({ agent, prefill, primary, token, onSave, onDelete })" in save
     assert "primary.ready(token, heldTheKeyboard);" in save
     # The guard the ownership model replaces: the save used to decide for
     # itself whether the button was still its to paint.
@@ -749,10 +758,19 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     assert at("context/agents-dialog.js") < at("shell/add-agent-menu.js")
 
     joined = "\n".join(_read(p) for p in sorted(CONTEXT.glob("agent-*.js")))
-    for gone in ("Browse packs", "Start blank", "Loading packs…",
+    for gone in ("Browse packs", "Loading packs…",
                  "pack-url-input", "btn-import-pack-url", "pack-url-import-status",
                  "applyImport", "bindUrlImport", "pack-browse"):
         assert gone not in joined, gone
+    # `Start blank` is back, and it is not the retired door: it is the one
+    # control on a RECREATED form's chip, in the module that marks that form,
+    # and it is nowhere near the picker. Read off the code, comments stripped,
+    # because the pane's prose explains what it does.
+    starts = sorted(
+        path.name for path in sorted(CONTEXT.glob("agent-*.js"))
+        if "Start blank" in re.sub(r"/\*.*?\*/|//[^\n]*", "", _read(path), flags=re.S)
+    )
+    assert starts == ["agent-form-template.js"], starts
     # ...and the close-and-reopen hop between Add agent and the marketplace:
     # the footer door, the flag that sequenced it, and the takeover's own open.
     # Read off the CODE of every module that took part in it, comments
@@ -911,3 +929,109 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
     assert ".add-agent-choice:hover { background: var(--bg); color: var(--ink); }" in overlays
     hire_hover = shell_css.split(".roster-hire:hover {", 1)[1].split("}", 1)[0]
     assert "background: var(--bg)" in hire_hover and "color: var(--ink)" in hire_hover
+
+
+def test_recent_lists_the_agents_this_machine_has_made() -> None:
+    """The scope that puts a deleted agent's setup back in front of the operator.
+
+    A delete is a hard delete — the row, its role contract and every companion
+    row go — so before snapshots the only way back was reading
+    `diagnostics.context`, which exists only if the agent ever ran. Recent is a
+    rail row beside `All`, drawn from `GET /api/agent-snapshots`: the same grid
+    and the same card, with the agent's own avatar where a pack's category
+    bubble goes, and the one date that says whether it is still on the roster.
+    """
+    payload = _harness()
+    for key in (
+        "recentListsTheSnapshots", "aRecentCardIsTheAgentNotAPack",
+        "theFilterSearchesRecentTooAndSaysSoWhenItMisses",
+        "noRecentAgentsNoRecentRow",
+    ):
+        assert payload[key] is True, key
+    picker = _read(CONTEXT / "agent-template-picker.js")
+    # Both reads together, and either failing is the one failed state: half a
+    # grid is not something the operator can act on.
+    assert "await Promise.all(" in picker
+    assert "AGENT_API.listSnapshots()" in picker
+    assert "if (!Array.isArray(rows) || !Array.isArray(snapshots)) {" in picker
+    api = _read(CONTEXT / "agent-api.js")
+    assert "async function listSnapshots()" in api
+    assert "apiFetch('/api/agent-snapshots'" in api
+
+
+def test_a_recent_pick_is_a_create_and_never_an_edit() -> None:
+    """Spec §3.2: the form stack used `agent` for values AND for identity.
+
+    Identity decides the recovery tools, Delete, the policy read by id, the
+    duplicate-name self-exclusion and whether the save creates. A snapshot
+    supplies VALUES only — the agent it came from may not even exist — so it
+    arrives as a separate `prefill`, and what proves it is what reaches the
+    server: `POST /api/agents`, never a PATCH of the agent it was taken from.
+    """
+    payload = _harness()
+    for key in ("aRecentPickBuildsFromValuesNotIdentity",
+                "theRecentChipNamesTheAgentAndWhenItWent",
+                "recreatingPostsANewAgent", "startBlankLeavesTheRecreate"):
+        assert payload[key] is True, key
+    pane = _read(ADD_PANE)
+    # The pane hands the snapshot over as values, and only as values.
+    assert "const prefill = choice.kind === 'snapshot' ? choice.row : null;" in pane
+    assert "container: formEl, agent: null, prefill, primary, onSave," in pane
+    # Both halves of the split, in the module that composes the form.
+    form = _read(CONTEXT / "agent-form.js")
+    assert "async function buildFormHTML(container, agent = null, prefill = null) {" in form
+    assert "const values = agent || prefill;" in form
+    assert "if (agent && prefill) {" in form
+    for value_builder in ("nameField(values)", "roleContractCard(values, roster)",
+                          "connectionsSection(values, connections, {",
+                          "advancedSection(values, {"):
+        assert value_builder in form, value_builder
+    for identity_builder in ("statusAndRecovery(agent)", "actionsRow(agent)",
+                             "loadFormData(agent)",
+                             "bindDuplicateNameWarning(form, roster, agent)",
+                             "bindConnectionGuard(form, { creating: !agent })"):
+        assert identity_builder in form, identity_builder
+    # The chip is the marker module's, beside the template one.
+    template = _read(CONTEXT / "agent-form-template.js")
+    assert "function applySnapshotChip(formRoot, snapshot, onStartBlank)" in template
+    assert "COPY.recreating" in template and "COPY.deleted" in template
+
+
+def test_save_as_template_writes_the_form_into_the_library() -> None:
+    """A tuned role contract had nowhere to live but the agent it was typed on.
+
+    The footer action opens a LAYER over the form — `keepOpen`, so the dialog
+    it is about is still underneath — reads the form at the moment it is
+    pressed, and posts the role contract as a local template. A title that is
+    taken is a question, not an overwrite.
+    """
+    payload = _harness()
+    for key in (
+        "saveAsTemplateOpensALayerAndKeepsTheForm",
+        "aTakenTitleAsksBeforeItReplaces", "theSavedTemplateIsTheFormsContract",
+        "aSavedTemplateSaysWhereItWentAndRefreshesBoth", "doneClosesOnlyTheLayer",
+        "anEmptyContractIsRefusedOnTheForm",
+        "saveAsTemplateIsWithheldWhileAFormIsBuilding",
+        "theEditDialogSavesTemplatesToo", "everythingClosed",
+    ):
+        assert payload[key] is True, key
+    footer = _read(CONTEXT / "agent-dialog-footer.js")
+    # It leads the row and does not close the dialog it reads.
+    assert "label: SAVE_TEMPLATE, tone: 'quiet', id: SAVE_TEMPLATE_ID," in footer
+    assert "keepOpen: true, onSelect: chrome.onSaveTemplate," in footer
+    # ...and it is withheld for exactly as long as the primary is building,
+    # because until then the host holds the pick the operator just left.
+    assert "if (saveTemplate) saveTemplate.disabled = label === BUILDING;" in footer
+    overlays = _read(ROOT / "ui" / "static" / "css" / "overlays.css")
+    assert "#agent-save-template { margin-right: auto; }" in overlays
+    module = _read(CONTEXT / "agent-save-template.js")
+    # The contract, and nothing the operator owns.
+    fields = module.split("function fieldsFromForm(form) {", 1)[1].split("\n    }", 1)[0]
+    for forbidden in ('name="name"', 'name="agent-color"', 'name="model_'):
+        assert forbidden not in fields, forbidden
+    # The app's dropdown, never a native select, and the shared field input.
+    assert "BossModMenuSelect.create({" in module
+    assert "<select" not in module
+    assert "class: 'field-input'" in module
+    # Overlays carries the flag the action leans on.
+    assert "if (!action.keepOpen) close();" in _read(ROOT / "ui" / "static" / "js" / "core" / "overlays.js")

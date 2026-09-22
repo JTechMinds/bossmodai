@@ -1,4 +1,9 @@
-"""BossMod AI — Agent and AgentState CRUD."""
+"""BossMod AI — Agent and AgentState CRUD.
+
+Every write that changes an agent's setup also captures its snapshot for Add
+agent's Recent (db/agent_snapshots.py): after a create or a save, and once
+more before a delete removes anything, stamped deleted.
+"""
 
 from __future__ import annotations
 
@@ -57,6 +62,23 @@ def _decrypt_agent(agent: Agent | None) -> Agent | None:
     return agent.model_copy(update={"api_key": plain})
 
 
+def _capture_snapshot(agent: Agent, *, deleted: bool) -> None:
+    """Capture ``agent``'s setup, with its prompt-history policy, for Recent.
+
+    Raises whatever ``capture_agent_snapshot`` raises; a caller inside a
+    transaction rolls its own write back with it.
+    """
+    # Imported here, not at module top, the way delete_agent imports
+    # db.host_path_consent: db.agent_prompt_history_policies imports this
+    # module back to re-capture after a policy change, and keeping the
+    # snapshot hooks' imports inside functions keeps the db package's load
+    # order free of cycles.
+    from db.agent_prompt_history_policies import get_agent_prompt_history_policy
+    from db.agent_snapshots import capture_agent_snapshot
+
+    capture_agent_snapshot(agent, get_agent_prompt_history_policy(agent.id), deleted=deleted)
+
+
 # ---------------------------------------------------------------------------
 # Agent CRUD
 # ---------------------------------------------------------------------------
@@ -84,7 +106,7 @@ def create_agent(
     guardian_repetition_threshold: float = 0.85,
     guardian_no_progress_threshold: int = 30,
 ) -> Agent:
-    """Insert a new agent and its companion state rows atomically."""
+    """Insert a new agent, its companion state rows and its snapshot atomically."""
     with transaction():
         created = insert_returning_dict(
             """
@@ -131,9 +153,12 @@ def create_agent(
             [agent_id, history_n, history_tokens, True],
         )
 
-    agent = get_agent(agent_id)
-    if agent is None:
-        raise RuntimeError(f"Failed to reload created agent {agent_id}")
+        agent = get_agent(agent_id)
+        if agent is None:
+            raise RuntimeError(f"Failed to reload created agent {agent_id}")
+        # Inside the transaction: an agent whose snapshot could not be written
+        # is not created either, so the operator's retry cannot make a second.
+        _capture_snapshot(agent, deleted=False)
     return agent
 
 
@@ -171,7 +196,10 @@ def list_agents() -> list[Agent]:
 
 
 def update_agent(agent_id: str, **fields: Any) -> Agent | None:
-    """Update an agent's fields. Returns the updated Agent or None."""
+    """Update an agent's fields. Returns the updated Agent or None.
+
+    A write that applied anything re-captures the agent's snapshot.
+    """
     if "api_key" in fields:
         fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
     if "communication" in fields:
@@ -185,16 +213,32 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
                 fields["communication"], specialty=role,
             ),
         }
-    build_update("agents", "id", agent_id, fields, _AGENT_VALID_COLUMNS)
-    return get_agent(agent_id)
+    applied = build_update("agents", "id", agent_id, fields, _AGENT_VALID_COLUMNS)
+    agent = get_agent(agent_id)
+    if applied and agent is not None:
+        _capture_snapshot(agent, deleted=False)
+    return agent
 
 
 def delete_agent(agent_id: str) -> bool:
-    """Delete an agent and all dependent rows.
+    """Delete an agent and all dependent rows, keeping its setup as a snapshot.
+
+    The snapshot is captured, stamped deleted, BEFORE the first row goes: its
+    prompt-history policy is one of the rows this removes. Returns False when
+    there is no such agent. Raises ``RuntimeError`` when the agent row exists
+    but cannot be read whole, since deleting it then would lose the setup the
+    snapshot exists to keep.
     """
     result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
     if not result:
         return False
+    agent = get_agent(agent_id)
+    if agent is None:
+        raise RuntimeError(
+            f"Agent {agent_id} exists but could not be read for its last snapshot; "
+            "refusing to delete it"
+        )
+    _capture_snapshot(agent, deleted=True)
     # notification_links -> notifications
     notification_ids = [r["id"] for r in query(
         "SELECT id FROM notifications WHERE agent_id = $1", [agent_id],

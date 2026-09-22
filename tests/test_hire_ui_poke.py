@@ -180,8 +180,9 @@ def test_successful_create_dismisses_hire_form() -> None:
     the property is pinned on each side of that seam.
     """
     pane = _read("context/agent-add-pane.js")
-    # A create builds with no agent, and its save routes to the new one.
-    assert "renderInline({ container: formEl, agent: null, primary, onSave })" in pane
+    # A create builds with no agent — a snapshot pick adds its values as
+    # `prefill` and nothing else — and its save routes to the new one.
+    assert "container: formEl, agent: null, prefill, primary, onSave," in pane
     on_save = pane.split("function onSave(savedAgent) {", 1)[1].split(
         "function failed(err)", 1
     )[0]

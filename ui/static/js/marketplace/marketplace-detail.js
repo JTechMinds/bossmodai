@@ -52,6 +52,11 @@ const BossModMarketplaceDetail = (() => {
         removing: 'Removing…',
         uninstallAsk: 'Remove this template from your library? Agents already '
             + 'created from it are unaffected.',
+        // A local template is not an install to undo: there is no pack behind
+        // it to reinstall from, so the word and the question both say so.
+        deleteLocal: 'Delete',
+        deleteLocalAsk: 'Delete this local template? It exists only on this '
+            + 'machine; agents created from it are unaffected.',
         remove: 'Remove',
         cancel: 'Cancel',
         trustConfirm: 'Install anyway',
@@ -151,7 +156,7 @@ const BossModMarketplaceDetail = (() => {
             template ? h('button', {
                 class: 'market-action', id: 'market-uninstall', type: 'button',
                 disabled: removing, onclick: () => handlers.onUninstall(template.id),
-            }, removing ? COPY.removing : COPY.uninstall) : null,
+            }, removing ? COPY.removing : (item.local ? COPY.deleteLocal : COPY.uninstall)) : null,
         ].filter(Boolean);
         return rows.length ? h('div', { class: 'market-detail-actions' }, rows) : null;
     }
@@ -244,8 +249,9 @@ const BossModMarketplaceDetail = (() => {
         state.error ? h('p', { class: 'market-error', role: 'alert' }, state.error) : null,
         state.notice ? h('p', { class: 'market-notice', role: 'status' }, state.notice) : null,
         state.pendingUninstall ? confirmStrip({
-            text: COPY.uninstallAsk, id: 'market-uninstall-confirm',
-            label: COPY.remove, tone: 'danger',
+            text: item.local ? COPY.deleteLocalAsk : COPY.uninstallAsk,
+            id: 'market-uninstall-confirm',
+            label: item.local ? COPY.deleteLocal : COPY.remove, tone: 'danger',
             onConfirm: () => handlers.onUninstallConfirm(state.pendingUninstall),
             onCancel: () => handlers.onUninstallCancel(),
         }) : null,

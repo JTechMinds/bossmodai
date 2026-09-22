@@ -1,5 +1,5 @@
 /**
- * BossMod AI — what an installed template adds to the create form.
+ * BossMod AI — what a template, or a recreated agent, adds to the create form.
  *
  * Renamed and reduced from agent-form-quick.js, which built a SECOND LAYOUT.
  * That module swept everything from the role contract down into a collapsed
@@ -26,9 +26,15 @@
  * so removing a template does not release it — an agent with no connection
  * fails on its first turn whether or not a template was involved.
  *
+ * A RECENT AGENT gets the same chip and none of the rest. Its values are the
+ * form's already — context/agent-form.js builds every field from the snapshot
+ * — so there is nothing to hydrate and nothing to undo field by field; what
+ * the chip says is WHICH agent is being recreated and, when it is gone, when
+ * it went, and its one control starts over from a blank form.
+ *
  * Built with BossModDom.h. A template's title, author and specialty are
- * pack-authored remote text; the markup exemption the form's field groups carry
- * is theirs and does not extend here.
+ * pack-authored remote text, and an agent's name is operator text; the markup
+ * exemption the form's field groups carry is theirs and does not extend here.
  */
 const BossModAgentFormTemplate = (() => {
     const { h } = BossModDom;
@@ -39,6 +45,9 @@ const BossModAgentFormTemplate = (() => {
         pinned: 'pinned',
         clear: 'Remove template',
         tools: 'Tools',
+        recreating: 'Recreating',
+        deleted: 'deleted',
+        startBlank: 'Start blank',
     });
 
     /** The pinned commit, short enough to read on one chip line. */
@@ -178,5 +187,43 @@ const BossModAgentFormTemplate = (() => {
         form.prepend(chip);
     }
 
-    return { COPY, shortSha, templateFields, applyTemplate };
+    /**
+     * Mark a create form as the recreation of one agent.
+     *
+     * ADDITIVE, like the template chip, and even more so: every field is
+     * already the snapshot's, so this only says whose setup is on screen —
+     * `Recreating Ada`, plus `· deleted <when>` for an agent that is gone —
+     * and offers the way out. `Start blank` does not clear the fields here; it
+     * hands back to the caller, which picks Blank and builds the empty form,
+     * because a half-cleared recreate is neither thing.
+     *
+     * @param {HTMLElement} formRoot  The host `renderInline` filled.
+     * @param {object} snapshot  The `AgentSnapshot` the form was built from.
+     * @param {() => void} onStartBlank  Start over from an empty form.
+     * @returns {void}
+     * @throws {Error} When the form is missing — the same reasoning
+     *   `applyTemplate` gives — or without `onStartBlank`, which would leave a
+     *   live control that does nothing.
+     */
+    function applySnapshotChip(formRoot, snapshot, onStartBlank) {
+        const form = formRoot.querySelector('#agent-form');
+        if (!form) throw new Error('[template] no #agent-form to mark');
+        if (typeof onStartBlank !== 'function') {
+            throw new Error('[template] applySnapshotChip needs onStartBlank');
+        }
+        const parts = [`${COPY.recreating} ${snapshot.name}`];
+        // The roster's own way of saying when: a time today, a date before it.
+        const when = BossModFormat.formatActivityTime(snapshot.deleted_at);
+        if (when) parts.push(`${COPY.deleted} ${when}`);
+        form.prepend(h('p', { class: 'template-chip', id: 'snapshot-provenance' },
+            h('span', { class: 'template-chip-mark', 'aria-hidden': 'true' }, COPY.mark),
+            h('span', { class: 'template-chip-text' }, parts.join(' · ')),
+            h('button', {
+                class: 'template-chip-start', type: 'button',
+                id: 'snapshot-provenance-blank',
+                onclick: () => onStartBlank(),
+            }, COPY.startBlank)));
+    }
+
+    return { COPY, shortSha, templateFields, applyTemplate, applySnapshotChip };
 })();

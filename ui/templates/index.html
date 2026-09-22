@@ -314,18 +314,22 @@
     <script src="{{ static_url('js/context/agent-recovery.js') }}"></script>
 
     <!-- Add agent, in dependency order: the form's save wiring, then the two
-         halves of the create pane's steps, then the pinned footer, then the
-         create pane that swaps between them, then the one-form-at-a-time slot
-         the two agent dialogs share.
+         halves of the create pane's steps, then Save as template, then the
+         pinned footer, then the create pane that swaps between the steps, then
+         the one-form-at-a-time slot the two agent dialogs share.
 
          The picker reads the local library through agent-templates-api.js and
-         draws it with the two builders the marketplace block above already
-         defined, so it loads after both. agent-form-template.js only marks the
-         form agent-form.js built, and agent-dialog-footer.js owns the primary
-         the save wiring is handed — agent-add-pane.js hands it over for a
-         create and agent-edit.js for an edit, so both load after it. The
-         Agents dialog, which hosts the create pane beside the Marketplace
-         pane, loads straight after agent-edit.js.
+         the agent snapshots Recent lists through agent-api.js, and draws both
+         with the two builders the marketplace block above already defined, so
+         it loads after all of them. agent-form-template.js only marks the form
+         agent-form.js built. agent-save-template.js writes that form back into
+         the library and asks its one question with the marketplace's confirm
+         strip, so it follows both blocks and precedes the footer whose action
+         opens it. agent-dialog-footer.js owns the primary the save wiring is
+         handed — agent-add-pane.js hands it over for a create and
+         agent-edit.js for an edit, so both load after it. The Agents dialog,
+         which hosts the create pane beside the Marketplace pane, loads
+         straight after agent-edit.js.
 
          The module that used to lead this block is gone: the save wiring's
          refusal still ASKS which shape the form's connection question is in,
@@ -334,6 +338,7 @@
     <script src="{{ static_url('js/context/agent-form-save.js') }}"></script>
     <script src="{{ static_url('js/context/agent-template-picker.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-template.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-save-template.js') }}"></script>
     <script src="{{ static_url('js/context/agent-dialog-footer.js') }}"></script>
     <script src="{{ static_url('js/context/agent-add-pane.js') }}"></script>
     <script src="{{ static_url('js/context/agent-dialog-slot.js') }}"></script>

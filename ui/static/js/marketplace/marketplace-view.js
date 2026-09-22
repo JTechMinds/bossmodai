@@ -47,6 +47,7 @@ const BossModMarketplaceView = (() => {
         categoryGroup: 'Categories',
         all: 'All',
         installed: 'Installed',
+        local: 'Local',
         loading: 'Loading the catalog…',
         failed: 'Couldn’t load the catalog.',
         empty: 'The catalog has no packs at this pin.',
@@ -201,6 +202,8 @@ const BossModMarketplaceView = (() => {
             intro: item.intro,
             mission: item.mission,
             note: WITHHELD.installedNote(item.catalogStatus),
+            // Beside the category, and only on a row saved here.
+            tags: item.local ? [COPY.local] : [],
             author: item.author,
             chip: STATE_CHIP[item.state] || null,
             packId: item.packId || null,

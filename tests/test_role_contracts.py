@@ -283,8 +283,10 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "Runtime core" in panel
     assert 'id="runtime-core-preview"' in panel
     assert 'name="runtime_core"' not in panel
-    assert panel.index('name="done_fail_bar"') < panel.index("${communicationFields(agent)}")
-    assert panel.index("${communicationFields(agent)}") < panel.index("Runtime core")
+    # `values`, not `agent`: the same fields are shown for an agent being
+    # edited and for a snapshot being recreated (spec 2026-09-22 §5.3).
+    assert panel.index('name="done_fail_bar"') < panel.index("${communicationFields(values)}")
+    assert panel.index("${communicationFields(values)}") < panel.index("Runtime core")
     advanced = Path("ui/static/js/context/agent-form-advanced.js").read_text(encoding="utf-8")
     assert 'name="communication_${field}"' in advanced
     submit_js = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")

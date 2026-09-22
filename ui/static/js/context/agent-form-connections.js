@@ -20,6 +20,13 @@
  * now, and an attribute whose author is not its renderer is an attribute that
  * goes stale.
  *
+ * A RECREATED AGENT'S MODELS MAY BE GONE. A snapshot keeps model NAMES, never
+ * the connection secrets they were reached with, and is matched back to a
+ * connection the way Edit matches a stored agent: by model or connection name.
+ * A name no connection answers to any more leaves its select at None, so a
+ * form built from a snapshot says which ones under the matrix
+ * (`reportMissing`) — otherwise a recreate quietly loses the choice.
+ *
  * MARKUP, and why this module claims no exemption: it builds template strings
  * for the same reason its parent does — see the block comment in
  * context/agent-form-fields.js — and every value it interpolates is
@@ -102,13 +109,25 @@ const BossModAgentFormConnections = (() => {
      * @param {string|null} currentValue  The model name stored on the agent.
      * @returns {string}
      */
+    /**
+     * Whether one connection answers to a model name an agent stored.
+     *
+     * By model or by connection name: what would have been stored for it. The
+     * one match rule, shared by the options below and the missing-model note,
+     * so the note can never name a model a select did in fact preselect.
+     *
+     * @param {object} connection
+     * @param {string|null} stored
+     * @returns {boolean}
+     */
+    function offers(connection, stored) {
+        return Boolean(stored) && (stored === connection.model || stored === connection.name);
+    }
+
     function connectionOptions(connections, currentValue) {
         return connections.map(c => {
             const label = c.model ? `${c.name} (${c.model})` : c.name;
-            // Match by combining connection fields into what would have been stored
-            const selected = currentValue && (
-                currentValue === c.model || currentValue === c.name
-            );
+            const selected = offers(c, currentValue);
             return `<option value="${BossModFormat.escapeAttribute(c.id)}" title="${BossModFormat.escapeAttribute(label)}"${selected ? ' selected' : ''}>${BossModFormat.escapeHtml(label)}</option>`;
         }).join('');
     }
@@ -146,13 +165,19 @@ const BossModAgentFormConnections = (() => {
      * rule that already separated it — it writes to the other five rather than
      * being a sixth value, and that is what stops it reading as one of them.
      *
-     * @param {object|null} agent
+     * @param {object|null} values  The model names to preselect: the agent
+     *   being edited, or the snapshot being recreated. null for a blank form.
      * @param {object[]} connections
+     * @param {{reportMissing?: boolean}} [options]  `reportMissing` puts one
+     *   note under the matrix naming each model type whose stored model no
+     *   connection offers now. For a recreate: an edit already shows None for
+     *   such a type and has always been allowed to.
      * @returns {string} With no connections configured, a link to Settings —
-     *   an empty matrix would look like a broken form. `shapeFor` above is what
-     *   tells the rest of the dialog which of the two it built.
+     *   an empty matrix would look like a broken form, and a note naming models
+     *   with nothing to pick instead would point nowhere. `shapeFor` above is
+     *   what tells the rest of the dialog which of the two it built.
      */
-    function connectionsSection(agent, connections) {
+    function connectionsSection(values, connections, { reportMissing = false } = {}) {
         const noConnections = connections.length === 0;
         const MODEL_TYPES = FIELDS.MODEL_TYPES;
         return `
@@ -178,11 +203,31 @@ const BossModAgentFormConnections = (() => {
                        ${MODEL_TYPES.map(t => `<div class="field">
                            <label for="${BossModFormat.escapeAttribute(connectionSelectId(t.key))}"
                                   class="field-label field-label-sm">${t.label}</label>
-                           ${connectionSelect(connections, t.key, agent?.[t.key])}
+                           ${connectionSelect(connections, t.key, values?.[t.key])}
                        </div>`).join('')}
-                   </div>`
+                   </div>
+                   ${reportMissing ? missingModelNote(values, connections) : ''}`
             }
         </section>`;
+    }
+
+    /**
+     * `Work: qwen3.8-27b — no connection offers this model now; pick one.`,
+     * one line per model type whose stored model nothing answers to.
+     *
+     * @param {object|null} values
+     * @param {object[]} connections  Never empty: only the matrix shape asks.
+     * @returns {string} '' when every stored model is still offered.
+     */
+    function missingModelNote(values, connections) {
+        const missing = FIELDS.MODEL_TYPES.filter((t) => values?.[t.key]
+            && !connections.some((c) => offers(c, values[t.key])));
+        if (!missing.length) return '';
+        // `Work (routine)` names the type in the matrix; the note names it the
+        // way the operator says it, before the parenthesis.
+        const lines = missing.map((t) => `<li>${BossModFormat.escapeHtml(t.label.replace(/\s*\(.*\)$/, ''))}: `
+            + `${BossModFormat.escapeHtml(values[t.key])} — no connection offers this model now; pick one.</li>`);
+        return `<ul class="connection-missing" id="agent-connection-missing">${lines.join('')}</ul>`;
     }
 
     return {

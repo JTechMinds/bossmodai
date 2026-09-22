@@ -228,6 +228,23 @@
    the Tailwind `disabled:` pair on the old in-form button carried. */
 .modal-action:disabled { opacity: 0.55; pointer-events: none; }
 
+/* Save as template is about the FORM, not about finishing the dialog, so it
+   takes the far end of the row and leaves Cancel and the primary paired at
+   the near one. */
+#agent-save-template { margin-right: auto; }
+
+/* ─── Save as template ───
+   A layer over the agent form (context/agent-save-template.js): two questions
+   about the LIBRARY, stacked, then the strip that asks about an existing
+   title. Its width is the default dialog's; only the rhythm is here. */
+.save-template { display: flex; flex-direction: column; gap: 14px; }
+
+/* Said in the layer: a title that is missing, or a save that failed. */
+.save-template-note { margin: 0; font-size: 13px; color: var(--alert-ink); }
+
+/* Where it went, once it is there. */
+.save-template-done { margin: 0; font-size: 13px; color: var(--ink); }
+
 /* ─── The Agents dialog ───
    Add agent and the Marketplace as two tabs of one takeover
    (context/agents-dialog.js). The body holds both panes; the one that is away
@@ -477,6 +494,25 @@
    the chip, because it is the rest of that same sentence. */
 .template-tools { margin: -6px 0 12px; font-size: 12px; color: var(--muted); }
 
+/* `Start blank` on a Recent agent's chip. A WORD, not the `×` a template's
+   chip carries: that one clears four fields and leaves the form, and this one
+   throws the whole recreate away for an empty form, so it says which. Ink on
+   the chip's tint, like the text beside it. */
+.template-chip-start {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--r);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--blue-ink);
+}
+
+.template-chip-start:hover { background: var(--panel); }
+
+/* Why a Save as template refused to open, at the top of the form it is about,
+   above the field it sends the keyboard to. */
+.form-refusal { margin: 0 0 12px; }
+
 /* Specialty, description and colour, stacked inside the Identity section. */
 .role-contract { display: flex; flex-direction: column; gap: 12px; }
 
@@ -706,6 +742,19 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* The models a recreated agent stored that no connection offers any more
+   (context/agent-form-connections.js), under the matrix they are missing from.
+   A list, because there is one line per activation type; `.field-warn`'s ink
+   on the panel is what the form's other warnings use. */
+.connection-missing {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--amber-ink);
 }
 
 /* context/agent-form.js's notice for a dependency read that FAILED, at the top

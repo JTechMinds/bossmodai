@@ -1,9 +1,11 @@
 /**
  * BossMod AI — every request the agent editor makes.
  *
- * One of the modules agent-panel.js became. Eight calls, no DOM, no state:
+ * One of the modules agent-panel.js became. Requests only — no DOM, no state:
  * separating them from the form is what lets the form be tested for what it
- * renders and this be read for what it talks to.
+ * renders and this be read for what it talks to. That includes the one read
+ * Add agent's Recent makes, `listSnapshots`: a snapshot is an agent's setup,
+ * so its client is the agent client's.
  *
  * Each mutating call throws the server's own message on a non-2xx rather than
  * returning a falsy value — the editor surfaces it in the save feedback, and a
@@ -117,6 +119,21 @@ const BossModAgentApi = (() => {
     }
 
     /**
+     * Every agent snapshot — one per agent, deleted agents included — for
+     * Add agent's Recent scope.
+     *
+     * @returns {Promise<object[]>} `AgentSnapshot` rows, newest `captured_at`
+     *   first. None carries an API key, base URL or extra body.
+     * @throws {Error} With the server's message on any non-2xx, so the picker
+     *   can tell a failed read from an empty list.
+     */
+    async function listSnapshots() {
+        const res = await apiFetch('/api/agent-snapshots', { cache: 'no-store' });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    /**
      * Read a failed pack-API body without assuming FastAPI's detail shape.
      *
      * @param {Response} res
@@ -158,6 +175,7 @@ const BossModAgentApi = (() => {
         apiUpdatePromptHistoryPolicy,
         apiClearChatHistory,
         apiResetRuntime,
+        listSnapshots,
         fetchCatalog,
     };
 })();

@@ -63,8 +63,9 @@ const BossModOverlays = (() => {
 
     /**
      * Fill an action row with buttons, replacing whatever it held: one
-     * implementation for construction and for setActions(), so the `form` and
-     * close semantics documented on createModal's `actions` cannot drift.
+     * implementation for construction and for setActions(), so the `form`,
+     * `keepOpen` and close semantics documented on createModal's `actions`
+     * cannot drift.
      * @returns {HTMLElement[]} The buttons, in render order.
      */
     function renderActions(actionRow, actions, close) {
@@ -79,10 +80,11 @@ const BossModOverlays = (() => {
                 form: action.form || null,
                 onclick: action.form ? null : () => {
                     // Runs BEFORE close (options.onClose); finally unwedges it.
+                    // `keepOpen` skips the close: the action opened a layer.
                     try {
                         if (action.onSelect) action.onSelect();
                     } finally {
-                        close();
+                        if (!action.keepOpen) close();
                     }
                 },
             }, action.label);
@@ -108,7 +110,7 @@ const BossModOverlays = (() => {
      * @param {string} options.title
      * @param {string|HTMLElement} options.body
      * @param {Array<{label: string, tone?: string, id?: string, form?: string,
-     *   onSelect?: () => void}>} options.actions
+     *   keepOpen?: boolean, onSelect?: () => void}>} options.actions
      *   Rendered left to right. The LAST receives focus on open when — and
      *   only when — the body has nothing focusable in it: that is the safe
      *   choice in a confirm dialog, and it is wrong in a form one, where the
@@ -119,6 +121,8 @@ const BossModOverlays = (() => {
      *   BUTTON SUBMITS from outside it — how a form's primary can be pinned
      *   above a scrolling body — and such an action does not close the dialog,
      *   because the form's own handler and validation own the outcome.
+     *   `keepOpen: true` runs `onSelect` and leaves the dialog up too: for an
+     *   action that opens a layer over it, such as Save as template.
      * @param {() => void} [options.onClose] Called after close, however it
      *   closed — and after the chosen action's onSelect, so a caller can treat
      *   it as "dismissed" when no choice was recorded.

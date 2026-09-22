@@ -86,6 +86,11 @@ def test_modal_accessibility_contract() -> None:
         "escClosesWithoutConfirming": True,
         "restoresFocus": True,
         "unbindsOnClose": True,
+        # An action may opt out of the close every other action ends in:
+        # "Save as template" opens a layer over the agent form, which must
+        # still be under it. Opt-in, so everything else still closes.
+        "keepOpenActionStaysOpen": True,
+        "plainActionStillCloses": True,
         # The panel SIZE (born `wide`, with the agent form): one implementation,
         # more room, and a body that scrolls with the title and the action row
         # pinned outside it. Listed here because this file owns the modal's

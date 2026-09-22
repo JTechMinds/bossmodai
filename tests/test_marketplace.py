@@ -172,9 +172,16 @@ def test_marketplace_behaviour() -> None:
         # is in flight: the row it would hand over is the one being replaced.
         "useIsWithheldWhileItsPackIsWritten",
         # The pane reads the catalog lazily, and tells the dialog when the
-        # library changed — only when it did.
+        # library changed — only when it did. It is told the same thing back
+        # when the Add agent tab saves a template, and re-reads the library
+        # alone, and only once it has one.
         "theCatalogIsReadOnFirstActivateOnly",
         "theLibraryChangeIsToldOncePerSuccessAndNeverOnFailure",
+        "aSavedTemplateIsReReadOnlyAfterActivation",
+        # A template saved on this machine says so, and is deleted rather than
+        # uninstalled: there is no pack behind it to reinstall from.
+        "aLocalTemplateSaysItIsLocal", "aLocalTemplateIsDeletedNotUninstalled",
+        "aPackIsStillUninstalled",
         # URL installs live only under Installed; the pane shows the done bar
         # and the tools the row carries.
         "extrasOnlyUnderInstalled", "detailShowsTheDoneBarAndTools",
@@ -401,13 +408,18 @@ def test_a_pack_wears_its_categorys_bubble_in_both_views() -> None:
     assert "categoryMark," in detail.rsplit("return {", 1)[-1]
     assert "categoryMark(item.category, 'lg')" in detail
     assert "BossModPackCard.categoryMark(slug, size)" in detail
-    # ...and nothing here paints a second bubble of its own.
+    # ...and nothing here paints a second bubble of its own. Both calls live
+    # in the card module, and they are not the same mark: the category bubble
+    # a PACK wears, and the agent's own avatar a RECENT row wears in the Add
+    # agent picker's grid — which is the thing that tells the two kinds of
+    # cell apart when they sit side by side.
     builders = {
         path.name: _code(path).count("BossModAvatar.create(")
         for path in sorted((JS / "marketplace").glob("*.js"))
     }
-    assert sum(builders.values()) == 1, builders
-    assert builders["pack-card.js"] == 1, builders
+    assert sum(builders.values()) == 2, builders
+    assert builders["pack-card.js"] == 2, builders
+    assert "function snapshotCard(row, deps) {" in card
 
     # The colour is DERIVED from the slug through the shared tint, never a
     # colour per known category: `packs/<category>/` is whatever a contributor
@@ -767,7 +779,9 @@ def test_an_installed_pack_that_went_bad_is_not_one_that_left_the_repo() -> None
     # Every call site passes it: a stale index would mislabel the very row this
     # exists to label.
     state = _read(JS / "marketplace" / "marketplace.js")
-    assert state.count("state.templates, state.categories, state.withheld,") == 3
+    # Four call sites now: the load, the install, the uninstall, and the
+    # re-read the Add agent tab asks for when it saves a template.
+    assert state.count("state.templates, state.categories, state.withheld,") == 4
     # Said in both views, from ONE wording, so they cannot drift apart.
     withheld = _code(JS / "marketplace" / "marketplace-withheld.js")
     assert "function installedNote(catalogStatus)" in withheld
@@ -1444,3 +1458,40 @@ def test_the_section_list_names_stop_shouting_at_their_own_subtitles() -> None:
     assert "color: var(--blue-ink);" in selected
     # And the row is still a 24x24 target with the list still one tab stop.
     assert "min-height: 24px;" in tab
+
+
+def test_a_template_saved_on_this_machine_is_told_apart_from_an_install() -> None:
+    """`source: 'local'` is the third kind of row the library can hold.
+
+    It has no pack id and no source url, so without a word of its own it read
+    as a URL install — a pack fetched from somewhere, which it never was. The
+    projection asks that question FIRST, the card wears a `Local` tag beside
+    its category, the note says where it lives, and the detail offers Delete
+    rather than Uninstall because there is nothing to reinstall it from.
+    """
+    payload = _harness()
+    for key in ("aLocalTemplateSaysItIsLocal", "aLocalTemplateIsDeletedNotUninstalled",
+                "aPackIsStillUninstalled"):
+        assert payload[key] is True, key
+    items = _code(JS / "marketplace" / "marketplace-items.js")
+    status = items.split("function extraStatus(row, withheldByPackId) {", 1)[1]
+    # FIRST, before the pack_id question that would otherwise answer it.
+    assert status.index("if (row.source === 'local') return 'local';") < status.index(
+        "if (!row.pack_id) return 'url';")
+    assert "local: row.source === 'local'," in items
+    withheld = _code(JS / "marketplace" / "marketplace-withheld.js")
+    assert "local: 'Saved on this machine.'," in withheld
+    # The tag is the card's, from the same flag, on both surfaces that draw one.
+    card = _code(JS / "marketplace" / "pack-card.js")
+    assert "h('span', { class: 'market-card-tag' }, tag)" in card
+    for surface in (JS / "marketplace" / "marketplace-view.js",
+                    JS / "context" / "agent-template-picker.js"):
+        assert "tags: item.local ? [COPY.local] : []" in _code(surface), surface.name
+    # A neutral chip beside the blue category one: two blue chips in one band
+    # would read as two categories.
+    tag = _read(CSS).split(".market-card-tag {", 1)[1].split("}", 1)[0]
+    assert "background: var(--line);" in tag
+    assert "color: var(--muted);" in tag
+    detail = _code(JS / "marketplace" / "marketplace-detail.js")
+    assert "item.local ? COPY.deleteLocal : COPY.uninstall" in detail
+    assert "text: item.local ? COPY.deleteLocalAsk : COPY.uninstallAsk," in detail

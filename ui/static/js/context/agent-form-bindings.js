@@ -20,7 +20,9 @@ const BossModAgentFormBindings = (() => {
      *
      * @param {HTMLElement} container
      * @param {object[]} roster
-     * @param {object|null} agent
+     * @param {object|null} agent  The agent being EDITED, whose own name is
+     *   not a clash — never a snapshot being recreated, which is a new agent
+     *   and clashes with the one it was taken from like any other.
      * @returns {void}
      */
     function bindDuplicateNameWarning(container, roster, agent) {
@@ -52,10 +54,12 @@ const BossModAgentFormBindings = (() => {
      * rendered by the server rather than guessed here.
      *
      * @param {HTMLElement} container
-     * @param {object|null} agent
+     * @param {object|null} values  What the form was built from — the agent
+     *   being edited or the snapshot being recreated. Only its stored desk is
+     *   read, and only when the form has no desk select.
      * @returns {void}
      */
-    function bindRuntimeCorePreview(container, agent) {
+    function bindRuntimeCorePreview(container, values) {
         const preview = container.querySelector('#runtime-core-preview');
         if (!preview) return;
         const nameInput = container.querySelector('input[name="name"]');
@@ -71,9 +75,9 @@ const BossModAgentFormBindings = (() => {
                 const [x, y] = deskValue.split(',');
                 if (x) params.set('desk_x', x);
                 if (y) params.set('desk_y', y);
-            } else if (agent?.desk_x != null && agent?.desk_y != null && !deskSelect) {
-                params.set('desk_x', String(agent.desk_x));
-                params.set('desk_y', String(agent.desk_y));
+            } else if (values?.desk_x != null && values?.desk_y != null && !deskSelect) {
+                params.set('desk_x', String(values.desk_x));
+                params.set('desk_y', String(values.desk_y));
             }
             try {
                 const res = await apiFetch(`/api/runtime/core?${params.toString()}`);
@@ -101,18 +105,19 @@ const BossModAgentFormBindings = (() => {
      * offering nothing.
      *
      * @param {HTMLElement} container
-     * @param {object|null} agent
+     * @param {object|null} values  What the form was built from — the agent
+     *   being edited or the snapshot being recreated; null for a blank form.
      * @returns {void}
      */
-    function bindFinishLineSuggestion(container, agent) {
+    function bindFinishLineSuggestion(container, values) {
         const specialtyInput = container.querySelector('input[name="role"]');
         const descriptionInput = container.querySelector('textarea[name="description"]');
         const finishLineInput = container.querySelector('input[name="done_fail_bar"]');
         const suggestBtn = container.querySelector('#btn-suggest-finish-line');
         if (!specialtyInput || !descriptionInput || !finishLineInput) return;
 
-        let lastSuggested = agent
-            ? BossModSpecialty.suggestFinishLine(agent.role || '', agent.description || '')
+        let lastSuggested = values
+            ? BossModSpecialty.suggestFinishLine(values.role || '', values.description || '')
             : '';
 
         function currentSuggestion() {
@@ -136,7 +141,7 @@ const BossModAgentFormBindings = (() => {
         if (suggestBtn) {
             suggestBtn.addEventListener('click', () => applySuggestion({ force: true }));
         }
-        if (agent && !(agent.done_fail_bar || '').trim() && (agent.role || agent.description)) {
+        if (values && !(values.done_fail_bar || '').trim() && (values.role || values.description)) {
             applySuggestion();
         }
     }
@@ -147,10 +152,11 @@ const BossModAgentFormBindings = (() => {
      * this only replaces values that still match the previous default.
      *
      * @param {HTMLElement} container
-     * @param {object|null} agent
+     * @param {object|null} values  What the form was built from — the agent
+     *   being edited or the snapshot being recreated; null for a blank form.
      * @returns {void}
      */
-    function bindCommunicationDefaults(container, agent) {
+    function bindCommunicationDefaults(container, values) {
         const specialtyInput = container.querySelector('input[name="role"]');
         const selects = BossModCommunication.KEYS.map((key) => (
             container.querySelector(`[name="communication_${key}"]`)
@@ -158,7 +164,7 @@ const BossModAgentFormBindings = (() => {
         if (!specialtyInput || selects.some((node) => !node)) return;
 
         let lastDefault = BossModCommunication.defaultFor(
-            agent ? (agent.role || '') : specialtyInput.value,
+            values ? (values.role || '') : specialtyInput.value,
         );
 
         function applyDefaults() {

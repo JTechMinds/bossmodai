@@ -16,8 +16,8 @@
  * marketplace/marketplace.js's pane; neither has a modal of its own, and this
  * owns only the frame, the tabs, which pane is up, and the two wires between
  * them: "Add agent from this" in the marketplace switches to Add agent and
- * starts the form from that template, and an install or uninstall re-reads
- * the Add agent library.
+ * starts the form from that template, and a library write on either side — an
+ * install, an uninstall, or a form saved as a template — re-reads the other.
  *
  * A pane that is away is HIDDEN, never destroyed: the picker's filter, the
  * marketplace's scroll and open pack, and a half-typed form all survive a tab
@@ -102,6 +102,13 @@ const BossModAgentsDialog = (() => {
             store,
             onBrowse: () => selectTab('marketplace'),
             onDone: () => modal.close(),
+            // A form saved as a template is a row BOTH panes list: the picker
+            // offers it on the next create, and the Marketplace shows it under
+            // Installed. Neither re-reads on its own, so the dialog says so.
+            onTemplateSaved: () => {
+                void addPane.refresh();
+                void market.refreshLibrary();
+            },
         });
         const market = BossModMarketplace.createPane({
             // The bridge. The tab switches FIRST, so the pane is live — its
@@ -110,7 +117,7 @@ const BossModAgentsDialog = (() => {
             // draft, which is the picker's own rule; the same one keeps it.
             onUseTemplate: (template) => {
                 selectTab('add');
-                void addPane.pick(template);
+                void addPane.pick({ kind: 'template', row: template });
             },
             onLibraryChanged: () => { void addPane.refresh(); },
         });

@@ -7,6 +7,14 @@
  * here is optional — the disclosure is collapsed by default, which is the
  * point of the section.
  *
+ * A RECREATED AGENT'S PROMPT MAY MATCH NO PERSONALITY. The dropdown is matched
+ * by `prompt_template` text, and a snapshot can carry a prompt no configured
+ * personality holds any more — edited, deleted, or never one of them. Shown as
+ * "No personality" it would be dropped on save, so it gets one extra, selected
+ * option, `Kept from <name>`, and a hidden input carrying the text itself,
+ * which context/agent-submit.js sends. Recreate only: an edit that saves no
+ * personality leaves the agent's prompt as it was.
+ *
  * It no longer imports a pack from a URL. That box could fill these fields and
  * then had nowhere to keep what it fetched, so a URL import was a dead end;
  * installing from a URL is the marketplace's "Install from URL", which saves a
@@ -20,25 +28,38 @@ const BossModAgentFormAdvanced = (() => {
     /**
      * Build the Advanced block.
      *
-     * @param {object|null} agent
+     * @param {object|null} values  What the fields show: the agent being
+     *   edited, or the snapshot being recreated. null for a blank form.
      * @param {object} view
      * @param {object[]} view.personalities
      * @param {object[]} view.roster                 Peers, for desk occupancy.
      * @param {object} view.promptHistoryPolicy      Merged over the defaults by
      *   the caller, so every field here has a value to show.
+     * @param {{label: string, text: string}|null} [view.keptPrompt]  A
+     *   recreated prompt no personality matches: rendered as the selected
+     *   `Kept from <name>` option plus the hidden `prompt_template_kept`
+     *   input. Offered even when Settings holds no personality at all, since
+     *   the prompt would otherwise have nowhere on the form to live.
      * @returns {string}
      */
-    function advancedSection(agent, view) {
+    function advancedSection(values, view) {
         const { personalities, roster, promptHistoryPolicy } = view;
+        const kept = view.keptPrompt || null;
         const DEFAULT_PROMPT_HISTORY_POLICY = BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY;
-        const { selectedDesk, noFreeDesk, deskOptions } = BossModAgentFields.deskChoice(agent, roster);
+        const { selectedDesk, noFreeDesk, deskOptions } = BossModAgentFields.deskChoice(values, roster);
         // Personality dropdown — match by prompt_template since agents store
         // the template text, not the personality ID.
         const personalityOptions = personalities.map(p => {
-            const selected = agent?.prompt_template && agent.prompt_template === p.prompt_template;
+            const selected = values?.prompt_template && values.prompt_template === p.prompt_template;
             return `<option value="${BossModFormat.escapeAttribute(p.id)}" ${selected ? 'selected' : ''}>${BossModFormat.escapeHtml(p.name)}</option>`;
         }).join('');
-        const noPersonalities = personalities.length === 0;
+        const keptOption = kept
+            ? `<option value="${BossModFormat.escapeAttribute(BossModAgentFields.KEPT_PERSONALITY)}" selected>${BossModFormat.escapeHtml(kept.label)}</option>`
+            : '';
+        const keptInput = kept
+            ? `<input type="hidden" name="prompt_template_kept" value="${BossModFormat.escapeAttribute(kept.text)}">`
+            : '';
+        const noPersonalities = personalities.length === 0 && !kept;
         const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed
             ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
             : '';
@@ -62,7 +83,7 @@ const BossModAgentFormAdvanced = (() => {
                         </button>
                     </div>
                     <input type="text" name="done_fail_bar" id="agent-done-fail-bar"
-                           value="${BossModFormat.escapeAttribute(agent?.done_fail_bar || '')}"
+                           value="${BossModFormat.escapeAttribute(values?.done_fail_bar || '')}"
                            placeholder="Suggested from specialty. Editable."
                            maxlength="500"
                            class="field-input">
@@ -70,7 +91,7 @@ const BossModAgentFormAdvanced = (() => {
                         Optional. We’ll suggest one from the specialty; edit anytime.
                     </p>
                 </div>
-                ${communicationFields(agent)}
+                ${communicationFields(values)}
                 <div class="field">
                     <span class="field-label">Runtime core</span>
                     <pre id="runtime-core-preview" class="runtime-core-preview"></pre>
@@ -87,7 +108,9 @@ const BossModAgentFormAdvanced = (() => {
                            <select name="personality_id" id="agent-personality" class="field-select">
                                <option value="">No personality</option>
                                ${personalityOptions}
-                           </select>`
+                               ${keptOption}
+                           </select>
+                           ${keptInput}`
                     }
                 </div>
                 <div class="field">
@@ -149,8 +172,8 @@ const BossModAgentFormAdvanced = (() => {
         </section>`;
     }
 
-    function communicationFields(agent) {
-        const comm = BossModCommunication.resolve(agent?.communication, agent?.role || '');
+    function communicationFields(values) {
+        const comm = BossModCommunication.resolve(values?.communication, values?.role || '');
         const select = (key) => {
             const options = BossModCommunication.ENUMS[key].map((value) => {
                 const selected = value === comm[key] ? 'selected' : '';

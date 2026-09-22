@@ -561,7 +561,8 @@ def test_agent_edit_modules_stay_focused() -> None:
         "agent-form-connections.js", "agent-form-fields.js",
         "agent-form-hydrate.js", "agent-form-save.js",
         "agent-form-template.js", "agent-form.js", "agent-recovery.js",
-        "agent-submit.js", "agent-template-picker.js", "agent-templates-api.js",
+        "agent-save-template.js", "agent-submit.js", "agent-template-picker.js",
+        "agent-templates-api.js",
     ], names
     for path in modules:
         lines = len(_read(path).splitlines())
@@ -744,7 +745,9 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "void renderInline({ container: formEl, agent, primary, onSave, onDelete })" in edit
     assert "conversationId" not in edit, "an edit leaves the operator where they were"
     pane = _read(CONTEXT / "agent-add-pane.js")
-    assert "const landed = await renderInline({ container: formEl, agent: null, primary, onSave });" in pane
+    # A snapshot pick carries its values in as `prefill`; the create is still
+    # a create, so `agent` stays null whichever cell was picked.
+    assert "container: formEl, agent: null, prefill, primary, onSave," in pane
     saved = pane.split("function onSave(savedAgent) {", 1)[1]
     assert "if (savedAgent) {" in saved
     assert "conversationKind: 'agent'" in saved
@@ -771,3 +774,54 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     panel = _read(CONTEXT / "desk-panel.js")
     assert "store.subscribe((s) => s.deskPath" in panel
     assert "files.open(store.getState().deskPath || '/me')" in panel
+
+
+def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
+    """Spec §3.2, driven through the REAL builders and the real submit path.
+
+    `agent` answered two questions at once: what the fields show, and who the
+    form is for. A snapshot answers only the first — the agent it was taken
+    from may have been deleted — so it arrives as `prefill`, and the proof is
+    on both sides of that seam: every field the snapshot carries is filled
+    (including the colour, which a missing radio would silently rewrite), and
+    none of what identity decides is there — no Delete, no recovery tools, no
+    runtime pill — while the save is a `POST /api/agents`.
+
+    Two things a snapshot cannot promise are named rather than dropped: a model
+    no connection offers any more is listed under the matrix, and a prompt no
+    personality carries any more rides in on its own option with the text in a
+    hidden input. A prompt one DOES carry selects that personality, exactly as
+    it does for an edit.
+    """
+    payload = _harness()
+    for key in (
+        "recreateFillsTheFormFromTheSnapshot", "recreateIsACreateNotAnEdit",
+        "theMissingModelIsNamed", "keptOptionCarriesThePrompt",
+        "recreateSavesAsACreateWithTheKeptPrompt",
+        "aMatchedPromptIsJustThatPersonality",
+    ):
+        assert payload[key] is True, key
+    # The policy a recreate starts from is the SNAPSHOT'S, and the one fallback
+    # is stated where it is taken (spec §5.3).
+    form = _read(CONTEXT / "agent-form.js")
+    policy = form.split("function prefillPolicy(prefill) {", 1)[1].split("\n    }", 1)[0]
+    assert "if (!prefill.prompt_history_policy) return { ...DEFAULTS };" in policy
+    assert "The one fallback here, and it is stated" in policy
+    assert "const promptHistoryPolicy = prefill ? prefillPolicy(prefill) : loadedPolicy;" in form
+    # The kept option and the value it submits are one vocabulary, not two.
+    fields = _read(CONTEXT / "agent-fields.js")
+    assert "const KEPT_PERSONALITY = '__kept__';" in fields
+    advanced = _read(CONTEXT / "agent-form-advanced.js")
+    assert "BossModAgentFields.KEPT_PERSONALITY" in advanced
+    assert 'name="prompt_template_kept"' in advanced
+    submit = _read(CONTEXT / "agent-submit.js")
+    assert "if (personalityId === BossModAgentFields.KEPT_PERSONALITY) {" in submit
+    assert "const kept = formData.get('prompt_template_kept');" in submit
+    # No silent fallback: a kept choice with no text is refused, not sent null.
+    assert "throw new Error('The kept prompt template is missing from the form.');" in submit
+    # The missing-model note is the connections module's, drawn only where it
+    # can be acted on — under a matrix, for a recreate.
+    conn = _read(CONTEXT / "agent-form-connections.js")
+    assert "function missingModelNote(values, connections)" in conn
+    assert "${reportMissing ? missingModelNote(values, connections) : ''}" in conn
+    assert "reportMissing: Boolean(prefill)," in form

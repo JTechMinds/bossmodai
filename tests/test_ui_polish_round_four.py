@@ -197,9 +197,15 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     # is where .desk-back and the marketplace detail's `‹` already are. Its
     # presence there is pinned in the harness and in
     # tests/test_add_agent_modal.py.
+    #
+    # `Save as template` LEADS both form rows (spec 2026-09-22, recent agents
+    # and local templates): it is about the form rather than about finishing
+    # the dialog, so the stylesheet pushes it to the far end and leaves Cancel
+    # and the primary paired at the near one. The pairing this test is about
+    # is unchanged — Cancel first, primary last.
     assert payload["stepOnePinned"] == []
-    assert payload["stepTwoPinned"] == ["Cancel", "Create Agent"]
-    assert payload["editPinnedActions"] == ["Cancel", "Save Changes"]
+    assert payload["stepTwoPinned"] == ["Save as template", "Cancel", "Create Agent"]
+    assert payload["editPinnedActions"] == ["Save as template", "Cancel", "Save Changes"]
     # It submits the form it is no longer inside.
     assert payload["primaryCarriesFormAttribute"] == "agent-form"
     assert payload["primaryIsSubmitType"] is True

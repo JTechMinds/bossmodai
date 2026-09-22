@@ -1,9 +1,10 @@
 """BossMod AI — Installed agent template model.
 
-A template is a locally-installed, pinned snapshot of an agent pack. It is the
-only thing that pre-fills the create-agent form, so the fields are stored flat
-rather than as raw YAML: the picker filters on title, specialty and description
-per keystroke, and re-parsing YAML for that would buy nothing.
+A template is a locally-installed, pinned snapshot of an agent pack, or the
+operator's own role contract saved from an agent form (``source = 'local'``).
+It pre-fills the create-agent form, so the fields are stored flat rather than
+as raw YAML: the picker filters on title, specialty and description per
+keystroke, and re-parsing YAML for that would buy nothing.
 """
 
 from __future__ import annotations
@@ -22,19 +23,25 @@ from core.agent_pack.service import describe_pack
 
 
 class AgentTemplate(BaseModel):
-    """One installed agent template: a pinned snapshot of a pack.
+    """One agent template in the local library.
 
-    ``pack_id`` is set for catalog installs and ``source_url`` for URL
-    installs; exactly one of the two is the row's natural key. ``content_hash``
-    is the digest of the pack's canonical YAML at ``commit_sha``, so staleness
-    is answerable without refetching and without comparing the repo-wide
-    catalog pin (which moves for packs that never changed).
+    ``source`` says where it came from. ``'catalog'`` and ``'url'`` are pinned
+    snapshots of a pack: ``pack_id`` is set for catalog installs and
+    ``source_url`` for URL installs, exactly one of the two is the row's
+    natural key, and ``content_hash`` is the digest of the pack's canonical
+    YAML at ``commit_sha``, so staleness is answerable without refetching and
+    without comparing the repo-wide catalog pin (which moves for packs that
+    never changed). ``'local'`` is the operator's own template, saved from an
+    agent form: keyed by its title, and carrying NONE of ``pack_id``,
+    ``source_url``, ``commit_sha`` or ``content_hash`` — it was never fetched,
+    so it has no pin and no hash to be stale against. The table's CHECKs hold
+    both halves of that rule.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    source: Literal["catalog", "url"]
+    source: Literal["catalog", "url", "local"]
     pack_id: str | None = None
     source_url: str | None = None
     category: str
@@ -47,8 +54,9 @@ class AgentTemplate(BaseModel):
     communication: dict[str, str] | None = None
     author_name: str | None = None
     author_url: str | None = None
-    commit_sha: str
-    content_hash: str
+    # None exactly when ``source == 'local'``: a local template was never fetched.
+    commit_sha: str | None
+    content_hash: str | None
     installed_at: datetime
     updated_at: datetime
 

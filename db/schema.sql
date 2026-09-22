@@ -737,12 +737,13 @@ CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_agent
     ON cli_approval_requests (agent_id, status);
 
 -- ───────────────────────────────────────────────────────────────────────────
--- Agent templates — locally-installed, pinned snapshots of agent packs
+-- Agent templates — locally-installed, pinned snapshots of agent packs, and
+-- the operator's own templates saved from an agent form (source 'local')
 -- ───────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS agent_templates (
     id                   VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
-    source               VARCHAR NOT NULL CHECK (source IN ('catalog', 'url')),
+    source               VARCHAR NOT NULL CHECK (source IN ('catalog', 'url', 'local')),
     pack_id              VARCHAR,
     source_url           TEXT,
     category             VARCHAR NOT NULL,
@@ -755,15 +756,54 @@ CREATE TABLE IF NOT EXISTS agent_templates (
     communication        TEXT,
     author_name          VARCHAR,
     author_url           TEXT,
-    commit_sha           VARCHAR NOT NULL,
-    content_hash         VARCHAR NOT NULL,
+    -- Pinned pack facts: a local template was never fetched, so it has neither.
+    commit_sha           VARCHAR,
+    content_hash         VARCHAR,
     installed_at         TIMESTAMP DEFAULT current_timestamp,
-    updated_at           TIMESTAMP DEFAULT current_timestamp
+    updated_at           TIMESTAMP DEFAULT current_timestamp,
+    CHECK ((source = 'local') = (commit_sha IS NULL)),
+    CHECK ((source = 'local') = (content_hash IS NULL)),
+    CHECK (source <> 'local' OR (pack_id IS NULL AND source_url IS NULL))
 );
 
--- Uniqueness is per natural key, and the two keys are mutually exclusive:
--- a catalog install is keyed by pack_id, a URL install by source_url.
+-- Uniqueness is per natural key, and the keys are mutually exclusive: a
+-- catalog install is keyed by pack_id, a URL install by source_url, and a
+-- local template by its title (it has neither of the other two).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_pack
     ON agent_templates(pack_id) WHERE pack_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_url
     ON agent_templates(source_url) WHERE pack_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_local
+    ON agent_templates(title) WHERE source = 'local';
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Agent snapshots — one current, secret-free copy of each agent's setup
+-- ───────────────────────────────────────────────────────────────────────────
+
+-- Captured by db/agents.py on create, on every save and on a prompt-history
+-- policy change, and once more on delete (stamped deleted_at), then trimmed to
+-- the newest `recent_agents_limit`. The column list is EXPLICIT and carries no
+-- api_key, api_base_url or extra_body: those are connection-derived and may
+-- hold credentials, so a recreate re-links the connection by model name.
+CREATE TABLE IF NOT EXISTS agent_snapshots (
+    id                    VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id              VARCHAR NOT NULL UNIQUE,   -- no FK: outlives the agent
+    name                  VARCHAR NOT NULL,
+    role                  VARCHAR,
+    description           TEXT,
+    done_fail_bar         TEXT,
+    communication         TEXT,                      -- same JSON text as agents.communication
+    prompt_template       TEXT,
+    color                 VARCHAR,
+    model_social          VARCHAR,
+    model_work            VARCHAR,
+    model_reasoning       VARCHAR,
+    model_extraction      VARCHAR,
+    model_self_queue      VARCHAR,
+    desk_x                INTEGER,
+    desk_y                INTEGER,
+    prompt_history_policy TEXT,                      -- JSON: the 4 policy fields, or NULL
+    captured_at           TIMESTAMP NOT NULL,
+    deleted_at            TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_snapshots_captured ON agent_snapshots(captured_at);

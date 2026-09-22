@@ -38,11 +38,18 @@ from db.agent_prompt_history_policies import (
     get_agent_prompt_history_policy,
     update_agent_prompt_history_policy,
 )
+from db.agent_snapshots import (
+    capture_agent_snapshot,
+    list_agent_snapshots,
+    prune_agent_snapshots,
+)
 from db.agent_templates import (
+    LocalTemplateTitleTaken,
     delete_agent_template,
     find_agent_template,
     get_agent_template,
     list_agent_templates,
+    save_local_template,
     upsert_agent_template,
 )
 from db.artifacts import (
@@ -360,10 +367,15 @@ __all__ = [
     "build_artifact_title",
     "create_agent_prompt_history_policy",
     "ensure_agent_prompt_history_policy",
+    "capture_agent_snapshot",
+    "list_agent_snapshots",
+    "prune_agent_snapshots",
+    "LocalTemplateTitleTaken",
     "delete_agent_template",
     "find_agent_template",
     "get_agent_template",
     "list_agent_templates",
+    "save_local_template",
     "upsert_agent_template",
     "get_artifact",
     "get_artifact_by_absolute_path",

@@ -1,6 +1,13 @@
 /**
  * BossMod AI — one pack, as a card, for every surface that lists packs.
  *
+ * THE PICKER LISTS ONE MORE KIND OF ROW: a RECENT agent, from the snapshot of
+ * an agent that was created here rather than a pack that was installed. It is
+ * the same card with two of its parts given from outside — its own avatar in
+ * place of the category bubble (`mark`), and no category chip — and it is a
+ * card rather than a shape of its own because the operator is choosing between
+ * these and templates in one grid.
+ *
  * TWO SURFACES NOW, which is why this is a module rather than a function inside
  * marketplace-view.js. The marketplace grid lists the catalog; the Add agent
  * dialog's first step lists the local template library. They are the same rows
@@ -26,6 +33,9 @@
 const BossModPackCard = (() => {
     const { h } = BossModDom;
     const ITEMS = BossModMarketplaceItems;
+
+    /** What the footer chip says about a Recent agent's one date. */
+    const COPY = Object.freeze({ saved: 'Saved', deleted: 'Deleted' });
 
     /**
      * The bubble that says which FAMILY a pack belongs to.
@@ -88,8 +98,12 @@ const BossModPackCard = (() => {
      * view, and the mark it keeps afterwards says "this is the one you were
      * reading" — the same word, and the same tint, the rail's live row uses.
      *
-     * @param {object} view  What the card prints. `title` and `category` are
-     *   required; `specialty`, `intro`, `mission`, `note`, `author` and `chip`
+     * @param {object} view  What the card prints. `title` is required, and so
+     *   is `category` unless the caller gives its own `mark` — a node that
+     *   leads the card in place of the category bubble, which is how a Recent
+     *   agent wears its own avatar and no category at all. `tags` are extra
+     *   chips after the category chip (`Local`, for a template saved here).
+     *   `specialty`, `intro`, `mission`, `note`, `author` and `chip`
      *   are each drawn only when present, so a caller that has none of them
      *   gets a card with no empty rows rather than a stack of blank bands.
      *   `author` is the PROJECTION'S SHAPE — `{name, url}` or null, exactly
@@ -122,6 +136,7 @@ const BossModPackCard = (() => {
         if (!id) throw new Error('[pack-card] deps.id is required');
         if (typeof onSelect !== 'function') throw new Error('[pack-card] deps.onSelect is required');
         const category = ITEMS.categoryLabel(view.category);
+        const tags = Array.isArray(view.tags) ? view.tags : [];
         // The projection carries `{name, url}`; a card prints the name and the
         // detail view is where the url becomes a link. Unwrapped HERE so both
         // callers can hand over the item's own field untouched.
@@ -141,10 +156,15 @@ const BossModPackCard = (() => {
         // are on different bands doing different jobs, so neither reads as the
         // other said twice.
         h('span', { class: 'market-card-head' },
-            categoryMark(view.category, 'md'),
+            // The caller's own mark when it has one — a Recent agent's avatar
+            // — and otherwise the family bubble this module derives.
+            view.mark || categoryMark(view.category, 'md'),
             h('span', { class: 'market-card-title' }, view.title)),
-        category || view.specialty ? h('span', { class: 'market-card-meta' },
+        category || tags.length || view.specialty ? h('span', { class: 'market-card-meta' },
             category ? h('span', { class: 'market-card-category' }, category) : null,
+            // After the category and before the specialty: what KIND of row
+            // this is, beside what kind of pack it is.
+            tags.map((tag) => h('span', { class: 'market-card-tag' }, tag)),
             view.specialty
                 ? h('span', { class: 'market-card-specialty' }, view.specialty) : null) : null,
         view.intro ? h('span', { class: 'market-card-intro' }, view.intro) : null,
@@ -158,5 +178,33 @@ const BossModPackCard = (() => {
             view.chip ? h('span', { class: 'market-card-state' }, view.chip) : null) : null);
     }
 
-    return { categoryMark, packCard };
+    /**
+     * One RECENT agent, as the same card.
+     *
+     * A snapshot is not a pack — it has no category, no author and no pin —
+     * so what it gives the card is its own avatar for the mark, its name, its
+     * role, its description, and when it was last saved or deleted. Built
+     * HERE rather than in the picker for the reason this module exists: the
+     * cells of one grid must be one card, and a second builder is how they
+     * come to differ.
+     *
+     * @param {object} row  An `AgentSnapshot`.
+     * @param {object} deps  `packCard`'s: `id`, `onSelect`, `extraClass`.
+     * @returns {HTMLElement}
+     * @throws {Error} From `packCard`, without an id or an onSelect.
+     */
+    function snapshotCard(row, deps) {
+        const gone = Boolean(row.deleted_at);
+        // The roster's own way of saying when: a time today, a date before it.
+        const when = BossModFormat.formatActivityTime(gone ? row.deleted_at : row.captured_at);
+        return packCard({
+            title: row.name,
+            specialty: row.role || '',
+            intro: row.description || '',
+            mark: BossModAvatar.create({ name: row.name, color: row.color, size: 'md' }),
+            chip: when ? `${gone ? COPY.deleted : COPY.saved} ${when}` : null,
+        }, deps);
+    }
+
+    return { COPY, categoryMark, packCard, snapshotCard };
 })();

@@ -680,7 +680,8 @@ def test_the_agents_dialog_modules_load_where_the_design_put_them() -> None:
     """
     order = {name: index for index, name in enumerate(_scripts())}
     for name in ("js/core/tabs.js", "js/context/agent-dialog-slot.js",
-                 "js/context/agent-add-pane.js", "js/context/agents-dialog.js"):
+                 "js/context/agent-add-pane.js", "js/context/agents-dialog.js",
+                 "js/context/agent-save-template.js"):
         assert name in order, f"index.html does not load {name}"
     assert order["js/core/search-field.js"] < order["js/core/tabs.js"]
     assert order["js/core/tabs.js"] < order["js/places/office/office-place.js"]
@@ -689,6 +690,12 @@ def test_the_agents_dialog_modules_load_where_the_design_put_them() -> None:
     assert order["js/context/agent-dialog-slot.js"] < order["js/context/agent-edit.js"]
     assert order["js/context/agent-dialog-footer.js"] < order["js/context/agent-add-pane.js"]
     assert order["js/context/agent-edit.js"] < order["js/context/agents-dialog.js"]
+    # Save as template writes the form back into the library and asks with the
+    # marketplace's own confirm strip, so it loads after the form marker and
+    # that view, and before the footer whose action opens it (spec 5.8).
+    assert order["js/context/agent-form-template.js"] < order["js/context/agent-save-template.js"]
+    assert order["js/marketplace/marketplace-detail.js"] < order["js/context/agent-save-template.js"]
+    assert order["js/context/agent-save-template.js"] < order["js/context/agent-dialog-footer.js"]
     for dependency in ("js/core/tabs.js", "js/context/agent-add-pane.js",
                        "js/context/agent-dialog-slot.js", "js/marketplace/marketplace.js"):
         assert order[dependency] < order["js/context/agents-dialog.js"], dependency

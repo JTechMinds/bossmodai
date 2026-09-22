@@ -2,10 +2,11 @@
  * BossMod AI — the catalog and the local library, projected into one list.
  *
  * The marketplace shows two sources at once: packs the catalog lists at the
- * pinned commit, and templates already installed here — including ones the
- * catalog cannot show, because they came from a URL or because their pack has
- * since left the repo. This turns both into ONE item shape, so neither the
- * grid nor the detail view ever branches on where a row came from.
+ * pinned commit, and templates already in the library here — including ones
+ * the catalog cannot show, because they came from a URL, because the operator
+ * saved them from an agent form, or because their pack has since left the
+ * repo. This turns both into ONE item shape, so neither the grid nor the
+ * detail view ever branches on where a row came from.
  *
  * Pure: every function takes what it reads and returns what it derived. No
  * state is mutated, nothing is fetched, and no node is built — which is what
@@ -203,9 +204,13 @@ const BossModMarketplaceItems = (() => {
      *
      * @param {object} row  An installed template row with no catalog card.
      * @param {object} withheldByPackId  Withheld rows keyed by pack id.
-     * @returns {'url'|'gone'|'refused'|'unavailable'}
+     * @returns {'local'|'url'|'gone'|'refused'|'unavailable'}
      */
     function extraStatus(row, withheldByPackId) {
+        // FIRST: a template saved on this machine has no pack_id either, and
+        // would otherwise read as a URL install — a pack fetched from
+        // somewhere, which it never was.
+        if (row.source === 'local') return 'local';
         if (!row.pack_id) return 'url';
         const withheld = withheldByPackId[row.pack_id];
         return withheld ? withheld.kind : 'gone';
@@ -228,9 +233,10 @@ const BossModMarketplaceItems = (() => {
      *
      * @param {object} row  An `AgentTemplate` row.
      * @returns {object} `key` is what selection is held by, prefixed `tpl:` so
-     *   it cannot collide with a catalog card's; `intro` and `mission` are the
-     *   two paragraphs every view opens with, either null when absent;
-     *   `specialty` is `''` when it only echoes the title.
+     *   it cannot collide with a catalog card's; `local` says the operator
+     *   saved it here; `intro` and `mission` are the two paragraphs every view
+     *   opens with, either null when absent; `specialty` is `''` when it only
+     *   echoes the title.
      * @throws {Error} Through `parsed`, when the row carries no parsed
      *   `sections`. An installed row derives them from two NOT NULL columns, so
      *   their absence is a broken payload and is said out loud rather than
@@ -239,6 +245,9 @@ const BossModMarketplaceItems = (() => {
     function templateItem(row) {
         return {
             key: `tpl:${row.id}`,
+            // Saved here rather than installed: the card wears a `Local` tag,
+            // and the detail view offers Delete rather than Uninstall.
+            local: row.source === 'local',
             title: row.title,
             specialty: distinctSpecialty(row.title, row.specialty),
             description: row.description || '',

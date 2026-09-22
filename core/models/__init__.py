@@ -21,6 +21,7 @@ from core.models.agent import (
     HIRE_ROLE_MAX_LEN,
     normalize_hire_text,
 )
+from core.models.agent_snapshot import AgentSnapshot
 from core.models.artifact import Artifact
 from core.models.channel import (
     Channel,
@@ -65,6 +66,7 @@ __all__ = [
     # Agent
     "Agent",
     "AgentCreate",
+    "AgentSnapshot",
     "AgentState",
     "AgentUpdate",
     "HIRE_DESCRIPTION_MAX_LEN",

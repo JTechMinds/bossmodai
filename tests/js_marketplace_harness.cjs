@@ -297,6 +297,9 @@ let catalogMode = "ready";
 let holdCatalog = null;
 // Every GET of the catalog, so the pane can be shown to read it lazily.
 let catalogReads = 0;
+// ...and every GET of the local library, so the re-read the Add agent tab asks
+// for can be shown to happen only when this pane has something to re-read.
+let libraryReads = 0;
 // Flipped to make every install and uninstall answer a 500: the library did
 // not change, and the dialog must not be told that it did.
 let failWrites = false;
@@ -372,7 +375,10 @@ global.apiFetch = (url, init) => {
         return jsonResponse(CATALOG);
     }
     if (path.startsWith("/api/agent-templates")) {
-        if (method === "GET") return jsonResponse(installed);
+        if (method === "GET") {
+            libraryReads += 1;
+            return jsonResponse(installed);
+        }
         if (holdWrite) {
             const gate = holdWrite;
             holdWrite = null;
@@ -1412,6 +1418,84 @@ async function main() {
         && retyped.selectionStart === 2
         && retyped.value === "pl"
         && count(".market-card") === 1;
+    handle.close();
+
+    // ── A template the operator saved HERE. It has no pack behind it, so it
+    //    lives under Installed like a URL install — and says which it is.
+    handle = await openMarket();
+    // Saved from an agent form on the other tab: no pack, no URL, and neither
+    // of the two pinned-pack facts — it was never fetched. It arrives the way
+    // it really does, through the re-read the Agents dialog asks for.
+    installed = installed.concat([template({
+        id: "t-local", source: "local", pack_id: null, source_url: null,
+        category: "custom", title: "Standup Summariser",
+        specialty: "Summarises standups", commit_sha: null, content_hash: null,
+    })]);
+    await handle.pane.refreshLibrary();
+    await drain();
+    await click(railRow("Installed"));
+    const localCard = host().querySelectorAll(".market-card")
+        .find((card) => card.querySelector(".market-card-title").textContent
+            === "Standup Summariser");
+    verdict.aLocalTemplateSaysItIsLocal = Boolean(localCard)
+        && localCard.querySelector(".market-card-tag").textContent === "Local"
+        // Beside the category chip, not instead of it: `custom` is still the
+        // shelf it is filed on.
+        && localCard.querySelector(".market-card-category").textContent === "Custom"
+        && localCard.querySelector(".market-card-note").textContent
+            === "Saved on this machine."
+        // And it is the only card wearing the tag: an installed pack is not
+        // local however it got here.
+        && host().querySelectorAll(".market-card-tag").length === 1;
+
+    // Removing one is a DELETE, not an uninstall: there is no pack to
+    // reinstall it from, and the question says so.
+    await click(localCard);
+    const deleteButton = host().querySelector("#market-uninstall");
+    const deleteWording = deleteButton.textContent === "Delete";
+    await click(deleteButton);
+    const strip = host().querySelector(".market-confirm");
+    verdict.aLocalTemplateIsDeletedNotUninstalled = deleteWording
+        && strip.textContent.includes("Delete this local template?")
+        && strip.textContent.includes("only on this machine")
+        && host().querySelector("#market-uninstall-confirm").textContent === "Delete";
+    // ...and a pack keeps its own wording.
+    await click(host().querySelector("#market-back"));
+    await click(cardFor("code-auditor"));
+    verdict.aPackIsStillUninstalled =
+        host().querySelector("#market-uninstall").textContent === "Uninstall";
+    handle.close();
+
+    // ── The library re-read the Add agent tab asks for, when it saves a
+    //    template. Lazy, like the catalog: a pane that has read nothing has
+    //    nothing to re-read, and reading now would be the eager fetch
+    //    `activate` exists to avoid.
+    resetServer();
+    catalogReads = 0;
+    libraryReads = 0;
+    handle = mountMarket();
+    await drain();
+    await handle.pane.refreshLibrary();
+    const quietBeforeActivate = libraryReads === 0 && catalogReads === 0;
+    handle.pane.activate();
+    await drain();
+    const afterActivate = libraryReads;
+    // A row appears from the other tab; the pane is told, and re-reads only
+    // the LIBRARY — the catalog did not change.
+    installed = installed.concat([template({
+        id: "t-new-local", source: "local", pack_id: null, category: "custom",
+        title: "Saved From The Form", specialty: "Writes things",
+        commit_sha: null, content_hash: null,
+    })]);
+    const catalogReadsBefore = catalogReads;
+    await handle.pane.refreshLibrary();
+    await drain();
+    await click(railRow("Installed"));
+    verdict.aSavedTemplateIsReReadOnlyAfterActivation = quietBeforeActivate
+        && afterActivate === 1
+        && libraryReads === 2
+        && catalogReads === catalogReadsBefore
+        && texts(".market-card-title").includes("Saved From The Form");
     handle.close();
 
     verdict.ok = true;

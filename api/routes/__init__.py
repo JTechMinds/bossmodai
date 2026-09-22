@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from api.routes import (
     agent_packs,
+    agent_snapshots,
     agent_templates,
     agents,
     cli_policy,
@@ -27,6 +28,7 @@ router.include_router(runtime.router)
 router.include_router(agents.router)
 router.include_router(agent_packs.router)
 router.include_router(agent_templates.router)
+router.include_router(agent_snapshots.router)
 router.include_router(company_files.router)
 router.include_router(tasks.router)
 router.include_router(cli_policy.router)

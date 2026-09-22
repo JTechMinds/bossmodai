@@ -32,7 +32,8 @@ const BossModAgentFormFields = (() => {
     /**
      * The name field and its duplicate-name warning slot.
      *
-     * @param {object|null} agent
+     * @param {object|null} agent  The VALUES shown — the agent being edited,
+     *   or the snapshot being recreated (context/agent-form.js's `values`).
      * @returns {string}
      */
     function nameField(agent) {
@@ -53,7 +54,8 @@ const BossModAgentFormFields = (() => {
     /**
      * Specialty, description, and colour — the role contract card.
      *
-     * @param {object|null} agent
+     * @param {object|null} agent  The VALUES shown — the agent being edited,
+     *   or the snapshot being recreated (context/agent-form.js's `values`).
      * @param {object[]} roster  Peers, so a new agent gets an unused colour.
      * @returns {string}
      */
@@ -132,7 +134,8 @@ const BossModAgentFormFields = (() => {
     /**
      * The read-only runtime status pill and the recovery tools.
      *
-     * @param {object|null} agent
+     * @param {object|null} agent  The agent being EDITED — identity, never a
+     *   snapshot's values: a recreate is a hire.
      * @returns {string} '' while hiring: there is no runtime to reset yet.
      */
     function statusAndRecovery(agent) {
@@ -181,7 +184,8 @@ const BossModAgentFormFields = (() => {
      * Delete stays. It is destructive and belongs away from the primary, not
      * beside it, which is why it did not travel with it.
      *
-     * @param {object|null} agent
+     * @param {object|null} agent  The agent being EDITED — identity, never a
+     *   snapshot's values: a recreate is a hire.
      * @returns {string} '' while hiring: there is nothing to delete yet.
      */
     function actionsRow(agent) {

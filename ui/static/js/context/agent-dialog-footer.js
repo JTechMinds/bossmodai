@@ -27,6 +27,12 @@
  * travel up here at all — it is destructive and stays in the form body, away
  * from the primary.
  *
+ * SAVE AS TEMPLATE IS, at the other end of the row: it is about the form as a
+ * whole, like the primary, and it leaves the dialog open (`keepOpen`) because
+ * it opens a layer over the form it reads. It is WITHHELD for exactly as long
+ * as the primary is `building` — the host then still holds the pick the
+ * operator just left, and a template saved from it would be that draft.
+ *
  * THE ROW CAN BE SUSPENDED. The Agents dialog has two tabs over one footer
  * band, and the Add agent pane's async work — a build landing, a build
  * failing, a save settling — can finish while the Marketplace tab is up. A
@@ -77,6 +83,10 @@ const BossModAgentDialogFooter = (() => {
 
     const CANCEL = Object.freeze({ label: 'Cancel', tone: 'quiet' });
 
+    /** The one other action that reads the form, and its id. */
+    const SAVE_TEMPLATE_ID = 'agent-save-template';
+    const SAVE_TEMPLATE = 'Save as template';
+
     /**
      * The actions one step offers, left to right.
      *
@@ -92,20 +102,30 @@ const BossModAgentDialogFooter = (() => {
      * this app lives — the desk's, and the marketplace detail's.
      *
      * @param {'picker'|'form'} step
-     * @param {{creating: boolean}} chrome
+     * @param {{creating: boolean, onSaveTemplate?: () => void}} chrome  With
+     *   an `onSaveTemplate`, the form row LEADS with Save as template — the
+     *   stylesheet pushes it to the far end, away from the two that finish the
+     *   dialog.
      * @returns {Array<object>} core/overlays.js action descriptors. The
      *   primary carries `form`, which is both what makes it submit a form it
      *   is not inside and what tells overlays.js this action must NOT close
-     *   the dialog — a refused save keeps the draft on screen.
+     *   the dialog — a refused save keeps the draft on screen. Save as
+     *   template says the same thing the other way, with `keepOpen`: it opens
+     *   a layer over the form and the form has to be there underneath it.
      * @throws {Error} For any other step: a row nobody declared is a footer
      *   that silently shows the wrong thing.
      */
     function actionsFor(step, chrome) {
         if (step === 'form') {
             const words = chrome.creating ? WORDS.create : WORDS.edit;
-            return [CANCEL, {
+            const primary = {
                 label: words.resting, tone: 'primary', id: ID, form: FORM_ID,
-            }];
+            };
+            if (typeof chrome.onSaveTemplate !== 'function') return [CANCEL, primary];
+            return [{
+                label: SAVE_TEMPLATE, tone: 'quiet', id: SAVE_TEMPLATE_ID,
+                keepOpen: true, onSelect: chrome.onSaveTemplate,
+            }, CANCEL, primary];
         }
         if (step === 'picker') return [];
         throw new Error(`[agent-dialog-footer] no row for step "${step}"`);
@@ -130,6 +150,10 @@ const BossModAgentDialogFooter = (() => {
      *   primary is the one of the three that still records the state: the
      *   claim is live and the dialog is open, so the row that next holds a
      *   primary is owed it.
+     *
+     *   It owns one control beyond the primary: `Save as template` is
+     *   withheld while the state is `building`, because it reads the same
+     *   form — see the header.
      */
     function createPrimary(root, creating) {
         const words = creating ? WORDS.create : WORDS.edit;
@@ -195,6 +219,11 @@ const BossModAgentDialogFooter = (() => {
             // `building` as the last thing remembered, and the row the Add
             // agent tab got back came up `Loading…` and disabled for good.
             painted = { token, state: { label, disabled, reason } };
+            // Save as template reads the form too, and while one is BUILDING
+            // the form in the host is the pick the operator just left. One
+            // state, both controls, so a rebuilt row cannot restore half of it.
+            const saveTemplate = root.querySelector(`#${SAVE_TEMPLATE_ID}`);
+            if (saveTemplate) saveTemplate.disabled = label === BUILDING;
             const button = root.querySelector(`#${ID}`);
             if (!button) return false;
             const held = document.activeElement === button;
@@ -249,8 +278,10 @@ const BossModAgentDialogFooter = (() => {
      * @param {object} modal  From core/overlays.js. Needed for its `element`
      *   and `setActions`, which is why this is built after the dialog while
      *   `actionsFor` — the row it opens with — is a plain function.
-     * @param {{creating: boolean}} chrome  Which flow, and so which words the
-     *   primary says.
+     * @param {{creating: boolean, onSaveTemplate?: () => void}} chrome  Which
+     *   flow, and so which words the primary says — and what Save as template
+     *   does, when the caller offers one. Held by reference and read on every
+     *   row build.
      * @returns {{show: (step: 'picker'|'form') => void, recovery: () => void,
      *   suspend: () => void, resume: () => void, primary: object}}
      *   `show` and `recovery` write the row while the footer is live and only
@@ -288,6 +319,9 @@ const BossModAgentDialogFooter = (() => {
              * While SUSPENDED it only records the debt. A build that fails
              * while the Marketplace tab is up must not put `Cancel` into that
              * tab's footer, and must not take the keyboard from it.
+             *
+             * Save as template is not offered here either: there is no form
+             * left to read one off.
              */
             recovery() {
                 owed = 'recovery';

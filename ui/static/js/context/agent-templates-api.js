@@ -1,12 +1,14 @@
 /**
- * BossMod AI — the three calls the local agent template library makes.
+ * BossMod AI — the four calls the local agent template library makes.
  *
- * A template is a locally-installed, pinned snapshot of a pack. These are the
- * only requests against it, and they are deliberately shaped like
+ * A template is a locally-installed, pinned snapshot of a pack, or the
+ * operator's own — a role contract saved from an agent form. These are the
+ * only requests against the library, and they are deliberately shaped like
  * context/agent-api.js's pack calls: the marketplace branches on
- * `err.code === 'trust_required'` to raise its inline confirm strip, and that
- * only works while both clients read the server's `{code, message}` detail the
- * same way. A second, differently-shaped reader is how that branch would rot.
+ * `err.code === 'trust_required'` to raise its inline confirm strip, and Save
+ * as template on `err.code === 'local_title_taken'` to ask Replace, and both
+ * only work while every reader takes the server's `{code, message}` detail the
+ * same way. A second, differently-shaped reader is how those branches would rot.
  *
  * No DOM and no state, so the marketplace can be read for what it renders and
  * this for what it talks to.
@@ -77,8 +79,33 @@ const BossModAgentTemplatesApi = (() => {
     }
 
     /**
-     * Remove one installed template. Agents already created from it are
-     * untouched — a template is a snapshot, not a live link.
+     * Save the operator's own role contract as a local template.
+     *
+     * @param {{title: string, category: string, specialty: string,
+     *   description: string, what_done_looks_like: string,
+     *   personality_hint: string|null, communication: object|null,
+     *   replace?: boolean}} body  What POST /api/agent-templates/local takes.
+     * @returns {Promise<object>} The stored `AgentTemplate` row
+     *   (`source: 'local'`).
+     * @throws {Error} With the server's message and `code` intact, exactly as
+     *   `installTemplate` throws. `code` is `local_title_taken` when a local
+     *   template already has that title and `replace` was not set — the one
+     *   the caller answers by asking; everything else is terminal.
+     */
+    async function saveLocalTemplate(body) {
+        const res = await apiFetch('/api/agent-templates/local', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw await failure(res, 'Save failed.');
+        return res.json();
+    }
+
+    /**
+     * Remove one template from the library — an uninstall, or a local
+     * template's delete. Agents already created from it are untouched — a
+     * template is a snapshot, not a live link.
      *
      * @param {string} id
      * @returns {Promise<void>} Resolves on 204.
@@ -92,5 +119,5 @@ const BossModAgentTemplatesApi = (() => {
         if (!res.ok) throw await failure(res, 'Uninstall failed.');
     }
 
-    return { listTemplates, installTemplate, uninstallTemplate };
+    return { listTemplates, installTemplate, saveLocalTemplate, uninstallTemplate };
 })();

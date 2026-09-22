@@ -11,7 +11,9 @@
  * offers a friendlier thing than the agent stores: a personality is a prompt
  * template to copy, and a connection is a model name plus the base URL. A
  * connection with no explicit model identifier THROWS rather than saving an
- * agent that would fail on its first turn with no visible cause.
+ * agent that would fail on its first turn with no visible cause. The one
+ * personality that is not a personality — a recreated agent's prompt kept
+ * because nothing configured matches it — sends the kept text itself.
  *
  * The colour is validated the same way, and for the same reason: an agent whose
  * seed is too light is drawn on the office floor as a sprite nobody can pick
@@ -30,7 +32,8 @@ const BossModAgentSubmit = (() => {
      * @param {object[]} connections
      * @returns {Promise<{agentData: object, promptHistoryPolicy: object}>}
      * @throws {Error} When a selected connection carries no model identifier,
-     *   or when the chosen colour is too light to render as a visible agent.
+     *   when the chosen colour is too light to render as a visible agent, or
+     *   when the kept personality is chosen and its text is not on the form.
      *   Refused rather than darkened: silently saving a different colour than
      *   the operator picked is the behaviour this codebase forbids.
      */
@@ -66,7 +69,15 @@ const BossModAgentSubmit = (() => {
 
         // Resolve personality → copy prompt_template
         const personalityId = formData.get('personality_id');
-        if (personalityId) {
+        if (personalityId === BossModAgentFields.KEPT_PERSONALITY) {
+            // A recreated agent's own prompt, which no personality holds now
+            // (context/agent-form-advanced.js): the text rides in the form.
+            const kept = formData.get('prompt_template_kept');
+            if (kept === null) {
+                throw new Error('The kept prompt template is missing from the form.');
+            }
+            agentData.prompt_template = kept;
+        } else if (personalityId) {
             try {
                 const res = await apiFetch(`/api/personalities/${personalityId}`);
                 if (res.ok) {

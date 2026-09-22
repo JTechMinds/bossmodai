@@ -287,6 +287,21 @@
    on --blue measures 6.39:1. */
 .market-card[aria-current="true"] .market-card-category { background: var(--blue); }
 
+/* What KIND of row this is, beside what kind of pack it is: `Local` on a
+   template the operator saved here. Neutral on purpose — the blue chip next to
+   it is the category, which is the thing the grid can be filtered to, and two
+   blue chips in one band would read as two categories. --muted measures 6.10:1
+   on --bg and the chip's ground is --line, which is lighter still. */
+.market-card-tag {
+  padding: 2px 8px;
+  border-radius: var(--r);
+  background: var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
 .market-card-specialty {
   font-size: 12px;
   font-weight: 500;

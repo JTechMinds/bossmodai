@@ -9,7 +9,9 @@
  *
  * It knows nothing about steps, pickers or templates, and nothing here calls
  * back into the dialog: the caller passes what to do after a save and after a
- * delete, which is what lets one implementation serve both flows.
+ * delete, which is what lets one implementation serve both flows. A snapshot
+ * being recreated is a `prefill` — values for the form, never its identity —
+ * so the form it fills creates, exactly as a blank one does.
  *
  * ONE RENDER OWNS A HOST, AND WITH IT THE PRIMARY. The create dialog can put
  * two builds over one host — pick, Back, pick again — and each is four
@@ -107,6 +109,8 @@ const BossModAgentFormSave = (() => {
      *
      * @param {object} deps
      * @param {object|null} deps.agent  null to create.
+     * @param {object|null} [deps.prefill]  An `AgentSnapshot` whose values the
+     *   create form starts from; only with no agent.
      * @param {object} deps.primary  The dialog's primary owner.
      * @param {object} deps.token    This render's claim on it. The save the
      *   form is wired with inherits it, so the save may move the button only
@@ -117,7 +121,7 @@ const BossModAgentFormSave = (() => {
      *   feedback: object}>}
      * @throws {Error} When the form itself cannot be built.
      */
-    async function stageForm({ agent, primary, token, onSave, onDelete }) {
+    async function stageForm({ agent, prefill, primary, token, onSave, onDelete }) {
         // Per render, not per module. Which agent this form is for, and whether
         // it creates or updates, belong to THIS form: as module state a second
         // form would rewrite the first one's identity, and an edit already open
@@ -132,7 +136,7 @@ const BossModAgentFormSave = (() => {
         }
 
         const stage = h('div');
-        await BossModAgentForm.buildFormHTML(stage, agent);
+        await BossModAgentForm.buildFormHTML(stage, agent, prefill);
 
         const form = stage.querySelector('#agent-form');
         const deleteBtn = stage.querySelector('#btn-delete-agent');
@@ -255,6 +259,9 @@ const BossModAgentFormSave = (() => {
      * @param {object} deps
      * @param {HTMLElement} deps.container
      * @param {object|null} deps.agent   null to create.
+     * @param {object|null} [deps.prefill]  An `AgentSnapshot` to recreate: the
+     *   create form starts from its values and the save is a create — see
+     *   context/agent-form.js. Never with an agent.
      * @param {object} deps.primary      The dialog's primary owner, from
      *   context/agent-dialog-footer.js. Required: without one the form's build
      *   race and its save would each be writing to the button unsupervised,
@@ -268,12 +275,17 @@ const BossModAgentFormSave = (() => {
      *   this call has written nothing to it — no form, no feedback, no
      *   primary. A caller that records what is on screen may only record it on
      *   `true`.
-     * @throws {Error} Only when the form itself cannot render AND this render
-     *   still holds the claim; a failed SAVE becomes the in-form feedback and
-     *   the draft is kept.
+     * @throws {Error} Synchronously-first — before any claim is taken — when
+     *   given both an agent and a prefill, or no primary. Otherwise only when
+     *   the form itself cannot render AND this render still holds the claim; a
+     *   failed SAVE becomes the in-form feedback and the draft is kept.
      */
-    async function renderInline({ container, agent, primary, onSave, onDelete }) {
+    async function renderInline({ container, agent, prefill, primary, onSave, onDelete }) {
         if (!primary) throw new Error('[agent-form-save] deps.primary is required');
+        if (agent && prefill) {
+            throw new Error('[agent-form-save] an agent and a prefill: edit one agent or '
+                + 'recreate from a snapshot, never both');
+        }
         const token = primary.claim();
         // WITHHELD, not left live. The create dialog pins `Create Agent` when
         // the step swaps, which is BEFORE this build lands, and it submits
@@ -287,7 +299,7 @@ const BossModAgentFormSave = (() => {
         const heldTheKeyboard = primary.building(token);
         let staged;
         try {
-            staged = await stageForm({ agent, primary, token, onSave, onDelete });
+            staged = await stageForm({ agent, prefill, primary, token, onSave, onDelete });
         } catch (err) {
             // A superseded render must not reach the dialog, and that includes
             // its failure: the caller's handler clears the host that the

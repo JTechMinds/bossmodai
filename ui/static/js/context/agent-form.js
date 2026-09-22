@@ -18,6 +18,14 @@
  * connections while reporting success. The `<form>` is the node that travels,
  * so it is the node every binding here holds.
  *
+ * VALUES ARE NOT IDENTITY. `agent` used to answer two questions: what the
+ * fields show, and WHO the form is for — which decides the recovery tools,
+ * Delete, the policy read by id, the duplicate-name self-exclusion and whether
+ * the save creates. A snapshot being recreated answers only the first; the
+ * form it fills creates a NEW agent. So it arrives as a separate `prefill`,
+ * every value builder reads `values = agent || prefill`, and every identity
+ * builder keeps reading `agent`.
+ *
  * MARKUP EXEMPTION: see the block comment in context/agent-form-fields.js.
  * The `<form>` wrapper below is the only markup this module owns.
  */
@@ -173,16 +181,63 @@ const BossModAgentForm = (() => {
     }
 
     /**
+     * The AI-history policy a recreate starts from: the snapshot's own.
+     *
+     * @param {object} prefill  An `AgentSnapshot`.
+     * @returns {object} Every field the Advanced block shows.
+     */
+    function prefillPolicy(prefill) {
+        const DEFAULTS = BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY;
+        // The one fallback here, and it is stated: a snapshot captured while
+        // its agent had no policy row carries none, and a new agent with no
+        // policy of its own gets exactly these create defaults.
+        if (!prefill.prompt_history_policy) return { ...DEFAULTS };
+        return { ...DEFAULTS, ...prefill.prompt_history_policy };
+    }
+
+    /**
+     * The `Kept from <name>` option a recreate needs, or null.
+     *
+     * @param {object} prefill  An `AgentSnapshot`.
+     * @param {object[]} personalities
+     * @returns {{label: string, text: string}|null} null when the snapshot has
+     *   no prompt, or a personality still carries that exact text — the
+     *   dropdown selects that one, as it does for an edit. A personalities
+     *   read that FAILED leaves this list empty, and the option is offered:
+     *   carrying the prompt is the safe direction to be wrong in, and the
+     *   degraded notice above the form says the list could not be read.
+     */
+    function keptPromptFor(prefill, personalities) {
+        const text = prefill.prompt_template;
+        if (!text) return null;
+        if (personalities.some((p) => p.prompt_template === text)) return null;
+        return { label: `Kept from ${prefill.name}`, text };
+    }
+
+    /**
      * Render the form into a container and bind everything inside it.
      *
      * @param {HTMLElement} container
-     * @param {object|null} [agent]  null to hire, a roster row to edit.
+     * @param {object|null} [agent]  null to hire, a roster row to edit. The
+     *   form's IDENTITY as well as its values — see the header.
+     * @param {object|null} [prefill]  An `AgentSnapshot` to recreate: the
+     *   form's values and nothing else. The form it fills creates.
      * @returns {Promise<void>}
+     * @throws {Error} When given both an agent and a prefill — a form cannot
+     *   edit one agent while it creates another — or when the markup did not
+     *   build.
      */
-    async function buildFormHTML(container, agent = null) {
+    async function buildFormHTML(container, agent = null, prefill = null) {
+        if (agent && prefill) {
+            throw new Error('[agent-form] an agent and a prefill: a form edits one agent '
+                + 'or creates from a snapshot, never both');
+        }
+        const values = agent || prefill;
         const {
-            connections, personalities, roster, promptHistoryPolicy, failed,
+            connections, personalities, roster, promptHistoryPolicy: loadedPolicy, failed,
         } = await loadFormData(agent);
+        const promptHistoryPolicy = prefill ? prefillPolicy(prefill) : loadedPolicy;
+        const keptPrompt = prefill ? keptPromptFor(prefill, personalities) : null;
 
         // TWO COLUMNS, ONE FORM, and the same one whichever door was used.
         // Identity on the left, what the agent thinks with on the right, the
@@ -203,13 +258,15 @@ const BossModAgentForm = (() => {
             <div class="agent-form-grid">
                 <section class="form-section">
                     <h3 class="form-section-title">Identity</h3>
-                    ${BossModAgentFormFields.nameField(agent)}
-                    ${BossModAgentFormFields.roleContractCard(agent, roster)}
+                    ${BossModAgentFormFields.nameField(values)}
+                    ${BossModAgentFormFields.roleContractCard(values, roster)}
                 </section>
-                ${BossModAgentFormConnections.connectionsSection(agent, connections)}
+                ${BossModAgentFormConnections.connectionsSection(values, connections, {
+                    reportMissing: Boolean(prefill),
+                })}
                 <div class="agent-form-wide">
-                    ${BossModAgentFormAdvanced.advancedSection(agent, {
-                        personalities, roster, promptHistoryPolicy,
+                    ${BossModAgentFormAdvanced.advancedSection(values, {
+                        personalities, roster, promptHistoryPolicy, keptPrompt,
                     })}
                     ${BossModAgentFormFields.statusAndRecovery(agent)}
                     ${BossModAgentFormFields.actionsRow(agent)}
@@ -286,9 +343,11 @@ const BossModAgentForm = (() => {
         }
 
         const BINDINGS = BossModAgentFormBindings;
-        BINDINGS.bindFinishLineSuggestion(form, agent);
-        BINDINGS.bindCommunicationDefaults(form, agent);
-        BINDINGS.bindRuntimeCorePreview(form, agent);
+        BINDINGS.bindFinishLineSuggestion(form, values);
+        BINDINGS.bindCommunicationDefaults(form, values);
+        // Values: it reads a stored desk, and only where the form has no desk
+        // select to read one from.
+        BINDINGS.bindRuntimeCorePreview(form, values);
         BINDINGS.bindDuplicateNameWarning(form, roster, agent);
         BINDINGS.bindColorSwatchInitial(form);
         BINDINGS.bindDescriptionAutoGrow(form);

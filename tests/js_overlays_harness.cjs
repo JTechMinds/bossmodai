@@ -146,6 +146,35 @@ yes.listeners.click[0]({ preventDefault() {} });
 if (!fired) throw new Error("primary action must fire onSelect");
 if (document.activeElement !== trigger2) throw new Error("focus must return after action");
 
+// ── keepOpen: an action that opens a layer over its own dialog ──
+//
+// Every non-form action closes the dialog after its onSelect, which is right
+// for a confirm and wrong for "Save as template": that opens a layer over the
+// agent form and the form must still be there when the layer goes. The flag
+// is opt-in, so an action without it — the Cancel beside it — still closes.
+const trigger2b = makeEl("button");
+body.append(trigger2b);
+trigger2b.focus();
+let keptOpenRuns = 0;
+const kept = BossModOverlays.createModal({
+    title: "Agent form",
+    body: "x",
+    actions: [
+        { label: "Save as template", keepOpen: true, onSelect: () => { keptOpenRuns += 1; } },
+        { label: "Cancel", tone: "quiet" },
+    ],
+});
+const keptButtons = kept.element.querySelectorAll("button");
+const keeper = keptButtons.filter((b) => b.textLabel === "Save as template")[0];
+keeper.listeners.click[0]({ preventDefault() {} });
+const keepOpenActionStaysOpen = keptOpenRuns === 1
+    && body.children.indexOf(kept.element) !== -1;
+if (!keepOpenActionStaysOpen) throw new Error("a keepOpen action must run and leave the dialog up");
+keptButtons.filter((b) => b.textLabel === "Cancel")[0].listeners.click[0]({ preventDefault() {} });
+const plainActionStillCloses = body.children.indexOf(kept.element) === -1
+    && document.activeElement === trigger2b;
+if (!plainActionStillCloses) throw new Error("an action without keepOpen must still close");
+
 // ── The panel size: the same contract over a body that scrolls ──
 //
 // createModal was built for a short question with two buttons. The agent form
@@ -691,6 +720,8 @@ process.stdout.write(JSON.stringify({
     escClosesWithoutConfirming: true,
     restoresFocus: true,
     unbindsOnClose: true,
+    keepOpenActionStaysOpen,
+    plainActionStillCloses,
     panelModalIsMarked,
     panelModalActionsSitOutsideTheBody,
     panelModalTrapsTabAcrossItsBody,

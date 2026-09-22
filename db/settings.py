@@ -155,6 +155,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("default_spawn_y", "9", "simulation"),
     ("default_prompt_history_last_n", "30", "context"),
     ("default_prompt_history_max_tokens", "2000", "context"),
+    # How many agent snapshots Add agent's Recent keeps (db/agent_snapshots.py):
+    # the newest by capture time, deleted agents included. No version history.
+    ("recent_agents_limit", "20", "advanced"),
 
     # ── Telegram integration ──
     ("telegram_enabled", "false", "telegram"),
