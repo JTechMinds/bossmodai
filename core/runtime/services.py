@@ -43,6 +43,8 @@ class EventSink(Protocol):
 
     async def broadcast_channel_presence(self, **data: Any) -> None: ...
 
+    async def broadcast_agent_presence(self, **data: Any) -> None: ...
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
 
     async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None: ...
@@ -243,6 +245,7 @@ class RuntimeServices:
         env = os.environ.copy()
         env["BOSSMOD_DB_PATH"] = str(db_connection._DB_PATH)
         env["BOSSMOD_APP_PID"] = str(os.getpid())
+        env["BOSSMOD_RUNTIME_WORKER"] = "1"
         self._process = await asyncio.create_subprocess_exec(
             *worker_cmd,
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -445,6 +448,9 @@ class RuntimeServices:
             return
         if kind == "channel_presence":
             await sink.broadcast_channel_presence(**data)
+            return
+        if kind == "agent_presence":
+            await sink.broadcast_agent_presence(**data)
             return
         if kind == "diagnostic":
             await sink.broadcast_diagnostic(data["summary"])

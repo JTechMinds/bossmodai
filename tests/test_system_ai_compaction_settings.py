@@ -123,17 +123,20 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
         "compaction_chat_budget_headroom_percent",
         "compaction_min_turns_between_runs",
         "compaction_cooldown_minutes",
-        "max_concurrent_llm_calls",
     ]
+    assert "max_concurrent_llm_calls" not in rows
+    assert "max_concurrent_llm_calls" not in order
     assert "system_ai_connection" not in rows
     for row in rows.values():
         assert row["category"] == "llm"
 
     turns = rows["max_concurrent_agent_turns"]
-    assert turns["label"] == "Max Concurrent Agent Turns"
+    assert turns["label"] == "Max concurrent model calls"
     assert turns["value"] == "2"
-    assert "local LLM" in turns["paragraphs"][0]
+    assert "System AI routes" in turns["paragraphs"][0]
+    assert "repairs" in turns["paragraphs"][0]
     assert "one turn" in turns["paragraphs"][0]
+    assert "health warning" in turns["paragraphs"][0]
 
     mode = rows["compaction_mode"]
     assert mode["label"] == "Compaction Mode"

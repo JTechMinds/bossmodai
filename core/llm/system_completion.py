@@ -19,6 +19,7 @@ import litellm
 
 import db
 from core import config
+from core.llm.call_budget import budget
 from core.llm.client import canonicalize_openai_compatible_model, validate_api_base
 from core.models import AIConnection
 
@@ -94,11 +95,18 @@ def complete_text(
     extra = _extra_body(connection.extra_body)
     if extra:
         kwargs["extra_body"] = extra
-    try:
-        response = litellm.completion(**kwargs)
-    except Exception as exc:
-        logger.warning("system completion failed: %s", type(exc).__name__)
+    lane = budget.try_acquire(kind="system", owner="system-ai")
+    if lane is None:
+        logger.info("system completion skipped: model-call budget is full")
         return None
+    try:
+        try:
+            response = litellm.completion(**kwargs)
+        except Exception as exc:
+            logger.warning("system completion failed: %s", type(exc).__name__)
+            return None
+    finally:
+        budget.release(lane)
     text = _message_text(response)
     if not text.strip():
         logger.warning("system completion returned empty text")

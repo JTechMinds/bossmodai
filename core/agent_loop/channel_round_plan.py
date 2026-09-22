@@ -65,7 +65,10 @@ def channel_response_round_cap() -> int:
 
 
 def max_concurrent_agent_turns() -> int:
-    """Return the global cap on agent turns that may run at once."""
+    """Return the single max-concurrent-model-calls knob.
+
+    Agent turns, System AI routes, and repairs all draw from this number.
+    """
     configured = config.get_int(MAX_CONCURRENT_AGENT_TURNS_SETTING)
     if configured is None or configured < 1:
         return DEFAULT_MAX_CONCURRENT_AGENT_TURNS

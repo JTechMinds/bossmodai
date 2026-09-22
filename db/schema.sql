@@ -807,3 +807,18 @@ CREATE TABLE IF NOT EXISTS agent_snapshots (
     deleted_at            TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_agent_snapshots_captured ON agent_snapshots(captured_at);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Model-call lanes — one global budget shared by the app and the worker
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS model_call_lanes (
+    id          VARCHAR PRIMARY KEY,
+    kind        VARCHAR NOT NULL,
+    owner       VARCHAR NOT NULL,
+    pid         INTEGER NOT NULL,
+    acquired_at TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_call_lanes_kind
+    ON model_call_lanes (kind);

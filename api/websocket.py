@@ -189,18 +189,46 @@ class ConnectionManager:
         agent_id: str,
         agent_name: str,
         phase: str,
+        ahead: int | None = None,
     ) -> None:
         """Broadcast one member's in-flight thinking/working presence."""
         if db.is_channel_archived(channel_id):
             return
+        data: dict[str, Any] = {
+            "channel_id": channel_id,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "phase": phase,
+        }
+        if ahead is not None:
+            data["ahead"] = ahead
         await self.broadcast({
             "type": "channel_presence",
-            "data": {
-                "channel_id": channel_id,
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "phase": phase,
-            },
+            "data": data,
+        })
+
+    async def broadcast_agent_presence(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        phase: str,
+        ahead: int | None = None,
+        channel_id: str | None = None,
+    ) -> None:
+        """Broadcast desk presence for one agent: thinking, queued, or idle."""
+        data: dict[str, Any] = {
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "phase": phase,
+        }
+        if ahead is not None:
+            data["ahead"] = ahead
+        if channel_id:
+            data["channel_id"] = channel_id
+        await self.broadcast({
+            "type": "agent_presence",
+            "data": data,
         })
 
     async def broadcast_channel_updated(self, channel: dict[str, Any]) -> None:

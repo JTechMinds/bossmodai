@@ -129,8 +129,8 @@ const SystemSection = (() => {
         },
         max_concurrent_agent_turns: {
             order: 36,
-            label: 'Max Concurrent Agent Turns',
-            description: 'How many agent turns may run at once. Default 2 is safe for a local LLM. Each agent still runs at most one turn. Repair wakes use a slot and wait behind a live channel lead.',
+            label: 'Max concurrent model calls',
+            description: 'How many model calls may run at once. Agent turns, System AI routes, and repairs share this budget. Default 2. Each agent still runs at most one turn. Repair wakes use a lane and wait behind a live channel lead. When a local server reports fewer parallel calls than this number, the connection test shows that as a health warning.',
         },
         compaction_mode: {
             order: 38,
@@ -161,11 +161,6 @@ const SystemSection = (() => {
             order: 42,
             label: 'Cooldown (minutes)',
             description: 'Minimum minutes between compaction runs. Compaction queues in the background and never blocks the agent turn.',
-        },
-        max_concurrent_llm_calls: {
-            order: 48,
-            label: 'Max Concurrent LLM Calls',
-            description: 'Global concurrency limit for simultaneous model requests across the runtime.',
         },
         managed_writer_max_batch_files: {
             order: 50,

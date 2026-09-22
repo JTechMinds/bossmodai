@@ -62,6 +62,16 @@ class RuntimeEventSink(Protocol):
         agent_id: str,
         agent_name: str,
         phase: str,
+        ahead: int | None = None,
+    ) -> None: ...
+    async def broadcast_agent_presence(
+        self,
+        *,
+        agent_id: str,
+        agent_name: str,
+        phase: str,
+        ahead: int | None = None,
+        channel_id: str | None = None,
     ) -> None: ...
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
     async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None: ...
@@ -100,6 +110,9 @@ class NullRuntimeEventSink:
         return None
 
     async def broadcast_channel_presence(self, **_: Any) -> None:
+        return None
+
+    async def broadcast_agent_presence(self, **_: Any) -> None:
         return None
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
@@ -153,6 +166,9 @@ class TransportRuntimeEventSink:
 
     async def broadcast_channel_presence(self, **kwargs: Any) -> None:
         await self._emit("channel_presence", kwargs)
+
+    async def broadcast_agent_presence(self, **kwargs: Any) -> None:
+        await self._emit("agent_presence", kwargs)
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         await self._emit("diagnostic", {"summary": summary})
@@ -218,6 +234,9 @@ class RuntimeEventProxy:
         if db.is_channel_archived(kwargs.get("channel_id")):
             return
         await self._sink.broadcast_channel_presence(**kwargs)
+
+    async def broadcast_agent_presence(self, **kwargs: Any) -> None:
+        await self._sink.broadcast_agent_presence(**kwargs)
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         await self._sink.broadcast_diagnostic(summary)

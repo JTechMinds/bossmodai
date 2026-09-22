@@ -3,6 +3,8 @@ import os
 import shutil
 import tempfile
 
+import pytest
+
 
 def _ensure_test_db_path() -> None:
     # Avoid touching the repo-root dev DB (`bossmod.sqlite3`) during pytest runs.
@@ -21,4 +23,14 @@ def _ensure_test_db_path() -> None:
 
 
 _ensure_test_db_path()
+
+
+@pytest.fixture(autouse=True)
+def _reset_model_call_budget():
+    """Keep one test's model-call lanes from filling the next test's knob."""
+    from core.llm.call_budget import budget
+
+    budget.reset()
+    yield
+    budget.reset()
 

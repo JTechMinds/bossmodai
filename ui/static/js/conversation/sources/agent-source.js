@@ -33,12 +33,6 @@ const BossModAgentSource = (() => {
         if (!store) throw new Error('[agent-source] ctx.store is required');
         if (!presence) throw new Error('[agent-source] ctx.presence is required');
 
-        let signals = null;
-
-        function signal(name) {
-            if (signals && typeof signals[name] === 'function') signals[name]();
-        }
-
         function colorFor(id) {
             if (!id) return null;
             const row = (store.getState().roster || []).find((item) => item && item.id === id);
@@ -146,29 +140,21 @@ const BossModAgentSource = (() => {
         /**
          * Wake the agent with a message.
          *
-         * The indicator is cleared in a `finally` because an agent that
-         * produced no reply (walk_to, idle) fires no WebSocket event at all —
-         * without this it would appear to be thinking forever. A refusal
-         * throws the server's reason so the composer can show it.
+         * Presence waits for the server. A lane is claimed before thinking;
+         * no lane is Queued on the desk, not a thinking row. A refusal throws
+         * the server's reason so the composer can show it.
          *
          * @param {string} text
          * @returns {Promise<void>}
          * @throws {Error} On any failure, so the send gate keeps the draft.
          */
         async function send(text) {
-            presence.start(agentId, agentId, agent().name);
-            signal('presence');
-            try {
-                const res = await api(`/api/agents/${agentId}/activate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: text }),
-                });
-                if (!res.ok) throw new Error(await refusal(res));
-            } finally {
-                presence.stop(agentId, agentId);
-                signal('presence');
-            }
+            const res = await api(`/api/agents/${agentId}/activate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: text }),
+            });
+            if (!res.ok) throw new Error(await refusal(res));
         }
 
         /**
@@ -177,7 +163,6 @@ const BossModAgentSource = (() => {
          * @returns {() => void} One disposer that drains all three subscriptions.
          */
         function subscribe(on) {
-            signals = on;
             const offs = [
                 bus.subscribe('chat_message', (data) => {
                     if (!data) return;
@@ -195,6 +180,20 @@ const BossModAgentSource = (() => {
                 bus.subscribe('chat_reset', (data) => {
                     if (!data || data.agent_id !== agentId) return;
                     on.reset();
+                }),
+                bus.subscribe('agent_presence', (data) => {
+                    if (!data || data.agent_id !== agentId) return;
+                    if (data.phase === 'thinking') {
+                        presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
+                    } else if (data.phase === 'queued') {
+                        presence.start(agentId, agentId, data.agent_name || agent().name, {
+                            phase: 'queued',
+                            ahead: data.ahead,
+                        });
+                    } else {
+                        presence.stop(agentId, agentId);
+                    }
+                    on.presence();
                 }),
                 bus.subscribe('channel_message', (data) => {
                     if (!data) return;
@@ -219,7 +218,6 @@ const BossModAgentSource = (() => {
             ];
             return () => {
                 offs.splice(0).forEach((off) => off());
-                signals = null;
             };
         }
 

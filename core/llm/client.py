@@ -15,23 +15,12 @@ from typing import Any
 import litellm
 
 from core import config
+from core.llm.call_budget import budget, current_turn_lane
 
 logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
-
-# Concurrency limiter for LLM calls — initialized lazily from settings
-_llm_semaphore: asyncio.Semaphore | None = None
-
-
-def _get_semaphore() -> asyncio.Semaphore:
-    """Return the LLM concurrency semaphore, initializing from config on first use."""
-    global _llm_semaphore
-    if _llm_semaphore is None:
-        limit = config.get_int("max_concurrent_llm_calls") or 5
-        _llm_semaphore = asyncio.Semaphore(limit)
-    return _llm_semaphore
 
 
 def validate_api_base(url: str) -> str:
@@ -381,31 +370,36 @@ async def completion(
         bool(kwargs.get("stream")),
     )
 
+    # A turn that already claimed a lane — including its repair calls — reuses
+    # that lane. Any other caller waits for the same budget.
+    held = current_turn_lane()
+    owned = None
+    if held is None:
+        owned = await budget.acquire(kind="call", owner=str(model or "llm-call"))
     try:
-        async with _get_semaphore():
-            # The backstop bounds the model call, not the wait for a free slot.
-            started = time.monotonic()
+        # The backstop bounds the model call, not the wait for a free slot.
+        started = time.monotonic()
+        try:
+            opened = await asyncio.wait_for(
+                litellm.acompletion(**kwargs),
+                timeout=backstop_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
+            raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
+        if stream_for_progress and _is_async_stream(opened):
             try:
-                opened = await asyncio.wait_for(
-                    litellm.acompletion(**kwargs),
-                    timeout=backstop_seconds,
+                return await _read_stream(
+                    opened,
+                    messages=messages,
+                    model=model,
+                    started=started,
+                    backstop_seconds=backstop_seconds,
+                    stall_seconds=stall_seconds,
                 )
-            except asyncio.TimeoutError as exc:
-                logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
-                raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
-            if stream_for_progress and _is_async_stream(opened):
-                try:
-                    return await _read_stream(
-                        opened,
-                        messages=messages,
-                        model=model,
-                        started=started,
-                        backstop_seconds=backstop_seconds,
-                        stall_seconds=stall_seconds,
-                    )
-                finally:
-                    await _close_stream(opened)
-            return _response_from_model(opened, model)
+            finally:
+                await _close_stream(opened)
+        return _response_from_model(opened, model)
     except LLMTimeoutError:
         raise
     except Exception as exc:
@@ -414,6 +408,9 @@ async def completion(
             raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
         logger.error("LLM call failed (model=%s): %s", model, exc)
         raise LLMError(f"LLM call failed: {exc}") from exc
+    finally:
+        if owned is not None:
+            budget.release(owned)
 
 
 def count_tokens(text: str, model: str | None = None) -> int:
