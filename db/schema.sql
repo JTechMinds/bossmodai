@@ -828,3 +828,24 @@ CREATE TABLE IF NOT EXISTS model_call_lanes (
 
 CREATE INDEX IF NOT EXISTS idx_model_call_lanes_kind
     ON model_call_lanes (kind);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Chat fade — soft summary of older channel turns. Transcript rows stay.
+-- ───────────────────────────────────────────────────────────────────────────
+
+-- One summary per channel. through_message_id is the newest transcript row
+-- folded into that summary. Original channel_messages are not deleted.
+CREATE TABLE IF NOT EXISTS channel_chat_fades (
+    channel_id         VARCHAR PRIMARY KEY REFERENCES channels(id),
+    through_message_id VARCHAR NOT NULL,
+    summary            TEXT NOT NULL,
+    updated_at         TIMESTAMP DEFAULT current_timestamp
+);
+
+-- One global gate so chat fade never runs every turn. Turns count every
+-- agent wake. last_run_at is the last time a background fade was queued.
+CREATE TABLE IF NOT EXISTS chat_fade_gate (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    turns_since_run INTEGER NOT NULL DEFAULT 0,
+    last_run_at     TIMESTAMP
+);

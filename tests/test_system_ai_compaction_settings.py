@@ -1,4 +1,4 @@
-"""System AI picker and compaction pressure knobs. No compaction runner."""
+"""System AI picker and compaction pressure knobs. Chat fade uses them."""
 
 from __future__ import annotations
 
@@ -69,8 +69,9 @@ def test_seed_comments_state_the_compaction_product_rules() -> None:
     source = (ROOT / "db" / "settings.py").read_text(encoding="utf-8")
     assert "never runs every turn" in source
     assert "never blocks an agent turn" in source
-    assert "queue in the background" in source
-    assert "no compaction runner" in source
+    assert "queues in the background" in source
+    assert "chat fade" in source.lower()
+    assert "sticky-slot" in source.lower()
     assert "not a" in source and "per-agent identity model" in source
 
 
