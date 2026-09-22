@@ -239,6 +239,20 @@ const BossModThreadSource = (() => {
             signal('chrome');
         }
 
+        async function pauseThread() {
+            const res = await api(`/api/channels/${threadId}/pause`, { method: 'POST' });
+            if (!res.ok) throw new Error((await res.text()) || 'Could not pause this thread.');
+            channel = await res.json();
+            signal('chrome');
+        }
+
+        async function resumeThread() {
+            const res = await api(`/api/channels/${threadId}/resume`, { method: 'POST' });
+            if (!res.ok) throw new Error((await res.text()) || 'Could not resume this thread.');
+            channel = await res.json();
+            signal('chrome');
+        }
+
         async function reopenThread() {
             const res = await api(`/api/channels/${threadId}/reopen`, { method: 'POST' });
             if (!res.ok) throw new Error((await res.text()) || 'Could not reopen this thread.');
@@ -286,6 +300,21 @@ const BossModThreadSource = (() => {
                     iconOnly: true,
                     onSelect: seatAgent,
                 });
+                actions.push(channel && channel.conversation_paused
+                    ? {
+                        id: 'channel-resume-btn',
+                        label: 'Resume',
+                        icon: 'play',
+                        slot: 'menu',
+                        onSelect: resumeThread,
+                    }
+                    : {
+                        id: 'channel-pause-btn',
+                        label: 'Pause thread',
+                        icon: 'pause',
+                        slot: 'menu',
+                        onSelect: pauseThread,
+                    });
             }
             actions.push(archived
                 ? {

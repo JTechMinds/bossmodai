@@ -233,36 +233,25 @@ def test_seed_rules_lock_interpreters_xargs_and_shells() -> None:
     assert "uv run" not in always
 
 
-def test_reconcile_hardens_legacy_always_allowed_rows() -> None:
-    db.execute("DELETE FROM cli_policy_rules")
-    db.create_cli_policy_rule(
-        tier="always_allowed",
-        pattern="python",
-        match_mode="prefix",
-        description="legacy interpreter",
-        category="development",
-    )
-    db.create_cli_policy_rule(
-        tier="always_allowed",
-        pattern="xargs",
-        match_mode="prefix",
-        description="legacy xargs",
-        category="general",
-    )
-    db.create_cli_policy_rule(
-        tier="approval_required",
-        pattern="node",
-        match_mode="prefix",
-        description="legacy node",
-        category="development",
-    )
+def test_reconcile_inserts_missing_hardened_rows_without_clobbering_tiers() -> None:
+    python3 = next(rule for rule in db.list_cli_policy_rules() if rule.pattern == "python3")
+    python = next(rule for rule in db.list_cli_policy_rules() if rule.pattern == "python")
+    db.update_cli_policy_rule(python3.id, tier="approval_required")
+    db.update_cli_policy_rule(python.id, tier="always_allowed")
+    db.execute("DELETE FROM cli_policy_rules WHERE pattern = $1 AND agent_id IS NULL", ["bash"])
 
     changed = db.reconcile_hardened_cli_policy_rules()
-    assert changed >= 3
+    assert changed >= 1
 
-    by_pattern = {rule.pattern: rule.tier for rule in db.list_cli_policy_rules()}
-    for pattern in HARDENED_NEVER_ALLOWED_PATTERNS:
-        assert by_pattern[pattern] == "never_allowed"
+    by_pattern = {rule.pattern: rule.tier for rule in db.list_cli_policy_rules() if rule.agent_id is None}
+    assert by_pattern["python3"] == "approval_required"
+    assert by_pattern["python"] == "always_allowed"
+    assert by_pattern["bash"] == "never_allowed"
+
+    db.init_db()
+    by_pattern = {rule.pattern: rule.tier for rule in db.list_cli_policy_rules() if rule.agent_id is None}
+    assert by_pattern["python3"] == "approval_required"
+    assert by_pattern["python"] == "always_allowed"
 
 
 def test_policy_engine_denies_hardened_commands_when_shell_enabled() -> None:

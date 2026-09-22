@@ -18,7 +18,7 @@ from core.agent_loop.specialty import work_kind_label
 DISPATCH_ROUNDS = "rounds"
 DISPATCH_FANOUT = "fanout"
 
-DEFAULT_ROUND_CAP = 4
+DEFAULT_ROUND_CAP = 64
 ROUND_CAP_SETTING = "channel_response_round_cap"
 MAX_CONCURRENT_AGENT_TURNS_SETTING = "max_concurrent_agent_turns"
 DEFAULT_MAX_CONCURRENT_AGENT_TURNS = 2
@@ -53,7 +53,11 @@ _HUMAN_NAMES = {name.lower() for name in HUMAN_MENTION_NAMES}
 
 
 def channel_response_round_cap() -> int:
-    """Return the soft cap on rounds for one human message, including round 1."""
+    """Return the last-resort cap on rounds for one human message.
+
+    Empty speak, Pause, pass demotion, and narrow dup-ack are the brakes.
+    This cap is only a safety ceiling.
+    """
     configured = config.get_int(ROUND_CAP_SETTING)
     if configured is None or configured < 1:
         return DEFAULT_ROUND_CAP

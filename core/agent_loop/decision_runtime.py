@@ -41,6 +41,7 @@ from core.agent_loop.decision_work_plan import (
     _resolve_work_execution_plan,
     _should_queue_initial_work_resume,
 )
+from core.agent_loop.channel_host import note_channel_work
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
@@ -261,6 +262,7 @@ def apply_decision(
             )
             result["detail"] = f'{agent.name} deferred "{task.title}"'
             result.setdefault("activity_extra", {})["task_title"] = task.title
+            _note_channel_work_bind(agent, trigger, decision, task)
         else:
             result["detail"] = f"{agent.name} deferred the request"
         _complete_assignment_if_present(agent.id)
@@ -328,6 +330,7 @@ def apply_decision(
                     reason=_build_initial_work_reason(state, task.title),
                 )
             )
+        _note_channel_work_bind(agent, trigger, decision, task)
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         attach_operator_status_line(result, task=task, agent=agent, kind="accepted")
@@ -433,6 +436,24 @@ def apply_decision(
     _attach_reply_artifacts(result, agent, state, trigger, decision)
     _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
     return result
+
+def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: ConversationDecision, task: Any) -> None:
+    """End peer Talk when this channel turn bound a real board task.
+
+    Prose with no task does not qualify. The work resume already queued on
+    ``trigger_requests`` is left in place.
+    """
+    if decision.commitmentKind != "work":
+        return
+    if str(trigger.get("type") or "") not in {"channel_message", "channel_response"}:
+        return
+    channel_id = str(trigger.get("channel_id") or "").strip()
+    task_id = str(getattr(task, "id", "") or "").strip()
+    title = (decision.taskTitle or getattr(task, "title", "") or "").strip()
+    if not channel_id or not task_id or not title:
+        return
+    note_channel_work(channel_id, agent_id=agent.id, task_id=task_id)
+
 
 def summarize_decision(decision_payload: dict[str, Any]) -> str:
     """Return a concise diagnostic label for a decision turn."""

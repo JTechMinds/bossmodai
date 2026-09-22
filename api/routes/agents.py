@@ -29,6 +29,7 @@ from core.models import (
     AgentUpdate,
 )
 from core.models.message import HUMAN_SENDER_ID
+from core.agent_loop.channel_host import is_thread_paused, pause_thread, resume_thread
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
 from core.channel_members import ThreadSeatError, seat_agent_in_thread
 from core.tasking.service import list_open_origin_tasks_for_channel
@@ -239,6 +240,40 @@ async def rename_channel(channel_id: str, body: ChannelRenameBody):
     # Every other surface holding this thread's name — the rail, an open
     # transcript in another window — learns about it the same way archive and
     # reopen are learned about.
+    await manager.broadcast_channel_updated(summary)
+    return summary
+
+
+@router.post("/channels/{channel_id}/pause")
+async def pause_channel_thread(channel_id: str):
+    """Pause one thread. Host-side. Does not cancel board work."""
+    return await _set_channel_pause(channel_id, paused=True)
+
+
+@router.post("/channels/{channel_id}/resume")
+async def resume_channel_thread(channel_id: str):
+    """Resume one paused thread without opening a Talk round."""
+    return await _set_channel_pause(channel_id, paused=False)
+
+
+async def _set_channel_pause(channel_id: str, *, paused: bool) -> dict[str, object]:
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        raise HTTPException(404, "Thread not found")
+    marker = pause_thread(channel.id) if paused else resume_thread(channel.id)
+    if marker:
+        await manager.broadcast_channel_message(
+            channel_id=marker["channel_id"],
+            content=marker["content"],
+            author_type=marker.get("author_type") or "system",
+            author_name=marker.get("author_name") or "BossMod",
+            message_id=marker.get("message_id"),
+            created_at=marker.get("created_at"),
+            notification_kind=marker.get("notification_kind"),
+        )
+    members = db.list_channel_member_details(channel.id)
+    latest = db.get_latest_channel_message(channel.id)
+    summary = _serialize_channel_summary(channel, members=members, latest_message=latest)
     await manager.broadcast_channel_updated(summary)
     return summary
 
@@ -911,6 +946,7 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "created_at": channel.created_at.isoformat() if channel.created_at else None,
         "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
+        "conversation_paused": is_thread_paused(channel.id),
         "member_count": len(members or []),
         "members": members or [],
         "latest_message": latest,

@@ -91,7 +91,7 @@ class _RecordingServices:
 
 def test_settings_seed_turn_cap_and_round_cap() -> None:
     assert config.get("max_concurrent_agent_turns") == "2"
-    assert config.get("channel_response_round_cap") == "4"
+    assert config.get("channel_response_round_cap") == "64"
     assert "speak or pass" in AUDIENCE_SOFT_JUDGMENT
     assert "do not post a chat message" in AUDIENCE_SOFT_JUDGMENT
     assert "@" not in AUDIENCE_SOFT_JUDGMENT
@@ -305,7 +305,7 @@ def test_mid_round_mention_waits_for_the_next_round() -> None:
     assert nxt["agent_id"] == order_before[1]
 
 
-def test_step_out_is_sticky_until_mentioned_and_cap_stops_at_four() -> None:
+def test_step_out_returns_on_mention_and_fallback_does_not_wake_everyone() -> None:
     jim, laura, _ada, channel = _trio()
     # Two-member snapshot: drop Ada by excluding her.
     message = _message(channel.id, "Where are we?")
@@ -357,27 +357,21 @@ def test_step_out_is_sticky_until_mentioned_and_cap_stops_at_four() -> None:
         content="Round 2",
     )
 
-    # Keep both speaking until the cap. Round 2 is already open.
-    seen_indexes = {1, 2}
+    # Round 2 is the @ return. Further speaks do not wake the room.
+    # The round cap is not what stops this snapshot.
     wake = progress["trigger_requests"][0]
-    for _ in range(12):
-        round_id = wake["payload"]["round_id"]
-        agent_id = wake["agent_id"]
-        db.mark_channel_candidate_responded(round_id=round_id, agent_id=agent_id)
-        trigger = dict(base)
-        trigger.update(wake["payload"])
-        progress = advance_channel_round(trigger, spoke=True, speaker_id=agent_id, spoken_text="Still here.")
-        if not progress["trigger_requests"]:
-            break
-        wake = progress["trigger_requests"][0]
-        seen_indexes.add(int(wake["payload"]["round_index"]))
-    assert seen_indexes == {1, 2, 3, 4}
+    round_id = wake["payload"]["round_id"]
+    agent_id = wake["agent_id"]
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=agent_id)
+    trigger = dict(base)
+    trigger.update(wake["payload"])
+    progress = advance_channel_round(trigger, spoke=True, speaker_id=agent_id, spoken_text="Still here.")
     assert progress["trigger_requests"] == []
     indexes = []
     for row in db.list_channel_response_rounds(channel.id):
         if row.source_message_id == message.id:
             indexes.append(channel_round_db.get_channel_round_meta(row.id)["round_index"])
-    assert sorted(indexes) == [1, 2, 3, 4]
+    assert sorted(indexes) == [1, 2]
 
 
 @pytest.mark.asyncio

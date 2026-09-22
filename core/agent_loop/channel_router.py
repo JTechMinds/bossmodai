@@ -208,6 +208,7 @@ def build_router_messages(
         f"makes speak longer than {ROUTER_SPEAK_CAP}. "
         "Do not add anyone else past that cap once pending @ ids are included. "
         'Every other member id must appear in "stay_out". '
+        'An empty "speak" array is valid and ends the snapshot. '
         "Do not add keys or ids."
     )
     return [
