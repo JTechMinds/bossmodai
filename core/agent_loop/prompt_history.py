@@ -7,6 +7,7 @@ from typing import Any
 
 import db
 from core.agent_loop.chat_fade import apply_channel_chat_fade, consider_channel_chat_fade
+from core.agent_loop.sticky_slots import compose_channel_sticky_slots, compose_task_sticky_slots
 from core.agent_loop.task_thread_history import load_task_thread_history
 from core.llm.client import count_tokens
 from core.models import Agent, Notification
@@ -54,7 +55,14 @@ def _load_conversation_history(
             limit=fetch_limit,
             earliest_ts=policy.earliest_ts_allowed,
         )
-        return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+        return _finish_history(
+            thread,
+            agent.id,
+            policy,
+            token_model=token_model,
+            scope_kind="task",
+            scope_id=str(trigger["task_id"]),
+        )
 
     if trigger_type in {"task_assigned", "task_follow_up", "task_update"} and trigger.get("task_id"):
         thread = load_task_thread_history(
@@ -64,7 +72,14 @@ def _load_conversation_history(
             exclude_source_message_id=trigger.get("source_message_id"),
             exclude_source_task_event_id=trigger.get("source_task_event_id"),
         )
-        return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+        return _finish_history(
+            thread,
+            agent.id,
+            policy,
+            token_model=token_model,
+            scope_kind="task",
+            scope_id=str(trigger["task_id"]),
+        )
 
     if trigger_type in ("human_chat", "watchdog_status_ping"):
         thread = db.get_human_chat_thread(
@@ -75,7 +90,14 @@ def _load_conversation_history(
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
         if trigger_type == "human_chat":
             formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
-        return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
+        return _finish_history(
+            formatted,
+            agent.id,
+            policy,
+            token_model=token_model,
+            scope_kind="human",
+            scope_id=agent.id,
+        )
 
     if trigger_type == "peer_message" and trigger.get("from_agent"):
         thread = db.get_agent_direct_thread(
@@ -86,7 +108,14 @@ def _load_conversation_history(
         )
         formatted = db.get_formatted_messages(thread, human_label="Human Operator")
         formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
-        return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
+        return _finish_history(
+            formatted,
+            agent.id,
+            policy,
+            token_model=token_model,
+            scope_kind="peer",
+            scope_id=f"{agent.id}:{trigger['from_agent']}",
+        )
 
     if trigger_type in {"channel_message", "channel_response"}:
         channel_id = trigger.get("channel_id")
@@ -95,16 +124,23 @@ def _load_conversation_history(
                 channel_id,
                 limit=fetch_limit,
             )
-            thread = _exclude_source_message(thread, trigger.get("source_message_id"))
-            thread = apply_channel_chat_fade(str(channel_id), thread, policy)
+            verbatim = _exclude_source_message(thread, trigger.get("source_message_id"))
+            faded = apply_channel_chat_fade(str(channel_id), verbatim, policy)
             consider_channel_chat_fade(
                 str(channel_id),
-                thread,
+                faded,
                 policy,
                 agent_id=agent.id,
                 token_model=token_model,
             )
-            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            windowed = _apply_policy_window(faded, agent.id, policy, token_model=token_model)
+            return compose_channel_sticky_slots(
+                verbatim=verbatim,
+                visible=windowed,
+                policy=policy,
+                agent_id=agent.id,
+                token_model=token_model,
+            )
 
     if trigger_type in {"session_message", "session_response"}:
         session_id = trigger.get("session_id")
@@ -114,7 +150,14 @@ def _load_conversation_history(
                 limit=fetch_limit,
             )
             thread = _exclude_source_message(thread, trigger.get("source_message_id"))
-            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            return _finish_history(
+                thread,
+                agent.id,
+                policy,
+                token_model=token_model,
+                scope_kind="meeting",
+                scope_id=str(session_id),
+            )
 
     if trigger_type == "activity_resumed":
         active = db.get_active_activity(agent.id)
@@ -125,7 +168,14 @@ def _load_conversation_history(
                     session.id,
                     limit=fetch_limit,
                 )
-                return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+                return _finish_history(
+                    thread,
+                    agent.id,
+                    policy,
+                    token_model=token_model,
+                    scope_kind="meeting",
+                    scope_id=session.id,
+                )
         if active and active.kind == "conversation":
             thread = db.get_human_chat_thread(
                 agent.id,
@@ -133,7 +183,14 @@ def _load_conversation_history(
                 earliest_ts=policy.earliest_ts_allowed,
             )
             formatted = db.get_formatted_messages(thread, human_label="Human Operator")
-            return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
+            return _finish_history(
+                formatted,
+                agent.id,
+                policy,
+                token_model=token_model,
+                scope_kind="human",
+                scope_id=agent.id,
+            )
 
     if trigger_type in {"host_path_consent_resolved", "cli_approval_resolved"}:
         return _load_consent_or_approval_history(
@@ -169,7 +226,14 @@ def _load_consent_or_approval_history(
             earliest_ts=policy.earliest_ts_allowed,
         )
         if thread:
-            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            return _finish_history(
+                thread,
+                agent.id,
+                policy,
+                token_model=token_model,
+                scope_kind="task",
+                scope_id=str(task_id),
+            )
 
     channel_id = trigger.get("channel_id")
     if isinstance(channel_id, str) and channel_id.strip():
@@ -178,7 +242,14 @@ def _load_consent_or_approval_history(
             limit=fetch_limit,
         )
         if thread:
-            return _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            windowed = _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            return compose_channel_sticky_slots(
+                verbatim=thread,
+                visible=windowed,
+                policy=policy,
+                agent_id=agent.id,
+                token_model=token_model,
+            )
 
     thread = db.get_human_chat_thread(
         agent.id,
@@ -186,7 +257,14 @@ def _load_consent_or_approval_history(
         earliest_ts=policy.earliest_ts_allowed,
     )
     formatted = db.get_formatted_messages(thread, human_label="Human Operator")
-    return _apply_policy_window(formatted, agent.id, policy, token_model=token_model)
+    return _finish_history(
+        formatted,
+        agent.id,
+        policy,
+        token_model=token_model,
+        scope_kind="human",
+        scope_id=agent.id,
+    )
 
 
 def _exclude_source_message(messages: list[dict[str, Any]], source_message_id: Any) -> list[dict[str, Any]]:
@@ -205,6 +283,35 @@ def _load_prompt_notifications(agent_id: str, policy: Any) -> list[Notification]
     )
     rows.reverse()
     return rows
+
+
+def _finish_history(
+    messages: list[dict[str, Any]],
+    agent_id: str,
+    policy: Any,
+    *,
+    token_model: str | None,
+    scope_kind: str,
+    scope_id: str,
+    verbatim: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Apply the warm window. Task threads then receive task-side slots.
+
+    Other scopes stay on the warm window. Channel history composes slots
+    after chat fade in the channel branch, and only for turns that already
+    carry a task id.
+    """
+    windowed = _apply_policy_window(messages, agent_id, policy, token_model=token_model)
+    if scope_kind != "task" or not str(scope_id).strip():
+        return windowed
+    return compose_task_sticky_slots(
+        task_id=str(scope_id),
+        verbatim=verbatim if verbatim is not None else messages,
+        visible=windowed,
+        policy=policy,
+        agent_id=agent_id,
+        token_model=token_model,
+    )
 
 
 def _apply_policy_window(

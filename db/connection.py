@@ -195,6 +195,7 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply additive column migrations for existing databases."""
+    _ensure_source_keyed_sticky_slots(con)
     _create_task_events_table_if_missing(con)
     _ensure_agent_state_status_values(con)
     _ensure_task_status_values(con)
@@ -315,6 +316,32 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "cli_approval_requests", "review_note", "TEXT",
     )
     _backfill_task_closed_at(con)
+
+
+def _ensure_source_keyed_sticky_slots(con: SQLiteCompatConnection) -> None:
+    """Replace a conversation-scoped pocket with source-keyed task slots.
+
+    The earlier shape stored one row per chat scope. Slots are keyed by
+    an existing task, owner, verdict path, or blocker id. A database that
+    already has that key is left untouched, so open rows are not wiped.
+    """
+    result = con.execute("PRAGMA table_info(sticky_slots)")
+    columns = {row[1] for row in result.fetchall()}
+    if "source_id" in columns and "slot_kind" in columns:
+        return
+    con.execute("DROP TABLE IF EXISTS sticky_slots")
+    con.execute(
+        """
+        CREATE TABLE sticky_slots (
+            source_id   VARCHAR NOT NULL,
+            slot_kind   VARCHAR NOT NULL
+                            CHECK (slot_kind IN ('plan', 'next_owner', 'verdict_path', 'blockers')),
+            body        TEXT NOT NULL,
+            updated_at  TIMESTAMP DEFAULT current_timestamp,
+            PRIMARY KEY (source_id, slot_kind)
+        )
+        """
+    )
 
 
 def _add_column_if_missing(
