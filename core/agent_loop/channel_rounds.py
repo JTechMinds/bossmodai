@@ -783,7 +783,11 @@ def _post_round_marker(
     source_id: str,
     round_index: int,
 ) -> dict[str, Any] | None:
-    """One system line so later wakes can see the round boundary. Not a pass."""
+    """One system line so later wakes can see the round boundary. Not a pass.
+
+    Posted for agent prompt history and diagnostics. The operator transcript
+    filters `channel_round_marker` and does not paint "Round N".
+    """
     if round_index <= 1 or not source_id:
         return None
     content = f"Round {round_index}"
