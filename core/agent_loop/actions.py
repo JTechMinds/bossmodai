@@ -192,7 +192,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 'execution turns require a compact "act"; say-only / empty actions is for operator chat'
             )
         raise ValueError('missing "act"')
-    extra_root = set(payload) - {"act", "data", "th"}
+    extra_root = set(payload) - {"act", "data", "th", "next_owners"}
     if extra_root:
         raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
 
@@ -212,9 +212,12 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(action_code, str) or action_code not in _MODEL_ACTION_TO_NAME:
         raise ValueError('invalid "act"')
 
+    from core.agent_loop.parse_steer import parse_next_owner_ids
+
     normalized: dict[str, Any] = {
         "action": _MODEL_ACTION_TO_NAME[action_code],
         "thought": payload.get("th", ""),
+        "nextOwners": parse_next_owner_ids(payload.get("next_owners")),
     }
     task = extra.get("task") or {}
     if task in ("", None):

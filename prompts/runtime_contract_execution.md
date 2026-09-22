@@ -103,6 +103,8 @@ CLI NOTES:
   - do not invent that the desk cannot shell; do not park @Operator as the test runner or shell enabler
 {{end}}
 
+Optional top-level "next_owners": ["agent-id", ...] names who should act next. Ids only. An @ in the message is not required.
+
 EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
   {"act":"request_host_access","data":{"path":"/home/you/app.py","why":"Need to review the named host file"},"th":"open host-path consent"}

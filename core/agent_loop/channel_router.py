@@ -11,11 +11,16 @@ between the lists, or a non-list rejects the payload. The caller then
 uses the existing drain order and each member gets a normal soft-judge
 turn.
 
-``ROUTER_SPEAK_CAP`` (default 2) is the maximum extra fan-out. Human @
-mentions, and any other ids the caller marks as required, stay first and
-are never removed to meet the cap. When those required ids already fill
-the cap, no further id is taken from ``speak``. Ids the model omits are
+``ROUTER_SPEAK_CAP`` (default 2) is the maximum extra fan-out. Operator
+@ ids, and any other ids the caller marks as required (structured
+``next_owners``, Board next-card owners), stay first and are never
+removed to meet the cap. When those required ids already fill the cap,
+no further id is taken from ``speak``. Ids the model omits are
 stay_out. Stay-out members are an engine pass: no identity-model turn.
+
+A Done/handoff route whose parsed ``speak`` is empty, and which has no
+required pin, gets one repair completion ("who speaks next?") and then
+stops. It does not fall back to drain order and it does not invent an @.
 """
 
 from __future__ import annotations
@@ -41,6 +46,8 @@ _STICKY_CHARS = 400
 _PREF_CHARS = 80
 _OPENING_CHARS = 160
 _PREFS_IN_STICKY = 3
+# One hire-role line on the member roster. Not a bio, prompt, or note body.
+_ROLE_BLURB_CHARS = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,13 +74,20 @@ def plan_channel_route(
     pending_mention_ids: list[str],
     forced_ids: list[str],
     opening_message: str = "",
+    handoff: bool = False,
+    sticky_note: str = "",
 ) -> RoundPlan:
     """Return a system plan, or the drain order when System AI cannot route.
 
     ``fallback_order`` is the #124 member order and the only legal id set.
     ``forced_ids`` and ``pending_mention_ids`` are required. They stay at
     the front of ``speak`` in that order and are stored on ``pinned``.
-    Human @ mentions are passed there so the router cannot drop them.
+    Operator @ ids and other hard pins are passed there so the router
+    cannot drop them.
+
+    ``handoff`` is a Done/handoff round. An empty parsed speak with no
+    pin gets one repair. A still-empty speak is a system hard stop, not
+    the drain order.
     """
     universe = _unique(fallback_order)
     allowed = set(universe)
@@ -91,20 +105,24 @@ def plan_channel_route(
     except Exception:
         logger.warning("channel router skipped sticky context")
         sticky = ""
-    raw = complete_text(
-        build_router_messages(
-            members=roster,
-            latest_message=latest_message,
-            pending_mention_ids=pinned,
-            sticky=sticky,
-        )
+    note = (sticky_note or "").strip()
+    if note:
+        sticky = _clip("\n".join(part for part in (sticky, note) if part), _STICKY_CHARS)
+    messages = build_router_messages(
+        members=roster,
+        latest_message=latest_message,
+        pending_mention_ids=pinned,
+        sticky=sticky,
     )
+    raw = complete_text(messages)
     if raw is None:
         return fallback
     parsed = parse_router_payload(raw, universe)
     if parsed is None:
         logger.info("channel router rejected payload; using drain order")
         return fallback
+    if handoff and not parsed[0] and not pinned:
+        parsed = _repair_empty_handoff_speak(messages, universe) or parsed
     named = tuple(parsed[0])
     speak, stay_out = finalize_router_lists(
         universe,
@@ -173,6 +191,55 @@ def finalize_router_lists(
     return chosen, stay_out
 
 
+def _repair_empty_handoff_speak(
+    messages: list[dict[str, str]],
+    member_ids: list[str],
+) -> tuple[list[str], list[str]] | None:
+    """One "who speaks next?" repair. None keeps the empty speak (hard stop).
+
+    A bad repair payload does not fall through to drain order. Only a
+    parsed non-empty speak replaces the empty list.
+    """
+    repair = [dict(item) for item in messages]
+    if repair:
+        repair[-1] = {
+            "role": repair[-1].get("role") or "user",
+            "content": (repair[-1].get("content") or "") + "\n\nWho speaks next?",
+        }
+    raw = complete_text(repair)
+    if raw is None:
+        return None
+    parsed = parse_router_payload(raw, member_ids)
+    if parsed is None or not parsed[0]:
+        return None
+    return parsed
+
+
+def role_blurb(text: str | None) -> str:
+    """Return the first line of a hire summary, clipped.
+
+    Later paragraphs, prompt text, and note bodies are not part of this
+    line. Empty input stays empty so the member row keeps ``id | name | specialty``.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    first = raw.splitlines()[0]
+    return _clip(" ".join(first.split()), _ROLE_BLURB_CHARS)
+
+
+def format_member_line(member: dict[str, str]) -> str:
+    """``id | name | specialty``, plus `` — blurb`` when a hire summary exists."""
+    agent_id = str(member.get("id") or "").strip()
+    name = str(member.get("name") or "").strip() or agent_id
+    specialty = str(member.get("role") or "").strip() or "unspecified"
+    line = f"{agent_id} | {name} | {specialty}"
+    blurb = role_blurb(member.get("description") or member.get("blurb"))
+    if blurb:
+        return f"{line} — {blurb}"
+    return line
+
+
 def build_router_messages(
     *,
     members: list[dict[str, str]],
@@ -180,16 +247,13 @@ def build_router_messages(
     pending_mention_ids: list[str],
     sticky: str,
 ) -> list[dict[str, str]]:
-    """Build the short route prompt. Specialties are hire roles, not bios."""
+    """Build the short route prompt. Specialties and one role line, not bios."""
     by_id = {str(member.get("id") or ""): member for member in members}
     member_lines = []
     for member in members:
-        agent_id = str(member.get("id") or "").strip()
-        if not agent_id:
+        if not str(member.get("id") or "").strip():
             continue
-        name = str(member.get("name") or "").strip() or agent_id
-        specialty = str(member.get("role") or "").strip() or "unspecified"
-        member_lines.append(f"{agent_id} | {name} | {specialty}")
+        member_lines.append(format_member_line(member))
     pending_lines = []
     for agent_id in pending_mention_ids:
         member = by_id.get(agent_id) or {}
@@ -212,16 +276,22 @@ def build_router_messages(
         ]
     )
     system = (
-        "You route one channel round. Reply with one JSON object and no other text. "
+        "You choose who should wake for this channel round from intent, not wording. "
+        "Read the latest message and sticky context: who is being handed work, who "
+        "must answer, who is only being discussed. Prefer Board/task next owners when "
+        "the sticky implies them. Do not wake people merely because their name appears "
+        "in prose. Use the one-line role blurb to match the work to who owns it. "
+        "Operator @ ids (pending) are already required — keep them first. "
+        "Reply with only one JSON object and no other text. "
         'The only keys are "speak" and "stay_out". '
         "Each value is an array of member ids from the list below. "
+        "Every member id appears in exactly one list. "
         'Order in "speak" is the order they should talk. '
-        f'Put at most {ROUTER_SPEAK_CAP} ids in "speak" after the pending @ ids. '
+        f"speak is ordered and short (at most {ROUTER_SPEAK_CAP} ids after the pending @ ids). "
         "Pending @ ids are required in speak and must come first, even when that "
         f"makes speak longer than {ROUTER_SPEAK_CAP}. "
         "Do not add anyone else past that cap once pending @ ids are included. "
-        'Every other member id must appear in "stay_out". '
-        'An empty "speak" array is valid and ends the snapshot. '
+        "An empty speak array ends the snapshot only when no one needs to act next. "
         "Do not add keys or ids."
     )
     return [

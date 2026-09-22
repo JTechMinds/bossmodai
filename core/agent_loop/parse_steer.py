@@ -33,8 +33,9 @@ INVALID_DECISION_STEER = (
 )
 
 # Existing compact keys plus the product aliases. Unknown keys stay fail-closed.
-_COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th"})
-_ENVELOPE_KEYS = frozenset({"say", "actions"})
+# ``next_owners`` is the structured handoff pin. It is not a second protocol.
+_COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th", "next_owners"})
+_ENVELOPE_KEYS = frozenset({"say", "actions", "next_owners"})
 _COMPACT_ROOT_KEYS = _COMPACT_ACTION_KEYS | _ENVELOPE_KEYS
 _CONVERSATION_ACTS = frozenset(
     {"reply", "observe", "accept", "clarify", "cancel", "decline", "defer"}
@@ -157,6 +158,29 @@ def parse_failed_payload(
     return payload
 
 
+def parse_next_owner_ids(value: Any) -> list[str]:
+    """Return ordered unique agent ids from ``next_owners``.
+
+    Omitted or null is an empty list. A non-list, or a blank item, is
+    fail-closed. Duplicates collapse. This does not read @ text.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise InvalidDecisionEnvelope('"next_owners" must be an array of ids')
+    found: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise InvalidDecisionEnvelope('"next_owners" must be an array of ids')
+        token = item.strip()
+        if token in seen:
+            continue
+        seen.add(token)
+        found.append(token)
+    return found
+
+
 def resolve_operator_chat(payload: dict[str, Any]) -> str | None:
     """Return ``say`` / ``msg`` chat text, or None when absent."""
     return _resolve_chat_alias(payload.get("say"), payload.get("msg"))
@@ -176,6 +200,7 @@ def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     chat = _resolve_chat_alias(payload.get("say"), payload.get("msg"))
+    owners = parse_next_owner_ids(payload.get("next_owners")) if "next_owners" in payload else None
     action_items = _coerce_actions(payload.get("actions"))
     remainder = {key: value for key, value in payload.items() if key not in _ENVELOPE_KEYS}
     if chat is not None:
@@ -184,7 +209,8 @@ def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     if action_items:
         remainder = _unwrap_single_action(remainder, action_items[0], chat)
 
-    return _fold_chat_onto_act(remainder)
+    folded = _fold_chat_onto_act(remainder)
+    return _merge_next_owners(folded, owners)
 
 
 def _coerce_actions(value: Any) -> list[Any] | None:
@@ -273,6 +299,22 @@ def _fold_chat_onto_act(payload: dict[str, Any]) -> dict[str, Any]:
         folded.pop("commit", None)
         return folded
     return payload
+
+
+def _merge_next_owners(payload: dict[str, Any], owners: list[str] | None) -> dict[str, Any]:
+    """Keep one ``next_owners`` list. Envelope and action must agree."""
+    if owners is None:
+        return payload
+    if "next_owners" in payload:
+        inner = parse_next_owner_ids(payload.get("next_owners"))
+        if inner != owners:
+            raise InvalidDecisionEnvelope(
+                '"next_owners" must match when set on both the envelope and the action'
+            )
+        return payload
+    merged = dict(payload)
+    merged["next_owners"] = owners
+    return merged
 
 
 def _strip_fences(raw_response: str) -> str:

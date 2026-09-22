@@ -155,6 +155,58 @@ def _build_delegated_board(agent_id: str) -> dict[str, Any]:
     }
 
 
+def next_board_owner_id(task: Any, *, author_id: str | None = None) -> str | None:
+    """Return who should wake for the next open card after ``task``.
+
+    A later open sibling comes first. Otherwise the next open card on the
+    same channel, in created order. The assignee is that owner. There is
+    no chat-text match.
+    """
+    if task is None:
+        return None
+    author = (author_id or "").strip()
+    parent_id = str(getattr(task, "parent_task_id", None) or "").strip()
+    channel_id = str(getattr(task, "notification_channel_id", None) or "").strip()
+    if parent_id:
+        owner = _later_card_owner(task, author_id=author, parent_task_id=parent_id)
+        if owner:
+            return owner
+    if not channel_id:
+        return None
+    return _later_card_owner(task, author_id=author, notification_channel_id=channel_id)
+
+
+def _later_card_owner(
+    task: Any,
+    *,
+    author_id: str,
+    parent_task_id: str | None = None,
+    notification_channel_id: str | None = None,
+) -> str | None:
+    """First open card strictly after ``task`` in this pool, skipping the author."""
+    rows: list[Task] = []
+    seen: set[str] = set()
+    for status in OPEN_TASK_STATUSES:
+        for item in db.list_tasks(
+            parent_task_id=parent_task_id,
+            notification_channel_id=notification_channel_id,
+            status=status,
+        ):
+            if item.id in seen:
+                continue
+            seen.add(item.id)
+            rows.append(item)
+    rows.sort(key=lambda item: (item.created_at, item.id))
+    for item in rows:
+        if item.id == task.id or item.created_at < task.created_at:
+            continue
+        owner = str(item.assigned_to or "").strip() or str(item.owner_id or "").strip()
+        if not owner or owner == author_id or owner == HUMAN_SENDER_ID:
+            continue
+        return owner
+    return None
+
+
 def _current_task(agent_id: str) -> Task | None:
     active_task_id = activity_runtime.get_active_task_id(agent_id)
     if not active_task_id:
