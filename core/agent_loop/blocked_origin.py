@@ -471,6 +471,165 @@ def _first_next_owner_name(
     return None
 
 
+# Shown to System AI when the tagged next owner answers a Blocked line.
+# That reply is new work. It is not the settled no-op empty speak.
+BLOCKED_REPLY_WORK = (
+    "Reply to a Blocked line from the tagged next owner. "
+    "Wake the blocked agent. This is new work, not a settled no-op."
+)
+
+_BLOCKED_MARKER = "blocked —"
+
+
+def reply_is_real_work(text: str | None) -> bool:
+    """Return True for a question or work reply, not an ack, pass, or status mirror."""
+    from core.agent_loop.channel_host import is_ack_phrase
+    from core.agent_loop.channel_round_plan import is_pass_reply
+    from core.agent_loop.next_owner import is_pure_reaction, is_system_one_liner
+
+    blob = " ".join((text or "").split())
+    if not blob:
+        return False
+    if is_ack_phrase(blob) or is_pass_reply(blob) or is_pure_reaction(blob):
+        return False
+    if is_system_one_liner(blob):
+        return False
+    return True
+
+
+def blocked_reply_reopen_id(
+    *,
+    channel_id: str,
+    reply: str,
+    replier_agent_id: str | None = None,
+    replier_name: str | None = None,
+    replier_is_human: bool = False,
+    blocked_line: str | None = None,
+    blocked_agent_id: str | None = None,
+    skip_message_id: str | None = None,
+) -> str | None:
+    """Return the blocked agent to hard-wake when the tagged owner replies.
+
+    ``blocked_line`` is the round opening when this reply is inside that
+    round. Otherwise the immediately previous channel line is used. A
+    settled essay that is not that reply returns None so it can stay out.
+    """
+    if not reply_is_real_work(reply):
+        return None
+    line = (blocked_line or "").strip()
+    known = (blocked_agent_id or "").strip()
+    if line:
+        if not _is_blocked_origin_line(line) or not _line_tags_replier(
+            line,
+            channel_id,
+            agent_id=replier_agent_id,
+            name=replier_name,
+            is_human=replier_is_human,
+        ):
+            return None
+    else:
+        found, prefixed = _previous_blocked_line(channel_id, skip_message_id=skip_message_id)
+        if not found or not _line_tags_replier(
+            found,
+            channel_id,
+            agent_id=replier_agent_id,
+            name=replier_name,
+            is_human=replier_is_human,
+        ):
+            return None
+        line = found
+        known = known or prefixed
+    target = known or _blocked_agent_from_line(line, channel_id) or ""
+    replier = (replier_agent_id or "").strip()
+    if not target or target == replier:
+        target = _blocked_agent_from_line(line, channel_id) or ""
+    if not target or target == replier:
+        return None
+    members = {
+        str(member.get("id") or "")
+        for member in db.list_channel_member_details(channel_id)
+    }
+    if target not in members:
+        return None
+    return target
+
+
+def _is_blocked_origin_line(text: str) -> bool:
+    body = (text or "").strip()
+    lowered = body.lower()
+    index = lowered.find(_BLOCKED_MARKER)
+    if index < 0:
+        return False
+    return "@" in body[index:]
+
+
+def _line_tags_replier(
+    text: str,
+    channel_id: str,
+    *,
+    agent_id: str | None,
+    name: str | None,
+    is_human: bool,
+) -> bool:
+    mentions = extract_next_owner_mentions(
+        text,
+        member_names=mention_names_for_channel(channel_id),
+    )
+    if is_human:
+        human = {item.lower() for item in HUMAN_MENTION_NAMES}
+        return any(mention.strip().lower() in human for mention in mentions)
+    agent = db.get_agent(agent_id) if agent_id else None
+    needle = ((agent.name if agent is not None else None) or name or "").strip().lower()
+    if not needle:
+        return False
+    return any(mention.strip().lower() == needle for mention in mentions)
+
+
+def _blocked_agent_from_line(text: str, channel_id: str) -> str | None:
+    body = (text or "").strip()
+    lowered = body.lower()
+    index = lowered.find(_BLOCKED_MARKER)
+    if index <= 0:
+        return None
+    name = body[:index].strip()
+    if not name:
+        return None
+    return _member_id_by_name(channel_id, name)
+
+
+def _member_id_by_name(channel_id: str, name: str) -> str | None:
+    needle = (name or "").strip().lower()
+    if not needle:
+        return None
+    for member in db.list_channel_member_details(channel_id):
+        if str(member.get("name") or "").strip().lower() == needle and member.get("id"):
+            return str(member["id"])
+    return None
+
+
+def _previous_blocked_line(
+    channel_id: str,
+    *,
+    skip_message_id: str | None,
+) -> tuple[str, str]:
+    """Return the immediately previous blocked line and its named agent, if any."""
+    skip = (skip_message_id or "").strip()
+    for row in reversed(db.list_channel_messages(channel_id, limit=12)):
+        if skip and str(getattr(row, "id", "") or "") == skip:
+            continue
+        if str(getattr(row, "author_type", "") or "") == "system" and (
+            getattr(row, "notification_kind", None) or ""
+        ) == "channel_round_marker":
+            continue
+        text = (getattr(row, "content", None) or "").strip()
+        if not text:
+            continue
+        if _is_blocked_origin_line(text):
+            return text, _blocked_agent_from_line(text, channel_id) or ""
+        return "", ""
+    return "", ""
+
+
 def _channel_id(trigger: dict[str, Any] | None) -> str | None:
     if not isinstance(trigger, dict):
         return None

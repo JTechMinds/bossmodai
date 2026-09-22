@@ -74,6 +74,7 @@ def _cli_action_result(
 ) -> dict[str, Any]:
     """Map a CLI / host-access result onto the execution-turn payload."""
     from core.agent_loop.blocked_origin import surface_cli_gate_block
+    from core.agent_loop.liveness import cli_result_counts_as_progress
     from core.models.host_path_consent import consent_turn_event
 
     result = {
@@ -81,6 +82,7 @@ def _cli_action_result(
         "detail": cli_result.detail,
         "agent_name": agent.name,
         "cli_prompt_content": cli_result.prompt_content,
+        "counts_as_progress": cli_result_counts_as_progress(cli_result),
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": not (
             cli_result.approval_required or cli_result.consent_required

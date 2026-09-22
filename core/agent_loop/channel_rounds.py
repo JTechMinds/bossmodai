@@ -124,7 +124,25 @@ def start_channel_peer_round(
     operator_pins = mention_ids_in_order(content, members) if author_type == "human" else []
     member_ids = {member["id"] for member in members}
     board_ids = [agent_id for agent_id in (board_owner_ids or []) if agent_id in member_ids]
-    pins = _merge_ids(operator_pins, list(required_ids or []), board_ids, allowed=member_ids)
+    reopen_id = ""
+    if author_type != "system":
+        reopen_id = _blocked_reply_reopen_id(
+            channel_id=channel_id,
+            reply=content,
+            replier_agent_id=from_agent if author_type == "agent" else None,
+            replier_name=from_name,
+            replier_is_human=author_type == "human",
+            skip_message_id=message_id,
+        ) or ""
+    # Operator @ stays first. A Blocked-line reply then hard-wakes the blocked
+    # agent. A settled no-op has no reopen id and is not pinned here.
+    pins = _merge_ids(
+        operator_pins,
+        [reopen_id] if reopen_id else [],
+        list(required_ids or []),
+        board_ids,
+        allowed=member_ids,
+    )
     lead_id = _lead_id(channel, [member["id"] for member in members])
     ordered_ids = order_round_members(
         [member["id"] for member in members],
@@ -134,6 +152,11 @@ def start_channel_peer_round(
     )
     if not ordered_ids:
         return []
+    sticky = _board_sticky(members, board_ids)
+    if reopen_id:
+        from core.agent_loop.blocked_origin import BLOCKED_REPLY_WORK
+
+        sticky = "\n".join(part for part in (sticky, BLOCKED_REPLY_WORK) if part)
     plan = _plan_for_members(
         mode=mode,
         members=members,
@@ -142,7 +165,7 @@ def start_channel_peer_round(
         required_ids=pins,
         handoff=handoff,
         agent_line=author_type == "agent",
-        sticky_note=_board_sticky(members, board_ids),
+        sticky_note=sticky,
     )
 
     round_record = db.create_channel_response_round(
@@ -155,6 +178,8 @@ def start_channel_peer_round(
         if mode == DISPATCH_ROUNDS
         else []
     )
+    if reopen_id and reopen_id in set(speak_ids):
+        _resume_blocked_agent(reopen_id)
     channel_round_db.set_channel_round_meta(
         round_record.id,
         round_index=1,
@@ -390,6 +415,7 @@ def advance_channel_round(
         meta=channel_round_db.get_channel_round_meta(round_id),
         participants=[candidate.agent_id for candidate in candidates],
         agent_speak=spoken if spoke else "",
+        speaker_id=speaker if spoke else "",
     )
     if progress.pop("keep_stay", False) and stay_before is not None:
         restore_stay(channel_id, stay_before)
@@ -742,6 +768,7 @@ def _open_follow_up_round(
     meta: dict[str, Any],
     participants: list[str],
     agent_speak: str = "",
+    speaker_id: str = "",
 ) -> dict[str, Any]:
     """Open the next round only for who should speak. Empty speak is a hard stop.
 
@@ -755,6 +782,9 @@ def _open_follow_up_round(
     echo, or a no-op is an empty speak. Peer @ on that line is not a pin
     and is not written back into the wake list. Operator pins stay on the
     plan. That empty stop does not clear pass streaks or demotion.
+
+    A real reply to the Blocked line that opened this round is not that
+    no-op. The blocked agent is a hard wake after any operator @.
     """
     empty: dict[str, Any] = {"trigger_requests": []}
     index = int(meta.get("round_index") or 1)
@@ -772,11 +802,21 @@ def _open_follow_up_round(
     stepped = set(meta.get("stepped_out") or [])
     member_ids = [member["id"] for member in _ordered_members(channel_id, set())]
     member_set = set(member_ids)
+    reopen_id = ""
+    if (agent_speak or "").strip() and (speaker_id or "").strip():
+        reopen_id = _blocked_reply_reopen_id(
+            channel_id=channel_id,
+            reply=agent_speak,
+            replier_agent_id=speaker_id,
+            blocked_line=str(trigger.get("content") or ""),
+            blocked_agent_id=str(trigger.get("from_agent") or ""),
+        ) or ""
     # The previous round's roster, plus anyone this round @mentioned.
     # System AI may speak a member who passed once. Someone never in the
-    # snapshot stays out until they are mentioned.
+    # snapshot stays out until they are mentioned. The blocked agent is
+    # the exception: a real reply to their Blocked line puts them back in.
     pool: list[str] = []
-    for agent_id in list(participants) + list(mention_ids):
+    for agent_id in list(participants) + list(mention_ids) + ([reopen_id] if reopen_id else []):
         if agent_id in member_set and agent_id not in pool:
             pool.append(agent_id)
     if not pool:
@@ -815,7 +855,15 @@ def _open_follow_up_round(
     # Peer @ is context for an agent line. It is not a hard pin. Fallback
     # with no system route still wakes the @ ids it already required.
     route_required = operator_pins if agent_line else fallback_required
+    if reopen_id:
+        # After operator @, before any peer @ the settled path refuses to pin.
+        route_required = _merge_ids(operator_pins, [reopen_id], route_required, allowed=set(ordered))
     roster = _members_in_order(channel_id, ordered)
+    sticky = ""
+    if reopen_id:
+        from core.agent_loop.blocked_origin import BLOCKED_REPLY_WORK
+
+        sticky = BLOCKED_REPLY_WORK
     plan = _plan_for_members(
         mode=DISPATCH_ROUNDS,
         members=roster,
@@ -824,16 +872,23 @@ def _open_follow_up_round(
         required_ids=route_required,
         opening_message=str(trigger.get("content") or ""),
         agent_line=agent_line,
+        sticky_note=sticky,
     )
-    if plan.mode == "system" and not plan.named_speak:
+    hard_wake = bool(reopen_id and reopen_id in set(plan.pinned))
+    if plan.mode == "system" and not plan.named_speak and not hard_wake:
         if agent_line:
             return {"trigger_requests": [], "keep_stay": True}
         return empty
     if plan.mode == "system" and agent_line:
         # plan.speak already has operator pins first and anyone the model
-        # named. Do not insert a peer @ the model left out.
-        shape_mentions = []
-        shape_required = operator_pins
+        # named. Do not insert a peer @ the model left out. The blocked
+        # agent stays after those operator pins.
+        if hard_wake:
+            shape_mentions = list(operator_pins) + [reopen_id]
+            shape_required = _merge_ids(operator_pins, [reopen_id], allowed=set(ordered))
+        else:
+            shape_mentions = []
+            shape_required = operator_pins
     else:
         shape_mentions = mention_ids
         shape_required = fallback_required
@@ -847,6 +902,8 @@ def _open_follow_up_round(
     )
     if not speak_ids:
         return empty
+    if hard_wake and reopen_id in set(speak_ids):
+        _resume_blocked_agent(reopen_id)
     blocked = set(demoted_ids(channel_id))
     stay_ids = [agent_id for agent_id in stay_ids if agent_id not in blocked]
     stepped_now = list(stepped)
@@ -952,6 +1009,19 @@ def _post_round_marker(
         "created_at": message.created_at,
         "notification_kind": message.notification_kind,
     }
+
+
+def _blocked_reply_reopen_id(**kwargs: Any) -> str | None:
+    from core.agent_loop.blocked_origin import blocked_reply_reopen_id
+
+    return blocked_reply_reopen_id(**kwargs)
+
+
+def _resume_blocked_agent(agent_id: str) -> None:
+    """Reopen Soft-block so Board shows the work again. Does not wipe it."""
+    from core.agent_loop.soft_blocks import resume_soft_blocked_work
+
+    resume_soft_blocked_work(agent_id)
 
 
 def log_channel_pass(agent: Agent, trigger: dict[str, Any], reply: str) -> None:
