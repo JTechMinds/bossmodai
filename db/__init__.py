@@ -219,6 +219,7 @@ from db.meeting_orchestration import (
     upsert_meeting_session_participant,
 )
 from db.agent_triggers import (
+    channel_peer_snapshot_is_drafting,
     claim_trigger,
     complete_agent_trigger,
     count_queued_triggers,
@@ -475,6 +476,7 @@ __all__ = [
     "update_meeting_session",
     "update_meeting_response_candidate",
     # Trigger queue
+    "channel_peer_snapshot_is_drafting",
     "claim_trigger",
     "complete_agent_trigger",
     "count_queued_triggers",

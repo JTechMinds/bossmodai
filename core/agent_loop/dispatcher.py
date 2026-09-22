@@ -597,6 +597,14 @@ class TurnDispatcher:
         A lane is acquired before the trigger is claimed, and thinking is
         broadcast only after that. No lane leaves the trigger queued and
         records ``Queued (n ahead)``. One agent still holds at most one turn.
+        A channel holds at most one live speak, even when the global knob
+        has a free lane. The next wake in that channel stays queued and is
+        painted Queued (n ahead) until the live claim ends. That claim ends
+        after the turn has posted, so the next speaker's last-N history
+        includes the post. Ahead is channel-local: one for the live speak,
+        plus each earlier waiter in that channel. Another room can still
+        take a free lane. This wait does not delete the trigger or clear
+        stay, and it does not replace an empty speak on a settled no-op.
         Repair wakes are ordered behind a live channel lead and use a lane
         from the same budget once claimed.
         """
@@ -620,10 +628,19 @@ class TurnDispatcher:
             self._note_waiting(eligible, 0)
             return None
 
-        for index, trigger in enumerate(eligible):
+        held: list[Any] = []
+        runnable: list[Any] = []
+        for trigger in eligible:
+            if _peer_snapshot_is_drafting(trigger):
+                held.append(trigger)
+            else:
+                runnable.append(trigger)
+        self._note_channel_waiters(held)
+
+        for index, trigger in enumerate(runnable):
             lane = budget.try_acquire(kind="turn", owner=trigger.agent_id)
             if lane is None:
-                self._note_waiting(eligible, index)
+                self._note_waiting(runnable, index)
                 return None
             claimed = db.claim_trigger(trigger.id)
             if claimed is None:
@@ -633,6 +650,22 @@ class TurnDispatcher:
             schedule_queue_visibility(claimed.agent_id)
             return claimed
         return None
+
+    def _note_channel_waiters(self, triggers: list[Any]) -> None:
+        """Paint same-channel peers Queued behind the one live speak.
+
+        Ahead is not the global inflight count. The live speak is one ahead.
+        Each earlier waiter in that same channel adds one more. A full knob
+        uses ``_note_waiting`` instead, so these peers are not recorded twice.
+        """
+        seen: dict[str, int] = {}
+        for trigger in triggers:
+            channel_id = _trigger_channel_id(trigger)
+            if not channel_id:
+                continue
+            slot = seen.get(channel_id, 0)
+            seen[channel_id] = slot + 1
+            self._queue_notices.append(self._queue_notice(trigger, 1 + slot))
 
     def _note_waiting(self, triggers: list[Any], start: int) -> None:
         """Record Queued (n ahead) for triggers that did not get a lane."""
@@ -922,6 +955,30 @@ class TurnDispatcher:
                 "nearby_names": [eligible_peer["name"]],
             },
         )
+
+
+def _trigger_channel_id(trigger: Any) -> str | None:
+    """Return the channel id on a queued channel peer trigger, if any."""
+    if getattr(trigger, "trigger_type", None) not in {"channel_message", "channel_response"}:
+        return None
+    try:
+        payload = json.loads(trigger.payload) if trigger.payload else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        return None
+    return _channel_id_for_presence({
+        "type": trigger.trigger_type,
+        "channel_id": payload.get("channel_id"),
+    })
+
+
+def _peer_snapshot_is_drafting(trigger: Any) -> bool:
+    """Return whether this queued channel peer must wait for the room's live speak."""
+    channel_id = _trigger_channel_id(trigger)
+    if not channel_id:
+        return False
+    return db.channel_peer_snapshot_is_drafting(channel_id)
 
 
 def _channel_id_for_presence(trigger: dict[str, Any]) -> str | None:

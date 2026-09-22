@@ -185,7 +185,8 @@ def test_empty_speak_stops_the_snapshot_and_leaves_work_wakes(monkeypatch) -> No
     progress = _finish(laura_round, laura.id, base, spoke=True, text="Agreed, and the cap is not the brake.")
     assert progress["trigger_requests"] == []
     assert _work_still_queued(jim.id)
-    assert calls["n"] == 3
+    # Follow-up empty speak gets one repair, then the snapshot stops.
+    assert calls["n"] == 4
 
 
 def test_empty_speak_stops_after_a_passed_human_mention(monkeypatch) -> None:
