@@ -13,7 +13,7 @@ from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_acti
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
 from core.agent_loop.soft_blocks import apply_no_progress_block
-from core.agent_loop.liveness import record_action_liveness
+from core.agent_loop.liveness import next_actions_since_progress, outcome_resets_no_progress, record_action_liveness
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.task_origins import consent_origin_channel_id
@@ -191,6 +191,7 @@ async def _run_execution_turn(
 
     # 4. Multi-turn loop
     action_count = 0
+    actions_since_progress = 0
     action: dict[str, Any] | None = None
     executed_actions: list[str] = []
     result: dict[str, Any] = {}
@@ -550,6 +551,10 @@ async def _run_execution_turn(
         )
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
+        actions_since_progress = next_actions_since_progress(
+            actions_since_progress,
+            progressed=outcome_resets_no_progress(action, result),
+        )
 
         # Guardian hard-stop checks (token explosion, velocity, repetition)
         violation = check_post_action(agent, action, response.content, model=response.model)
@@ -597,7 +602,9 @@ async def _run_execution_turn(
             )
 
         # Guardian no-progress: block + @ next owner, not diagnostic spam.
-        violation = check_no_progress(agent, action_count)
+        # Landed writes reset actions_since_progress, so a scaffold cannot
+        # trip this on its own.
+        violation = check_no_progress(agent, actions_since_progress)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
             result = apply_no_progress_block(agent, trigger)

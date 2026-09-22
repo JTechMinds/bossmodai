@@ -94,11 +94,9 @@ def check_no_progress(
 ) -> GuardianViolation | None:
     """No-progress detection for the multi-turn loop.
 
-    Vision doc: "agent takes more than N actions AND no new memory nodes
-    in the last 10 actions AND task status has not changed → pause."
-
-    Since memory extraction isn't implemented yet, checks action count
-    against the per-agent guardian_no_progress_threshold.
+    ``action_count`` is actions since the last real outcome (a landed
+    write, a mutating CLI, or another progress action). The caller resets
+    that streak. This only compares it with ``guardian_no_progress_threshold``.
     """
     if action_count < agent.guardian_no_progress_threshold:
         return None

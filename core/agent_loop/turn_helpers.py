@@ -256,6 +256,7 @@ def _cli_result_to_turn_result(
 ) -> dict[str, Any]:
     """Convert one BossMod CLI result into the standard turn-local action result."""
     from core.agent_loop.blocked_origin import surface_cli_gate_block
+    from core.agent_loop.liveness import cli_result_counts_as_progress
     from core.models.host_path_consent import consent_turn_event
 
     result = {
@@ -263,6 +264,7 @@ def _cli_result_to_turn_result(
         "detail": cli_result.detail,
         "agent_name": agent.name,
         "cli_prompt_content": cli_result.prompt_content,
+        "counts_as_progress": cli_result_counts_as_progress(cli_result),
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": True,
     }
