@@ -77,6 +77,9 @@ def start_channel_peer_round(
     exclude_agent_ids: set[str] | frozenset[str] | None = None,
     from_agent: str | None = None,
     channel_name: str | None = None,
+    handoff: bool = False,
+    required_ids: list[str] | None = None,
+    board_owner_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Open a new channel response round so peers can react to one message.
 
@@ -108,25 +111,29 @@ def start_channel_peer_round(
     if not members:
         return []
     mode = classify_channel_dispatch(content, members)
-    mentioned = mention_ids_in_order(content, members)
+    # Operator @ is an override pin. Agent @ in prose is not. Structured
+    # next_owners and Board next-card owners are hard pins of the same kind.
+    operator_pins = mention_ids_in_order(content, members) if author_type == "human" else []
+    member_ids = {member["id"] for member in members}
+    board_ids = [agent_id for agent_id in (board_owner_ids or []) if agent_id in member_ids]
+    pins = _merge_ids(operator_pins, list(required_ids or []), board_ids, allowed=member_ids)
     lead_id = _lead_id(channel, [member["id"] for member in members])
     ordered_ids = order_round_members(
         [member["id"] for member in members],
         lead_id=lead_id,
-        mentioned_ids=mentioned,
+        mentioned_ids=pins,
         round_index=1,
     )
     if not ordered_ids:
         return []
-    # Mentions on the message that opens the round are required. A human @
-    # is the case that must never be dropped; the same pin covers every
-    # @ on that opening message.
     plan = _plan_for_members(
         mode=mode,
         members=members,
         fallback_order=ordered_ids,
         latest_message=content,
-        required_ids=mentioned,
+        required_ids=pins,
+        handoff=handoff,
+        sticky_note=_board_sticky(members, board_ids),
     )
 
     round_record = db.create_channel_response_round(
@@ -185,6 +192,9 @@ def post_agent_channel_share(
     agent: Agent,
     content: str,
     source_channel: str = "channel",
+    handoff: bool = False,
+    required_ids: list[str] | None = None,
+    board_owner_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Persist an agent-authored channel share and open a peer response round.
 
@@ -221,6 +231,9 @@ def post_agent_channel_share(
         author_type="agent",
         exclude_agent_ids={agent.id},
         from_agent=agent.id,
+        handoff=handoff,
+        required_ids=required_ids,
+        board_owner_ids=board_owner_ids,
     )
 
 
@@ -371,6 +384,8 @@ def _plan_for_members(
     latest_message: str,
     required_ids: list[str],
     opening_message: str = "",
+    handoff: bool = False,
+    sticky_note: str = "",
 ) -> RoundPlan:
     """Route a rounds queue. Fan-out and an unset router keep the drain order."""
     if mode != DISPATCH_ROUNDS:
@@ -387,6 +402,8 @@ def _plan_for_members(
         pending_mention_ids=list(required_ids),
         forced_ids=list(required_ids),
         opening_message=opening_message,
+        handoff=handoff,
+        sticky_note=sticky_note,
     )
 
 
@@ -556,6 +573,28 @@ def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]
             }
         )
     return ordered
+
+
+def _merge_ids(*groups: list[str], allowed: set[str]) -> list[str]:
+    """Keep the first occurrence of each id that is in ``allowed``."""
+    found: list[str] = []
+    for group in groups:
+        for agent_id in group:
+            token = (agent_id or "").strip()
+            if token in allowed and token not in found:
+                found.append(token)
+    return found
+
+
+def _board_sticky(members: list[dict[str, str]], owner_ids: list[str]) -> str:
+    """One sticky line per Board next owner so the router can read the pin."""
+    by_id = {member["id"]: member for member in members}
+    lines: list[str] = []
+    for agent_id in owner_ids:
+        member = by_id.get(agent_id) or {}
+        name = str(member.get("name") or "").strip() or agent_id
+        lines.append(f"Board next: {agent_id} | {name}")
+    return "\n".join(lines)
 
 
 def _lead_id(channel: Any, member_ids: list[str]) -> str | None:

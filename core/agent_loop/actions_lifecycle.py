@@ -259,6 +259,7 @@ async def _handle_complete(
     else:
         completion_event = None
         parent = None
+    handoff = _channel_handoff_kwargs(task, action, author_id=agent.id)
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -267,6 +268,7 @@ async def _handle_complete(
         content=follow_up_message,
         attention_kind="completion_report" if parent is None else None,
         source_trigger_id=(trigger or {}).get("trigger_id"),
+        **handoff,
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -287,6 +289,7 @@ async def _handle_complete(
             reason=summary or None,
             claim=done_claim.as_dict() if done_claim is not None else None,
         )
+        _open_origin_handoff_if_quiet(result, agent=agent, task=task, action=action)
     return result
 
 
@@ -559,6 +562,12 @@ async def _handle_delegated(
     }
     if child and child.status == "pending":
         result["trigger_requests"] = [build_task_assigned_trigger(child)]
+    handoff = _channel_handoff_kwargs(
+        original_task,
+        action,
+        author_id=agent.id,
+        delegate_id=target.id,
+    )
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -567,6 +576,7 @@ async def _handle_delegated(
         content=follow_up_message,
         attention_kind="handoff",
         source_trigger_id=(trigger or {}).get("trigger_id"),
+        **handoff,
     )
     _append_task_stakeholder_reports(
         result=result,
@@ -588,6 +598,13 @@ async def _handle_delegated(
             kind="rerouted",
             reason=(follow_up_message or "").strip() or None,
             target_name=target.name,
+        )
+        _open_origin_handoff_if_quiet(
+            result,
+            agent=agent,
+            task=original_task,
+            action=action,
+            delegate_id=target.id,
         )
     return result
 
@@ -667,3 +684,92 @@ async def _handle_abandoned(
     if task is not None:
         attach_operator_status_line(result, task=task, agent=agent, kind="cancelled", reason=reason)
     return result
+
+
+def _handoff_pin_ids(action: dict[str, Any], *, delegate_id: str | None = None) -> list[str]:
+    """Structured next_owners, then an explicit delegate target. No @ parse."""
+    found: list[str] = []
+    for agent_id in list(action.get("nextOwners") or []):
+        token = str(agent_id or "").strip()
+        if token and token not in found:
+            found.append(token)
+    delegate = (delegate_id or "").strip()
+    if delegate and delegate not in found:
+        found.append(delegate)
+    return found
+
+
+def _channel_handoff_kwargs(
+    task: Any,
+    action: dict[str, Any],
+    *,
+    author_id: str,
+    delegate_id: str | None = None,
+) -> dict[str, Any]:
+    """Pins for a Done/handoff channel round. Empty when this task is not on a channel."""
+    if task is None or getattr(task, "source_channel", None) != "channel":
+        return {}
+    if not str(getattr(task, "notification_channel_id", None) or "").strip():
+        return {}
+    from core.tasking.board import next_board_owner_id
+
+    board = next_board_owner_id(task, author_id=author_id)
+    return {
+        "handoff": True,
+        "required_ids": _handoff_pin_ids(action, delegate_id=delegate_id),
+        "board_owner_ids": [board] if board else [],
+    }
+
+
+def _open_origin_handoff_if_quiet(
+    result: dict[str, Any],
+    *,
+    agent: Agent,
+    task: Any,
+    action: dict[str, Any],
+    delegate_id: str | None = None,
+) -> None:
+    """Open one System AI round on the origin line when the share did not.
+
+    A follow-up share already woke peers. This covers Done/handoff with no
+    agent chat line. It does not post a second card.
+    """
+    if any(
+        isinstance(item, dict) and item.get("trigger_type") == "channel_message"
+        for item in (result.get("trigger_requests") or [])
+    ):
+        return
+    posted = result.get("channel_message")
+    if isinstance(posted, dict) and posted.get("author_type") == "agent" and posted.get("message_id"):
+        return
+    kwargs = _channel_handoff_kwargs(task, action, author_id=agent.id, delegate_id=delegate_id)
+    if not kwargs:
+        return
+    channel_id = str(task.notification_channel_id).strip()
+    origin = None
+    for item in result.get("origin_status_messages") or []:
+        if isinstance(item, dict) and item.get("message_id") and item.get("channel_id") == channel_id:
+            origin = item
+            break
+    if origin is None:
+        posted = result.get("channel_message")
+        if isinstance(posted, dict) and posted.get("author_type") == "system" and posted.get("message_id"):
+            origin = posted
+    if origin is None:
+        return
+    from core.agent_loop.channel_rounds import start_channel_peer_round
+
+    wakes = start_channel_peer_round(
+        channel_id=channel_id,
+        message_id=str(origin.get("message_id") or ""),
+        content=str(origin.get("content") or ""),
+        from_name=agent.name,
+        author_type="system",
+        exclude_agent_ids={agent.id},
+        from_agent=agent.id,
+        handoff=True,
+        required_ids=kwargs.get("required_ids"),
+        board_owner_ids=kwargs.get("board_owner_ids"),
+    )
+    if wakes:
+        result.setdefault("trigger_requests", []).extend(wakes)

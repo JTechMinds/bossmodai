@@ -135,6 +135,7 @@ class ConversationDecision(BaseModel):
     deliverables: list[DeliverableSpec] | None = None
     executionPlan: WorkExecutionPlan | None = None
     proceedUntagged: bool = False
+    nextOwners: list[str] = Field(default_factory=list)
     thought: str = Field(default="")
 
     @model_validator(mode="after")
@@ -304,7 +305,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     payload = _default_status_reply_if_say_only(payload)
     if "act" not in payload:
         raise ValueError('missing "act"')
-    extra_root = set(payload) - {"act", "intent", "msg", "commit", "data", "th"}
+    extra_root = set(payload) - {"act", "intent", "msg", "commit", "data", "th", "next_owners"}
     if extra_root:
         raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
 
@@ -344,6 +345,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "deliverables": _normalize_outs(task.get("outs")),
         "executionPlan": _normalize_work_plan(plan),
         "proceedUntagged": _as_bool(data.get("proceed")),
+        "nextOwners": _next_owner_ids(payload.get("next_owners")),
         "thought": payload.get("th", ""),
     }
 
@@ -454,6 +456,13 @@ def _map_optional(value: Any, mapping: dict[str, str], field_name: str) -> str |
     if value in (None, ""):
         return None
     return _map_required(value, mapping, field_name)
+
+
+def _next_owner_ids(value: Any) -> list[str]:
+    """Map envelope ``next_owners`` onto the canonical decision field."""
+    from core.agent_loop.parse_steer import parse_next_owner_ids
+
+    return parse_next_owner_ids(value)
 
 
 def _as_bool(value: Any) -> bool:

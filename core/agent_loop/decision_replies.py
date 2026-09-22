@@ -468,6 +468,7 @@ def _persist_task_follow_up_reply(
             channel_id=task.notification_channel_id,
             agent=agent,
             content=reply,
+            required_ids=list(decision.nextOwners or []),
         )
         return {
             "channel_message": channel_message,
