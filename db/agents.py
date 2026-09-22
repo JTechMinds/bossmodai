@@ -224,7 +224,9 @@ def delete_agent(agent_id: str) -> bool:
     from db.host_path_consent import delete_agent_consent
 
     delete_agent_consent(agent_id)
-    # CLI approval requests
+    # bm_cli_events.approval_request_id references cli_approval_requests.
+    # Drop this agent's audit rows before those requests, and before the agent.
+    execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
     execute("DELETE FROM cli_approval_requests WHERE agent_id = $1", [agent_id])
     # CLI policy rules (nullable agent_id)
     execute("UPDATE cli_policy_rules SET agent_id = NULL WHERE agent_id = $1", [agent_id])
@@ -232,7 +234,6 @@ def delete_agent(agent_id: str) -> bool:
     execute("UPDATE telegram_sessions SET target_agent_id = NULL WHERE target_agent_id = $1", [agent_id])
     # remaining FK dependents
     execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
     execute("DELETE FROM agent_triggers WHERE agent_id = $1", [agent_id])
     # companion tables
     execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
