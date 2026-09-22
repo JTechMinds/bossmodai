@@ -66,13 +66,16 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # including round 1. Empty speak, Pause, demotion, and narrow dup-ack
     # stop a live thread. This number must not be that brake.
     ("channel_response_round_cap", "64", "llm"),
-    # System AI + compaction pressure knobs (Settings → System → AI Output).
+    # System AI + compaction pressure knobs. The System AI picker is the
+    # first control under Settings → AI Connections. Compaction knobs stay
+    # on Settings → System → AI Output.
     # Compaction never runs every turn, and it never blocks an agent turn.
     # When compactors exist they queue in the background. These keys only
     # store the choice and the knobs; no compaction runner ships with them.
-    # system_ai_connection is one AI connection id (empty = unset), not a
-    # per-agent identity model override. Channel rounds use it for one short
-    # route. compaction_mode is off | pressure_only.
+    # system_ai_connection is one AI connection id, not a per-agent identity model
+    # override. Empty means unset. A saved id that still names a
+    # connection is kept on upgrade; this seed does not overwrite it.
+    # Channel rounds use it for one short route. compaction_mode is off | pressure_only.
     ("system_ai_connection", "", "llm"),
     ("compaction_mode", "pressure_only", "llm"),
     ("compaction_task_budget_headroom_percent", "25", "llm"),

@@ -51,6 +51,7 @@ CRITICAL_CALL_SITES = {
     # form writes and tests. Both halves are named so neither loses coverage.
     "settings/settings-connections.js": [
         "apiFetch('/api/connections')",
+        "apiFetch('/api/settings')",
     ],
     "settings/settings-connections-form.js": [
         "apiFetch('/api/connections/test'",
@@ -299,6 +300,7 @@ def test_api_fetch_ok_throws_on_http_error_with_parsed_detail() -> None:
 _SAVE_OK_SITES = {
     "settings/settings-connections.js": [
         "apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`",
+        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`",
     ],
     "settings/settings-connections-form.js": [
         "apiFetchOk(`/api/connections/${conn.id}`",
