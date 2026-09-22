@@ -73,6 +73,18 @@ const BossModThreadSource = (() => {
         }
 
         /**
+         * Round markers stay on the channel for agent wakes and diagnostics.
+         * They are not operator transcript lines — paint them there and they
+         * read as confusing chrome ("Round 2") between real posts.
+         *
+         * @param {object} raw
+         * @returns {boolean}
+         */
+        function isRoundMarker(raw) {
+            return !!raw && raw.notification_kind === 'channel_round_marker';
+        }
+
+        /**
          * Normalise one backend row. Both the REST load and the WebSocket echo
          * pass through here, so both produce the same dedupe key.
          *
@@ -118,7 +130,9 @@ const BossModThreadSource = (() => {
             if (!res.ok) throw new Error((await res.text()) || 'Could not load this thread.');
             const payload = await res.json();
             channel = payload.channel || null;
-            return (Array.isArray(payload.messages) ? payload.messages : []).map(toMessage);
+            return (Array.isArray(payload.messages) ? payload.messages : [])
+                .filter((raw) => !isRoundMarker(raw))
+                .map(toMessage);
         }
 
         /**
@@ -173,6 +187,8 @@ const BossModThreadSource = (() => {
                         presence.stop(threadId, data.author_agent_id);
                         on.presence();
                     }
+                    // Round markers stay posted for the engine; skip painting.
+                    if (isRoundMarker(data)) return;
                     on.message(toMessage(data));
                 }),
                 bus.subscribe('channel_presence', (data) => {

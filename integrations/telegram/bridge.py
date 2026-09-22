@@ -74,6 +74,9 @@ class TelegramEventBridge:
         """Forward channel messages to Telegram users in that channel."""
         if data.get("author_type") == "human":
             return
+        # Round markers are engine/diagnostics boundaries, not operator lines.
+        if data.get("notification_kind") == "channel_round_marker":
+            return
         channel_id = data.get("channel_id")
         if not channel_id:
             return

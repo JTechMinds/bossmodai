@@ -125,6 +125,59 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
     assert "removeByKey" in transcript
 
 
+def test_thread_hides_round_markers_from_operator_transcript() -> None:
+    """Round N is engine/diagnostics chrome, not operator transcript paint.
+
+    The server still posts `channel_round_marker` so later wakes see the
+    boundary. The thread adapter drops those rows on load and live append.
+    Soft-block demotion and stay-out host rules are untouched.
+    """
+    thread = _read(SOURCES / "thread-source.js")
+    assert "function isRoundMarker(raw)" in thread
+    assert "notification_kind === 'channel_round_marker'" in thread
+    assert ".filter((raw) => !isRoundMarker(raw))" in thread
+    assert "if (isRoundMarker(data)) return;" in thread
+    # Pause/resume and other system notes still paint.
+    assert "systemReceipt: false" in thread
+
+    rounds = _read(ROOT / "core" / "agent_loop" / "channel_rounds.py")
+    assert 'ROUND_MARKER_KIND = "channel_round_marker"' in rounds
+    assert "def _post_round_marker(" in rounds
+    assert 'content = f"Round {round_index}"' in rounds
+
+    telegram = _read(ROOT / "integrations" / "telegram" / "bridge.py")
+    assert 'notification_kind") == "channel_round_marker"' in telegram
+
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parent / "js_round_marker_transcript_harness.cjs"),
+            str(JS / "core" / "dom.js"),
+            str(JS / "core" / "store.js"),
+            str(JS / "core" / "bus.js"),
+            str(JS / "core" / "gates.js"),
+            str(JS / "core" / "consent-card.js"),
+            str(JS / "core" / "overlay-focus.js"),
+            str(JS / "core" / "overlays.js"),
+            str(SOURCES / "thread-archive.js"),
+            str(SOURCES / "thread-seat.js"),
+            str(SOURCES / "thread-source.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "loadHidesRound": True,
+        "liveHidesRound": True,
+        "loadedTexts": ["Ship the fix.", "On it.", "Thread paused."],
+        "paintedTexts": ["Still here."],
+    }
+
+
 def _transcript_payload() -> dict:
     result = subprocess.run(
         [
