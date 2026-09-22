@@ -331,15 +331,109 @@ def test_same_snapshot_peers_do_not_draft_in_parallel() -> None:
     second = dispatcher._claim_available_trigger()
     assert first is not None and first.agent_id == ada.id
     assert second is not None and second.agent_id == dee.id
-    assert db.get_agent_trigger(bea_row.id).status == "queued"
+    waiting = db.get_agent_trigger(bea_row.id)
+    assert waiting is not None
+    assert waiting.status == "queued"
+    assert bea.id not in dispatcher._turn_lanes
+    assert len(dispatcher._queue_notices) == 1
+    notice = dispatcher._queue_notices[0]
+    assert notice["phase"] == "queued"
+    assert notice["agent_id"] == bea.id
+    assert notice["channel_id"] == room.id
+    assert notice["ahead"] == 1
+    assert format_queued_ahead(notice["ahead"]) == "Queued (1 ahead)"
     assert budget.inflight() == 2
     assert dispatcher._claim_available_trigger() is None
+    assert db.get_agent_trigger(bea_row.id).status == "queued"
 
     db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
     dispatcher._release_turn_lane(ada.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None and opened.agent_id == bea.id
     assert budget.inflight() == 2
+
+
+@pytest.mark.asyncio
+async def test_same_channel_waiter_stays_queued_while_lanes_remain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Knob 4 still allows one live speak per channel. The next wake is Queued."""
+    _set_knob("4")
+    ada = _agent("Ada")
+    bea = _agent("Bea")
+    cy = _agent("Cy")
+    dee = _agent("Dee")
+    room = db.create_channel(name="Room", member_agent_ids=[ada.id, bea.id, cy.id])
+    other = db.create_channel(name="Other", member_agent_ids=[dee.id])
+    ada_row = _enqueue(ada.id, channel_id=room.id, when="2026-01-01 00:00:01")
+    bea_row = _enqueue(bea.id, channel_id=room.id, when="2026-01-01 00:00:02")
+    cy_row = _enqueue(cy.id, channel_id=room.id, when="2026-01-01 00:00:03")
+    _enqueue(dee.id, channel_id=other.id, when="2026-01-01 00:00:04")
+    assert ada_row is not None and bea_row is not None and cy_row is not None
+
+    phases: list[tuple[str, str, str, int | None]] = []
+
+    async def _capture(kind: str, **kwargs: object) -> None:
+        ahead = kwargs.get("ahead")
+        phases.append((
+            kind,
+            str(kwargs.get("agent_id")),
+            str(kwargs.get("phase")),
+            ahead if isinstance(ahead, int) else None,
+        ))
+
+    async def _desk(**kwargs: object) -> None:
+        await _capture("desk", **kwargs)
+
+    async def _channel(**kwargs: object) -> None:
+        await _capture("channel", **kwargs)
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _desk)
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_channel_presence", _channel)
+
+    dispatcher = TurnDispatcher()
+    first = dispatcher._claim_available_trigger()
+    second = dispatcher._claim_available_trigger()
+    assert first is not None and first.agent_id == ada.id
+    assert second is not None and second.agent_id == dee.id
+    assert max_concurrent_model_calls() == 4
+    assert budget.inflight() == 2
+    by_agent = {notice["agent_id"]: notice for notice in dispatcher._queue_notices}
+    assert set(by_agent) == {bea.id, cy.id}
+    assert by_agent[bea.id]["phase"] == "queued"
+    assert by_agent[bea.id]["ahead"] == 1
+    assert by_agent[cy.id]["ahead"] == 2
+    assert by_agent[bea.id]["channel_id"] == room.id
+    assert db.get_agent_trigger(bea_row.id).status == "queued"
+    assert db.get_agent_trigger(cy_row.id).status == "queued"
+    assert bea.id not in dispatcher._turn_lanes
+    assert cy.id not in dispatcher._turn_lanes
+    await dispatcher._emit_queue_notices()
+    assert ("desk", bea.id, "queued", 1) in phases
+    assert ("channel", bea.id, "queued", 1) in phases
+    assert ("desk", cy.id, "queued", 2) in phases
+    assert ("channel", cy.id, "queued", 2) in phases
+    assert "thinking" not in {item[2] for item in phases}
+
+    blocked = dispatcher._claim_available_trigger()
+    assert blocked is None
+    assert budget.inflight() == 2
+    assert db.get_agent_trigger(bea_row.id).status == "queued"
+
+    db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
+    dispatcher._release_turn_lane(ada.id)
+    opened = dispatcher._claim_available_trigger()
+    assert opened is not None and opened.agent_id == bea.id
+    assert db.get_agent_trigger(cy_row.id).status == "queued"
+    waiting = dispatcher._claim_available_trigger()
+    assert waiting is None
+    cy_notice = dispatcher._queue_notices[0]
+    assert cy_notice["agent_id"] == cy.id
+    assert cy_notice["ahead"] == 1
+    assert cy_notice["phase"] == "queued"
+    await dispatcher._emit_queue_notices()
+    assert ("channel", cy.id, "queued", 1) in phases
+    assert "thinking" not in {item[2] for item in phases}
 
 
 def test_send_does_not_paint_thinking_before_a_lane() -> None:

@@ -170,10 +170,11 @@ _CHANNEL_PEER_TRIGGER_TYPES = frozenset({"channel_message", "channel_response"})
 
 
 def channel_peer_snapshot_is_drafting(channel_id: str) -> bool:
-    """Return whether a claimed channel peer is already drafting this room.
+    """Return whether a claimed channel peer is already the live speak here.
 
-    One snapshot, one drafter. A second peer stays queued until that claim
-    ends. Other rooms and non-channel turns are not blocked.
+    One channel, one live speak. A second peer stays queued until that claim
+    ends, which is after the turn has posted. Other rooms and non-channel
+    turns are not blocked.
     """
     token = (channel_id or "").strip()
     if not token:
