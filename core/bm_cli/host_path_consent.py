@@ -67,6 +67,8 @@ class HostAccessCall(BaseModel):
     path: str
     reason: str
     thought: str = Field(default="")
+    # Operator-visible say from the product envelope; host posts before access.
+    operator_say: str | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "HostAccessCall":
@@ -74,6 +76,10 @@ class HostAccessCall(BaseModel):
             raise ValueError('"request_host_access" requires a non-empty "path"')
         if not self.reason.strip():
             raise ValueError('"request_host_access" requires a non-empty "why"')
+        if self.operator_say is not None and (
+            not isinstance(self.operator_say, str) or not self.operator_say.strip()
+        ):
+            raise ValueError('"operator_say" must be a non-empty string when provided')
         return self
 
 
@@ -81,7 +87,7 @@ def maybe_parse_host_access_call(payload: Any) -> HostAccessCall | None:
     """Return a validated host-access call from the model-facing compact payload."""
     if not isinstance(payload, dict) or payload.get("act") != "request_host_access":
         return None
-    extra_root = set(payload) - {"act", "data", "th"}
+    extra_root = set(payload) - {"act", "data", "th", "msg"}
     if extra_root:
         raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')
     data = payload.get("data") or {}
@@ -90,12 +96,16 @@ def maybe_parse_host_access_call(payload: Any) -> HostAccessCall | None:
     extra_data = set(data) - {"path", "why"}
     if extra_data:
         raise ValueError(f'unexpected request_host_access data keys: {", ".join(sorted(extra_data))}')
+    operator_say = payload.get("msg")
+    if operator_say in (None, ""):
+        operator_say = None
     return HostAccessCall.model_validate(
         {
             "action": "request_host_access",
             "path": data.get("path"),
             "reason": data.get("why"),
             "thought": payload.get("th", ""),
+            "operator_say": operator_say,
         }
     )
 

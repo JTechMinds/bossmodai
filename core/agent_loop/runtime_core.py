@@ -43,6 +43,12 @@ AUDIENCE_SOFT_JUDGMENT = (
     "Do not write that you will stay quiet."
 )
 
+# Talk / 1:1 status / channel only — bias, not a hard require. Work stays quiet.
+SAY_WITH_ACTIONS = (
+    "When acting on a human ask, include a non-empty say with the actions. "
+    "Bias only — no essay acks or \"Copy that.\""
+)
+
 # Cold notes stay on demand. Standing prefs are a separate warm store.
 NOTES_STORE_RETRIEVE = (
     "Notes (cold): Personal: /me/notes. "
@@ -151,6 +157,7 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
         f"{LOCKED_WORKSPACE_COPY_STEER}\n"
         f"{dest_suffix}"
         f"{AUDIENCE_SOFT_JUDGMENT}\n"
+        f"{SAY_WITH_ACTIONS}\n"
         f"{CHAT_FORMATTING}"
     )
 

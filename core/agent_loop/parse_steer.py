@@ -157,6 +157,11 @@ def parse_failed_payload(
     return payload
 
 
+def resolve_operator_chat(payload: dict[str, Any]) -> str | None:
+    """Return ``say`` / ``msg`` chat text, or None when absent."""
+    return _resolve_chat_alias(payload.get("say"), payload.get("msg"))
+
+
 def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Map ``say`` / ``actions`` onto the existing compact act/msg object.
 
