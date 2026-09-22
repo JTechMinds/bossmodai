@@ -2,7 +2,9 @@
 
 System AI picks ambient Talk and Done/handoff rounds. Operator @ is a pin.
 Empty speak on a Done/handoff route gets one repair, then stops. Prose
-names are not a wake layer.
+names are not a wake layer. When Done lands and the Board or structured
+next_owners names a pending card, that assignee gets a Work bind. A status
+round does not.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from core.agent_loop.decision_runtime import apply_decision
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.board import next_board_owner_id
 from core.tasking.service import create_or_bind_task
+from core.tasking.transitions import transition_task
 from db import channel_response_rounds as channel_round_db
 
 
@@ -113,6 +116,14 @@ def _channel_wakes(result: dict[str, Any]) -> list[dict[str, Any]]:
         item
         for item in (result.get("trigger_requests") or [])
         if item.get("trigger_type") == "channel_message"
+    ]
+
+
+def _work_wakes(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in (result.get("trigger_requests") or [])
+        if item.get("trigger_type") == "task_assigned"
     ]
 
 
@@ -354,8 +365,12 @@ async def test_board_next_owner_wakes_with_no_chat_syntax(monkeypatch: pytest.Mo
     assert calls["n"] == 1
     assert "Board next:" in calls["last"]
     assert "Who speaks next?" not in calls["last"]
-    wakes = _channel_wakes(completed)
-    assert wakes[0]["agent_id"] == laura.id
+    assert _channel_wakes(completed) == []
+    work = _work_wakes(completed)
+    assert [item["agent_id"] for item in work] == [laura.id]
+    assert work[0]["task_id"] == nxt.task.id
+    assert work[0]["source_channel"] == "work"
+    assert db.get_task(nxt.task.id).status == "pending"
 
 
 @pytest.mark.asyncio
@@ -401,6 +416,137 @@ async def test_done_prose_name_does_not_pin(monkeypatch: pytest.MonkeyPatch) -> 
     assert wakes[0]["agent_id"] == jim.id
     round_id = wakes[0]["payload"]["round_id"]
     assert laura.id not in channel_round_db.get_channel_round_meta(round_id)["pinned_ids"]
+
+
+@pytest.mark.asyncio
+async def test_next_owners_pending_card_is_a_work_bind(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    calls = _script(monkeypatch, [_payload([jim.id, laura.id], [])])
+    audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
+    assert audit.task is not None
+    _task, completed = await _done(
+        jimothy,
+        channel,
+        follow_up="Evidence is on the channel.",
+        next_owners=[laura.id],
+    )
+    assert calls["n"] == 1
+    assert "Who speaks next?" not in calls["last"]
+    assert all(item["agent_id"] != laura.id for item in _channel_wakes(completed))
+    work = _work_wakes(completed)
+    assert [item["agent_id"] for item in work] == [laura.id]
+    assert work[0]["task_id"] == audit.task.id
+    assert work[0]["source_channel"] == "work"
+
+
+@pytest.mark.asyncio
+async def test_done_work_bind_leaves_other_speakers_on_talk(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    _script(monkeypatch, [_payload([jim.id, laura.id], [])])
+    nxt = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
+    assert nxt.task is not None
+    _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
+    assert [item["agent_id"] for item in _channel_wakes(completed)] == [jim.id]
+    work = _work_wakes(completed)
+    assert [item["agent_id"] for item in work] == [laura.id]
+    assert work[0]["task_id"] == nxt.task.id
+
+
+def test_status_who_is_up_does_not_invent_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    _script(monkeypatch, [_payload([jim.id, laura.id, jimothy.id], [])])
+    audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
+    assert audit.task is not None
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="who is up?",
+        source_channel="channel",
+    )
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+    )
+    assert triggers
+    assert {item["trigger_type"] for item in triggers} == {"channel_message"}
+    round_id = triggers[0]["payload"]["round_id"]
+    queued = {item.agent_id for item in db.list_channel_response_candidates(round_id)}
+    assert laura.id in queued
+    assert db.get_task(audit.task.id).status == "pending"
+
+
+def test_status_next_owners_do_not_bind_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    _jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    calls = _script(monkeypatch, [_payload([], [laura.id])])
+    audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
+    assert audit.task is not None
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "status_request",
+            "reply": "Still on the evidence.",
+            "proceedUntagged": True,
+            "nextOwners": [laura.id],
+        },
+        jimothy,
+        state,
+        {
+            "type": "task_follow_up",
+            "task_id": creation.task.id,
+            "content": "Who is up?",
+            "from_name": "Human Operator",
+        },
+    )
+    assert calls["n"] == 1
+    assert _work_wakes(result) == []
+    assert _channel_wakes(result)[0]["agent_id"] == laura.id
+    assert db.get_task(audit.task.id).status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_soft_blocked_next_card_stays_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    _script(monkeypatch, [_payload([], [jim.id, laura.id])])
+    blocked = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
+    assert blocked.task is not None
+    transition_task(
+        blocked.task.id,
+        "blocked",
+        reason="Blocked — no progress. @Jim",
+        actor="BossMod",
+        status_note="Blocked — no progress. @Jim",
+    )
+    unrelated = _channel_task(assignee_id=jim.id, channel_id=channel.id, title="Hold the notes")
+    assert unrelated.task is not None
+    transition_task(
+        unrelated.task.id,
+        "blocked",
+        reason="Blocked — no progress. @Laura",
+        actor="BossMod",
+        status_note="Blocked — no progress. @Laura",
+    )
+    _task, completed = await _done(
+        jimothy,
+        channel,
+        follow_up="Evidence is on the channel.",
+        next_owners=[laura.id],
+    )
+    assert _work_wakes(completed) == []
+    assert db.get_task(blocked.task.id).status == "blocked"
+    assert db.get_task(unrelated.task.id).status == "blocked"
 
 
 def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> None:

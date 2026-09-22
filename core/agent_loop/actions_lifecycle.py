@@ -260,6 +260,9 @@ async def _handle_complete(
         completion_event = None
         parent = None
     handoff = _channel_handoff_kwargs(task, action, author_id=agent.id)
+    next_cards = _named_next_work_cards(task, action, author_id=agent.id)
+    if next_cards:
+        handoff["work_bind_ids"] = [str(card.assigned_to) for card in next_cards if card.assigned_to]
     skipped = _append_task_follow_up_message(
         result=result,
         actor=agent,
@@ -289,7 +292,14 @@ async def _handle_complete(
             reason=summary or None,
             claim=done_claim.as_dict() if done_claim is not None else None,
         )
-        _open_origin_handoff_if_quiet(result, agent=agent, task=task, action=action)
+        _open_origin_handoff_if_quiet(
+            result,
+            agent=agent,
+            task=task,
+            action=action,
+            work_bind_ids=handoff.get("work_bind_ids"),
+        )
+        _queue_named_next_work(result, next_cards)
     return result
 
 
@@ -686,6 +696,73 @@ async def _handle_abandoned(
     return result
 
 
+def _named_next_work_cards(task: Any, action: dict[str, Any], *, author_id: str) -> list[Any]:
+    """Pending cards the Board or structured next_owners name after Done.
+
+    Soft-blocked and already-bound cards are not a new Work wake. A name
+    with no pending card does not invent one.
+    """
+    if task is None or getattr(task, "source_channel", None) != "channel":
+        return []
+    channel_id = str(getattr(task, "notification_channel_id", None) or "").strip()
+    if not channel_id:
+        return []
+    from core.tasking.board import next_board_task, pending_channel_card_for_owner
+
+    author = (author_id or "").strip()
+    owners: list[str] = []
+    for agent_id in _handoff_pin_ids(action):
+        if agent_id and agent_id != author and agent_id not in owners:
+            owners.append(agent_id)
+    board = next_board_task(task, author_id=author)
+    board_owner = str(getattr(board, "assigned_to", None) or "").strip() if board is not None else ""
+    if (
+        board is not None
+        and getattr(board, "status", None) == "pending"
+        and board_owner
+        and board_owner != author
+        and board_owner not in owners
+    ):
+        owners.append(board_owner)
+    cards: list[Any] = []
+    seen: set[str] = set()
+    exclude = {str(getattr(task, "id", "") or "")}
+    for owner in owners:
+        card = None
+        if board is not None and board_owner == owner and getattr(board, "status", None) == "pending":
+            card = board
+        if card is None:
+            card = pending_channel_card_for_owner(
+                channel_id,
+                owner,
+                exclude_task_ids=exclude,
+            )
+        if card is None or getattr(card, "status", None) != "pending":
+            continue
+        if str(card.assigned_to or "").strip() != owner or card.id in seen:
+            continue
+        seen.add(card.id)
+        cards.append(card)
+    return cards
+
+
+def _queue_named_next_work(result: dict[str, Any], cards: list[Any]) -> None:
+    """Append one task_assigned wake per named pending card. Does not clear Soft-block."""
+    if not cards:
+        return
+    queued = {
+        str(item.get("task_id") or "")
+        for item in (result.get("trigger_requests") or [])
+        if isinstance(item, dict) and item.get("trigger_type") == "task_assigned"
+    }
+    requests = result.setdefault("trigger_requests", [])
+    for card in cards:
+        if card.id in queued:
+            continue
+        requests.append(build_task_assigned_trigger(card))
+        queued.add(card.id)
+
+
 def _handoff_pin_ids(action: dict[str, Any], *, delegate_id: str | None = None) -> list[str]:
     """Structured next_owners, then an explicit delegate target. No @ parse."""
     found: list[str] = []
@@ -728,6 +805,7 @@ def _open_origin_handoff_if_quiet(
     task: Any,
     action: dict[str, Any],
     delegate_id: str | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> None:
     """Open one System AI round on the origin line when the share did not.
 
@@ -743,6 +821,8 @@ def _open_origin_handoff_if_quiet(
     if isinstance(posted, dict) and posted.get("author_type") == "agent" and posted.get("message_id"):
         return
     kwargs = _channel_handoff_kwargs(task, action, author_id=agent.id, delegate_id=delegate_id)
+    if work_bind_ids:
+        kwargs["work_bind_ids"] = list(work_bind_ids)
     if not kwargs:
         return
     channel_id = str(task.notification_channel_id).strip()
@@ -770,6 +850,7 @@ def _open_origin_handoff_if_quiet(
         handoff=True,
         required_ids=kwargs.get("required_ids"),
         board_owner_ids=kwargs.get("board_owner_ids"),
+        work_bind_ids=kwargs.get("work_bind_ids"),
     )
     if wakes:
         result.setdefault("trigger_requests", []).extend(wakes)
