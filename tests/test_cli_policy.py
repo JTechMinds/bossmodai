@@ -432,14 +432,56 @@ def test_printenv_and_token_env_dumps_are_never_allowed() -> None:
     assert diagnostic.tier == "always_allowed"
 
 
+def test_seed_default_is_approval_required_and_an_existing_deny_stays() -> None:
+    """New databases seed Approval required.
+
+    ``seed_defaults`` inserts the row only when it is missing. After
+    ``reconcile_factory_cli_default_policy`` has recorded its one bump,
+    a later ``init_db`` leaves an operator Deny pick alone. The bump
+    itself is ``test_factory_cli_default_policy_bump_leaves_a_custom_value``.
+    """
+    from db.settings import _CLI_DEFAULT_POLICY_FACTORY_RECONCILED
+
+    fresh = next(item for item in db.get_settings() if item.key == "cli_default_policy")
+    assert fresh.value == "approval_required"
+    marker = next(
+        item for item in db.get_settings()
+        if item.key == _CLI_DEFAULT_POLICY_FACTORY_RECONCILED
+    )
+    assert marker.value == "true"
+
+    db.set_setting("cli_default_policy", "deny", "cli_policy")
+    db.init_db()
+    kept = next(item for item in db.get_settings() if item.key == "cli_default_policy")
+    assert kept.value == "deny"
+
+
+def test_rule_tier_edits_are_visible_without_reloading_the_engine() -> None:
+    """The worker must not keep the rule list it cached at boot."""
+    _enable_shell()
+    warmed = policy_engine.evaluate("cat notes.md", frozenset())
+    assert warmed.allowed is True
+    assert warmed.tier == "always_allowed"
+
+    cat = next(
+        rule for rule in db.list_cli_policy_rules()
+        if rule.pattern == "cat" and rule.agent_id is None
+    )
+    db.update_cli_policy_rule(cat.id, tier="never_allowed")
+    again = policy_engine.evaluate("cat notes.md", frozenset())
+    assert again.allowed is False
+    assert again.approval_required is False
+    assert again.tier == "never_allowed"
+
+
 def test_approval_required_default_is_read_live_and_reconcile_keeps_it() -> None:
     """Settings writes do not reload the runtime worker cache.
 
     Unmatched commands must follow the database value. A stale ``deny``
     cache must not hard-deny, and a stale ``approval_required`` cache must
-    not open a card when the database says deny. Re-init leaves the
-    operator's default and a customized tier alone. ``never_allowed``
-    still hard-denies.
+    not open a card when the database says deny. After the one-time factory
+    bump has been recorded, re-init leaves the operator's default and a
+    customized tier alone. ``never_allowed`` still hard-denies.
     """
     _enable_shell()
     db.set_setting("cli_default_policy", "approval_required", "cli_policy")

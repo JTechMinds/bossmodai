@@ -1,8 +1,10 @@
-"""BossMod AI — DB-driven policy rule evaluator with in-memory caching.
+"""BossMod AI — DB-driven policy rule evaluator.
 
 Replaces hardcoded command classification with database-backed rules loaded
-from the ``cli_policy_rules`` table.  Rules are lazy-loaded on first use and
-cached until :meth:`PolicyEngine.reload` invalidates them.
+from the ``cli_policy_rules`` table. Each evaluation reads the database.
+``reload()`` still clears any leftover cache, but the runtime worker does
+not need it: a Settings save happens in the API process, and this process
+must not keep serving the rules or ``cli_default_policy`` it saw at boot.
 
 Evaluation order (first match wins):
     1. Virtual commands  -> allowed, executor="virtual"
@@ -261,7 +263,6 @@ class PolicyEngine:
             return dump_deny
 
         # 4. Walk tiers in strict order; first matching rule wins.
-        self._ensure_loaded()
         for tier in _TIER_ORDER:
             rules = self._rules_for_tier(tier, agent_id)
             for rule in rules:
@@ -281,7 +282,12 @@ class PolicyEngine:
         return self.evaluate(command_str, virtual_commands, agent_id)
 
     def reload(self) -> None:
-        """Invalidate cached rules so they are re-fetched on next evaluation."""
+        """Drop any cached rules.
+
+        Evaluation reads the database itself, so a worker that never
+        receives this call still sees a rule save. The call remains so
+        the API process can drop a cache it may have filled earlier.
+        """
         with self._lock:
             self._rules = None
         logger.debug("PolicyEngine cache invalidated")
@@ -321,7 +327,6 @@ class PolicyEngine:
 
         if not command_dumps_secret_token_env(command_str):
             return None
-        self._ensure_loaded()
         for rule in self._rules_for_tier("never_allowed", agent_id):
             if self._match_rule(command_str, rule, cwd=cwd):
                 return self._decision_for_tier("never_allowed", rule)
@@ -339,18 +344,11 @@ class PolicyEngine:
     ) -> list[CliPolicyRule]:
         """Return rules for *tier*, optionally refined by *agent_id*.
 
-        When an *agent_id* is provided the engine queries the DB directly for
-        agent-specific + global rules (the DB query already orders
-        agent-specific rules before global ones).  When no agent context is
-        needed, the pre-cached global rules are used.
+        Always read the database. The API process calls :meth:`reload` after
+        a rule save, but that object is not the runtime worker's. A cached
+        tier list would keep the worker on the rules it loaded at boot.
         """
-        if agent_id is not None:
-            return db.get_cli_policy_rules_by_tier(tier, agent_id=agent_id)
-
-        with self._lock:
-            if self._rules is not None:
-                return self._rules.get(tier, [])
-        return []
+        return db.get_cli_policy_rules_by_tier(tier, agent_id=agent_id)
 
     def _match_rule(
         self,
