@@ -854,19 +854,17 @@ CREATE TABLE IF NOT EXISTS chat_fade_gate (
 -- Sticky slots — typed work-spine pockets. Transcript rows stay.
 -- ───────────────────────────────────────────────────────────────────────────
 
--- One pocket per conversation scope. A fill replaces only the facts it
--- returns; null columns stay. source_message_ids is a JSON array of
--- transcript ids those facts were drawn from. Original messages stay.
+-- One fact per real source id. source_id is an existing task id, owner id,
+-- verdict path, or blocker event id — not a new board card. A fill updates
+-- only rows it returns. Open blocker rows are not replaced or deleted.
+-- Transcript rows and task rows are not deleted here.
 CREATE TABLE IF NOT EXISTS sticky_slots (
-    scope_kind          VARCHAR NOT NULL,
-    scope_id            VARCHAR NOT NULL,
-    plan                TEXT,
-    next_owner          TEXT,
-    verdict_path        TEXT,
-    blockers            TEXT,
-    source_message_ids  TEXT NOT NULL,
-    updated_at          TIMESTAMP DEFAULT current_timestamp,
-    PRIMARY KEY (scope_kind, scope_id)
+    source_id   VARCHAR NOT NULL,
+    slot_kind   VARCHAR NOT NULL
+                    CHECK (slot_kind IN ('plan', 'next_owner', 'verdict_path', 'blockers')),
+    body        TEXT NOT NULL,
+    updated_at  TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (source_id, slot_kind)
 );
 
 -- One gate so sticky-slot fill never runs every turn. Separate from the

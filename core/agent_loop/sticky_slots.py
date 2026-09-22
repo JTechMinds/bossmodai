@@ -1,21 +1,21 @@
-"""Pressure-gated sticky slots for the work spine.
+"""Pressure-gated task-side sticky slots.
 
-Chat fade soft-summarizes older channel turns. The warm window drops
-turns that no longer fit. Sticky slots keep four typed facts from those
-turns — plan, next owner, verdict path, and blockers — and inject them
-into the prompt once a covered turn is in the fetched thread and missing
-from the visible window.
+Slots are keyed by source ids that already exist: the task id for the
+plan, an existing owner id for the next owner, an existing deliverable
+path for the verdict, and an existing blocker event id for an open
+condition. System AI does not create board cards, owners, paths, or
+blocker events.
+
+Chat fade still soft-summarizes older channel turns. When a task-linked
+turn falls off that window, or off the task thread's warm window, the
+stored slots inject. An open blocker stays on the prompt from the event
+or status note already on the task. A fill does not insert or replace
+that blockers row, so a clearing reply cannot hide the condition.
 
 The agent turn never waits. A background thread asks System AI. If
-System AI is missing, the call fails, or the write fails, the prompt
-stays on the warm window and chat fade.
-
-Knobs are the existing compaction settings: mode, task-budget headroom,
-min turns between runs, and cooldown. Chat headroom is not used. The
-fill gate is separate from chat fade, and it reads the same min-turns
-and cooldown knobs. Standing prefs, desk notes, personal notes, and
-Soft-block are not read or written. A fill replaces only facts that
-come back as text; null and omitted facts stay.
+System AI is missing, the reply is unusable, or the write fails, stored
+rows stay and the prompt keeps the warm window plus chat fade. Standing
+prefs, desk notes, personal notes, and Soft-block are not read or written.
 """
 
 from __future__ import annotations
@@ -25,30 +25,35 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+import db
 from core import config
 from core.agent_loop.chat_fade import FADE_ID_PREFIX
 from core.llm.client import count_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from db.sticky_slots import (
-    FACT_KEYS,
-    get_sticky_slot,
-    merge_sticky_slot,
+    SLOT_KINDS,
+    list_sticky_slots,
     try_claim_sticky_slot_run,
+    upsert_sticky_slots,
 )
 
 logger = logging.getLogger(__name__)
 
 SLOT_ID_PREFIX = "sticky-slot:"
+SlotKind = Literal["plan", "next_owner", "verdict_path", "blockers"]
+_OPEN_STATUSES = frozenset({"blocked", "stalled", "waiting"})
 _FACT_MAX_CHARS = 180
 _FACT_MIN_CHARS = 2
+_SOURCE_ID_MAX = 300
 _SOURCE_MESSAGE_CHARS = 280
 _SOURCE_MESSAGE_CAP = 16
-_FILL_MAX_TOKENS = 220
+_FILL_MAX_TOKENS = 280
 _HEADROOM_MAX = 95
+_KIND_ORDER = {kind: index for index, kind in enumerate(SLOT_KINDS)}
 _LABELS = {
     "plan": "plan",
     "next_owner": "next owner",
@@ -57,36 +62,49 @@ _LABELS = {
 }
 
 _FILL_SYSTEM = (
-    "Extract work-spine facts from older turns that are leaving the prompt. "
-    "Return one JSON object with only these keys: "
-    "plan, next_owner, verdict_path, blockers. "
-    "Each value is a short factual string or null. "
-    "Use null when the turns do not state that fact. Null leaves a stored fact unchanged. "
-    "Do not invent facts. Do not add preferences, notes, or tasks. "
+    "Extract task-side sticky slots from the task record. "
+    'Return one JSON object {"slots":[{"source_id":"string","slot_kind":"plan|next_owner|verdict_path|blockers","body":"string"}]}. '
+    "Use only source ids and kinds from the allowed list. "
+    "Do not invent tasks, owners, paths, or blockers. "
+    "Omit a slot rather than clearing it. "
     "JSON only."
 )
 
 _scheduler: Callable[[Callable[[], None]], None] | None = None
 
 
-class StickySlotFill(BaseModel):
-    """One System AI fill. Unknown keys are rejected. Null does not clear."""
+class StickySlotItem(BaseModel):
+    """One returned fact. The source id must be one the caller already listed."""
 
     model_config = ConfigDict(extra="forbid")
 
-    plan: str | None = None
-    next_owner: str | None = None
-    verdict_path: str | None = None
-    blockers: str | None = None
+    source_id: str
+    slot_kind: SlotKind
+    body: str
 
-    @field_validator(*FACT_KEYS, mode="before")
+    @field_validator("source_id")
     @classmethod
-    def _text_or_null(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError("sticky slot fact must be text or null")
-        return _clean_fact(value)
+    def _source(cls, value: str) -> str:
+        token = value.strip()
+        if not token or len(token) > _SOURCE_ID_MAX or any(char in token for char in ("\n", "\r", "\x00")):
+            raise ValueError("sticky slot source id is invalid")
+        return token
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        text = _clean_fact(value)
+        if text is None:
+            raise ValueError("sticky slot body is empty")
+        return text
+
+
+class StickySlotFill(BaseModel):
+    """The only System AI shape. Unknown keys are rejected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    slots: list[StickySlotItem]
 
 
 def set_sticky_slot_scheduler(scheduler: Callable[[Callable[[], None]], None] | None) -> None:
@@ -105,37 +123,26 @@ def note_sticky_slot_turn() -> None:
         logger.warning("sticky slots could not count an agent turn")
 
 
-def compose_sticky_slots(
+def compose_task_sticky_slots(
     *,
-    scope_kind: str,
-    scope_id: str,
+    task_id: str,
     verbatim: list[dict[str, Any]],
     visible: list[dict[str, Any]],
     policy: Any,
     agent_id: str,
     token_model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Inject a stored pocket, then queue a fill when pressure allows it.
-
-    Inject failures and queue failures leave ``visible`` unchanged. The
-    fill is not run here.
-    """
+    """Inject task slots when task-thread turns fell off, then maybe queue a fill."""
     shown = visible
     try:
-        shown = _inject(
-            scope_kind,
-            scope_id,
-            verbatim,
-            visible,
-            policy,
-        )
+        if _turns_fell_off(verbatim, visible):
+            shown = _inject_tasks([task_id], visible, policy, visible_ids=_message_ids(visible))
     except Exception:
         logger.warning("sticky slots were not injected; keeping the warm window")
         shown = visible
     try:
-        _consider(
-            scope_kind,
-            scope_id,
+        _consider_task(
+            task_id,
             verbatim,
             policy,
             agent_id=agent_id,
@@ -146,12 +153,43 @@ def compose_sticky_slots(
     return shown
 
 
-def _inject(
-    scope_kind: str,
-    scope_id: str,
+def compose_channel_sticky_slots(
+    *,
     verbatim: list[dict[str, Any]],
     visible: list[dict[str, Any]],
     policy: Any,
+    agent_id: str,
+    token_model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Inject slots for task-linked channel turns that fade or the window dropped.
+
+    Messages with no task id do not create slots. Chat fade itself is unchanged.
+    """
+    shown = visible
+    try:
+        task_ids = _task_ids_on(_dropped_messages(verbatim, visible))
+        shown = _inject_tasks(task_ids, visible, policy, visible_ids=_message_ids(visible))
+    except Exception:
+        logger.warning("sticky slots were not injected; keeping the warm window")
+        shown = visible
+    try:
+        _consider_channel(
+            verbatim,
+            policy,
+            agent_id=agent_id,
+            token_model=token_model,
+        )
+    except Exception:
+        logger.warning("sticky slots were not queued")
+    return shown
+
+
+def _inject_tasks(
+    task_ids: list[str],
+    visible: list[dict[str, Any]],
+    policy: Any,
+    *,
+    visible_ids: set[str],
 ) -> list[dict[str, Any]]:
     if _mode() != "pressure_only":
         return visible
@@ -159,43 +197,92 @@ def _inject(
         return visible
     if any(_is_slot_message(message) for message in visible):
         return visible
-    row = get_sticky_slot(scope_kind, scope_id)
-    if not row:
+    ordered = _unique(task_ids)
+    if not ordered:
         return visible
-    facts = _facts_from_row(row)
-    source_ids = _source_ids(row.get("source_message_ids"))
-    if not facts or not source_ids:
+    lines: list[str] = []
+    open_lines: list[str] = []
+    other_lines: list[str] = []
+    for task_id in ordered:
+        task = db.get_task(task_id)
+        if task is None:
+            continue
+        catalog = _allowed_sources(task)
+        stored = {
+            (str(row.get("source_id") or ""), str(row.get("slot_kind") or "")): str(row.get("body") or "")
+            for row in list_sticky_slots(list(catalog))
+        }
+        for source_id, kinds in sorted(catalog.items(), key=lambda item: item[0]):
+            if source_id in visible_ids:
+                continue
+            for kind in sorted(kinds, key=lambda item: _KIND_ORDER.get(item, 99)):
+                body = stored.get((source_id, kind), "").strip()
+                if not body:
+                    continue
+                line = f"{_LABELS[kind]} ({source_id}): {body}"
+                if kind == "blockers":
+                    open_lines.append(line)
+                else:
+                    other_lines.append(line)
+        for event_id, content in _open_blocker_events(task):
+            if event_id in visible_ids or (event_id, "blockers") in stored:
+                continue
+            text = _clean_fact(content)
+            if text is None:
+                continue
+            open_lines.append(f"blockers ({event_id}): {text}")
+        task_token = str(task.id)
+        if (
+            "blockers" in catalog.get(task_token, set())
+            and (task_token, "blockers") not in stored
+            and task_token not in visible_ids
+        ):
+            note = _clean_fact(str(getattr(task, "status_note", "") or ""))
+            if note is not None:
+                open_lines.append(f"blockers ({task_token}): {note}")
+    lines.extend(open_lines)
+    room = max(0, 12 - len(lines))
+    lines.extend(other_lines[:room])
+    if not lines:
         return visible
-    verbatim_ids = _message_ids(verbatim)
-    known = [source_id for source_id in source_ids if source_id in verbatim_ids]
-    if not known:
-        return visible
-    visible_ids = _message_ids(visible)
-    if all(source_id in visible_ids for source_id in known):
-        return visible
-    return [_slot_message(scope_kind, scope_id, facts), *visible]
+    return [_slot_message(ordered, lines), *visible]
 
 
-def _consider(
-    scope_kind: str,
-    scope_id: str,
-    verbatim: list[dict[str, Any]],
+def _consider_task(
+    task_id: str,
+    messages: list[dict[str, Any]],
     policy: Any,
     *,
     agent_id: str,
     token_model: str | None,
 ) -> bool:
-    kind = (scope_kind or "").strip()
-    ident = (scope_id or "").strip()
-    if not kind or not ident or _mode() != "pressure_only":
+    token = (task_id or "").strip()
+    if not token or db.get_task(token) is None:
         return False
-    prefix = _pressure_prefix(
-        verbatim,
-        policy,
-        agent_id=agent_id,
-        token_model=token_model,
-    )
+    prefix = _pressure_prefix(messages, policy, agent_id=agent_id, token_model=token_model)
     if prefix is None:
+        return False
+    return _queue((token,))
+
+
+def _consider_channel(
+    messages: list[dict[str, Any]],
+    policy: Any,
+    *,
+    agent_id: str,
+    token_model: str | None,
+) -> bool:
+    prefix = _pressure_prefix(messages, policy, agent_id=agent_id, token_model=token_model)
+    if prefix is None:
+        return False
+    task_ids = _task_ids_on(prefix)
+    if not task_ids:
+        return False
+    return _queue(tuple(task_ids))
+
+
+def _queue(task_ids: tuple[str, ...]) -> bool:
+    if _mode() != "pressure_only":
         return False
     if not system_ai_is_configured():
         logger.info("sticky slots skipped: system AI unavailable")
@@ -206,14 +293,164 @@ def _consider(
         return False
     if not try_claim_sticky_slot_run(min_turns=gap, cooldown=cooldown):
         return False
-    shots = tuple(_snapshot(message) for message in prefix)
 
     def job() -> None:
-        _run_fill_job(kind, ident, shots)
+        _run_fill_job(task_ids)
 
     _schedule(job)
-    logger.info("sticky slots queued for %s %s (%d older turns)", kind, ident, len(shots))
+    logger.info("sticky slots queued for %d task(s)", len(task_ids))
     return True
+
+
+def _run_fill_job(task_ids: tuple[str, ...]) -> None:
+    try:
+        if _mode() != "pressure_only" or not system_ai_is_configured():
+            logger.info("sticky slots skipped: pressure mode or system AI changed")
+            return
+        allowed: dict[str, set[str]] = {}
+        lines: list[str] = []
+        preserve: set[str] = set()
+        for task_id in task_ids:
+            task = db.get_task(task_id)
+            if task is None:
+                continue
+            catalog = _allowed_sources(task)
+            for source_id, kinds in catalog.items():
+                allowed.setdefault(source_id, set()).update(kinds)
+            lines.extend(_task_lines(task))
+            if task.status in _OPEN_STATUSES:
+                preserve.update(event_id for event_id, _content in _open_blocker_events(task))
+                if "blockers" in catalog.get(task.id, set()):
+                    preserve.add(task.id)
+        if not allowed:
+            return
+        raw = complete_text(_fill_messages(allowed, lines), max_tokens=_FILL_MAX_TOKENS)
+        slots = [
+            slot
+            for slot in _accepted_slots(raw, allowed)
+            if not (slot["slot_kind"] == "blockers" and slot["source_id"] in preserve)
+        ]
+        if not slots:
+            logger.info("sticky slots skipped: system AI returned no usable facts")
+            return
+        upsert_sticky_slots(slots, preserve_source_ids=preserve)
+    except Exception:
+        logger.warning("sticky slot fill failed; existing slots stay")
+
+
+def _allowed_sources(task: Any) -> dict[str, set[str]]:
+    """Source ids already on this task. Nothing new is added."""
+    allowed: dict[str, set[str]] = {str(task.id): {"plan"}}
+    for agent_id in (getattr(task, "owner_id", None), getattr(task, "assigned_to", None)):
+        token = str(agent_id or "").strip()
+        if token and db.get_agent(token) is not None:
+            allowed.setdefault(token, set()).add("next_owner")
+    contract = getattr(task, "work_contract", None)
+    deliverables = getattr(contract, "deliverables", None) or []
+    for item in deliverables:
+        path = str(getattr(item, "path", "") or "").strip()
+        if path and len(path) <= _SOURCE_ID_MAX:
+            allowed.setdefault(path, set()).add("verdict_path")
+    if task.status in _OPEN_STATUSES:
+        blockers = _open_blocker_events(task)
+        for event_id, _content in blockers:
+            allowed.setdefault(event_id, set()).add("blockers")
+        if not blockers and str(getattr(task, "status_note", "") or "").strip():
+            allowed[str(task.id)].add("blockers")
+    return allowed
+
+
+def _open_blocker_events(task: Any) -> list[tuple[str, str]]:
+    if getattr(task, "status", None) not in _OPEN_STATUSES:
+        return []
+    events = db.list_task_events(str(task.id), limit=40)
+    found: list[tuple[str, str]] = []
+    for event in events:
+        if getattr(event, "event_type", None) != "blocker":
+            continue
+        event_id = str(getattr(event, "id", "") or "").strip()
+        content = str(getattr(event, "content", "") or "")
+        if event_id:
+            found.append((event_id, content))
+    return found
+
+
+def _task_lines(task: Any) -> list[str]:
+    title = " ".join(str(getattr(task, "title", "") or "").split())
+    lines = [f"task {task.id} status={task.status} title={title[:_SOURCE_MESSAGE_CHARS]}"]
+    note = " ".join(str(getattr(task, "status_note", "") or "").split())
+    if note:
+        lines.append(f"status note: {note[:_SOURCE_MESSAGE_CHARS]}")
+    events = db.list_task_events(str(task.id), limit=40)
+    for event in events:
+        name = str(getattr(event, "author_name", "") or "Unknown")
+        content = " ".join(str(getattr(event, "content", "") or "").split())
+        lines.append(f"{name}: {content[:_SOURCE_MESSAGE_CHARS]}")
+    return lines
+
+
+def _fill_messages(allowed: dict[str, set[str]], lines: list[str]) -> list[dict[str, str]]:
+    catalog = [
+        f"{source_id} slot_kind={kind}"
+        for source_id in sorted(allowed)
+        for kind in sorted(allowed[source_id], key=lambda item: _KIND_ORDER.get(item, 99))
+    ]
+    chosen = list(lines)
+    omitted = 0
+    if len(chosen) > _SOURCE_MESSAGE_CAP:
+        omitted = len(chosen) - _SOURCE_MESSAGE_CAP
+        half = _SOURCE_MESSAGE_CAP // 2
+        chosen = [*lines[:half], *lines[-half:]]
+    body = ["Allowed:", *catalog, "Task record:", *chosen]
+    if omitted:
+        body.append(f"({omitted} older task lines between these excerpts)")
+    return [
+        {"role": "system", "content": _FILL_SYSTEM},
+        {"role": "user", "content": "\n".join(body)[:4000]},
+    ]
+
+
+def _accepted_slots(raw: Any, allowed: dict[str, set[str]]) -> list[dict[str, str]]:
+    fill = _parse_fill(raw)
+    if fill is None:
+        return []
+    accepted: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in fill.slots:
+        kinds = allowed.get(item.source_id)
+        if not kinds or item.slot_kind not in kinds:
+            continue
+        key = (item.source_id, item.slot_kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(
+            {"source_id": item.source_id, "slot_kind": item.slot_kind, "body": item.body}
+        )
+    return accepted
+
+
+def _parse_fill(raw: Any) -> StickySlotFill | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
+        text = "\n".join(lines).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        payload = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return StickySlotFill.model_validate(payload)
+    except ValidationError:
+        return None
 
 
 def _pressure_prefix(
@@ -224,6 +461,8 @@ def _pressure_prefix(
     token_model: str | None,
 ) -> list[dict[str, Any]] | None:
     """Return older turns that sit above the task-headroom line."""
+    if _mode() != "pressure_only":
+        return None
     budget = int(getattr(policy, "max_allowed_history_tokens", 0) or 0)
     if budget <= 0:
         return None
@@ -251,162 +490,72 @@ def _pressure_prefix(
     if keep_from <= 0:
         return None
     prefix = verbatim[:keep_from]
-    if not any(str(message.get("id") or "").strip() for message in prefix):
+    if not prefix:
         return None
     return prefix
 
 
-def _run_fill_job(
-    scope_kind: str,
-    scope_id: str,
-    shots: tuple[tuple[str, str, str], ...],
-) -> None:
-    try:
-        if _mode() != "pressure_only" or not system_ai_is_configured():
-            logger.info("sticky slots skipped: pressure mode or system AI changed")
-            return
-        if not shots:
-            return
-        raw = complete_text(
-            _fill_messages(shots),
-            max_tokens=_FILL_MAX_TOKENS,
-        )
-        facts = _parse_fill(raw)
-        if not facts:
-            logger.info("sticky slots skipped: system AI returned no usable facts")
-            return
-        merge_sticky_slot(
-            scope_kind=scope_kind,
-            scope_id=scope_id,
-            facts=facts,
-            source_message_ids=[shot[0] for shot in shots],
-        )
-    except Exception:
-        logger.warning("sticky slot fill failed; warm window stays")
+def _task_ids_on(messages: list[dict[str, Any]]) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    for message in messages:
+        message_id = str(message.get("id") or "").strip()
+        if not message_id or _is_synthetic_id(message_id):
+            continue
+        row = db.get_channel_message(message_id)
+        task_id = str(getattr(row, "task_id", "") or "").strip() if row is not None else ""
+        if not task_id or task_id in seen or db.get_task(task_id) is None:
+            continue
+        seen.add(task_id)
+        found.append(task_id)
+    return found
 
 
-def _fill_messages(shots: tuple[tuple[str, str, str], ...]) -> list[dict[str, str]]:
-    chosen = list(shots)
-    omitted = 0
-    if len(chosen) > _SOURCE_MESSAGE_CAP:
-        omitted = len(chosen) - _SOURCE_MESSAGE_CAP
-        half = _SOURCE_MESSAGE_CAP // 2
-        chosen = [*shots[:half], *shots[-half:]]
-    lines: list[str] = []
-    for _message_id, name, content in chosen:
-        lines.append(f"{name}: {content}")
-    if omitted:
-        lines.append(f"({omitted} older turns between these excerpts)")
+def _dropped_messages(
+    verbatim: list[dict[str, Any]],
+    visible: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    visible_ids = _message_ids(visible)
     return [
-        {"role": "system", "content": _FILL_SYSTEM},
-        {"role": "user", "content": "\n".join(lines)[:4000]},
+        message
+        for message in verbatim
+        if str(message.get("id") or "") and str(message.get("id") or "") not in visible_ids
+        and not _is_synthetic(message)
     ]
 
 
-def _snapshot(message: dict[str, Any]) -> tuple[str, str, str]:
-    message_id = str(message.get("id") or "").strip()
-    name = str(message.get("from_name") or "Unknown")
-    content = " ".join(str(message.get("content") or "").split())[:_SOURCE_MESSAGE_CHARS]
-    return message_id, name, content
+def _turns_fell_off(verbatim: list[dict[str, Any]], visible: list[dict[str, Any]]) -> bool:
+    visible_ids = _message_ids(visible)
+    for message in verbatim:
+        message_id = str(message.get("id") or "")
+        if message_id and not _is_synthetic_id(message_id) and message_id not in visible_ids:
+            return True
+    return False
 
 
-def _schedule(job: Callable[[], None]) -> None:
-    if _scheduler is not None:
-        _scheduler(job)
-        return
-    _default_schedule(job)
-
-
-def _default_schedule(job: Callable[[], None]) -> None:
-    def _guard() -> None:
-        try:
-            job()
-        except Exception:
-            logger.warning("sticky slot fill failed; warm window stays")
-
-    threading.Thread(target=_guard, name="sticky-slots", daemon=True).start()
-
-
-def _parse_fill(raw: Any) -> dict[str, str] | None:
-    if not isinstance(raw, str):
-        return None
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        payload = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    try:
-        fill = StickySlotFill.model_validate(payload)
-    except ValidationError:
-        return None
-    return _facts(fill)
-
-
-def _facts(fill: StickySlotFill) -> dict[str, str]:
-    data = fill.model_dump()
+def _slot_message(task_ids: list[str], lines: list[str]) -> dict[str, Any]:
     return {
-        key: data[key]
-        for key in FACT_KEYS
-        if isinstance(data.get(key), str) and data[key]
-    }
-
-
-def _facts_from_row(row: dict[str, Any]) -> dict[str, str]:
-    payload = {key: row.get(key) for key in FACT_KEYS}
-    try:
-        fill = StickySlotFill.model_validate(payload)
-    except ValidationError:
-        return {}
-    return _facts(fill)
-
-
-def _source_ids(raw: Any) -> list[str]:
-    if isinstance(raw, list):
-        values = raw
-    elif isinstance(raw, str) and raw.strip():
-        try:
-            values = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-    else:
-        return []
-    if not isinstance(values, list):
-        return []
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        if not isinstance(item, str):
-            continue
-        token = item.strip()
-        if not token or token in seen or _is_synthetic_id(token):
-            continue
-        seen.add(token)
-        ordered.append(token)
-    return ordered
-
-
-def _slot_message(scope_kind: str, scope_id: str, facts: dict[str, str]) -> dict[str, Any]:
-    lines = [f"{_LABELS[key]}: {facts[key]}" for key in FACT_KEYS if key in facts]
-    payload: dict[str, Any] = {
-        "id": f"{SLOT_ID_PREFIX}{scope_kind}:{scope_id}",
+        "id": f"{SLOT_ID_PREFIX}{task_ids[0]}",
         "from_agent": "__system__",
         "from_name": "Work spine",
         "to_agent": None,
         "content": "\n".join(lines),
         "message_type": "sticky_slot",
     }
-    if scope_kind == "channel":
-        payload["channel_id"] = scope_id
-    return payload
+
+
+def _schedule(job: Callable[[], None]) -> None:
+    if _scheduler is not None:
+        _scheduler(job)
+        return
+
+    def _guard() -> None:
+        try:
+            job()
+        except Exception:
+            logger.warning("sticky slot fill failed; existing slots stay")
+
+    threading.Thread(target=_guard, name="sticky-slots", daemon=True).start()
 
 
 def _is_slot_message(message: dict[str, Any]) -> bool:
@@ -461,15 +610,25 @@ def _clean_fact(value: str) -> str | None:
     return text
 
 
+def _unique(values: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = (value or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return ordered
+
+
 def _mode() -> str:
     return config.get_live("compaction_mode") or ""
 
 
 def _headroom_percent() -> int | None:
     raw = _knob_int("compaction_task_budget_headroom_percent")
-    if raw is None:
-        return None
-    if raw < 0:
+    if raw is None or raw < 0:
         return None
     return min(raw, _HEADROOM_MAX)
 

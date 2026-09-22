@@ -1,23 +1,22 @@
-"""Sticky-slot storage.
+"""Task-side sticky slot storage.
 
-One typed work-spine pocket per conversation scope, plus one gate so a
-fill cannot queue on every agent turn. Transcript rows are never deleted
-here. A merge writes only the facts it is given; other columns stay.
+Each row is one fact keyed by a real source id: a task id, an owner id,
+a verdict path, or a blocker event id. Rows are not deleted here.
+``preserve_source_ids`` keeps an existing blockers body, so an open
+condition is not replaced. A failed caller transaction leaves the
+previous rows in place.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from db.connection import transaction
-from db.crud import execute, query_one
+from db.crud import execute, query, query_one
 
-FACT_KEYS = ("plan", "next_owner", "verdict_path", "blockers")
-_SCOPE_KINDS = frozenset({"channel", "task", "human", "peer", "meeting"})
-_SCOPE_ID_MAX = 200
-_SOURCE_ID_CAP = 24
+SLOT_KINDS = ("plan", "next_owner", "verdict_path", "blockers")
+_SOURCE_ID_MAX = 300
 
 
 def note_sticky_slot_turn() -> None:
@@ -53,8 +52,7 @@ def try_claim_sticky_slot_run(*, min_turns: int, cooldown: timedelta) -> bool:
     """Claim the next fill slot. False when the gap or cooldown has not elapsed.
 
     The first claim (no prior run) is allowed. A successful claim zeros the
-    turn gap and stamps ``last_run_at`` so a later turn cannot queue again
-    until both knobs allow it.
+    turn gap and stamps ``last_run_at``.
     """
     now = datetime.now(timezone.utc)
     with transaction():
@@ -84,139 +82,99 @@ def try_claim_sticky_slot_run(*, min_turns: int, cooldown: timedelta) -> bool:
         return True
 
 
-def get_sticky_slot(scope_kind: str, scope_id: str) -> dict[str, Any] | None:
-    """Return the stored pocket for one scope, if any."""
-    scoped = _scope(scope_kind, scope_id)
-    if scoped is None:
+def get_sticky_slot(source_id: str, slot_kind: str) -> dict[str, Any] | None:
+    """Return one stored fact, if the key is well formed."""
+    key = _key(source_id, slot_kind)
+    if key is None:
         return None
-    kind, ident = scoped
+    source, kind = key
     return query_one(
         """
-        SELECT scope_kind, scope_id, plan, next_owner, verdict_path, blockers,
-               source_message_ids, updated_at
+        SELECT source_id, slot_kind, body, updated_at
         FROM sticky_slots
-        WHERE scope_kind = $1 AND scope_id = $2
+        WHERE source_id = $1 AND slot_kind = $2
         """,
-        [kind, ident],
+        [source, kind],
     )
 
 
-def merge_sticky_slot(
-    *,
-    scope_kind: str,
-    scope_id: str,
-    facts: dict[str, str],
-    source_message_ids: list[str],
-) -> None:
-    """Store returned facts. Keys absent from ``facts`` keep their current text.
+def list_sticky_slots(source_ids: list[str]) -> list[dict[str, Any]]:
+    """Return stored facts for these source ids. Unknown ids contribute nothing."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for source_id in source_ids:
+        token = (source_id or "").strip()
+        if not token or token in seen or len(token) > _SOURCE_ID_MAX:
+            continue
+        seen.add(token)
+        cleaned.append(token)
+    if not cleaned:
+        return []
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(cleaned)))
+    return query(
+        f"""
+        SELECT source_id, slot_kind, body, updated_at
+        FROM sticky_slots
+        WHERE source_id IN ({placeholders})
+        ORDER BY source_id, slot_kind
+        """,
+        cleaned,
+    )
 
-    Empty ``facts`` or an empty source-id list does not write. Invalid
-    scope raises so the caller can fail closed without a partial row.
+
+def upsert_sticky_slots(
+    slots: list[dict[str, str]],
+    *,
+    preserve_source_ids: set[str] | None = None,
+) -> None:
+    """Insert or replace returned facts. Other rows stay.
+
+    An existing blockers row whose source id is in ``preserve_source_ids``
+    is left as stored. Empty input does not write. Invalid keys raise so
+    the caller can fail closed without a partial pocket.
     """
-    scoped = _scope(scope_kind, scope_id)
-    if scoped is None:
-        raise ValueError("sticky slot scope is invalid")
-    kind, ident = scoped
-    incoming = {
-        key: facts[key]
-        for key in FACT_KEYS
-        if isinstance(facts.get(key), str) and str(facts.get(key)).strip()
-    }
-    new_ids = _clean_ids(source_message_ids)
-    if not incoming or not new_ids:
+    preserve = preserve_source_ids or set()
+    incoming: list[tuple[str, str, str]] = []
+    for slot in slots:
+        key = _key(str(slot.get("source_id") or ""), str(slot.get("slot_kind") or ""))
+        body = str(slot.get("body") or "").strip()
+        if key is None or not body:
+            continue
+        incoming.append((key[0], key[1], body))
+    if not incoming:
         return
     now = datetime.now(timezone.utc)
     with transaction():
-        row = query_one(
-            """
-            SELECT plan, next_owner, verdict_path, blockers, source_message_ids
-            FROM sticky_slots
-            WHERE scope_kind = $1 AND scope_id = $2
-            """,
-            [kind, ident],
-        )
-        merged = {key: None for key in FACT_KEYS}
-        existing_ids: list[str] = []
-        if row:
-            for key in FACT_KEYS:
-                value = row.get(key)
-                merged[key] = value if isinstance(value, str) and value.strip() else None
-            existing_ids = _clean_ids(_load_ids(row.get("source_message_ids")))
-        for key, value in incoming.items():
-            merged[key] = value.strip()
-        ids = _union_ids(existing_ids, new_ids)
-        if not any(merged.values()):
-            return
-        execute(
-            """
-            INSERT INTO sticky_slots (
-                scope_kind, scope_id, plan, next_owner, verdict_path, blockers,
-                source_message_ids, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT(scope_kind, scope_id) DO UPDATE SET
-                plan = excluded.plan,
-                next_owner = excluded.next_owner,
-                verdict_path = excluded.verdict_path,
-                blockers = excluded.blockers,
-                source_message_ids = excluded.source_message_ids,
-                updated_at = excluded.updated_at
-            """,
-            [
-                kind,
-                ident,
-                merged["plan"],
-                merged["next_owner"],
-                merged["verdict_path"],
-                merged["blockers"],
-                json.dumps(ids),
-                now,
-            ],
-        )
+        for source_id, slot_kind, body in incoming:
+            existing = query_one(
+                """
+                SELECT body FROM sticky_slots
+                WHERE source_id = $1 AND slot_kind = $2
+                """,
+                [source_id, slot_kind],
+            )
+            if existing and slot_kind == "blockers" and source_id in preserve:
+                continue
+            execute(
+                """
+                INSERT INTO sticky_slots (source_id, slot_kind, body, updated_at)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT(source_id, slot_kind) DO UPDATE SET
+                    body = excluded.body,
+                    updated_at = excluded.updated_at
+                """,
+                [source_id, slot_kind, body, now],
+            )
 
 
-def _scope(scope_kind: str, scope_id: str) -> tuple[str, str] | None:
-    kind = (scope_kind or "").strip()
-    ident = (scope_id or "").strip()
-    if kind not in _SCOPE_KINDS or not ident or len(ident) > _SCOPE_ID_MAX:
+def _key(source_id: str, slot_kind: str) -> tuple[str, str] | None:
+    source = (source_id or "").strip()
+    kind = (slot_kind or "").strip()
+    if kind not in SLOT_KINDS or not source or len(source) > _SOURCE_ID_MAX:
         return None
-    if any(char in ident for char in ("\n", "\r", "\x00")):
+    if any(char in source for char in ("\n", "\r", "\x00")):
         return None
-    return kind, ident
-
-
-def _load_ids(raw: Any) -> list[str]:
-    if isinstance(raw, list):
-        values = raw
-    elif isinstance(raw, str) and raw.strip():
-        try:
-            values = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-    else:
-        return []
-    if not isinstance(values, list):
-        return []
-    return [item for item in values if isinstance(item, str)]
-
-
-def _clean_ids(values: list[str]) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in values:
-        token = item.strip()
-        if not token or token in seen:
-            continue
-        if len(token) > 80 or any(char in token for char in ("\n", "\r", "\x00")):
-            continue
-        seen.add(token)
-        ordered.append(token)
-    if len(ordered) > _SOURCE_ID_CAP:
-        ordered = ordered[-_SOURCE_ID_CAP:]
-    return ordered
-
-
-def _union_ids(existing: list[str], incoming: list[str]) -> list[str]:
-    return _clean_ids([*existing, *incoming])
+    return source, kind
 
 
 def _as_utc(value: Any) -> datetime | None:

@@ -76,8 +76,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Compaction never runs every turn, and it never blocks an agent turn.
     # Chat fade queues in the background on System AI when chat headroom
     # is tight. Sticky-slot fill queues in the background on System AI
-    # when task headroom is tight. These keys are the only knob surface:
-    # mode, headroom, min turns, and cooldown.
+    # when task headroom is tight. Slots are task-side and keyed by
+    # existing task, owner, verdict, and blocker ids. These keys are the
+    # only knob surface: mode, headroom, min turns, and cooldown.
     # system_ai_connection is one AI connection id, not a per-agent identity model
     # override. Empty means unset. A saved id that still names a
     # connection is kept on upgrade; this seed does not overwrite it.

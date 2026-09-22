@@ -7,7 +7,7 @@ from typing import Any
 
 import db
 from core.agent_loop.chat_fade import apply_channel_chat_fade, consider_channel_chat_fade
-from core.agent_loop.sticky_slots import compose_sticky_slots
+from core.agent_loop.sticky_slots import compose_channel_sticky_slots, compose_task_sticky_slots
 from core.agent_loop.task_thread_history import load_task_thread_history
 from core.llm.client import count_tokens
 from core.models import Agent, Notification
@@ -133,14 +133,13 @@ def _load_conversation_history(
                 agent_id=agent.id,
                 token_model=token_model,
             )
-            return _finish_history(
-                faded,
-                agent.id,
-                policy,
-                token_model=token_model,
-                scope_kind="channel",
-                scope_id=str(channel_id),
+            windowed = _apply_policy_window(faded, agent.id, policy, token_model=token_model)
+            return compose_channel_sticky_slots(
                 verbatim=verbatim,
+                visible=windowed,
+                policy=policy,
+                agent_id=agent.id,
+                token_model=token_model,
             )
 
     if trigger_type in {"session_message", "session_response"}:
@@ -243,13 +242,13 @@ def _load_consent_or_approval_history(
             limit=fetch_limit,
         )
         if thread:
-            return _finish_history(
-                thread,
-                agent.id,
-                policy,
+            windowed = _apply_policy_window(thread, agent.id, policy, token_model=token_model)
+            return compose_channel_sticky_slots(
+                verbatim=thread,
+                visible=windowed,
+                policy=policy,
+                agent_id=agent.id,
                 token_model=token_model,
-                scope_kind="channel",
-                scope_id=channel_id.strip(),
             )
 
     thread = db.get_human_chat_thread(
@@ -296,17 +295,17 @@ def _finish_history(
     scope_id: str,
     verbatim: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Apply the warm window, then sticky slots.
+    """Apply the warm window. Task threads then receive task-side slots.
 
-    ``verbatim`` is the thread before chat fade replaces older turns.
-    The window still runs on ``messages``, which is the faded view when
-    fade ran. Slot inject happens after the window so the pocket is not
-    trimmed with the turns it preserves.
+    Other scopes stay on the warm window. Channel history composes slots
+    after chat fade in the channel branch, and only for turns that already
+    carry a task id.
     """
     windowed = _apply_policy_window(messages, agent_id, policy, token_model=token_model)
-    return compose_sticky_slots(
-        scope_kind=scope_kind,
-        scope_id=scope_id,
+    if scope_kind != "task" or not str(scope_id).strip():
+        return windowed
+    return compose_task_sticky_slots(
+        task_id=str(scope_id),
         verbatim=verbatim if verbatim is not None else messages,
         visible=windowed,
         policy=policy,
