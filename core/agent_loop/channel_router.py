@@ -45,12 +45,18 @@ _PREFS_IN_STICKY = 3
 
 @dataclass(frozen=True, slots=True)
 class RoundPlan:
-    """Who speaks, who is an engine pass, and whether the router produced this."""
+    """Who speaks, who is an engine pass, and whether the router produced this.
+
+    ``named_speak`` is the speak list the model returned, before required
+    @ ids are pinned. An empty list on a system plan is a hard stop: callers
+    must not put those pins back.
+    """
 
     speak: list[str]
     stay_out: list[str]
     mode: str
     pinned: list[str]
+    named_speak: tuple[str, ...] = ()
 
 
 def plan_channel_route(
@@ -99,6 +105,7 @@ def plan_channel_route(
     if parsed is None:
         logger.info("channel router rejected payload; using drain order")
         return fallback
+    named = tuple(parsed[0])
     speak, stay_out = finalize_router_lists(
         universe,
         forced_ids=pinned,
@@ -106,7 +113,13 @@ def plan_channel_route(
         cap=ROUTER_SPEAK_CAP,
     )
     kept_pins = [agent_id for agent_id in pinned if agent_id in set(speak)]
-    return RoundPlan(speak=speak, stay_out=stay_out, mode="system", pinned=kept_pins)
+    return RoundPlan(
+        speak=speak,
+        stay_out=stay_out,
+        mode="system",
+        pinned=kept_pins,
+        named_speak=named,
+    )
 
 
 def parse_router_payload(raw: str, member_ids: list[str]) -> tuple[list[str], list[str]] | None:
@@ -208,6 +221,7 @@ def build_router_messages(
         f"makes speak longer than {ROUTER_SPEAK_CAP}. "
         "Do not add anyone else past that cap once pending @ ids are included. "
         'Every other member id must appear in "stay_out". '
+        'An empty "speak" array is valid and ends the snapshot. '
         "Do not add keys or ids."
     )
     return [

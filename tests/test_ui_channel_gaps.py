@@ -195,6 +195,10 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
 
     # Archive / Reopen chrome, and the archived list.
     assert "id: 'channel-archive-btn'" in thread
+    assert "id: 'channel-pause-btn'" in thread
+    assert "label: 'Pause thread'" in thread
+    assert "id: 'channel-resume-btn'" in thread
+    assert thread.index("id: 'channel-pause-btn'") < thread.index("id: 'channel-archive-btn'")
     assert "id: 'channel-reopen-btn'" in thread
     assert "id: 'channel-seat-btn'" in thread
     assert "'Add to thread'" in thread

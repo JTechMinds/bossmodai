@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import db
+from core.agent_loop.channel_host import prepare_human_channel_message
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.thread_supersede import cancel_queued_older_thread_rounds
 from core.models.message import HUMAN_SENDER_ID
@@ -100,13 +101,29 @@ async def route_human_channel_message(
         channel_id=channel_id,
         keep_source_message_id=message.id,
     )
-    trigger_requests = start_channel_peer_round(
-        channel_id=channel_id,
-        message_id=message.id,
-        content=message.content,
-        from_name=from_name,
-        author_type="human",
-        channel_name=channel_name,
+    prepared = prepare_human_channel_message(channel_id, message.content)
+    if prepared.marker:
+        marker = prepared.marker
+        await broadcast_manager.broadcast_channel_message(
+            channel_id=marker["channel_id"],
+            content=marker["content"],
+            author_type=marker.get("author_type") or "system",
+            author_name=marker.get("author_name") or "BossMod",
+            message_id=marker.get("message_id"),
+            created_at=marker.get("created_at"),
+            notification_kind=marker.get("notification_kind"),
+        )
+    trigger_requests = (
+        start_channel_peer_round(
+            channel_id=channel_id,
+            message_id=message.id,
+            content=message.content,
+            from_name=from_name,
+            author_type="human",
+            channel_name=channel_name,
+        )
+        if prepared.allow_round
+        else []
     )
     for request in trigger_requests:
         await services.enqueue_trigger(

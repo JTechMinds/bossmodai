@@ -60,8 +60,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # for a local LLM. One agent still runs at most one turn. Repair wakes
     # use a slot and sort behind a live channel lead.
     ("max_concurrent_agent_turns", "2", "llm"),
-    # Follow-up channel rounds per human message, including round 1.
-    ("channel_response_round_cap", "4", "llm"),
+    # Last-resort safety cap on channel rounds for one human message,
+    # including round 1. Empty speak, Pause, demotion, and narrow dup-ack
+    # stop a live thread. This number must not be that brake.
+    ("channel_response_round_cap", "64", "llm"),
     # System AI + compaction pressure knobs (Settings → System → AI Output).
     # Compaction never runs every turn, and it never blocks an agent turn.
     # When compactors exist they queue in the background. These keys only
@@ -189,7 +191,28 @@ def seed_defaults() -> None:
             )
     ensure_local_api_token()
     reconcile_catalog_pin()
+    reconcile_factory_round_cap()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
+
+
+# The shipped cap before Talk/Work/Paused. Only this factory value is raised.
+# An operator who set a different cap keeps it.
+_FACTORY_ROUND_CAP = "4"
+_LAST_RESORT_ROUND_CAP = "64"
+
+
+def reconcile_factory_round_cap() -> None:
+    """Raise the untouched factory round cap so it is not the live-thread brake.
+
+    Does not overwrite a value the operator changed away from ``4``.
+    """
+    row = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        ["channel_response_round_cap"],
+    )
+    if row is None or str(row.get("value") or "") != _FACTORY_ROUND_CAP:
+        return
+    set_setting("channel_response_round_cap", _LAST_RESORT_ROUND_CAP, "llm")
 
 
 def ensure_local_api_token() -> str:

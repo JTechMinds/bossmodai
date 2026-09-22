@@ -295,6 +295,17 @@ def persist_origin_status_line(
         )
         if not notification:
             return {}
+        from core.agent_loop.channel_host import (
+            SPEAK_WORTHY_ORIGIN_KINDS,
+            note_speak_worthy_outcome,
+        )
+
+        if kind in SPEAK_WORTHY_ORIGIN_KINDS:
+            note_speak_worthy_outcome(
+                channel_id,
+                agent_id=agent.id,
+                task_id=str(getattr(task, "id", "") or ""),
+            )
         return {"channel_message": notification}
 
     if kind != "created" and _chat_already_has_line(agent.id, getattr(task, "id", None), text):

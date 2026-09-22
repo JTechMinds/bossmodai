@@ -107,7 +107,7 @@ def test_speak_cap_and_stall_defaults_stay_put() -> None:
     assert config.get("max_concurrent_agent_turns") == "2"
     assert config.get("llm_stall_timeout_seconds") == "120"
     assert config.get("llm_request_timeout_seconds") == "720"
-    assert config.get("channel_response_round_cap") == "4"
+    assert config.get("channel_response_round_cap") == "64"
 
 
 def test_parser_rejects_invented_keys_and_unknown_ids() -> None:

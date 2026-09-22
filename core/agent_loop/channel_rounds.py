@@ -25,6 +25,18 @@ from core.agent_loop.channel_round_plan import (
     mention_ids_in_order,
     order_round_members,
 )
+from core.agent_loop.channel_host import (
+    blocks_peer_round,
+    demoted_ids,
+    is_pause_phrase,
+    note_human_snapshot,
+    note_pass,
+    pause_thread,
+    record_channel_turn,
+    shape_follow_up_speak,
+    stop_active_talk_rounds,
+    talk_closed,
+)
 from core.agent_loop.channel_router import RoundPlan, plan_channel_route
 from core.agent_loop.response_rounds import (
     SharedRoundBinding,
@@ -84,7 +96,15 @@ def start_channel_peer_round(
 
     resolved_name = (channel_name or "").strip() or channel.name
 
+    if author_type == "human" and is_pause_phrase(content):
+        pause_thread(channel_id)
+        return []
+    if blocks_peer_round(channel_id, author_type=author_type):
+        return []
+
     members = _ordered_members(channel_id, excluded)
+    if author_type == "human":
+        note_human_snapshot(channel_id, mention_ids_in_order(content, members))
     if not members:
         return []
     mode = classify_channel_dispatch(content, members)
@@ -298,6 +318,17 @@ def advance_channel_round(
         db.maybe_complete_channel_response_round(round_id)
         return empty
 
+    spoken = spoken_text or str(trigger.get("spoken_text") or "")
+    dup_ack = record_channel_turn(
+        channel_id,
+        spoke=spoke,
+        speaker_id=speaker,
+        spoken_text=spoken,
+    )
+    if dup_ack or talk_closed(channel_id):
+        stop_active_talk_rounds(channel_id)
+        return empty
+
     candidates = db.list_channel_response_candidates(round_id)
     if any(str(candidate.status or "") in {"queued", "responding"} for candidate in candidates):
         return empty
@@ -309,7 +340,7 @@ def advance_channel_round(
             pending=pending,
             pinned_ids=list(meta.get("pinned_ids") or []),
             opening_message=str(trigger.get("content") or ""),
-            latest_message=spoken_text or str(trigger.get("spoken_text") or ""),
+            latest_message=spoken,
         )
     if pending:
         nxt = pending[0]
@@ -403,6 +434,7 @@ def _engine_pass(agent_id: str, *, round_id: str, channel_id: str) -> None:
     Same record as a #124 pass: no channel line, no warm context, no model.
     """
     db.mark_channel_candidate_observed(round_id=round_id, agent_id=agent_id)
+    note_pass(channel_id, agent_id)
     agent = db.get_agent(agent_id)
     if agent is None:
         return
@@ -612,10 +644,13 @@ def _open_follow_up_round(
     meta: dict[str, Any],
     participants: list[str],
 ) -> dict[str, Any]:
-    """Open the next round for members who have not stepped out, up to the soft cap.
+    """Open the next round only for who should speak. Empty speak is a hard stop.
 
-    System AI may narrow that pool to a short speak list. A failed route
-    wakes the #124 drain order, one member at a time, for a soft-judge turn.
+    System AI may name a short speak list, including someone who passed once.
+    An empty system speak list ends the snapshot. A passed human @ is not
+    pinned back in, and shape must not re-insert one. A failed or unset
+    route does not wake the room. It wakes required @ ids only. Two
+    consecutive passes demote a member from that list.
     """
     empty: dict[str, Any] = {"trigger_requests": []}
     index = int(meta.get("round_index") or 1)
@@ -633,15 +668,11 @@ def _open_follow_up_round(
     stepped = set(meta.get("stepped_out") or [])
     member_ids = [member["id"] for member in _ordered_members(channel_id, set())]
     member_set = set(member_ids)
+    # The previous round's roster, plus anyone this round @mentioned.
+    # System AI may speak a member who passed once. Someone never in the
+    # snapshot stays out until they are mentioned.
     pool: list[str] = []
-    for agent_id in participants:
-        if agent_id not in member_set:
-            continue
-        if agent_id in stepped and agent_id not in mention_ids:
-            continue
-        if agent_id not in pool:
-            pool.append(agent_id)
-    for agent_id in mention_ids:
+    for agent_id in list(participants) + list(mention_ids):
         if agent_id in member_set and agent_id not in pool:
             pool.append(agent_id)
     if not pool:
@@ -678,8 +709,22 @@ def _open_follow_up_round(
         required_ids=required,
         opening_message=str(trigger.get("content") or ""),
     )
+    if plan.mode == "system" and not plan.named_speak:
+        return empty
+    speak_ids, stay_ids = shape_follow_up_speak(
+        channel_id,
+        mode=plan.mode,
+        speak=list(plan.speak),
+        ordered=ordered,
+        required_ids=required,
+        mention_ids=mention_ids,
+    )
+    if not speak_ids:
+        return empty
+    blocked = set(demoted_ids(channel_id))
+    stay_ids = [agent_id for agent_id in stay_ids if agent_id not in blocked]
     stepped_now = list(stepped)
-    for agent_id in plan.stay_out:
+    for agent_id in stay_ids:
         if agent_id not in stepped_now:
             stepped_now.append(agent_id)
 
@@ -694,13 +739,13 @@ def _open_follow_up_round(
         stepped_out=stepped_now,
         next_mentions=[],
         router_mode=plan.mode,
-        pinned_ids=list(plan.pinned),
+        pinned_ids=[agent_id for agent_id in plan.pinned if agent_id in set(speak_ids)],
     )
     follow_wake = _install_round_queue(
         round_id=round_record.id,
         channel_id=channel_id,
-        speak_ids=plan.speak,
-        stay_out_ids=plan.stay_out,
+        speak_ids=speak_ids,
+        stay_out_ids=stay_ids,
         wake_all=False,
     )
     if not follow_wake:

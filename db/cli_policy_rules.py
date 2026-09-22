@@ -205,8 +205,9 @@ def delete_rule(rule_id: str) -> bool:
 # another command's argv). Those families therefore stay hard-blocked.
 #
 # Existing databases: :func:`reconcile_hardened_seed_rules` runs from
-# ``init_db`` and upserts these rows. Operators can also use Settings →
-# CLI Policy → Seed defaults, which wipes rules and re-inserts ``_SEED_RULES``.
+# ``init_db`` and inserts any missing global rows. It does not change the
+# tier on a row the operator already saved. Settings → CLI Policy → Seed
+# defaults remains the explicit wipe and reseed.
 
 _HARDENED_NEVER_ALLOWED: list[tuple[str, str, str, str | None, str, str | None, str | None]] = [
     ("never_allowed", "sh", "prefix", "POSIX shell (arbitrary command execution).", "system",
@@ -518,62 +519,18 @@ def seed_default_rules() -> None:
 
 
 def reconcile_hardened_seed_rules() -> int:
-    """Apply HA-SEC-P0-03 lockdown to existing databases.
+    """Insert missing hardened seed rows. Do not clobber operator tiers.
 
-    Updates every row (global or agent-specific) whose pattern is in
-    :data:`_HARDENED_NEVER_ALLOWED` so it cannot remain ``always_allowed``
-    or ``approval_required``. Inserts any missing global rows.
+    A global row that already exists keeps the tier the operator saved,
+    including ``approval_required``. Only a missing global pattern is
+    inserted as ``never_allowed``. Agent-specific rows are left alone.
 
     Called from :func:`db.connection.init_db` after :func:`seed_default_rules`.
     Settings → CLI Policy → Seed defaults remains the full wipe/reseed path.
 
-    Returns the number of inserted or updated rows.
+    Returns the number of inserted rows.
     """
-    changes = 0
-    for tier, pattern, match_mode, description, category, usage_syntax, help_text in _HARDENED_NEVER_ALLOWED:
-        existing = fetch_all(
-            f"""
-            SELECT {_ALL_COLUMNS}
-            FROM cli_policy_rules
-            WHERE pattern = $1 AND match_mode = $2
-            """,
-            [pattern, match_mode],
-            CliPolicyRule,
-        )
-        if not existing:
-            execute(
-                """
-                INSERT INTO cli_policy_rules (
-                    tier, pattern, match_mode, description,
-                    category, usage_syntax, help_text
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """,
-                [tier, pattern, match_mode, description, category, usage_syntax, help_text],
-            )
-            changes += 1
-            continue
-        for rule in existing:
-            if (
-                rule.tier == tier
-                and rule.description == description
-                and rule.category == category
-                and rule.usage_syntax == usage_syntax
-                and rule.help_text == help_text
-                and rule.enabled
-            ):
-                continue
-            updated = update_rule(
-                rule.id,
-                tier=tier,
-                description=description,
-                category=category,
-                usage_syntax=usage_syntax,
-                help_text=help_text,
-                enabled=True,
-            )
-            if updated is not None:
-                changes += 1
+    changes = _insert_missing_global_seed_rules(tuple(_HARDENED_NEVER_ALLOWED))
     changes += _ensure_safe_diagnostic_seed_rules()
     changes += _ensure_validate_on_clone_seed_rules()
     return changes
