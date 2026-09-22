@@ -57,6 +57,43 @@ logger = logging.getLogger(__name__)
 
 _MAX_EXECUTION_REPAIR_ATTEMPTS = 2
 
+# Dispatcher merges the queued JSON onto the trigger. A nested ``payload``
+# is only the pre-dispatch shape some callers still pass.
+_RESUME_FIELD_KEYS = (
+    "status",
+    "command",
+    "content",
+    "cwd",
+    "decision_note",
+    "approval_request_id",
+    "path",
+    "clone_dest",
+    "consent_request_id",
+)
+_CLI_RESUME_EXECUTE_STATUSES = frozenset({"approved", "always_allowed"})
+
+
+def _resume_fields(trigger: dict[str, Any]) -> dict[str, Any]:
+    """Return consent/approval resume fields from a live trigger.
+
+    Top-level keys win. Nested ``payload`` fills keys the flat trigger does
+    not carry. A missing nested ``payload`` must not hide a top-level
+    ``approved`` or ``always_allowed`` status.
+    """
+    nested = trigger.get("payload")
+    if isinstance(nested, str):
+        try:
+            nested = json.loads(nested)
+        except (json.JSONDecodeError, TypeError):
+            nested = None
+    if not isinstance(nested, dict):
+        nested = {}
+    fields = dict(nested)
+    for key in _RESUME_FIELD_KEYS:
+        if key in trigger:
+            fields[key] = trigger[key]
+    return fields
+
 
 async def _run_execution_turn(
     *,
@@ -77,29 +114,24 @@ async def _run_execution_turn(
     """Handle CLI-approval resume and the multi-step execution action loop."""
     # 3b. Handle cli_approval_resolved / host_path_consent_resolved resume
     if trigger_type == "cli_approval_resolved":
-        approval_payload = trigger.get("payload") or {}
-        if isinstance(approval_payload, str):
-            try:
-                approval_payload = json.loads(approval_payload)
-            except (json.JSONDecodeError, TypeError):
-                approval_payload = {}
-        approval_status = approval_payload.get("status", "rejected")
-        if approval_status == "approved":
+        approval_fields = _resume_fields(trigger)
+        approval_status = approval_fields.get("status") or "rejected"
+        if approval_status in _CLI_RESUME_EXECUTE_STATUSES:
             from core.bm_cli.runtime import execute_approved_command
             cli_result = execute_approved_command(
                 agent,
                 state,
-                approval_payload.get("command", ""),
-                approval_payload.get("content"),
-                approval_request_id=approval_payload.get("approval_request_id", ""),
-                cwd=approval_payload.get("cwd"),
+                approval_fields.get("command", ""),
+                approval_fields.get("content"),
+                approval_request_id=approval_fields.get("approval_request_id", ""),
+                cwd=approval_fields.get("cwd"),
                 trigger_type=trigger_type,
                 channel_id=consent_origin_channel_id(trigger),
             )
             approval_context_msg = cli_result.prompt_content
         else:
-            note = approval_payload.get("decision_note") or "No reason given."
-            cmd = approval_payload.get("command", "unknown")
+            note = approval_fields.get("decision_note") or "No reason given."
+            cmd = approval_fields.get("command", "unknown")
             approval_context_msg = _render_loop_prompt(
                 "internal_loop_approval_rejected_result",
                 command=cmd,
@@ -113,20 +145,15 @@ async def _run_execution_turn(
         )
 
     if trigger_type == "host_path_consent_resolved":
-        consent_payload = trigger.get("payload") or {}
-        if isinstance(consent_payload, str):
-            try:
-                consent_payload = json.loads(consent_payload)
-            except (json.JSONDecodeError, TypeError):
-                consent_payload = {}
-        consent_status = consent_payload.get("status", "denied")
+        consent_fields = _resume_fields(trigger)
+        consent_status = consent_fields.get("status") or "denied"
         if consent_status in {"allowed_once", "always_allowed", "edit_host", "enabled"}:
             from core.bm_cli.host_path_consent import is_request_host_access_command
             from core.bm_cli.runtime import execute_bm_cli
 
-            command = consent_payload.get("command", "")
+            command = consent_fields.get("command", "")
             if is_request_host_access_command(command):
-                path = consent_payload.get("path") or "the requested host path"
+                path = consent_fields.get("path") or "the requested host path"
                 approval_context_msg = (
                     f"Host-path access granted for {path}. Use cli on that path now."
                 )
@@ -135,21 +162,21 @@ async def _run_execution_turn(
                     agent,
                     state,
                     command,
-                    consent_payload.get("content"),
+                    consent_fields.get("content"),
                     trigger_type=trigger_type,
                     channel_id=consent_origin_channel_id(trigger),
                 )
                 approval_context_msg = cli_result.prompt_content
         elif consent_status in {"cloned", "branched"}:
-            dest = consent_payload.get("clone_dest") or "/me"
+            dest = consent_fields.get("clone_dest") or "/me"
             approval_context_msg = (
                 f"Workspace preference is locked: work in the agent workspace at {dest}. "
                 f"{LOCKED_WORKSPACE_COPY_STEER} "
                 "Host writes stay blocked."
             )
         else:
-            note = consent_payload.get("decision_note") or "Host-path access denied."
-            cmd = consent_payload.get("command", "unknown")
+            note = consent_fields.get("decision_note") or "Host-path access denied."
+            cmd = consent_fields.get("command", "unknown")
             approval_context_msg = _render_loop_prompt(
                 "internal_loop_approval_rejected_result",
                 command=cmd,
