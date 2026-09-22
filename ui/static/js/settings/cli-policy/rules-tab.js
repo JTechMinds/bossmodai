@@ -14,7 +14,7 @@
 const BossModCliPolicyRules = (() => {
     const esc = BossModFormat.escapeHtml;
     const escAttr = BossModFormat.escapeAttribute;
-    const { icons } = BossModCliPolicyShared;
+    const { icons, announceApplied } = BossModCliPolicyShared;
     const table = BossModCliPolicyRulesTable;
 
     let rulesCache = [];
@@ -146,6 +146,7 @@ const BossModCliPolicyRules = (() => {
                     });
                     rule.enabled = !rule.enabled;
                     table.renderTableBody(rulesCache);
+                    announceApplied();
                 } catch (err) {
                     alert(err.message || 'Failed to update rule.');
                 }
@@ -162,6 +163,7 @@ const BossModCliPolicyRules = (() => {
                     await apiFetchOk(`/api/cli-policy/rules/${del.dataset.deleteRule}`, { method: 'DELETE' });
                     rulesCache = rulesCache.filter(r => r.id !== del.dataset.deleteRule);
                     table.renderTableBody(rulesCache);
+                    announceApplied();
                 } catch (err) {
                     alert(err.message || 'Failed to delete rule.');
                 }
@@ -176,6 +178,7 @@ const BossModCliPolicyRules = (() => {
             if (!confirm('This will delete ALL existing rules and replace them with the defaults. Continue?')) return;
             try {
                 await apiFetchOk('/api/cli-policy/rules/seed-defaults', { method: 'POST' });
+                announceApplied();
                 renderRulesTab(el, { onEditRule });
             } catch (err) {
                 alert(err.message || 'Failed to seed defaults.');

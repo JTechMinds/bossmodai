@@ -12,7 +12,7 @@
 const BossModCliPolicyRuleForm = (() => {
     const esc = BossModFormat.escapeHtml;
     const escAttr = BossModFormat.escapeAttribute;
-    const { icons, getAgents } = BossModCliPolicyShared;
+    const { icons, getAgents, announceApplied } = BossModCliPolicyShared;
 
     /**
      * Open the rule form in the Rules tab's slot.
@@ -177,6 +177,7 @@ const BossModCliPolicyRuleForm = (() => {
                         body: JSON.stringify(data),
                     });
                 }
+                announceApplied();
                 onSaved();
             } catch (err) {
                 alert(err.message || 'Failed to save rule.');

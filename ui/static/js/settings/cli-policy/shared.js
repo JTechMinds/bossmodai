@@ -12,6 +12,10 @@
  * table resolves an agent name for every row and the rule form fills a select
  * from the same list, so re-fetching per tab would be one request per tab
  * switch for a list that does not change while Settings is open.
+ *
+ * Default Policy and CLI rule writes already PUT on change. `announceApplied`
+ * is the confirmation for those writes: a toast, not a second Save button
+ * that would PUT the same key again.
  */
 const BossModCliPolicyShared = (() => {
     const esc = BossModFormat.escapeHtml;
@@ -142,6 +146,47 @@ const BossModCliPolicyShared = (() => {
         node.className = ok ? 'text-xs mt-2 text-emerald-600' : 'text-xs mt-2 text-red-500';
     }
 
+    /** Copy the operator reads after a Default Policy or CLI rule write lands. */
+    const APPLIED_COPY = 'Saved / Applied';
+    const APPLIED_MS = 4000;
+    let appliedTimer = null;
+
+    /**
+     * Show the Saved / Applied toast.
+     *
+     * Called only after a successful Default Policy PUT or a successful CLI
+     * rule create, update, delete, enable toggle, or seed. It does not write
+     * anything. A second announcement replaces the first so a burst of rule
+     * edits does not stack a column of the same sentence.
+     *
+     * The host is its own element, not the needs-arrival toast host: those
+     * toasts mean a need arrived, and this one means a setting write landed.
+     *
+     * @returns {void}
+     */
+    function announceApplied() {
+        let host = document.querySelector('[data-cli-applied-toast-host]');
+        if (!host) {
+            host = document.createElement('div');
+            host.setAttribute('data-cli-applied-toast-host', '');
+            host.className = 'cli-applied-toast-host';
+            document.body.appendChild(host);
+        }
+        host.replaceChildren();
+        const toast = document.createElement('div');
+        toast.className = 'cli-applied-toast';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+        toast.textContent = APPLIED_COPY;
+        host.appendChild(toast);
+        if (appliedTimer) clearTimeout(appliedTimer);
+        appliedTimer = setTimeout(() => {
+            toast.remove();
+            appliedTimer = null;
+        }, APPLIED_MS);
+        if (appliedTimer && typeof appliedTimer.unref === 'function') appliedTimer.unref();
+    }
+
     return {
         icons,
         fetchAgents,
@@ -149,5 +194,6 @@ const BossModCliPolicyShared = (() => {
         agentName,
         statusBadge,
         applySettingSaveResult,
+        announceApplied,
     };
 })();
