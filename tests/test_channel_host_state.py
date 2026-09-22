@@ -17,14 +17,16 @@ from core.agent_loop.channel_host import (
     is_thread_paused,
     pause_thread,
     resume_thread,
+    shape_follow_up_speak,
     work_holds_talk,
 )
-from core.agent_loop.channel_round_plan import DISPATCH_ROUNDS
+from core.agent_loop.channel_round_plan import DISPATCH_FANOUT, DISPATCH_ROUNDS
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.task_origin_mirrors import persist_origin_status_line
 from core.messaging import route_human_channel_message
 from db import channel_host as host_db
+from db import channel_response_rounds as channel_round_db
 from db.settings import reconcile_factory_round_cap
 
 
@@ -184,6 +186,54 @@ def test_empty_speak_stops_the_snapshot_and_leaves_work_wakes(monkeypatch) -> No
     assert progress["trigger_requests"] == []
     assert _work_still_queued(jim.id)
     assert calls["n"] == 3
+
+
+def test_empty_speak_stops_after_a_passed_human_mention(monkeypatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    calls = {"n": 0}
+
+    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _payload([jim.id], [laura.id, ada.id])
+        return _payload([], [jim.id, laura.id, ada.id])
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "@Jim where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert triggers[0]["agent_id"] == jim.id
+    assert host_db.get_channel_host_state(channel.id)["protected_ids"][0] == jim.id
+    speak, stay = shape_follow_up_speak(
+        channel.id,
+        mode="system",
+        speak=[],
+        ordered=[jim.id, laura.id, ada.id],
+        required_ids=[jim.id],
+        mention_ids=[jim.id],
+    )
+    assert speak == []
+    assert stay == []
+    progress = _finish(
+        triggers[0]["payload"]["round_id"],
+        jim.id,
+        _base(channel, message),
+        spoke=False,
+    )
+    assert progress["trigger_requests"] == []
+    indexes = [
+        int(channel_round_db.get_channel_round_meta(row.id)["round_index"])
+        for row in db.list_channel_response_rounds(channel.id)
+    ]
+    assert indexes == [1]
+    assert calls["n"] == 2
 
 
 def test_two_passes_demote_until_a_peer_speaks_or_a_human_at(monkeypatch) -> None:
@@ -571,6 +621,67 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
         for item in result["trigger_requests"]
     ]
     assert wakes == [("channel_message", order[1])]
+
+
+def test_work_bind_stops_fanout_peer_queues() -> None:
+    jim, laura, ada, channel = _trio()
+    message = _message(channel.id, "@everyone ship the notes")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert {item["agent_id"] for item in triggers} == {jim.id, laura.id, ada.id}
+    assert triggers[0]["payload"]["dispatch_mode"] == DISPATCH_FANOUT
+    round_id = triggers[0]["payload"]["round_id"]
+    for item in triggers:
+        if item["agent_id"] == jim.id:
+            continue
+        db.create_agent_trigger(
+            agent_id=item["agent_id"],
+            trigger_type="channel_message",
+            source_channel="channel",
+            payload=dict(item["payload"]),
+        )
+    _queue_work(jim.id, channel.id)
+    state = db.get_agent_state(jim.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "accept",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "taskTitle": "Ship the notes",
+            "reply": "I'll ship the notes.",
+        },
+        jim,
+        state,
+        {
+            "type": "channel_message",
+            "channel_id": channel.id,
+            "channel_name": channel.name,
+            "round_id": round_id,
+            "source_message_id": message.id,
+            "content": message.content,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "dispatch_mode": DISPATCH_FANOUT,
+        },
+    )
+    kinds = [item.get("trigger_type") for item in result["trigger_requests"]]
+    assert "activity_resumed" in kinds
+    assert "channel_message" not in kinds
+    assert work_holds_talk(channel.id)
+    assert db.list_channel_response_rounds(channel.id, status="active") == []
+    queued = db.list_queued_triggers(limit=20)
+    assert not any(
+        item.trigger_type == "channel_message" and item.agent_id in {laura.id, ada.id}
+        for item in queued
+    )
+    assert _work_still_queued(jim.id)
 
 
 def test_factory_round_cap_bump_leaves_a_custom_value() -> None:

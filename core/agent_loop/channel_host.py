@@ -304,6 +304,10 @@ def shape_follow_up_speak(
     """
     allowed = set(ordered)
     mentions = [agent_id for agent_id in mention_ids if agent_id in allowed]
+    # An empty system speak list is the snapshot stop. Do not re-insert a
+    # prior @ or a required id; that reopens rounds until the cap.
+    if mode == "system" and not any(agent_id in allowed for agent_id in speak):
+        return [], []
     _lift_mentions(channel_id, mentions)
     if mode != "system":
         chosen = [agent_id for agent_id in required_ids if agent_id in allowed]

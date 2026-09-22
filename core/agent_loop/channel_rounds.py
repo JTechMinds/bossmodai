@@ -647,8 +647,10 @@ def _open_follow_up_round(
     """Open the next round only for who should speak. Empty speak is a hard stop.
 
     System AI may name a short speak list, including someone who passed once.
-    A failed or unset route does not wake the room. It wakes required @ ids
-    only. Two consecutive passes demote a member from that list.
+    An empty system speak list ends the snapshot. A passed human @ is not
+    pinned back in, and shape must not re-insert one. A failed or unset
+    route does not wake the room. It wakes required @ ids only. Two
+    consecutive passes demote a member from that list.
     """
     empty: dict[str, Any] = {"trigger_requests": []}
     index = int(meta.get("round_index") or 1)
@@ -707,6 +709,8 @@ def _open_follow_up_round(
         required_ids=required,
         opening_message=str(trigger.get("content") or ""),
     )
+    if plan.mode == "system" and not plan.named_speak:
+        return empty
     speak_ids, stay_ids = shape_follow_up_speak(
         channel_id,
         mode=plan.mode,

@@ -41,7 +41,7 @@ from core.agent_loop.decision_work_plan import (
     _resolve_work_execution_plan,
     _should_queue_initial_work_resume,
 )
-from core.agent_loop.channel_host import note_channel_work
+from core.agent_loop.channel_host import note_channel_work, stop_active_talk_rounds
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
@@ -453,6 +453,7 @@ def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: Con
     if not channel_id or not task_id or not title:
         return
     note_channel_work(channel_id, agent_id=agent.id, task_id=task_id)
+    stop_active_talk_rounds(channel_id)
 
 
 def summarize_decision(decision_payload: dict[str, Any]) -> str:
