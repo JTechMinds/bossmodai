@@ -16,7 +16,9 @@ from core.agent_loop.channel_router import (
     ROUTER_SPEAK_CAP,
     build_router_messages,
     finalize_router_lists,
+    format_member_line,
     parse_router_payload,
+    role_blurb,
     short_sticky_context,
 )
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
@@ -172,6 +174,67 @@ def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
     assert "Jim: keep notes short" in blob
     assert '"speak"' in blob and '"stay_out"' in blob
     assert f"at most {ROUTER_SPEAK_CAP}" in blob
+    assert "role blurb" in blob
+
+
+def test_member_line_keeps_specialty_and_one_role_blurb() -> None:
+    essay = (
+        "owns M0 build / stack lock\n\n"
+        + ("biography paragraph " * 20)
+    )
+    line = format_member_line(
+        {
+            "id": "charles",
+            "name": "Charles",
+            "role": "Engineer",
+            "description": essay,
+        }
+    )
+    assert line == "charles | Charles | Engineer — owns M0 build / stack lock"
+    assert role_blurb(essay) == "owns M0 build / stack lock"
+    long_first = "owns the product requirements " + ("detail " * 30)
+    clipped = role_blurb(long_first)
+    assert clipped.startswith("owns the product requirements")
+    assert len(clipped) <= 80
+    assert clipped.endswith("...")
+    assert long_first not in clipped
+    bare = format_member_line({"id": "jim", "name": "Jim", "role": "PM"})
+    assert bare == "jim | Jim | PM"
+
+
+def test_route_sees_the_hire_blurb_and_not_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jim, laura, ada, channel = _trio()
+    db.update_agent(
+        jim.id,
+        description="owns the product brief\n\nStanding note body that must stay off the roster.",
+        prompt_template="FULL PROMPT SHOULD NOT APPEAR",
+    )
+    _enable_system_ai()
+    seen: list[str] = []
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        seen.append("\n".join(item["content"] for item in messages))
+        return _payload([laura.id], [jim.id, ada.id])
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "Who should own the requirements?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert triggers[0]["agent_id"] == laura.id
+    prompt = seen[0]
+    assert f"{jim.id} | Jim | PM — owns the product brief" in prompt
+    assert "Standing note body" not in prompt
+    assert "FULL PROMPT" not in prompt
+    assert f"{laura.id} | Laura | Eng" in prompt
+    assert " — " not in prompt.split(f"{laura.id} | Laura | Eng", 1)[1].split("\n", 1)[0]
 
 
 def test_unset_system_ai_keeps_drain_order_and_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:

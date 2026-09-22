@@ -565,11 +565,13 @@ def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]
         if not agent_id or agent_id in excluded:
             continue
         detail = details.get(agent_id) or {}
+        agent = db.get_agent(agent_id)
         ordered.append(
             {
                 "id": agent_id,
                 "name": str(detail.get("name") or ""),
                 "role": str(detail.get("role") or ""),
+                "description": str(getattr(agent, "description", None) or "") if agent is not None else "",
             }
         )
     return ordered

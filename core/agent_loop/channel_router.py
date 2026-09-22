@@ -46,6 +46,8 @@ _STICKY_CHARS = 400
 _PREF_CHARS = 80
 _OPENING_CHARS = 160
 _PREFS_IN_STICKY = 3
+# One hire-role line on the member roster. Not a bio, prompt, or note body.
+_ROLE_BLURB_CHARS = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +215,31 @@ def _repair_empty_handoff_speak(
     return parsed
 
 
+def role_blurb(text: str | None) -> str:
+    """Return the first line of a hire summary, clipped.
+
+    Later paragraphs, prompt text, and note bodies are not part of this
+    line. Empty input stays empty so the member row keeps ``id | name | specialty``.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    first = raw.splitlines()[0]
+    return _clip(" ".join(first.split()), _ROLE_BLURB_CHARS)
+
+
+def format_member_line(member: dict[str, str]) -> str:
+    """``id | name | specialty``, plus `` — blurb`` when a hire summary exists."""
+    agent_id = str(member.get("id") or "").strip()
+    name = str(member.get("name") or "").strip() or agent_id
+    specialty = str(member.get("role") or "").strip() or "unspecified"
+    line = f"{agent_id} | {name} | {specialty}"
+    blurb = role_blurb(member.get("description") or member.get("blurb"))
+    if blurb:
+        return f"{line} — {blurb}"
+    return line
+
+
 def build_router_messages(
     *,
     members: list[dict[str, str]],
@@ -220,16 +247,13 @@ def build_router_messages(
     pending_mention_ids: list[str],
     sticky: str,
 ) -> list[dict[str, str]]:
-    """Build the short route prompt. Specialties are hire roles, not bios."""
+    """Build the short route prompt. Specialties and one role line, not bios."""
     by_id = {str(member.get("id") or ""): member for member in members}
     member_lines = []
     for member in members:
-        agent_id = str(member.get("id") or "").strip()
-        if not agent_id:
+        if not str(member.get("id") or "").strip():
             continue
-        name = str(member.get("name") or "").strip() or agent_id
-        specialty = str(member.get("role") or "").strip() or "unspecified"
-        member_lines.append(f"{agent_id} | {name} | {specialty}")
+        member_lines.append(format_member_line(member))
     pending_lines = []
     for agent_id in pending_mention_ids:
         member = by_id.get(agent_id) or {}
@@ -256,7 +280,8 @@ def build_router_messages(
         "Read the latest message and sticky context: who is being handed work, who "
         "must answer, who is only being discussed. Prefer Board/task next owners when "
         "the sticky implies them. Do not wake people merely because their name appears "
-        "in prose. Operator @ ids (pending) are already required — keep them first. "
+        "in prose. Use the one-line role blurb to match the work to who owns it. "
+        "Operator @ ids (pending) are already required — keep them first. "
         "Reply with only one JSON object and no other text. "
         'The only keys are "speak" and "stay_out". '
         "Each value is an array of member ids from the list below. "
