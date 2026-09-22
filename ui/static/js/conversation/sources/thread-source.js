@@ -284,6 +284,27 @@ const BossModThreadSource = (() => {
             signal('chrome');
         }
 
+        /**
+         * Opt this thread in or out of System AI auto-approve.
+         *
+         * Off is the default. The request writes only the thread flag.
+         *
+         * @param {boolean} enabled
+         * @returns {Promise<void>}
+         */
+        async function setCliAutoApprove(enabled) {
+            const res = await api(`/api/channels/${threadId}/cli-auto-approve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled === true }),
+            });
+            if (!res.ok) {
+                throw new Error(await refusal(res, 'Could not update auto-approve for this thread.'));
+            }
+            channel = await res.json();
+            signal('chrome');
+        }
+
         async function reopenThread() {
             const res = await api(`/api/channels/${threadId}/reopen`, { method: 'POST' });
             if (!res.ok) throw new Error((await res.text()) || 'Could not reopen this thread.');
@@ -330,6 +351,14 @@ const BossModThreadSource = (() => {
                     icon: 'user-plus',
                     iconOnly: true,
                     onSelect: seatAgent,
+                });
+                actions.push({
+                    id: 'channel-cli-auto-approve',
+                    kind: 'switch',
+                    slot: 'menu',
+                    label: 'Auto-approve safe commands',
+                    pressed: !!(channel && channel.cli_auto_approve),
+                    onSelect: setCliAutoApprove,
                 });
                 actions.push(channel && channel.conversation_paused
                     ? {

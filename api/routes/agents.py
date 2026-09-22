@@ -81,6 +81,10 @@ class ChannelRenameBody(BaseModel):
     name: str
 
 
+class ChannelCliAutoApproveBody(BaseModel):
+    enabled: bool
+
+
 class ChannelMemberBody(BaseModel):
     agent_id: str
 
@@ -240,6 +244,24 @@ async def rename_channel(channel_id: str, body: ChannelRenameBody):
     # Every other surface holding this thread's name — the rail, an open
     # transcript in another window — learns about it the same way archive and
     # reopen are learned about.
+    await manager.broadcast_channel_updated(summary)
+    return summary
+
+
+@router.patch("/channels/{channel_id}/cli-auto-approve")
+async def set_channel_cli_auto_approve(channel_id: str, body: ChannelCliAutoApproveBody):
+    """Turn per-thread CLI auto-approve on or off.
+
+    Writes only that flag. Default policy, Soft-block, and Deny picks stay.
+    """
+    if db.get_channel(channel_id) is None:
+        raise HTTPException(404, "Thread not found")
+    updated = db.update_channel(channel_id, cli_auto_approve=body.enabled)
+    if updated is None:
+        raise HTTPException(404, "Thread not found")
+    members = db.list_channel_member_details(updated.id)
+    latest = db.get_latest_channel_message(updated.id)
+    summary = _serialize_channel_summary(updated, members=members, latest_message=latest)
     await manager.broadcast_channel_updated(summary)
     return summary
 
@@ -947,6 +969,7 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
         "conversation_paused": is_thread_paused(channel.id),
+        "cli_auto_approve": bool(getattr(channel, "cli_auto_approve", False)),
         "member_count": len(members or []),
         "members": members or [],
         "latest_message": latest,

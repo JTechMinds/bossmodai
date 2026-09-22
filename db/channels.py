@@ -16,7 +16,10 @@ from core.models import (
 from db.connection import transaction
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
-_CHANNEL_COLUMNS = "id, name, kind, status, created_by, created_at, updated_at, archived_at"
+_CHANNEL_COLUMNS = (
+    "id, name, kind, status, created_by, created_at, updated_at, archived_at, "
+    "cli_auto_approve"
+)
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
 _MESSAGE_COLUMNS = (
     "id, channel_id, author_type, author_agent_id, author_name, content, "
@@ -151,9 +154,14 @@ def update_channel(
     name: str | None = None,
     status: str | None = None,
     archived_at: datetime | None = None,
+    cli_auto_approve: bool | None = None,
     touch: bool = True,
 ) -> Channel | None:
-    """Update one channel's metadata."""
+    """Update one channel's metadata.
+
+    ``cli_auto_approve`` writes only that flag. It does not touch CLI default
+    policy, Soft-block, or Deny rules.
+    """
     fields: dict[str, object] = {}
     if name is not None:
         fields["name"] = name
@@ -161,6 +169,8 @@ def update_channel(
         fields["status"] = status
     if archived_at is not None:
         fields["archived_at"] = archived_at
+    if cli_auto_approve is not None:
+        fields["cli_auto_approve"] = 1 if cli_auto_approve else 0
     if touch:
         fields["updated_at"] = datetime.now(timezone.utc)
     if not fields:

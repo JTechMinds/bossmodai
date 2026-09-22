@@ -303,6 +303,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "channel_response_rounds", "pinned_ids",
         "TEXT NOT NULL DEFAULT '[]'",
     )
+    _add_column_if_missing(
+        con, "channels", "cli_auto_approve",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
     _backfill_task_closed_at(con)
 
 
