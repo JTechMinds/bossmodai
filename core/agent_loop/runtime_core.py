@@ -39,6 +39,7 @@ _RUNTIME_CORE_TITLE = "# Runtime core"
 AUDIENCE_SOFT_JUDGMENT = (
     "Before you reply, choose speak or pass. "
     "Speak only when this wake is for you; one line is enough, not an essay. "
+    "When nothing changed, prefer an engine pass over a status essay. "
     "Pass is engine-side: use observe and do not post a chat message. "
     "Do not write that you will stay quiet."
 )

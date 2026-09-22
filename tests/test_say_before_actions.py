@@ -84,6 +84,7 @@ def test_runtime_core_biases_say_with_actions_on_human_ask() -> None:
     assert AUDIENCE_SOFT_JUDGMENT in block
     # Work stays quiet: soft judgment still allows pass; no forced ack line.
     assert "Speak only when this wake is for you" in AUDIENCE_SOFT_JUDGMENT
+    assert "When nothing changed, prefer an engine pass over a status essay." in AUDIENCE_SOFT_JUDGMENT
     assert "must always say" not in block.lower()
     assert "forced ack" not in block.lower()
 

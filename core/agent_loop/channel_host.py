@@ -262,6 +262,26 @@ def note_pass(channel_id: str, agent_id: str) -> None:
     host_db.save_channel_host_state(state)
 
 
+def copy_stay(channel_id: str) -> dict[str, Any]:
+    """Copy pass streaks and demotion. A no-op speak must not wipe them."""
+    state = host_db.get_channel_host_state(channel_id)
+    return {
+        "pass_streaks": dict(state["pass_streaks"]),
+        "demoted_ids": list(state["demoted_ids"]),
+    }
+
+
+def restore_stay(channel_id: str, stay: dict[str, Any]) -> None:
+    """Put a copied stay back. Other host fields are left alone."""
+    token = (channel_id or "").strip()
+    if not token:
+        return
+    state = host_db.get_channel_host_state(token)
+    state["pass_streaks"] = dict(stay.get("pass_streaks") or {})
+    state["demoted_ids"] = list(stay.get("demoted_ids") or [])
+    host_db.save_channel_host_state(state)
+
+
 def note_speak(channel_id: str) -> None:
     """A real speak resets every pass streak and lifts demotion."""
     token = (channel_id or "").strip()

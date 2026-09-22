@@ -460,6 +460,7 @@ def test_selected_member_still_posts_a_speak_turn(monkeypatch: pytest.MonkeyPatc
     replies = [
         _payload([laura.id], [_jim.id, _ada.id]),
         _payload([], [laura.id]),
+        _payload([], [laura.id, _jim.id, _ada.id]),
     ]
 
     def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
@@ -511,6 +512,7 @@ def test_redecide_after_a_speak_passes_the_rest_without_a_second_wake(
         _payload([jim.id, laura.id], [ada.id]),
         _payload([], [laura.id]),
         _payload([], [jim.id]),
+        _payload([], [jim.id, laura.id, ada.id]),
     ]
 
     def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:

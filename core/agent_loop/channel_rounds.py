@@ -4,7 +4,10 @@ Discuss and status messages wake one member at a time. When System AI is
 set, one short route per round chooses an ordered speak list and a
 stay-out list. Human @ mentions stay first and are never dropped. Stay-out
 members are an engine pass: the queue advances, nothing is posted, and the
-identity model is not called. A failed or unset route keeps the #124 drain
+identity model is not called. An agent speak is judged before the next
+peer round: new work, a question, or a handoff may wake; settled status,
+an echo, or a no-op is an empty speak and does not force a peer @ into
+that round. A failed or unset route keeps the #124 drain
 (mentioned first, then a stable lead / round-robin) and each of those wakes
 is a normal soft-judge turn. Fan-out remains only for the narrow allowlist
 in ``channel_round_plan``.
@@ -27,12 +30,14 @@ from core.agent_loop.channel_round_plan import (
 )
 from core.agent_loop.channel_host import (
     blocks_peer_round,
+    copy_stay,
     demoted_ids,
     is_pause_phrase,
     note_human_snapshot,
     note_pass,
     pause_thread,
     record_channel_turn,
+    restore_stay,
     shape_follow_up_speak,
     stop_active_talk_rounds,
     talk_closed,
@@ -133,6 +138,7 @@ def start_channel_peer_round(
         latest_message=content,
         required_ids=pins,
         handoff=handoff,
+        agent_line=author_type == "agent",
         sticky_note=_board_sticky(members, board_ids),
     )
 
@@ -332,6 +338,7 @@ def advance_channel_round(
         return empty
 
     spoken = spoken_text or str(trigger.get("spoken_text") or "")
+    stay_before = copy_stay(channel_id) if spoke else None
     dup_ack = record_channel_turn(
         channel_id,
         spoke=spoke,
@@ -366,14 +373,18 @@ def advance_channel_round(
         return {"trigger_requests": [_wake_trigger(trigger, nxt.agent_id, round_id, meta)]}
 
     db.maybe_complete_channel_response_round(round_id)
-    return _open_follow_up_round(
+    progress = _open_follow_up_round(
         trigger,
         round_id=round_id,
         channel_id=channel_id,
         source_id=source_id,
         meta=channel_round_db.get_channel_round_meta(round_id),
         participants=[candidate.agent_id for candidate in candidates],
+        agent_speak=spoken if spoke else "",
     )
+    if progress.pop("keep_stay", False) and stay_before is not None:
+        restore_stay(channel_id, stay_before)
+    return progress
 
 
 def _plan_for_members(
@@ -385,6 +396,7 @@ def _plan_for_members(
     required_ids: list[str],
     opening_message: str = "",
     handoff: bool = False,
+    agent_line: bool = False,
     sticky_note: str = "",
 ) -> RoundPlan:
     """Route a rounds queue. Fan-out and an unset router keep the drain order."""
@@ -403,6 +415,7 @@ def _plan_for_members(
         forced_ids=list(required_ids),
         opening_message=opening_message,
         handoff=handoff,
+        agent_line=agent_line,
         sticky_note=sticky_note,
     )
 
@@ -542,15 +555,15 @@ def _members_in_order(channel_id: str, agent_ids: list[str]) -> list[dict[str, s
     return [by_id[agent_id] for agent_id in agent_ids if agent_id in by_id]
 
 
-def _latest_channel_text(channel_id: str, fallback: str) -> str:
-    """Newest transcript line, skipping round-boundary markers."""
+def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str]:
+    """Newest transcript line and its author, skipping round-boundary markers."""
     for row in reversed(db.list_channel_messages(channel_id, limit=12)):
         if row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND:
             continue
         text = (row.content or "").strip()
         if text:
-            return text
-    return fallback
+            return text, str(row.author_type or "")
+    return fallback, ""
 
 
 def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
@@ -684,6 +697,7 @@ def _open_follow_up_round(
     source_id: str,
     meta: dict[str, Any],
     participants: list[str],
+    agent_speak: str = "",
 ) -> dict[str, Any]:
     """Open the next round only for who should speak. Empty speak is a hard stop.
 
@@ -692,6 +706,11 @@ def _open_follow_up_round(
     pinned back in, and shape must not re-insert one. A failed or unset
     route does not wake the room. It wakes required @ ids only. Two
     consecutive passes demote a member from that list.
+
+    An agent speak is judged before this round opens. Settled status, an
+    echo, or a no-op is an empty speak. Peer @ on that line is not a pin
+    and is not written back into the wake list. Operator pins stay on the
+    plan. That empty stop does not clear pass streaks or demotion.
     """
     empty: dict[str, Any] = {"trigger_requests": []}
     index = int(meta.get("round_index") or 1)
@@ -736,29 +755,51 @@ def _open_follow_up_round(
         for candidate in db.list_channel_response_candidates(round_id)
         if str(candidate.status or "") == "responded"
     }
-    required: list[str] = []
-    for agent_id in list(meta.get("pinned_ids") or []) + list(mention_ids):
-        if agent_id in set(ordered) and agent_id not in responded and agent_id not in required:
-            required.append(agent_id)
+    operator_pins: list[str] = []
+    for agent_id in list(meta.get("pinned_ids") or []):
+        if agent_id in set(ordered) and agent_id not in responded and agent_id not in operator_pins:
+            operator_pins.append(agent_id)
+    peer_mentions = [agent_id for agent_id in mention_ids if agent_id not in set(operator_pins)]
+    fallback_required = _merge_ids(operator_pins, peer_mentions, allowed=set(ordered))
+    agent_text = " ".join((agent_speak or "").split())
+    if agent_text:
+        latest = agent_text
+        agent_line = True
+    else:
+        latest, author = _latest_channel_line(channel_id, str(trigger.get("content") or ""))
+        agent_line = author == "agent"
+    # Peer @ is context for an agent line. It is not a hard pin. Fallback
+    # with no system route still wakes the @ ids it already required.
+    route_required = operator_pins if agent_line else fallback_required
     roster = _members_in_order(channel_id, ordered)
-    latest = _latest_channel_text(channel_id, str(trigger.get("content") or ""))
     plan = _plan_for_members(
         mode=DISPATCH_ROUNDS,
         members=roster,
         fallback_order=ordered,
         latest_message=latest,
-        required_ids=required,
+        required_ids=route_required,
         opening_message=str(trigger.get("content") or ""),
+        agent_line=agent_line,
     )
     if plan.mode == "system" and not plan.named_speak:
+        if agent_line:
+            return {"trigger_requests": [], "keep_stay": True}
         return empty
+    if plan.mode == "system" and agent_line:
+        # plan.speak already has operator pins first and anyone the model
+        # named. Do not insert a peer @ the model left out.
+        shape_mentions = []
+        shape_required = operator_pins
+    else:
+        shape_mentions = mention_ids
+        shape_required = fallback_required
     speak_ids, stay_ids = shape_follow_up_speak(
         channel_id,
         mode=plan.mode,
         speak=list(plan.speak),
         ordered=ordered,
-        required_ids=required,
-        mention_ids=mention_ids,
+        required_ids=shape_required,
+        mention_ids=shape_mentions,
     )
     if not speak_ids:
         return empty
