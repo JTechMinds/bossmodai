@@ -1005,7 +1005,8 @@ def reset_database() -> None:
 
     Clears per-agent artifact workspaces so reseeded agents start clean.
 
-    Note: Shared project files under `artifacts/projects` are preserved.
+    Note: Shared project files under the separated projects root are preserved.
+    A reset does not move or delete them.
     """
     import shutil
 

@@ -1,7 +1,7 @@
 """Allowlisted extra host roots for named-path access.
 
 This is not a full host mount. Built-in roots stay ``/me`` (agent workspace)
-and ``/projects`` (``artifacts/projects``). Operators may add extra absolute
+and ``/projects`` (the project data root, outside the application install). Operators may add extra absolute
 directories via the ``workspace_host_roots`` setting. Empty setting = no
 extra host access. Path jail and company-file confinement both read this
 list; approval does not bypass it.

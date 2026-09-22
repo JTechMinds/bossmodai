@@ -112,7 +112,18 @@ def _api_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def _nest_cwd(agent_id: str) -> str:
+    """Point cwd at a locked clone that has its own git dir.
+
+    An empty ``/me/host-work`` path sits inside the application checkout.
+    Without a clone ``.git``, git would walk up into the application
+    repository and the project-git fence refuses that.
+    """
     dest = "/me/host-work/sample_repo"
+    agent = db.get_agent(agent_id)
+    assert agent is not None
+    real = agent_artifact_dir(agent.storage_key) / "host-work" / "sample_repo"
+    real.mkdir(parents=True, exist_ok=True)
+    (real / ".git").mkdir(exist_ok=True)
     set_cli_cwd(agent_id, dest)
     return dest
 
