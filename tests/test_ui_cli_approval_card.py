@@ -28,6 +28,8 @@ def test_cli_approval_card_always_coalesce_and_stale_dismiss() -> None:
         "ok": True,
         "nestOffersAlways": True,
         "deskHidesAlways": True,
+        "quietWithoutNote": True,
+        "showsReviewWhy": True,
         "alwaysAllowResolves": True,
         "staleMorphsToDismiss": True,
         "dismissIsLocalOnly": True,

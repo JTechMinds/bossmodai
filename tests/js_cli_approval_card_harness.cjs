@@ -105,7 +105,29 @@ function deskCard(id) {
     if (deskLabels.includes("Always allow")) {
         throw new Error("desk card must not offer Always allow");
     }
+    if (desk.textContent.includes("System AI")) {
+        throw new Error("a card with no review note must stay quiet");
+    }
     const deskHidesAlways = true;
+    const quietWithoutNote = true;
+
+    const explained = documentStub.createElement("div");
+    explained.className = "host-path-consent-card";
+    documentStub.body.append(explained);
+    const reviewWhy = "System AI unsure / refused: deletes more than one file";
+    BossModConsentCard.renderCliApprovalCard(
+        explained,
+        nestCard("appr-why", { review_note: reviewWhy }),
+        api,
+    );
+    if (!explained.textContent.includes(reviewWhy)) {
+        throw new Error(`unsure review must show on the card, got ${explained.textContent}`);
+    }
+    const explainedLabels = labels(explained);
+    if (!explainedLabels.includes("Approve") || !explainedLabels.includes("Reject")) {
+        throw new Error(`explained card must still offer Approve, got ${explainedLabels.join(",")}`);
+    }
+    const showsReviewWhy = true;
 
     const alwaysBtn = nest.querySelectorAll(".hpc-action")
         .find((node) => node.textContent === "Always allow");
@@ -163,6 +185,8 @@ function deskCard(id) {
         ok: true,
         nestOffersAlways,
         deskHidesAlways,
+        quietWithoutNote,
+        showsReviewWhy,
         alwaysAllowResolves,
         staleMorphsToDismiss,
         dismissIsLocalOnly,

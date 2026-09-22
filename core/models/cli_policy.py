@@ -64,6 +64,7 @@ class CliApprovalRequest(BaseModel):
     status: str = "pending"
     decision_by: str | None = None
     decision_note: str | None = None
+    review_note: str | None = None
     decided_at: datetime | None = None
     expires_at: datetime | None = None
     created_at: datetime
@@ -84,6 +85,9 @@ class CliApprovalRequest(BaseModel):
             card["channel_id"] = self.channel_id
         if self.decision_note:
             card["decision_note"] = self.decision_note
+        note = (self.review_note or "").strip()
+        if note:
+            card["review_note"] = note
         from core.bm_cli.cli_always import offers_always_allow_cli
 
         card["always_allow"] = offers_always_allow_cli(self.cwd)

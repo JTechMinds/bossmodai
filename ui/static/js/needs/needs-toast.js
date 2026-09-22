@@ -62,7 +62,10 @@ const BossModNeedsToast = (() => {
         function show(need) {
             const toast = h('div', { class: 'toast', role: 'status' },
                 h('p', { class: 'toast-title' }, need.title),
-                h('p', { class: 'toast-sub' }, need.sub));
+                h('p', { class: 'toast-sub' }, need.sub),
+                need.reviewNote
+                    ? h('p', { class: 'toast-sub' }, need.reviewNote)
+                    : null);
 
             const actions = h('div', { class: 'toast-actions' });
             let timer = null;

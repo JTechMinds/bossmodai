@@ -1,11 +1,13 @@
 """Opt-in per-thread review of ``approval_required`` commands.
 
 The thread flag defaults off. When it is on, host guardrails run before
-System AI. A pass asks for ``{"allow": bool, "why": str}``. Anything
-uncertain, unreadable, or failed stays on the Approve card. Deny,
-never-allow, the project git fence, and the path jail are not decided
-here — callers leave those blocks in place, and a jail escape found by
-the guardrail is returned as a block so System AI cannot approve it.
+System AI. A pass asks for ``{"allow": bool, "why": str}``. A refusal or
+a failed review stays on the Approve card and says why. Manual Approves
+in that thread are advisory context for a later review of a command with
+the same shape. They do not skip the review. Deny, never-allow, the
+project git fence, and the path jail are not decided here — callers leave
+those blocks in place, and a jail escape found by the guardrail is
+returned as a block so System AI cannot approve it.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from core.bm_cli import install_layout
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.host_roots import is_within_roots
 from core.bm_cli.project_repo import project_directory_for
+from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.shell_executor import (
     PathJailError,
     allowed_shell_roots,
@@ -37,6 +40,20 @@ logger = logging.getLogger(__name__)
 AUDIT_PREFIX = "approved-by=system"
 SYSTEM_DECISION_BY = "system"
 CLI_AUTO_APPROVED_EVENT = "cli_auto_approved"
+UNSURE_PREFIX = "System AI unsure / refused: "
+REVIEW_ERROR_PREFIX = "System AI review error: "
+NOT_ASKED_OPAQUE = (
+    "System AI was not asked: this command is not a scoped local change"
+)
+NOT_ASKED_SCOPE = (
+    "System AI was not asked: the write leaves the bound project or a granted /me"
+)
+NOT_ASKED_CWD = (
+    "System AI was not asked: the working directory is not a workspace path"
+)
+_ADVISORY_LIMIT = 5
+_REVIEW_UNREADABLE = "the reply was not a review"
+_REVIEW_FAILED = "the review call failed"
 
 _REVIEW_KEYS = frozenset({"allow", "why"})
 _WRITE_NAMES = frozenset({
@@ -70,8 +87,10 @@ _REVIEW_SYSTEM = (
     '{"allow": true or false, "why": "short reason"}. '
     "Set allow true only when the command is a routine local change whose "
     "effects stay inside the resolved paths. If you are unsure, set allow "
-    "to false. You cannot override a deny, a never-allow rule, a project "
-    "git fence, or a path jail."
+    "to false. prior_manual_approves lists earlier manual Approves in this "
+    "same thread for a command of the same shape. They are advisory context "
+    "only and do not grant permission. You cannot override a deny, a "
+    "never-allow rule, a project git fence, or a path jail."
 )
 
 PlanAction = Literal["card", "block", "approve"]
@@ -84,6 +103,7 @@ class AutoApprovePlan:
     action: PlanAction
     why: str = ""
     jail_message: str = ""
+    card_why: str = ""
 
 
 def audit_line(why: str) -> str:
@@ -129,30 +149,33 @@ def plan_thread_auto_approve(
     if not thread_cli_auto_approve_enabled(channel_id):
         return AutoApprovePlan(action="card")
     if (parsed.name or "") in _OPAQUE_NAMES:
-        return AutoApprovePlan(action="card")
+        return AutoApprovePlan(action="card", card_why=NOT_ASKED_OPAQUE)
 
     try:
         real_cwd, paths = _resolved_paths(agent, parsed, cwd)
     except PathJailError as exc:
         return AutoApprovePlan(action="block", jail_message=str(exc))
     except ValueError:
-        return AutoApprovePlan(action="card")
+        return AutoApprovePlan(action="card", card_why=NOT_ASKED_CWD)
 
     refusal = _host_refusal(agent, real_cwd, paths)
     if refusal is not None:
         return AutoApprovePlan(action="block", jail_message=refusal)
     if not _writes_stay_in_scope(agent, parsed, real_cwd, paths):
-        return AutoApprovePlan(action="card")
+        return AutoApprovePlan(action="card", card_why=NOT_ASKED_SCOPE)
 
     reviewed = _review(
         command=parsed.raw,
         cwd=cwd,
         policy_tier=policy_tier,
         resolved_paths=tuple(str(path) for path in paths),
+        advisories=prior_manual_approves(channel_id, parsed.raw),
     )
-    if reviewed is None or not reviewed[0]:
-        return AutoApprovePlan(action="card")
-    return AutoApprovePlan(action="approve", why=reviewed[1])
+    if reviewed.error:
+        return AutoApprovePlan(action="card", card_why=review_error_card_why(reviewed.error))
+    if not reviewed.allow:
+        return AutoApprovePlan(action="card", card_why=unsure_card_why(reviewed.why))
+    return AutoApprovePlan(action="approve", why=reviewed.why)
 
 
 def log_system_auto_approve(agent_name: str, line: str) -> None:
@@ -207,13 +230,101 @@ def parse_review_payload(raw: str | None) -> tuple[bool, str] | None:
     return allow, text
 
 
+@dataclass(frozen=True, slots=True)
+class _Review:
+    allow: bool = False
+    why: str = ""
+    error: str = ""
+
+
+def unsure_card_why(why: str) -> str:
+    """Operator line when System AI answered and did not allow the command."""
+    text = why.strip() or "no reason given"
+    return f"{UNSURE_PREFIX}{text}"
+
+
+def review_error_card_why(detail: str) -> str:
+    """Operator line when the review call or its reply could not be used."""
+    return f"{REVIEW_ERROR_PREFIX}{detail.strip()}"
+
+
+def command_shape(command: str) -> tuple[str, tuple[str, ...], tuple[str, ...]] | None:
+    """Return ``(name, flags, operands)`` with paths collapsed to ``<path>``.
+
+    Two commands match when this tuple matches. A parse failure is not a
+    shape, so it never matches a remembered Approve.
+    """
+    try:
+        parsed = parse_cli_command(command or "")
+    except ValueError:
+        return None
+    flags: list[str] = []
+    operands: list[str] = []
+    end_flags = False
+    force = parsed.name in _WRITE_NAMES
+    tokens = list(parsed.args)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {">", ">>"}:
+            if index + 1 >= len(tokens):
+                return None
+            operands.append("<path>")
+            index += 2
+            continue
+        if not end_flags and token == "--":
+            end_flags = True
+            index += 1
+            continue
+        if not end_flags and token.startswith("-") and token != "-":
+            flags.append(token)
+            index += 1
+            continue
+        if force or _looks_like_path(token):
+            operands.append("<path>")
+        else:
+            operands.append(token)
+        index += 1
+    return (parsed.name, tuple(sorted(flags)), tuple(operands))
+
+
+def prior_manual_approves(channel_id: str | None, command: str) -> list[dict[str, str]]:
+    """Manual Approves in this thread whose command shape matches.
+
+    System approvals are not included. Another thread's rows are not
+    included. The list is context for the next review, not a decision.
+    """
+    token = (channel_id or "").strip()
+    shape = command_shape(command)
+    if not token or shape is None:
+        return []
+    from core.bm_cli.approvals import ALWAYS_ALLOWED_NOTE
+
+    rows = db.list_thread_manual_approvals(token, excluded_note=ALWAYS_ALLOWED_NOTE)
+    found: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if command_shape(row.command or "") != shape:
+            continue
+        item = {"command": row.command, "cwd": row.cwd or ""}
+        key = (item["command"], item["cwd"])
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(item)
+        if len(found) >= _ADVISORY_LIMIT:
+            break
+    return found
+
+
 def _review(
     *,
     command: str,
     cwd: str,
     policy_tier: str,
     resolved_paths: tuple[str, ...],
-) -> tuple[bool, str] | None:
+    advisories: list[dict[str, str]],
+) -> _Review:
     messages = [
         {"role": "system", "content": _REVIEW_SYSTEM},
         {
@@ -224,6 +335,7 @@ def _review(
                     "cwd": cwd,
                     "policy_tier": policy_tier,
                     "resolved_paths": list(resolved_paths),
+                    "prior_manual_approves": advisories,
                 },
                 ensure_ascii=True,
             ),
@@ -233,8 +345,12 @@ def _review(
         raw = complete_text(messages)
     except Exception:
         logger.warning("system auto-approve review failed closed")
-        return None
-    return parse_review_payload(raw)
+        return _Review(error=_REVIEW_FAILED)
+    parsed = parse_review_payload(raw)
+    if parsed is None:
+        return _Review(error=_REVIEW_UNREADABLE)
+    allow, why = parsed
+    return _Review(allow=allow, why=why)
 
 
 def _resolved_paths(

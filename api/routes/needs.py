@@ -189,6 +189,7 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             "agent_name": name,
             "title": f"{name} wants to run a command",
             "sub": request.command,
+            "review_note": (request.review_note or "").strip(),
             "cwd": request.cwd,
             "created_at": request.created_at.isoformat(),
             "conversation_id": request.channel_id or request.agent_id,
