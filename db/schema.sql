@@ -849,3 +849,31 @@ CREATE TABLE IF NOT EXISTS chat_fade_gate (
     turns_since_run INTEGER NOT NULL DEFAULT 0,
     last_run_at     TIMESTAMP
 );
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Sticky slots — typed work-spine pockets. Transcript rows stay.
+-- ───────────────────────────────────────────────────────────────────────────
+
+-- One pocket per conversation scope. A fill replaces only the facts it
+-- returns; null columns stay. source_message_ids is a JSON array of
+-- transcript ids those facts were drawn from. Original messages stay.
+CREATE TABLE IF NOT EXISTS sticky_slots (
+    scope_kind          VARCHAR NOT NULL,
+    scope_id            VARCHAR NOT NULL,
+    plan                TEXT,
+    next_owner          TEXT,
+    verdict_path        TEXT,
+    blockers            TEXT,
+    source_message_ids  TEXT NOT NULL,
+    updated_at          TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (scope_kind, scope_id)
+);
+
+-- One gate so sticky-slot fill never runs every turn. Separate from the
+-- chat fade gate so a fade claim does not consume this clock. Turns count
+-- every agent wake. last_run_at is the last time a background fill was queued.
+CREATE TABLE IF NOT EXISTS sticky_slot_gate (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    turns_since_run INTEGER NOT NULL DEFAULT 0,
+    last_run_at     TIMESTAMP
+);

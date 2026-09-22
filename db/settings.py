@@ -74,10 +74,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # first control under Settings → AI Connections. Compaction knobs stay
     # on Settings → System → AI Output.
     # Compaction never runs every turn, and it never blocks an agent turn.
-    # Chat fade queues in the background on System AI. These keys are the
-    # only knob surface: mode, chat headroom, min turns, and cooldown.
-    # Task budget headroom stays stored for a later tip. No sticky-slot
-    # compaction runner ships with chat fade.
+    # Chat fade queues in the background on System AI when chat headroom
+    # is tight. Sticky-slot fill queues in the background on System AI
+    # when task headroom is tight. These keys are the only knob surface:
+    # mode, headroom, min turns, and cooldown.
     # system_ai_connection is one AI connection id, not a per-agent identity model
     # override. Empty means unset. A saved id that still names a
     # connection is kept on upgrade; this seed does not overwrite it.

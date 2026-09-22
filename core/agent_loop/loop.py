@@ -14,6 +14,7 @@ from typing import Any
 
 from core.agent_loop import activity_runtime
 from core.agent_loop.chat_fade import note_agent_turn
+from core.agent_loop.sticky_slots import note_sticky_slot_turn
 from core.agent_loop.communication import (
     build_communication_snapshot,
     communication_snapshot_json,
@@ -65,6 +66,7 @@ async def run_turn(
     """
     start = time.monotonic()
     note_agent_turn()
+    note_sticky_slot_turn()
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
 
     trigger_type = trigger.get("type", "unknown")

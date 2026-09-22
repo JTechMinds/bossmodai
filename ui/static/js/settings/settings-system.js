@@ -145,7 +145,7 @@ const SystemSection = (() => {
         compaction_task_budget_headroom_percent: {
             order: 39,
             label: 'Task Budget Headroom (%)',
-            description: 'How much of the task context budget to leave free before pressure-only compaction may queue.',
+            description: 'How much of the task context budget to leave free before pressure-only sticky-slot fill may queue.',
         },
         compaction_chat_budget_headroom_percent: {
             order: 40,
