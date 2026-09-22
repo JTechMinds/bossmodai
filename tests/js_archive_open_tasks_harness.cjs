@@ -17,15 +17,17 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    agentStatusPath, domPath, avatarPath, storePath, busPath, gatesPath, consentPath,
+    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, gatesPath, consentPath,
     overlayFocusPath, overlaysPath, formatPath, needShapePath, rowMetaPath, archivePath, threadSourcePath,
-    rosterPeoplePath, threadCreatePath, threadViewMenuPath, rosterThreadsPath, agentRoutesPath,
-    rosterPath,
+    rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
+    rosterThreadsPath, agentRoutesPath, rosterPath,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(agentStatusPath, "BossModAgentStatus");
 load(domPath, "BossModDom");
 load(avatarPath, "BossModAvatar");
+// The People header's "Show roles" switch is the shared control.
+load(switchPath, "BossModSwitch");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
 load(gatesPath, "BossModGates");
@@ -38,6 +40,10 @@ load(needShapePath, "BossModNeedShape");
 load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
 load(threadSourcePath, "BossModThreadSource");
+// Both section headers' `⋯` — the Threads one this harness opens, and the
+// People one — then the People one's owner, before the half that mounts it.
+load(rosterHeaderMenuPath, "BossModRosterHeaderMenu");
+load(peopleViewMenuPath, "BossModPeopleViewMenu");
 load(rosterPeoplePath, "BossModRosterPeople");
 load(threadCreatePath, "BossModThreadCreate");
 load(threadViewMenuPath, "BossModThreadViewMenu");

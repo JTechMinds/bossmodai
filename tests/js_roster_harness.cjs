@@ -54,6 +54,10 @@ function makeEl(tag) {
             if (other === this) return true;
             return this.children.some((c) => c && c.contains && c.contains(other));
         },
+        // BossModOverlays.createMenu asks a panel for its first focusable on
+        // open. This fake models no focus order, so it answers "none" — focus
+        // on open is proven against a real tab order by the overlays harness.
+        querySelectorAll() { return []; },
     };
 }
 
@@ -77,7 +81,18 @@ global.document = {
     },
     get activeElement() { return activeElement; },
 };
-global.window = { document: global.document };
+// Site data, Map-backed, so the People half's "Show roles" preference is read
+// and written through the real code path rather than its blocked-storage
+// branch. `getItem` answers null for a key never set, as a browser's does.
+const siteData = new Map();
+global.window = {
+    document: global.document,
+    localStorage: {
+        getItem: (key) => (siteData.has(key) ? siteData.get(key) : null),
+        setItem: (key, value) => { siteData.set(key, String(value)); },
+        removeItem: (key) => { siteData.delete(key); },
+    },
+};
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
@@ -99,6 +114,16 @@ eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModNeedShape = Bo
 // what opening it does.
 eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
 eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+// Both section headers' `⋯` (shell/roster-header-menu.js) and the People
+// half's "Show roles" switch behind its own. Loaded as SIBLINGS of the
+// overlays and People slots, for the reason agent-routes.js is below: five
+// Python files drive this harness with one positional list each, and a new
+// slot would have to land in all of them.
+const coreDir = path.dirname(process.argv[10]);
+const shellDir = path.dirname(process.argv[12]);
+eval(`${fs.readFileSync(path.join(coreDir, "switch.js"), "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
+eval(`${fs.readFileSync(path.join(shellDir, "roster-header-menu.js"), "utf8")}\n;global.BossModRosterHeaderMenu = BossModRosterHeaderMenu;\n`);
+eval(`${fs.readFileSync(path.join(shellDir, "people-view-menu.js"), "utf8")}\n;global.BossModPeopleViewMenu = BossModPeopleViewMenu;\n`);
 // Both halves build their right-hand column through this one builder.
 eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
 eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
@@ -605,6 +630,123 @@ function rowFor(el, name) {
     const noNestedButtons = nested(el).length === 0;
     if (!noNestedButtons) throw new Error(`${nested(el).length} nested buttons in the rail`);
 
+    // ── Show roles ──
+    //
+    // The PEOPLE header's `⋯` holds one switch. Off is today's look; on, each
+    // name line reads `Jim – Engineer`, and the preference lives in site data.
+    const ROLES_KEY = "bossmod.roster.showRoles";
+    const storedRoles = () => global.window.localStorage.getItem(ROLES_KEY);
+    const roleNodes = () => find(el, hasClass("roster-role"), []);
+    const roleOf = (name) => {
+        const row = rowFor(el, name);
+        const role = row ? find(row, hasClass("roster-role"), [])[0] : null;
+        return role ? text(role) : null;
+    };
+    const ancestorClasses = (node) => {
+        const out = [];
+        for (let at = node.parentNode; at; at = at.parentNode) {
+            out.push(...String(at.getAttribute("class") || "").split(/\s+/));
+        }
+        return out;
+    };
+
+    // Outside every `roster-section-actions` group: a People group present at
+    // rest would be the rail's first, and the `+` checks above read the first.
+    const peopleMenuBtn = byId("roster-people-view");
+    const peopleMenuSitsOutsideActionGroups = Boolean(peopleMenuBtn)
+        && hasClass("roster-section-head")(peopleMenuBtn.parentNode)
+        && peopleMenuBtn.getAttribute("aria-label") === "People list options"
+        && peopleMenuBtn.getAttribute("aria-haspopup") === "dialog"
+        && peopleMenuBtn.getAttribute("aria-expanded") === "false"
+        && !ancestorClasses(peopleMenuBtn).includes("roster-section-actions");
+    if (!peopleMenuSitsOutsideActionGroups) {
+        throw new Error(`the People \`⋯\` is not a named header control outside the action groups: `
+            + `${peopleMenuBtn && JSON.stringify(peopleMenuBtn.attributes)}`
+            + ` ancestors "${peopleMenuBtn && ancestorClasses(peopleMenuBtn).join(" ")}"`);
+    }
+
+    const rolesHiddenByDefault = roleNodes().length === 0 && storedRoles() === null;
+    if (!rolesHiddenByDefault) {
+        throw new Error(`roles must start hidden with nothing stored, got ${roleNodes().length}`
+            + ` role nodes and "${storedRoles()}"`);
+    }
+
+    click(peopleMenuBtn);
+    const peoplePanel = find(el, (n) => n.getAttribute("data-menu") === "people-view", [])[0];
+    const rolesSwitches = peoplePanel ? find(peoplePanel, (n) => n.getAttribute("role") === "switch", []) : [];
+    if (peopleMenuBtn.getAttribute("aria-expanded") !== "true" || !peoplePanel
+        || rolesSwitches.length !== 1 || !text(rolesSwitches[0]).includes("Show roles")
+        || rolesSwitches[0].getAttribute("aria-checked") !== "false") {
+        throw new Error(`the \`⋯\` must open a panel holding one unchecked Show roles switch: expanded `
+            + `${peopleMenuBtn.getAttribute("aria-expanded")} panel ${Boolean(peoplePanel)}`
+            + ` switches ${rolesSwitches.length}`
+            + ` "${rolesSwitches[0] ? text(rolesSwitches[0]) : ""}"`
+            + ` checked ${rolesSwitches[0] && rolesSwitches[0].getAttribute("aria-checked")}`);
+    }
+    const rolesSwitch = rolesSwitches[0];
+    const panelIsOpen = () => find(el, (n) => n === peoplePanel, []).length === 1;
+
+    // The switch's own state moving is the confirmation, so the panel stays.
+    click(rolesSwitch);
+    const rolesShowAfterToggle = roleOf("Jim") === "– Engineer"
+        && roleOf("Laura") === "– Writer"
+        && storedRoles() === "true"
+        && rolesSwitch.getAttribute("aria-checked") === "true"
+        && panelIsOpen();
+    if (!rolesShowAfterToggle) {
+        throw new Error(`Show roles must suffix each name: Jim "${roleOf("Jim")}" Laura "${roleOf("Laura")}"`
+            + ` stored "${storedRoles()}" checked ${rolesSwitch.getAttribute("aria-checked")}`
+            + ` panel open ${panelIsOpen()}`);
+    }
+
+    // The name comes first and is untouched; the full role rides on `title`
+    // for when the line ellipsises it.
+    const jimLine = find(rowFor(el, "Jim") || {}, hasClass("roster-name-line"), [])[0];
+    const lineParts = jimLine ? jimLine.children : [];
+    const nameLeadsRole = lineParts.length === 2
+        && hasClass("roster-name")(lineParts[0]) && text(lineParts[0]) === "Jim"
+        && hasClass("roster-role")(lineParts[1]) && lineParts[1].getAttribute("title") === "Engineer";
+    if (!nameLeadsRole) {
+        throw new Error(`the name line must be the name, then the role: `
+            + `${lineParts.map((n) => `${n.getAttribute("class")}="${text(n)}"`).join(", ")}`);
+    }
+
+    // An agent with no role shows the name alone — no dangling dash.
+    const rosterWithRoles = store.getState().roster;
+    store.setState({
+        roster: rosterWithRoles.map((agent) => (
+            agent.id === "a2" ? Object.assign({}, agent, { role: null }) : agent
+        )),
+    });
+    const lauraNoRole = rowFor(el, "Laura");
+    const roleWithoutValueShowsNothing = Boolean(lauraNoRole)
+        && find(lauraNoRole, hasClass("roster-role"), []).length === 0
+        && !text(lauraNoRole).includes("–");
+    if (!roleWithoutValueShowsNothing) {
+        throw new Error(`a role-less agent must show the name only, got "${text(lauraNoRole)}"`);
+    }
+    store.setState({ roster: rosterWithRoles });
+    if (roleOf("Laura") !== "– Writer") {
+        throw new Error(`restoring Laura's role must show it again, got "${roleOf("Laura")}"`);
+    }
+
+    click(rolesSwitch);
+    const rolesHideAgain = roleNodes().length === 0
+        && storedRoles() === "false"
+        && rolesSwitch.getAttribute("aria-checked") === "false";
+    if (!rolesHideAgain) {
+        throw new Error(`Show roles off must take every role away: ${roleNodes().length} left,`
+            + ` stored "${storedRoles()}"`);
+    }
+
+    // On again, and the panel is LEFT OPEN: disposing the rail below must be
+    // what puts it away.
+    click(rolesSwitch);
+    if (storedRoles() !== "true" || roleNodes().length !== 2 || !panelIsOpen()) {
+        throw new Error(`re-enabling must show both roles with the panel open: ${roleNodes().length}`
+            + ` stored "${storedRoles()}" panel open ${panelIsOpen()}`);
+    }
+
     // A live channel_updated re-fetches the thread list.
     const channelFetches = () => apiCalls.filter((c) => c.url.startsWith("/api/channels") && (!c.init || !c.init.method)).length;
     const before = channelFetches();
@@ -613,6 +755,10 @@ function rowFor(el, name) {
     if (channelFetches() !== before + 1) throw new Error("channel_updated must refresh the thread list");
 
     // ── Disposers drain ──
+    // The People panel is still open here, so its press-outside listener is
+    // the one document mousedown listener — counted now so "empty after" below
+    // cannot pass vacuously.
+    const mousedownWhileOpen = (document.listeners.mousedown || []).length;
     dispose();
     const escapeListenerDrains = (document.listeners.keydown || []).length === 0;
     if (!escapeListenerDrains) {
@@ -623,6 +769,49 @@ function rowFor(el, name) {
     }
     if (bus.subscriberCount() !== busBaseline) {
         throw new Error(`bus leak: baseline ${busBaseline}, now ${bus.subscriberCount()}`);
+    }
+    // escapeListenerDrains above covers the panel's keydown; this is its other
+    // document listener.
+    const peopleMenuDrainsOnDispose = mousedownWhileOpen === 1
+        && (document.listeners.mousedown || []).length === 0
+        && !panelIsOpen()
+        && peopleMenuBtn.getAttribute("aria-expanded") === "false";
+    if (!peopleMenuDrainsOnDispose) {
+        throw new Error(`disposing must put the open People panel away: ${mousedownWhileOpen} mousedown`
+            + ` listener(s) while open, ${(document.listeners.mousedown || []).length} after,`
+            + ` panel open ${panelIsOpen()}`);
+    }
+
+    // ── The preference outlives the rail ──
+    //
+    // A fresh rail over the same store reads what the last one stored, and
+    // shows roles on its first render — no click — with its switch agreeing.
+    const freshEl = makeEl("aside");
+    const disposeFresh = BossModRoster.mount(freshEl, {
+        store, bus, apiFetch, navigate: () => {}, onHire: () => {},
+    });
+    await drain();
+    const freshRole = find(rowFor(freshEl, "Jim") || freshEl, hasClass("roster-role"), [])[0];
+    const freshMenuBtn = find(freshEl, (n) => n.getAttribute("id") === "roster-people-view", [])[0];
+    click(freshMenuBtn);
+    const freshSwitch = find(freshEl, (n) => n.getAttribute("role") === "switch", [])[0];
+    const rolePreferencePersists = storedRoles() === "true"
+        && Boolean(freshRole) && text(freshRole) === "– Engineer"
+        && Boolean(freshSwitch) && freshSwitch.getAttribute("aria-checked") === "true";
+    if (!rolePreferencePersists) {
+        throw new Error(`a fresh rail must show roles from site data: stored "${storedRoles()}"`
+            + ` Jim's role "${freshRole ? text(freshRole) : ""}"`
+            + ` switch ${freshSwitch && freshSwitch.getAttribute("aria-checked")}`);
+    }
+    disposeFresh();
+    if (store.subscriberCount() !== storeBaseline) {
+        throw new Error(`fresh rail store leak: baseline ${storeBaseline}, now ${store.subscriberCount()}`);
+    }
+    if (bus.subscriberCount() !== busBaseline) {
+        throw new Error(`fresh rail bus leak: baseline ${busBaseline}, now ${bus.subscriberCount()}`);
+    }
+    if ((document.listeners.mousedown || []).length !== 0 || (document.listeners.keydown || []).length !== 0) {
+        throw new Error("the fresh rail left a document listener behind");
     }
 
     process.stdout.write(JSON.stringify({
@@ -658,6 +847,14 @@ function rowFor(el, name) {
         checkboxStillRendersInSelectMode,
         noNestedButtons,
         disposersDrain: true,
+        peopleMenuSitsOutsideActionGroups,
+        rolesHiddenByDefault,
+        rolesShowAfterToggle,
+        nameLeadsRole,
+        roleWithoutValueShowsNothing,
+        rolesHideAgain,
+        peopleMenuDrainsOnDispose,
+        rolePreferencePersists,
     }));
 })().catch((err) => {
     process.stderr.write(String((err && err.stack) || err));

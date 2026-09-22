@@ -59,17 +59,31 @@ global.document = {
     removeEventListener() {},
     activeElement: null,
 };
-global.window = { document: global.document };
+// Site data, Map-backed: the People half reads its "Show roles" preference at
+// mount, and a window without storage would send it down the blocked-storage
+// branch instead of the real one.
+const siteData = new Map();
+global.window = {
+    document: global.document,
+    localStorage: {
+        getItem: (key) => (siteData.has(key) ? siteData.get(key) : null),
+        setItem: (key, value) => { siteData.set(key, String(value)); },
+        removeItem: (key) => { siteData.delete(key); },
+    },
+};
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    dom, avatar, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta, places, header,
-    rosterPeople, threadCreate, threadViewMenu, rosterThreads, agentRoutes, roster, footer,
+    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta,
+    places, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
+    rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(dom, "BossModDom");
 load(avatar, "BossModAvatar");
+// The People header's "Show roles" switch is the shared control.
+load(switchControl, "BossModSwitch");
 load(store, "BossModStore");
 load(bus, "BossModBus");
 // A person row renders its last-activity timestamp through this.
@@ -81,6 +95,10 @@ load(overlayFocus, "BossModOverlayFocus");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
 load(header, "BossModHeader");
+// Both section headers' `⋯`, then the People one's owner, before the half
+// that mounts it.
+load(rosterHeaderMenu, "BossModRosterHeaderMenu");
+load(peopleViewMenu, "BossModPeopleViewMenu");
 load(rosterPeople, "BossModRosterPeople");
 load(threadCreate, "BossModThreadCreate");
 load(threadViewMenu, "BossModThreadViewMenu");

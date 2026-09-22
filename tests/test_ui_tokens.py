@@ -105,12 +105,12 @@ class TintedSurface(NamedTuple):
 
 
 TINTED_SURFACES = (
-    # Selecting a roster row tints the whole row; the name, the status line and
-    # the last-spoken time all render on it (shell/roster-people.js,
+    # Selecting a roster row tints the whole row; the name, the role, the status
+    # line and the last-spoken time all render on it (shell/roster-people.js,
     # shell/roster-threads.js, shell/roster-row-meta.js).
     TintedSurface(
         "shell.css", '.roster-row[data-selected="true"]', "accent-bg", "roster-row",
-        ("roster-name", "roster-status", "roster-time"),
+        ("roster-name", "roster-role", "roster-status", "roster-time"),
     ),
     # Selecting a task card tints the card behind everything task-card.js
     # builds into it.

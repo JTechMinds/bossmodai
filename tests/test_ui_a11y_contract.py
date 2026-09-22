@@ -14,6 +14,7 @@ HARNESS = Path(__file__).resolve().parent / "js_a11y_harness.cjs"
 HARNESS_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
@@ -24,6 +25,8 @@ HARNESS_MODULES = [
     SHELL / "roster-row-meta.js",
     SHELL / "places.js",
     SHELL / "header.js",
+    SHELL / "roster-header-menu.js",
+    SHELL / "people-view-menu.js",
     SHELL / "roster-people.js",
     SHELL / "thread-create.js",
     SHELL / "thread-view-menu.js",

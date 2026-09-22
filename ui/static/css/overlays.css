@@ -808,14 +808,16 @@
   color: var(--ink);
 }
 
-/* The rail's THREADS view menu. Same clip, a different answer: this one hangs
-   off a row near the TOP of the rail, so `top: 100%` lands it inside the
-   scroll area rather than below the window and it can stay absolute. What it
-   cannot keep is the 220px floor — the rail is exactly 220px wide, so a panel
-   with that minimum would be sliced by .app-roster's hidden overflow. It takes
-   the width of the header row it hangs off instead, which also lines its edges
-   up with the section title and the `+` above it. */
-.menu[data-menu="thread-view"] {
+/* The rail's two section-header menus, THREADS and PEOPLE (both built by
+   shell/roster-header-menu.js). Same clip, a different answer: each hangs off
+   a row near the TOP of the rail, so `top: 100%` lands it inside the scroll
+   area rather than below the window and it can stay absolute. What it cannot
+   keep is the 220px floor — the rail is exactly 220px wide, so a panel with
+   that minimum would be sliced by .app-roster's hidden overflow. It takes the
+   width of the header row it hangs off instead, which also lines its edges up
+   with the section title and the controls on that row. */
+.menu[data-menu="thread-view"],
+.menu[data-menu="people-view"] {
   min-width: 0;
   width: 100%;
   right: 0;

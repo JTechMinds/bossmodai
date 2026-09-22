@@ -29,6 +29,10 @@
  * The checkbox stays, and stops being the hit target: it is the mode's only
  * visible state, and a 16px box is a poor thing to have to hit. The row
  * carries the state too, through `data-selected`.
+ *
+ * The header's `⋯` is shell/people-view-menu.js. It owns the "Show roles"
+ * preference and where it is kept; this half only asks `view.showRoles()`
+ * when it renders.
  */
 const BossModRosterPeople = (() => {
     const { h, clear } = BossModDom;
@@ -126,11 +130,19 @@ const BossModRosterPeople = (() => {
         const selected = new Set();
 
         const list = h('ul', { class: 'roster-people' });
-        // The action group is mounted only while a live thread is open. Idle
-        // People is still just the label — a hidden `roster-section-actions`
-        // would become the rail's first header group and steal Threads' `+`.
+        // `getContainer` is a thunk for the reason Threads gives: the row the
+        // panel hangs off cannot be built until the `⋯` exists to go in it.
+        const view = BossModPeopleViewMenu.createPeopleViewMenu({
+            getContainer: () => head,
+            onChange: render,
+        });
+        // The seat group is mounted only while a live thread is open — a
+        // hidden `roster-section-actions` would become the rail's first header
+        // group and steal Threads' `+`. The `⋯` is always here, so it sits
+        // OUTSIDE any such group: inside one, that group would exist at rest.
         const head = h('div', { class: 'roster-section-head' },
-            h('h2', { class: 'roster-section-title' }, 'People'));
+            h('h2', { class: 'roster-section-title' }, 'People'),
+            view.button);
         const element = h('section', { class: 'roster-section' }, head, list);
         let seatGroup = null;
 
@@ -151,10 +163,14 @@ const BossModRosterPeople = (() => {
          * @param {object} agent
          * @param {boolean} paused
          * @param {Set<string>} needy
+         * @param {boolean} showRoles  From the header's `⋯`.
          * @returns {HTMLElement}
          */
-        function personRow(agent, paused, needy) {
+        function personRow(agent, paused, needy, showRoles) {
             const selecting = selectMode;
+            const role = showRoles && typeof agent.role === 'string' && agent.role.trim()
+                ? agent.role.trim()
+                : null;
             const includeLabel = `Include ${agent.name} in a new thread`;
             const box = selecting
                 ? h('input', {
@@ -214,7 +230,13 @@ const BossModRosterPeople = (() => {
                     'aria-label': selecting ? includeLabel : null,
                     onclick: selecting ? toggle : () => onOpenConversation(agent.id),
                 },
-                    h('span', { class: 'roster-name' }, agent.name),
+                    // One row shape, roles on or off. `title` is a native
+                    // tooltip because the app's [data-tooltip] bubble is
+                    // right-anchored for icon-only controls and would clip at
+                    // the rail's left edge.
+                    h('span', { class: 'roster-name-line' },
+                        h('span', { class: 'roster-name' }, agent.name),
+                        role ? h('span', { class: 'roster-role', title: role }, `– ${role}`) : null),
                     h('span', { class: 'roster-status' }, statusLine(agent, paused, needy))),
                 // The row's right-hand column, shared with the Threads half:
                 // when the operator last spoke to this agent, over the need
@@ -249,7 +271,8 @@ const BossModRosterPeople = (() => {
 
             const paused = store.getState().runtimePaused === true;
             const needy = agentsWithNeeds();
-            visible.forEach((agent) => list.append(personRow(agent, paused, needy)));
+            const showRoles = view.showRoles();
+            visible.forEach((agent) => list.append(personRow(agent, paused, needy, showRoles)));
             syncSeatAction();
             BossModIcons.paintDocument('roster-people');
         }
@@ -282,7 +305,8 @@ const BossModRosterPeople = (() => {
                     'aria-label': 'Add to thread',
                     onclick: () => { void seatIntoOpenThread(); },
                 }, h('i', { 'data-lucide': 'user-plus', 'aria-hidden': 'true' })));
-            head.append(seatGroup);
+            // Before the `⋯`, which stays last on the row as it does on Threads.
+            head.insertBefore(seatGroup, view.button);
             BossModIcons.paint(seatGroup, 'roster-people');
         }
 
@@ -355,11 +379,13 @@ const BossModRosterPeople = (() => {
             },
 
             /**
-             * Drain every subscription this half created.
+             * Drain every subscription this half created, and put the `⋯`'s
+             * panel away: an open one would outlive the rail.
              * @returns {void}
              */
             destroy() {
                 disposers.splice(0).forEach((off) => off());
+                view.destroy();
             },
         };
     }

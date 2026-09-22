@@ -334,6 +334,13 @@ body[data-view="settings"] #main-layout { display: none; }
   margin-left: auto;
 }
 
+/* A `⋯` straight after the title — the PEOPLE row at rest, with no action
+   group ahead of it to do the pushing — pins itself right, so the rail's two
+   `⋯`s share one right edge. Once the seat group lands between the two, that
+   group's own auto margin pushes both and this stops matching: two auto
+   margins on one row would split the space and strand the group mid-row. */
+.roster-section-title + .roster-section-action { margin-left: auto; }
+
 .roster-section-title {
   margin: 4px 6px 6px;
   font-size: 11px;
@@ -392,6 +399,7 @@ body[data-view="settings"] #main-layout { display: none; }
    5.67:1. Same correction .msg-human .msg-time carries in conversation.css. */
 .roster-row[data-selected="true"] .roster-status { color: var(--muted); }
 .roster-row[data-selected="true"] .roster-time { color: var(--muted); }
+.roster-row[data-selected="true"] .roster-role { color: var(--muted); }
 
 .roster-person,
 .roster-thread {
@@ -410,6 +418,26 @@ body[data-view="settings"] #main-layout { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The name, then — when "Show roles" is on — an en dash and the role. The
+   wrapper is built either way, so the row has one shape with roles on or off. */
+.roster-name-line { display: flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; }
+
+/* The name keeps up to the whole line and the role takes what is left: a role
+   is a decoration on the name, so it is the one that ellipsises. */
+.roster-name-line .roster-name { flex-shrink: 0; }
+
+/* The status line's ink and size, so the role reads as detail about the
+   person rather than as part of their name. */
+.roster-role {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hint);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .roster-status { color: var(--hint); font-size: 11px; }

@@ -346,6 +346,8 @@ SWITCH_CALL_SITES = (
     "conversation/system-receipts.js",
     "places/tasks/tasks-toolbar.js",
     "places/log/log-filters.js",
+    # The People header's "Show roles" — a fourth call site, not a fourth toggle.
+    "shell/people-view-menu.js",
 )
 
 SWITCH_MODULES = [JS / "core" / "dom.js", JS / "core" / "switch.js"]
@@ -1042,7 +1044,13 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
 
     roster_threads = _read(JS / "shell/roster-threads.js")
     view = _read(JS / "shell/thread-view-menu.js")
-    assert "class: 'roster-section-action roster-thread-view'" in view
+    # The `⋯` and its panel moved to shell/roster-header-menu.js when the
+    # PEOPLE header grew the same control; the segment stayed here. The
+    # assertions about the button follow it to its new owner, and this module
+    # is held to building its `⋯` through that owner rather than beside it.
+    header_menu = _read(JS / "shell/roster-header-menu.js")
+    assert "BossModRosterHeaderMenu.createHeaderMenu({" in view
+    assert "class: 'roster-section-action'" in header_menu
     # The `⋯` sits OUTSIDE the group thread-create.js empties on every mode
     # swap: a control that survives the swap cannot live in the cleared node.
     head = roster_threads.split("class: 'roster-section-head'", 1)[1].split(");", 1)[0]
@@ -1067,8 +1075,9 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     # header, sliders here, the application gear in the app header. The rule:
     # `⋯` opens a menu of things you can do to the thing beside it, and a gear
     # means application settings and appears exactly once.
-    assert "'data-lucide': 'ellipsis'" in view
+    assert "'data-lucide': 'ellipsis'" in header_menu
     assert "settings" not in _code(view)
+    assert "settings" not in _code(header_menu)
     gears = [
         path.relative_to(JS).as_posix()
         for path in _app_js()
@@ -1077,7 +1086,7 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     assert gears == ["shell/header.js"], gears
 
     # It reuses the shared panel rather than growing a popover of its own.
-    assert "BossModOverlays.createMenu({" in view
+    assert "BossModOverlays.createMenu({" in header_menu
 
     # BOTH lists on screen at once, and the one you are looking at is filled:
     # state is a shape, not a sentence. Two earlier spellings were wrong in
@@ -1108,7 +1117,7 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     # A menu panel is DETACHED while it is closed, so the document sweep that
     # paints the rail can never reach a glyph inside it. Both menus paint what
     # they just attached — the bug that rendered Archive as a bare heading.
-    assert "BossModIcons.paint(menu.element, 'thread-view-menu')" in view
+    assert "BossModIcons.paint(menu.element, 'roster-header-menu')" in header_menu
     chrome = _read(CONVERSATION / "chrome.js")
     assert "BossModIcons.paint(menu.element, 'conversation-chrome.menu')" in chrome
 

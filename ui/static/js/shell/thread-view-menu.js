@@ -8,16 +8,12 @@
  * 400-line cap — the same reason roster-people.js came out of roster.js and
  * thread-create.js came out of roster-threads.js.
  *
- * It owns the `⋯`, the panel behind it, and the segment inside that. It owns no
+ * It owns the segment inside the header's `⋯` panel. The `⋯` and the panel
+ * themselves are shell/roster-header-menu.js's, shared with the PEOPLE header
+ * so the rail's two menus open, close and hang the same way. It owns no
  * STATE: which list is showing belongs to the half that fetches it, so this
  * asks (`getStatus`) and reports (`onSelect`) and never keeps a copy. Two
  * copies of one mode is how a control and the list under it end up disagreeing.
- *
- * ONE GLYPH FOR A MENU, across the app. This control was a gear for a day and
- * it was the third different mark for the same idea in one window — `⋯` on the
- * conversation header, sliders here, the application gear in the app header.
- * The rule that replaced them: `⋯` opens a menu of things you can do to the
- * thing beside it, and a gear means application settings and appears once.
  *
  * WHAT IS IN THE PANEL is a labelled segment — `Thread view: Active |
  * Archived` — and it got there by way of two wrong answers. A switch reading
@@ -109,71 +105,16 @@ const BossModThreadViewMenu = (() => {
                 'aria-labelledby': SEGMENT_ID,
             }, options));
 
-        const button = h('button', {
-            class: 'roster-section-action roster-thread-view',
+        const menu = BossModRosterHeaderMenu.createHeaderMenu({
             id: 'roster-thread-view',
-            type: 'button',
-            'aria-label': MENU_LABEL,
-            'data-tooltip': MENU_LABEL,
-            // dialog, not menu: core/overlays.js's panel is a role="dialog" and
-            // its children are ordinary buttons rather than menuitems. Same
-            // call the conversation chrome's `⋯` makes, for the same reason.
-            'aria-haspopup': 'dialog',
-            'aria-expanded': 'false',
-            onclick: () => toggle(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
-
-        /** The open panel, or null. One at a time, and the `⋯` toggles it. */
-        let menu = null;
-
-        /** @returns {void} */
-        function close() {
-            if (!menu) return;
-            const open = menu;
-            menu = null;
-            open.close();
-        }
-
-        /**
-         * Show the options, or put them away again.
-         *
-         * The panel is core/overlays.js's — it already owns the focus trap,
-         * Esc, the press-outside dismiss and returning focus to the `⋯`. A
-         * second popover implementation is exactly the duplication the
-         * primitives exist to remove.
-         *
-         * @returns {void}
-         */
-        function toggle() {
-            if (menu) {
-                close();
-                return;
-            }
-            menu = BossModOverlays.createMenu({
-                anchor: button,
-                label: MENU_LABEL,
-                items: [group],
-                container: getContainer(),
-                onClose: () => {
-                    menu = null;
-                    button.setAttribute('aria-expanded', 'false');
-                },
-            });
-            // The rail is exactly as wide as the menu's own minimum, so the
-            // panel takes the header row's width instead. See overlays.css.
-            menu.element.setAttribute('data-menu', 'thread-view');
-            // A menu panel is DETACHED while it is closed, so the document
-            // sweep that paints the rail at mount can never reach inside one —
-            // which is the bug that rendered the conversation's Archive row as
-            // a bare word. The segment carries no glyph today; this is what
-            // keeps that from becoming true again the first time one is added,
-            // and it costs nothing when there is nothing to paint.
-            BossModIcons.paint(menu.element, 'thread-view-menu');
-            button.setAttribute('aria-expanded', 'true');
-        }
+            label: MENU_LABEL,
+            menuName: 'thread-view',
+            getContainer,
+            items: [group],
+        });
 
         return {
-            button,
+            button: menu.button,
 
             /**
              * Fill whichever pill the list is currently showing.
@@ -192,16 +133,8 @@ const BossModThreadViewMenu = (() => {
                 });
             },
 
-            close,
-
-            /**
-             * Put the panel away. A panel left open would outlive the rail it
-             * hangs off, and its press-outside listener would outlive both.
-             * @returns {void}
-             */
-            destroy() {
-                close();
-            },
+            close: menu.close,
+            destroy: menu.destroy,
         };
     }
 

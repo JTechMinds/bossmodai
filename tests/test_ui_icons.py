@@ -42,6 +42,7 @@ CALL_SITES = {
     "shell/header.js": "BossModIcons.paintDocument('header')",
     "shell/thread-create.js": "BossModIcons.paintDocument('thread-create')",
     "shell/roster-people.js": "BossModIcons.paintDocument('roster-people')",
+    "shell/roster-header-menu.js": "BossModIcons.paint(menu.element, 'roster-header-menu')",
 }
 
 

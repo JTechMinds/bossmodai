@@ -120,3 +120,33 @@ def test_roster_owns_the_thread_creation_copy() -> None:
     # rail -> Threads -> creation. Each link named, so a broken one is loud.
     assert "BossModRosterThreads.createThreads(" in _source()
     assert "BossModThreadCreate.createThreadControls(" in _threads_source()
+
+
+def test_show_roles_is_an_opt_in_soft_suffix() -> None:
+    """The PEOPLE header's `⋯` holds one switch, and it is off until turned on.
+
+    Off is the rail as it has always looked; on, a name line reads
+    `Jim – Engineer` and an agent with no role still reads as the name alone.
+    The `⋯` sits outside every `roster-section-actions` group: a People group
+    present at rest would be the rail's first one and stand in for Threads'
+    `+`. The choice lives in site data, so a fresh rail comes back the way it
+    was left, and disposing the rail puts an open panel away with its document
+    listener.
+
+    The seat half is proven in source: `seat` is null in the harness, so the
+    `Add to thread` group never mounts there, and it is the one path that has
+    to keep the `⋯` last on the row.
+    """
+    payload = _run_harness()
+    for key in (
+        "peopleMenuSitsOutsideActionGroups",
+        "rolesHiddenByDefault",
+        "rolesShowAfterToggle",
+        "nameLeadsRole",
+        "roleWithoutValueShowsNothing",
+        "rolesHideAgain",
+        "peopleMenuDrainsOnDispose",
+        "rolePreferencePersists",
+    ):
+        assert payload[key] is True, key
+    assert "head.insertBefore(seatGroup, view.button)" in _people_source()
