@@ -683,6 +683,15 @@
 
 .composer-error.hidden { display: none; }
 
+/* Quiet, not an alert. Shown only while a send is still unacknowledged. */
+.composer-hint {
+  margin: 4px 0 0;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.composer-hint.hidden { display: none; }
+
 /* ─── Mentions: letter avatar + regular-weight name on a soft gray chip ─── */
 
 /* Host is `position: relative` so the click menu hangs under THIS pill,

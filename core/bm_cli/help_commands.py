@@ -31,9 +31,13 @@ def _shell_enabled() -> bool:
 
 
 def _default_policy() -> str:
-    """Return the configured default shell policy (approval_required when unset)."""
+    """Return the configured default shell policy (approval_required when unset).
+
+    Live read so help text matches the engine after a Settings change.
+    The runtime worker does not reload its settings cache.
+    """
     try:
-        return config.get("cli_default_policy") or "approval_required"
+        return config.get_live("cli_default_policy") or "approval_required"
     except Exception:
         return "approval_required"
 

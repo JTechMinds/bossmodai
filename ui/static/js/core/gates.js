@@ -52,33 +52,43 @@ const BossModGates = (() => {
     }
 
     /**
-     * A one-at-a-time composer submit gate that never loses a draft.
+     * A composer submit gate that never freezes the field and never loses a draft.
      *
-     * The input clears only after `send` resolves. A rejection leaves the typed
-     * text in place and reports through `onError`, because a composer that
-     * empties itself on a failed request destroys the operator's work.
+     * Accepting a send takes that text out of the box immediately so the
+     * operator can type the next line while agents are still thinking. The
+     * field and Send stay enabled. A second send waits behind the first and
+     * posts in order — it is not dropped. The box is not grayed out.
+     *
+     * A rejection puts the text back when the operator has not started a
+     * newer draft, and reports through `onError`. A newer draft is left
+     * alone. `onQueued` receives how many sends are still unacknowledged
+     * so the composer can show a quiet hint.
      *
      * @returns {{ busy: () => boolean, submit: (opts: object) => Promise<object> }}
      *   `submit` resolves `{submitted, ok, reason?, error?}` and never throws;
-     *   `reason` is `'in-flight'`, `'blocked'`, or `'empty'` when nothing sent.
+     *   `reason` is `'blocked'` or `'empty'` when nothing was accepted.
      */
     function createComposerSendGate() {
-        let inFlight = false;
+        let pending = 0;
+        let tail = Promise.resolve();
 
         function busy() {
-            return inFlight;
+            return pending > 0;
+        }
+
+        function noteQueued(onQueued) {
+            if (typeof onQueued === 'function') onQueued(pending);
         }
 
         async function submit({
             input,
-            sendBtn,
             send,
             applyIdleState,
             onSuccess,
             onError,
+            onQueued,
             canSubmit,
         } = {}) {
-            if (inFlight) return { submitted: false, ok: false, reason: 'in-flight' };
             if (typeof canSubmit === 'function' && !canSubmit()) {
                 return { submitted: false, ok: false, reason: 'blocked' };
             }
@@ -88,30 +98,39 @@ const BossModGates = (() => {
                 return { submitted: false, ok: false, reason: 'blocked' };
             }
 
-            inFlight = true;
-            if (sendBtn) sendBtn.disabled = true;
-            if (input) input.disabled = true;
-
-            try {
-                await send(draft);
-                if (input) {
-                    input.value = '';
-                    if (input.style) input.style.height = 'auto';
-                }
-                if (typeof onSuccess === 'function') onSuccess(draft);
-                return { submitted: true, ok: true };
-            } catch (err) {
-                if (typeof onError === 'function') onError(err, draft);
-                return { submitted: true, ok: false, error: err };
-            } finally {
-                inFlight = false;
-                if (typeof applyIdleState === 'function') {
-                    applyIdleState();
-                } else {
-                    if (sendBtn) sendBtn.disabled = false;
-                    if (input) input.disabled = false;
-                }
+            // Free the field now. Do not disable it — a gray box traps the
+            // next line for as long as this post takes.
+            if (input) {
+                input.value = '';
+                if (input.style) input.style.height = 'auto';
             }
+            if (typeof applyIdleState === 'function') applyIdleState();
+
+            pending += 1;
+            noteQueued(onQueued);
+
+            const run = async () => {
+                try {
+                    await send(draft);
+                    if (typeof onSuccess === 'function') onSuccess(draft);
+                    return { submitted: true, ok: true };
+                } catch (err) {
+                    const current = String(input && input.value != null ? input.value : '').trim();
+                    if (input && !current) {
+                        input.value = draft;
+                        if (typeof applyIdleState === 'function') applyIdleState();
+                    }
+                    if (typeof onError === 'function') onError(err, draft);
+                    return { submitted: true, ok: false, error: err };
+                } finally {
+                    pending -= 1;
+                    noteQueued(onQueued);
+                }
+            };
+
+            const result = tail.then(run);
+            tail = result.then(() => {}, () => {});
+            return result;
         }
 
         return { busy, submit };

@@ -412,8 +412,16 @@ class PolicyEngine:
 
     @staticmethod
     def _default_decision(command_str: str) -> CommandPolicyDecision:
-        """Apply the default policy when no rule matches."""
-        default_policy = config.get("cli_default_policy") or "approval_required"
+        """Apply the default policy when no rule matches.
+
+        Read the database, not the process cache. Settings writes reload
+        only the API process; the runtime worker keeps the value it loaded
+        at boot. A live read is what makes an operator's choice take effect
+        on the next command. Unset means the factory default,
+        approval_required. ``never_allowed`` is decided before this and is
+        unchanged.
+        """
+        default_policy = config.get_live("cli_default_policy") or "approval_required"
 
         if default_policy == "approval_required":
             return CommandPolicyDecision(

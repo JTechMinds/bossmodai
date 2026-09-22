@@ -23,33 +23,36 @@ def test_gates_export_composer_send_gate() -> None:
     assert "setComposerError," in source
 
 
-def test_chat_send_waits_for_ack_and_blocks_inflight() -> None:
+def test_chat_send_stays_editable_while_a_send_is_queued() -> None:
     source = _read("conversation/composer.js")
     assert "BossModGates.createComposerSendGate()" in source
     submit = source.split("async function submit() {", 1)[1].split(
         "disposers.push(", 1
     )[0]
-    # Re-pointed in the visual-parity pass: submit() now RETURNS the gate's
-    # verdict so sendText() can report a blocked send instead of no-opping.
-    # The property is unchanged — every send goes through the one gate.
-    assert "return sendGate.submit(" in submit
+    # Every send goes through the one gate, which returns its verdict.
+    assert "await sendGate.submit(" in submit
+    assert "return result;" in submit
     assert "const result = await submit();" in source
-    # The gate clears the input after the ack; the composer never may.
+    # The gate takes the accepted line out of the box. The composer never may.
     assert "el.value = ''" not in source
     assert "input.value = ''" not in source
     # A failed send has to reach the operator, not just the console.
     assert "onError:" in submit
+    assert "onQueued: setQueued" in submit
     assert "setError(" in submit
     assert "BossModGates.setComposerError(" in source
-    # The copy an unreachable agent produces, unchanged.
+    assert "'composer-hint hidden'" in source
+    # The copy an unreachable agent produces, unchanged as the fallback.
     assert "Failed to reach agent." in _read("conversation/sources/agent-source.js")
     apply_state = source.split("function applyState() {", 1)[1].split(
-        "function setError(", 1
+        "function setQueued(", 1
     )[0]
-    assert "sendGate.busy()" in apply_state
+    # Thinking and an in-flight send are not a lock. No model and a sealed
+    # thread still disable the field.
+    assert "sendGate.busy()" not in apply_state
+    assert "const enabled = hasUsableModel && allowed;" in apply_state
     assert "sendBtn.disabled = !enabled" in apply_state
     assert "input.disabled = !enabled" in apply_state
-    # applyState runs in the gate's finally, so a failure cannot strand it.
     assert "applyIdleState: applyState" in submit
 
 
@@ -66,9 +69,9 @@ def test_thread_send_surfaces_error_and_keeps_draft() -> None:
     send = thread.split("async function send(text) {", 1)[1].split(
         "function subscribe(on) {", 1
     )[0]
-    # A rejected post must reject, not resolve: the gate keeps the draft only
-    # when send() throws, and it must never be swallowed into a console.error.
-    assert "throw new Error((await res.text())" in send
+    # A rejected post must reject, not resolve: the gate puts the text back
+    # only when send() throws. The reason is the server's, not raw JSON.
+    assert "throw new Error(await refusal(res, 'Could not post to this thread.'))" in send
     assert "Could not post to this thread." in send
     assert "console.error" not in send
 
@@ -85,7 +88,9 @@ def test_composer_send_harness_keeps_draft_and_blocks_double_submit() -> None:
     assert payload == {
         "ok": True,
         "keptDraftOnFailure": True,
+        "leftNewerDraftIntact": True,
         "clearedOnSuccess": True,
-        "blockedDoubleSubmit": True,
+        "queuedSecondSend": True,
+        "stayedEnabled": True,
         "surfacedError": True,
     }
