@@ -19,8 +19,10 @@ from core import config
 from core.bm_cli import filesystem, install_layout
 from core.bm_cli.filesystem import projects_artifact_root
 from core.bm_cli.policy_engine import policy_engine
+from core.bm_cli.parser import parse_cli_command
+from core.bm_cli.project_git_fence import project_git_fence_reason
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
-from core.bm_cli.session import set_cli_cwd
+from core.bm_cli.session import get_cli_cwd, set_cli_cwd
 from db.cli_policy_rules import reconcile_hardened_seed_rules
 
 
@@ -254,6 +256,108 @@ def test_git_commit_inside_the_project_does_not_touch_the_app(
     assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
 
 
+def test_git_dash_c_projects_path_is_that_project_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``git -C /projects/<slug>`` rewrites onto that project's real root.
+
+    The command is issued from ``/me``. Status, commit, and checkout stay
+    inside the project. The projects mount, the application install, and a
+    real absolute path outside that project stay blocked.
+    """
+    _enable_shell()
+    install = tmp_path / "app-checkout"
+    _init_app(install)
+    other = tmp_path / "other-repo"
+    _init_app(other)
+    before_install = _branches(install)
+    head = _git(install, "rev-parse", "HEAD").stdout.strip()
+    before_other = _branches(other)
+    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
+
+    agent, state = _agent_and_state()
+    written = execute_bm_cli(
+        agent,
+        state,
+        "write /projects/diablo-poc/readme.txt",
+        content="project notes\n",
+    )
+    assert written.ok is True, written.detail
+    project = projects_artifact_root() / "diablo-poc"
+    assert get_cli_cwd(agent.id) == "/me"
+
+    status = execute_bm_cli(agent, state, "git -C /projects/diablo-poc status")
+    assert status.ok is True, status.detail
+    assert status.kind == "shell"
+    assert "readme.txt" in (status.prompt_content or "")
+    assert project_git_fence_reason(
+        agent,
+        parse_cli_command("git -C /projects/diablo-poc status"),
+        "/me",
+    ) is None
+
+    absolute = execute_bm_cli(agent, state, f"git -C {project} status --short")
+    assert absolute.ok is True, absolute.detail
+    assert "readme.txt" in (absolute.prompt_content or "")
+
+    added = execute_bm_cli(agent, state, "git -C /projects/diablo-poc add readme.txt")
+    assert added.ok is True, added.detail
+    committed = execute_bm_cli(
+        agent,
+        state,
+        'git -C /projects/diablo-poc commit -m "project note"',
+    )
+    assert committed.ok is True, committed.detail
+    assert _git(project, "log", "-1", "--pretty=%s").stdout.strip() == "project note"
+    assert "readme.txt" in _git(project, "ls-files").stdout
+
+    checkout = execute_bm_cli(
+        agent,
+        state,
+        "git -C /projects/diablo-poc checkout -b poc-branch",
+    )
+    assert checkout.ok is False
+    assert checkout.kind != "project_git_fence"
+    assert checkout.approval_required is True
+    assert "Switch branches" in (checkout.detail or "")
+    assert "bound project" not in (checkout.detail or "")
+    assert project_git_fence_reason(
+        agent,
+        parse_cli_command("git -C /projects/diablo-poc checkout -b poc-branch"),
+        "/me",
+    ) is None
+    approved = execute_approved_command(
+        agent,
+        state,
+        "git -C /projects/diablo-poc checkout -b poc-branch",
+        approval_request_id=checkout.approval_request_id or "",
+    )
+    assert approved.ok is True, approved.detail
+    assert "poc-branch" in _branches(project)
+    assert _branches(install) == before_install
+    assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
+
+    parent = execute_bm_cli(agent, state, "git -C /projects/diablo-poc/.. status")
+    assert parent.ok is False
+    assert parent.kind == "project_git_fence"
+    assert "Blocked —" in parent.detail
+    assert "bound project" in parent.detail
+    assert "application install" not in parent.detail
+
+    app = execute_bm_cli(agent, state, f"git -C {install} status")
+    assert app.ok is False
+    assert app.kind == "project_git_fence"
+    assert "application install" in app.detail
+
+    other_repo = execute_bm_cli(agent, state, f"git -C {other} status")
+    assert other_repo.ok is False
+    assert other_repo.kind == "project_git_fence"
+    assert "Blocked —" in other_repo.detail
+    assert "bound project" in other_repo.detail
+    assert _branches(other) == before_other
+    assert _branches(install) == before_install
+
+
 def test_operator_deny_picks_stay_untouched() -> None:
     checkout = next(
         rule
@@ -280,6 +384,16 @@ def test_operator_deny_picks_stay_untouched() -> None:
     assert blocked.ok is False
     assert blocked.kind != "project_git_fence"
     assert "application install" not in (blocked.detail or "")
+
+    dash_c_denied = execute_bm_cli(
+        agent,
+        state,
+        "git -C /projects/deny-poc checkout -b feature",
+    )
+    assert dash_c_denied.ok is False
+    assert dash_c_denied.kind != "project_git_fence"
+    assert "application install" not in (dash_c_denied.detail or "")
+    assert "bound project" not in (dash_c_denied.detail or "")
 
     reconcile_hardened_seed_rules()
     policy_engine.reload()

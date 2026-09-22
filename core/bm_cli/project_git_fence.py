@@ -2,13 +2,16 @@
 
 Agent git may create repositories and branches inside the bound project
 (or the agent's own workspace repo, or a locked clone). It must not operate
-on the BossMod application install or on any other repository. ``-C``,
-``--git-dir``, ``--work-tree``, ``cd ..``, and absolute paths are checked
-after realpath resolution. A miss is an explicit Blocked reason.
+on the BossMod application install or on any other repository. Virtual
+``/projects`` and ``/me`` paths, including ``-C`` and ``--work-tree``
+operands, are rewritten to their real directories before the bound-repo
+check. ``cd ..`` and other absolute paths are checked after realpath
+resolution. A miss is an explicit Blocked reason.
 """
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -70,24 +73,11 @@ def project_git_fence_reason(
     if _pinned_to_agent_workspace(agent, parsed, virtual_cwd):
         return None
 
-    real_cwd = _resolve_real_cwd(agent, virtual_cwd)
+    scoped, real_cwd, scope = _resolved_git_scope(agent, parsed, virtual_cwd)
     if real_cwd is not None:
         _ensure_personal_workspace_repo(agent, real_cwd)
-    if real_cwd is None:
-        if _absolute_token_hits_application(virtual_cwd):
-            return APP_INSTALL_GIT_WHY
-        return PROJECT_GIT_ESCAPE_WHY
-    if _hits_application(real_cwd):
-        return APP_INSTALL_GIT_WHY
-
-    bound = _bound_repository(agent, real_cwd)
-    if bound is not None and _hits_application(bound):
-        return APP_INSTALL_GIT_WHY
-
-    scoped = _rewrite_virtual_git_paths(agent, parsed, virtual_cwd)
-    scope = _parse_scope(scoped.args, real_cwd)
     if scope.invalid:
-        if _scope_mentions_application(scoped.args, real_cwd) or _hits_application(real_cwd):
+        if _scope_hits_application(scoped.args, real_cwd, virtual_cwd):
             return APP_INSTALL_GIT_WHY
         return PROJECT_GIT_ESCAPE_WHY
     if _hits_application(scope.work_tree) or _hits_application(scope.git_dir):
@@ -100,7 +90,20 @@ def project_git_fence_reason(
         if _hits_application(operand):
             return APP_INSTALL_GIT_WHY
 
+    # Bind to the repository ``-C`` / ``--work-tree`` selected after virtual
+    # ``/projects/<slug>`` (and real absolute paths) are rewritten. The CLI
+    # cwd is that scope when the command has no location override.
+    bound = _bound_repository(agent, scope.work_tree)
+    if bound is not None and _hits_application(bound):
+        return APP_INSTALL_GIT_WHY
     if bound is None:
+        # A ``-C`` / ``--work-tree`` that missed both the project and the
+        # application install is an escape. With no location override, a cwd
+        # that is the application install keeps the install reason.
+        if git_has_location_override(parsed.args):
+            return PROJECT_GIT_ESCAPE_WHY
+        if _scope_hits_application(scoped.args, real_cwd, virtual_cwd):
+            return APP_INSTALL_GIT_WHY
         return PROJECT_GIT_ESCAPE_WHY
 
     if not is_within_roots(scope.work_tree, (bound,)):
@@ -182,15 +185,107 @@ def _ensure_personal_workspace_repo(agent: Agent, real_cwd: Path) -> None:
     ensure_agent_workspace_repo(agent)
 
 
+def project_git_policy_subject(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    virtual_cwd: str,
+) -> str | None:
+    """Return ``git <subcommand> …`` when ``-C`` lands in a project repo.
+
+    Seed rules are written as ``git status``, ``git commit``, and
+    ``git checkout``. Those match once ``-C`` or ``--work-tree`` rewrites
+    onto a project directory. ``git -C .`` from ``/me`` keeps the default
+    policy.
+    """
+    if not _is_git_cli(parsed) or not git_has_location_override(parsed.args):
+        return None
+    _scoped, _real_cwd, scope = _resolved_git_scope(agent, parsed, virtual_cwd)
+    project = None if scope.invalid else project_directory_for(scope.work_tree)
+    if project is None:
+        return None
+    if scope.git_dir is not None and not _git_dir_inside(scope.git_dir, project):
+        return None
+    tail = _git_command_tail(parsed.args)
+    if not tail:
+        return None
+    return shlex.join(["git", *tail])
+
+
+def git_has_location_override(args: tuple[str, ...]) -> bool:
+    """Return True when git argv selects a repo other than the plain cwd."""
+    for token in args:
+        key = token.split("=", 1)[0]
+        if key in {"-C", "--git-dir", "--work-tree", "--separate-git-dir"}:
+            return True
+        if token.startswith("-C") and not token.startswith("--") and token != "-C":
+            return True
+    return False
+
+
+def _resolved_git_scope(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    virtual_cwd: str,
+) -> tuple[ParsedCliCommand, Path | None, _GitScope]:
+    """Rewrite virtual mounts, then parse ``-C`` / ``--work-tree`` / ``--git-dir``."""
+    scoped = _rewrite_virtual_git_paths(agent, parsed, virtual_cwd)
+    real_cwd = _resolve_real_cwd(agent, virtual_cwd)
+    base = real_cwd if real_cwd is not None else Path("/")
+    return scoped, real_cwd, _parse_scope(scoped.args, base)
+
+
 def _rewrite_virtual_git_paths(
     agent: Agent,
     parsed: ParsedCliCommand,
     virtual_cwd: str,
 ) -> ParsedCliCommand:
-    """Map ``/me`` and ``/projects`` git paths onto their real directories."""
+    """Map ``/me`` and ``/projects`` git paths onto their real directories.
+
+    Uses the same token rewrite as the shell, including the path after
+    ``-C``, ``--git-dir``, and ``--work-tree``.
+    """
     from core.bm_cli.locked_clone_outcome import rewrite_virtual_shell_paths
 
     return rewrite_virtual_shell_paths(agent, parsed, virtual_cwd)
+
+
+def _scope_hits_application(
+    args: tuple[str, ...],
+    real_cwd: Path | None,
+    virtual_cwd: str,
+) -> bool:
+    base = real_cwd if real_cwd is not None else Path("/")
+    if _scope_mentions_application(args, base):
+        return True
+    if real_cwd is not None and _hits_application(real_cwd):
+        return True
+    return _absolute_token_hits_application(virtual_cwd)
+
+
+def _git_command_tail(args: tuple[str, ...]) -> list[str]:
+    """Return argv starting at the git subcommand, without global options."""
+    index = 0
+    tokens = list(args)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return tokens[index + 1:]
+        if not token.startswith("-"):
+            return tokens[index:]
+        key, sep, _value = token.partition("=")
+        attached_c = (
+            token.startswith("-C")
+            and not token.startswith("--")
+            and token not in {"-C", "-c"}
+        )
+        if attached_c or sep == "=":
+            index += 1
+            continue
+        if key in _GIT_VALUE_OPTIONS:
+            index += 2
+            continue
+        index += 1
+    return []
 
 
 def _is_git_cli(parsed: ParsedCliCommand) -> bool:
@@ -201,21 +296,11 @@ def _is_git_cli(parsed: ParsedCliCommand) -> bool:
 def _pinned_to_agent_workspace(agent: Agent, parsed: ParsedCliCommand, virtual_cwd: str) -> bool:
     if _git_subcommand(parsed.args) not in _PINNED_VIRTUAL_GIT:
         return False
-    if _has_location_override(parsed.args):
+    if git_has_location_override(parsed.args):
         return False
     from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
 
     return not cwd_is_nested_clone_repo(agent, virtual_cwd)
-
-
-def _has_location_override(args: tuple[str, ...]) -> bool:
-    for token in args:
-        key = token.split("=", 1)[0]
-        if key in {"-C", "--git-dir", "--work-tree", "--separate-git-dir"}:
-            return True
-        if token.startswith("-C") and not token.startswith("--") and token != "-C":
-            return True
-    return False
 
 
 def _resolve_real_cwd(agent: Agent, virtual_cwd: str) -> Path | None:

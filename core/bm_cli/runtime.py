@@ -34,7 +34,7 @@ from core.bm_cli.help_commands import (
 )
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
-from core.bm_cli.policy_engine import policy_engine
+from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
 from core.bm_cli.host_path_consent import handle_named_path_consent, looks_like_command_flag
@@ -1118,6 +1118,12 @@ def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     subcommand = git_subcommand(parsed.args)
     if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
         return True
+    from core.bm_cli.project_git_fence import git_has_location_override
+
+    # ``git -C /projects/<slug> status`` follows that project. Virtual git
+    # only understands a bare subcommand and would ignore ``-C``.
+    if git_has_location_override(parsed.args):
+        return True
     return cwd_is_nested_clone_repo(agent, cwd)
 
 
@@ -1149,6 +1155,34 @@ def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[s
     return extra
 
 
+def _shell_policy_for_command(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+) -> CommandPolicyDecision:
+    """Match seed rules for project ``git -C`` without changing other ``-C`` forms.
+
+    An operator Deny on the raw command still wins. ``git -C /projects/<slug>
+    status`` matches ``git status``. ``git -C . status`` in ``/me`` does not.
+    """
+    raw = policy_engine.evaluate(
+        parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd,
+    )
+    if raw.matched_rule_id:
+        return raw
+    from core.bm_cli.project_git_fence import project_git_policy_subject
+
+    subject = project_git_policy_subject(agent, parsed, cwd)
+    if not subject or subject == parsed.raw:
+        return raw
+    scoped = policy_engine.evaluate(
+        subject, frozenset(), agent_id=agent.id, cwd=cwd,
+    )
+    if scoped.matched_rule_id:
+        return scoped
+    return raw
+
+
 def _execute_shell_policy(
     *,
     agent: Agent,
@@ -1159,9 +1193,7 @@ def _execute_shell_policy(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Evaluate shell policy for a command that left the virtual handler."""
-    shell_policy = policy_engine.evaluate(
-        parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd_before,
-    )
+    shell_policy = _shell_policy_for_command(agent, parsed, cwd_before)
     if shell_policy.approval_required:
         return _handle_approval_required(
             agent=agent,
