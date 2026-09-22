@@ -48,6 +48,12 @@ from core.agent_loop.decision_work_plan import (
     _should_queue_initial_work_resume,
 )
 from core.agent_loop.channel_host import note_channel_work, stop_active_talk_rounds
+from core.agent_loop.promise_lock import (
+    EMPTY_ACTIONS_WHY,
+    merge_promise_gap,
+    say_commits_to_work,
+    surface_promise_gap,
+)
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
@@ -130,6 +136,15 @@ def apply_decision(
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        if say_commits_to_work(decision.reply):
+            merge_promise_gap(
+                result,
+                surface_promise_gap(
+                    agent=agent,
+                    trigger=trigger,
+                    why=EMPTY_ACTIONS_WHY,
+                ),
+            )
         return result
 
     if decision.decision == "clarify":

@@ -21,6 +21,11 @@ from core.agent_loop.decision_parse_fail import (
     surface_decision_parse_failure,
     surface_llm_timeout_failure,
 )
+from core.agent_loop.promise_lock import (
+    promise_fail_why,
+    say_commits_to_work,
+    surface_promise_gap,
+)
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.say_before_actions import (
     early_say_fail_result,
@@ -110,6 +115,7 @@ async def _run_decision_turn(
     peek_budget = DecisionPeekBudget()
     last_response_content = ""
     decision_repair_attempts = 0
+    promised_work = False
 
     while True:
         step_started = time.monotonic()
@@ -226,6 +232,8 @@ async def _run_decision_turn(
         total_completion_tokens += response.completion_tokens
         total_tokens += response.total_tokens
         last_response_content = response.content
+        if say_commits_to_work(response.content):
+            promised_work = True
         step_prompt_tokens = response.prompt_tokens
         step_completion_tokens = response.completion_tokens
         step_total_tokens = response.total_tokens
@@ -289,7 +297,18 @@ async def _run_decision_turn(
                 step_completion_tokens=step_completion_tokens,
                 step_total_tokens=step_total_tokens,
                 error=error,
-                surfaced=surface_decision_parse_failure(agent=agent, trigger=trigger),
+                surfaced=(
+                    surface_promise_gap(
+                        agent=agent,
+                        trigger=trigger,
+                        why=promise_fail_why(
+                            repair_attempts=decision_repair_attempts,
+                            kind=str(parse_kind or ""),
+                        ),
+                    )
+                    if promised_work
+                    else surface_decision_parse_failure(agent=agent, trigger=trigger)
+                ),
                 action=parsed,
                 flags={"parse_steer": True},
                 start=start,
