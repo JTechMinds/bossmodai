@@ -13,7 +13,9 @@ may wake; settled status, an echo, or a no-op is an empty speak and does
 not force a peer @ into that round. A failed or unset route keeps the
 #124 drain (mentioned first, then a stable lead / round-robin) and each
 of those wakes is a normal soft-judge turn. Fan-out remains only for the
-narrow allowlist in ``channel_round_plan``.
+narrow allowlist in ``channel_round_plan``. A later route is told who
+already spoke and who is work-bound. Echo versus new substance is that
+route's guess; unsure is stay-out. The speak cap only shortens one slice.
 """
 
 from __future__ import annotations
@@ -46,6 +48,13 @@ from core.agent_loop.channel_host import (
     talk_closed,
 )
 from core.agent_loop.channel_router import RoundPlan, plan_channel_route
+from core.agent_loop.channel_work_bind import (
+    live_work_bind_ids,
+    live_work_binds,
+    merge_work_binds,
+    pairs_for_agents,
+    snapshot_spoke_ids,
+)
 from core.agent_loop.response_rounds import (
     SharedRoundBinding,
     begin_shared_response,
@@ -130,7 +139,14 @@ def start_channel_peer_round(
     # Work-bound owners stay in the Board sticky so the route can see them,
     # and stay out of the Talk queue. A Done round that already has one
     # does not spend the empty-speak repair on a status fan-out.
-    bound = {agent_id for agent_id in (work_bind_ids or []) if agent_id in member_ids}
+    # A human snapshot already cleared carried binds. Agent rounds keep them.
+    carried = live_work_binds(channel_id)
+    explicit = pairs_for_agents(
+        channel_id,
+        [agent_id for agent_id in (work_bind_ids or []) if agent_id in member_ids],
+    )
+    binds = merge_work_binds(carried, explicit)
+    bound = {pair["agent_id"] for pair in binds if pair["agent_id"] in member_ids}
     talk_board_ids = [agent_id for agent_id in board_ids if agent_id not in bound]
     talk_required = [agent_id for agent_id in (required_ids or []) if agent_id not in bound]
     reopen_id = ""
@@ -176,6 +192,8 @@ def start_channel_peer_round(
         agent_line=author_type == "agent",
         sticky_note=sticky,
         repair_empty=not (handoff and bound),
+        snapshot_id=message_id,
+        work_bind_ids=[pair["agent_id"] for pair in binds if pair["agent_id"] in bound],
     )
 
     round_record = db.create_channel_response_round(
@@ -211,13 +229,20 @@ def start_channel_peer_round(
             if mode == DISPATCH_ROUNDS
             else []
         ),
+        work_binds=binds,
     )
+    quiet_ids = [
+        agent_id
+        for agent_id in (pair["agent_id"] for pair in binds)
+        if agent_id in bound and agent_id not in set(speak_ids) and agent_id not in set(stay_ids)
+    ]
     wake_ids = _install_round_queue(
         round_id=round_record.id,
         channel_id=channel_id,
         speak_ids=speak_ids,
         stay_out_ids=stay_ids,
         wake_all=mode == DISPATCH_FANOUT,
+        quiet_ids=quiet_ids,
     )
 
     payload: dict[str, Any] = {
@@ -421,6 +446,7 @@ def advance_channel_round(
             opening_message=str(trigger.get("content") or ""),
             latest_message=spoken,
         )
+    pending = _drop_bound_pending(round_id, channel_id, pending)
     if pending:
         nxt = pending[0]
         db.update_channel_response_candidate(
@@ -459,6 +485,10 @@ def _plan_for_members(
     agent_line: bool = False,
     sticky_note: str = "",
     repair_empty: bool = True,
+    snapshot_id: str = "",
+    round_id: str = "",
+    already_spoke_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> RoundPlan:
     """Route a rounds queue. Fan-out and an unset router keep the drain order."""
     if mode != DISPATCH_ROUNDS:
@@ -479,6 +509,10 @@ def _plan_for_members(
         agent_line=agent_line,
         sticky_note=sticky_note,
         repair_empty=repair_empty,
+        snapshot_id=snapshot_id,
+        round_id=round_id,
+        already_spoke_ids=already_spoke_ids,
+        work_bind_ids=work_bind_ids,
     )
 
 
@@ -489,8 +523,13 @@ def _install_round_queue(
     speak_ids: list[str],
     stay_out_ids: list[str],
     wake_all: bool,
+    quiet_ids: list[str] | None = None,
 ) -> list[str]:
-    """Create the queue. Stay-out members are an engine pass and are not woken."""
+    """Create the queue. Stay-out members are an engine pass and are not woken.
+
+    ``quiet_ids`` are work-bound owners. They stay on the round so a later
+    slice can name them after the work settles, and they are not a pass.
+    """
     wakes: list[str] = []
     position = 1
     for agent_id in speak_ids:
@@ -517,7 +556,76 @@ def _install_round_queue(
         )
         position += 1
         _engine_pass(agent_id, round_id=round_id, channel_id=channel_id)
+    for agent_id in quiet_ids or []:
+        if agent_id in set(speak_ids) or agent_id in set(stay_out_ids):
+            continue
+        _park_observed(round_id, agent_id)
     return wakes
+
+
+def _park_observed(round_id: str, agent_id: str) -> None:
+    """Mark one owner observed without counting a pass."""
+    existing = db.get_channel_response_candidate(round_id=round_id, agent_id=agent_id)
+    if existing is not None and str(existing.status or "") == "responded":
+        return
+    if existing is None:
+        db.create_channel_response_candidate(round_id=round_id, agent_id=agent_id)
+    db.mark_channel_candidate_observed(round_id=round_id, agent_id=agent_id)
+
+
+def _round_source_id(round_id: str) -> str:
+    row = db.get_channel_response_round(round_id)
+    if row is None:
+        return ""
+    return str(row.source_message_id or "")
+
+
+def _except_bound(agent_ids: list[str], bound: set[str], keep: set[str]) -> list[str]:
+    """Drop live work owners. A blocked-line reopen stays."""
+    return [agent_id for agent_id in agent_ids if agent_id not in bound or agent_id in keep]
+
+
+def _split_bound(
+    speak_ids: list[str],
+    stay_ids: list[str],
+    bound: set[str],
+    *,
+    keep: set[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Move work owners out of speak and out of the pass list."""
+    speak: list[str] = []
+    stay: list[str] = []
+    park: list[str] = []
+    for agent_id in speak_ids:
+        if agent_id in bound and agent_id not in keep:
+            if agent_id not in park:
+                park.append(agent_id)
+            continue
+        if agent_id not in speak:
+            speak.append(agent_id)
+    spoken = set(speak)
+    for agent_id in stay_ids:
+        if agent_id in bound and agent_id not in keep:
+            if agent_id not in park and agent_id not in spoken:
+                park.append(agent_id)
+            continue
+        if agent_id not in stay and agent_id not in spoken:
+            stay.append(agent_id)
+    return speak, stay, park
+
+
+def _drop_bound_pending(round_id: str, channel_id: str, pending: list[Any]) -> list[Any]:
+    """Park live work owners so a later slice cannot Talk-wake them."""
+    bound = set(live_work_bind_ids(channel_id))
+    if not bound:
+        return pending
+    kept: list[Any] = []
+    for candidate in pending:
+        if candidate.agent_id in bound:
+            _park_observed(round_id, candidate.agent_id)
+            continue
+        kept.append(candidate)
+    return kept
 
 
 def _engine_pass(agent_id: str, *, round_id: str, channel_id: str) -> None:
@@ -595,6 +703,9 @@ def _redecide_remaining(
     eligible_set = set(eligible_ids)
     forced = [agent_id for agent_id in pinned_ids if agent_id in eligible_set]
     latest = (latest_message or "").strip() or opening_message
+    source_id = _round_source_id(round_id)
+    spoke_ids = snapshot_spoke_ids(channel_id, source_id)
+    bind_ids = live_work_bind_ids(channel_id)
     plan = plan_channel_route(
         members=_members_in_order(channel_id, eligible_ids),
         fallback_order=eligible_ids,
@@ -604,16 +715,25 @@ def _redecide_remaining(
         opening_message=opening_message,
         agent_line=True,
         repair_empty=False,
+        snapshot_id=source_id,
+        round_id=round_id,
+        already_spoke_ids=spoke_ids,
+        work_bind_ids=bind_ids,
     )
     if plan.mode != "system":
         channel_round_db.set_channel_round_meta(round_id, router_mode="fallback")
         return pending
-    speak_ids = [agent_id for agent_id in _serial_speak_ids(plan) if agent_id in eligible_set]
+    bound_set = set(bind_ids)
+    speak_ids = [
+        agent_id
+        for agent_id in _serial_speak_ids(plan)
+        if agent_id in eligible_set and agent_id not in bound_set
+    ]
     speak_set = set(speak_ids)
     meta = channel_round_db.get_channel_round_meta(round_id)
     stepped = list(meta.get("stepped_out") or [])
     for agent_id in plan.stay_out:
-        if agent_id not in remaining_set or agent_id in speak_set:
+        if agent_id in bound_set or agent_id not in remaining_set or agent_id in speak_set:
             continue
         _engine_pass(agent_id, round_id=round_id, channel_id=channel_id)
         if agent_id not in stepped:
@@ -843,7 +963,10 @@ def _open_follow_up_round(
     # snapshot stays out until they are mentioned. The blocked agent is
     # the exception: a real reply to their Blocked line puts them back in.
     pool: list[str] = []
-    for agent_id in list(participants) + list(mention_ids) + ([reopen_id] if reopen_id else []):
+    bind_ids = live_work_bind_ids(channel_id)
+    # Work-bound owners stay in the pool so a later slice can name them
+    # after that work settles. They are not woken while the bind is live.
+    for agent_id in list(participants) + list(mention_ids) + ([reopen_id] if reopen_id else []) + list(bind_ids):
         if agent_id in member_set and agent_id not in pool:
             pool.append(agent_id)
     if not pool:
@@ -885,6 +1008,9 @@ def _open_follow_up_round(
     if reopen_id:
         # After operator @, before any peer @ the settled path refuses to pin.
         route_required = _merge_ids(operator_pins, [reopen_id], route_required, allowed=set(ordered))
+    spoke_ids = snapshot_spoke_ids(channel_id, source_id)
+    keep_bound = {reopen_id} if reopen_id else set()
+    route_required = _except_bound(route_required, set(bind_ids), keep_bound)
     roster = _members_in_order(channel_id, ordered)
     sticky = ""
     if reopen_id:
@@ -900,6 +1026,10 @@ def _open_follow_up_round(
         opening_message=str(trigger.get("content") or ""),
         agent_line=agent_line,
         sticky_note=sticky,
+        snapshot_id=source_id,
+        round_id=round_id,
+        already_spoke_ids=spoke_ids,
+        work_bind_ids=bind_ids,
     )
     hard_wake = bool(reopen_id and reopen_id in set(plan.pinned))
     if plan.mode == "system" and not plan.named_speak and not hard_wake:
@@ -924,8 +1054,14 @@ def _open_follow_up_round(
         mode=plan.mode,
         speak=_serial_speak_ids(plan),
         ordered=ordered,
-        required_ids=shape_required,
-        mention_ids=shape_mentions,
+        required_ids=_except_bound(shape_required, set(bind_ids), keep_bound),
+        mention_ids=_except_bound(shape_mentions, set(bind_ids), keep_bound),
+    )
+    speak_ids, stay_ids, park_ids = _split_bound(
+        speak_ids,
+        stay_ids,
+        set(bind_ids),
+        keep=keep_bound,
     )
     if not speak_ids:
         return empty
@@ -949,7 +1085,12 @@ def _open_follow_up_round(
         stepped_out=stepped_now,
         next_mentions=[],
         router_mode=plan.mode,
-        pinned_ids=[agent_id for agent_id in plan.pinned if agent_id in set(speak_ids)],
+        pinned_ids=[
+            agent_id
+            for agent_id in plan.pinned
+            if agent_id in set(speak_ids) and agent_id not in set(bind_ids)
+        ],
+        work_binds=live_work_binds(channel_id),
     )
     follow_wake = _install_round_queue(
         round_id=round_record.id,
@@ -957,6 +1098,7 @@ def _open_follow_up_round(
         speak_ids=speak_ids,
         stay_out_ids=stay_ids,
         wake_all=False,
+        quiet_ids=park_ids,
     )
     if not follow_wake:
         db.maybe_complete_channel_response_round(round_record.id)

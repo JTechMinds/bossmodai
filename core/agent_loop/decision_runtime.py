@@ -48,6 +48,7 @@ from core.agent_loop.decision_work_plan import (
     _should_queue_initial_work_resume,
 )
 from core.agent_loop.channel_host import note_channel_work, stop_active_talk_rounds
+from core.agent_loop.channel_work_bind import record_round_work_bind
 from core.agent_loop.promise_lock import (
     EMPTY_ACTIONS_WHY,
     merge_promise_gap,
@@ -480,6 +481,9 @@ def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: Con
     title = (decision.taskTitle or getattr(task, "title", "") or "").strip()
     if not channel_id or not task_id or not title:
         return
+    round_id = str(trigger.get("round_id") or "").strip()
+    if round_id:
+        record_round_work_bind(round_id, agent_id=agent.id, task_id=task_id)
     note_channel_work(channel_id, agent_id=agent.id, task_id=task_id)
     stop_active_talk_rounds(channel_id)
 

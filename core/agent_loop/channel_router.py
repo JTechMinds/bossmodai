@@ -64,6 +64,20 @@ AGENT_LINE_ROUTE = (
     "A peer @ on that line is not a pending pin and does not open another round."
 )
 
+# Re-route / later slice. Engine facts are Already spoke and Work-bound.
+# Echo versus new substance is the guess. Unsure stays out.
+REROUTE_ECHO_ROUTE = (
+    "Already spoke lists ids that already took a turn on this human snapshot. "
+    "Work-bound lists ids on live work. "
+    "Do not put an already-spoke id in speak when that turn would only restate what the thread already shows. "
+    "If you are unsure whether an already-spoke id would add new substance, put that id in stay_out. "
+    "An empty speak array is the stop when nobody has new substance. "
+    "Do not name someone because they might have something. "
+    "An id that has not spoken may still be named for new work, a question, or a handoff. "
+    "Work-bound member ids go in stay_out. "
+    "Ids under Already spoke that are not in Members must not be copied into either array."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RoundPlan:
@@ -93,6 +107,10 @@ def plan_channel_route(
     agent_line: bool = False,
     sticky_note: str = "",
     repair_empty: bool = True,
+    snapshot_id: str = "",
+    round_id: str = "",
+    already_spoke_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> RoundPlan:
     """Return a system plan, or the drain order when System AI cannot route.
 
@@ -134,6 +152,10 @@ def plan_channel_route(
         pending_mention_ids=pinned,
         sticky=sticky,
         agent_line=agent_line,
+        snapshot_id=snapshot_id,
+        round_id=round_id,
+        already_spoke_ids=already_spoke_ids,
+        work_bind_ids=work_bind_ids,
     )
     raw = complete_text(messages)
     if raw is None:
@@ -269,9 +291,15 @@ def build_router_messages(
     pending_mention_ids: list[str],
     sticky: str,
     agent_line: bool = False,
+    snapshot_id: str = "",
+    round_id: str = "",
+    already_spoke_ids: list[str] | None = None,
+    work_bind_ids: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the short route prompt. Specialties and one role line, not bios."""
     by_id = {str(member.get("id") or ""): member for member in members}
+    spoke = _unique(list(already_spoke_ids or []))
+    bound = _unique(list(work_bind_ids or []))
     member_lines = []
     for member in members:
         if not str(member.get("id") or "").strip():
@@ -320,10 +348,41 @@ def build_router_messages(
     )
     if agent_line:
         system = f"{system} {AGENT_LINE_ROUTE}"
+    if spoke or bound:
+        system = f"{system} {REROUTE_ECHO_ROUTE}"
+        user = "\n".join(
+            [
+                user,
+                "",
+                "Human snapshot:",
+                (snapshot_id or "").strip() or "(none)",
+                "",
+                "Round:",
+                (round_id or "").strip() or "(none)",
+                "",
+                "Already spoke:",
+                _fact_lines(spoke, by_id),
+                "",
+                "Work-bound:",
+                _fact_lines(bound, by_id),
+            ]
+        )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def _fact_lines(agent_ids: list[str], by_id: dict[str, dict[str, str]]) -> str:
+    """``id | name`` lines for engine facts. Empty stays ``(none)``."""
+    if not agent_ids:
+        return "(none)"
+    lines: list[str] = []
+    for agent_id in agent_ids:
+        member = by_id.get(agent_id) or {}
+        name = str(member.get("name") or "").strip()
+        lines.append(f"{agent_id} | {name}" if name else agent_id)
+    return "\n".join(lines)
 
 
 def short_sticky_context(

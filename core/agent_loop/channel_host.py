@@ -166,6 +166,9 @@ def note_human_snapshot(channel_id: str, mention_ids: list[str]) -> None:
     token = (channel_id or "").strip()
     if not token:
         return
+    from core.agent_loop.channel_work_bind import clear_channel_work_binds
+
+    clear_channel_work_binds(token)
     state = host_db.get_channel_host_state(token)
     protected: list[str] = []
     for agent_id in mention_ids:
@@ -207,6 +210,11 @@ def note_speak_worthy_outcome(channel_id: str, *, agent_id: str, task_id: str) -
     token = (channel_id or "").strip()
     if not token:
         return
+    from core.agent_loop.channel_work_bind import live_work_binds
+
+    # Drop binds whose work has left pending/accepted/active. A still-live
+    # owner stays on the round until a new human snapshot.
+    live_work_binds(token)
     state = host_db.get_channel_host_state(token)
     if not state["work_agent_id"] and not state["work_task_id"]:
         return

@@ -304,6 +304,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         "TEXT NOT NULL DEFAULT '[]'",
     )
     _add_column_if_missing(
+        con, "channel_response_rounds", "work_bind_ids",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_column_if_missing(
         con, "channels", "cli_auto_approve",
         "INTEGER NOT NULL DEFAULT 0",
     )

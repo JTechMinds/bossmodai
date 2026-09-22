@@ -250,6 +250,8 @@ For reply (speak):
 
 One line is enough. This wake is one judgment, not an essay.
 
+You were nudged. If you would only restate what is already in the thread, pass. New substance only.
+
 In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
 
 For accept:
@@ -279,6 +281,8 @@ For reply (speak):
 ```
 
 One line is enough. This wake is one judgment, not an essay.
+
+You were nudged. If you would only restate what is already in the thread, pass. New substance only.
 
 In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
 

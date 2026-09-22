@@ -132,6 +132,8 @@ def get_channel_round_meta(round_id: str) -> dict:
             "next_mentions": [],
             "router_mode": "fallback",
             "pinned_ids": [],
+            "work_binds": [],
+            "work_bind_ids": [],
         }
     return meta
 
@@ -145,6 +147,7 @@ def set_channel_round_meta(
     next_mentions: list[str] | None = None,
     router_mode: str | None = None,
     pinned_ids: list[str] | None = None,
+    work_binds: list[dict[str, str]] | None = None,
 ) -> dict:
     """Persist channel round orchestration fields."""
     meta = shared.set_channel_round_meta(
@@ -155,5 +158,6 @@ def set_channel_round_meta(
         next_mentions=next_mentions,
         router_mode=router_mode,
         pinned_ids=pinned_ids,
+        work_binds=work_binds,
     )
     return meta or get_channel_round_meta(round_id)

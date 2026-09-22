@@ -232,7 +232,10 @@ CREATE TABLE IF NOT EXISTS channel_response_rounds (
     next_mentions     TEXT NOT NULL DEFAULT '[]',
     -- system: System AI chose speak vs stay_out. fallback: #124 drain.
     router_mode       VARCHAR NOT NULL DEFAULT 'fallback',
-    pinned_ids        TEXT NOT NULL DEFAULT '[]'
+    pinned_ids        TEXT NOT NULL DEFAULT '[]',
+    -- Live work owners for this snapshot: [{"agent_id","task_id"}, ...].
+    -- Cleared when that work leaves pending/accepted/active, or on a new human snapshot.
+    work_bind_ids     TEXT NOT NULL DEFAULT '[]'
 );
 
 -- Host-owned Talk / Paused state for one thread. Work silence is the
