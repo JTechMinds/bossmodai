@@ -1,16 +1,19 @@
 """BossMod AI — Shared channel response-round coordination.
 
 Discuss and status messages wake one member at a time. When System AI is
-set, one short route per round chooses an ordered speak list and a
-stay-out list. Human @ mentions stay first and are never dropped. Stay-out
-members are an engine pass: the queue advances, nothing is posted, and the
-identity model is not called. An agent speak is judged before the next
-peer round: new work, a question, or a handoff may wake; settled status,
-an echo, or a no-op is an empty speak and does not force a peer @ into
-that round. A failed or unset route keeps the #124 drain
-(mentioned first, then a stable lead / round-robin) and each of those wakes
-is a normal soft-judge turn. Fan-out remains only for the narrow allowlist
-in ``channel_round_plan``.
+set, one short route chooses an ordered speak list and a stay-out list.
+A plan may name 1…N agents. They run one at a time, and each next
+speaker sees the posts already in the thread. After a speak, and again
+when that set drains, System AI routes the next set, including someone
+the first slice left out. Human @ mentions stay first and are never
+dropped. Stay-out members are an engine pass: the queue advances,
+nothing is posted, and the identity model is not called. An agent speak
+is judged before the next peer round: new work, a question, or a handoff
+may wake; settled status, an echo, or a no-op is an empty speak and does
+not force a peer @ into that round. A failed or unset route keeps the
+#124 drain (mentioned first, then a stable lead / round-robin) and each
+of those wakes is a normal soft-judge turn. Fan-out remains only for the
+narrow allowlist in ``channel_round_plan``.
 """
 
 from __future__ import annotations
@@ -146,11 +149,17 @@ def start_channel_peer_round(
         channel_id=channel_id,
         source_message_id=message_id,
     )
+    speak_ids = _serial_speak_ids(plan) if mode == DISPATCH_ROUNDS else list(plan.speak)
+    stay_ids = (
+        [agent_id for agent_id in plan.stay_out if agent_id not in set(speak_ids)]
+        if mode == DISPATCH_ROUNDS
+        else []
+    )
     channel_round_db.set_channel_round_meta(
         round_record.id,
         round_index=1,
         dispatch_mode=mode,
-        stepped_out=list(plan.stay_out),
+        stepped_out=list(stay_ids),
         next_mentions=[],
         router_mode=plan.mode if mode == DISPATCH_ROUNDS else "fallback",
         pinned_ids=list(plan.pinned) if mode == DISPATCH_ROUNDS else [],
@@ -158,8 +167,8 @@ def start_channel_peer_round(
     wake_ids = _install_round_queue(
         round_id=round_record.id,
         channel_id=channel_id,
-        speak_ids=plan.speak,
-        stay_out_ids=plan.stay_out if mode == DISPATCH_ROUNDS else [],
+        speak_ids=speak_ids,
+        stay_out_ids=stay_ids,
         wake_all=mode == DISPATCH_FANOUT,
     )
 
@@ -479,6 +488,23 @@ def _engine_pass(agent_id: str, *, round_id: str, channel_id: str) -> None:
     )
 
 
+def _serial_speak_ids(plan: RoundPlan) -> list[str]:
+    """Return the plan in speak order, including names past the slice cap.
+
+    The cap is how short one prompt should be. It does not drop someone the
+    model already ordered. Pins stay first. Fallback keeps the drain order.
+    One wake is issued for the first id. The rest wait, one at a time.
+    """
+    if plan.mode != "system":
+        return list(plan.speak)
+    ordered: list[str] = []
+    for agent_id in list(plan.pinned) + list(plan.named_speak):
+        token = (agent_id or "").strip()
+        if token and token not in ordered:
+            ordered.append(token)
+    return ordered or list(plan.speak)
+
+
 def _redecide_remaining(
     *,
     round_id: str,
@@ -488,12 +514,16 @@ def _redecide_remaining(
     opening_message: str,
     latest_message: str,
 ) -> list[Any]:
-    """Optionally re-route members still waiting after a speak.
+    """Re-route who still might speak after one post.
 
-    One wake is issued by the caller. A failed re-route leaves the remaining
-    drain in place and stops further routes for this round. Required @ ids
-    that are still waiting stay in speak. @ ids stored from the speak wait
-    for the next round and are not pulled ahead here.
+    One wake is issued by the caller. The route sees the rest of this plan
+    and anyone the first slice left on an engine pass, so a later set can
+    name them. A failed re-route leaves the remaining drain in place and
+    does not promote those passes. Required @ ids that are still waiting,
+    with no voluntary speaker left beside them, stay in order and are not
+    re-routed. An already-observed pass is not counted again when the new
+    set still leaves them out. @ ids stored from the speak wait for the
+    next round and are not pulled ahead here.
     """
     remaining_ids = [candidate.agent_id for candidate in pending]
     remaining_set = set(remaining_ids)
@@ -501,30 +531,44 @@ def _redecide_remaining(
     voluntary = [agent_id for agent_id in remaining_ids if agent_id not in set(forced)]
     if not voluntary:
         return pending
+    observed_ids: list[str] = []
+    for candidate in db.list_channel_response_candidates(round_id):
+        if str(candidate.status or "") != "observed":
+            continue
+        if candidate.agent_id in remaining_set or candidate.agent_id in observed_ids:
+            continue
+        observed_ids.append(candidate.agent_id)
+    eligible_ids = remaining_ids + observed_ids
+    eligible_set = set(eligible_ids)
+    forced = [agent_id for agent_id in pinned_ids if agent_id in eligible_set]
     latest = (latest_message or "").strip() or opening_message
     plan = plan_channel_route(
-        members=_members_in_order(channel_id, remaining_ids),
-        fallback_order=remaining_ids,
+        members=_members_in_order(channel_id, eligible_ids),
+        fallback_order=eligible_ids,
         latest_message=latest,
         pending_mention_ids=forced,
         forced_ids=forced,
         opening_message=opening_message,
+        agent_line=True,
+        repair_empty=False,
     )
     if plan.mode != "system":
         channel_round_db.set_channel_round_meta(round_id, router_mode="fallback")
         return pending
+    speak_ids = [agent_id for agent_id in _serial_speak_ids(plan) if agent_id in eligible_set]
+    speak_set = set(speak_ids)
     meta = channel_round_db.get_channel_round_meta(round_id)
     stepped = list(meta.get("stepped_out") or [])
     for agent_id in plan.stay_out:
-        if agent_id not in remaining_set:
+        if agent_id not in remaining_set or agent_id in speak_set:
             continue
         _engine_pass(agent_id, round_id=round_id, channel_id=channel_id)
         if agent_id not in stepped:
             stepped.append(agent_id)
+    for agent_id in speak_ids:
+        stepped = [item for item in stepped if item != agent_id]
     start_at = min(candidate.queue_position or 1 for candidate in pending)
-    for offset, agent_id in enumerate(plan.speak):
-        if agent_id not in remaining_set:
-            continue
+    for offset, agent_id in enumerate(speak_ids):
         db.update_channel_response_candidate(
             round_id=round_id,
             agent_id=agent_id,
@@ -535,7 +579,7 @@ def _redecide_remaining(
         round_id,
         stepped_out=stepped,
         router_mode="system",
-        pinned_ids=[agent_id for agent_id in plan.pinned if agent_id in remaining_set],
+        pinned_ids=[agent_id for agent_id in plan.pinned if agent_id in eligible_set],
     )
     return _pending_candidates(db.list_channel_response_candidates(round_id))
 
@@ -796,7 +840,7 @@ def _open_follow_up_round(
     speak_ids, stay_ids = shape_follow_up_speak(
         channel_id,
         mode=plan.mode,
-        speak=list(plan.speak),
+        speak=_serial_speak_ids(plan),
         ordered=ordered,
         required_ids=shape_required,
         mention_ids=shape_mentions,

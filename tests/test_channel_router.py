@@ -23,6 +23,7 @@ from core.agent_loop.channel_router import (
 )
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.decision_runtime import apply_decision
+from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.standing_prefs import standing_prefs_file
 from core.bm_cli import filesystem
 from core.llm.system_completion import (
@@ -30,6 +31,7 @@ from core.llm.system_completion import (
     SYSTEM_COMPLETION_TIMEOUT_SECONDS,
     complete_text,
 )
+from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 
 
@@ -175,6 +177,7 @@ def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
     assert '"speak"' in blob and '"stay_out"' in blob
     assert f"at most {ROUTER_SPEAK_CAP}" in blob
     assert "role blurb" in blob
+    assert "left out of this slice is not finished" in blob
 
 
 def test_member_line_keeps_specialty_and_one_role_blurb() -> None:
@@ -665,6 +668,156 @@ def test_follow_up_round_uses_a_new_route(monkeypatch: pytest.MonkeyPatch) -> No
     assert _statuses(follow_id)[jim.id] == "queued"
     assert _statuses(follow_id)[laura.id] == "observed"
     assert progress["round_marker"]["content"] == "Round 2"
+
+
+def test_named_plan_longer_than_the_slice_wakes_one_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+
+    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return _payload([jim.id, laura.id, ada.id], [])
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "Where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert [item["agent_id"] for item in triggers] == [jim.id]
+    round_id = triggers[0]["payload"]["round_id"]
+    assert _statuses(round_id)[jim.id] == "queued"
+    assert _statuses(round_id)[laura.id] == "pending"
+    assert _statuses(round_id)[ada.id] == "pending"
+    assert ROUTER_SPEAK_CAP == 2
+
+
+def test_later_route_names_someone_the_first_slice_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    replies = [
+        _payload([jim.id, laura.id], [ada.id]),
+        _payload([ada.id], [laura.id]),
+    ]
+
+    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return replies.pop(0)
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "Where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert [item["agent_id"] for item in triggers] == [jim.id]
+    round_id = triggers[0]["payload"]["round_id"]
+    assert _statuses(round_id)[ada.id] == "observed"
+    assert _statuses(round_id)[laura.id] == "pending"
+    prior = "Need a fixture check before we call this done."
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="agent",
+        author_agent_id=jim.id,
+        author_name="Jim",
+        content=prior,
+        source_channel="channel",
+    )
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=jim.id)
+    progress = advance_channel_round(
+        {
+            "content": message.content,
+            "channel_id": channel.id,
+            "round_id": round_id,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "source_message_id": message.id,
+            "channel_name": channel.name,
+            "dispatch_mode": DISPATCH_ROUNDS,
+        },
+        spoke=True,
+        speaker_id=jim.id,
+        spoken_text=prior,
+    )
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [ada.id]
+    assert _statuses(round_id)[ada.id] == "queued"
+    assert _statuses(round_id)[laura.id] == "observed"
+    ada_agent = db.get_agent(ada.id)
+    assert ada_agent is not None
+    history = build_prompt_history_view(
+        ada_agent,
+        {
+            "type": "channel_message",
+            "channel_id": channel.id,
+            "source_message_id": message.id,
+        },
+    )
+    heard = " ".join(str(item.get("content") or "") for item in history.conversation_history)
+    assert prior in heard
+    streaks = host_db.get_channel_host_state(channel.id)["pass_streaks"]
+    assert ada.id not in streaks
+
+
+def test_empty_reroute_leaves_the_outsider_and_restores_stay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    replies = [
+        _payload([jim.id, laura.id], [ada.id]),
+        _payload([], [laura.id, ada.id]),
+        _payload([], [jim.id, laura.id, ada.id]),
+        _payload([], [jim.id, laura.id, ada.id]),
+    ]
+
+    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return replies.pop(0)
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "Where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    round_id = triggers[0]["payload"]["round_id"]
+    state = host_db.get_channel_host_state(channel.id)
+    state["pass_streaks"] = {laura.id: 2}
+    state["demoted_ids"] = [laura.id]
+    host_db.save_channel_host_state(state)
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=jim.id)
+    progress = advance_channel_round(
+        {
+            "content": message.content,
+            "channel_id": channel.id,
+            "round_id": round_id,
+            "from_name": "Human Operator",
+            "author_type": "human",
+            "source_message_id": message.id,
+            "dispatch_mode": DISPATCH_ROUNDS,
+        },
+        spoke=True,
+        speaker_id=jim.id,
+        spoken_text="Signature is on record. Nothing further from me.",
+    )
+    assert progress["trigger_requests"] == []
+    assert _statuses(round_id)[ada.id] == "observed"
+    stayed = host_db.get_channel_host_state(channel.id)
+    assert stayed["demoted_ids"] == [laura.id]
+    assert stayed["pass_streaks"][laura.id] == 2
 
 
 def test_sticky_context_is_short_and_skips_note_bodies(

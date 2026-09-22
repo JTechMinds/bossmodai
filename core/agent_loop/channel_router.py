@@ -11,12 +11,16 @@ between the lists, or a non-list rejects the payload. The caller then
 uses the existing drain order and each member gets a normal soft-judge
 turn.
 
-``ROUTER_SPEAK_CAP`` (default 2) is the maximum extra fan-out. Operator
-@ ids, and any other ids the caller marks as required (structured
-``next_owners``, Board next-card owners), stay first and are never
-removed to meet the cap. When those required ids already fill the cap,
-no further id is taken from ``speak``. Ids the model omits are
-stay_out. Stay-out members are an engine pass: no identity-model turn.
+``ROUTER_SPEAK_CAP`` (default 2) is how short one route's next slice
+should be. Operator @ ids, and any other ids the caller marks as
+required (structured ``next_owners``, Board next-card owners), stay
+first and are never removed to meet the cap. When those required ids
+already fill the cap, no further id is taken from the capped ``speak``
+list. Ids the model omits are stay_out on that decision. The cap is not
+a permanent skip: a plan the model ordered as 1…N still runs one at a
+time, and someone left out of this slice can be named when the route
+runs again. Stay-out with nothing left to do is an engine pass: no
+identity-model turn.
 
 A Done/handoff route, and an agent-line route, whose parsed ``speak`` is
 empty and which has no required pin, gets one repair completion ("who
@@ -88,6 +92,7 @@ def plan_channel_route(
     handoff: bool = False,
     agent_line: bool = False,
     sticky_note: str = "",
+    repair_empty: bool = True,
 ) -> RoundPlan:
     """Return a system plan, or the drain order when System AI cannot route.
 
@@ -99,8 +104,10 @@ def plan_channel_route(
 
     ``handoff`` is a Done/handoff round. ``agent_line`` is a peer round
     opened from an agent speak. An empty parsed speak with no pin gets
-    one repair on either path. A still-empty speak is a system hard stop,
-    not the drain order. Operator pins stay in speak. A peer @ does not.
+    one repair on either path when ``repair_empty`` is set. A still-empty
+    speak is a system hard stop, not the drain order. Operator pins stay
+    in speak. A peer @ does not. A mid-round re-route passes
+    ``repair_empty`` false so an empty slice does not spend the repair.
     """
     universe = _unique(fallback_order)
     allowed = set(universe)
@@ -135,7 +142,7 @@ def plan_channel_route(
     if parsed is None:
         logger.info("channel router rejected payload; using drain order")
         return fallback
-    if (handoff or agent_line) and not parsed[0] and not pinned:
+    if repair_empty and (handoff or agent_line) and not parsed[0] and not pinned:
         parsed = _repair_empty_speak(messages, universe) or parsed
     named = tuple(parsed[0])
     speak, stay_out = finalize_router_lists(
@@ -307,6 +314,7 @@ def build_router_messages(
         "Pending @ ids are required in speak and must come first, even when that "
         f"makes speak longer than {ROUTER_SPEAK_CAP}. "
         "Do not add anyone else past that cap once pending @ ids are included. "
+        "Someone left out of this slice is not finished: a later route can name them if they still need to act. "
         "An empty speak array ends the snapshot only when no one needs to act next. "
         "Do not add keys or ids."
     )
