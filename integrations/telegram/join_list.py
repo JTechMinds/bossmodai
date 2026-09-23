@@ -20,7 +20,8 @@ class JoinListStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-_snapshots: dict[int, tuple[str, ...]] = {}
+# user -> (floor id, channel ids in the order just printed)
+_snapshots: dict[int, tuple[str, tuple[str, ...]]] = {}
 
 
 def reset_channel_list_snapshots() -> None:
@@ -28,25 +29,43 @@ def reset_channel_list_snapshots() -> None:
     _snapshots.clear()
 
 
-def remember_channel_list(telegram_user_id: int, channel_ids: list[str]) -> None:
-    """Store the channel ids in the order just shown to this user."""
-    _snapshots[telegram_user_id] = tuple(channel_ids)
+def remember_channel_list(
+    telegram_user_id: int,
+    channel_ids: list[str],
+    *,
+    floor_id: str,
+) -> None:
+    """Store one floor's channel ids in the order just shown to this user."""
+    _snapshots[telegram_user_id] = (floor_id, tuple(channel_ids))
+
+
+def remembered_floor_id(telegram_user_id: int) -> str | None:
+    """The floor the last list was scoped to, if a list was shown."""
+    snapshot = _snapshots.get(telegram_user_id)
+    if snapshot is None:
+        return None
+    return snapshot[0]
 
 
 def resolve_join_ordinal(
     telegram_user_id: int,
     ordinal: int,
     current_channel_ids: list[str],
+    *,
+    floor_id: str,
 ) -> tuple[JoinListStatus, str | None]:
-    """Return the channel id for ``ordinal`` only when the list is unchanged.
+    """Return the channel id for ``ordinal`` only when that floor's list is unchanged.
 
     ``ordinal`` is 1-based and matches the number printed on that row.
+    A different floor than the one just listed is stale: the number must
+    not reach a thread the operator was not shown.
     """
     snapshot = _snapshots.get(telegram_user_id)
     if snapshot is None:
         return JoinListStatus.MISSING, None
-    if tuple(current_channel_ids) != snapshot:
+    remembered_floor, channel_ids = snapshot
+    if remembered_floor != floor_id or tuple(current_channel_ids) != channel_ids:
         return JoinListStatus.STALE, None
-    if ordinal < 1 or ordinal > len(snapshot):
+    if ordinal < 1 or ordinal > len(channel_ids):
         return JoinListStatus.UNKNOWN, None
-    return JoinListStatus.OK, snapshot[ordinal - 1]
+    return JoinListStatus.OK, channel_ids[ordinal - 1]

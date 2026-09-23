@@ -38,8 +38,10 @@ const BossModOfficePlace = (() => {
      * token totals need /api/metrics, which this place does not load.
      */
     function countsText(state) {
-        const people = (state.roster || []).length;
-        const threads = (state.threads || []).length;
+        const people = BossModFloorScope.officePeople(state, state.roster || []).length;
+        const threads = (state.threads || []).filter(
+            (thread) => BossModFloorScope.floorOf(thread) === BossModFloorScope.officeFloorId(state),
+        ).length;
         return `${people} ${people === 1 ? 'person' : 'people'} · `
             + `${threads} ${threads === 1 ? 'thread' : 'threads'}`;
     }
@@ -136,10 +138,12 @@ const BossModOfficePlace = (() => {
 
             statePill = h('span', { class: 'office-state', 'data-state': 'live' }, 'live');
             countsLine = h('p', { class: 'office-counts' }, countsText(ctx.store.getState()));
+            const floorEcho = h('p', { class: 'office-floor-echo' });
 
             const canvasEl = h('canvas', { class: 'office-canvas' });
             const canvasWrap = h('div', { class: 'office-canvas-wrap' },
                 canvasEl,
+                floorEcho,
                 h('div', { class: 'office-paused', role: 'status', hidden: true },
                     h('p', { class: 'office-paused-copy' }, PAUSED_COPY)));
             mapPane = h('div', {
@@ -187,16 +191,27 @@ const BossModOfficePlace = (() => {
             });
             orgPane.append(orgView.element);
 
+            function paintFloor() {
+                const state = ctx.store.getState();
+                const seated = BossModFloorScope.officePeople(state, state.roster || []);
+                canvas.updateAgents(seated);
+                floorEcho.textContent = BossModFloorScope.floorName(
+                    state,
+                    BossModFloorScope.officeFloorId(state),
+                );
+                countsLine.textContent = countsText(state);
+            }
+
             showPane('map');
             paintRuntimeState(ctx.store.getState().runtimePaused);
+            paintFloor();
 
-            disposers.push(ctx.store.subscribe((s) => s.roster, (roster) => {
-                canvas.updateAgents(roster || []);
-                countsLine.textContent = countsText(ctx.store.getState());
-            }));
-            disposers.push(ctx.store.subscribe((s) => s.threads, () => {
-                countsLine.textContent = countsText(ctx.store.getState());
-            }));
+            disposers.push(ctx.store.subscribe((s) => s.roster, paintFloor));
+            disposers.push(ctx.store.subscribe((s) => s.threads, paintFloor));
+            disposers.push(ctx.store.subscribe(
+                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                paintFloor,
+            ));
             disposers.push(ctx.store.subscribe((s) => s.runtimePaused, paintRuntimeState));
             disposers.push(ctx.bus.subscribe('activity', (entry) => canvas.handleActivity(entry)));
             disposers.push(ctx.bus.subscribe('agent_thought', (data) => {

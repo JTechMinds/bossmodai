@@ -476,13 +476,20 @@ async def _handle_delegated(
     target = _resolve_agent_by_id(action.get("agentId"))
     if target is None:
         return {"event": "status_changed", "detail": "No valid delegate target specified", "agent_name": agent.name}
+    from core.floors import CROSS_FLOOR_DENY, peers_share_floor
+
+    if not peers_share_floor(agent.id, target.id):
+        return {"event": "world_feedback", "detail": CROSS_FLOOR_DENY, "agent_name": agent.name}
     original_task = db.get_task(task_id)
     if original_task is not None:
         evaluation = evaluate_specialty_assignment(
             assignee=target,
             title=original_task.title,
             description=original_task.description,
-            teammates=db.list_agents(),
+            teammates=[
+                item for item in db.list_agents()
+                if peers_share_floor(agent.id, item.id)
+            ],
             confirm=bool(action.get("confirmSpecialtyMismatch")),
         )
         if evaluation.deny:
@@ -727,7 +734,12 @@ def _named_next_work_cards(task: Any, action: dict[str, Any], *, author_id: str)
     cards: list[Any] = []
     seen: set[str] = set()
     exclude = {str(getattr(task, "id", "") or "")}
+    from core.floors import on_floor, channel_floor_id as _channel_floor
+
+    thread_floor = _channel_floor(channel_id)
     for owner in owners:
+        if not thread_floor or not on_floor(owner, thread_floor):
+            continue
         card = None
         if board is not None and board_owner == owner and getattr(board, "status", None) == "pending":
             card = board
@@ -758,6 +770,10 @@ def _queue_named_next_work(result: dict[str, Any], cards: list[Any]) -> None:
     requests = result.setdefault("trigger_requests", [])
     for card in cards:
         if card.id in queued:
+            continue
+        from core.agent_loop.activity_scheduler import assignment_wake_trigger
+
+        if assignment_wake_trigger(card) is None:
             continue
         requests.append(build_task_assigned_trigger(card))
         queued.add(card.id)

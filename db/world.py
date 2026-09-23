@@ -78,7 +78,7 @@ def get_world_state() -> list[dict[str, Any]]:
         """
         SELECT
             a.id, a.name, a.role, a.description, a.done_fail_bar, a.color,
-            a.desk_x, a.desk_y,
+            a.desk_x, a.desk_y, a.floor_id,
             s.x, s.y, s.status,
             s.last_active_at, s.idle_since,
             act.kind AS currentActivityKind,
@@ -115,6 +115,8 @@ def get_nearby_agents(
         FROM agents a
         JOIN agent_state s ON s.agent_id = a.id
         WHERE a.id != $1
+          AND a.floor_id IS NOT NULL
+          AND a.floor_id = (SELECT floor_id FROM agents WHERE id = $1)
           AND (ABS(s.x - $2) + ABS(s.y - $3)) <= $4
         ORDER BY a.name
         """,

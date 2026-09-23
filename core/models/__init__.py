@@ -7,6 +7,7 @@ Re-exports every model for convenient top-level imports::
 
 from __future__ import annotations
 
+from core.models.floor import Floor
 from core.models.cli import AgentCliState
 from core.models.cli_policy import CliApprovalRequest, CliPolicyRule, CliPolicyRuleCreate
 from core.models.host_path_consent import HostPathConsentRequest
@@ -88,6 +89,7 @@ __all__ = [
     "THREAD_ARCHIVED_CONSENT_DENY",
     "THREAD_STALE_SKIP_KIND",
     "THREAD_STALE_SKIP_LINE",
+    "Floor",
     "ChannelResponseCandidate",
     "ChannelResponseRound",
     "MeetingResponseCandidate",

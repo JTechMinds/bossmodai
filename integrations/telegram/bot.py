@@ -29,6 +29,7 @@ from integrations.telegram.auth import is_telegram_user_allowed
 from integrations.telegram.join_list import (
     JoinListStatus,
     remember_channel_list,
+    remembered_floor_id,
     resolve_join_ordinal,
 )
 from integrations.telegram.sessions import (
@@ -50,8 +51,8 @@ TELEGRAM_START_COMMAND_HELP = (
     "/chat <name> — chat with an agent\n"
     "/chat <name1> <name2> — thread with those agents\n"
     "/chat — close active session\n"
-    "/thread — all-agent thread\n"
-    "/channels — list threads, numbered\n"
+    "/thread — agents on one floor (Lobby, or /thread <floor>)\n"
+    "/channels — one floor's threads, numbered\n"
     "/join <N> — rejoin list row N\n"
     "/status — quick summary\n"
     "/approve — pending approvals"
@@ -199,6 +200,17 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _open_thread(update, context, user_id, resolved)
 
 
+def _floor_from_args(args: list[str]):
+    """Lobby when no name is given. None when the name is not a floor."""
+    from db.floors import LOBBY_ID, ensure_lobby, get_floor, get_floor_by_name
+
+    ensure_lobby()
+    label = " ".join(args).strip()
+    if not label:
+        return get_floor(LOBBY_ID)
+    return get_floor_by_name(label)
+
+
 def _thread_display_name(agents: list[dict[str, Any]]) -> str:
     """Roster label used when BossMod creates a thread with no custom name."""
     member_names = [str(agent.get("name") or "") for agent in agents]
@@ -248,11 +260,19 @@ async def _open_thread(
     channel = db.find_active_channel_for_members(member_ids)
     created = channel is None
     if channel is None:
-        channel = db.create_channel(
-            name=_thread_display_name(agents),
-            member_agent_ids=member_ids,
-            created_by=HUMAN_SENDER_ID,
-        )
+        from core.floors import FloorDenied
+
+        try:
+            channel = db.create_channel(
+                name=_thread_display_name(agents),
+                member_agent_ids=member_ids,
+                created_by=HUMAN_SENDER_ID,
+            )
+        except FloorDenied:
+            await update.message.reply_text(
+                "Those agents are not on the same floor. A thread stays on one floor."
+            )
+            return
     names_key = ",".join(sorted(str(agent.get("name") or "").lower() for agent in agents))
     upsert_session(
         user_id,
@@ -270,13 +290,24 @@ async def _open_thread(
 # ---------------------------------------------------------------------------
 
 async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Open the all-agent thread. This is a channel, not a room meeting."""
+    """Open the thread of agents on one floor. This is a channel, not a meeting.
+
+    With no floor name the floor is Lobby. Agents on any other floor are
+    not included, so the roster cannot mix.
+    """
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
-    agents = db.get_world_state()
+    floor = _floor_from_args(context.args or [])
+    if floor is None:
+        await update.message.reply_text("No floor with that name.")
+        return
+    agents = [
+        agent for agent in db.get_world_state()
+        if str(agent.get("floor_id") or "") == floor.id
+    ]
     if not agents:
-        await update.message.reply_text("No agents available.")
+        await update.message.reply_text(f"No agents on {floor.name}.")
         return
     await _open_thread(update, context, update.effective_user.id, agents)
 
@@ -289,10 +320,18 @@ async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
-    channels = db.list_channels()
-    remember_channel_list(update.effective_user.id, [channel.id for channel in channels])
+    floor = _floor_from_args(context.args or [])
+    if floor is None:
+        await update.message.reply_text("No floor with that name.")
+        return
+    channels = [channel for channel in db.list_channels() if channel.floor_id == floor.id]
+    remember_channel_list(
+        update.effective_user.id,
+        [channel.id for channel in channels],
+        floor_id=floor.id,
+    )
     members_map = {ch.id: db.list_channel_member_details(ch.id) for ch in channels}
-    text = formatters.format_channels_list(channels, members_map)
+    text = formatters.format_channels_list(channels, members_map, floor_name=floor.name)
     await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
@@ -314,11 +353,16 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /join N — N is a row from /channels.")
         return
     ordinal = int(args[0])
-    channels = db.list_channels()
+    floor_id = remembered_floor_id(update.effective_user.id)
+    if not floor_id:
+        await update.message.reply_text(_JOIN_CLOSED[JoinListStatus.MISSING])
+        return
+    channels = [channel for channel in db.list_channels() if channel.floor_id == floor_id]
     status, channel_id = resolve_join_ordinal(
         update.effective_user.id,
         ordinal,
         [channel.id for channel in channels],
+        floor_id=floor_id,
     )
     if status is not JoinListStatus.OK or not channel_id:
         await update.message.reply_text(_JOIN_CLOSED.get(status, _JOIN_CLOSED[JoinListStatus.STALE]))

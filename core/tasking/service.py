@@ -85,6 +85,15 @@ def create_or_bind_task(
     bind_task_id: str | None = None,
 ) -> TaskCreateOrBindResult:
     """Create a task only when the board does not already contain the workstream."""
+    from core.floors import assert_assignment
+
+    parent = db.get_task(parent_task_id) if parent_task_id else None
+    assert_assignment(
+        assignee_id=assigned_to,
+        owner_id=owner_id,
+        channel_id=notification_channel_id,
+        parent_channel_id=getattr(parent, "notification_channel_id", None) if parent is not None else None,
+    )
     if bind_task_id:
         existing = db.get_task(bind_task_id)
         if existing is None:

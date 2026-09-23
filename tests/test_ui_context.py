@@ -82,6 +82,8 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-dialog-footer.js",
     CONTEXT / "agent-add-pane.js",
     CONTEXT / "agent-dialog-slot.js",
+    JS / "shell" / "floor-scope.js",
+    CONTEXT / "agent-floor.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "agents-dialog.js",
     CONTEXT / "desk-panel.js",
@@ -556,7 +558,7 @@ def test_agent_edit_modules_stay_focused() -> None:
     assert names == [
         "agent-add-pane.js", "agent-api.js", "agent-dialog-footer.js",
         "agent-dialog-slot.js", "agent-edit.js",
-        "agent-fields.js",
+        "agent-fields.js", "agent-floor.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
         "agent-form-connections.js", "agent-form-fields.js",
         "agent-form-hydrate.js", "agent-form-save.js",

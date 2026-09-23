@@ -46,6 +46,13 @@ def seat_agent_in_thread(channel_id: str, agent_id: str) -> Channel:
     if agent is None:
         raise ThreadSeatError("Agent not found", status_code=404)
 
+    from core.floors import CROSS_FLOOR_DENY, FloorDenied, assert_on_channel
+
+    try:
+        assert_on_channel(agent.id, channel.id)
+    except FloorDenied as exc:
+        raise ThreadSeatError(str(exc) or CROSS_FLOOR_DENY, status_code=403) from exc
+
     already = {member.agent_id for member in db.list_channel_members(channel.id)}
     if agent.id in already:
         raise ThreadSeatError(

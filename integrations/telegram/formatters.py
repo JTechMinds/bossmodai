@@ -75,21 +75,29 @@ def format_status_summary(
 def format_channels_list(
     channels: list[Any],
     members_map: dict[str, list[dict[str, Any]]],
+    *,
+    floor_name: str = "",
 ) -> str:
-    """Format active threads with 1-based row numbers.
+    """Format one floor's threads with 1-based row numbers.
 
-    The number is the only join handle. It matches list order and nothing else.
+    The number is the only join handle. It matches this floor's list order
+    and nothing else. The floor name is on the header and on every row so
+    an ordinal cannot be read as a thread from another floor.
     """
+    label = floor_name.strip() or "this floor"
     if not channels:
-        return escape_md("No active threads. Nothing to /join.")
+        return escape_md(f"No active threads on {label}. Nothing to /join.")
 
-    lines = ["*Threads*\n"]
+    lines = [f"*Threads · {escape_md(label)}*\n"]
+    floor_tag = escape_md(f"[{label}]")
     for index, ch in enumerate(channels, start=1):
         name = escape_md(ch.name if hasattr(ch, "name") else str(ch))
         members = members_map.get(ch.id if hasattr(ch, "id") else "", [])
         member_names = ", ".join(escape_md(m.get("name", "?")) for m in members)
         ordinal = escape_md(f"{index}.")
-        lines.append(f"{ordinal} *{name}* \\- {member_names or escape_md('no members')}")
+        lines.append(
+            f"{ordinal} *{name}* {floor_tag} \\- {member_names or escape_md('no members')}"
+        )
 
     lines.append("")
     lines.append(escape_md("Rejoin a row with /join N. If the list changed, send /channels again."))

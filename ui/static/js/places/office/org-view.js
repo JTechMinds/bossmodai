@@ -95,11 +95,27 @@ const BossModOrgView = (() => {
             return root;
         }
 
+        function seated() {
+            return BossModFloorScope.officePeople(store.getState(), agents);
+        }
+
         function renderGrid() {
             cardNodes.clear();
             clear(body);
+            const visible = seated();
+            if (agents.length === 0) {
+                renderEmpty();
+                return;
+            }
+            if (visible.length === 0) {
+                body.append(h('div', { class: 'place-empty' },
+                    h('p', { class: 'place-empty-title' }, 'No one on this floor'),
+                    h('p', { class: 'place-empty-hint' },
+                        'The office shows one floor. Switch floors in the header to see another.')));
+                return;
+            }
             const grid = h('div', { class: 'org-grid' });
-            agents.forEach((agent) => grid.append(card(agent)));
+            visible.forEach((agent) => grid.append(card(agent)));
             body.append(grid);
         }
 
@@ -170,22 +186,21 @@ const BossModOrgView = (() => {
          */
         function handleWorldUpdate(incomingAgents) {
             if (destroyed || !Array.isArray(incomingAgents)) return;
-            const previousIds = agents.map((agent) => agent.id).join('\0');
+            const previousIds = seated().map((agent) => agent.id).join('\0');
+            const before = new Map(agents.map((agent) => [agent.id,
+                { status: agent.status, kind: agent.currentActivityKind }]));
             const next = BossModAgentStatus.mergeRosterFromWorld(agents, incomingAgents);
-            const membershipChanged = previousIds !== next.map((agent) => agent.id).join('\0');
+            agents = next;
+            const visible = seated();
+            const membershipChanged = previousIds !== visible.map((agent) => agent.id).join('\0');
 
             if (membershipChanged) {
-                agents = next;
                 if (agents.length === 0) renderEmpty();
                 else renderGrid();
                 return;
             }
-
-            const before = new Map(agents.map((agent) => [agent.id,
-                { status: agent.status, kind: agent.currentActivityKind }]));
-            agents = next;
             let stale = false;
-            for (const agent of agents) {
+            for (const agent of visible) {
                 const previous = before.get(agent.id);
                 if (previous
                     && agent.status === previous.status
@@ -217,6 +232,14 @@ const BossModOrgView = (() => {
         }
 
         const unsubscribe = store.subscribe((s) => s.roster, handleWorldUpdate);
+        const unsubscribeFloor = store.subscribe(
+            (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+            () => {
+                if (destroyed) return;
+                if (agents.length === 0) renderEmpty();
+                else renderGrid();
+            },
+        );
         void refresh();
 
         return {
@@ -232,6 +255,7 @@ const BossModOrgView = (() => {
                 destroyed = true;
                 load.next();
                 unsubscribe();
+                unsubscribeFloor();
                 cardNodes.clear();
                 clear(body);
             },

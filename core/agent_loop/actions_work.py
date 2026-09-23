@@ -152,6 +152,14 @@ async def _handle_message(
         target = _resolve_agent_by_id(action.get("agentId"))
         if target is None:
             return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
+        from core.floors import CROSS_FLOOR_DENY, peers_share_floor
+
+        if not peers_share_floor(agent.id, target.id):
+            return {
+                "event": "world_feedback",
+                "detail": CROSS_FLOOR_DENY,
+                "agent_name": agent.name,
+            }
         to_agent_id = target.id
         to_display = target.name
 

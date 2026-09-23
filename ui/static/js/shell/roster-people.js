@@ -256,13 +256,17 @@ const BossModRosterPeople = (() => {
                 list.append(h('li', { class: 'roster-empty' }, 'Could not load the roster.'));
                 return;
             }
-            const roster = store.getState().roster;
-            if (roster.length === 0) {
+            const state = store.getState();
+            const roster = typeof BossModFloorScope === 'undefined'
+                ? state.roster
+                : BossModFloorScope.filterPeople(state, state.roster);
+            if (state.roster.length === 0) {
                 list.append(h('li', { class: 'roster-empty' }, 'No one is hired yet.'));
                 return;
             }
+            if (roster.length === 0) { list.append(h('li', { class: 'roster-empty' }, 'No one on this floor.')); return; }
 
-            const query = String(store.getState().rosterQuery).trim().toLowerCase();
+            const query = String(state.rosterQuery).trim().toLowerCase();
             const visible = roster.filter((agent) => matches(agent, query));
             if (visible.length === 0) {
                 list.append(h('li', { class: 'roster-empty' }, 'No one matches that search.'));
@@ -348,6 +352,7 @@ const BossModRosterPeople = (() => {
 
         disposers.push(store.subscribe((s) => s.roster, render));
         disposers.push(store.subscribe((s) => s.rosterQuery, render));
+        disposers.push(store.subscribe((s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`, render));
         disposers.push(store.subscribe((s) => s.needs, render));
         disposers.push(store.subscribe((s) => s.runtimePaused, render));
         disposers.push(store.subscribe((s) => s.conversationId, syncSeatAction));

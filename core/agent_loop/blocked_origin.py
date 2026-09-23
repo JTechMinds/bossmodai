@@ -397,6 +397,10 @@ def _wake_chat_owner(
     target = _mentioned_agent(content, author_name=agent.name)
     if target is None or target.id == agent.id:
         return []
+    from core.floors import peers_share_floor
+
+    if not peers_share_floor(agent.id, target.id):
+        return []
     task_id = activity_runtime.get_active_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
     if task is not None:
@@ -441,13 +445,23 @@ def _mentioned_member_id(content: str, *, channel_id: str, author_name: str) -> 
 
 
 def _mentioned_agent(content: str, *, author_name: str) -> Agent | None:
-    names = [row.name for row in db.list_agents() if getattr(row, "name", None)]
+    from core.floors import peers_share_floor
+
+    author = next(
+        (row for row in db.list_agents() if (row.name or "").strip().lower() == (author_name or "").strip().lower()),
+        None,
+    )
+    roster = [
+        row for row in db.list_agents()
+        if author is None or peers_share_floor(author.id, row.id)
+    ]
+    names = [row.name for row in roster if getattr(row, "name", None)]
     names.extend(HUMAN_MENTION_NAMES)
     target_name = _first_next_owner_name(content, names, author_name=author_name)
     if not target_name:
         return None
     needle = target_name.strip().lower()
-    for row in db.list_agents():
+    for row in roster:
         if (row.name or "").strip().lower() == needle:
             return row
     return None

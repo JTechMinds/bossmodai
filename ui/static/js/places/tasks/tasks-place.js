@@ -93,7 +93,7 @@ const BossModTasksPlace = (() => {
     const archiveCard = (task) => renderCard(task, pushDetail);
 
     function paint() {
-        const visible = DATA.filterTasks(tasks, toolbar.filters());
+        const visible = BossModFloorScope.filterTasks(ctxRef.store.getState(), DATA.filterTasks(tasks, toolbar.filters()));
         const ordered = DATA.sortTasks(visible, sortDirection);
         const grouped = DATA.groupIntoColumns(ordered, { windowDays, now: Date.now() });
         const totals = DATA.counts(grouped);
@@ -341,6 +341,7 @@ const BossModTasksPlace = (() => {
             // The shell does not drive Place.resync() yet; subscribing here is
             // what keeps the list from sitting stale after an outage.
             disposers.push(ctx.bus.subscribe('resync', () => BossModTasksPlace.resync()));
+            disposers.push(ctx.store.subscribe((s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`, () => { if (ctxRef) paint(); }));
 
             const linkedTaskId = String(ctx.store.getState().placeParams.taskId || '').trim();
             void refresh().then(() => {

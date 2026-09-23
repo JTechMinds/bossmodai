@@ -35,7 +35,7 @@ _AGENT_COLUMNS = (
     "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
-    "agents.created_at"
+    "agents.floor_id, agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
@@ -46,6 +46,7 @@ _AGENT_VALID_COLUMNS = {
     "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
     "guardian_token_limit", "guardian_velocity_limit",
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
+    "floor_id",
 }
 
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
@@ -105,8 +106,18 @@ def create_agent(
     guardian_velocity_limit: int = 10,
     guardian_repetition_threshold: float = 0.85,
     guardian_no_progress_threshold: int = 30,
+    floor_id: str | None = None,
 ) -> Agent:
-    """Insert a new agent, its companion state rows and its snapshot atomically."""
+    """Insert a new agent, its companion state rows and its snapshot atomically.
+
+    Home floor defaults to Lobby. A named floor must already exist.
+    """
+    from db.floors import LOBBY_ID, ensure_lobby, get_floor
+
+    ensure_lobby()
+    home = (floor_id or "").strip() or LOBBY_ID
+    if get_floor(home) is None:
+        raise ValueError("Floor not found")
     with transaction():
         created = insert_returning_dict(
             """
@@ -115,8 +126,9 @@ def create_agent(
                 model_social, model_work, model_reasoning, model_extraction, model_self_queue,
                 api_base_url, api_key, extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
-                guardian_repetition_threshold, guardian_no_progress_threshold
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                guardian_repetition_threshold, guardian_no_progress_threshold,
+                floor_id
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
             RETURNING id
             """,
             [
@@ -127,6 +139,7 @@ def create_agent(
                 api_base_url, encrypt_secret(api_key), extra_body, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
+                home,
             ],
         )
         agent_id = str(created["id"])

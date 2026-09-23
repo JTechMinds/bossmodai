@@ -118,6 +118,8 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-dialog-footer.js",
     JS / "context" / "agent-add-pane.js",
     JS / "context" / "agent-dialog-slot.js",
+    JS / "shell" / "floor-scope.js",
+    JS / "context" / "agent-floor.js",
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",

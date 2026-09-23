@@ -65,6 +65,9 @@ class Agent(BaseModel):
     guardian_repetition_threshold: float = 0.85
     guardian_no_progress_threshold: int = 30
 
+    # Home floor. One per agent. Lobby until an operator moves them.
+    floor_id: str | None = None
+
     created_at: datetime
 
     @field_validator("communication", mode="before")
@@ -141,6 +144,7 @@ class AgentCreate(BaseModel):
     api_key: str | None = None
     extra_body: str | None = None
     connection_id: str | None = None
+    floor_id: str | None = None
 
     @field_validator("role")
     @classmethod

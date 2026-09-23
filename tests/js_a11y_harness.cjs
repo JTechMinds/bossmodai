@@ -76,7 +76,7 @@ installIconsStub();
 
 const [
     dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta,
-    places, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
+    places, floorSwitcher, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
     rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -94,6 +94,7 @@ load(rowMeta, "BossModRosterRowMeta");
 load(overlayFocus, "BossModOverlayFocus");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
+load(floorSwitcher, "BossModFloorSwitcher");
 load(header, "BossModHeader");
 // Both section headers' `⋯`, then the People one's owner, before the half
 // that mounts it.

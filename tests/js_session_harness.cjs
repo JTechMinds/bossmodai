@@ -23,12 +23,13 @@ const ctx = { places: PLACES, agentIds: ["a1"], threadIds: ["t1"] };
 S.save({
     place: "tasks", conversationId: "a1", conversationKind: "agent",
     contextMode: "desk", railCollapsed: true,
+    currentFloorId: "lobby", floorScope: "this", browseFloorId: null,
     roster: [1, 2, 3], needs: ["secret"],
 });
 const raw = JSON.parse(global.localStorage.getItem("bossmod_ui"));
 if ("roster" in raw || "needs" in raw) throw new Error("only whitelisted keys may persist");
 if (Object.keys(raw).sort().join(",") !==
-    "contextMode,conversationId,conversationKind,place,railCollapsed") {
+    "browseFloorId,contextMode,conversationId,conversationKind,currentFloorId,floorScope,place,railCollapsed") {
     throw new Error(`unexpected persisted keys: ${Object.keys(raw).join(",")}`);
 }
 
@@ -67,7 +68,7 @@ if (afterCorrupt.place !== "chat" || afterCorrupt.conversationId !== null) {
 // A partial object gets full defaults, not undefined holes.
 global.localStorage.setItem("bossmod_ui", JSON.stringify({ place: "log" }));
 const partial = S.validate(S.load(), ctx);
-for (const key of ["place", "conversationId", "conversationKind", "contextMode", "railCollapsed"]) {
+for (const key of ["place", "conversationId", "conversationKind", "contextMode", "railCollapsed", "currentFloorId", "floorScope", "browseFloorId"]) {
     if (!(key in partial)) throw new Error(`restored object missing ${key}`);
 }
 if (partial.place !== "log") throw new Error("valid partial key must survive");

@@ -203,6 +203,11 @@ const BossModAgentFormSave = (() => {
                         say('bad', noConnection(form));
                         return; // `finally` gives the primary back for the retry.
                     }
+                    // Home floor is the concrete floor on screen. "All floors"
+                    // is browse, so a hire never lands on a mixed scope.
+                    if (isCreating) {
+                        agentData.floor_id = BossModFloorScope.hireFloorId();
+                    }
                     if (isCreating) {
                         savedAgent = await BossModAgentApi.apiCreateAgent(agentData);
                     } else {

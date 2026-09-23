@@ -18,7 +18,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 
 _CHANNEL_COLUMNS = (
     "id, name, kind, status, created_by, created_at, updated_at, archived_at, "
-    "cli_auto_approve"
+    "cli_auto_approve, floor_id"
 )
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
 _MESSAGE_COLUMNS = (
@@ -39,15 +39,18 @@ def create_channel(
     unique_members = list(dict.fromkeys(agent_id for agent_id in member_agent_ids if agent_id))
     if not unique_members:
         raise ValueError("At least one channel member is required")
+    from core.floors import require_shared_home
+
+    floor_id = require_shared_home(unique_members)
 
     with transaction():
         channel = insert_returning(
             f"""
-            INSERT INTO channels (name, kind, status, created_by)
-            VALUES ($1, $2, 'active', $3)
+            INSERT INTO channels (name, kind, status, created_by, floor_id)
+            VALUES ($1, $2, 'active', $3, $4)
             RETURNING {_CHANNEL_COLUMNS}
             """,
-            [name, kind, created_by],
+            [name, kind, created_by, floor_id],
             Channel,
         )
         for agent_id in unique_members:
@@ -75,12 +78,19 @@ def find_active_channel_for_members(member_agent_ids: list[str]) -> Channel | No
     unique_members = list(dict.fromkeys(agent_id for agent_id in member_agent_ids if agent_id))
     if not unique_members:
         return None
-    placeholders = ", ".join(f"${index + 2}" for index in range(len(unique_members)))
+    from core.floors import FloorDenied, require_shared_home
+
+    try:
+        floor_id = require_shared_home(unique_members)
+    except FloorDenied:
+        return None
+    placeholders = ", ".join(f"${index + 3}" for index in range(len(unique_members)))
     return fetch_one(
         f"""
         SELECT {_CHANNEL_COLUMNS}
         FROM channels
         WHERE status = 'active'
+          AND floor_id = $2
           AND id IN (
             SELECT cm.channel_id
             FROM channel_members cm
@@ -91,7 +101,7 @@ def find_active_channel_for_members(member_agent_ids: list[str]) -> Channel | No
         ORDER BY updated_at DESC, created_at DESC
         LIMIT 1
         """,
-        [len(unique_members), *unique_members],
+        [len(unique_members), floor_id, *unique_members],
         Channel,
     )
 
@@ -252,11 +262,15 @@ def list_channel_member_details(channel_id: str) -> list[dict[str, Any]]:
 
 
 def add_channel_members(channel_id: str, agent_ids: list[str]) -> int:
-    """Add new agents to a shared channel."""
+    """Add new agents to a shared channel. Cross-floor seats are refused."""
+    from core.floors import assert_on_channel
+
     unique_members = list(dict.fromkeys(agent_id for agent_id in agent_ids if agent_id))
     added = 0
     if not unique_members:
         return added
+    for agent_id in unique_members:
+        assert_on_channel(agent_id, channel_id)
     with transaction():
         for agent_id in unique_members:
             exists = query_one(

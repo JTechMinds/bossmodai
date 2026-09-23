@@ -79,7 +79,9 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
     if plan is None:
         return {"mode": "self", "delegations": []}
 
-    agents = db.list_agents()
+    from core.floors import peers_share_floor
+
+    agents = [item for item in db.list_agents() if peers_share_floor(agent.id, item.id)]
     by_id = {item.id: item for item in agents}
     by_name: dict[str, list[Agent]] = {}
     for item in agents:

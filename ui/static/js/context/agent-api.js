@@ -64,6 +64,41 @@ const BossModAgentApi = (() => {
      * @returns {Promise<void>}
      * @throws {Error} With the server's message on any non-2xx.
      */
+    /**
+     * Move one agent's home floor. Open work on the old floor is a 409
+     * until the operator confirms. This is not a field on the role PATCH.
+     *
+     * @param {string} id
+     * @param {string} floorId
+     * @param {boolean} [confirmOpenWork=false]
+     * @returns {Promise<object>} The updated agent.
+     * @throws {Error} `code` is `confirm_open_work` on a 409.
+     */
+    async function apiMoveHomeFloor(id, floorId, confirmOpenWork) {
+        const res = await apiFetch(`/api/agents/${id}/home-floor`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                floor_id: floorId,
+                confirm_open_work: Boolean(confirmOpenWork),
+            }),
+        });
+        if (res.status === 409) {
+            let body = {};
+            try {
+                body = await res.json();
+            } catch (err) {
+                body = {};
+            }
+            const error = new Error(body.message || 'Confirm open work before moving the home floor.');
+            error.code = body.code || 'confirm_open_work';
+            error.openTaskCount = body.open_task_count;
+            throw error;
+        }
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
     async function apiDeleteAgent(id) {
         const res = await apiFetch(`/api/agents/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
@@ -170,6 +205,7 @@ const BossModAgentApi = (() => {
         fetchAgent,
         apiCreateAgent,
         apiUpdateAgent,
+        apiMoveHomeFloor,
         apiDeleteAgent,
         fetchPromptHistoryPolicy,
         apiUpdatePromptHistoryPolicy,

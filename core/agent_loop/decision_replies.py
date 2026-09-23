@@ -165,6 +165,10 @@ def _persist_reply(
             return {}
         if db.is_channel_archived(channel_id):
             return {}
+        from core.floors import on_floor, channel_floor_id
+
+        if not on_floor(agent.id, channel_floor_id(channel_id)):
+            return {}
         try:
             message = db.create_channel_message(
                 channel_id=channel_id,
@@ -191,6 +195,10 @@ def _persist_reply(
         target_id = trigger.get("from_agent")
         from_type = None
         if not target_id:
+            return {}
+        from core.floors import peers_share_floor
+
+        if not peers_share_floor(agent.id, str(target_id)):
             return {}
         message_type = resolve_peer_message_type(state=state, trigger=trigger)
     else:

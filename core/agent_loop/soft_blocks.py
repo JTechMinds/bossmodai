@@ -195,16 +195,26 @@ def next_owner_mention(
             if requester == HUMAN_SENDER_ID:
                 return "@Human Operator"
             other = db.get_agent(requester)
-            if other is not None and (other.name or "").strip():
+            if other is not None and (other.name or "").strip() and _same_home(agent.id, other.id):
                 return f"@{other.name}"
         owner = getattr(task, "owner_id", None)
         if owner and owner != agent.id:
             if owner == HUMAN_SENDER_ID:
                 return "@Human Operator"
             other = db.get_agent(owner)
-            if other is not None and (other.name or "").strip():
+            if other is not None and (other.name or "").strip() and _same_home(agent.id, other.id):
                 return f"@{other.name}"
     return "@Human Operator"
+
+
+def _same_home(left: str, right: str) -> bool:
+    """Same-floor check used when naming a soft-block next owner.
+
+    Cross-floor names are skipped. The block itself is not cleared.
+    """
+    from core.floors import peers_share_floor
+
+    return peers_share_floor(left, right)
 
 
 def _channel_id(task: Any, trigger: dict[str, Any] | None) -> str | None:

@@ -341,9 +341,12 @@ def _run_fill_job(task_ids: tuple[str, ...]) -> None:
 def _allowed_sources(task: Any) -> dict[str, set[str]]:
     """Source ids already on this task. Nothing new is added."""
     allowed: dict[str, set[str]] = {str(task.id): {"plan"}}
+    from core.floors import on_floor, task_floor_id
+
+    anchor = task_floor_id(task)
     for agent_id in (getattr(task, "owner_id", None), getattr(task, "assigned_to", None)):
         token = str(agent_id or "").strip()
-        if token and db.get_agent(token) is not None:
+        if token and anchor and on_floor(token, anchor) and db.get_agent(token) is not None:
             allowed.setdefault(token, set()).add("next_owner")
     contract = getattr(task, "work_contract", None)
     deliverables = getattr(contract, "deliverables", None) or []

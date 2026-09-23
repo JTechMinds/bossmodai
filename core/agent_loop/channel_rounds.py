@@ -784,7 +784,16 @@ def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str]:
 
 
 def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
-    """Membership order with names, skipping excluded agents."""
+    """Membership order with names, skipping excluded and cross-floor agents.
+
+    A member whose home is not this thread's floor is not woken. A thread
+    with no floor wakes nobody.
+    """
+    from core.floors import channel_floor_id, on_floor
+
+    floor_id = channel_floor_id(channel_id)
+    if not floor_id:
+        return []
     details = {
         str(member.get("id") or ""): member
         for member in db.list_channel_member_details(channel_id)
@@ -792,7 +801,7 @@ def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]
     ordered: list[dict[str, str]] = []
     for membership in db.list_channel_members(channel_id):
         agent_id = membership.agent_id
-        if not agent_id or agent_id in excluded:
+        if not agent_id or agent_id in excluded or not on_floor(agent_id, floor_id):
             continue
         detail = details.get(agent_id) or {}
         agent = db.get_agent(agent_id)

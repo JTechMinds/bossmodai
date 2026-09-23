@@ -23,6 +23,7 @@ const BossModMetricsPlace = (() => {
     let load = null;
     let bodyEl = null;
     let summaryEl = null;
+    let lastDashboard = null;
     const disposers = [];
 
     function setBody(...nodes) {
@@ -80,19 +81,44 @@ const BossModMetricsPlace = (() => {
             }, 'Open Tasks')));
     }
 
+    /**
+     * Narrow per-agent metric rows to the header's floor. Company-wide
+     * health checks stay on the original payload. An empty roster means
+     * the world has not arrived yet, so the payload is left whole.
+     */
+    function scopedMetrics(state, data, roster) {
+        if (!state.roster || state.roster.length === 0) return data;
+        if (BossModFloorScope.visibleFloorId(state) === null) return data;
+        const ids = new Set(roster.map((agent) => agent.id));
+        const tokens = Object.assign({}, data.tokens || {});
+        tokens.by_agent = (tokens.by_agent || []).filter((row) => ids.has(row.agent_id));
+        const active = roster.filter((agent) => agent.status && agent.status !== 'idle').length;
+        return Object.assign({}, data, {
+            tokens,
+            agents: {
+                total: roster.length,
+                active,
+                idle: Math.max(roster.length - active, 0),
+            },
+        });
+    }
+
     function paintDashboard(data) {
+        lastDashboard = data;
         // The verdict moved out of this line and into the panel below, where it
         // leads the page instead of trailing the word "Metrics". What is left
         // here is what the header row is for: what this place is.
         summaryEl.textContent = 'Company health';
-        const roster = ctxRef.store.getState().roster;
+        const state = ctxRef.store.getState();
+        const roster = BossModFloorScope.filterPeople(state, state.roster || []);
+        const dataForFloor = scopedMetrics(state, data, roster);
         setBody(
             CARDS.renderHealthPanel(data),
-            CARDS.renderStatCards(data),
-            BARS.renderAgentActivity(data),
+            CARDS.renderStatCards(dataForFloor),
+            BARS.renderAgentActivity(dataForFloor),
             BARS.renderTaskDistribution(data.tasks || {}),
-            BARS.renderTokenUsage(data.tokens || {}, {
-                roster,
+            BARS.renderTokenUsage(dataForFloor.tokens || {}, {
+                roster: state.roster && state.roster.length ? roster : state.roster,
                 // Spec 6.5: the number is the way into what the agent did.
                 onOpenLog: (agentId) => ctxRef.navigate('log', { agentId }),
             }),
@@ -123,6 +149,7 @@ const BossModMetricsPlace = (() => {
         }
         if (!load.isCurrent(loadId)) return;
         if (isEmpty(data)) {
+            lastDashboard = null;
             paintEmpty();
             return;
         }
@@ -160,6 +187,10 @@ const BossModMetricsPlace = (() => {
             // The shell does not drive Place.resync() yet; without this the
             // dashboard would sit on numbers read before an outage.
             disposers.push(ctx.bus.subscribe('resync', () => BossModMetricsPlace.resync()));
+            disposers.push(ctx.store.subscribe(
+                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                () => { if (lastDashboard) paintDashboard(lastDashboard); },
+            ));
             void refresh();
         },
 
@@ -179,6 +210,7 @@ const BossModMetricsPlace = (() => {
         unmount() {
             disposers.splice(0).forEach((off) => off());
             if (load) load.next();
+            lastDashboard = null;
             bodyEl = null;
             summaryEl = null;
             ctxRef = null;

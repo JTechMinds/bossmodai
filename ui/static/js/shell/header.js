@@ -124,6 +124,11 @@ const BossModHeader = (() => {
             });
         }
 
+        // The floor switcher sits in the empty band. shell/floor-switcher.js
+        // owns it so this file stays the brand, nav, bell, and pause.
+        const floors = BossModFloorSwitcher.mount({ store, apiFetch });
+        disposers.push(floors.destroy);
+
         // ─── Needs bell ───
 
         const bell = h('button', {
@@ -286,7 +291,7 @@ const BossModHeader = (() => {
             gear.setAttribute('aria-expanded', open === true ? 'true' : 'false');
         }
 
-        el.append(railToggle, brand, nav, h('div', { class: 'header-actions' },
+        el.append(railToggle, brand, nav, floors.element, h('div', { class: 'header-actions' },
             errorEl, bellLive, bell, pause, gear));
 
         function paintIcons() {
