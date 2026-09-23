@@ -32,6 +32,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels/{channel_id}", "get_channel"),
     (("PATCH",), "/api/channels/{channel_id}", "rename_channel"),
     (("PATCH",), "/api/channels/{channel_id}/cli-auto-approve", "set_channel_cli_auto_approve"),
+    (("POST",), "/api/channels/{channel_id}/pause", "pause_channel_thread"),
+    (("POST",), "/api/channels/{channel_id}/resume", "resume_channel_thread"),
     (("POST",), "/api/channels/{channel_id}/archive", "archive_channel"),
     (("POST",), "/api/channels/{channel_id}/reopen", "reopen_channel"),
     (("GET",), "/api/channels/{channel_id}/open-tasks", "list_channel_open_tasks"),
@@ -58,6 +60,13 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/messages", "get_agent_messages"),
     (("GET",), "/api/agents/{agent_id}/notifications", "get_agent_notifications"),
     (("GET",), "/api/agents/{agent_id}/triggers", "get_agent_triggers"),
+    (("GET",), "/api/agents/vacation", "list_vacationing_agents"),
+    (("POST",), "/api/agents/{agent_id}/home-floor", "move_agent_home_floor"),
+    (("POST",), "/api/agents/{agent_id}/return", "return_agent_from_vacation"),
+    (("GET",), "/api/floors", "get_floors"),
+    (("POST",), "/api/floors", "post_floor"),
+    (("PATCH",), "/api/floors/{floor_id}", "patch_floor"),
+    (("DELETE",), "/api/floors/{floor_id}", "remove_floor"),
     (("GET",), "/api/tasks", "list_tasks"),
     (("POST",), "/api/tasks", "create_task"),
     (("GET",), "/api/tasks/board", "get_task_board"),
@@ -142,7 +151,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 118
+    assert len(got) == 127
 
 
 def test_from_api_routes_import_router_still_works() -> None:

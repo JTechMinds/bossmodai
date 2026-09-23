@@ -18,7 +18,8 @@ installIconsStub();
 
 const [
     agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, gatesPath, consentPath,
-    overlayFocusPath, overlaysPath, formatPath, needShapePath, rowMetaPath, archivePath, threadSourcePath,
+    overlayFocusPath, overlaysPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
+    threadSourcePath,
     rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
     rosterThreadsPath, agentRoutesPath, rosterPath,
 ] = process.argv.slice(2);
@@ -39,6 +40,8 @@ load(formatPath, "BossModFormat");
 load(needShapePath, "BossModNeedShape");
 load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
+// The source's rename / reopen / pause requests live in their own module.
+load(threadRequestsPath, "BossModThreadRequests");
 load(threadSourcePath, "BossModThreadSource");
 // Both section headers' `⋯` — the Threads one this harness opens, and the
 // People one — then the People one's owner, before the half that mounts it.

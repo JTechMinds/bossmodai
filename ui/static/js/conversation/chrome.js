@@ -44,10 +44,12 @@
  * permanent seat beside the conversation title, and a bordered `Archive`
  * sitting there every time you open a thread reads as a suggestion.
  *
- * The menu's actions are appended into a STABLE panel node this view owns
- * rather than handed to the menu at open time, which is what lets a repaint
- * that happens while the panel is open — Archive succeeding and becoming
- * Reopen — land inside the panel the operator is looking at.
+ * The menu's actions are appended into a STABLE panel node rather than handed
+ * to the menu at open time, which is what lets a repaint that happens while
+ * the panel is open — Archive succeeding and becoming Reopen — land inside the
+ * panel the operator is looking at. That node, the `⋯` itself and the panel's
+ * open/close lifecycle are conversation/chrome-menu.js's; this view only
+ * decides what goes behind it.
  *
  * The SUBTITLE sits with the actions rather than with the title. `3
  * participants` is a fact about the room and the title is its name; putting
@@ -57,9 +59,6 @@
  */
 const BossModConversationChrome = (() => {
     const { h, clear } = BossModDom;
-
-    /** The `⋯`'s accessible name and its tooltip: one string, never two. */
-    const MENU_LABEL = 'More actions';
 
     /**
      * Build the header.
@@ -110,75 +109,12 @@ const BossModConversationChrome = (() => {
             actionsEl);
         actionsEl.append(subtitleEl);
 
-        /** The open menu, or null. One at a time, and the `⋯` toggles it. */
-        let menu = null;
-        /**
-         * The menu ACTIONS' parent, owned here and reused forever.
-         *
-         * Built once and never replaced, for the same reason the view options
-         * are the caller's nodes rather than rebuilt on open: it may be inside
-         * an open panel when apply() runs, and refilling a stable node is what
-         * keeps a live chrome swap visible to whoever is looking at it. While
-         * the panel is closed this is simply detached, holding its buttons.
-         */
-        const menuActionsEl = h('div', { class: 'menu-actions' });
-        const menuButton = h('button', {
-            class: 'btn btn-sm conversation-action conversation-view-options',
-            type: 'button',
-            id: 'conversation-view-options',
-            'aria-label': MENU_LABEL,
-            'data-tooltip': MENU_LABEL,
-            // dialog, not menu: the panel holds a role="switch", which is
-            // not a menuitem and must not be announced as one.
-            'aria-haspopup': 'dialog',
-            'aria-expanded': 'false',
-            onclick: () => toggleMenu(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
-
-        /** @returns {void} */
-        function closeMenu() {
-            if (!menu) return;
-            const open = menu;
-            menu = null;
-            open.close();
-        }
-
-        /**
-         * Show the view options, or put them away again.
-         *
-         * The panel is core/overlays.js's — it already owns the focus trap, Esc,
-         * and returning focus to the control that opened it. A second popover
-         * implementation is exactly the duplication the primitives exist to
-         * remove.
-         *
-         * @returns {void}
-         */
-        function toggleMenu() {
-            if (menu) {
-                closeMenu();
-                return;
-            }
-            menu = BossModOverlays.createMenu({
-                anchor: menuButton,
-                label: MENU_LABEL,
-                // Actions first, then preferences: one is a thing to do and
-                // the other is a thing to set, and the doing comes first.
-                items: [menuActionsEl].concat(viewOptions),
-                container: element,
-                onClose: () => {
-                    menu = null;
-                    menuButton.setAttribute('aria-expanded', 'false');
-                },
-            });
-            // THE PANEL IS THE ONE TREE THE SWEEP CANNOT REACH. apply() ends on
-            // BossModIcons.paintDocument, which walks document.body — and while
-            // the menu is closed `menuActionsEl` hangs off a detached node, so
-            // an action built in there kept its bare `<i>` placeholder and
-            // rendered as a bare word. Archive read as a stray heading in the
-            // panel because of exactly this. Paint what was just attached.
-            BossModIcons.paint(menu.element, 'conversation-chrome.menu');
-            menuButton.setAttribute('aria-expanded', 'true');
-        }
+        // The `⋯` and its panel's lifecycle are conversation/chrome-menu.js's;
+        // what goes behind it is decided below, in apply().
+        const overflow = BossModChromeMenu.createChromeMenu({ container: element, viewOptions });
+        const menuActionsEl = overflow.actionsEl;
+        const menuButton = overflow.button;
+        const closeMenu = overflow.close;
 
         let latest = null;
         /** `name|color`, or 'group'. Compared so a presence repaint does not churn the node. */
@@ -378,7 +314,7 @@ const BossModConversationChrome = (() => {
             // Archive becoming Reopen is that case. Painting it explicitly
             // costs nothing when there is nothing left to paint (the painter is
             // idempotent) and is the difference between a glyph and a word.
-            if (menu) BossModIcons.paint(menu.element, 'conversation-chrome.menu');
+            overflow.paint();
         }
 
         return {

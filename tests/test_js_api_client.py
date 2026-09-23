@@ -93,6 +93,7 @@ API_BY_INJECTION = {
     "conversation/conversation.js",
     "conversation/sources/agent-source.js",
     "conversation/sources/thread-source.js",
+    "conversation/sources/thread-requests.js",
     "conversation/sources/thread-archive.js",
     "conversation/sources/thread-seat.js",
     # The Office and Tasks places take `api` from the shell's ctx and hand it
@@ -198,6 +199,7 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "conversation/conversation.js",
                  "conversation/sources/agent-source.js",
                  "conversation/sources/thread-source.js",
+                 "conversation/sources/thread-requests.js",
                  "conversation/sources/thread-archive.js",
                  "conversation/sources/thread-seat.js",
                  "places/office/office-canvas.js",

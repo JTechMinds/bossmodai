@@ -24,6 +24,7 @@ const NAMES = [
     "BossModSearchField", "BossModStore",
     "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenuSelect", "BossModPlaces", "BossModAgentRoutes",
+    "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
@@ -68,13 +69,14 @@ const TASKS = STATUSES.map((status, index) => ({
     assigned_to: "a1",
     assigned_to_name: "Jim",
     parent_task_id: null,
+    floor_id: "lobby",
     last_activity: `2026-09-0${(index % 9) + 1}T10:00:00Z`,
     closed_at: FINISHED.has(status) ? todayIso : null,
 }));
 
 // Finished work spread across the calendar, and a second backlog task that
 // moved earlier than the first, so the sort has something to reverse.
-const person = { assigned_to: "a1", assigned_to_name: "Jim", parent_task_id: null };
+const person = { assigned_to: "a1", assigned_to_name: "Jim", parent_task_id: null, floor_id: "lobby" };
 TASKS.push(
     { ...person, id: "t-complete-yesterday", title: "Task complete yesterday", status: "complete",
         last_activity: yesterdayIso, closed_at: yesterdayIso },
@@ -96,6 +98,14 @@ const BLOCKED_KIND_NEEDS = TASKS
     .filter((task) => task.status === "blocked" || task.status === "stalled")
     .map((task) => ({ id: task.id, kind: "blocked", agentId: task.assigned_to }));
 
+// GET /api/tasks returns every floor's tasks (api/routes/tasks.py emits
+// `floor_id` on each); the place shows only the operator's floor. This one is
+// on another floor, so it must never reach the board.
+const OFF_FLOOR_TASK = {
+    ...person, floor_id: "upstairs", id: "t-other-floor", title: "Task on another floor",
+    status: "active", last_activity: todayIso, closed_at: null,
+};
+
 let taskFetches = 0;
 
 function api(url) {
@@ -104,7 +114,7 @@ function api(url) {
     }
     if (url.startsWith("/api/tasks")) {
         taskFetches += 1;
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(TASKS) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([...TASKS, OFF_FLOOR_TASK]) });
     }
     return Promise.resolve({
         ok: true, json: () => Promise.resolve([]), text: () => Promise.resolve(""),
@@ -233,6 +243,7 @@ function storeFor(placeParams) {
         conversationId: null,
         conversationKind: null,
         roster: [{ id: "a1", name: "Jim", color: "#3b82f6" }],
+        currentFloorId: "lobby",
         threads: [],
         needs: BLOCKED_KIND_NEEDS,
         runtimePaused: false,
@@ -263,6 +274,10 @@ async function main() {
     if (!everyStatusLands) {
         fail(`not every status rendered: ${cards.length} cards, statuses ${[...rendered].sort()}`);
     }
+
+    // ── offFloorTaskHidden ──────────────────────────────────────────────
+    const offFloorTaskHidden = !container.querySelector('[data-task-id="t-other-floor"]');
+    if (!offFloorTaskHidden) fail("a task on another floor was rendered on the lobby board");
 
     // ── doneExcludesClosed ──────────────────────────────────────────────
     const doneColumn = container.querySelector('[data-column="done"]');
@@ -500,6 +515,7 @@ async function main() {
         needsColumnMatchesQueue,
         refetchesOnResync,
         opensLinkedTask,
+        offFloorTaskHidden,
     }));
 }
 

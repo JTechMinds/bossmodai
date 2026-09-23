@@ -8,6 +8,8 @@
  * format, which is why they drifted apart.
  */
 const BossModThreadSource = (() => {
+    // Shared with the thread-setting requests: one reading of a refusal body.
+    const { refusal } = BossModThreadRequests;
 
     /** What the composer says instead of a placeholder once a room is sealed. */
     const ARCHIVED_REASON = 'Archived — reopen to post again.';
@@ -43,6 +45,10 @@ const BossModThreadSource = (() => {
         if (typeof forgetCache !== 'function') {
             throw new Error('[thread-source] ctx.forgetCache is required');
         }
+
+        // Rename, pause, resume, auto-approve and reopen: the HTTP half of
+        // each header action. What stays here is adopting the answer.
+        const requests = BossModThreadRequests.createThreadRequests({ api, threadId });
 
         let channel = null;
         let signals = null;
@@ -133,27 +139,6 @@ const BossModThreadSource = (() => {
             return (Array.isArray(payload.messages) ? payload.messages : [])
                 .filter((raw) => !isRoundMarker(raw))
                 .map(toMessage);
-        }
-
-        /**
-         * The server's reason, when it sent one. Raw JSON is not a reason.
-         *
-         * @param {Response} res
-         * @param {string} fallback
-         * @returns {Promise<string>}
-         */
-        async function refusal(res, fallback) {
-            let raw = '';
-            try { raw = await res.text(); } catch { raw = ''; }
-            const text = String(raw || '').trim();
-            if (text.startsWith('{')) {
-                try {
-                    const data = JSON.parse(text);
-                    const detail = data && data.detail;
-                    if (typeof detail === 'string' && detail.trim()) return detail.trim();
-                } catch { /* keep the raw body */ }
-            }
-            return text || fallback;
         }
 
         /**
@@ -251,36 +236,22 @@ const BossModThreadSource = (() => {
          * did. The view keeps the operator's text on a rejection; this only has
          * to fail loudly.
          *
-         * @param {string} nextName  Already trimmed by the caller; trimmed
-         *   again here because this is the boundary the server sees.
+         * @param {string} nextName
          * @returns {Promise<void>}
-         * @throws {Error} With the server's message on any non-2xx, and before
-         *   the request on a name the server would reject anyway.
+         * @throws {Error} From thread-requests.js, with the server's message.
          */
         async function renameThread(nextName) {
-            const name = String(nextName || '').trim();
-            if (!name) throw new Error('A thread needs a name.');
-            const res = await api(`/api/channels/${threadId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name }),
-            });
-            if (!res.ok) throw new Error((await res.text()) || 'Could not rename this thread.');
-            channel = await res.json();
+            channel = await requests.rename(nextName);
             signal('chrome');
         }
 
         async function pauseThread() {
-            const res = await api(`/api/channels/${threadId}/pause`, { method: 'POST' });
-            if (!res.ok) throw new Error((await res.text()) || 'Could not pause this thread.');
-            channel = await res.json();
+            channel = await requests.pause();
             signal('chrome');
         }
 
         async function resumeThread() {
-            const res = await api(`/api/channels/${threadId}/resume`, { method: 'POST' });
-            if (!res.ok) throw new Error((await res.text()) || 'Could not resume this thread.');
-            channel = await res.json();
+            channel = await requests.resume();
             signal('chrome');
         }
 
@@ -293,22 +264,12 @@ const BossModThreadSource = (() => {
          * @returns {Promise<void>}
          */
         async function setCliAutoApprove(enabled) {
-            const res = await api(`/api/channels/${threadId}/cli-auto-approve`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: enabled === true }),
-            });
-            if (!res.ok) {
-                throw new Error(await refusal(res, 'Could not update auto-approve for this thread.'));
-            }
-            channel = await res.json();
+            channel = await requests.setCliAutoApprove(enabled);
             signal('chrome');
         }
 
         async function reopenThread() {
-            const res = await api(`/api/channels/${threadId}/reopen`, { method: 'POST' });
-            if (!res.ok) throw new Error((await res.text()) || 'Could not reopen this thread.');
-            channel = await res.json();
+            channel = await requests.reopen();
             signal('chrome');
         }
 

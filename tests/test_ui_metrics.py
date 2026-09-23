@@ -54,8 +54,10 @@ def test_metrics_registers_itself_and_has_four_states() -> None:
     assert "paintError(" in error_body
 
     # Every section §6.5 names has a producer.
-    assert "CARDS.renderStatCards(data)" in place
-    assert "BARS.renderAgentActivity(data)" in place
+    # Cards and activity bars are scoped to the operator's floor (51aaa84);
+    # the health panel and grid stay company-wide, so they still take `data`.
+    assert "CARDS.renderStatCards(dataForFloor)" in place
+    assert "BARS.renderAgentActivity(dataForFloor)" in place
     assert "BARS.renderTaskDistribution(" in place
     assert "BARS.renderTokenUsage(" in place
     assert "CARDS.renderHealthGrid(data)" in place

@@ -115,6 +115,7 @@ const BossModShell = (() => {
         BossModHeader.mount(requireElement('app-header'), {
             store,
             apiFetch,
+            bus,
             navigate,
             needs,
             attention,

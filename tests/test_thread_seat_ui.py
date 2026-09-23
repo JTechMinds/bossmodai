@@ -20,6 +20,7 @@ SEAT_MODULES = [
     JS / "core" / "overlays.js",
     JS / "conversation" / "sources" / "thread-archive.js",
     JS / "conversation" / "sources" / "thread-seat.js",
+    JS / "conversation" / "sources" / "thread-requests.js",
     JS / "conversation" / "sources" / "thread-source.js",
 ]
 

@@ -6,6 +6,7 @@
  * test_ui_needs.py assert that nothing downstream of it ever sees one.
  *
  * Split out of needs-store.js so the conversion is testable without a fake bus.
+ * Folding a list of Needs into one card per ask is needs/need-coalesce.js's.
  */
 const BossModNeedShape = (() => {
 
@@ -316,82 +317,11 @@ const BossModNeedShape = (() => {
         return need;
     }
 
-    /**
-     * Identity used to coalesce identical live error, CLI-approval, and consent cards.
-     *
-     * Errors group by agent and message. Approvals group by agent and command.
-     * Other kinds stay one-id-one-need.
-     *
-     * @param {Need} need
-     * @returns {string}
-     */
-    function coalesceKey(need) {
-        if (!need) return '';
-        if (need.kind === 'error') return `error:${need.agentId || ''}:${need.sub || ''}`;
-        if (need.kind === 'approval') {
-            return `approval:${need.agentId || ''}:${need.sub || ''}:${need.cwd || ''}`;
-        }
-        if (need.kind === 'consent') {
-            const flavor = need.cardKind || 'host_path';
-            if (flavor === 'shell_executor') {
-                return `consent:shell:${need.conversationId || need.agentId || ''}`;
-            }
-            return `consent:${flavor}:${need.conversationId || ''}:${need.sub || ''}`;
-        }
-        return String(need.id || '');
-    }
-
-    /**
-     * Collapse identical error, CLI-approval, and consent needs into one live card.
-     *
-     * Diagnostics stay individual in the log. Duplicate pending Approves for
-     * the same command, and identical consent waits, are one ask.
-     *
-     * @param {Need[]} needs
-     * @returns {Need[]}
-     */
-    function coalesceNeeds(needs) {
-        const list = Array.isArray(needs) ? needs : [];
-        const others = [];
-        const groups = new Map();
-        list.forEach((need) => {
-            if (!need || (need.kind !== 'error' && need.kind !== 'approval' && need.kind !== 'consent')) {
-                others.push(need);
-                return;
-            }
-            const key = coalesceKey(need);
-            const existing = groups.get(key);
-            if (!existing) {
-                groups.set(key, Object.assign({}, need, {
-                    count: 1,
-                    groupedIds: need.groupedIds && need.groupedIds.length
-                        ? need.groupedIds.slice()
-                        : [need.id],
-                }));
-                return;
-            }
-            const incomingIsNewer = String(need.createdAt || '')
-                .localeCompare(String(existing.createdAt || '')) >= 0;
-            const live = incomingIsNewer ? need : existing;
-            const count = (existing.count || 1) + 1;
-            const groupedIds = (existing.groupedIds || [existing.id]).concat(
-                need.groupedIds && need.groupedIds.length ? need.groupedIds : [need.id],
-            );
-            const title = count > 1 && live.kind === 'error'
-                ? `${live.agentName} hit an error ×${count}`
-                : live.title;
-            groups.set(key, Object.assign({}, live, { count, groupedIds, title }));
-        });
-        return others.concat(Array.from(groups.values()));
-    }
-
     return {
         ACTIVITY_TRIGGERS,
         KIND_TARGETS,
         OPEN_FOCUS_NEED,
         belongsOnOpenFocus,
-        coalesceKey,
-        coalesceNeeds,
         coversInlineNeed,
         isOpenFocusNeed,
         normalise,

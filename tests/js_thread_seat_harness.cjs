@@ -13,7 +13,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays",
-    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadSource",
+    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModThreadSource",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

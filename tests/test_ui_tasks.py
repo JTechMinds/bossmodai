@@ -27,6 +27,8 @@ HARNESS_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu-select.js",
     JS / "shell" / "places.js", JS / "shell" / "agent-routes.js",
+    # tasks-place.js scopes the board to the operator's floor through it.
+    JS / "shell" / "floor-scope.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "tasks-grid.js",
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
@@ -332,6 +334,7 @@ def test_tasks_harness() -> None:
         "needsColumnMatchesQueue": True,
         "refetchesOnResync": True,
         "opensLinkedTask": True,
+        "offFloorTaskHidden": True,
     }
 
     # Every refresh trigger must still be emitted somewhere in the engine.

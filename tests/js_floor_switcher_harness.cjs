@@ -7,8 +7,11 @@
  * a row with its agent count and the current one is pressed, that picking a
  * row moves the operator, that `+ New floor` turns into a field in place and
  * Esc there goes back to the door without closing the panel, that a failed
- * floor load is shown on the trigger, and that the Delete layer holds its
- * confirm until the operator has said what happens to the agents.
+ * floor load is shown on the trigger, that the Delete layer holds its
+ * confirm until the operator has said what happens to the agents, and that a
+ * `floors_updated` broadcast (a change made in another window) repaints the
+ * trigger, closes a stale panel, and moves the operator to Lobby when their
+ * floor is gone.
  *
  * Invoked by tests/test_ui_floor_switcher.py. Not a browser bundle.
  */
@@ -20,7 +23,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModOverlayFocus", "BossModOverlays",
+    "BossModDom", "BossModStore", "BossModBus", "BossModOverlayFocus", "BossModOverlays",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorEdit", "BossModFloorSwitcher",
 ];
 process.argv.slice(2).forEach((path, index) => {
@@ -87,9 +90,13 @@ async function submit(form) {
         ],
         threads: [{ id: "t1", name: "Books", status: "active", floor_id: "fin" }],
     });
+    const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
     const header = documentStub.createElement("header");
     documentStub.body.append(header);
-    const switcher = BossModFloorSwitcher.mount({ store, apiFetch });
+    let mountWithoutBusThrows = false;
+    try { BossModFloorSwitcher.mount({ store, apiFetch }); } catch (err) { mountWithoutBusThrows = true; }
+    verdict.mountRequiresABus = mountWithoutBusThrows;
+    const switcher = BossModFloorSwitcher.mount({ store, apiFetch, bus });
     header.append(switcher.element);
     await drain();
 
@@ -178,11 +185,56 @@ async function submit(form) {
         && /1 agent works on Finance\. Its 1 thread will be archived\./.test(layer.textContent);
     (radios[0].listeners.change || []).forEach((fn) => fn({ target: radios[0] }));
     verdict.choosingEnablesDelete = layer.querySelector("#floor-delete-confirm").disabled === false;
+    // ✕ on the top layer closes every layer.
+    await layer.querySelector(".modal-close").dispatchClick();
+
+    // ─── Live: another window renamed the floor the operator is on ───
+    // The panel is open when it lands; its rows are stale, so it closes.
+    await trigger.dispatchClick();
+    const openBeforeRename = Boolean(switcher.element.querySelector(".menu"));
+    bus.publish("floors_updated", [
+        { id: "lobby", name: "Lobby" }, { id: "fin", name: "Accounts" }, { id: "ops", name: "Ops" },
+    ]);
+    await drain();
+    verdict.aRenameElsewhereRepaintsTheTrigger = openBeforeRename
+        && store.getState().currentFloorId === "fin"
+        && trigger.getAttribute("aria-label") === "Floor: Accounts"
+        && switcher.element.querySelector(".floor-switcher-name").textContent === "Accounts"
+        && !switcher.element.querySelector(".menu")
+        && trigger.getAttribute("aria-expanded") === "false";
+
+    // ─── Live: another window deleted it ───
+    bus.publish("floors_updated", [{ id: "lobby", name: "Lobby" }, { id: "ops", name: "Ops" }]);
+    await drain();
+    verdict.aDeleteElsewhereMovesTheOperatorToLobby = store.getState().currentFloorId === "lobby"
+        && store.getState().floors.every((floor) => floor.id !== "fin")
+        && trigger.getAttribute("aria-label") === "Floor: Lobby";
+
+    // ─── A malformed broadcast is shown and logged, never adopted ───
+    const floorsBefore = store.getState().floors;
+    const errorBefore = console.error;
+    const malformedLogged = [];
+    console.error = (...args) => { malformedLogged.push(args.join(" ")); };
+    bus.publish("floors_updated", []);
+    await drain();
+    console.error = errorBefore;
+    verdict.aMalformedBroadcastIsNotAdopted = store.getState().floors === floorsBefore
+        && trigger.getAttribute("data-error") === "true"
+        && malformedLogged.some((line) => line.includes("[floor-switcher] could not load floors"));
+
+    // ─── A reconnect re-reads the list: broadcasts sent while down are gone ───
+    const readsBefore = calls.filter((call) => call.url === "/api/floors" && call.method === "GET").length;
+    bus.publish("resync", { downtimeMs: 4000 });
+    await drain();
+    verdict.resyncReReadsTheFloors = calls
+        .filter((call) => call.url === "/api/floors" && call.method === "GET").length === readsBefore + 1
+        && !trigger.hasAttribute("data-error");
 
     // ─── A failed floor load is shown on the trigger, not swallowed ───
     switcher.destroy();
+    verdict.destroyDrainsTheBus = bus.subscriberCount() === 0;
     failFloors = true;
-    const broken = BossModFloorSwitcher.mount({ store, apiFetch });
+    const broken = BossModFloorSwitcher.mount({ store, apiFetch, bus });
     const originalError = console.error;
     const logged = [];
     console.error = (...args) => { logged.push(args.join(" ")); };

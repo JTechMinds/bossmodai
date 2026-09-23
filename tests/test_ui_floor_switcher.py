@@ -13,6 +13,7 @@ HARNESS = Path(__file__).resolve().parent / "js_floor_switcher_harness.cjs"
 MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
+    JS / "core" / "bus.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "floor-scope.js",
@@ -29,6 +30,7 @@ def test_floor_switcher_behaviour() -> None:
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "ok": True,
+        "mountRequiresABus": True,
         "triggerNamesTheCurrentFloor": True,
         "floorsLoadIntoTheStore": True,
         "panelHangsOffTheSwitcherHost": True,
@@ -40,5 +42,10 @@ def test_floor_switcher_behaviour() -> None:
         "editFloorPrefillsTheNameAndOffersDelete": True,
         "deleteLayerWaitsForTheAgentsChoice": True,
         "choosingEnablesDelete": True,
+        "aRenameElsewhereRepaintsTheTrigger": True,
+        "aDeleteElsewhereMovesTheOperatorToLobby": True,
+        "aMalformedBroadcastIsNotAdopted": True,
+        "resyncReReadsTheFloors": True,
+        "destroyDrainsTheBus": True,
         "aFailedLoadIsShownAndLogged": True,
     }

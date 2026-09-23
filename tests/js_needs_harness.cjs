@@ -29,7 +29,7 @@ const pressKey = (key, shiftKey) => {
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 const [
     domPath, storePath, busPath, gatesPath, formatPath, nestGitPath, cardsPath, shapePath,
-    needsPath, popoverPath, barPath, toastPath,
+    coalescePath, needsPath, popoverPath, barPath, toastPath,
 ] = process.argv.slice(2);
 load(domPath, "BossModDom");
 load(storePath, "BossModStore");
@@ -40,6 +40,7 @@ load(formatPath, "BossModFormat");
 load(nestGitPath, "BossModNestGitCard");
 load(cardsPath, "BossModEventCards");
 load(shapePath, "BossModNeedShape");
+load(coalescePath, "BossModNeedCoalesce");
 load(needsPath, "BossModNeeds");
 load(popoverPath, "BossModNeedsPopover");
 load(barPath, "BossModNeedsBar");

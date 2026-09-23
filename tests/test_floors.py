@@ -576,6 +576,50 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
     }
 
 
+def test_floor_create_rename_delete_each_broadcast_the_whole_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every open window's switcher is kept current from the server, not a reload.
+
+    Each successful change sends the full list; a refused one sends nothing,
+    because nothing changed.
+    """
+    monkeypatch.setattr("api.routes.floors.runtime_services", _Services())
+    sent: list[list[dict[str, object]]] = []
+
+    async def _capture(floors: list[dict[str, object]]) -> None:
+        sent.append(floors)
+
+    monkeypatch.setattr("api.routes.floors.manager.broadcast_floors_updated", _capture)
+    lobby_name = get_floor(LOBBY_ID).name
+    client, headers = _client()
+
+    def listed() -> set[tuple[object, object]]:
+        return {(floor["id"], floor["name"]) for floor in sent[-1]}
+
+    created = client.post("/api/floors", headers=headers, json={"name": "Finance"})
+    assert created.status_code == 201
+    finance_id = created.json()["id"]
+    assert len(sent) == 1
+    assert listed() == {(LOBBY_ID, lobby_name), (finance_id, "Finance")}
+    # JSON-ready as sent: the datetime is already a string.
+    assert all(isinstance(floor["created_at"], str) for floor in sent[-1])
+
+    renamed = client.patch(f"/api/floors/{finance_id}", headers=headers, json={"name": "Money"})
+    assert renamed.status_code == 200
+    assert len(sent) == 2
+    assert listed() == {(LOBBY_ID, lobby_name), (finance_id, "Money")}
+
+    refused = client.patch("/api/floors/nope", headers=headers, json={"name": "Else"})
+    assert refused.status_code == 404
+    assert len(sent) == 2
+
+    deleted = client.delete(f"/api/floors/{finance_id}", headers=headers)
+    assert deleted.status_code == 200
+    assert len(sent) == 3
+    assert listed() == {(LOBBY_ID, lobby_name)}
+
+
 def test_init_db_never_pulls_a_vacationer_back_into_lobby() -> None:
     ada = _agent("Ada", 1)
     send_home(ada.id)

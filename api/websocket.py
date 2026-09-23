@@ -235,6 +235,20 @@ class ConnectionManager:
         """Broadcast a channel summary update to all connected clients."""
         await self.broadcast({"type": "channel_updated", "data": channel})
 
+    async def broadcast_floors_updated(self, floors: list[dict[str, Any]]) -> None:
+        """Broadcast the full floor list after a floor was created, renamed, or deleted.
+
+        Every open window's header switcher replaces its list with this one, so
+        a change made in one window reaches the rest without a reload. The
+        whole list is sent rather than a diff: it is a handful of rows, and a
+        client that missed an earlier event is corrected by the next one.
+
+        Args:
+            floors: Every floor, JSON-ready (``Floor.model_dump(mode="json")``).
+                Never empty — Lobby always exists.
+        """
+        await self.broadcast({"type": "floors_updated", "data": floors})
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         """Broadcast a diagnostic summary to all connected clients."""
         await self.broadcast({"type": "diagnostic", "data": summary})

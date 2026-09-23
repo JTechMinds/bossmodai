@@ -13,7 +13,8 @@
  * failed approval would look like a granted one.
  */
 const BossModNeeds = (() => {
-    const { ACTIVITY_TRIGGERS, coalesceKey, coalesceNeeds, normalise, normaliseDiagnostic } = BossModNeedShape;
+    const { ACTIVITY_TRIGGERS, normalise, normaliseDiagnostic } = BossModNeedShape;
+    const { coalesceKey, coalesceNeeds } = BossModNeedCoalesce;
 
     const NEEDS_URL = '/api/needs';
 

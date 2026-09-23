@@ -19,10 +19,10 @@ const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
-    "BossModTitleRename", "BossModConversationChrome",
+    "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadSource", "BossModAgentSource", "BossModConversation",
+    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

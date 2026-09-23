@@ -13,6 +13,10 @@
  * below the viewport and focusing its first row scrolled the header away.
  *
  * Requests go through shell/floor-api.js; this file draws.
+ *
+ * LIVE. A floor created, renamed or deleted in one window reaches every other
+ * one: the server broadcasts the whole list as `floors_updated` after each
+ * change, and a `resync` (a reconnect that may have missed some) re-reads it.
  */
 const BossModFloorSwitcher = (() => {
     const { h, clear } = BossModDom;
@@ -34,9 +38,14 @@ const BossModFloorSwitcher = (() => {
      * @param {object} deps.store  Reads `floors`, `currentFloorId`, `roster`;
      *   writes `floors` and `currentFloorId`.
      * @param {Function} deps.apiFetch  The shell's authenticated fetch.
+     * @param {object} deps.bus  Topic bus. `floors_updated` replaces the list;
+     *   `resync` re-reads it.
      * @returns {{element: HTMLElement, destroy: () => void}}
+     * @throws {Error} When `bus` is missing — without it a floor renamed in
+     *   another window would stay stale here until a reload.
      */
-    function mount({ store, apiFetch }) {
+    function mount({ store, apiFetch, bus }) {
+        if (!bus) throw new Error('[floor-switcher] deps.bus is required');
         const floorApi = BossModFloorApi.createFloorApi({ apiFetch });
 
         const nameEl = h('span', { class: 'floor-switcher-name' });
@@ -89,26 +98,55 @@ const BossModFloorSwitcher = (() => {
         }
 
         /**
-         * Read the floors into the store. A current floor that no longer
-         * exists (deleted elsewhere) falls back to Lobby.
+         * Put a floor list into the store. A current floor that is not in it
+         * (deleted elsewhere) falls back to Lobby.
          *
-         * @returns {Promise<boolean>} False when the request failed; the
-         *   failure is already shown and logged.
+         * An open panel is closed first: its rows were built from the old
+         * list, and a row for a floor that was just deleted is a control
+         * pointed at nothing.
+         *
+         * @param {Array<{id: string, name: string}>} rows  The whole list.
+         * @returns {void}
+         * @throws {Error} When `rows` is not a non-empty array of floors —
+         *   Lobby always exists, so anything else is a broken payload, and
+         *   adopting it would empty the switcher.
          */
-        async function loadFloors() {
-            let rows;
-            try {
-                rows = await floorApi.listFloors();
-            } catch (err) {
-                showLoadError(err);
-                return false;
-            }
+        function applyFloors(rows) {
+            const valid = Array.isArray(rows) && rows.length > 0
+                && rows.every((floor) => floor && typeof floor.id === 'string'
+                    && typeof floor.name === 'string');
+            if (!valid) throw new Error('The floor list arrived malformed.');
+            close();
             clearLoadError();
             const patch = { floors: rows };
             const current = store.getState().currentFloorId;
             if (!rows.some((floor) => floor.id === current)) patch.currentFloorId = LOBBY_ID;
             store.setState(patch);
+        }
+
+        /**
+         * Read the floors from the server into the store.
+         *
+         * @returns {Promise<boolean>} False when the request failed; the
+         *   failure is already shown and logged.
+         */
+        async function loadFloors() {
+            try {
+                applyFloors(await floorApi.listFloors());
+            } catch (err) {
+                showLoadError(err);
+                return false;
+            }
             return true;
+        }
+
+        /** A broadcast list; a malformed one is shown and logged, never adopted. */
+        function onFloorsUpdated(rows) {
+            try {
+                applyFloors(rows);
+            } catch (err) {
+                showLoadError(err);
+            }
         }
 
         function close() {
@@ -266,6 +304,9 @@ const BossModFloorSwitcher = (() => {
         paint(store.getState());
         BossModIcons.paint(element, 'floor-switcher');
         void loadFloors();
+        const offUpdated = bus.subscribe('floors_updated', onFloorsUpdated);
+        // Broadcasts sent while the socket was down are gone; re-read.
+        const offResync = bus.subscribe('resync', () => void loadFloors());
         const off = store.subscribe(
             (s) => [
                 s.currentFloorId || LOBBY_ID,
@@ -278,6 +319,8 @@ const BossModFloorSwitcher = (() => {
             element,
             destroy() {
                 off();
+                offUpdated();
+                offResync();
                 close();
             },
         };

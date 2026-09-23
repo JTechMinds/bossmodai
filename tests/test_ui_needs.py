@@ -24,6 +24,7 @@ NEEDS_MODULES = [
     JS / "core" / "consent-card-nest-git.js",
     JS / "conversation" / "event-cards.js",
     NEEDS / "need-shape.js",
+    NEEDS / "need-coalesce.js",
     NEEDS / "needs-store.js",
     NEEDS / "needs-popover.js",
     NEEDS / "needs-bar.js",

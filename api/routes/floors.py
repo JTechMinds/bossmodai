@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _broadcast_floors() -> None:
+    """Tell every open window the floor list changed, sending the whole list."""
+    await manager.broadcast_floors_updated(
+        [floor.model_dump(mode="json") for floor in list_floors()]
+    )
+
+
 class FloorCreateBody(BaseModel):
     name: str
 
@@ -38,9 +45,11 @@ async def get_floors() -> list[Floor]:
 async def post_floor(body: FloorCreateBody) -> Floor:
     """Create a labeled floor. An existing name returns that floor."""
     try:
-        return create_floor(body.name)
+        floor = create_floor(body.name)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    await _broadcast_floors()
+    return floor
 
 
 @router.patch("/floors/{floor_id}")
@@ -58,6 +67,7 @@ async def patch_floor(floor_id: str, body: FloorRenameBody) -> Floor:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    await _broadcast_floors()
     return floor
 
 
@@ -119,6 +129,7 @@ async def remove_floor(floor_id: str, occupants: str | None = None):
         )
         await manager.broadcast_channel_updated(summary)
     await manager.broadcast_world_state()
+    await _broadcast_floors()
     for agent_id in result.agents_deleted:
         name = doomed.get(agent_id, agent_id)
         await manager.broadcast_activity(

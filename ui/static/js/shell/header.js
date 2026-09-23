@@ -51,6 +51,8 @@ const BossModHeader = (() => {
      * @param {object} deps
      * @param {object} deps.store            Application store.
      * @param {Function} deps.apiFetch       Authenticated request helper.
+     * @param {object} deps.bus              Topic bus; the floor switcher keeps
+     *   its list live from `floors_updated` and `resync`.
      * @param {(placeId: string) => void} deps.navigate
      * @param {object} deps.needs            From BossModNeeds.createNeedsStore;
      *   the popover resolves through it. The bell is the one guaranteed path to
@@ -64,7 +66,7 @@ const BossModHeader = (() => {
      *   it would report "nothing needs you" forever.
      */
     function mount(el, deps) {
-        const { store, apiFetch, navigate, needs, openSettings, attention } = deps;
+        const { store, apiFetch, bus, navigate, needs, openSettings, attention } = deps;
         if (!needs) throw new Error('[header] deps.needs is required');
         const disposers = [];
 
@@ -126,7 +128,7 @@ const BossModHeader = (() => {
 
         // The floor switcher sits in the empty band. shell/floor-switcher.js
         // owns it so this file stays the brand, nav, bell, and pause.
-        const floors = BossModFloorSwitcher.mount({ store, apiFetch });
+        const floors = BossModFloorSwitcher.mount({ store, apiFetch, bus });
         disposers.push(floors.destroy);
 
         // ─── Needs bell ───

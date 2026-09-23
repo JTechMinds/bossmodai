@@ -94,15 +94,17 @@ installIconsStub(() => { iconPasses += 1; });
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossModStore;\n`);
-eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
+// The floor switcher keeps its list live off the bus.
+eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModBus;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
 // The switcher reads the current floor through floor-scope and talks through
 // floor-api; both load ahead of it, as index.html orders them.
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModFloorScope = BossModFloorScope;\n`);
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModFloorApi = BossModFloorApi;\n`);
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModFloorSwitcher = BossModFloorSwitcher;\n`);
-eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModFloorScope = BossModFloorScope;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModFloorApi = BossModFloorApi;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModFloorSwitcher = BossModFloorSwitcher;\n`);
+eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
 
 /** Text a screen reader would announce: aria-hidden subtrees contribute nothing. */
 function accessibleText(node) {
@@ -161,6 +163,7 @@ function apiFetch(url, init) {
         runtimePaused: false,
     });
     const storeBaseline = store.subscriberCount();
+    const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
     const el = makeEl("header");
     const navigated = [];
     let settingsOpened = 0;
@@ -179,6 +182,7 @@ function apiFetch(url, init) {
     const dispose = BossModHeader.mount(el, {
         store,
         apiFetch,
+        bus,
         navigate: (id) => navigated.push(id),
         needs: needsStub,
         openSettings: () => { settingsOpened += 1; },
@@ -276,10 +280,15 @@ function apiFetch(url, init) {
 
     if (iconPasses < 1) throw new Error("header must render its Lucide icons");
 
-    // The disposer drains every store subscription.
+    // The disposer drains every store subscription, and the floor switcher's
+    // two bus subscriptions (floors_updated, resync) with them.
+    if (bus.subscriberCount() === 0) throw new Error("the floor switcher must listen on the bus");
     dispose();
     if (store.subscriberCount() !== storeBaseline) {
         throw new Error(`store leak: baseline ${storeBaseline}, now ${store.subscriberCount()}`);
+    }
+    if (bus.subscriberCount() !== 0) {
+        throw new Error(`bus leak: ${bus.subscriberCount()} subscriptions outlived the header`);
     }
 
     process.stdout.write(JSON.stringify({

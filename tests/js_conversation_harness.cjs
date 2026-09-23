@@ -23,10 +23,10 @@ const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
-    "BossModTitleRename", "BossModConversationChrome",
+    "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadSource", "BossModAgentSource", "BossModConversation",
+    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -439,9 +439,16 @@ async function main() {
     }
     await dots.dispatchClick();
     const panel = conversation.element.querySelector(".menu");
+    // The panel is not the receipts switch's alone: a live thread puts its own
+    // `slot: 'menu'` switch ("Auto-approve safe commands") in there too, ahead
+    // of the view options. So the receipts switch is found by its label, and
+    // must be there exactly once; the thread's switch must be there as well.
+    const receiptsIn = (root) => root.querySelectorAll(".switch-row").filter((row) =>
+        row.querySelector(".switch-label").textContent === "Show system notifications");
     const receiptsToggleReachableFromMenu = Boolean(panel)
         && panel.getAttribute("role") === "dialog"
-        && panel.querySelectorAll(".switch-row").length === 1
+        && receiptsIn(panel).length === 1
+        && Boolean(panel.querySelector("#channel-cli-auto-approve"))
         && dots.getAttribute("aria-expanded") === "true";
     if (!receiptsToggleReachableFromMenu) {
         throw new Error(`the receipts toggle must be reachable from the menu: `
@@ -449,7 +456,7 @@ async function main() {
     }
 
     // Toggling it from its new home writes the SAME storage key it always did.
-    const receiptsNode = panel.querySelector(".switch-row");
+    const receiptsNode = receiptsIn(panel)[0];
     await receiptsNode.dispatchClick();
     const receiptsPreferencePersists =
         global.window.localStorage.getItem("bossmod.chat.showSystemReceipts") === "false"
@@ -474,7 +481,7 @@ async function main() {
     // one, which is what keeps the preference it holds.
     await dots.dispatchClick();
     const receiptsNodeSurvivesReopen =
-        conversation.element.querySelector(".menu").querySelector(".switch-row") === receiptsNode;
+        receiptsIn(conversation.element.querySelector(".menu"))[0] === receiptsNode;
     if (!receiptsNodeSurvivesReopen) {
         throw new Error("re-opening the menu must reuse the preference control");
     }
@@ -484,7 +491,7 @@ async function main() {
     // the actions around it.
     await conversation.open("a", "agent");
     await dots.dispatchClick();
-    if (conversation.element.querySelector(".menu").querySelector(".switch-row") !== receiptsNode) {
+    if (receiptsIn(conversation.element.querySelector(".menu"))[0] !== receiptsNode) {
         throw new Error("the receipts toggle must outlive a conversation switch");
     }
     await dots.dispatchClick();
@@ -570,7 +577,12 @@ async function main() {
     if (actionNames().join("|") !== "Add to thread") {
         throw new Error(`a live thread must offer Add to thread, got ${actionNames().join("|")}`);
     }
-    const archiveLivesInTheMenu = await menuActionNames() === "Archive";
+    // The thread's other rare controls share the panel: the per-thread CLI
+    // auto-approve switch (787dd54) and Pause (ac0c6fe), both ahead of Archive
+    // in the order thread-source.js emits them. Archive is still in there and
+    // still nowhere on the row.
+    const archiveLivesInTheMenu = await menuActionNames()
+        === "Auto-approve safe commands|Pause thread|Archive";
     if (!archiveLivesInTheMenu) {
         throw new Error(`Archive must be behind the \`⋯\`, got ${await menuActionNames()}`);
     }

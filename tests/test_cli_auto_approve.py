@@ -341,7 +341,10 @@ def test_thread_toggle_is_off_in_the_menu_until_the_flag_is_set() -> None:
     assert "id: 'channel-cli-auto-approve'" in thread
     assert "label: 'Auto-approve safe commands'" in thread
     assert "pressed: !!(channel && channel.cli_auto_approve)" in thread
-    assert "/cli-auto-approve" in thread
+    # The request itself moved to thread-requests.js with the other
+    # thread-setting requests; the menu switch above stays in the source.
+    requests = (ROOT / "ui/static/js/conversation/sources/thread-requests.js").read_text(encoding="utf-8")
+    assert "/cli-auto-approve" in requests
     popover = (ROOT / "ui/static/js/needs/needs-popover.js").read_text(encoding="utf-8")
     assert "audit: 'Auto-approved'" in popover
     assert "popover-need-review" in popover

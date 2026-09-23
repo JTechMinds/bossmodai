@@ -1119,8 +1119,9 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     # paints the rail can never reach a glyph inside it. Both menus paint what
     # they just attached — the bug that rendered Archive as a bare heading.
     assert "BossModIcons.paint(menu.element, 'roster-header-menu')" in header_menu
-    chrome = _read(CONVERSATION / "chrome.js")
-    assert "BossModIcons.paint(menu.element, 'conversation-chrome.menu')" in chrome
+    # The conversation's `⋯` panel is conversation/chrome-menu.js's.
+    chrome_menu = _read(CONVERSATION / "chrome-menu.js")
+    assert "BossModIcons.paint(menu.element, 'conversation-chrome.menu')" in chrome_menu
 
 
 # ─── Conversation: identity, glyphs, bubbles, and the empty state ───
@@ -1667,7 +1668,7 @@ def test_metrics_leads_with_a_health_panel() -> None:
     place = _read(JS / "places/metrics/metrics-place.js")
     body = place.split("function paintDashboard(data) {", 1)[1].split("\n    }", 1)[0]
     assert body.index("CARDS.renderHealthPanel(data)") < body.index(
-        "CARDS.renderStatCards(data)"
+        "CARDS.renderStatCards(dataForFloor)"
     )
 
 

@@ -74,14 +74,17 @@ CONTEXT_MODULES = [
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
     CONVERSATION / "title-rename.js",
+    CONVERSATION / "chrome-menu.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
     JS / "needs" / "need-shape.js",
+    JS / "needs" / "need-coalesce.js",
     JS / "needs" / "needs-store.js",
     JS / "needs" / "needs-bar.js",
     CONVERSATION / "sources" / "thread-archive.js",
     CONVERSATION / "sources" / "thread-seat.js",
+    CONVERSATION / "sources" / "thread-requests.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation.js",
@@ -179,6 +182,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "message.js",
     CONVERSATION / "event-cards.js",
     CONVERSATION / "title-rename.js",
+    CONVERSATION / "chrome-menu.js",
     CONVERSATION / "chrome.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -186,6 +190,7 @@ CONVERSATION_MODULES = [
     JS / "needs" / "needs-bar.js",
     CONVERSATION / "sources" / "thread-archive.js",
     CONVERSATION / "sources" / "thread-seat.js",
+    CONVERSATION / "sources" / "thread-requests.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation.js",
@@ -464,7 +469,9 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
     guarded is that there is one panel and one focus trap behind it, and both
     are still true.
     """
-    chrome = _read(CONVERSATION / "chrome.js")
+    # The `⋯` and its panel live in chrome-menu.js, split out of chrome.js
+    # along the seam between what goes behind the `⋯` and how the panel lives.
+    chrome = _read(CONVERSATION / "chrome-menu.js")
     assert "const MENU_LABEL = 'More actions';" in chrome
     assert "'aria-label': MENU_LABEL" in chrome
     # Named twice from one constant: the label a screen reader hears and the
