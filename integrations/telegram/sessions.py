@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict
 
-from db.crud import execute, fetch_all, fetch_one, query_one
+from db.crud import execute, fetch_all, fetch_one
 
 _COLUMNS = (
     "id, telegram_user_id, session_type, target_agent_id, "
@@ -137,19 +137,3 @@ def touch_session(telegram_user_id: int) -> None:
         "UPDATE telegram_sessions SET last_active_at = $1 WHERE telegram_user_id = $2",
         [now, telegram_user_id],
     )
-
-
-def find_channel_for_names_key(agent_names_key: str) -> str | None:
-    """Return the target_channel_id from any session matching the names key, or None."""
-    row = query_one(
-        """
-        SELECT target_channel_id
-        FROM telegram_sessions
-        WHERE agent_names_key = $1 AND target_channel_id IS NOT NULL
-        LIMIT 1
-        """,
-        [agent_names_key],
-    )
-    if row and row.get("target_channel_id"):
-        return row["target_channel_id"]
-    return None

@@ -112,6 +112,10 @@ const TelegramSection = (() => {
                     <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide mb-3">Bot Commands</h3>
                     <div class="text-sm space-y-1.5 font-mono">
                         <div class="flex gap-3">
+                            <span class="text-bm-accent shrink-0">/help</span>
+                            <span class="text-bm-muted font-sans">Command map (same as /start)</span>
+                        </div>
+                        <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/agents</span>
                             <span class="text-bm-muted font-sans">List all agents with status</span>
                         </div>
@@ -121,23 +125,23 @@ const TelegramSection = (() => {
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/chat &lt;n1&gt; &lt;n2&gt;</span>
-                            <span class="text-bm-muted font-sans">Group chat with multiple agents</span>
+                            <span class="text-bm-muted font-sans">Open the thread with those agents</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/chat</span>
                             <span class="text-bm-muted font-sans">Close active session</span>
                         </div>
                         <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/group</span>
-                            <span class="text-bm-muted font-sans">All-agent group channel (not a spatial office meeting)</span>
-                        </div>
-                        <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/meeting</span>
-                            <span class="text-bm-muted font-sans">Legacy alias for /group</span>
+                            <span class="text-bm-accent shrink-0">/thread</span>
+                            <span class="text-bm-muted font-sans">Open the all-agent thread</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/channels</span>
-                            <span class="text-bm-muted font-sans">List active group chats</span>
+                            <span class="text-bm-muted font-sans">List threads with row numbers</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <span class="text-bm-accent shrink-0">/join &lt;N&gt;</span>
+                            <span class="text-bm-muted font-sans">Rejoin row N from the last list</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/status</span>
