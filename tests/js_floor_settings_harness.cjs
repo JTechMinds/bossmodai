@@ -23,7 +23,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModFormat", "BossModAvatar", "BossModSearchField",
+    "BossModDom", "BossModStore", "BossModFormat", "BossModAvatar", "BossModSearchField", "BossModInlineRename",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
@@ -67,6 +67,7 @@ const PLAN = {
 
 const calls = [];
 let moveAnswers = [];
+let renameRefusals = [];
 function apiFetch(url, init) {
     const method = (init && init.method) || "GET";
     const body = init && init.body ? JSON.parse(init.body) : null;
@@ -90,6 +91,8 @@ function apiFetch(url, init) {
         return Promise.resolve(response(200, plan));
     }
     if (url === "/api/floors/fin" && method === "PATCH") {
+        const refusal = renameRefusals.shift();
+        if (refusal) return Promise.resolve(refusal);
         return Promise.resolve(response(200, { id: "fin", name: body.name }));
     }
     if (url === "/api/floors/lobby/move" && method === "POST") {
@@ -105,6 +108,26 @@ const actionNamed = (panel, label) => panel.querySelectorAll(".modal-action")
     .find((button) => button.textLabel === label);
 const count = (url, method = "GET") => calls.filter((call) => call.url === url && call.method === method).length;
 const change = (input) => (input.listeners.change || []).forEach((fn) => fn({ target: input }));
+
+/**
+ * A key on `el`, bubbling to `document` unless a handler stopped it — the
+ * route a real Esc takes to the modal's handler (core/overlay-focus.js).
+ */
+function keydown(el, key) {
+    const event = {
+        key,
+        target: el,
+        defaultPrevented: false,
+        propagationStopped: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; },
+    };
+    (el.listeners.keydown || []).forEach((fn) => fn(event));
+    if (!event.propagationStopped && documentStub.listeners) {
+        (documentStub.listeners.keydown || []).slice().forEach((fn) => fn(event));
+    }
+    return event;
+}
 
 (async () => {
     const verdict = {};
@@ -129,8 +152,25 @@ const change = (input) => (input.listeners.change || []).forEach((fn) => fn({ ta
         && panel.getAttribute("data-size") === "panel"
         && panel.querySelector("#floor-settings-name").value === "Lobby"
         && titles.join("|") === "People (2)|Threads (2)|Projects (1)";
-    verdict.lobbyHasNoDelete = panel.querySelectorAll(".modal-action")
-        .map((button) => button.textLabel).join("|") === "Close";
+    // No footer at all: Close repeated the head's ✕, and Delete is a head tool.
+    verdict.lobbyHasNoFooterAndNoDelete = panel.querySelectorAll(".modal-action").length === 0
+        && panel.querySelector(".modal-actions").children.length === 0
+        && !panel.querySelector(".floor-delete-tool")
+        && /Lobby is the default floor and can't be deleted\./.test(panel.textContent);
+
+    // ─── The name at rest: text, no label, no ✓ / ✕ ───
+    const lobbyName = panel.querySelector("#floor-settings-name");
+    const lobbyRow = panel.querySelector(".inline-rename-row");
+    verdict.nameRestsAsTextWithNoLabelOrButtons = lobbyName.getAttribute("aria-label") === "Floor name"
+        && lobbyName.getAttribute("placeholder") === "Floor name"
+        && lobbyName.hasAttribute("readonly")
+        && lobbyName.classList.contains("inline-rename-input")
+        && !lobbyName.classList.contains("field-input")
+        && !panel.querySelector(".field-label")
+        && !panel.querySelector("form")
+        && lobbyRow.getAttribute("data-editing") === "false"
+        && !panel.querySelector(".inline-rename-save")
+        && !panel.querySelector(".inline-rename-cancel");
 
     // ─── ⋯ → Move to… hangs off the row's host ───
     const firstMore = panel.querySelector(".floor-item").querySelector(".floor-row-more");
@@ -221,26 +261,102 @@ const change = (input) => (input.listeners.change || []).forEach((fn) => fn({ ta
 
     // ─── Another floor's settings offer Delete ───
     settings.close();
+    // From here the fake document keeps its keydown listeners, so a key that
+    // is not stopped reaches the modal's own Esc handler as it would in a
+    // browser. The shared fake's addEventListener is a no-op.
+    documentStub.listeners = {};
+    documentStub.addEventListener = (type, fn) => { (documentStub.listeners[type] ||= []).push(fn); };
+    documentStub.removeEventListener = (type, fn) => {
+        documentStub.listeners[type] = (documentStub.listeners[type] || []).filter((item) => item !== fn);
+    };
     const fin = BossModFloorSettings.open({ store, floorApi, floorId: "fin", reloadFloors });
     await drain();
     const finPanel = dialogs()[0];
-    verdict.otherFloorsOfferDelete = finPanel.querySelectorAll(".modal-action")
-        .map((button) => button.textLabel).join("|") === "Delete floor…|Close"
+    const trash = finPanel.querySelector(".floor-delete-tool");
+    verdict.otherFloorsOfferDeleteAsAHeadTool = finPanel.querySelectorAll(".modal-action").length === 0
+        && Boolean(trash)
+        && trash.parentNode.classList.contains("modal-tools")
+        && trash.getAttribute("aria-label") === "Delete floor"
+        && trash.getAttribute("data-tooltip") === "Delete floor"
+        && trash.querySelector("[data-lucide=\"trash-2\"]") !== null
         && finPanel.querySelectorAll(".floor-section-title").map((node) => node.textContent)
             .join("|") === "People (1)|Threads (1)|Projects (1)";
-    // A saved rename retitles the settings through the modal's setTitle.
+
+    // ─── Click → edit: the hairline state, with ✓ and ✕ ───
     const nameInput = finPanel.querySelector("#floor-settings-name");
-    nameInput.value = "Money";
-    const nameForm = finPanel.querySelector("#floor-settings-name-form");
-    for (const fn of [...(nameForm.listeners.submit || [])]) {
-        await fn({ preventDefault() {}, stopPropagation() {}, target: nameForm });
-    }
+    const nameRow = finPanel.querySelector(".inline-rename-row");
+    await nameInput.dispatchClick();
+    const saveIcon = finPanel.querySelector(".inline-rename-save");
+    const cancelIcon = finPanel.querySelector(".inline-rename-cancel");
+    verdict.clickOpensEditWithSaveAndCancel = nameRow.getAttribute("data-editing") === "true"
+        && nameInput.readOnly === false
+        && Boolean(saveIcon) && saveIcon.getAttribute("aria-label") === "Save floor name"
+        && saveIcon.querySelector("[data-lucide=\"check\"]") !== null
+        && Boolean(cancelIcon) && cancelIcon.getAttribute("aria-label") === "Cancel rename"
+        && cancelIcon.querySelector("[data-lucide=\"x\"]") !== null;
+
+    const patches = () => calls.filter((call) => call.url === "/api/floors/fin" && call.method === "PATCH");
+    const nameAlert = () => finPanel.querySelector(".inline-rename").querySelector("[role=\"alert\"]");
+
+    // ─── An empty name is refused, the draft kept, nothing sent ───
+    nameInput.value = "   ";
+    keydown(nameInput, "Enter");
     await drain();
-    verdict.aRenameRetitlesTheSettings = finPanel.querySelector(".modal-title").textContent === "Money"
+    verdict.anEmptyNameIsRefused = patches().length === 0
+        && nameAlert().textContent === "Give the floor a name."
+        && nameRow.getAttribute("data-editing") === "true"
+        && nameInput.value === "   ";
+
+    // ─── A refused rename keeps the draft and edit mode, and says why ───
+    renameRefusals = [response(409, { detail: "Another floor already uses that name" })];
+    const errorBefore = console.error;
+    console.error = () => {};
+    nameInput.value = "Legal";
+    keydown(nameInput, "Enter");
+    await drain();
+    console.error = errorBefore;
+    verdict.aFailureKeepsTheDraftAndSaysWhy = patches().length === 1
+        && nameAlert().textContent === "Another floor already uses that name."
+        && nameRow.getAttribute("data-editing") === "true"
+        && nameInput.value === "Legal"
+        && finPanel.querySelector(".modal-title").textContent === "Finance";
+
+    // ─── Enter saves: PATCH, the head retitled, back at rest ───
+    nameInput.value = "Money";
+    keydown(nameInput, "Enter");
+    await drain();
+    verdict.enterSavesRetitlesAndRests = patches().length === 2
+        && patches()[1].body.name === "Money"
+        && finPanel.querySelector(".modal-title").textContent === "Money"
         && finPanel.getAttribute("aria-label") === "Money"
         && finPanel.querySelector(".modal-close").getAttribute("aria-label") === "Close Money"
-        && calls.some((call) => call.url === "/api/floors/fin" && call.method === "PATCH"
-            && call.body.name === "Money");
+        && nameRow.getAttribute("data-editing") === "false"
+        && nameAlert().textContent === ""
+        && !finPanel.querySelector(".inline-rename-save");
+
+    // ─── Esc cancels the rename only: the settings stay open ───
+    keydown(nameInput, "Enter");
+    nameInput.value = "Oops";
+    const esc = keydown(nameInput, "Escape");
+    await drain();
+    verdict.escCancelsTheRenameNotTheSettings = esc.propagationStopped === true
+        && nameInput.value === "Money"
+        && nameRow.getAttribute("data-editing") === "false"
+        && patches().length === 2
+        && dialogs().length === 1 && dialogs()[0] === finPanel;
+
+    // ─── The trash tool opens the Delete layer: a question, with ‹ back ───
+    await trash.dispatchClick();
+    const deleteLayer = visibleDialog();
+    const back = deleteLayer.querySelector(".modal-back");
+    const deleteLabels = deleteLayer.querySelectorAll(".modal-action").map((button) => button.textLabel);
+    verdict.trashOpensTheDeleteLayerWithBack = dialogs().length === 2
+        && deleteLayer.getAttribute("aria-label") === "Delete Money?"
+        && back.hidden === false
+        && back.getAttribute("aria-label") === "Back to Money"
+        && deleteLabels.join("|") === "Delete floor|Cancel"
+        && deleteLayer.querySelector("#floor-delete-confirm").classList.contains("danger");
+    await back.dispatchClick();
     fin.close();
 
     // setTitle on a layer with another above it: its head, its ✕, and the

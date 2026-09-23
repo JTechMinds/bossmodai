@@ -1,12 +1,12 @@
 /**
  * BossMod AI — the Delete floor layer.
  *
- * Opened from the floor settings' `Delete floor…` (shell/floor-settings.js)
- * as a LAYER over it (core/overlays.js). It says what will happen: the
- * floor's active threads are archived, its files move to Company › Archived
- * floors, and when agents live there the operator must choose, with no
- * default, whether they go on vacation or are deleted. Lobby is never
- * offered this layer.
+ * Opened from the floor settings' trash tool (shell/floor-settings.js) as a
+ * LAYER over it (core/overlays.js): the "are you sure" step. It says what
+ * will happen: the floor's active threads are archived, its files move to
+ * Company › Archived floors, and when agents live there the operator must
+ * choose, with no default, whether they go on vacation or are deleted.
+ * Lobby is never offered this layer.
  *
  * Requests go through shell/floor-api.js.
  */
@@ -105,7 +105,8 @@ const BossModFloorDelete = (() => {
 
         let busy = false;
         const layer = BossModOverlays.createModal({
-            title: `Delete ${floor.name}`,
+            // A question: this layer is the "are you sure" step.
+            title: `Delete ${floor.name}?`,
             body,
             actions: deleteActions(false),
             closeOnBackdrop: false,

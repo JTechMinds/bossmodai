@@ -25,6 +25,7 @@ installIconsStub();
 
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
+    "BossModInlineRename",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
@@ -178,21 +179,20 @@ async function submit(form) {
     const dialogs = () => documentStub.body.querySelectorAll(".modal-panel");
     const edit = dialogs()[0];
     const editInput = edit.querySelector("#floor-settings-name");
-    const actionLabels = edit.querySelectorAll(".modal-action").map((button) => button.textLabel);
+    const deleteTool = edit.querySelector(".floor-delete-tool");
     verdict.floorSettingsPrefillTheNameAndOfferDelete = Boolean(edit)
         && edit.getAttribute("aria-label") === "Finance"
         && edit.getAttribute("data-size") === "panel"
         && editInput.value === "Finance"
-        && actionLabels.join("|") === "Delete floor…|Close";
+        && edit.querySelectorAll(".modal-action").length === 0
+        && Boolean(deleteTool) && deleteTool.getAttribute("aria-label") === "Delete floor";
 
-    const deleteAction = edit.querySelectorAll(".modal-action")
-        .find((button) => button.textLabel === "Delete floor…");
-    await deleteAction.dispatchClick();
+    await deleteTool.dispatchClick();
     const layer = dialogs()[1];
     const confirm = layer.querySelector("#floor-delete-confirm");
     const radios = layer.querySelectorAll("input");
     verdict.deleteLayerWaitsForTheAgentsChoice = Boolean(layer)
-        && layer.getAttribute("aria-label") === "Delete Finance"
+        && layer.getAttribute("aria-label") === "Delete Finance?"
         && edit.hidden === true
         && radios.length === 2
         && radios.every((radio) => radio.getAttribute("type") === "radio" && !radio.checked)

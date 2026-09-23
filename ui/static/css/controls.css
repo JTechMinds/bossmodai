@@ -589,3 +589,65 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 [data-tooltip]:hover::after,
 [data-tooltip]:focus-visible::after { opacity: 1; }
+
+/* ─── Inline rename (core/inline-rename.js) ───
+   At rest the name is text on the ground: no border, no fill, the rail
+   search's treatment (.roster-search, shell.css). The placeholder identifies
+   the field (--hint is 4.83:1 on --panel). Editing draws one hairline under
+   the whole row — field, ✓ and ✕ — and changes nothing else.
+
+   The hairline is a bottom BORDER that is always there and only changes
+   colour, rather than .roster-search's inset box-shadow: inside the centred
+   panel the row sits on a fractional pixel, and an inset shadow there leaked
+   a faint second line along the row's top edge. A transparent border costs
+   the same 1px at rest as in edit, so nothing moves. */
+.inline-rename { display: flex; flex-direction: column; gap: 4px; }
+
+.inline-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid transparent;
+  /* The hairline arrives rather than appearing; base.css flattens it under
+     prefers-reduced-motion. */
+  transition: border-color 0.15s ease;
+}
+
+/* --line-control is 3.10:1 on --panel: the 3:1 non-text floor (SC 1.4.11)
+   for a boundary that IS the affordance, as on .roster-search:focus-visible. */
+.inline-rename-row[data-editing="true"] { border-bottom-color: var(--line-control); }
+
+.inline-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.inline-rename-input::placeholder { color: var(--hint); }
+
+/* base.css's accent ring is REPLACED, never removed (SC 2.4.7): a keyboard
+   focus at rest gets the edit state's hairline, on the field itself — at
+   rest the field is the whole row. While editing, the row's hairline is the
+   indicator, so the field's stays transparent rather than doubling it.
+   (0,3,0) outranks base.css's input:focus-visible border rule (0,1,1). */
+.inline-rename-input:focus-visible { outline: none; }
+
+.inline-rename-row[data-editing="false"] > .inline-rename-input:focus-visible {
+  border-bottom-color: var(--line-control);
+}
+
+.inline-rename-actions { display: inline-flex; flex: none; gap: 2px; }
+
+/* The conversation title's pair (conversation.css #conversation-title-save /
+   -cancel): icon-only, so the glyph is the only carrier and the 3:1 non-text
+   floor applies — --ok measures 4.87:1 and --alert 4.90:1 on --panel. The
+   shapes differ as well as the hues (SC 1.4.1). */
+.inline-rename-save { color: var(--ok); }
+.inline-rename-cancel { color: var(--alert); }

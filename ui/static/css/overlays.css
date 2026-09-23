@@ -129,6 +129,11 @@
 .modal-close { flex: 0 0 auto; margin-left: auto; font-size: 16px; line-height: 1; }
 .modal-tools + .modal-close { margin-left: 0; }
 
+/* A head tool's glyph (the task detail's `⋯`, floor settings' trash) is the
+   chat chrome's head icon size — .conversation-action svg, 14px — because
+   this head IS that row. Lucide's unsized 24px outweighed the ✕ beside it. */
+.modal-tools .header-icon-btn svg { width: 14px; height: 14px; }
+
 /* ‹ — back one layer. The ✕'s shape; the chevron glyph needs a size step to
    read at the same weight as the ✕ beside it. */
 .modal-back { flex: 0 0 auto; font-size: 20px; line-height: 1; }
@@ -1106,11 +1111,13 @@
 .modal-panel .modal-body li.floor-item,
 .modal-panel .modal-body li.floor-move-line { max-width: none; }
 
-.floor-name-form { display: flex; flex-direction: column; gap: 6px; }
+/* The name (core/inline-rename.js) reads as the floor's heading inside the
+   panel, with the Lobby hint and the reload notice under it. */
+.floor-name { display: flex; flex-direction: column; gap: 4px; }
 
-.floor-name-row { display: flex; align-items: center; gap: 8px; }
+.floor-name .inline-rename-input { font-size: 15px; font-weight: 600; }
 
-.floor-name-row .field-input { flex: 1 1 auto; min-width: 0; }
+.floor-name > p { margin: 0; }
 
 .floor-section { display: flex; flex-direction: column; gap: 6px; }
 

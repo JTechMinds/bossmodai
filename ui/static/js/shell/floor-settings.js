@@ -2,13 +2,15 @@
  * BossMod AI — floor settings: Name, People, Threads, Projects.
  *
  * Opened from a floor row's `⋯` in the header switcher. One panel-size modal
- * titled with the floor's name. Name is an inline form; People, Threads and
+ * titled with the floor's name, with no footer: its only ways out are the
+ * head's ✕ and, for any floor but Lobby, the head's trash tool, which opens
+ * the Delete layer (shell/floor-delete.js) — the "are you sure" step. The
+ * name renames in place (core/inline-rename.js). People, Threads and
  * Projects are lists (shell/floor-people.js, floor-threads.js,
  * floor-projects.js) whose rows each carry a `⋯` → Move to…, and whose
  * headers each carry an Add door that picks from the other floors
  * (shell/floor-picker.js). People and threads move through the confirm
- * layer (shell/floor-move-confirm.js); `Delete floor…` opens the Delete
- * layer (shell/floor-delete.js). Lobby has no Delete.
+ * layer (shell/floor-move-confirm.js).
  *
  * This file owns the frame and the two shapes the three lists share — the
  * section (heading, count, Add door, and its loading / error / empty / rows
@@ -21,8 +23,10 @@
  */
 const BossModFloorSettings = (() => {
     const { h, clear } = BossModDom;
-    const NAME_FORM_ID = 'floor-settings-name-form';
     const NAME_ID = 'floor-settings-name';
+    const DELETE_LABEL = 'Delete floor';
+    /** Matches db/floors.py FLOOR_NAME_MAX_LENGTH. */
+    const NAME_MAX_LENGTH = 80;
 
     /**
      * One list section: heading with its count, an Add door, and a body that
@@ -169,27 +173,26 @@ const BossModFloorSettings = (() => {
         const floor = { ...found };
         const isLobby = floor.id === BossModFloorScope.LOBBY_ID;
 
-        const input = h('input', {
-            class: 'field-input', id: NAME_ID, type: 'text', maxlength: '80', autocomplete: 'off',
+        const nameField = BossModInlineRename.create({
+            id: NAME_ID,
+            label: 'Floor name',
+            placeholder: 'Floor name',
+            maxLength: NAME_MAX_LENGTH,
+            emptyMessage: 'Give the floor a name.',
+            saveLabel: 'Save floor name',
+            cancelLabel: 'Cancel rename',
+            value: floor.name,
+            onRename: (name) => rename(name),
         });
-        input.value = floor.name;
-        const nameError = h('p', { class: 'context-error', role: 'alert' });
-        const nameForm = h('form', {
-            class: 'floor-name-form',
-            id: NAME_FORM_ID,
-            onsubmit: (event) => {
-                event.preventDefault();
-                void rename();
-            },
-        },
-            h('label', { class: 'field-label', for: NAME_ID }, 'Name'),
-            h('div', { class: 'floor-name-row' },
-                input,
-                h('button', { class: 'btn btn-sm', type: 'submit' }, 'Save')),
+        // The rename landed but the list behind it did not reload: said
+        // here, because the rename itself succeeded and must not look failed.
+        const nameNotice = h('p', { class: 'context-error', role: 'alert' });
+        const nameSection = h('div', { class: 'floor-name' },
+            nameField.element,
             isLobby
                 ? h('p', { class: 'field-hint' }, "Lobby is the default floor and can't be deleted.")
                 : null,
-            nameError);
+            nameNotice);
 
         const ctx = {
             store,
@@ -207,19 +210,25 @@ const BossModFloorSettings = (() => {
         const threads = BossModFloorThreads.create(ctx);
         const projects = BossModFloorProjects.create(ctx);
         const content = h('div', { class: 'floor-settings' },
-            nameForm, people.element, threads.element, projects.element);
+            nameSection, people.element, threads.element, projects.element);
+
+        // Before the frame's ✕, the task detail's `⋯` shape. Lobby has none.
+        const deleteTool = isLobby ? null : h('button', {
+            class: 'header-icon-btn floor-delete-tool',
+            type: 'button',
+            'aria-label': DELETE_LABEL,
+            'data-tooltip': DELETE_LABEL,
+            onclick: () => openDelete(),
+        }, h('i', { 'data-lucide': 'trash-2', 'aria-hidden': 'true' }));
 
         const modal = BossModOverlays.createModal({
             title: floor.name,
             size: 'panel',
             body: content,
+            tools: deleteTool ? [deleteTool] : [],
+            // No footer: Close would repeat the head's ✕, and Delete is a tool.
+            actions: [],
             closeOnBackdrop: false,
-            actions: [
-                isLobby ? null : {
-                    label: 'Delete floor…', keepOpen: true, onSelect: () => openDelete(),
-                },
-                { label: 'Close', tone: 'quiet' },
-            ].filter(Boolean),
             onClose: () => off(),
         });
         BossModIcons.paint(modal.element, 'floor-settings');
@@ -238,33 +247,24 @@ const BossModFloorSettings = (() => {
             void projects.load();
         }
 
-        async function rename() {
-            const name = String(input.value || '').trim();
-            if (!name) {
-                nameError.textContent = 'Give the floor a name.';
-                return;
-            }
-            nameError.textContent = '';
-            input.disabled = true;
+        /**
+         * The inline rename's `onRename`: rejects (with the words to show)
+         * when the server refuses, so the draft and edit mode are kept.
+         */
+        async function rename(name) {
+            nameNotice.textContent = '';
             try {
                 await floorApi.renameFloor(floor.id, name);
             } catch (err) {
                 console.error('[floor-settings] could not rename the floor', err);
-                nameError.textContent = err.status === 409
+                throw new Error(err.status === 409
                     ? 'Another floor already uses that name.'
-                    : (err.message || 'The floor could not be renamed.');
-                input.disabled = false;
-                input.focus();
-                return;
-            }
-            input.disabled = false;
-            const loaded = await reloadFloors();
-            if (!loaded) {
-                nameError.textContent = 'Renamed, but the floor list could not reload.';
-                return;
+                    : (err.message || 'The floor could not be renamed.'));
             }
             floor.name = name;
             modal.setTitle(name);
+            const loaded = await reloadFloors();
+            if (!loaded) nameNotice.textContent = 'Renamed, but the floor list could not reload.';
         }
 
         function openDelete() {
