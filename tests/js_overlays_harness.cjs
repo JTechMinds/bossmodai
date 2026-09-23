@@ -81,6 +81,7 @@ global.window = { document: global.document };
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
 
 // A trigger button has focus before the modal opens.
 const trigger = makeEl("button");
@@ -660,7 +661,7 @@ const optionA = makeEl("button");
 const optionB = makeEl("button");
 let menuClosed = 0;
 
-const menu = BossModOverlays.createMenu({
+const menu = BossModMenu.createMenu({
     anchor,
     label: "View options",
     items: [optionA, optionB],
@@ -707,7 +708,7 @@ if ((document.listeners.keydown || []).length !== 0) {
 // A menu with no control to hang off is a keyboard dead end, so it refuses.
 let menuNeedsAnAnchor = false;
 try {
-    BossModOverlays.createMenu({ label: "x", items: [], container });
+    BossModMenu.createMenu({ label: "x", items: [], container });
 } catch (err) {
     menuNeedsAnAnchor = true;
 }

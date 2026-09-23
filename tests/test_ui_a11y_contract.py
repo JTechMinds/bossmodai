@@ -22,6 +22,7 @@ HARNESS_MODULES = [
     JS / "needs" / "need-shape.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     SHELL / "roster-row-meta.js",
     SHELL / "places.js",
     SHELL / "floor-scope.js",

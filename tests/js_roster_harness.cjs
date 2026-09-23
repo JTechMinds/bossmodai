@@ -54,7 +54,7 @@ function makeEl(tag) {
             if (other === this) return true;
             return this.children.some((c) => c && c.contains && c.contains(other));
         },
-        // BossModOverlays.createMenu asks a panel for its first focusable on
+        // BossModMenu.createMenu asks a panel for its first focusable on
         // open. This fake models no focus order, so it answers "none" — focus
         // on open is proven against a real tab order by the overlays harness.
         querySelectorAll() { return []; },
@@ -121,6 +121,9 @@ eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = Bo
 // slot would have to land in all of them.
 const coreDir = path.dirname(process.argv[10]);
 const shellDir = path.dirname(process.argv[12]);
+// core/menu.js holds createMenu, split from core/overlays.js; a sibling of
+// the overlays slot, for the same five-lists reason.
+eval(`${fs.readFileSync(path.join(coreDir, "menu.js"), "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
 eval(`${fs.readFileSync(path.join(coreDir, "switch.js"), "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
 eval(`${fs.readFileSync(path.join(shellDir, "roster-header-menu.js"), "utf8")}\n;global.BossModRosterHeaderMenu = BossModRosterHeaderMenu;\n`);
 eval(`${fs.readFileSync(path.join(shellDir, "people-view-menu.js"), "utf8")}\n;global.BossModPeopleViewMenu = BossModPeopleViewMenu;\n`);

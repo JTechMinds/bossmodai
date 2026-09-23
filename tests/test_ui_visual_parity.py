@@ -1087,7 +1087,7 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     assert gears == ["shell/header.js"], gears
 
     # It reuses the shared panel rather than growing a popover of its own.
-    assert "BossModOverlays.createMenu({" in header_menu
+    assert "BossModMenu.createMenu({" in header_menu
 
     # BOTH lists on screen at once, and the one you are looking at is filled:
     # state is a shape, not a sentence. Two earlier spellings were wrong in

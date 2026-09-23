@@ -32,7 +32,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
     "BossModFormat", "BossModGates", "BossModConsentCard",
-    "BossModOverlayFocus", "BossModOverlays",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",     "BossModComposer", "BossModSystemReceipts",
     "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModThreadSource",

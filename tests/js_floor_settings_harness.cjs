@@ -9,7 +9,9 @@
  * picker grouped by floor whose Next waits for a choice, that the confirm
  * layer shows every group of a stubbed plan, that unchecking a companion
  * re-asks the server with its id excluded and keeps its row, and that a
- * stale plan is re-read and said before a second try moves.
+ * stale plan is re-read and said before a second try moves. It also proves
+ * core/overlays.js's setTitle on a layered stack (head, ✕, and the ‹ of the
+ * layer above), and that a saved rename retitles the settings through it.
  *
  * Invoked by tests/test_ui_floor_settings.py. Not a browser bundle.
  */
@@ -22,7 +24,7 @@ installIconsStub();
 
 const NAMES = [
     "BossModDom", "BossModStore", "BossModFormat", "BossModAvatar", "BossModSearchField",
-    "BossModOverlayFocus", "BossModOverlays",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings",
@@ -86,6 +88,9 @@ function apiFetch(url, init) {
             }
             : PLAN;
         return Promise.resolve(response(200, plan));
+    }
+    if (url === "/api/floors/fin" && method === "PATCH") {
+        return Promise.resolve(response(200, { id: "fin", name: body.name }));
     }
     if (url === "/api/floors/lobby/move" && method === "POST") {
         const answer = moveAnswers.shift();
@@ -223,7 +228,34 @@ const change = (input) => (input.listeners.change || []).forEach((fn) => fn({ ta
         .map((button) => button.textLabel).join("|") === "Delete floor…|Close"
         && finPanel.querySelectorAll(".floor-section-title").map((node) => node.textContent)
             .join("|") === "People (1)|Threads (1)|Projects (1)";
+    // A saved rename retitles the settings through the modal's setTitle.
+    const nameInput = finPanel.querySelector("#floor-settings-name");
+    nameInput.value = "Money";
+    const nameForm = finPanel.querySelector("#floor-settings-name-form");
+    for (const fn of [...(nameForm.listeners.submit || [])]) {
+        await fn({ preventDefault() {}, stopPropagation() {}, target: nameForm });
+    }
+    await drain();
+    verdict.aRenameRetitlesTheSettings = finPanel.querySelector(".modal-title").textContent === "Money"
+        && finPanel.getAttribute("aria-label") === "Money"
+        && finPanel.querySelector(".modal-close").getAttribute("aria-label") === "Close Money"
+        && calls.some((call) => call.url === "/api/floors/fin" && call.method === "PATCH"
+            && call.body.name === "Money");
     fin.close();
+
+    // setTitle on a layer with another above it: its head, its ✕, and the
+    // layer above's ‹, which is named for the layer beneath.
+    const base = BossModOverlays.createModal({ title: "Alpha", body: "a", actions: [] });
+    const above = BossModOverlays.createModal({ title: "Beta", body: "b", actions: [] });
+    const backBefore = above.element.querySelector(".modal-back").getAttribute("aria-label");
+    base.setTitle("Gamma");
+    verdict.setTitleRenamesHeadCloseAndTheBackAbove = backBefore === "Back to Alpha"
+        && base.element.querySelector(".modal-title").textContent === "Gamma"
+        && base.element.getAttribute("aria-label") === "Gamma"
+        && base.element.querySelector(".modal-close").getAttribute("aria-label") === "Close Gamma"
+        && above.element.querySelector(".modal-back").getAttribute("aria-label") === "Back to Gamma";
+    above.close();
+    base.close();
     verdict.closingDrainsTheStore = store.subscriberCount() === 0 && dialogs().length === 0;
 
     const failed = Object.entries(verdict).filter(([, ok]) => ok !== true).map(([name]) => name);

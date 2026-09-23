@@ -39,7 +39,7 @@ installIconsStub();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenuSelect", "BossModGates",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
     "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape

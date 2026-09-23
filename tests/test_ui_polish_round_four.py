@@ -55,7 +55,8 @@ def _run(harness: str, modules: list[Path]) -> dict:
 
 def _overlays_payload() -> dict:
     return _run("js_overlays_harness.cjs",
-                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js"])
+                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js",
+                 JS / "core/menu.js"])
 
 
 def test_a_modal_actually_blocks_the_page_behind_it() -> None:
@@ -115,6 +116,7 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -247,6 +249,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",

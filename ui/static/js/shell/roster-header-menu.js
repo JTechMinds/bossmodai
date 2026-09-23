@@ -73,7 +73,7 @@ const BossModRosterHeaderMenu = (() => {
             type: 'button',
             'aria-label': label,
             'data-tooltip': label,
-            // dialog, not menu: core/overlays.js's panel is a role="dialog" and
+            // dialog, not menu: core/menu.js's panel is a role="dialog" and
             // its children are ordinary controls rather than menuitems. Same
             // call the conversation chrome's `⋯` makes, for the same reason.
             'aria-haspopup': 'dialog',
@@ -95,7 +95,7 @@ const BossModRosterHeaderMenu = (() => {
         /**
          * Show the panel, or put it away again.
          *
-         * The panel is core/overlays.js's — it already owns the focus trap,
+         * The panel is core/menu.js's — it already owns the focus trap,
          * Esc, the press-outside dismiss and returning focus to the `⋯`. A
          * second popover implementation is exactly the duplication the
          * primitives exist to remove.
@@ -107,7 +107,7 @@ const BossModRosterHeaderMenu = (() => {
                 close();
                 return;
             }
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: button,
                 label,
                 items,

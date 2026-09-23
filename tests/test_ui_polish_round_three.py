@@ -434,6 +434,7 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -556,7 +557,8 @@ def test_the_wide_modal_keeps_the_shared_keyboard_contract() -> None:
     level, where the behaviour lives.
     """
     payload = _run("js_overlays_harness.cjs",
-                   [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js"])
+                   [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js",
+                    JS / "core/menu.js"])
     assert payload["panelModalIsMarked"] is True
     assert payload["panelModalTrapsTabAcrossItsBody"] is True
     assert payload["panelModalEscCloses"] is True
@@ -632,6 +634,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",

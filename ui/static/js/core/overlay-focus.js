@@ -5,10 +5,10 @@
  * 300-line cap with a bug fix still to land inside createModal. The seam is a
  * real one rather than a line-count convenience: keeping Tab inside a dialog
  * and answering Esc is one responsibility, and building a modal or an anchored
- * menu is another. core/overlays.js keeps both builders; this file keeps the
- * single rule they must not each own a copy of — because the modal and the
- * slide-over it has since replaced once did, and one of the two copies was
- * broken.
+ * menu is another. core/overlays.js and core/menu.js keep the builders;
+ * this file keeps the single rule they must not each own a copy of —
+ * because the modal and the slide-over it has since replaced once did, and
+ * one of the two copies was broken.
  *
  * It also owns the OVERLAY STACK, which is the answer to a second defect no
  * single overlay could see. Each open overlay binds its own keydown handler on
@@ -21,7 +21,7 @@
  * not DOM order either — the anchored menu lives in its own container — so it
  * is recorded here, and only the top entry may answer a key.
  *
- * Loaded before core/overlays.js in index.html, which is its only consumer.
+ * Loaded before core/overlays.js and core/menu.js in index.html, its only consumers.
  */
 const BossModOverlayFocus = (() => {
     /** Everything the browser will place in the tab order by default. */

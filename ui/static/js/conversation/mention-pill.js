@@ -178,7 +178,7 @@ const BossModMentionPills = (() => {
             menuAction('mention-open-chat', BossModMentions.OPEN_CHAT, () => BossModMentions.openChat(agent)),
             menuAction('mention-view-desk', BossModMentions.VIEW_DESK, () => BossModMentions.viewDesk(agent)),
             menuAction('mention-again', BossModMentions.MENTION_AGAIN, () => BossModMentions.mentionAgain(agent)))];
-        openMenuHandle = BossModOverlays.createMenu({
+        openMenuHandle = BossModMenu.createMenu({
             anchor: opts.anchor,
             label: `${agent.name} mention`,
             items,

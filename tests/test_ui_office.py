@@ -115,7 +115,7 @@ def test_agent_actions_harness() -> None:
     harness = Path(__file__).resolve().parent / "js_office_agent_actions_harness.cjs"
     modules = [
         JS / "core" / "dom.js", JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js",
-        JS / "core" / "avatar.js", JS / "core" / "agent-status.js", JS / "core" / "store.js",
+        JS / "core" / "menu.js", JS / "core" / "avatar.js", JS / "core" / "agent-status.js", JS / "core" / "store.js",
         JS / "shell" / "agent-routes.js", OFFICE / "agent-actions.js",
     ]
     result = subprocess.run(

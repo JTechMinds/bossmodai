@@ -113,7 +113,7 @@ const BossModTaskDetail = (() => {
                 menu.close();
                 return;
             }
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: optionsButton,
                 label: OPTIONS_LABEL,
                 items: [h('div', { class: 'menu-actions' },

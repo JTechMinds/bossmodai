@@ -25,7 +25,8 @@ HARNESS_MODULES = [
     JS / "core" / "store.js", JS / "core" / "bus.js",
     JS / "core" / "format.js", JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu-select.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
     JS / "shell" / "places.js", JS / "shell" / "agent-routes.js",
     # tasks-place.js scopes the board to the operator's floor through it.
     JS / "shell" / "floor-scope.js",
@@ -44,7 +45,7 @@ DETAIL_HARNESS = Path(__file__).resolve().parent / "js_task_detail_harness.cjs"
 DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "fact-list.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
     TASKS / "task-events.js", TASKS / "task-detail-sections.js", TASKS / "task-detail.js",

@@ -25,6 +25,7 @@ FILES_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     JS / "shell" / "places.js",
     FILES / "file-content.js",
     FILES / "file-form.js",

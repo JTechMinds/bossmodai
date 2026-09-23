@@ -28,6 +28,7 @@ HARNESS_MODULES = [
     JS / "core" / "store.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     JS / "shell" / "places.js",
     JS / "shell" / "responsive.js",
 ]

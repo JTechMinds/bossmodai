@@ -31,6 +31,7 @@ HARNESS_MODULES = [
     JS / "core" / "agent-status.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
     JS / "core" / "gates.js",
     CONTEXT / "agent-api.js",
@@ -701,7 +702,7 @@ def test_the_roster_row_opens_two_doors() -> None:
     # dialog now, each on its own tab.
     assert "'Agent Marketplace'" in menu
     assert "'Add Agent'" in menu
-    assert "BossModOverlays.createMenu({" in menu
+    assert "BossModMenu.createMenu({" in menu
     assert "BossModAgentsDialog.open({ store, tab: 'marketplace' })" in menu
     assert "BossModAgentsDialog.open({ store, tab: 'add' })" in menu
     assert "aria-haspopup" in menu and "aria-expanded" in menu

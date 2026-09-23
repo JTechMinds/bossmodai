@@ -33,6 +33,7 @@ HARNESS_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     JS / "core" / "search-field.js",
     JS / "context" / "agent-api.js",
     JS / "context" / "agent-templates-api.js",

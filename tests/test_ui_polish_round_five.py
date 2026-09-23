@@ -52,6 +52,7 @@ OVERLAY_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
 ]
 
 

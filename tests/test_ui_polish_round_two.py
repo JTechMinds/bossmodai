@@ -68,6 +68,7 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -175,6 +176,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -477,8 +479,8 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
     # bubble a pointer gets cannot drift apart.
     assert "'data-tooltip': MENU_LABEL" in chrome
     assert "aria-haspopup" in chrome
-    # It reuses the one overlay implementation.
-    assert "BossModOverlays." in chrome
+    # It reuses the one overlay implementation (the menu shape, core/menu.js).
+    assert "BossModMenu." in chrome
 
     # And there is still exactly ONE focus trap in the tree — the whole reason
     # the menu is an overlays.js function rather than a popover of its own.
@@ -491,9 +493,10 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
         if "function trapKeydown(" in _read(path)
     )
     assert definers == ["core/overlay-focus.js"], definers
-    # ...and the menu still reaches for it rather than growing its own.
-    assert "trapKeydown(event, element, close)" in _read(JS / "core/overlays.js")
-    assert "createMenu" in _read(JS / "core/overlays.js")
+    # ...and the menu still reaches for it rather than growing its own. The
+    # menu builder moved to core/menu.js when core/overlays.js ran out of room.
+    assert "trapKeydown(event, element, close)" in _read(JS / "core/menu.js")
+    assert "createMenu" in _read(JS / "core/menu.js")
 
 
 def test_the_receipts_preference_still_works_from_its_new_home() -> None:
@@ -525,7 +528,7 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
     """
     harness = HERE / "js_overlays_harness.cjs"
     args = ["node", str(harness), str(JS / "core/dom.js"), str(JS / "core/overlay-focus.js"),
-            str(JS / "core/overlays.js")]
+            str(JS / "core/overlays.js"), str(JS / "core/menu.js")]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout.strip().splitlines()[-1])

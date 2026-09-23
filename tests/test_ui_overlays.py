@@ -20,12 +20,12 @@ def _overlay_modules() -> dict[str, str]:
     whole set by construction — a fourth overlay or a second trap would have to
     be written into a core module named `overlay…` to be one of these, and
     anywhere else it is caught by test_ui_index.py's tree-wide createModal
-    guard instead.
+    guard instead. The one named exception is core/menu.js: createMenu moved
+    there when core/overlays.js reached its 400-line cap, and it is listed by
+    name so the counts below still cover both overlays.
     """
-    return {
-        path.name: path.read_text(encoding="utf-8")
-        for path in sorted((JS / "core").glob("overlay*.js"))
-    }
+    paths = [*sorted((JS / "core").glob("overlay*.js")), JS / "core" / "menu.js"]
+    return {path.name: path.read_text(encoding="utf-8") for path in paths}
 
 
 def test_both_overlays_share_one_focus_trap() -> None:
@@ -74,7 +74,7 @@ def test_both_overlays_share_one_focus_trap() -> None:
 def test_modal_accessibility_contract() -> None:
     result = subprocess.run(
         ["node", str(HARNESS), str(JS / "core" / "dom.js"), str(JS / "core" / "overlay-focus.js"),
-         str(JS / "core" / "overlays.js")],
+         str(JS / "core" / "overlays.js"), str(JS / "core" / "menu.js")],
         check=False, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr or result.stdout

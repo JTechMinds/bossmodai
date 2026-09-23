@@ -19,6 +19,7 @@ MENTION_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     CONVERSATION / "mentions.js",
     CONVERSATION / "mention-pill.js",
     CONVERSATION / "mention-draft.js",

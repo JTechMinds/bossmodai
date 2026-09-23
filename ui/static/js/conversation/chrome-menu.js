@@ -94,7 +94,7 @@ const BossModChromeMenu = (() => {
         /**
          * Show the panel, or put it away again.
          *
-         * The panel is core/overlays.js's — it already owns the focus trap, Esc,
+         * The panel is core/menu.js's — it already owns the focus trap, Esc,
          * and returning focus to the control that opened it. A second popover
          * implementation is exactly the duplication the primitives exist to
          * remove.
@@ -106,7 +106,7 @@ const BossModChromeMenu = (() => {
                 close();
                 return;
             }
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: button,
                 label: MENU_LABEL,
                 // Actions first, then preferences: one is a thing to do and

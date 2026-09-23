@@ -279,7 +279,7 @@ const BossModFloorSwitcher = (() => {
             }
             const state = store.getState();
             const rows = floorsOf(state).map((floor) => floorRow(state, floor));
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: trigger,
                 label: 'Floors',
                 container: element,

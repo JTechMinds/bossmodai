@@ -15,7 +15,7 @@
  *
  * Click-triggered and toggling, following conversation/chrome.js's `⋯`. A
  * hover-only menu is unreachable by keyboard and by touch, and the panel
- * itself is core/overlays.js's — one focus trap, Esc, and focus returned to
+ * itself is core/menu.js's — one focus trap, Esc, and focus returned to
  * the row — rather than a second popover implementation.
  *
  * Both doors read the same way: a lucide icon, then what it opens. The pair
@@ -91,7 +91,7 @@ const BossModAddAgentMenu = (() => {
             // the Agents dialog's, so the two can never drift apart. Why
             // `blocks` and a drawn `plus` is said there.
             const ICONS = BossModAgentsDialog.ICONS;
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor,
                 label: 'Add agent',
                 items: [

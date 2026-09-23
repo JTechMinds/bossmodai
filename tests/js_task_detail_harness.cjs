@@ -32,7 +32,7 @@ global.BossModMarkdown = {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModOverlays", "BossModFactList",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModFactList",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskDetailSections", "BossModTaskDetail",
 ];

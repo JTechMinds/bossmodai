@@ -6,11 +6,12 @@
  * keyboard-operable: focus is trapped inside while open, Esc dismisses without
  * confirming, and focus returns to whatever opened it.
  *
- * Two shapes, one contract — a modal and a menu hanging off a control. They
- * share core/overlay-focus.js's trapKeydown() rather than each carrying a trap
- * of its own, which is how the modal and the old slide-over drifted apart once
- * already. That module holds the keyboard rule; this one holds the shapes that
- * obey it. Slide-over panels were retired on 2026-09-21: every secondary
+ * Two shapes, one contract — this modal, and the menu hanging off a control
+ * (core/menu.js, split from here). They share core/overlay-focus.js's
+ * trapKeydown() rather than each carrying a trap of its own, which is how the
+ * modal and the old slide-over drifted apart once already. That module holds
+ * the keyboard rule; this one and core/menu.js hold the shapes that obey it.
+ * Slide-over panels were retired on 2026-09-21: every secondary
  * screen now opens in the modal, so there is one overlay primitive for them.
  *
  * The modal has THREE SIZES, one implementation and one frame: a question, a
@@ -148,7 +149,8 @@ const BossModOverlays = (() => {
      *   actions outside the body, and none touches the trap, Esc or focus
      *   restoration. Anything else is default.
      * @returns {{ close: () => void, element: HTMLElement,
-     *   setActions: (actions: Array<object>) => void }} `close` removes exactly
+     *   setActions: (actions: Array<object>) => void,
+     *   setTitle: (title: string) => void }} `close` removes exactly
      *   this layer, wherever it sits: layers above it stay, and each ‹ is
      *   relabelled to whatever is now beneath it. `setActions` rebuilds
      *   the action row IN PLACE — same node, same panel, same trap — because a
@@ -157,6 +159,9 @@ const BossModOverlays = (() => {
      *   second focus trap over one task. The trap re-reads the panel on every
      *   Tab so it finds the new buttons; the button that held focus may be one
      *   just removed, so placing focus after a swap is the caller's.
+     *   `setTitle` renames THIS layer in place (a rename saved in the dialog):
+     *   the head's title, the dialog's accessible name, its ✕ ("Close …"),
+     *   and the ‹ of the layer above it ("Back to …"), which reads the title.
      *
      *   Focus on open: the first control in the BODY that actually takes focus
      *   (a hidden one does not); else the last action; else the frame's ✕, so
@@ -205,13 +210,16 @@ const BossModOverlays = (() => {
             onclick: () => close(),
         }, '‹');
 
+        // Kept by name: setTitle renames it in place.
+        const titleNode = h('h2', { class: 'modal-title' }, title);
+
         // One row, the conversation header's: the way back, whatever leads,
         // the name, a fact about it, the caller's tools, and the exit. Empty
         // slots render nothing, so a confirm's head is its title and its ✕.
         const head = h('div', { class: 'modal-head' },
             back,
             lead || null,
-            h('h2', { class: 'modal-title' }, title),
+            titleNode,
             subtitle ? h('span', { class: 'modal-subtitle' }, subtitle) : null,
             tools && tools.length ? h('div', { class: 'modal-tools' }, tools) : null,
             closeButton);
@@ -310,88 +318,17 @@ const BossModOverlays = (() => {
             else closeButton.focus();
         }
 
-        return { close, element, setActions };
-    }
-
-    /**
-     * Open a small panel anchored to the control that asked for it.
-     *
-     * The same accessibility contract as the modal — Tab trapped inside,
-     * Esc dismisses, focus returns to the opener — but non-modal, because the
-     * page behind is not blocked by a handful of view options.
-     *
-     * `role="dialog"`, not `role="menu"`: a menu's children must carry
-     * menuitem roles, and the first thing this holds is a `role="switch"`.
-     * A dialog is the container that can carry an arbitrary control honestly.
-     *
-     * It is positioned by CSS against `container` rather than by measuring the
-     * anchor. Measuring would need a viewport this codebase's fake DOM cannot
-     * supply, and would put a number in JavaScript that the stylesheet is
-     * better at.
-     *
-     * @param {object} options
-     * @param {HTMLElement} options.anchor  The control that opened it. Focus
-     *   returns HERE on close, named explicitly rather than read from
-     *   document.activeElement: a mouse click does not focus a button in every
-     *   browser, and the anchor is the one right answer either way.
-     * @param {string} options.label  The panel's accessible name.
-     * @param {HTMLElement[]} options.items  Content. Owned by the caller: this
-     *   does not destroy it on close, so a preference control keeps what it
-     *   holds across every open.
-     * @param {HTMLElement} options.container  What it is positioned against.
-     *   Must be a positioned ancestor of the anchor.
-     * @param {() => void} [options.onClose]  Called once, after close, however
-     *   it closed — so the anchor can drop its aria-expanded and toggle rather
-     *   than stack a second panel.
-     * @returns {{ close: () => void, element: HTMLElement }}
-     * @throws {Error} When the anchor or the container is missing. A panel
-     *   with nothing to return focus to is a keyboard dead end.
-     */
-    function createMenu({ anchor, label, items, container, onClose }) {
-        if (!anchor) throw new Error('[overlays] a menu needs the control it hangs off');
-        if (!container) throw new Error('[overlays] a menu needs a container to sit in');
-
-        const element = h('div', {
-            class: 'menu',
-            role: 'dialog',
-            'aria-label': label,
-        }, items || []);
-
-        const onKeydown = (event) => trapKeydown(event, element, close);
-        // A press anywhere else dismisses it, which is what a panel hanging
-        // off a button is expected to do. mousedown rather than click, so it
-        // is gone before whatever is under the pointer reacts. The anchor is
-        // excluded: it toggles, and closing here would make its own click
-        // re-open the panel it just shut.
-        const onPointerDown = (event) => {
-            const target = event.target;
-            if (element.contains(target)) return;
-            if (anchor === target || (anchor.contains && anchor.contains(target))) return;
-            close();
-        };
-
-        let closed = false;
-        function close() {
-            if (closed) return;
-            closed = true;
-            BossModOverlayFocus.unmountOverlay(element, onKeydown);
-            document.removeEventListener('mousedown', onPointerDown);
-            element.remove();
-            if (anchor.focus) anchor.focus();
-            if (onClose) onClose();
+        /** Rename this layer; see @returns. */
+        function setTitle(next) {
+            layer.title = next;
+            titleNode.textContent = next;
+            element.setAttribute('aria-label', next);
+            closeButton.setAttribute('aria-label', `Close ${next}`);
+            relabel();
         }
 
-        BossModOverlayFocus.mountOverlay(element, onKeydown);
-        document.addEventListener('mousedown', onPointerDown);
-        container.append(element);
-        // The first option, so the keyboard lands on something to act on. With
-        // no options there is nothing to focus and the anchor keeps it, which
-        // is why a caller with nothing to show should not open one at all.
-        const stops = element.querySelectorAll(FOCUSABLE);
-        if (stops.length) stops[0].focus();
-
-        return { close, element };
+        return { close, element, setActions, setTitle };
     }
 
-    return { createModal, createMenu };
+    return { createModal };
 })();

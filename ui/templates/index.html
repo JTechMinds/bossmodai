@@ -157,11 +157,12 @@
     <script src="{{ static_url('js/core/tabs.js') }}"></script>
     <script src="{{ static_url('js/core/store.js') }}"></script>
     <script src="{{ static_url('js/core/bus.js') }}"></script>
-    <!-- The one focus trap the three overlays share, before the file that
-         builds them: overlays.js reads it at load time, not on first open. -->
+    <!-- The one focus trap the overlays share, before the files that build
+         them: overlays.js and menu.js read it at load time, not on first open. -->
     <script src="{{ static_url('js/core/overlay-focus.js') }}"></script>
     <script src="{{ static_url('js/core/overlays.js') }}"></script>
-    <!-- A dropdown is the shared menu panel, so it loads after overlays.js. -->
+    <script src="{{ static_url('js/core/menu.js') }}"></script>
+    <!-- A dropdown is the shared menu panel, so it loads after menu.js. -->
     <script src="{{ static_url('js/core/menu-select.js') }}"></script>
     <script src="{{ static_url('js/core/gates.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card-nest-git.js') }}"></script>

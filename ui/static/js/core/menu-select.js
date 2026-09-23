@@ -2,7 +2,7 @@
  * BossMod AI — a dropdown built from the app's own menu.
  *
  * A trigger button that names the current choice, and the shared anchored
- * panel (core/overlays.js createMenu) listing the options as `.menu-action`
+ * panel (core/menu.js createMenu) listing the options as `.menu-action`
  * rows — the same panel and rows a click on an agent's name in a chat opens.
  * It replaces the native <select> in toolbars: WebKitGTK paints a <select> as
  * a grey GTK button with its own arrow and height, so the one control that
@@ -128,7 +128,7 @@ const BossModMenuSelect = (() => {
 
         /**
          * Show the options, or put them away again. The panel is
-         * core/overlays.js's, which owns the focus trap, Esc, the press-outside
+         * core/menu.js's, which owns the focus trap, Esc, the press-outside
          * dismiss and returning focus to the trigger.
          * @returns {void}
          */
@@ -137,7 +137,7 @@ const BossModMenuSelect = (() => {
                 close();
                 return;
             }
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: trigger,
                 label,
                 items: [h('div', { class: 'menu-actions' }, list.map(row))],

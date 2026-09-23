@@ -18,6 +18,7 @@ MODULES = [
     JS / "core" / "search-field.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
     JS / "shell" / "floor-scope.js",
     JS / "shell" / "floor-api.js",
     JS / "shell" / "floor-delete.js",
@@ -47,5 +48,7 @@ def test_floor_settings_behaviour() -> None:
         "aStalePlanIsReReadAndSaid": True,
         "aMoveClosesBackToTheSettingsAndRefreshes": True,
         "otherFloorsOfferDelete": True,
+        "aRenameRetitlesTheSettings": True,
+        "setTitleRenamesHeadCloseAndTheBackAbove": True,
         "closingDrainsTheStore": True,
     }

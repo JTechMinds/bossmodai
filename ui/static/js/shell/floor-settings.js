@@ -121,7 +121,7 @@ const BossModFloorSettings = (() => {
                     onMoveTo(floor);
                 },
             }, h('span', { class: 'menu-select-label' }, floor.name)));
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: more,
                 container: host,
                 label: `Move ${name} to`,
@@ -264,11 +264,7 @@ const BossModFloorSettings = (() => {
                 return;
             }
             floor.name = name;
-            // The head is the frame's; its title node is the one place the name shows.
-            const title = modal.element.querySelector('.modal-title');
-            if (!title) throw new Error('[floor-settings] the modal rendered no title');
-            title.textContent = name;
-            modal.element.setAttribute('aria-label', name);
+            modal.setTitle(name);
         }
 
         function openDelete() {

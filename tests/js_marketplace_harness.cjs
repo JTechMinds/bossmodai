@@ -31,7 +31,7 @@ FakeEl.prototype.setSelectionRange = function setSelectionRange(start, end) {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays",
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     // The browse head's filter is the app's toolbar search.
     "BossModSearchField",
     "BossModAgentApi", "BossModAgentTemplatesApi",

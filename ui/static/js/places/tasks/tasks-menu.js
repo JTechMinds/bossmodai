@@ -98,7 +98,7 @@ const BossModTasksMenu = (() => {
             type: 'button',
             'aria-label': MENU_LABEL,
             'data-tooltip': MENU_LABEL,
-            // dialog, not menu: core/overlays.js's panel is a role="dialog" and
+            // dialog, not menu: core/menu.js's panel is a role="dialog" and
             // its children are ordinary buttons rather than menuitems.
             'aria-haspopup': 'dialog',
             'aria-expanded': 'false',
@@ -135,7 +135,7 @@ const BossModTasksMenu = (() => {
 
         /**
          * Show the options, or put them away again. The panel is
-         * core/overlays.js's, which owns the focus trap, Esc, the press-outside
+         * core/menu.js's, which owns the focus trap, Esc, the press-outside
          * dismiss and returning focus to the `⋯`.
          * @returns {void}
          */
@@ -145,7 +145,7 @@ const BossModTasksMenu = (() => {
                 return;
             }
             sync();
-            menu = BossModOverlays.createMenu({
+            menu = BossModMenu.createMenu({
                 anchor: button,
                 label: MENU_LABEL,
                 items: [group, actions],
