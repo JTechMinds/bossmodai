@@ -1,4 +1,8 @@
-"""HA-SEC-P0-04 — Company files API is rooted at artifacts/projects."""
+"""HA-SEC-P0-04 — Company files API is rooted at the company root.
+
+The company root holds one folder per floor. Backups, the database and
+per-agent workspaces never appear in it.
+"""
 
 from __future__ import annotations
 
@@ -58,10 +62,10 @@ def _auth_headers() -> dict[str, str]:
 
 def _seed_artifact_tree(tmp_path: Path, monkeypatch) -> dict[str, Path]:
     artifacts = tmp_path / "artifacts"
-    projects = artifacts / "projects"
+    company = artifacts / "company"
     backups = artifacts / "db_backups"
     agents = artifacts / "agents"
-    project = projects / "alpha"
+    project = company / "lobby" / "alpha"
     project.mkdir(parents=True)
     backups.mkdir(parents=True)
     (agents / "agent_0001").mkdir(parents=True)
@@ -73,17 +77,17 @@ def _seed_artifact_tree(tmp_path: Path, monkeypatch) -> dict[str, Path]:
     (agents / "agent_0001" / "secret.md").write_text("agent secret", encoding="utf-8")
     (project / "leak.bak").write_bytes(b"should not be served")
 
-    monkeypatch.setattr("core.bm_cli.filesystem.company_files_root", lambda: projects)
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(company))
     return {
         "artifacts": artifacts,
-        "projects": projects,
+        "company": company,
         "backups": backups,
         "backup": backup,
         "notes": notes,
     }
 
 
-def test_company_files_root_lists_projects_not_backups_or_agents(tmp_path, monkeypatch) -> None:
+def test_company_files_root_lists_floors_not_backups_or_agents(tmp_path, monkeypatch) -> None:
     _seed_artifact_tree(tmp_path, monkeypatch)
     client = _client()
 
@@ -92,10 +96,14 @@ def test_company_files_root_lists_projects_not_backups_or_agents(tmp_path, monke
     body = res.json()
     assert body["kind"] == "directory"
     names = [entry["name"] for entry in body["entries"]]
-    assert "alpha" in names
+    assert "lobby" in names
     assert "db_backups" not in names
     assert "agents" not in names
     assert "projects" not in names
+
+    inside = client.get("/api/company/files", params={"path": "/lobby"}, headers=_auth_headers())
+    assert inside.status_code == 200
+    assert [entry["name"] for entry in inside.json()["entries"]] == ["alpha"]
 
 
 def test_company_files_raw_rejects_db_backup_path(tmp_path, monkeypatch) -> None:
@@ -149,14 +157,14 @@ def test_company_files_can_open_and_edit_project_file(tmp_path, monkeypatch) -> 
     client = _client()
     headers = _auth_headers()
 
-    opened = client.get("/api/company/files", params={"path": "/alpha/notes.md"}, headers=headers)
+    opened = client.get("/api/company/files", params={"path": "/lobby/alpha/notes.md"}, headers=headers)
     assert opened.status_code == 200
     assert opened.json()["kind"] == "file"
     assert opened.json()["content"] == PROJECT_TEXT
 
     historical = client.get(
         "/api/company/files",
-        params={"path": "/projects/alpha/notes.md"},
+        params={"path": "/projects/lobby/alpha/notes.md"},
         headers=headers,
     )
     assert historical.status_code == 200
@@ -165,13 +173,13 @@ def test_company_files_can_open_and_edit_project_file(tmp_path, monkeypatch) -> 
     saved = client.put(
         "/api/company/files",
         headers=headers,
-        json={"path": "/alpha/notes.md", "content": "updated notes"},
+        json={"path": "/lobby/alpha/notes.md", "content": "updated notes"},
     )
     assert saved.status_code == 200
-    assert saved.json()["path"] == "/alpha/notes.md"
+    assert saved.json()["path"] == "/lobby/alpha/notes.md"
     assert tree["notes"].read_text(encoding="utf-8") == "updated notes"
 
-    denied = client.get("/api/company/files", params={"path": "/alpha/leak.bak"}, headers=headers)
+    denied = client.get("/api/company/files", params={"path": "/lobby/alpha/leak.bak"}, headers=headers)
     assert denied.status_code in {400, 404}
 
 

@@ -28,7 +28,7 @@ from core.bm_cli.virtual_fs import (
 def _sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep personal storage out of the work tree so absence is actually absent."""
     monkeypatch.setattr(filesystem, "_AGENTS_ROOT", tmp_path / "agents")
-    monkeypatch.setattr(filesystem, "_PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(tmp_path / "company"))
     db.close_connection()
     db_path = Path(os.environ["BOSSMOD_DB_PATH"])
     for suffix in ("", "-wal", "-shm"):

@@ -24,10 +24,12 @@ from core.bm_cli.cli_auto_approve import (
     command_shape,
     parse_review_payload,
 )
-from core.bm_cli.filesystem import agent_artifact_dir, project_artifact_dir
+from core.bm_cli.filesystem import agent_artifact_dir
+from core.bm_cli.floor_roots import project_dir
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
 from core.bm_cli.session import set_cli_cwd
+from db.floors import LOBBY_ID
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,7 +84,8 @@ def _thread(agent_id: str, *, enabled: bool):
 
 
 def _project_file(name: str = "demo") -> Path:
-    root = project_artifact_dir(name)
+    # New agents live in Lobby, so their /projects is Lobby's folder.
+    root = project_dir(LOBBY_ID, name)
     root.mkdir(parents=True, exist_ok=True)
     path = root / "notes.txt"
     path.write_text("keep", encoding="utf-8")
@@ -247,7 +250,7 @@ def test_write_outside_the_bound_project_stays_a_card(monkeypatch: pytest.Monkey
     agent, state = _agent_and_state()
     channel = _thread(agent.id, enabled=True)
     _project_file("demo")
-    other = project_artifact_dir("other")
+    other = project_dir(LOBBY_ID, "other")
     other.mkdir(parents=True, exist_ok=True)
     secret = other / "secret.txt"
     secret.write_text("nope", encoding="utf-8")

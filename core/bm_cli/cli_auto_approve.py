@@ -480,7 +480,7 @@ def _write_roots(agent: Agent, real_cwd: Path) -> tuple[Path, ...]:
     """Bound project realpath, plus the agent's own ``/me`` workspace."""
     me = agent_artifact_dir(agent.storage_key).resolve()
     roots = [me]
-    project = project_directory_for(real_cwd)
+    project = project_directory_for(agent.storage_key, real_cwd)
     if project is not None:
         roots.insert(0, project.resolve())
     return tuple(roots)

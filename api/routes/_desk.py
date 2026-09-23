@@ -64,7 +64,7 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
 def _list_virtual_root_entries(agent: Agent) -> list[dict[str, object]]:
     """Return the virtual filesystem mounts without scanning nested contents."""
     entries: list[dict[str, object]] = []
-    for mount in virtual_root_entries():
+    for mount in virtual_root_entries(agent.storage_key):
         path = f"/{mount.rstrip('/')}"
         resolved = resolve_cli_path(agent.storage_key, "/", path)
         updated_at = None

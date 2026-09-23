@@ -13,7 +13,7 @@ import pytest
 
 import db
 from core import config
-from core.bm_cli.filesystem import projects_artifact_root
+from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.locked_clone_outcome import (
     PATH_JAIL_BLOCKED_WHY,
     rewrite_virtual_shell_paths,
@@ -21,6 +21,7 @@ from core.bm_cli.locked_clone_outcome import (
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
+from db.floors import LOBBY_ID
 
 
 def setup_function() -> None:
@@ -53,7 +54,8 @@ def _reviewer():
 
 
 def _seed_shared_deliverable() -> tuple[Path, str]:
-    root = projects_artifact_root() / "llm-helper-review" / "a1-impl"
+    # The reviewer lives in Lobby, so its /projects is Lobby's folder.
+    root = floor_root(LOBBY_ID) / "llm-helper-review" / "a1-impl"
     tests_dir = root / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     target = tests_dir / "test_ok.py"

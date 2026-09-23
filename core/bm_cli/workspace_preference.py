@@ -429,14 +429,19 @@ def _host_path_is_allowlisted(agent: Agent, raw_path: str, task_id: str | None) 
     try:
         resolved = Path(raw_path).expanduser().resolve()
         extras = named_path_roots(agent.storage_key)
-        # Desk / projects are the default workspace; this card is for extra host roots.
-        from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
+        # Desk / the floor's projects are the default workspace; this card is
+        # for extra host roots.
+        from core.bm_cli.filesystem import agent_artifact_dir
+        from core.bm_cli.floor_roots import agent_floor_id, floor_root
 
         desk = agent_artifact_dir(agent.storage_key).resolve()
-        projects = projects_artifact_root().resolve()
-        if is_within_roots(resolved, (desk, projects)):
+        floor_id = agent_floor_id(agent.storage_key)
+        workspace = {desk}
+        if floor_id is not None:
+            workspace.add(floor_root(floor_id).resolve())
+        if is_within_roots(resolved, tuple(workspace)):
             return False
-        host_roots = tuple(root for root in extras if root not in {desk, projects})
+        host_roots = tuple(root for root in extras if root not in workspace)
         return is_within_roots(resolved, host_roots)
     except OSError:
         return False

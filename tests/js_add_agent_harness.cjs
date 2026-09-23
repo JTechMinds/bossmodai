@@ -57,7 +57,7 @@ const NAMES = [
     "BossModAgentTemplatePicker",
     "BossModAgentFormTemplate", "BossModAgentSaveTemplate", "BossModAgentDialogFooter",
     "BossModAgentAddPane", "BossModAgentDialogSlot",
-    "BossModFloorScope", "BossModAgentFloor",
+    "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModAddAgentMenu",
 ];
 if (paths.length !== NAMES.length) {

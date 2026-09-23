@@ -61,12 +61,15 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/notifications", "get_agent_notifications"),
     (("GET",), "/api/agents/{agent_id}/triggers", "get_agent_triggers"),
     (("GET",), "/api/agents/vacation", "list_vacationing_agents"),
-    (("POST",), "/api/agents/{agent_id}/home-floor", "move_agent_home_floor"),
     (("POST",), "/api/agents/{agent_id}/return", "return_agent_from_vacation"),
     (("GET",), "/api/floors", "get_floors"),
     (("POST",), "/api/floors", "post_floor"),
     (("PATCH",), "/api/floors/{floor_id}", "patch_floor"),
     (("DELETE",), "/api/floors/{floor_id}", "remove_floor"),
+    (("POST",), "/api/floors/{floor_id}/move-plan", "post_move_plan"),
+    (("POST",), "/api/floors/{floor_id}/move", "post_move"),
+    (("GET",), "/api/floors/{floor_id}/projects", "get_floor_projects"),
+    (("POST",), "/api/floors/{floor_id}/projects/move", "post_project_move"),
     (("GET",), "/api/tasks", "list_tasks"),
     (("POST",), "/api/tasks", "create_task"),
     (("GET",), "/api/tasks/board", "get_task_board"),
@@ -151,7 +154,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 127
+    assert len(got) == 130
 
 
 def test_from_api_routes_import_router_still_works() -> None:

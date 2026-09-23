@@ -1,4 +1,10 @@
-"""Company workspace file browser and mutators."""
+"""Company workspace file browser and mutators.
+
+The browser is rooted at the company root, whose top level is one folder per
+floor (named by floor id, shown by floor name) plus ``.archived-floors``
+(shown as "Archived floors"). The top level is floors only: nothing is
+created there directly. Configured host roots are listed beside the floors.
+"""
 
 import asyncio
 import os
@@ -18,6 +24,15 @@ from api.routes._shared import (
     _child_virtual_path,
     _launch_file_explorer,
     _read_desk_file_preview,
+)
+from api.routes._company_floors import (
+    annotate_floor_folders,
+    annotate_search_hit,
+    floor_display_name,
+    floor_names,
+    is_top_level_hidden,
+    refuse_floor_folder,
+    refuse_floor_level_destination,
 )
 from core import config
 
@@ -124,11 +139,15 @@ def _validate_name(name: str) -> None:
 
 @router.post("/company/files/create", status_code=201)
 async def create_company_file(body: CompanyFileCreateBody) -> dict[str, object]:
-    """Create an empty file or folder in the company workspace."""
+    """Create an empty file or folder in the company workspace.
+
+    400 at floor level (the company top level or directly in the archive).
+    """
     root = _company_files_root()
     parent = _resolve_safe_company_path(root, body.path)
     if parent is None or not parent.exists() or not parent.is_dir():
         raise HTTPException(400, "Invalid parent path")
+    refuse_floor_level_destination(parent)
 
     _validate_name(body.name)
     target = parent / body.name
@@ -146,11 +165,15 @@ async def create_company_file(body: CompanyFileCreateBody) -> dict[str, object]:
 
 @router.delete("/company/files")
 async def delete_company_file(body: CompanyFileDeleteBody) -> dict[str, object]:
-    """Delete a file or empty directory from the company workspace."""
+    """Delete a file or empty directory from the company workspace.
+
+    409 for a floor folder, the archive, or an archived floor.
+    """
     root = _company_files_root()
     resolved = _resolve_safe_company_path(root, body.path)
     if resolved is None or not resolved.exists():
         raise HTTPException(404, "Path not found")
+    refuse_floor_folder(resolved)
 
     if resolved.is_dir():
         if any(resolved.iterdir()):
@@ -164,11 +187,17 @@ async def delete_company_file(body: CompanyFileDeleteBody) -> dict[str, object]:
 
 @router.patch("/company/files/rename")
 async def rename_company_file(body: CompanyFileRenameBody) -> dict[str, object]:
-    """Rename a file or folder in the company workspace."""
+    """Rename a file or folder in the company workspace.
+
+    409 for a floor folder, the archive, or an archived floor; 400 for
+    anything else sitting at floor level.
+    """
     root = _company_files_root()
     resolved = _resolve_safe_company_path(root, body.path)
     if resolved is None or not resolved.exists():
         raise HTTPException(404, "Path not found")
+    refuse_floor_folder(resolved)
+    refuse_floor_level_destination(resolved.parent)
 
     _validate_name(body.new_name)
     new_target = resolved.parent / body.new_name
@@ -180,7 +209,11 @@ async def rename_company_file(body: CompanyFileRenameBody) -> dict[str, object]:
 
 @router.post("/company/files/move")
 async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
-    """Move a file or folder within the company workspace."""
+    """Move a file or folder within the company workspace.
+
+    409 when the source is a floor folder, the archive, or an archived floor;
+    400 when the destination is floor level.
+    """
     root = _company_files_root()
     source = _resolve_safe_company_path(root, body.source)
     destination = _resolve_safe_company_path(root, body.destination)
@@ -188,6 +221,8 @@ async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
         raise HTTPException(404, "Source not found")
     if destination is None or not destination.exists() or not destination.is_dir():
         raise HTTPException(400, "Destination must be an existing directory")
+    refuse_floor_folder(source)
+    refuse_floor_level_destination(destination)
 
     target = destination / source.name
     if target.exists():
@@ -200,7 +235,11 @@ async def move_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
 
 @router.post("/company/files/copy")
 async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
-    """Copy a file or folder within the company workspace."""
+    """Copy a file or folder within the company workspace.
+
+    409 when the source is a floor folder, the archive, or an archived floor;
+    400 when the destination is floor level.
+    """
     root = _company_files_root()
     source = _resolve_safe_company_path(root, body.source)
     destination = _resolve_safe_company_path(root, body.destination)
@@ -208,6 +247,8 @@ async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
         raise HTTPException(404, "Source not found")
     if destination is None or not destination.exists() or not destination.is_dir():
         raise HTTPException(400, "Destination must be an existing directory")
+    refuse_floor_folder(source)
+    refuse_floor_level_destination(destination)
 
     target = destination / source.name
     if target.exists():
@@ -223,7 +264,11 @@ async def copy_company_file(body: CompanyFileMoveBody) -> dict[str, object]:
 
 @router.get("/company/files/search")
 async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[str, object]]:
-    """Search for files and folders by name across the company workspace."""
+    """Search for files and folders by name across the company workspace.
+
+    Each hit carries ``display_path``: its path with floor folders shown by
+    floor name (``/Finance/books/plan.md``), not by id.
+    """
     from core.bm_cli.filesystem import is_denied_company_file
 
     def _search() -> list[dict[str, object]]:
@@ -231,6 +276,8 @@ async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[s
         query_lower = q.lower()
         results: list[dict[str, object]] = []
 
+        names = floor_names()
+        company = root.resolve()
         search_roots = _company_named_roots()
         for search_root in search_roots:
             if not search_root.exists():
@@ -249,13 +296,15 @@ async def search_company_files(q: str = Query(..., min_length=1)) -> list[dict[s
                     full = Path(dirpath) / name
                     is_dir = full.is_dir()
                     stat_result = full.stat()
-                    results.append({
+                    hit = {
                         "name": name,
                         "path": _company_virtual_path(root, full),
                         "is_dir": is_dir,
                         "size_bytes": None if is_dir else stat_result.st_size,
                         "updated_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
-                    })
+                    }
+                    annotate_search_hit(hit, in_company=search_root == company, names=names)
+                    results.append(hit)
                     if len(results) >= 100:
                         break
                 if len(results) >= 100:
@@ -285,13 +334,13 @@ async def get_company_file_raw(path: str = Query(..., min_length=1)):
 
 
 def _company_files_root() -> Path:
-    """Return the company browser root (the separated project data root)."""
-    from core.bm_cli.filesystem import company_files_root
-    return company_files_root()
+    """Return the company browser root: the company root, one folder per floor."""
+    from core.bm_cli.floor_roots import company_root
+    return company_root()
 
 
 def _company_named_roots() -> tuple[Path, ...]:
-    """Projects mount plus any operator-configured extra host roots."""
+    """Company root plus any operator-configured extra host roots."""
     from core.bm_cli.host_roots import configured_host_roots
 
     projects = _company_files_root().resolve()
@@ -452,6 +501,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
                 continue
             if is_denied_company_file(Path(name)):
                 continue
+            if virtual_path == "/" and is_top_level_hidden(name):
+                continue
             is_dir = entry.is_dir()
             stat_result = entry.stat()
             child_path = _child_virtual_path(virtual_path, name)
@@ -464,14 +515,21 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
             })
     if virtual_path == "/":
         entries.extend(_host_root_entries(extras))
-    entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
+    annotate_floor_folders(entries, virtual_path)
+    # Floors sort by the name the operator sees; the archive sits after them.
+    entries.sort(key=lambda e: (
+        not bool(e["is_dir"]),
+        e.get("mount") == "archive",
+        str(e.get("floor_name") or e["name"]).lower(),
+    ))
     _annotate_agent_names(entries)
 
+    crumbs = _company_breadcrumbs(virtual_path)
     return {
         "kind": "directory",
         "path": virtual_path,
-        "name": Path(virtual_path).name if virtual_path != "/" else "Company Workspace",
-        "breadcrumbs": _company_breadcrumbs(virtual_path),
+        "name": crumbs[-1]["label"] if virtual_path != "/" else "Company",
+        "breadcrumbs": crumbs,
         "entries": entries,
         "host_roots": [str(item) for item in extras],
         "workspace_note": _company_workspace_note(extras),
@@ -481,14 +539,16 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
 def _company_workspace_note(extras) -> str:
     if extras:
         return (
-            "Company Files is the shared project workspace (outside the application "
-            "install) plus the configured host roots shown below. Manage them here "
-            "or under Settings → CLI Policy. "
+            "Company Files holds one folder per floor (outside the application "
+            "install); agents see only their own floor's folder as /projects. "
+            "The configured host roots shown below are shared by every floor. "
+            "Manage them here or under Settings → CLI Policy. "
             "This is not a full unrestricted host mount."
         )
     return (
-        "Company Files is the shared project workspace only (outside the application "
-        "install). Use Add host folder on this "
+        "Company Files holds one folder per floor (outside the application "
+        "install); agents see only their own floor's folder as /projects. "
+        "Use Add host folder on this "
         "page (same allowlist as Settings → CLI Policy → Host workspace roots) "
         "to open a named path on disk. This is not a full unrestricted host mount."
     )
@@ -539,9 +599,12 @@ def _company_breadcrumbs(path: str) -> list[dict[str, str]]:
                 return crumbs
     parts = [item for item in path.strip("/").split("/") if item]
     breadcrumbs: list[dict[str, str]] = [{"label": "Company", "path": "/"}]
+    names = floor_names()
     current = ""
-    for part in parts:
+    for index, part in enumerate(parts):
         current += f"/{part}"
-        breadcrumbs.append({"label": part, "path": current})
+        # Floor folders are named by id; the crumb shows the floor's name.
+        label = floor_display_name(parts, index, names) or part
+        breadcrumbs.append({"label": label, "path": current})
     _annotate_agent_names(breadcrumbs, name_key="label")
     return breadcrumbs

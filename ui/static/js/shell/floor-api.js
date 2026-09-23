@@ -1,8 +1,9 @@
 /**
  * BossMod AI — floor and vacation requests.
  *
- * I/O only: the header switcher, the Edit floor modal and the On vacation
- * view draw; this file talks to /api/floors and the agent vacation routes.
+ * I/O only: the header switcher, the floor settings and the On vacation
+ * view draw; this file talks to /api/floors, the active thread list, and the
+ * agent vacation routes.
  * Every non-2xx becomes a thrown Error carrying the server's own message,
  * so a caller can never mistake a refused request for an empty answer.
  */
@@ -48,8 +49,16 @@ const BossModFloorApi = (() => {
      *   deleteFloor: (id: string, occupants: ('send_home'|'delete'|null)) => Promise<object>,
      *   listVacation: () => Promise<Array<object>>,
      *   returnFromVacation: (agentId: string, floorId: string) => Promise<object>,
+     *   listActiveThreads: () => Promise<Array<object>>,
+     *   planMove: (floorId: string, choice: MoveChoice) => Promise<object>,
+     *   applyMove: (floorId: string, choice: MoveChoice, fingerprint: string) => Promise<object>,
+     *   listProjects: (floorId: string) => Promise<Array<{name: string, modified_at: string}>>,
+     *   moveProject: (floorId: string, project: string, fromFloorId: string) => Promise<object>,
      * }} Each rejects with the Error from `failure` on a non-2xx, and with the
-     *   network error itself when the request never completed.
+     *   network error itself when the request never completed. A move whose
+     *   plan went stale rejects with `code` `plan_changed`. `MoveChoice` is
+     *   `{agentIds: string[], channelIds: string[], excludeCompanionIds: string[]}`:
+     *   what moves TO `floorId`.
      * @throws {Error} When apiFetch is missing.
      */
     function createFloorApi(deps) {
@@ -80,6 +89,18 @@ const BossModFloorApi = (() => {
             return rows;
         }
 
+        /** The move body the server reads; one shape for the plan and the apply. */
+        function moveBody(choice) {
+            const { agentIds = [], channelIds = [], excludeCompanionIds = [] } = choice || {};
+            return {
+                agent_ids: agentIds,
+                channel_ids: channelIds,
+                exclude_companion_ids: excludeCompanionIds,
+            };
+        }
+
+        const floorUrl = (id, rest) => `/api/floors/${encodeURIComponent(id)}${rest}`;
+
         return {
             listFloors,
             createFloor: (name) => send('POST', '/api/floors', { name }),
@@ -91,6 +112,15 @@ const BossModFloorApi = (() => {
             listVacation: () => json('/api/agents/vacation'),
             returnFromVacation: (agentId, floorId) => send(
                 'POST', `/api/agents/${encodeURIComponent(agentId)}/return`, { floor_id: floorId },
+            ),
+            listActiveThreads: () => json('/api/channels?status=active', { cache: 'no-store' }),
+            planMove: (floorId, choice) => send('POST', floorUrl(floorId, '/move-plan'), moveBody(choice)),
+            applyMove: (floorId, choice, fingerprint) => send(
+                'POST', floorUrl(floorId, '/move'), { ...moveBody(choice), fingerprint },
+            ),
+            listProjects: (floorId) => json(floorUrl(floorId, '/projects'), { cache: 'no-store' }),
+            moveProject: (floorId, project, fromFloorId) => send(
+                'POST', floorUrl(floorId, '/projects/move'), { project, from_floor_id: fromFloorId },
             ),
         };
     }

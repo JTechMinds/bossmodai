@@ -200,6 +200,30 @@ def update_channel(
     )
 
 
+def set_channel_floor(channel_id: str, floor_id: str) -> Channel:
+    """Move one thread to another floor. Members are the caller's to move too.
+
+    ``updated_at`` is left alone: a move is not activity in the thread, and
+    the rail orders threads by activity.
+
+    Raises:
+        LookupError: No thread has this id.
+    """
+    moved = fetch_one(
+        f"""
+        UPDATE channels
+        SET floor_id = $1
+        WHERE id = $2
+        RETURNING {_CHANNEL_COLUMNS}
+        """,
+        [floor_id, channel_id],
+        Channel,
+    )
+    if moved is None:
+        raise LookupError(f"Thread not found: {channel_id}")
+    return moved
+
+
 def list_channels(*, status: str = "active") -> list[Channel]:
     """Return shared channels ordered by recent activity."""
     return fetch_all(

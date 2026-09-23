@@ -20,6 +20,8 @@ const BossModFilesToolbar = (() => {
     const PATH_PLACEHOLDER = 'Open named path…';
     const PATH_TITLE = 'Paste an absolute path under a configured host root, '
         + 'or a company-relative path';
+    /** Why New is held shut at the company top level, which holds floors. */
+    const TOP_LEVEL_CREATE_HINT = 'Pick a floor first. The company top level holds one folder per floor.';
 
     /**
      * Build the toolbar.
@@ -34,6 +36,7 @@ const BossModFilesToolbar = (() => {
      * @param {() => void} deps.onOpenFolder
      * @param {() => void} deps.onRefresh
      * @returns {{ element: HTMLElement, clearSearch: () => void,
+     *             setCreateAllowed: (allowed: boolean) => void,
      *             destroy: () => void }}
      * @throws {Error} When a callback is missing.
      */
@@ -108,6 +111,16 @@ const BossModFilesToolbar = (() => {
             },
 
             /**
+             * Hold New shut (with the reason) or open it again. The place
+             * holds it shut at the company top level.
+             * @param {boolean} allowed
+             * @returns {void}
+             */
+            setCreateAllowed(allowed) {
+                newMenu.setAllowed(allowed, allowed ? undefined : TOP_LEVEL_CREATE_HINT);
+            },
+
+            /**
              * Drop the debounce and the New menu's document listeners.
              * @returns {void}
              */
@@ -118,5 +131,5 @@ const BossModFilesToolbar = (() => {
         };
     }
 
-    return { createToolbar, GLOBAL_SEARCH_MIN, SEARCH_DELAY_MS };
+    return { createToolbar, GLOBAL_SEARCH_MIN, SEARCH_DELAY_MS, TOP_LEVEL_CREATE_HINT };
 })();

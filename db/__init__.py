@@ -24,6 +24,7 @@ from db.agents import (
     create_agent,
     delete_agent,
     get_agent,
+    get_agent_by_storage_key,
     get_agent_state,
     get_agents_by_ids,
     list_agents,
@@ -59,6 +60,7 @@ from db.artifacts import (
     get_artifact_by_absolute_path,
     get_recent_artifact_refs,
     list_artifacts,
+    rewrite_artifact_path_prefix,
     upsert_artifact,
 )
 from db.bm_cli_events import create_bm_cli_event, has_bm_cli_write_for_path, list_bm_cli_events
@@ -147,6 +149,7 @@ from db.channels import (
     list_channel_messages,
     list_channels,
     payload_targets_archived_channel,
+    set_channel_floor,
     update_channel,
 )
 from db.channel_response_rounds import (
@@ -229,6 +232,7 @@ from db.agent_triggers import (
     create_agent_trigger,
     delete_queued_triggers,
     delete_open_triggers,
+    delete_queued_triggers_for_agent_channels,
     delete_queued_triggers_for_channel,
     delete_queued_triggers_for_round,
     delete_queued_triggers_for_task,
@@ -360,6 +364,7 @@ __all__ = [
     "create_agent",
     "delete_agent",
     "get_agent",
+    "get_agent_by_storage_key",
     "get_agent_state",
     "get_agents_by_ids",
     "list_agents",
@@ -387,6 +392,7 @@ __all__ = [
     "get_agent_prompt_history_policy",
     "get_recent_artifact_refs",
     "list_artifacts",
+    "rewrite_artifact_path_prefix",
     "upsert_artifact",
     "update_agent_cli_state",
     "update_agent_prompt_history_policy",
@@ -428,6 +434,7 @@ __all__ = [
     "list_channel_messages",
     "list_channels",
     "payload_targets_archived_channel",
+    "set_channel_floor",
     "update_channel",
     "create_channel_response_candidate",
     "create_channel_response_round",
@@ -487,6 +494,7 @@ __all__ = [
     "create_agent_trigger",
     "delete_queued_triggers",
     "delete_open_triggers",
+    "delete_queued_triggers_for_agent_channels",
     "delete_queued_triggers_for_channel",
     "delete_queued_triggers_for_round",
     "delete_queued_triggers_for_task",

@@ -1175,6 +1175,15 @@ def init_db() -> None:
     from db.agent_storage import normalize_agent_personal_storage_roots
     normalize_agent_personal_storage_roots()
 
+    # After the floors migration: every floor gets its company folder. This is
+    # also where a retired BOSSMOD_PROJECTS_ROOT stops startup.
+    from core.bm_cli.floor_roots import ensure_floor_roots
+    ensure_floor_roots()
+
+    # Needs Lobby's folder (above). Runs once; see db/company_layout.py.
+    from db.company_layout import migrate_to_floor_layout
+    migrate_to_floor_layout()
+
     from db.secret_store import migrate_plaintext_secrets
     migrated = migrate_plaintext_secrets()
     if migrated:
@@ -1183,32 +1192,76 @@ def init_db() -> None:
     logger.info("Database initialised")
 
 
+def backup_database(dest_dir: Path) -> Path:
+    """Write a consistent copy of the configured SQLite database into *dest_dir*.
+
+    Uses sqlite3's online backup API from a dedicated read connection, not the
+    thread-local one: ``reset_database`` closes every connection before it
+    backs up, and the backup API copies a consistent snapshot that already
+    includes committed WAL content, so no ``-wal``/``-shm`` sidecar is needed.
+    The copy is written under a ``.partial`` name and renamed into place, so a
+    failed backup never leaves a file that looks complete.
+
+    Args:
+        dest_dir: Directory to write into. Created when missing.
+
+    Returns:
+        The backup's path, ``<db file name>.<UTC timestamp, µs>.bak``.
+
+    Raises:
+        FileNotFoundError: The database file does not exist.
+        FileExistsError: A backup with this timestamp is already there.
+        OSError, sqlite3.Error: The copy failed. Nothing is left at the
+            returned name.
+    """
+    db_path = Path(_DB_PATH)
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Database file not found: {db_path}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Microseconds: two backups in one second (a retried boot) must not collide.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    target = dest_dir / f"{db_path.name}.{stamp}.bak"
+    if target.exists():
+        raise FileExistsError(f"Database backup already exists: {target}")
+    partial = target.with_name(f"{target.name}.partial")
+    source = sqlite3.connect(db_path, timeout=30.0)
+    try:
+        copy = sqlite3.connect(partial)
+        try:
+            source.backup(copy)
+        finally:
+            copy.close()
+        os.replace(partial, target)
+    except BaseException:
+        # Our own half-written copy, never operator data.
+        partial.unlink(missing_ok=True)
+        raise
+    finally:
+        source.close()
+    return target
+
+
 def reset_database() -> None:
     """Recreate the database file from the current schema and seed data.
 
     Clears per-agent artifact workspaces so reseeded agents start clean.
 
-    Note: Shared project files under the separated projects root are preserved.
-    A reset does not move or delete them.
+    Note: Shared project files under the company root are preserved. A reset
+    does not move or delete them.
     """
     import shutil
 
-    from core.bm_cli.filesystem import agents_artifact_root, ensure_artifact_roots
+    from core.bm_cli.filesystem import agents_artifact_root, artifacts_root, ensure_artifact_roots
 
     close_connection()
     db_path = Path(_DB_PATH)
     if db_path.exists():
         # Safety rail: always create a timestamped backup before deleting.
-        backup_dir = _PROJECT_ROOT / "artifacts" / "db_backups"
+        # The artifacts root, so a test run's reset stays in its temp tree.
+        backup_dir = artifacts_root() / "db_backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup_base = backup_dir / f"{db_path.name}.{stamp}.bak"
         try:
-            shutil.copy2(db_path, backup_base)
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(f"{db_path}{suffix}")
-                if sidecar.exists():
-                    shutil.copy2(sidecar, Path(f"{backup_base}{suffix}"))
+            backup_base = backup_database(backup_dir)
             logger.warning("Database reset requested; backup created at %s", str(backup_base))
         except Exception:
             logger.exception("Failed to create DB backup before reset; proceeding with reset anyway")

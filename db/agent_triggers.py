@@ -240,6 +240,36 @@ def delete_queued_triggers_for_channel(channel_id: str) -> int:
     return deleted
 
 
+def delete_queued_triggers_for_agent_channels(agent_id: str, channel_ids: set[str]) -> int:
+    """Delete one agent's queued triggers bound to any of these threads.
+
+    A trigger is bound by its payload's ``channel_id``; triggers without one
+    are kept. Claimed triggers are left alone: a live turn is the runtime's
+    to cancel. Used when an agent leaves those threads behind on a floor move.
+
+    Returns:
+        How many triggers were deleted.
+    """
+    wanted = {token.strip() for token in channel_ids if token and token.strip()}
+    if not wanted:
+        return 0
+    rows = query(
+        "SELECT id, payload FROM agent_triggers WHERE agent_id = $1 AND status = 'queued'",
+        [agent_id],
+    )
+    deleted = 0
+    for row in rows:
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("channel_id") or "").strip() not in wanted:
+            continue
+        execute(
+            "DELETE FROM agent_triggers WHERE id = $1 AND status = 'queued'",
+            [row["id"]],
+        )
+        deleted += 1
+    return deleted
+
+
 def delete_queued_triggers_for_task(task_id: str) -> int:
     """Delete queued triggers bound to one task so cancelled work does not resume."""
     row = query_one(

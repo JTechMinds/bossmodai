@@ -9,6 +9,10 @@
  * actions menu is a real button beside it, because a context menu reachable
  * only by right-click has no keyboard equivalent (WCAG 2.2 SC 2.1.1) and the
  * actions behind it include Delete.
+ *
+ * The company top level is floors. Their folders are named by floor id, so a
+ * row the server marks `mount: "floor"` shows its `floor_name` and the
+ * `layers` glyph the floor switcher uses, never the id.
  */
 const BossModFileGrid = (() => {
     const { h, clear } = BossModDom;
@@ -43,7 +47,9 @@ const BossModFileGrid = (() => {
      */
     function renderEntry(entry, { showPath, onOpen, onMenu }) {
         const isDir = entry.is_dir === true;
-        const name = String(entry.name || '');
+        const isFloor = entry.mount === 'floor';
+        // A floor folder's name on disk is its id; the operator knows the floor by name.
+        const name = String(entry.floor_name || entry.name || '');
         const size = isDir ? '' : BossModFormat.formatFileSize(entry.size_bytes);
         const when = BossModFormat.formatRelativeTime(entry.updated_at);
 
@@ -54,9 +60,12 @@ const BossModFileGrid = (() => {
             'data-is-dir': isDir ? '1' : '0',
             onclick: () => onOpen(entry),
         },
-            h('span', { class: 'file-entry-kind', 'aria-hidden': 'true' }, isDir ? '▸' : '·'),
+            isFloor
+                ? h('i', { 'data-lucide': 'layers', class: 'file-entry-kind', 'aria-hidden': 'true' })
+                : h('span', { class: 'file-entry-kind', 'aria-hidden': 'true' }, isDir ? '▸' : '·'),
             h('span', { class: 'file-entry-name' }, isDir ? `${name}/` : name),
-            showPath ? h('span', { class: 'file-entry-path' }, String(entry.path || '')) : null,
+            // Search hits carry display_path: floor folders by name, not id.
+            showPath ? h('span', { class: 'file-entry-path' }, String(entry.display_path)) : null,
             entry.agent_name ? h('span', { class: 'file-entry-agent' }, String(entry.agent_name)) : null,
             size ? h('span', { class: 'file-entry-size' }, size) : null,
             when ? h('span', { class: 'file-entry-time' }, when) : null);
@@ -98,6 +107,7 @@ const BossModFileGrid = (() => {
         }
         const list = h('div', { class: 'file-list' });
         entries.forEach((entry) => list.append(renderEntry(entry, deps)));
+        BossModIcons.paint(list, 'file-grid');
         return list;
     }
 

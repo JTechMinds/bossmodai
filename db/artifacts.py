@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.models import Artifact
-from db.crud import execute, fetch_all, fetch_one, insert_returning
+from db.crud import execute, fetch_all, fetch_one, insert_returning, rewrite_path_prefix
 
 _ARTIFACT_COLUMNS = (
     "id, agent_id, task_id, virtual_path, absolute_path, title, kind, "
@@ -73,6 +73,21 @@ def list_artifacts(
         params,
         Artifact,
     )
+
+
+def rewrite_artifact_path_prefix(old_prefix: str, new_prefix: str) -> int:
+    """Point every artifact under a moved directory at its new location.
+
+    ``absolute_path`` only; virtual paths are left alone. See
+    ``db.crud.rewrite_path_prefix`` for the matching rule.
+
+    Returns:
+        How many artifact rows were rewritten.
+
+    Raises:
+        ValueError: A prefix is empty or ends with a separator.
+    """
+    return rewrite_path_prefix("artifacts", "absolute_path", old_prefix, new_prefix)
 
 
 def get_recent_artifact_refs(agent_id: str, limit: int = 10) -> list[dict[str, Any]]:

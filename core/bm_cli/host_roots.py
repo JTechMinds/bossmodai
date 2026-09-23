@@ -1,22 +1,33 @@
 """Allowlisted extra host roots for named-path access.
 
 This is not a full host mount. Built-in roots stay ``/me`` (agent workspace)
-and ``/projects`` (the project data root, outside the application install). Operators may add extra absolute
-directories via the ``workspace_host_roots`` setting. Empty setting = no
-extra host access. Path jail and company-file confinement both read this
-list; approval does not bypass it.
+and ``/projects`` (the agent's floor folder under the company root, outside
+the application install). Operators may add extra absolute directories via
+the ``workspace_host_roots`` setting. Empty setting = no extra host access.
+Path jail and company-file confinement both read this list; approval does
+not bypass it.
+
+Extra host roots are global, not per floor: they are the operator's
+allowlist for the whole install, a documented exception to floor isolation.
+That exception stops at the company root: a host root that equals,
+contains, or sits inside the company root would hand every agent every
+floor's folders, so it is refused when written and ignored (with an ERROR
+log) when read.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
 from core.bm_cli.filesystem import (
     agent_artifact_dir,
     is_denied_company_file,
-    projects_artifact_root,
 )
+from core.bm_cli.floor_roots import agent_floor_id, company_root, floor_root
+
+logger = logging.getLogger(__name__)
 
 SETTING_KEY = "workspace_host_roots"
 SETTING_CATEGORY = "cli_policy"
@@ -29,6 +40,10 @@ _DENIED_SYSTEM_ROOTS = frozenset({
     Path("/dev"),
     Path("/root"),
 })
+
+
+class HostRootOverlapsCompany(ValueError):
+    """A host root equals, contains, or is inside the company root."""
 
 
 class PathOutsideRootsError(ValueError):
@@ -71,6 +86,8 @@ def validate_host_root(raw: str) -> Path:
 
     Raises
     ------
+    HostRootOverlapsCompany
+        If the path equals, contains, or is inside the company root.
     ValueError
         If the path is relative, missing, not a directory, the filesystem
         root, or a denied system tree.
@@ -97,7 +114,23 @@ def validate_host_root(raw: str) -> Path:
         raise ValueError(f"Host workspace root does not exist: {resolved}")
     if not resolved.is_dir():
         raise ValueError(f"Host workspace root must be a directory: {resolved}")
+    _refuse_company_overlap(resolved)
     return resolved
+
+
+def _refuse_company_overlap(resolved: Path) -> None:
+    """Raise when *resolved* would open the company tree to every agent."""
+    company = company_root()
+    if resolved == company or company in resolved.parents or resolved in company.parents:
+        raise HostRootOverlapsCompany(
+            f"Host workspace root {str(resolved)!r} overlaps the company folder "
+            f"({company}). Floor folders are reached only through each agent's own "
+            "/projects; a host root there would expose every floor."
+        )
+
+
+def _log_company_overlap(exc: HostRootOverlapsCompany) -> None:
+    logger.error("Ignoring a stored host root: %s", exc)
 
 
 def normalize_host_root_setting(raw: str | None) -> str:
@@ -123,9 +156,12 @@ def configured_host_roots(raw: str | None = None) -> tuple[Path, ...]:
     """Return validated extra host roots from *raw* or the live setting.
 
     Invalid stored tokens are skipped (fail-closed per entry) so a bad
-    line cannot widen the jail. When *raw* is omitted the setting is
-    read from the database so a worker process sees Always-allow writes
-    without sharing the API process config cache.
+    line cannot widen the jail. A stored root that overlaps the company
+    root is skipped too and logged at ERROR on every read: it was written
+    before that was refused, and honouring it would expose every floor.
+    When *raw* is omitted the setting is read from the database so a
+    worker process sees Always-allow writes without sharing the API
+    process config cache.
     """
     if raw is None:
         raw = _live_host_root_setting()
@@ -134,6 +170,9 @@ def configured_host_roots(raw: str | None = None) -> tuple[Path, ...]:
     for token in parse_host_root_setting(raw):
         try:
             path = validate_host_root(token)
+        except HostRootOverlapsCompany as exc:
+            _log_company_overlap(exc)
+            continue
         except ValueError:
             continue
         if path in seen:
@@ -144,7 +183,11 @@ def configured_host_roots(raw: str | None = None) -> tuple[Path, ...]:
 
 
 def extra_host_roots() -> tuple[Path, ...]:
-    """Allowlisted host roots plus any in-scope allow-once grants."""
+    """Allowlisted host roots plus any in-scope allow-once grants.
+
+    Fails closed: a root (setting or once-grant) that overlaps the company
+    root is left out and logged at ERROR every time.
+    """
     roots: list[Path] = list(configured_host_roots())
     from core.bm_cli.consent_scope import current_consent_scope
 
@@ -155,6 +198,9 @@ def extra_host_roots() -> tuple[Path, ...]:
         for raw_root in db.list_once_grant_roots(scope.agent_id, scope.task_id):
             try:
                 path = validate_host_root(raw_root)
+            except HostRootOverlapsCompany as exc:
+                _log_company_overlap(exc)
+                continue
             except ValueError:
                 continue
             roots.append(path)
@@ -168,16 +214,22 @@ def extra_host_roots() -> tuple[Path, ...]:
     return tuple(unique)
 
 
-def named_path_roots(agent_storage_key: str | None = None) -> tuple[Path, ...]:
-    """Return the real directories a named absolute path may resolve into.
+def named_path_roots(agent_storage_key: str) -> tuple[Path, ...]:
+    """Return the real directories one agent's named absolute path may resolve into.
 
-    Always includes the shared projects mount. Includes the agent's
-    personal workspace when *agent_storage_key* is provided. Extra host
-    roots come from settings plus any in-scope allow-once grants.
+    The agent's floor folder (its ``/projects``) comes first, when the agent
+    has a floor; an agent on vacation has none. Then the agent's personal
+    workspace. Extra host roots come from settings plus any in-scope
+    allow-once grants.
+
+    Raises:
+        LookupError: No agent owns this storage key.
     """
-    roots: list[Path] = [projects_artifact_root().resolve()]
-    if agent_storage_key:
-        roots.append(agent_artifact_dir(agent_storage_key).resolve())
+    roots: list[Path] = []
+    floor_id = agent_floor_id(agent_storage_key)
+    if floor_id is not None:
+        roots.append(floor_root(floor_id).resolve())
+    roots.append(agent_artifact_dir(agent_storage_key).resolve())
     roots.extend(extra_host_roots())
     # Preserve order, drop duplicates.
     seen: set[Path] = set()
@@ -191,7 +243,7 @@ def named_path_roots(agent_storage_key: str | None = None) -> tuple[Path, ...]:
 
 
 def allowed_workspace_roots(agent_storage_key: str) -> tuple[Path, ...]:
-    """Return path-jail roots for one agent: workspace + projects + host roots."""
+    """Return path-jail roots for one agent: its floor's projects + workspace + host roots."""
     return named_path_roots(agent_storage_key)
 
 

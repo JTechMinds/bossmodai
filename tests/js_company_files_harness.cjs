@@ -1,6 +1,8 @@
 /**
  * Node harness: the Files place's named-path open uses the API's own `kind`,
- * not a dotted-name heuristic, and a denied path stays visible.
+ * not a dotted-name heuristic, and a denied path stays visible. The company
+ * top level shows floors by name with the `layers` glyph, and New is held
+ * shut there (still focusable, with its reason) until a floor is open.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -16,6 +18,8 @@ const documentStub = installDom();
 require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 global.lucide = { createIcons() {} };
 global.window.lucide = global.lucide;
+const { installIconsStub } = require("./js_icons_stub.cjs");
+const iconsStub = installIconsStub();
 global.window.BossModApi = {
     formatError(payload, status) {
         if (payload && typeof payload.detail === "string" && payload.detail.trim()) {
@@ -74,7 +78,42 @@ function directory(path, crumbs) {
     });
 }
 
-let fetchImpl = () => Promise.resolve(directory("/"));
+// The company top level: two floors (folders named by id) and the archive.
+const TOP_LEVEL = {
+    kind: "directory",
+    path: "/",
+    entries: [
+        { name: "lobby", path: "/lobby", is_dir: true, floor_name: "Lobby", mount: "floor" },
+        { name: "f1", path: "/f1", is_dir: true, floor_name: "Finance", mount: "floor" },
+        {
+            name: ".archived-floors", path: "/.archived-floors", is_dir: true,
+            floor_name: "Archived floors", mount: "archive",
+        },
+    ],
+    breadcrumbs: [{ path: "/", label: "Company" }],
+    workspace_note: "",
+    host_roots: [],
+};
+
+let fetchImpl = (input) => {
+    const url = decodeURIComponent(String(input));
+    if (url.endsWith("path=/f1")) {
+        return Promise.resolve(ok({
+            kind: "directory",
+            path: "/f1",
+            entries: [{ name: "books", path: "/f1/books", is_dir: true, floor_name: null }],
+            breadcrumbs: [{ path: "/", label: "Company" }, { path: "/f1", label: "Finance" }],
+            workspace_note: "",
+            host_roots: [],
+        }));
+    }
+    return Promise.resolve(ok(TOP_LEVEL));
+};
+
+/** The New toggle, found by its label. */
+function newToggle(root) {
+    return root.querySelectorAll(".file-toolbar-btn").find((button) => button.textContent === "New");
+}
 
 async function main() {
     const store = BossModStore.createStore({ placeParams: {} });
@@ -89,6 +128,61 @@ async function main() {
         navigate() {},
     });
     await drain();
+
+    // ─── The company top level is floors ───
+    const rowNames = root.querySelectorAll(".file-entry-name").map((el) => el.textContent);
+    const floorRowsShowNames = rowNames.join("|") === "Lobby/|Finance/|Archived floors/";
+    const floorGlyphs = root.querySelectorAll('[data-lucide="layers"]').length;
+    const gridPainted = iconsStub.calls.some((call) => call.context === "file-grid");
+    const toggle = newToggle(root);
+    const hint = root.querySelector("#file-new-hint");
+    const topLevelNewHeldShut = toggle.getAttribute("aria-disabled") === "true"
+        && toggle.getAttribute("aria-describedby") === "file-new-hint"
+        && /Pick a floor first/.test(hint.textContent)
+        && toggle.disabled !== true;
+    await toggle.dispatchClick();
+    const topLevelNewStaysClosed = root.querySelector(".file-new-list").hidden === true;
+
+    // A floor row offers only what the server allows on a floor folder. The
+    // fake DOM has no layout, so the menu's anchor gets a box and the window
+    // a size to position against.
+    global.window.innerWidth = 1024;
+    global.window.innerHeight = 768;
+    const placeable = (button) => {
+        button.getBoundingClientRect = () => ({ left: 0, bottom: 0 });
+        return button;
+    };
+    // The row menu only: the New menu's items share the item class.
+    const menuLabels = () => documentStub.body.querySelector(".file-menu")
+        .querySelectorAll(".file-menu-item")
+        .map((item) => item.getAttribute("data-action"));
+    const financeMenu = root.querySelectorAll(".file-entry-menu")
+        .find((button) => button.getAttribute("aria-label") === "Actions for Finance");
+    await placeable(financeMenu).dispatchClick();
+    const floorRowActions = menuLabels().join("|");
+    documentStub.body.querySelector(".file-menu").remove();
+    const { itemsFor } = global.BossModFileActions;
+    const actionsOf = (entry) => itemsFor(entry).map((item) => item.action).join("|");
+    const archivedRowActions = actionsOf({ name: "old", path: "/.archived-floors/old", is_dir: true });
+    const strayTopRowActions = actionsOf({ name: "stray", path: "/stray", is_dir: true });
+
+    // A search hit shows its display path (floor by name), not the raw id path.
+    const hit = global.BossModFileGrid.renderEntry(
+        { name: "plan.md", path: "/f1/books/plan.md", display_path: "/Finance/books/plan.md", is_dir: false },
+        { showPath: true, onOpen() {}, onMenu() {} });
+    const searchHitPath = hit.querySelector(".file-entry-path").textContent;
+
+    const finance = root.querySelectorAll(".file-entry")
+        .find((button) => button.getAttribute("data-path") === "/f1");
+    await finance.dispatchClick();
+    await drain();
+    const insideFloorNewOpen = newToggle(root).getAttribute("aria-disabled") === "false"
+        && !newToggle(root).hasAttribute("aria-describedby");
+    const booksMenu = root.querySelectorAll(".file-entry-menu")
+        .find((button) => button.getAttribute("aria-label") === "Actions for books");
+    await placeable(booksMenu).dispatchClick();
+    const insideFloorRowActions = menuLabels().join("|");
+    documentStub.body.querySelector(".file-menu").remove();
 
     fetchImpl = (input) => {
         const url = decodeURIComponent(String(input));
@@ -137,6 +231,17 @@ async function main() {
 
     process.stdout.write(JSON.stringify({
         ok: true,
+        floorRowsShowNames,
+        floorGlyphs,
+        gridPainted,
+        topLevelNewHeldShut,
+        topLevelNewStaysClosed,
+        insideFloorNewOpen,
+        floorRowActions,
+        archivedRowActions,
+        strayTopRowActions,
+        insideFloorRowActions,
+        searchHitPath,
         dottedDirOpenedViewer,
         fileOpenedViewer,
         deniedPathErrorVisible: Boolean(deniedPathError),

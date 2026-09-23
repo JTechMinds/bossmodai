@@ -3,8 +3,8 @@
  *
  * One trigger naming the floor the operator is on. It opens a panel listing
  * EVERY floor with its agent count and a check on the current one, a `⋯` per
- * row to edit that floor (shell/floor-edit.js), and a `+ New floor` door that
- * turns into an inline name field in place. There is no browse mode: the
+ * row to open that floor's settings (shell/floor-settings.js), and a
+ * `+ New floor` door that turns into an inline name field in place. There is no browse mode: the
  * operator is always on exactly one floor (`state.currentFloorId`).
  *
  * The panel hangs off `.floor-switcher`, a positioned host wrapping the
@@ -156,7 +156,7 @@ const BossModFloorSwitcher = (() => {
             open.close();
         }
 
-        /** One floor's row: choose it, or `⋯` to edit it. */
+        /** One floor's row: choose it, or `⋯` to open its settings. */
         function floorRow(state, floor) {
             const count = (state.roster || [])
                 .filter((agent) => BossModFloorScope.floorOf(agent) === floor.id).length;
@@ -180,11 +180,11 @@ const BossModFloorSwitcher = (() => {
             const more = h('button', {
                 class: 'floor-row-more',
                 type: 'button',
-                'aria-label': `Edit floor ${floor.name}`,
-                'data-tooltip': `Edit floor ${floor.name}`,
+                'aria-label': `Floor settings ${floor.name}`,
+                'data-tooltip': `Floor settings ${floor.name}`,
                 onclick: () => {
                     close();
-                    BossModFloorEdit.open({ store, floorApi, floorId: floor.id, reloadFloors: loadFloors });
+                    BossModFloorSettings.open({ store, floorApi, floorId: floor.id, reloadFloors: loadFloors });
                 },
             }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
             return h('div', { class: 'floor-row' }, choice, more);

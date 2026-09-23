@@ -138,7 +138,7 @@ const NAMES = [
     "BossModAgentTemplatePicker",
     "BossModAgentFormTemplate", "BossModAgentDialogFooter",
     "BossModAgentAddPane", "BossModAgentDialogSlot",
-    "BossModFloorScope", "BossModAgentFloor",
+    "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
     "BossModContextColumn", "BossModChatPlace",
 ];

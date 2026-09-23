@@ -16,14 +16,15 @@ import pytest
 
 import db
 from core import config
-from core.bm_cli import filesystem, install_layout
-from core.bm_cli.filesystem import projects_artifact_root
+from core.bm_cli import install_layout
+from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.project_git_fence import project_git_fence_reason
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.session import get_cli_cwd, set_cli_cwd
 from db.cli_policy_rules import reconcile_hardened_seed_rules
+from db.floors import LOBBY_ID
 
 
 def setup_function() -> None:
@@ -46,6 +47,11 @@ def _enable_shell() -> None:
     db.set_setting("cli_shell_enabled", "true", "cli_policy")
     config.reload()
     policy_engine.reload()
+
+
+def _lobby_projects() -> Path:
+    """The folder a Lobby agent sees as ``/projects``. New agents live in Lobby."""
+    return floor_root(LOBBY_ID)
 
 
 def _agent_and_state():
@@ -86,7 +92,7 @@ def test_create_project_gets_its_own_git_outside_the_install() -> None:
     created = execute_bm_cli(agent, state, "mkdir /projects/poc-own")
     assert created.ok is True, created.detail
 
-    project = projects_artifact_root() / "poc-own"
+    project = _lobby_projects() / "poc-own"
     install = install_layout.app_install_root().resolve()
     assert (project / ".git").is_dir()
     toplevel = _git(project, "rev-parse", "--show-toplevel")
@@ -94,7 +100,7 @@ def test_create_project_gets_its_own_git_outside_the_install() -> None:
     assert Path(toplevel.stdout.strip()).resolve() == project.resolve()
     assert install not in project.resolve().parents
     assert project.resolve() != install
-    assert not (projects_artifact_root() / ".git").exists()
+    assert not (_lobby_projects() / ".git").exists()
 
 
 def test_existing_in_tree_projects_are_not_rewritten(
@@ -104,9 +110,9 @@ def test_existing_in_tree_projects_are_not_rewritten(
     legacy = install / "artifacts" / "projects" / "legacy-poc"
     legacy.mkdir(parents=True)
     (legacy / "keep.txt").write_text("operator data\n", encoding="utf-8")
-    separated = tmp_path / "bossmod-data" / "projects"
+    separated = tmp_path / "bossmod-data" / "company"
     monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
-    monkeypatch.setattr(filesystem, "_PROJECTS_ROOT", separated)
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(separated))
 
     agent, state = _agent_and_state()
     created = execute_bm_cli(agent, state, "mkdir /projects/fresh-poc")
@@ -114,13 +120,13 @@ def test_existing_in_tree_projects_are_not_rewritten(
 
     assert (legacy / "keep.txt").read_text(encoding="utf-8") == "operator data\n"
     assert not (legacy / ".git").exists()
-    fresh = separated / "fresh-poc"
+    fresh = separated / LOBBY_ID / "fresh-poc"
     assert (fresh / ".git").is_dir()
     assert install.resolve() not in fresh.resolve().parents
 
-    monkeypatch.setattr(filesystem, "_PROJECTS_ROOT", install / "artifacts" / "projects")
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(install / "artifacts" / "company"))
     with pytest.raises(ValueError, match="outside the BossMod application install"):
-        projects_artifact_root()
+        _lobby_projects()
     assert (legacy / "keep.txt").read_text(encoding="utf-8") == "operator data\n"
 
 
@@ -181,7 +187,7 @@ def test_git_escape_via_parent_dash_c_and_absolute_path_is_refused(
     assert created.ok is True, created.detail
     entered = execute_bm_cli(agent, state, "cd /projects/bound-poc")
     assert entered.ok is True, entered.detail
-    project = projects_artifact_root() / "bound-poc"
+    project = _lobby_projects() / "bound-poc"
 
     parent = execute_bm_cli(agent, state, "cd ..")
     assert parent.ok is True
@@ -248,7 +254,7 @@ def test_git_commit_inside_the_project_does_not_touch_the_app(
     committed = execute_bm_cli(agent, state, 'git commit -m "project note"')
     assert committed.ok is True, committed.detail
 
-    project = projects_artifact_root() / "bound-poc"
+    project = _lobby_projects() / "bound-poc"
     toplevel = _git(project, "rev-parse", "--show-toplevel")
     assert Path(toplevel.stdout.strip()).resolve() == project.resolve()
     assert _git(project, "log", "-1", "--pretty=%s").stdout.strip() == "project note"
@@ -283,7 +289,7 @@ def test_git_dash_c_projects_path_is_that_project_repo(
         content="project notes\n",
     )
     assert written.ok is True, written.detail
-    project = projects_artifact_root() / "diablo-poc"
+    project = _lobby_projects() / "diablo-poc"
     assert get_cli_cwd(agent.id) == "/me"
 
     status = execute_bm_cli(agent, state, "git -C /projects/diablo-poc status")

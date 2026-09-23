@@ -30,18 +30,6 @@ class FloorDenied(Exception):
         super().__init__(message)
 
 
-class FloorMoveNeedsConfirm(FloorDenied):
-    """The home floor can move, but open work on the old floor must be confirmed."""
-
-    def __init__(self, open_task_count: int) -> None:
-        self.open_task_count = open_task_count
-        noun = "task" if open_task_count == 1 else "tasks"
-        super().__init__(
-            f"This agent has {open_task_count} open {noun} on the current floor. "
-            "Confirm to move the home floor."
-        )
-
-
 class AgentOnVacation(FloorDenied):
     """The agent is on vacation: off every floor and never woken."""
 
@@ -69,6 +57,8 @@ class FloorDeleteResult:
     agents_sent_home: list[str] = field(default_factory=list)
     agents_deleted: list[str] = field(default_factory=list)
     threads_archived: list[str] = field(default_factory=list)
+    # True when the floor's company folder moved to Company › Archived floors.
+    folder_archived: bool = False
 
 
 def home_floor_id(agent_id: str | None) -> str | None:
@@ -230,74 +220,6 @@ def assignment_stays_on_floor(task: Any) -> bool:
     return on_floor(assignee, floor_id)
 
 
-def open_work_ids(agent_id: str) -> list[str]:
-    """Open cards assigned to or owned by this agent. Order is not significant."""
-    import db
-    from core.tasking.resolution import OPEN_TASK_STATUSES
-
-    found: list[str] = []
-    seen: set[str] = set()
-    for status in OPEN_TASK_STATUSES:
-        rows = list(db.list_tasks(assigned_to=agent_id, status=status))
-        rows.extend(db.list_tasks(owner_id=agent_id, status=status))
-        for task in rows:
-            if task.id in seen:
-                continue
-            seen.add(task.id)
-            found.append(task.id)
-    return found
-
-
-def move_home_floor(agent_id: str, floor_id: str, *, confirm_open_work: bool) -> Any:
-    """Move one agent's home floor. Open work on the old floor must be confirmed.
-
-    Membership on any other floor's threads is released so those rosters
-    stay single-floor. Tasks, soft-block, and sticky rows are not wiped.
-    An agent on vacation is refused with AgentOnVacation; ``bring_back``
-    is the only way back onto a floor.
-    """
-    import db
-
-    agent = db.get_agent(agent_id)
-    if agent is None:
-        raise LookupError("Agent not found")
-    # A move would give a vacationer a floor while vacation_since stays set,
-    # breaking the one invariant the gates rely on. bring_back is the way home.
-    if is_on_vacation(agent):
-        raise AgentOnVacation()
-    from db.floors import get_floor
-
-    target = (floor_id or "").strip()
-    floor = get_floor(target)
-    if floor is None:
-        raise LookupError("Floor not found")
-    current = str(getattr(agent, "floor_id", None) or "").strip()
-    if current == floor.id:
-        return agent
-    open_ids = open_work_ids(agent.id)
-    if open_ids and not confirm_open_work:
-        raise FloorMoveNeedsConfirm(len(open_ids))
-    updated = db.update_agent(agent.id, floor_id=floor.id)
-    if updated is None:
-        raise LookupError("Agent not found")
-    _release_other_floor_memberships(updated.id, floor.id)
-    return updated
-
-
-def _release_other_floor_memberships(agent_id: str, floor_id: str) -> None:
-    """Drop this agent from threads that are not their new home floor."""
-    import db
-
-    for status in ("active", "archived"):
-        for channel in db.list_channels(status=status):
-            if str(getattr(channel, "floor_id", None) or "") == floor_id:
-                continue
-            db.execute(
-                "DELETE FROM channel_members WHERE channel_id = $1 AND agent_id = $2",
-                [channel.id, agent_id],
-            )
-
-
 def is_on_vacation(agent: Any) -> bool:
     """True when ``agent`` (an Agent or None) is on vacation. None is not."""
     return agent is not None and getattr(agent, "vacation_since", None) is not None
@@ -323,8 +245,8 @@ def send_home(agent_id: str) -> Any:
     Sets ``floor_id`` to NULL and stamps ``vacation_since`` together, which is
     the invariant every floor gate relies on (no floor denies). Every channel
     membership, active or archived, is released and queued triggers are
-    dropped. Tasks stay where they are, the same policy ``move_home_floor``
-    follows. Idempotent: an agent already on vacation is returned unchanged.
+    dropped. Tasks stay where they are, the same policy a floor move
+    (core/floor_moves.py) follows. Idempotent: an agent already on vacation is returned unchanged.
 
     Raises:
         LookupError: No agent has this id.
@@ -387,7 +309,9 @@ async def delete_floor(
     ``services.reset_agent_runtime`` before the agent row changes), so no
     turn can re-queue into a thread that is about to seal. Then every active
     thread on the floor is archived through the operator path with its open
-    origin tasks cancelled. The floor row goes last.
+    origin tasks cancelled. Then the floor's company folder, when it has
+    one, moves to ``<company>/.archived-floors/<id>`` (never deleted) and
+    artifact paths under it are rewritten. The floor row goes last.
 
     ``on_before_seal`` is passed through to ``archive_thread_as_operator`` so
     an API caller can paint each thread's closing lines live.
@@ -439,15 +363,37 @@ async def delete_floor(
         )
         result.threads_archived.append(channel.id)
 
+    result.folder_archived = _archive_floor_folder(floor.id, floor.name)
+
     delete_floor_row(floor.id)
     logger.info(
-        "Deleted floor %s: %d sent home, %d deleted, %d threads archived",
+        "Deleted floor %s: %d sent home, %d deleted, %d threads archived, folder archived: %s",
         floor.id,
         len(result.agents_sent_home),
         len(result.agents_deleted),
         len(result.threads_archived),
+        result.folder_archived,
     )
     return result
+
+
+def _archive_floor_folder(floor_id: str, floor_name: str) -> bool:
+    """Move the floor's folder into the archive and repoint its artifacts.
+
+    Returns False when the floor had no folder on disk. The move happens
+    before the path rewrite; if the rewrite fails the error propagates with
+    the folder already archived, which is the state on disk to report.
+    """
+    import db
+    from core.bm_cli.floor_roots import archive_floor_folder
+
+    moved = archive_floor_folder(floor_id, floor_name, archived_at=datetime.now(timezone.utc))
+    if moved is None:
+        return False
+    old_path, new_path = moved
+    rewritten = db.rewrite_artifact_path_prefix(str(old_path), str(new_path))
+    logger.info("Floor %s: %d artifact path(s) now under %s", floor_id, rewritten, new_path)
+    return True
 
 
 def _release_all_memberships(agent_id: str) -> None:
@@ -475,7 +421,6 @@ __all__ = [
     "AgentOnVacation",
     "FloorDeleteResult",
     "FloorDenied",
-    "FloorMoveNeedsConfirm",
     "FloorOccupants",
     "FloorOccupantsChoiceRequired",
     "agent_id_on_vacation",
@@ -489,9 +434,7 @@ __all__ = [
     "home_floor_id",
     "is_on_vacation",
     "keep_one_floor",
-    "move_home_floor",
     "on_floor",
-    "open_work_ids",
     "peers_share_floor",
     "require_shared_home",
     "same_floor_agents",

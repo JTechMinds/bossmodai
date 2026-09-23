@@ -546,6 +546,9 @@
 }
 
 .file-toolbar-btn:hover { color: var(--ink); }
+/* Held shut but still focusable, so its reason stays reachable. */
+.file-toolbar-btn[aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.file-toolbar-btn[aria-disabled="true"]:hover { color: var(--muted); }
 
 .files-crumbs {
   flex: 0 0 auto;
@@ -633,6 +636,7 @@
 }
 
 .file-entry-kind { color: var(--hint); }
+svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
 .file-entry-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-entry-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--hint); }
 .file-entry-agent { font-size: 11px; color: var(--muted); }

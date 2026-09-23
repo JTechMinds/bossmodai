@@ -159,6 +159,19 @@ def test_company_files_named_path_harness() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload["ok"] is True
+    # The company top level is floors, shown by name with the layers glyph.
+    assert payload["floorRowsShowNames"] is True
+    assert payload["floorGlyphs"] == 2
+    assert payload["gridPainted"] is True
+    assert payload["topLevelNewHeldShut"] is True
+    assert payload["topLevelNewStaysClosed"] is True
+    assert payload["insideFloorNewOpen"] is True
+    # Floor folders and archived floors offer no rename/delete/move/copy.
+    assert payload["floorRowActions"] == "copy-path|open-explorer"
+    assert payload["archivedRowActions"] == "copy-path|open-explorer"
+    assert payload["strayTopRowActions"] == "delete|copy-path|open-explorer|move|copy"
+    assert payload["insideFloorRowActions"] == "rename|delete|copy-path|open-explorer|move|copy"
+    assert payload["searchHitPath"] == "/Finance/books/plan.md"
     assert payload["dottedDirOpenedViewer"] is False
     assert payload["fileOpenedViewer"] is True
     assert payload["deniedPathErrorVisible"] is True

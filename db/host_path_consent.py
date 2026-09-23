@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core.models.host_path_consent import HostPathConsentRequest
-from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
+from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one, rewrite_path_prefix
 
 _ALL_COLUMNS = (
     "id, agent_id, path, grant_root, reason, command, content, cwd, task_id, "
@@ -470,3 +470,23 @@ def delete_agent_consent(agent_id: str) -> None:
     """Remove consent rows for a deleted agent."""
     execute("DELETE FROM host_path_once_grants WHERE agent_id = $1", [agent_id])
     execute("DELETE FROM host_path_consent_requests WHERE agent_id = $1", [agent_id])
+
+
+def rewrite_host_path_prefix(old_prefix: str, new_prefix: str) -> int:
+    """Point consent paths, grant roots and once-grant roots at a moved directory.
+
+    Rewrites ``host_path_consent_requests.path``, ``.grant_root`` and
+    ``host_path_once_grants.root``. See ``db.crud.rewrite_path_prefix`` for
+    the matching rule.
+
+    Returns:
+        How many column values were rewritten, summed over the three columns.
+
+    Raises:
+        ValueError: A prefix is empty or ends with a separator.
+    """
+    return (
+        rewrite_path_prefix("host_path_consent_requests", "path", old_prefix, new_prefix)
+        + rewrite_path_prefix("host_path_consent_requests", "grant_root", old_prefix, new_prefix)
+        + rewrite_path_prefix("host_path_once_grants", "root", old_prefix, new_prefix)
+    )

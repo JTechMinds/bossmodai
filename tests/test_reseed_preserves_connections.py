@@ -43,7 +43,7 @@ def _sandboxed_reset(tmp_path, monkeypatch) -> None:
     rather than a search through whatever earlier tests left behind.
     """
     monkeypatch.setattr(filesystem, "_AGENTS_ROOT", tmp_path / "agents")
-    monkeypatch.setattr(filesystem, "_PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(tmp_path / "company"))
     monkeypatch.setattr(db_connection, "_PROJECT_ROOT", tmp_path)
 
     db.close_connection()

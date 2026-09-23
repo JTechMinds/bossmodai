@@ -2,20 +2,39 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-from core.bm_cli.install_layout import default_projects_root, require_projects_root
-
 
 _ROOT = Path(__file__).resolve().parents[2]
-_ARTIFACTS_ROOT = _ROOT / "artifacts"
+ARTIFACTS_ROOT_ENV = "BOSSMOD_ARTIFACTS_ROOT"
+
+
+def _configured_artifacts_root() -> Path:
+    """Return the artifacts root: ``BOSSMOD_ARTIFACTS_ROOT``, else ``<install>/artifacts``.
+
+    Read once, at import. The variable exists so a test run (tests/conftest.py)
+    can move the whole tree (per-agent ``/me`` folders, reset backups) out of
+    the checkout, where the running installation keeps its own.
+
+    Raises:
+        ValueError: The variable is set to a relative path.
+    """
+    raw = os.environ.get(ARTIFACTS_ROOT_ENV, "").strip()
+    if not raw:
+        return _ROOT / "artifacts"
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{ARTIFACTS_ROOT_ENV} must be an absolute path: {raw!r}")
+    return path.resolve()
+
+
+_ARTIFACTS_ROOT = _configured_artifacts_root()
 _AGENTS_ROOT = _ARTIFACTS_ROOT / "agents"
-# Live project mount. Tests replace this. The default is outside the checkout;
-# ``BOSSMOD_PROJECTS_ROOT`` re-binds it. The in-tree artifacts/projects tree
-# is not rewritten.
-_DEFAULT_PROJECTS_ROOT = default_projects_root()
-_PROJECTS_ROOT = _DEFAULT_PROJECTS_ROOT
+# Shared project folders are not here: they live under the company root, one
+# folder per floor (core/bm_cli/floor_roots.py). The in-tree
+# artifacts/projects tree is not rewritten.
 
 # Backup / database files must never be served by the company browser,
 # even if a later change widens the company root back to artifacts/.
@@ -23,17 +42,8 @@ DENIED_COMPANY_FILE_SUFFIXES = frozenset({".bak", ".sqlite3", ".db"})
 
 
 def ensure_artifact_roots() -> None:
-    """Create the top-level artifact directories when missing."""
+    """Create the per-agent artifact root when missing."""
     _AGENTS_ROOT.mkdir(parents=True, exist_ok=True)
-    projects_artifact_root()
-
-
-def _live_projects_root() -> Path:
-    """Return the project mount, honoring a monkeypatched ``_PROJECTS_ROOT``."""
-    candidate = _PROJECTS_ROOT
-    if candidate == _DEFAULT_PROJECTS_ROOT:
-        candidate = default_projects_root()
-    return require_projects_root(Path(candidate))
 
 
 def artifacts_root() -> Path:
@@ -48,30 +58,13 @@ def agents_artifact_root() -> Path:
     return _AGENTS_ROOT
 
 
-def projects_artifact_root() -> Path:
-    """Return the shared project root, outside the application install."""
-    root = _live_projects_root()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def company_files_root() -> Path:
-    """Return the company file browser root (shared projects only).
-
-    ``artifacts/db_backups`` and ``artifacts/agents`` stay outside this tree.
-    Project directories live in the separated data root, not the checkout.
-    """
-    _AGENTS_ROOT.mkdir(parents=True, exist_ok=True)
-    return projects_artifact_root()
-
-
 def is_denied_company_file(path: Path) -> bool:
     """Return True for backup/database files that must not be served."""
     return path.suffix.lower() in DENIED_COMPANY_FILE_SUFFIXES
 
 
 def normalize_company_relative_path(relative_path: str) -> str:
-    """Normalize a company-browser path relative to ``company_files_root()``.
+    """Normalize a company-browser path relative to the company root.
 
     Historical UI/API paths were rooted at ``artifacts/`` and therefore
     prefixed with ``/projects``. Strip a single leading ``projects``
@@ -105,16 +98,15 @@ def transitional_agent_id_artifact_dir(agent_id: str) -> Path:
 
 
 def agent_artifact_dir(storage_key: str) -> Path:
-    """Return the canonical immutable personal artifact directory for a storage key."""
+    """Return the canonical immutable personal artifact directory for a storage key.
+
+    This is the agent's ``/me``. It is agent-owned, not under a floor: it is
+    the agent's own memory and travels with the agent across floors.
+    """
     ensure_artifact_roots()
     path = _AGENTS_ROOT / storage_key
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def project_artifact_dir(project_name: str) -> Path:
-    """Return the shared artifact directory for a project."""
-    return projects_artifact_root() / slugify_name(project_name)
 
 
 def resolve_relative_path(root: Path, relative_path: str) -> Path:
@@ -129,7 +121,7 @@ def resolve_relative_path(root: Path, relative_path: str) -> Path:
 
 
 def resolve_company_relative_path(root: Path, relative_path: str) -> Path:
-    """Resolve a company-browser path inside the projects tree.
+    """Resolve a company-browser path inside the company tree.
 
     Rejects path traversal and backup/database file suffixes.
     """

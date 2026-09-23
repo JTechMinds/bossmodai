@@ -18,7 +18,8 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
-from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
+from core.bm_cli.filesystem import agent_artifact_dir
+from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.host_roots import (
     PathOutsideRootsError,
     consent_grant_root,
@@ -37,6 +38,7 @@ from core.bm_cli.shell_executor import (
     execute_shell_command,
 )
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
+from db.floors import LOBBY_ID
 
 
 def setup_function() -> None:
@@ -168,8 +170,8 @@ def test_resolve_cli_path_opens_named_host_file(tmp_path: Path) -> None:
     assert resolved.mount == "host"
     assert resolved.real_path == fixture.resolve()
     assert resolved.exists is True
-    assert "me/" in virtual_root_entries()
-    assert f"{host.resolve()}/" in virtual_root_entries()
+    assert "me/" in virtual_root_entries(agent.storage_key)
+    assert f"{host.resolve()}/" in virtual_root_entries(agent.storage_key)
 
 
 def test_resolve_cli_path_denies_outside_host_roots(tmp_path: Path) -> None:
@@ -186,7 +188,7 @@ def test_resolve_cli_path_denies_outside_host_roots(tmp_path: Path) -> None:
 
 def test_resolve_cli_path_canonicalizes_real_projects_path() -> None:
     agent = db.create_agent("Path Reviewer")
-    projects = projects_artifact_root()
+    projects = floor_root(agent.floor_id)
     notes = projects / "alpha" / "notes.md"
     notes.parent.mkdir(parents=True, exist_ok=True)
     notes.write_text("project notes\n", encoding="utf-8")
@@ -314,7 +316,7 @@ def test_company_files_root_still_hides_backups_with_host_roots(tmp_path: Path) 
 
 
 def test_company_relative_project_file_still_opens() -> None:
-    projects = projects_artifact_root()
+    projects = floor_root(LOBBY_ID)
     notes = projects / "alpha" / "notes.md"
     notes.parent.mkdir(parents=True, exist_ok=True)
     notes.write_text("hello project\n", encoding="utf-8")
@@ -322,7 +324,7 @@ def test_company_relative_project_file_still_opens() -> None:
     client = _client()
     opened = client.get(
         "/api/company/files",
-        params={"path": "/alpha/notes.md"},
+        params={"path": f"/{LOBBY_ID}/alpha/notes.md"},
         headers=_auth_headers(),
     )
     assert opened.status_code == 200

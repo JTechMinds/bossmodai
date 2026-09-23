@@ -30,7 +30,8 @@ def test_header_switcher_is_one_trigger_over_every_floor() -> None:
     assert "setAttribute('data-menu', 'floor')" in switcher
     assert "New floor" in switcher
     assert "floor-row-more" in switcher
-    assert "Edit floor ${floor.name}" in switcher
+    assert "Floor settings ${floor.name}" in switcher
+    assert "BossModFloorSettings.open" in switcher
     # I/O is floor-api.js's; the switcher never fetches directly.
     assert "BossModFloorApi.createFloorApi" in switcher
     assert "apiFetch(" not in switcher
@@ -83,17 +84,37 @@ def test_office_echoes_the_floor_and_is_not_the_switcher() -> None:
     assert "floor-switcher" not in office
 
 
-def test_hire_uses_the_concrete_floor_and_move_is_not_a_role_patch() -> None:
+def test_hire_uses_the_concrete_floor_and_moves_live_only_in_floor_settings() -> None:
     save = _read("context", "agent-form-save.js")
     assert "BossModFloorScope.hireFloorId()" in save
-    floor = _read("context", "agent-floor.js")
-    assert "apiMoveHomeFloor" in floor
-    assert "confirm_open_work" in floor
+    # The agent form's Home floor control is gone: floor settings are the only
+    # way to move anyone (plan Decision 4).
+    assert not (JS / "context" / "agent-floor.js").exists()
+    assert "BossModAgentFloor" not in _read("context", "agent-edit.js")
     api = _read("context", "agent-api.js")
-    assert "/home-floor" in api
-    assert "apiMoveHomeFloor" in api
+    assert "/home-floor" not in api
+    assert "apiMoveHomeFloor" not in api
+    floor_api = _read("shell", "floor-api.js")
+    assert "/move-plan" in floor_api
+    assert "/projects/move" in floor_api
     menu = _read("shell", "people-view-menu.js")
     assert "home-floor" not in menu
+
+
+def test_floor_settings_replace_the_edit_modal() -> None:
+    assert not (JS / "shell" / "floor-edit.js").exists()
+    settings = _read("shell", "floor-settings.js")
+    assert "size: 'panel'" in settings
+    # The Move to… menu hangs off the row's positioned host, never <body>.
+    assert "container: host" in settings
+    assert "container: document.body" not in settings
+    for name in ("floor-people.js", "floor-threads.js", "floor-projects.js"):
+        assert "ctx.section(" in _read("shell", name)
+        assert "ctx.row(" in _read("shell", name)
+    confirm = _read("shell", "floor-move-confirm.js")
+    assert "Same people, also moving" in confirm
+    assert "Stays behind, loses people" in confirm
+    assert "plan_changed" in confirm
 
 
 def test_people_menu_opens_the_vacation_view() -> None:
@@ -109,13 +130,19 @@ def test_people_menu_opens_the_vacation_view() -> None:
 def test_floor_scope_script_loads_before_the_header() -> None:
     scope = HTML.index("js/shell/floor-scope.js")
     api = HTML.index("js/shell/floor-api.js")
-    edit = HTML.index("js/shell/floor-edit.js")
+    settings_parts = [
+        HTML.index(f"js/shell/{name}")
+        for name in (
+            "floor-delete.js", "floor-picker.js", "floor-move-confirm.js",
+            "floor-people.js", "floor-threads.js", "floor-projects.js", "floor-settings.js",
+        )
+    ]
     vacation = HTML.index("js/shell/vacation-dialog.js")
     switcher = HTML.index("js/shell/floor-switcher.js")
     header = HTML.index("js/shell/header.js")
     people_menu = HTML.index("js/shell/people-view-menu.js")
-    assert scope < api < edit < switcher < header
+    assert scope < api < min(settings_parts)
+    assert max(settings_parts) < switcher < header
     assert api < vacation < people_menu
-    floor = HTML.index("js/context/agent-floor.js")
-    edit = HTML.index("js/context/agent-edit.js")
-    assert floor < edit
+    assert "js/shell/floor-edit.js" not in HTML
+    assert "js/context/agent-floor.js" not in HTML

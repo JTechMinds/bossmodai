@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Literal
 
 import db
-from core.bm_cli.filesystem import agent_artifact_dir, projects_artifact_root
+from core.bm_cli.filesystem import agent_artifact_dir
+from core.bm_cli.floor_roots import agent_floor_id, floor_root
 from core.bm_cli.host_roots import (
     PathOutsideRootsError,
     is_within_roots,
@@ -107,7 +108,7 @@ def rewrite_virtual_shell_paths(
 ) -> ParsedCliCommand:
     """Rewrite ``/me`` and ``/projects`` argv tokens to real workspace paths.
 
-    Shared deliverables under ``/projects`` map into ``projects_artifact_root``
+    Shared deliverables under ``/projects`` map into the agent's floor folder
     so read/list/find stay inside the path jail. Host Desktop is not unlocked.
     """
     tokens = [parsed.name, *parsed.args]
@@ -408,15 +409,18 @@ def _rewrite_one_path(agent: Agent, token: str, cwd: str) -> str:
 
 
 def _workspace_roots(agent: Agent) -> tuple[Path, ...]:
+    """The agent's ``/me`` and, when it has a floor, that floor's folder."""
     roots: list[Path] = []
     try:
         roots.append(agent_artifact_dir(agent.storage_key).resolve())
     except OSError:
         pass
-    try:
-        roots.append(projects_artifact_root().resolve())
-    except OSError:
-        pass
+    floor_id = agent_floor_id(agent.storage_key)
+    if floor_id is not None:
+        try:
+            roots.append(floor_root(floor_id).resolve())
+        except OSError:
+            pass
     return tuple(roots)
 
 

@@ -1,4 +1,4 @@
-"""shell/floor-switcher.js — one trigger, every floor, a panel that hangs off its host."""
+"""shell/floor-switcher.js — one trigger, every floor, a panel that hangs off its host, and the settings its `⋯` opens."""
 
 from __future__ import annotations
 
@@ -14,11 +14,20 @@ MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "format.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "search-field.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "shell" / "floor-scope.js",
     JS / "shell" / "floor-api.js",
-    JS / "shell" / "floor-edit.js",
+    JS / "shell" / "floor-delete.js",
+    JS / "shell" / "floor-picker.js",
+    JS / "shell" / "floor-move-confirm.js",
+    JS / "shell" / "floor-people.js",
+    JS / "shell" / "floor-threads.js",
+    JS / "shell" / "floor-projects.js",
+    JS / "shell" / "floor-settings.js",
     JS / "shell" / "floor-switcher.js",
 ]
 
@@ -35,12 +44,13 @@ def test_floor_switcher_behaviour() -> None:
         "floorsLoadIntoTheStore": True,
         "panelHangsOffTheSwitcherHost": True,
         "everyFloorIsARowWithItsCount": True,
-        "everyRowHasANamedEditButton": True,
+        "everyRowHasANamedSettingsButton": True,
         "pickingARowSetsTheCurrentFloor": True,
         "escInTheFieldReturnsToTheDoor": True,
         "newFloorCreatesAndMovesThere": True,
-        "editFloorPrefillsTheNameAndOffersDelete": True,
+        "floorSettingsPrefillTheNameAndOfferDelete": True,
         "deleteLayerWaitsForTheAgentsChoice": True,
+        "deleteLayerSaysTheFilesAreArchived": True,
         "choosingEnablesDelete": True,
         "aRenameElsewhereRepaintsTheTrigger": True,
         "aDeleteElsewhereMovesTheOperatorToLobby": True,

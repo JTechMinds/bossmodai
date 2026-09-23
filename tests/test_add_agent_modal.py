@@ -58,7 +58,6 @@ HARNESS_MODULES = [
     CONTEXT / "agent-add-pane.js",
     CONTEXT / "agent-dialog-slot.js",
     JS / "shell" / "floor-scope.js",
-    CONTEXT / "agent-floor.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "agents-dialog.js",
     JS / "shell" / "add-agent-menu.js",

@@ -71,9 +71,10 @@ class PathJailError(ValueError):
 def allowed_shell_roots(agent_storage_key: str) -> tuple[Path, ...]:
     """Return the real filesystem roots a native shell command may touch.
 
-    Roots are the agent's personal workspace, the shared projects mount, and
-    any operator-configured extra host roots. ``artifacts/db_backups`` and
-    other agents' workspaces stay outside the jail.
+    Roots are the agent's personal workspace, its floor's projects folder
+    (none on vacation), and any operator-configured extra host roots.
+    ``artifacts/db_backups``, other agents' workspaces, and other floors'
+    folders stay outside the jail.
     """
     return allowed_workspace_roots(agent_storage_key)
 

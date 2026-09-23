@@ -35,7 +35,16 @@ const BossModFilesPlace = (() => {
 
     // ─── Painting ───
 
+    /** The company root: its entries are floors, so nothing is created here. */
+    const COMPANY_TOP = '/';
+
+    /** New is held shut while the place is on (or loading) the company top level. */
+    function syncCreate() {
+        toolbar.setCreateAllowed(state.path !== COMPANY_TOP);
+    }
+
     function paint() {
+        syncCreate();
         if (state.mode === 'global') {
             GRID.paintSearchBar(frame.crumbs, state.query, () => {
                 toolbar.clearSearch();
@@ -77,6 +86,7 @@ const BossModFilesPlace = (() => {
     async function refresh() {
         const loadId = load.next();
         const requested = state.path;
+        syncCreate();
         frame.setBody(GRID.renderSkeleton());
         let payload;
         try {

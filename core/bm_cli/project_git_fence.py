@@ -200,7 +200,7 @@ def project_git_policy_subject(
     if not _is_git_cli(parsed) or not git_has_location_override(parsed.args):
         return None
     _scoped, _real_cwd, scope = _resolved_git_scope(agent, parsed, virtual_cwd)
-    project = None if scope.invalid else project_directory_for(scope.work_tree)
+    project = None if scope.invalid else project_directory_for(agent.storage_key, scope.work_tree)
     if project is None:
         return None
     if scope.git_dir is not None and not _git_dir_inside(scope.git_dir, project):
@@ -340,7 +340,7 @@ def _bound_repository(agent: Agent, real_cwd: Path) -> Path | None:
     from core.bm_cli.filesystem import agent_artifact_dir
     from core.bm_cli.workspace_preference import find_git_root
 
-    project = project_directory_for(real_cwd)
+    project = project_directory_for(agent.storage_key, real_cwd)
     if project is not None:
         return project.resolve()
 

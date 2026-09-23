@@ -1,5 +1,6 @@
 /**
- * Node harness: the header floor switcher and its Edit / Delete floor modal.
+ * Node harness: the header floor switcher, the floor settings its `⋯` opens,
+ * and the Delete floor layer over them.
  *
  * Checks what renders and what a click does, which the source text cannot
  * show: that the panel hangs off the switcher's own positioned host (the
@@ -23,8 +24,11 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModOverlayFocus", "BossModOverlays",
-    "BossModFloorScope", "BossModFloorApi", "BossModFloorEdit", "BossModFloorSwitcher",
+    "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
+    "BossModOverlayFocus", "BossModOverlays",
+    "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
+    "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
+    "BossModFloorSettings", "BossModFloorSwitcher",
 ];
 process.argv.slice(2).forEach((path, index) => {
     eval(`${fs.readFileSync(path, "utf8")}\n;global.${NAMES[index]} = ${NAMES[index]};\n`);
@@ -43,7 +47,7 @@ function response(status, body) {
     };
 }
 
-let floors = [{ id: "lobby", name: "Lobby" }, { id: "fin", name: "Finance" }];
+let floors = [{ id: "lobby", name: "Lobby", has_folder: true }, { id: "fin", name: "Finance", has_folder: true }];
 let failFloors = false;
 const calls = [];
 function apiFetch(url, init) {
@@ -51,6 +55,15 @@ function apiFetch(url, init) {
     calls.push({ url, method, body: init && init.body ? JSON.parse(init.body) : null });
     if (url === "/api/floors" && method === "GET") {
         return Promise.resolve(failFloors ? response(500, { detail: "boom" }) : response(200, floors));
+    }
+    // What the floor settings read when they open.
+    if (url === "/api/channels?status=active" && method === "GET") {
+        return Promise.resolve(response(200, [
+            { id: "t1", name: "Books", status: "active", floor_id: "fin", members: [{ id: "a3", name: "Cy" }] },
+        ]));
+    }
+    if (/^\/api\/floors\/[^/]+\/projects$/.test(url) && method === "GET") {
+        return Promise.resolve(response(200, []));
     }
     if (url === "/api/floors" && method === "POST") {
         const created = { id: "ops", name: JSON.parse(init.body).name };
@@ -123,8 +136,8 @@ async function submit(form) {
         && choices[1].getAttribute("aria-pressed") === "false"
         && documentStub.activeElement === choices[0];
     const more = panel.querySelectorAll(".floor-row-more");
-    verdict.everyRowHasANamedEditButton = more.length === 2
-        && more[1].getAttribute("aria-label") === "Edit floor Finance";
+    verdict.everyRowHasANamedSettingsButton = more.length === 2
+        && more[1].getAttribute("aria-label") === "Floor settings Finance";
 
     // ─── Picking a row moves the operator and closes the panel ───
     await choices[1].dispatchClick();
@@ -154,21 +167,23 @@ async function submit(form) {
         && store.getState().floors.some((floor) => floor.id === "ops")
         && !switcher.element.querySelector(".menu");
 
-    // ─── Edit floor, then the Delete layer ───
+    // ─── Floor settings, then the Delete layer ───
     store.setState({ currentFloorId: "fin" });
     await trigger.dispatchClick();
     panel = switcher.element.querySelector(".menu");
     const finMore = panel.querySelectorAll(".floor-row-more")
-        .find((button) => button.getAttribute("aria-label") === "Edit floor Finance");
+        .find((button) => button.getAttribute("aria-label") === "Floor settings Finance");
     await finMore.dispatchClick();
+    await drain();
     const dialogs = () => documentStub.body.querySelectorAll(".modal-panel");
     const edit = dialogs()[0];
-    const editInput = edit.querySelector(".field-input");
+    const editInput = edit.querySelector("#floor-settings-name");
     const actionLabels = edit.querySelectorAll(".modal-action").map((button) => button.textLabel);
-    verdict.editFloorPrefillsTheNameAndOffersDelete = Boolean(edit)
-        && edit.getAttribute("aria-label") === "Edit floor"
+    verdict.floorSettingsPrefillTheNameAndOfferDelete = Boolean(edit)
+        && edit.getAttribute("aria-label") === "Finance"
+        && edit.getAttribute("data-size") === "panel"
         && editInput.value === "Finance"
-        && actionLabels.join("|") === "Delete floor…|Cancel|Save";
+        && actionLabels.join("|") === "Delete floor…|Close";
 
     const deleteAction = edit.querySelectorAll(".modal-action")
         .find((button) => button.textLabel === "Delete floor…");
@@ -183,6 +198,9 @@ async function submit(form) {
         && radios.every((radio) => radio.getAttribute("type") === "radio" && !radio.checked)
         && confirm.disabled === true
         && /1 agent works on Finance\. Its 1 thread will be archived\./.test(layer.textContent);
+    // Finance has a company folder, so the layer says where its files go.
+    verdict.deleteLayerSaysTheFilesAreArchived = /Its files move to Company › Archived floors\./
+        .test(layer.textContent);
     (radios[0].listeners.change || []).forEach((fn) => fn({ target: radios[0] }));
     verdict.choosingEnablesDelete = layer.querySelector("#floor-delete-confirm").disabled === false;
     // ✕ on the top layer closes every layer.

@@ -617,41 +617,6 @@ async def create_agent(body: AgentCreate) -> Agent:
     return agent
 
 
-class HomeFloorBody(BaseModel):
-    """Operator move of one agent's home floor."""
-
-    floor_id: str
-    confirm_open_work: bool = False
-
-
-@router.post("/agents/{agent_id}/home-floor")
-async def move_agent_home_floor(agent_id: str, body: HomeFloorBody) -> Agent:
-    """Move an agent's home floor. Open work on the old floor requires confirm."""
-    from core.floors import FloorDenied, FloorMoveNeedsConfirm, move_home_floor
-
-    try:
-        agent = move_home_floor(
-            agent_id,
-            body.floor_id,
-            confirm_open_work=body.confirm_open_work,
-        )
-    except FloorMoveNeedsConfirm as exc:
-        return JSONResponse(
-            {
-                "code": "confirm_open_work",
-                "open_task_count": exc.open_task_count,
-                "message": str(exc),
-            },
-            status_code=409,
-        )
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except FloorDenied as exc:
-        raise HTTPException(403, str(exc)) from exc
-    await manager.broadcast_world_state()
-    return agent
-
-
 class VacationReturnBody(BaseModel):
     """The floor an agent on vacation comes back to."""
 

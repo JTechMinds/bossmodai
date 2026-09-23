@@ -87,7 +87,7 @@ def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
     target_arg = path_args[0] if path_args else None
     target = resolve_cli_path(context.agent.storage_key, context.cwd, target_arg)
     if target.mount == "root" and target.real_path is None:
-        entries = virtual_root_entries()
+        entries = virtual_root_entries(context.agent.storage_key)
         lines = [f"- {entry}" for entry in entries]
         return success_result(
             command=parsed.raw,
@@ -264,7 +264,7 @@ def handle_mkdir(context: CliExecutionContext, parsed: ParsedCliCommand, content
     try:
         from core.bm_cli.project_repo import ensure_project_repository
 
-        ensure_project_repository(target.real_path)
+        ensure_project_repository(context.agent.storage_key, target.real_path)
     except ValueError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
     commit_sha = auto_commit_workspace_change(
@@ -549,7 +549,7 @@ def write_virtual_text(
     target.real_path.parent.mkdir(parents=True, exist_ok=True)
     from core.bm_cli.project_repo import ensure_project_repository
 
-    ensure_project_repository(target.real_path.parent)
+    ensure_project_repository(agent.storage_key, target.real_path.parent)
     normalized = normalize_write_content(content)
     if append:
         with target.real_path.open("a", encoding="utf-8") as handle:

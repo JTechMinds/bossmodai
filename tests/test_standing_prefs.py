@@ -21,8 +21,10 @@ from core.agent_loop.standing_prefs import (
 )
 from core.bm_cli import filesystem
 from core.bm_cli.filesystem import agent_artifact_dir
+from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.runtime import execute_bm_cli
 from core.llm import context_builder
+from db.floors import LOBBY_ID
 
 
 def _pref(pref_id: str, *, kind: str = "preference", text: str = "short sentences", sources: list[str] | None = None) -> dict:
@@ -41,7 +43,7 @@ def _document(*prefs: dict) -> str:
 @pytest.fixture(autouse=True)
 def _sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(filesystem, "_AGENTS_ROOT", tmp_path / "agents")
-    monkeypatch.setattr(filesystem, "_PROJECTS_ROOT", tmp_path / "projects")
+    monkeypatch.setenv("BOSSMOD_COMPANY_ROOT", str(tmp_path / "company"))
     db.close_connection()
     db_path = Path(os.environ["BOSSMOD_DB_PATH"])
     for suffix in ("", "-wal", "-shm"):
@@ -107,7 +109,7 @@ def test_work_turns_inject_prefs_and_do_not_read_note_bodies(monkeypatch: pytest
     notes = agent_artifact_dir(agent.storage_key) / "notes" / "how.md"
     notes.parent.mkdir(parents=True)
     notes.write_text("NOTEBODY_SHOULD_NOT_BE_READ\n", encoding="utf-8")
-    project_note = filesystem._PROJECTS_ROOT / "billing" / "how.md"
+    project_note = floor_root(LOBBY_ID) / "billing" / "how.md"
     project_note.parent.mkdir(parents=True)
     project_note.write_text("PROJECT_NOTE_BODY\n", encoding="utf-8")
 

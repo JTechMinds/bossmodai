@@ -23,6 +23,35 @@ const BossModFileActions = (() => {
         { action: 'copy', label: 'Copy to…' },
     ]);
 
+    /** What a floor folder, the archive, or an archived floor may still do. */
+    const FLOOR_LEVEL_ACTIONS = Object.freeze(new Set(['copy-path', 'open-explorer']));
+    const COMPANY_TOP = '/';
+    const ARCHIVE = '/.archived-floors';
+
+    /**
+     * The menu items one row offers. The server refuses the rest (floor
+     * folders are managed by the floors, and nothing new may sit at floor
+     * level), so they are not offered: a menu item that can only fail is a
+     * trap, not a choice.
+     *
+     * @param {object} entry  A listing entry or a search hit.
+     * @returns {object[]} A subset of ITEMS, in order.
+     */
+    function itemsFor(entry) {
+        const parent = BossModFilesData.parentVirtualPath(entry.path);
+        // Everything directly in the archive is an archived floor, marker or not.
+        if (entry.mount === 'floor' || entry.mount === 'archive' || parent === ARCHIVE) {
+            return ITEMS.filter((item) => FLOOR_LEVEL_ACTIONS.has(item.action));
+        }
+        // A stray top-level folder may be moved into a floor or deleted, but a
+        // rename would leave it at the top level, which holds only floors.
+        if (parent === COMPANY_TOP) return ITEMS.filter((item) => item.action !== 'rename');
+        return ITEMS.slice();
+    }
+
+    /** The New menu's description, read when it is held shut. */
+    const NEW_HINT_ID = 'file-new-hint';
+
     /** Kept off the right edge of the viewport, as the original was. */
     const MENU_WIDTH = 200;
     const MENU_HEIGHT = 280;
@@ -46,7 +75,7 @@ const BossModFileActions = (() => {
             'aria-label': `Actions for ${entry.name}`,
         });
 
-        ITEMS.forEach((item, index) => {
+        itemsFor(entry).forEach((item, index) => {
             const button = h('button', {
                 class: `file-menu-item ${item.tone || ''}`.trim(),
                 type: 'button',
@@ -170,9 +199,16 @@ const BossModFileActions = (() => {
      * the menu is built — once per mount — and removed by destroy(). The
      * dock-era version bound it at module load and never removed it.
      *
+     * It can be held shut with `setAllowed(false, reason)`: the toggle stays
+     * focusable (a disabled button drops out of the tab order, taking its
+     * explanation with it), is marked aria-disabled, and carries the reason
+     * as its description and tooltip.
+     *
      * @param {object} deps
      * @param {(kind: 'file'|'folder') => void} deps.onCreate
-     * @returns {{ element: HTMLElement, close: () => void, destroy: () => void }}
+     * @returns {{ element: HTMLElement, close: () => void,
+     *             setAllowed: (allowed: boolean, reason?: string) => void,
+     *             destroy: () => void }}
      */
     function createNewMenu({ onCreate }) {
         const list = h('div', { class: 'file-new-list', role: 'menu', hidden: true },
@@ -188,10 +224,15 @@ const BossModFileActions = (() => {
         const toggle = h('button', {
             class: 'file-toolbar-btn', type: 'button',
             'aria-haspopup': 'menu', 'aria-expanded': 'false',
-            onclick: () => { list.hidden ? open() : close(); },
+            onclick: () => {
+                if (toggle.getAttribute('aria-disabled') === 'true') return;
+                if (list.hidden) open();
+                else close();
+            },
         }, 'New');
+        const hint = h('span', { class: 'visually-hidden', id: NEW_HINT_ID });
 
-        const element = h('div', { class: 'file-new' }, toggle, list);
+        const element = h('div', { class: 'file-new' }, toggle, hint, list);
 
         function open() {
             list.hidden = false;
@@ -221,6 +262,25 @@ const BossModFileActions = (() => {
         return {
             element,
             close,
+            /**
+             * @param {boolean} allowed
+             * @param {string} [reason]  Required when `allowed` is false.
+             * @returns {void}
+             * @throws {Error} When the menu is held shut with no reason.
+             */
+            setAllowed(allowed, reason) {
+                if (!allowed && !reason) throw new Error('[file-actions] setAllowed(false) needs a reason');
+                toggle.setAttribute('aria-disabled', allowed ? 'false' : 'true');
+                hint.textContent = allowed ? '' : reason;
+                if (allowed) {
+                    toggle.removeAttribute('aria-describedby');
+                    toggle.removeAttribute('title');
+                    return;
+                }
+                toggle.setAttribute('aria-describedby', NEW_HINT_ID);
+                toggle.setAttribute('title', reason);
+                close();
+            },
             /** @returns {void} */
             destroy() {
                 document.removeEventListener('click', onDocumentClick);
@@ -229,5 +289,5 @@ const BossModFileActions = (() => {
         };
     }
 
-    return { openMenu, run, createNewMenu, ITEMS };
+    return { openMenu, run, createNewMenu, itemsFor, ITEMS };
 })();

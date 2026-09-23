@@ -170,10 +170,6 @@ const BossModAgentEdit = (() => {
         }
 
         void renderInline({ container: formEl, agent, primary, onSave, onDelete })
-            .then((landed) => {
-                if (!landed || destroyed) return;
-                BossModAgentFloor.mount({ container: formEl, agent, store });
-            })
             .catch(failed);
 
         return handle;

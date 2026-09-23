@@ -23,16 +23,16 @@ from core.agent_loop.channel_rounds import _ordered_members, start_channel_peer_
 from core.agent_loop.chat_fade import _run_fade_job
 from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.sticky_slots import _allowed_sources
+from core.bm_cli.floor_roots import floor_root
+from core.floor_moves import apply_move, plan_move
 from core.floors import (
     CROSS_FLOOR_DENY,
     VACATION_DENY,
     AgentOnVacation,
     FloorDenied,
-    FloorMoveNeedsConfirm,
     FloorOccupantsChoiceRequired,
     delete_floor,
     keep_one_floor,
-    move_home_floor,
     send_home,
 )
 from core.messaging import route_human_dm
@@ -337,7 +337,7 @@ def test_system_roster_keeps_one_floor_and_drops_a_tie() -> None:
     assert keep_one_floor([{"id": ada.id}, {"id": cara.id}]) == []
 
 
-def test_move_home_confirms_open_work_then_releases_other_floor_seats() -> None:
+async def test_moving_one_agent_releases_the_seats_it_leaves_behind() -> None:
     ada = _agent("Ada", 1)
     bob = _agent("Bob", 2)
     channel = db.create_channel(
@@ -347,13 +347,14 @@ def test_move_home_confirms_open_work_then_releases_other_floor_seats() -> None:
     )
     task = db.create_task(title="Open card", assigned_to=ada.id, owner_id=ada.id)
     finance = create_floor("Finance")
-    with pytest.raises(FloorMoveNeedsConfirm) as caught:
-        move_home_floor(ada.id, finance.id, confirm_open_work=False)
-    assert caught.value.open_task_count >= 1
+    plan = plan_move(finance.id, agent_ids=[ada.id], channel_ids=[])
+    assert [ref.id for ref in plan.split_threads] == [channel.id]
     assert {row.agent_id for row in db.list_channel_members(channel.id)} == {ada.id, bob.id}
 
-    moved = move_home_floor(ada.id, finance.id, confirm_open_work=True)
-    assert moved.floor_id == finance.id
+    await apply_move(
+        finance.id, agent_ids=[ada.id], channel_ids=[], fingerprint=plan.fingerprint, services=_Services(),
+    )
+    assert db.get_agent(ada.id).floor_id == finance.id
     assert ada.id not in {row.agent_id for row in db.list_channel_members(channel.id)}
     assert bob.id in {row.agent_id for row in db.list_channel_members(channel.id)}
     assert db.get_task(task.id) is not None
@@ -381,7 +382,7 @@ def test_channel_api_denies_a_mixed_floor_roster() -> None:
     assert response.status_code == 403
 
 
-def test_home_floor_api_asks_before_leaving_open_work() -> None:
+def test_move_api_refuses_a_plan_the_operator_was_not_shown() -> None:
     ada = _agent("Ada", 1)
     db.create_task(title="Open card", assigned_to=ada.id, owner_id=ada.id)
     finance = create_floor("Finance")
@@ -391,14 +392,12 @@ def test_home_floor_api_asks_before_leaving_open_work() -> None:
     client = TestClient(app)
     headers = {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
     response = client.post(
-        f"/api/agents/{ada.id}/home-floor",
+        f"/api/floors/{finance.id}/move",
         headers=headers,
-        json={"floor_id": finance.id, "confirm_open_work": False},
+        json={"agent_ids": [ada.id], "fingerprint": "stale"},
     )
     assert response.status_code == 409
-    body = response.json()
-    assert body["code"] == "confirm_open_work"
-    assert body["open_task_count"] >= 1
+    assert response.json()["code"] == "plan_changed"
     assert db.get_agent(ada.id).floor_id == LOBBY_ID
 
 
@@ -565,6 +564,7 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
     finance = create_floor("Finance")
     ada = _agent("Ada", 1, floor_id=finance.id)
     desk = db.create_channel(name="Desk", member_agent_ids=[ada.id], created_by=ada.id)
+    floor_root(finance.id)
     client, headers = _client()
     response = client.delete(f"/api/floors/{finance.id}?occupants=send_home", headers=headers)
     assert response.status_code == 200
@@ -573,6 +573,7 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
         "agents_sent_home": [ada.id],
         "agents_deleted": [],
         "threads_archived": [desk.id],
+        "folder_archived": True,
     }
 
 
@@ -641,7 +642,7 @@ async def test_a_vacationer_is_hidden_unassignable_and_never_woken() -> None:
     with pytest.raises(FloorDenied):
         _bind(title="Card", assigned_to=ada.id, owner_id=bob.id, channel_id=None)
     with pytest.raises(FloorDenied):
-        move_home_floor(ada.id, LOBBY_ID, confirm_open_work=True)
+        await apply_move(LOBBY_ID, agent_ids=[ada.id], channel_ids=[], fingerprint="", services=_Services())
 
     TurnDispatcher().enqueue_trigger(ada.id, "human_chat", "chat", {"content": "hi"})
     persisted = persist_result_triggers({"trigger_requests": [{

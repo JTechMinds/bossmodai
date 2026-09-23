@@ -1089,6 +1089,123 @@
 
 .floor-delete-option-label { font-size: 13px; font-weight: 500; color: var(--ink); }
 
+/* Floor settings (shell/floor-settings.js and its sections): Name, then
+   People, Threads and Projects, each a heading with its count and an Add
+   door, then its rows. The rows share the vacation view's rhythm. */
+.floor-settings { display: flex; flex-direction: column; gap: 20px; }
+
+/* One centred column, the panel's reading width, so headings, rows and their
+   `⋯` share one right edge however wide the window is. */
+.floor-settings,
+.floor-picker,
+.floor-move { width: 100%; max-width: var(--panel-column); margin: 0 auto; }
+
+/* A row is a control, not prose: the panel's 100ch measure on <li>
+   (.modal-body :is(p, li)) would stop it short of the column's edge. Same
+   specificity as that rule, and later, so it wins. */
+.modal-panel .modal-body li.floor-item,
+.modal-panel .modal-body li.floor-move-line { max-width: none; }
+
+.floor-name-form { display: flex; flex-direction: column; gap: 6px; }
+
+.floor-name-row { display: flex; align-items: center; gap: 8px; }
+
+.floor-name-row .field-input { flex: 1 1 auto; min-width: 0; }
+
+.floor-section { display: flex; flex-direction: column; gap: 6px; }
+
+.floor-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.floor-section-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+
+.floor-section-add { flex: none; font-size: 13px; }
+
+.floor-section-body > .field-hint { margin: 0; padding: 8px; }
+
+.floor-section-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; }
+
+.floor-item-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+
+.floor-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r);
+}
+
+.floor-item:hover { background: var(--bg); }
+
+.floor-item-who { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+
+.floor-item-name { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+.floor-item-meta { font-size: 12px; color: var(--muted); }
+
+.floor-item-faces { display: flex; flex-wrap: wrap; gap: 2px; }
+
+/* Positioned: THE host a row's Move to… menu hangs off, right edges aligned
+   with the `⋯`, never <body> (the header-collapse RCA in floor-switcher.js). */
+.floor-item-more { position: relative; flex: none; }
+
+.floor-item:hover .floor-row-more,
+.floor-item:focus-within .floor-row-more { color: var(--ink); }
+
+.menu[data-menu="floor-move"] {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  max-height: min(320px, 60vh);
+  overflow-y: auto;
+}
+
+/* The Add picker (shell/floor-picker.js): search, then one group per floor. */
+.floor-picker { display: flex; flex-direction: column; gap: 12px; }
+
+.floor-pick-list { display: flex; flex-direction: column; gap: 14px; }
+
+.floor-pick-group { display: flex; flex-direction: column; gap: 2px; }
+
+.floor-pick-group-title { margin: 0 0 4px; font-size: 12px; font-weight: 500; color: var(--muted); }
+
+.floor-pick-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+
+.floor-pick-option:hover { background: var(--bg); }
+
+/* Both set a display, which would beat the UA's [hidden] rule; the search
+   hides rows and groups with the attribute. */
+.floor-pick-option[hidden],
+.floor-pick-group[hidden] { display: none; }
+
+/* The move confirm (shell/floor-move-confirm.js): the groups, in order. */
+.floor-move { display: flex; flex-direction: column; gap: 12px; }
+
+.floor-move-confirm p { margin: 0; }
+
+.floor-move-groups { display: flex; flex-direction: column; gap: 16px; }
+
+.floor-move-group { display: flex; flex-direction: column; gap: 6px; }
+
+.floor-move-lines { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+
+.floor-move-line { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; }
+
+.floor-move-companion { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+
 /* The On vacation view (shell/vacation-dialog.js): who, since when, and the
    one way back. */
 .vacation-view { display: flex; flex-direction: column; gap: 8px; }

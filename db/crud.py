@@ -118,6 +118,41 @@ def insert_returning_dict(sql: str, params: list[Any]) -> dict[str, Any]:
 # Update helpers
 # ---------------------------------------------------------------------------
 
+def rewrite_path_prefix(table: str, column: str, old_prefix: str, new_prefix: str) -> int:
+    """Point every path in ``table.column`` under a moved directory at its new place.
+
+    Rewrites the directory itself and everything below it (``old_prefix`` or
+    ``old_prefix/…``); a sibling that merely shares leading characters
+    (``old_prefix-2``) is not touched. Compared with ``substr`` rather than
+    ``LIKE`` so ``_`` and ``%`` in a path are not wildcards.
+
+    Returns:
+        How many rows were rewritten.
+
+    Raises:
+        ValueError: A prefix is empty or ends with a separator, or the table
+            or column name is not a plain identifier.
+    """
+    if not _IDENTIFIER_RE.match(table) or not _IDENTIFIER_RE.match(column):
+        raise ValueError(f"Invalid identifier: {table!r}.{column!r}")
+    old = str(old_prefix or "")
+    new = str(new_prefix or "")
+    for label, value in (("old_prefix", old), ("new_prefix", new)):
+        if not value or value.endswith("/"):
+            raise ValueError(f"{label} must be a non-empty path without a trailing separator")
+    rows = query(
+        f"""
+        UPDATE {table}
+        SET {column} = $2 || substr({column}, length($1) + 1)
+        WHERE {column} = $1
+           OR substr({column}, 1, length($1) + 1) = $1 || '/'
+        RETURNING 1 AS rewritten
+        """,
+        [old, new],
+    )
+    return len(rows)
+
+
 def build_update(
     table: str,
     id_column: str,

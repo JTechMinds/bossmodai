@@ -191,6 +191,29 @@ def get_agent(agent_id: str) -> Agent | None:
     )
 
 
+def get_agent_by_storage_key(storage_key: str) -> Agent | None:
+    """Fetch the agent that owns one immutable storage key (``agent_0001``).
+
+    Returns None when no agent carries the key. The key is what the CLI and
+    the Desk resolve paths with, so this is how a path learns its agent.
+    """
+    token = (storage_key or "").strip()
+    if not token:
+        return None
+    return _decrypt_agent(
+        fetch_one(
+            f"""
+            SELECT {_AGENT_COLUMNS}
+            FROM agents
+            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+            WHERE agent_storage_identities.storage_key = $1
+            """,
+            [token],
+            Agent,
+        )
+    )
+
+
 def list_agents() -> list[Agent]:
     """Return all agents ordered by creation time."""
     return [
