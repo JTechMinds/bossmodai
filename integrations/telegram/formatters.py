@@ -76,17 +76,23 @@ def format_channels_list(
     channels: list[Any],
     members_map: dict[str, list[dict[str, Any]]],
 ) -> str:
-    """Format active channels with member names."""
-    if not channels:
-        return escape_md("No active channels.")
+    """Format active threads with 1-based row numbers.
 
-    lines = ["*Channels*\n"]
-    for ch in channels:
+    The number is the only join handle. It matches list order and nothing else.
+    """
+    if not channels:
+        return escape_md("No active threads. Nothing to /join.")
+
+    lines = ["*Threads*\n"]
+    for index, ch in enumerate(channels, start=1):
         name = escape_md(ch.name if hasattr(ch, "name") else str(ch))
         members = members_map.get(ch.id if hasattr(ch, "id") else "", [])
         member_names = ", ".join(escape_md(m.get("name", "?")) for m in members)
-        lines.append(f"*{name}* \\- {member_names or escape_md('no members')}")
+        ordinal = escape_md(f"{index}.")
+        lines.append(f"{ordinal} *{name}* \\- {member_names or escape_md('no members')}")
 
+    lines.append("")
+    lines.append(escape_md("Rejoin a row with /join N. If the list changed, send /channels again."))
     return "\n".join(lines)
 
 
