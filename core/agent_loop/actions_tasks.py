@@ -166,6 +166,10 @@ async def _handle_delegate_task(
         return {"event": "agent_error", "detail": "No valid delegate target specified", "agent_name": agent.name}
     if target.id == agent.id:
         return {"event": "agent_error", "detail": "Cannot delegate a task to yourself", "agent_name": agent.name}
+    from core.floors import CROSS_FLOOR_DENY, FloorDenied, peers_share_floor
+
+    if not peers_share_floor(agent.id, target.id):
+        return {"event": "world_feedback", "detail": CROSS_FLOOR_DENY, "agent_name": agent.name}
 
     task_title = str(action.get("taskTitle") or "").strip()
     task_description = str(action.get("taskDescription") or "").strip()
@@ -173,7 +177,10 @@ async def _handle_delegate_task(
         assignee=target,
         title=task_title,
         description=task_description,
-        teammates=db.list_agents(),
+        teammates=[
+            item for item in db.list_agents()
+            if peers_share_floor(agent.id, item.id)
+        ],
         confirm=bool(action.get("confirmSpecialtyMismatch")),
     )
     if evaluation.deny:
@@ -230,44 +237,47 @@ async def _handle_delegate_task(
         parent_task=parent_task,
     )
 
-    if parent_task is not None:
-        creation = create_or_bind_subtask(
-            parent_task=parent_task,
-            title=task_title,
-            description=task_description,
-            project=project_name,
-            assigned_to=target.id,
-            requester_id=agent.id,
-            owner_id=owner_id,
-            created_by=agent.id,
-            work_contract=work_contract,
-            source_channel=source_channel,
-            notification_policy=notification_policy,
-            notification_channel_id=notification_channel_id,
-            audit_author_name=agent.name,
-            audit_author_type="agent",
-            audit_author_agent_id=agent.id,
-            audit_source_trigger_id=(trigger or {}).get("trigger_id"),
-        )
-    else:
-        creation = create_or_bind_task(
-            title=task_title,
-            description=task_description,
-            project=project_name,
-            assigned_to=target.id,
-            requester_id=agent.id,
-            owner_id=owner_id,
-            created_by=agent.id,
-            parent_task_id=None,
-            work_contract=work_contract,
-            source_channel=source_channel,
-            notification_policy=notification_policy,
-            notification_channel_id=notification_channel_id,
-            audit_author_name=agent.name,
-            audit_author_type="agent",
-            audit_author_agent_id=agent.id,
-            audit_source_trigger_id=(trigger or {}).get("trigger_id"),
-        )
+    try:
+        if parent_task is not None:
+            creation = create_or_bind_subtask(
+                parent_task=parent_task,
+                title=task_title,
+                description=task_description,
+                project=project_name,
+                assigned_to=target.id,
+                requester_id=agent.id,
+                owner_id=owner_id,
+                created_by=agent.id,
+                work_contract=work_contract,
+                source_channel=source_channel,
+                notification_policy=notification_policy,
+                notification_channel_id=notification_channel_id,
+                audit_author_name=agent.name,
+                audit_author_type="agent",
+                audit_author_agent_id=agent.id,
+                audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+            )
+        else:
+            creation = create_or_bind_task(
+                title=task_title,
+                description=task_description,
+                project=project_name,
+                assigned_to=target.id,
+                requester_id=agent.id,
+                owner_id=owner_id,
+                created_by=agent.id,
+                parent_task_id=None,
+                work_contract=work_contract,
+                source_channel=source_channel,
+                notification_policy=notification_policy,
+                notification_channel_id=notification_channel_id,
+                audit_author_name=agent.name,
+                audit_author_type="agent",
+                audit_author_agent_id=agent.id,
+                audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+            )
+    except FloorDenied:
+        return {"event": "world_feedback", "detail": CROSS_FLOOR_DENY, "agent_name": agent.name}
     task = creation.task
 
     if creation.outcome == "clarify_ambiguous_match" or task is None:

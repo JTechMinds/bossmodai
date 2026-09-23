@@ -12,7 +12,6 @@ from typing import Any
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
-    build_task_assigned_trigger,
     can_dispatch_trigger,
     persist_result_triggers,
     plan_arrival_follow_up,
@@ -881,7 +880,12 @@ class TurnDispatcher:
         """Drop stale resumptive backlog triggers and rebuild pending assignments."""
         db.delete_queued_triggers(agent_id, trigger_types=_REBUILDABLE_BACKLOG_TRIGGER_TYPES)
         for task in db.list_tasks(assigned_to=agent_id, status="pending"):
-            self.enqueue_trigger(**build_task_assigned_trigger(task))
+            from core.agent_loop.activity_scheduler import assignment_wake_trigger
+
+            wake = assignment_wake_trigger(task)
+            if wake is None:
+                continue
+            self.enqueue_trigger(**wake)
 
     async def _maybe_enqueue_social_trigger(self, agent_id: str) -> None:
         agent = db.get_agent(agent_id)

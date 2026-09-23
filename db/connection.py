@@ -312,6 +312,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "channels", "cli_auto_approve",
         "INTEGER NOT NULL DEFAULT 0",
     )
+    _ensure_floors(con)
     _add_column_if_missing(
         con, "cli_approval_requests", "review_note", "TEXT",
     )
@@ -353,6 +354,37 @@ def _add_column_if_missing(
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         logger.info("Migration: added column %s.%s", table, column)
+
+
+def _ensure_floors(con: SQLiteCompatConnection) -> None:
+    """Create Lobby and give every existing agent and thread that home.
+
+    Rows that already name a floor are left alone. Only missing homes are
+    filled, so a later boot does not move anyone and does not wipe work.
+    """
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS floors (
+            id          VARCHAR PRIMARY KEY,
+            name        VARCHAR NOT NULL UNIQUE,
+            created_at  TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO floors (id, name) VALUES ($1, $2) ON CONFLICT(id) DO NOTHING",
+        ["lobby", "Lobby"],
+    )
+    _add_column_if_missing(con, "agents", "floor_id", "VARCHAR")
+    _add_column_if_missing(con, "channels", "floor_id", "VARCHAR")
+    con.execute(
+        "UPDATE agents SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
+        ["lobby"],
+    )
+    con.execute(
+        "UPDATE channels SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
+        ["lobby"],
+    )
 
 
 def _backfill_task_closed_at(con: SQLiteCompatConnection) -> None:

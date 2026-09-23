@@ -40,7 +40,7 @@ const BossModLogPlace = (() => {
     /** Everyone the rows or the roster know about, for the agent dropdown. */
     function agentOptions(rows) {
         const seen = new Map();
-        ctxRef.store.getState().roster.forEach((agent) => {
+        BossModFloorScope.filterPeople(ctxRef.store.getState(), ctxRef.store.getState().roster).forEach((agent) => {
             seen.set(agent.id, { id: agent.id, name: agent.name, color: agent.color });
         });
         rows.forEach((row) => {
@@ -76,7 +76,10 @@ const BossModLogPlace = (() => {
      * @returns {void}
      */
     function paint() {
-        const rows = source.filter(filters.filters());
+        const floorState = ctxRef.store.getState();
+        const rows = source.filter(filters.filters()).filter(
+            (row) => BossModFloorScope.allowsAgent(floorState, row.agentId),
+        );
         const stick = filters.following() && isNearEdge(scrollEl, 'top');
         const previousScroll = scrollEl.scrollTop;
 
@@ -212,6 +215,10 @@ const BossModLogPlace = (() => {
 
             disposers.push(source.subscribe(paint));
             disposers.push(ctx.bus.subscribe('resync', () => BossModLogPlace.resync()));
+            disposers.push(ctx.store.subscribe(
+                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                () => { if (ctxRef) paint(); },
+            ));
 
             void reload().then(() => {
                 if (params.diagnosticId) expandDeepLink(String(params.diagnosticId));

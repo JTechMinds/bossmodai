@@ -127,6 +127,11 @@ def plan_channel_route(
     in speak. A peer @ does not. A mid-round re-route passes
     ``repair_empty`` false so an empty slice does not spend the repair.
     """
+    from core.floors import keep_one_floor
+
+    members = keep_one_floor(members)
+    allowed_ids = {str(member.get("id") or "") for member in members}
+    fallback_order = [agent_id for agent_id in fallback_order if agent_id in allowed_ids]
     universe = _unique(fallback_order)
     allowed = set(universe)
     pinned = []

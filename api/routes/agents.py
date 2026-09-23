@@ -199,11 +199,16 @@ async def create_channel(body: ChannelCreateBody):
         else:
             name = f"{', '.join(member_names[:3])} +{len(member_names) - 3}"
 
-    channel = db.create_channel(
-        name=name,
-        member_agent_ids=member_ids,
-        created_by=HUMAN_SENDER_ID,
-    )
+    from core.floors import FloorDenied
+
+    try:
+        channel = db.create_channel(
+            name=name,
+            member_agent_ids=member_ids,
+            created_by=HUMAN_SENDER_ID,
+        )
+    except FloorDenied as exc:
+        raise HTTPException(403, str(exc)) from exc
     members = db.list_channel_member_details(channel.id)
     summary = _serialize_channel_summary(channel, members=members, latest_message=None)
     summary["reused"] = False
@@ -561,25 +566,29 @@ async def create_agent(body: AgentCreate) -> Agent:
         "extra_body": body.extra_body,
     })
     desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
-    agent = db.create_agent(
-        name=body.name,
-        role=body.role,
-        description=body.description,
-        done_fail_bar=body.done_fail_bar,
-        communication=body.communication,
-        prompt_template=body.prompt_template,
-        color=body.color,
-        desk_x=desk_x,
-        desk_y=desk_y,
-        model_social=body.model_social,
-        model_work=body.model_work,
-        model_reasoning=body.model_reasoning,
-        model_extraction=body.model_extraction,
-        model_self_queue=body.model_self_queue,
-        api_base_url=creds.get("api_base_url"),
-        api_key=creds.get("api_key"),
-        extra_body=creds.get("extra_body"),
-    )
+    try:
+        agent = db.create_agent(
+            name=body.name,
+            role=body.role,
+            description=body.description,
+            done_fail_bar=body.done_fail_bar,
+            communication=body.communication,
+            prompt_template=body.prompt_template,
+            color=body.color,
+            desk_x=desk_x,
+            desk_y=desk_y,
+            model_social=body.model_social,
+            model_work=body.model_work,
+            model_reasoning=body.model_reasoning,
+            model_extraction=body.model_extraction,
+            model_self_queue=body.model_self_queue,
+            api_base_url=creds.get("api_base_url"),
+            api_key=creds.get("api_key"),
+            extra_body=creds.get("extra_body"),
+            floor_id=body.floor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     place_agent_at_desk(agent.id, agent.desk_x, agent.desk_y)
     # Broadcast to all connected clients
     await manager.broadcast_world_state()
@@ -588,6 +597,41 @@ async def create_agent(body: AgentCreate) -> Agent:
         detail=f"Agent \"{agent.name}\" created",
         agent_name=agent.name,
     )
+    return agent
+
+
+class HomeFloorBody(BaseModel):
+    """Operator move of one agent's home floor."""
+
+    floor_id: str
+    confirm_open_work: bool = False
+
+
+@router.post("/agents/{agent_id}/home-floor")
+async def move_agent_home_floor(agent_id: str, body: HomeFloorBody) -> Agent:
+    """Move an agent's home floor. Open work on the old floor requires confirm."""
+    from core.floors import FloorDenied, FloorMoveNeedsConfirm, move_home_floor
+
+    try:
+        agent = move_home_floor(
+            agent_id,
+            body.floor_id,
+            confirm_open_work=body.confirm_open_work,
+        )
+    except FloorMoveNeedsConfirm as exc:
+        return JSONResponse(
+            {
+                "code": "confirm_open_work",
+                "open_task_count": exc.open_task_count,
+                "message": str(exc),
+            },
+            status_code=409,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FloorDenied as exc:
+        raise HTTPException(403, str(exc)) from exc
+    await manager.broadcast_world_state()
     return agent
 
 
@@ -948,6 +992,7 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
         "y": y,
         "location": location_name,
         "idle_since": idle_since_iso,
+        "floor_id": item.get("floor_id"),
     }
 
 
@@ -970,6 +1015,7 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
         "conversation_paused": is_thread_paused(channel.id),
         "cli_auto_approve": bool(getattr(channel, "cli_auto_approve", False)),
+        "floor_id": getattr(channel, "floor_id", None),
         "member_count": len(members or []),
         "members": members or [],
         "latest_message": latest,

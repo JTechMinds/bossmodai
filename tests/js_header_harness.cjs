@@ -97,7 +97,8 @@ eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossMo
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModFloorSwitcher = BossModFloorSwitcher;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
 
 /** Text a screen reader would announce: aria-hidden subtrees contribute nothing. */
 function accessibleText(node) {

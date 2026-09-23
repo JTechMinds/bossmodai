@@ -144,14 +144,22 @@ const BossModRosterThreads = (() => {
                 threadList.append(h('li', { class: 'roster-empty' }, 'Could not load threads.'));
                 return;
             }
+            const state = store.getState();
+            const onFloor = typeof BossModFloorScope === 'undefined'
+                ? threads()
+                : BossModFloorScope.filterThreads(state, threads());
             if (threads().length === 0) {
                 threadList.append(h('li', { class: 'roster-empty' }, threadFilter === 'archived'
                     ? 'No archived threads.'
                     : 'No threads yet.'));
                 return;
             }
-            const query = String(store.getState().rosterQuery).trim().toLowerCase();
-            const visible = threads().filter((thread) => !query
+            if (onFloor.length === 0) {
+                threadList.append(h('li', { class: 'roster-empty' }, 'No threads on this floor.'));
+                return;
+            }
+            const query = String(state.rosterQuery).trim().toLowerCase();
+            const visible = onFloor.filter((thread) => !query
                 || String(thread.name || '').toLowerCase().includes(query));
             if (visible.length === 0) {
                 threadList.append(h('li', { class: 'roster-empty' }, 'No threads match that search.'));
@@ -228,6 +236,10 @@ const BossModRosterThreads = (() => {
 
         disposers.push(store.subscribe((s) => s.threads, renderThreads));
         disposers.push(store.subscribe((s) => s.rosterQuery, renderThreads));
+        disposers.push(store.subscribe(
+            (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+            renderThreads,
+        ));
 
         renderThreads();
         applyThreadFilter();

@@ -13,6 +13,7 @@ from api.routes import (
     agents,
     cli_policy,
     company_files,
+    floors,
     host_path_consent,
     needs,
     nest_git,
@@ -30,6 +31,7 @@ router.include_router(agent_packs.router)
 router.include_router(agent_templates.router)
 router.include_router(agent_snapshots.router)
 router.include_router(company_files.router)
+router.include_router(floors.router)
 router.include_router(tasks.router)
 router.include_router(cli_policy.router)
 router.include_router(host_path_consent.router)

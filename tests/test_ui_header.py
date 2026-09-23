@@ -13,7 +13,7 @@ HARNESS = Path(__file__).resolve().parent / "js_header_harness.cjs"
 MODULES = [
     ("core", "dom.js"), ("core", "store.js"),
     ("core", "overlay-focus.js"), ("core", "overlays.js"),
-    ("shell", "places.js"), ("shell", "header.js"),
+    ("shell", "places.js"), ("shell", "floor-switcher.js"), ("shell", "header.js"),
 ]
 
 # A press-and-hold has no keyboard equivalent. On the emergency stop that is a

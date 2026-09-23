@@ -71,6 +71,7 @@ const BossModAgentStatus = (() => {
             // message (db/world.py). Null for a conversation nobody has
             // spoken in, which the rail renders as no timestamp at all.
             lastMessageAt: w.lastMessageAt || null,
+            floorId: w.floor_id || w.floorId || null,
         };
     }
 

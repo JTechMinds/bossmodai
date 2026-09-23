@@ -183,6 +183,10 @@ def assignment_wake_trigger(task: Task) -> dict[str, Any] | None:
         return None
     if task.status not in OPEN_TASK_STATUSES:
         return None
+    from core.floors import assignment_stays_on_floor
+
+    if not assignment_stays_on_floor(task):
+        return None
     return build_task_assigned_trigger(task)
 
 

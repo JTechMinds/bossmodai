@@ -144,6 +144,36 @@ body[data-view="settings"] #main-layout { display: none; }
   color: var(--ink);
 }
 
+/* The floor switcher lives in the empty band between the place nav and the
+   actions. Two auto margins split that band so the control sits in it
+   without becoming a new tab and without moving the bell. */
+.floor-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.floor-switcher-item {
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+}
+
+.floor-switcher-item:hover { color: var(--ink); }
+
+.floor-switcher-item[aria-pressed="true"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.floor-switcher-dot { color: var(--muted); }
+
 /* The nav no longer centres itself, so the actions carry the shove that used
    to come free with its auto margin. */
 .header-actions {

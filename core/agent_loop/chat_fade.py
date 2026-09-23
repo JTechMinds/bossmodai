@@ -239,6 +239,16 @@ def _run_fade_job(
                 logger.info("chat fade skipped: transcript row missing")
                 return
             rows.append(row)
+        from core.floors import channel_floor_id, on_floor
+
+        floor_id = channel_floor_id(channel_id)
+        kept = []
+        for row in rows:
+            author_id = str(getattr(row, "author_agent_id", None) or "").strip()
+            if author_id and (not floor_id or not on_floor(author_id, floor_id)):
+                continue
+            kept.append(row)
+        rows = kept
         if not rows:
             return
         raw = complete_text(

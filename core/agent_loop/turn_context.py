@@ -124,7 +124,12 @@ def _get_reference_materials(agent_id: str) -> list[str]:
     """Build non-chat references for the turn."""
     materials: list[str] = []
 
-    teammates = [agent for agent in db.list_agents() if agent.id != agent_id]
+    from core.floors import peers_share_floor
+
+    teammates = [
+        agent for agent in db.list_agents()
+        if agent.id != agent_id and peers_share_floor(agent_id, agent.id)
+    ]
     for teammate in teammates:
         role = f" ({teammate.role})" if teammate.role else ""
         bar = teammate.done_fail_bar.strip() if teammate.done_fail_bar else ""

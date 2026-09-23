@@ -34,6 +34,11 @@ const BossModShell = (() => {
         threads: [],
         rosterQuery: '',
         railCollapsed: false,
+        // Global floor scope. The header switcher writes it; every place reads it.
+        currentFloorId: 'lobby',
+        floorScope: 'this',
+        browseFloorId: null,
+        floors: [{ id: 'lobby', name: 'Lobby' }],
         settingsOpen: false,
         runtimePaused: false,
         hasUsableModel: false,
@@ -62,6 +67,7 @@ const BossModShell = (() => {
     async function boot() {
         const restored = BossModSession.load();
         const store = BossModStore.createStore(Object.assign({}, INITIAL_STATE));
+        if (typeof BossModFloorScope !== 'undefined') BossModFloorScope.attach(store);
         const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
 
         const layoutElement = requireElement('main-layout');
@@ -205,6 +211,9 @@ const BossModShell = (() => {
         store.setState({
             contextMode: startup.contextMode,
             railCollapsed: startup.railCollapsed,
+            currentFloorId: startup.currentFloorId,
+            floorScope: startup.floorScope,
+            browseFloorId: startup.browseFloorId,
         });
         applyContextColumn(startup.place);
         // Applied, not left to the subscription: a session restored with the

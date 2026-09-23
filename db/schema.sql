@@ -2,6 +2,18 @@
 -- Execute with IF NOT EXISTS so it is safe to run on every startup.
 
 -- ───────────────────────────────────────────────────────────────────────────
+-- Floors — labeled co-mingle domains (finance, game-dev, NDA, …)
+-- One home floor per agent. Channels inherit that floor at create.
+-- Lobby is the default so an existing company is never left without a floor.
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS floors (
+    id          VARCHAR PRIMARY KEY,
+    name        VARCHAR NOT NULL UNIQUE,
+    created_at  TIMESTAMP DEFAULT current_timestamp
+);
+
+-- ───────────────────────────────────────────────────────────────────────────
 -- Agents — persistent identity & configuration
 -- ───────────────────────────────────────────────────────────────────────────
 
@@ -28,6 +40,7 @@ CREATE TABLE IF NOT EXISTS agents (
     guardian_velocity_limit        INTEGER DEFAULT 10,
     guardian_repetition_threshold  FLOAT   DEFAULT 0.85,
     guardian_no_progress_threshold INTEGER DEFAULT 30,
+    floor_id                      VARCHAR,
     created_at                    TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -189,7 +202,9 @@ CREATE TABLE IF NOT EXISTS channels (
     updated_at  TIMESTAMP DEFAULT current_timestamp,
     archived_at TIMESTAMP,
     -- Per-thread opt-in. Off leaves approval_required on the Approve card.
-    cli_auto_approve INTEGER NOT NULL DEFAULT 0
+    cli_auto_approve INTEGER NOT NULL DEFAULT 0,
+    -- Inherited from the roster's home floor at create. Never mixed.
+    floor_id         VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS channel_members (

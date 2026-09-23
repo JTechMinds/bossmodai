@@ -104,11 +104,21 @@ def reply_channel_id(trigger: dict[str, Any] | None) -> str | None:
 
 
 def mention_names_for_channel(channel_id: str) -> list[str]:
-    """Return @-mention candidates: member names plus the human operator aliases."""
-    names = [
-        str(member.get("name") or "").strip()
-        for member in db.list_channel_member_details(channel_id)
-    ]
+    """Return @-mention candidates on this thread's floor, plus the operator.
+
+    A member whose home floor is not the thread's floor is not a candidate.
+    A thread with no floor names nobody but the operator.
+    """
+    from core.floors import channel_floor_id, on_floor
+
+    floor_id = channel_floor_id(channel_id)
+    names = []
+    if floor_id:
+        names = [
+            str(member.get("name") or "").strip()
+            for member in db.list_channel_member_details(channel_id)
+            if on_floor(str(member.get("id") or ""), floor_id)
+        ]
     names.extend(HUMAN_MENTION_NAMES)
     return [name for name in names if name]
 

@@ -63,6 +63,13 @@ async def list_tasks(
     ]
 
 
+def _listed_task_floor(task, _agents_by_id: dict) -> str | None:
+    """Floor the card belongs to, for the header scope. Not an isolation check."""
+    from core.floors import task_floor_id
+
+    return task_floor_id(task)
+
+
 def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None) -> dict:
     """Serialize one task row with assignee contract and done-claim status."""
     assignee = agents_by_id.get(task.assigned_to) if task.assigned_to else None
@@ -87,6 +94,7 @@ def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None)
             if task.owner_id and task.owner_id in agents_by_id
             else None
         ),
+        "floor_id": _listed_task_floor(task, agents_by_id),
         "latest_event": latest.model_dump(mode="json") if latest is not None else None,
         "done_claim": done_claim,
         "done_claim_guidance": operator_done_claim_guidance(
@@ -165,7 +173,19 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
         assignee = db.get_agent(body.assigned_to)
         if assignee is None:
             raise HTTPException(404, "Assigned agent not found")
-        teammates = db.list_agents()
+        from core.floors import home_floor_id, on_floor
+
+        bound_floor = None
+        if body.notification_channel_id:
+            from core.floors import channel_floor_id
+
+            bound_floor = channel_floor_id(body.notification_channel_id)
+        elif body.assigned_to:
+            bound_floor = home_floor_id(body.assigned_to)
+        teammates = [
+            agent for agent in db.list_agents()
+            if bound_floor is None or on_floor(agent.id, bound_floor)
+        ]
         evaluation = evaluate_specialty_assignment(
             assignee=assignee,
             title=body.title,
@@ -192,8 +212,18 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             requested_specialty=body.requested_specialty,
         )
         if work_kind is not None:
+            from core.floors import channel_floor_id, on_floor
+
+            suggestion_floor = (
+                channel_floor_id(body.notification_channel_id)
+                if body.notification_channel_id
+                else None
+            )
             ranked = rank_agents_for_work(
-                db.list_agents(),
+                [
+                    agent for agent in db.list_agents()
+                    if suggestion_floor is None or on_floor(agent.id, suggestion_floor)
+                ],
                 title=body.title,
                 description=body.description,
                 requested_specialty=body.requested_specialty,
@@ -216,6 +246,8 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
         parent_task=parent_task,
     )
 
+    from core.floors import FloorDenied
+
     try:
         creation = create_or_bind_task(
             title=body.title,
@@ -235,6 +267,8 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             audit_author_agent_id=None,
             bind_task_id=body.bind_task_id,
         )
+    except FloorDenied as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         if "bind_task_id not found" in str(exc):
             raise HTTPException(404, "Task not found") from exc
