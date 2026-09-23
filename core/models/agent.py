@@ -67,6 +67,9 @@ class Agent(BaseModel):
 
     # Home floor. One per agent. Lobby until an operator moves them.
     floor_id: str | None = None
+    # Set while the agent is on vacation: off every floor (floor_id None),
+    # never woken. core/floors.py keeps the two in step.
+    vacation_since: datetime | None = None
 
     created_at: datetime
 

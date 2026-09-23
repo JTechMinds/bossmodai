@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import db
@@ -11,6 +12,8 @@ from core.agent_loop.task_origins import stamp_origin_channel_payload
 from core.agent_loop.task_roles import task_assignment_sender
 from core.models import Activity, AgentState, Task
 from core.tasking.resolution import OPEN_TASK_STATUSES
+
+logger = logging.getLogger(__name__)
 
 _CONSENT_GRANT_STATUSES = frozenset(
     {
@@ -135,7 +138,12 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
 
     Also reads ``result["auto_github_issue"]``. Auto GH opens only when that
     flag is True. A named next owner or origin line leaves it False.
+
+    A request for an agent on vacation is skipped and logged, like one aimed
+    at an archived thread.
     """
+    from core.floors import agent_id_on_vacation
+
     persisted: list[Any] = []
     seen: set[str] = set()
     for queued in result.get("trigger_requests") or []:
@@ -154,6 +162,9 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
         if not isinstance(payload, dict):
             payload = {}
         if db.payload_targets_archived_channel(payload):
+            continue
+        if agent_id_on_vacation(agent_id):
+            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
             continue
         persisted.append(
             db.create_agent_trigger(

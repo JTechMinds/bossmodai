@@ -72,7 +72,7 @@ const BossModAddAgentMenu = (() => {
          */
         function door(icon, label, open) {
             return h('button', {
-                class: 'add-agent-choice', type: 'button',
+                class: 'menu-door', type: 'button',
                 // Closed FIRST, on purpose: close() puts focus back on the
                 // row, so the dialog that follows captures the row as the
                 // thing to return focus to when it closes in turn.

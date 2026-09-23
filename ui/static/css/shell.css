@@ -146,33 +146,51 @@ body[data-view="settings"] #main-layout { display: none; }
 
 /* The floor switcher lives in the empty band between the place nav and the
    actions. Two auto margins split that band so the control sits in it
-   without becoming a new tab and without moving the bell. */
+   without becoming a new tab and without moving the bell.
+
+   POSITIONED on purpose: it is the host the floor panel hangs off
+   (overlays.css .menu[data-menu="floor"]). The panel used to be appended to
+   <body>, which is not positioned, so it opened below the window and focusing
+   its first row scrolled the header out of view. */
 .floor-switcher {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* The trigger wears the place nav's geometry — the same pill, --muted at rest
+   and --ink on --bg under the pointer — so the header reads as one row of
+   controls. The name is the one heavier word: it says where you are. */
+.floor-switcher-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   min-width: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.floor-switcher-item {
-  padding: 4px 2px;
+  padding: 6px 12px;
+  border-radius: 999px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
-  background: transparent;
 }
 
-.floor-switcher-item:hover { color: var(--ink); }
+.floor-switcher-trigger:hover,
+.floor-switcher-trigger[aria-expanded="true"] { background: var(--bg); color: var(--ink); }
 
-.floor-switcher-item[aria-pressed="true"] {
-  color: var(--ink);
+.floor-switcher-trigger svg { flex: none; width: 14px; height: 14px; }
+
+.floor-switcher-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
+  color: var(--ink);
 }
 
-.floor-switcher-dot { color: var(--muted); }
+/* The floor list failed to load. The words are in the trigger's title and its
+   described-by text; this is the mark a sighted operator sees first. */
+.floor-switcher-trigger[data-error="true"] svg { color: var(--alert); }
 
 /* The nav no longer centres itself, so the actions carry the shove that used
    to come free with its auto margin. */

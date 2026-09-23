@@ -131,6 +131,23 @@ async def list_agents() -> list[Agent]:
     return db.list_agents()
 
 
+# Registered BEFORE /agents/{agent_id}: FastAPI matches in order, and the
+# literal "vacation" would otherwise be read as an agent id.
+@router.get("/agents/vacation")
+async def list_vacationing_agents() -> list[dict[str, object]]:
+    """Return the agents on vacation, most recently sent home first."""
+    return [
+        {
+            "id": agent.id,
+            "name": agent.name,
+            "role": agent.role,
+            "color": agent.color,
+            "vacation_since": _iso_or_none(agent.vacation_since),
+        }
+        for agent in db.list_vacationing_agents()
+    ]
+
+
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str) -> Agent:
     agent = db.get_agent(agent_id)
@@ -635,6 +652,31 @@ async def move_agent_home_floor(agent_id: str, body: HomeFloorBody) -> Agent:
     return agent
 
 
+class VacationReturnBody(BaseModel):
+    """The floor an agent on vacation comes back to."""
+
+    floor_id: str
+
+
+@router.post("/agents/{agent_id}/return")
+async def return_agent_from_vacation(agent_id: str, body: VacationReturnBody) -> Agent:
+    """Bring one agent back from vacation onto a floor.
+
+    404 when the agent or the floor is missing, 409 when the agent is not
+    on vacation.
+    """
+    from core.floors import bring_back
+
+    try:
+        agent = bring_back(agent_id, body.floor_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await manager.broadcast_world_state()
+    return agent
+
+
 @router.patch("/agents/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     fields = _apply_connection_credentials(body.model_dump(exclude_none=True))
@@ -993,7 +1035,13 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
         "location": location_name,
         "idle_since": idle_since_iso,
         "floor_id": item.get("floor_id"),
+        "vacation_since": _iso_or_none(item.get("vacation_since")),
     }
+
+
+def _iso_or_none(value: object) -> object:
+    """A datetime as ISO text; anything else (None, a stored string) unchanged."""
+    return value.isoformat() if hasattr(value, "isoformat") else value
 
 
 def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | None = None, latest_message=None) -> dict[str, object]:
@@ -1034,13 +1082,18 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
 
     content = body.content if body else "You have been manually activated."
 
-    await route_human_dm(
-        agent_id=agent_id,
-        content=content,
-        from_name="You",
-        broadcast_manager=manager,
-        services=runtime_services,
-    )
+    from core.floors import AgentOnVacation
+
+    try:
+        await route_human_dm(
+            agent_id=agent_id,
+            content=content,
+            from_name="You",
+            broadcast_manager=manager,
+            services=runtime_services,
+        )
+    except AgentOnVacation as exc:
+        raise HTTPException(409, str(exc)) from exc
 
     return {"status": "ok", "message": "Message queued"}
 

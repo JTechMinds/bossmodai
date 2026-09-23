@@ -216,7 +216,7 @@ const BossModLogPlace = (() => {
             disposers.push(source.subscribe(paint));
             disposers.push(ctx.bus.subscribe('resync', () => BossModLogPlace.resync()));
             disposers.push(ctx.store.subscribe(
-                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                (s) => s.currentFloorId,
                 () => { if (ctxRef) paint(); },
             ));
 

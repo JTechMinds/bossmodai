@@ -495,7 +495,7 @@
 }
 
 /* --accent measures 4.19:1 on --accent-bg and fails AA; --blue-ink is 6.86:1
-   there. The same correction .roster-hire and .add-agent-choice carry. */
+   there. The same correction .roster-hire and .menu-door carry. */
 .market-detail-back:hover { background: var(--accent-bg); color: var(--blue-ink); }
 
 .market-detail-back-mark { font-size: 18px; line-height: 1; }

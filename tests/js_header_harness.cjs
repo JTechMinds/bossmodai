@@ -97,8 +97,12 @@ eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossMo
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModFloorSwitcher = BossModFloorSwitcher;\n`);
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
+// The switcher reads the current floor through floor-scope and talks through
+// floor-api; both load ahead of it, as index.html orders them.
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModFloorScope = BossModFloorScope;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModFloorApi = BossModFloorApi;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModFloorSwitcher = BossModFloorSwitcher;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModHeader = BossModHeader;\n`);
 
 /** Text a screen reader would announce: aria-hidden subtrees contribute nothing. */
 function accessibleText(node) {

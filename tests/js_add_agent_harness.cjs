@@ -1245,7 +1245,7 @@ async function main() {
     });
     addAgent.toggle();
     await drain();
-    const doors = railHost.querySelectorAll(".add-agent-choice");
+    const doors = railHost.querySelectorAll(".menu-door");
     const marks = doors.map((row) => row.querySelector("i"));
     verdict.bothMenuDoorsCarryALucideIcon = doors.length === 2
         && marks.every((mark) => Boolean(mark)
@@ -1278,13 +1278,13 @@ async function main() {
         && panelOf("marketplace").hidden === false
         && panelOf("add").hidden === true
         && marketActivations === activatedBefore + 1
-        && railHost.querySelectorAll(".add-agent-choice").length === 0
+        && railHost.querySelectorAll(".menu-door").length === 0
         && hireRow.getAttribute("aria-expanded") === "false";
     await closeByX();
     // The other door opens the SAME dialog, on the other tab.
     addAgent.toggle();
     await drain();
-    await railHost.querySelectorAll(".add-agent-choice")[1].dispatchClick();
+    await railHost.querySelectorAll(".menu-door")[1].dispatchClick();
     await drain();
     verdict.theAddAgentDoorOpensTheSameDialogOnItsTab = dialogs().length === 1
         && dialog().getAttribute("aria-label") === "Agents"

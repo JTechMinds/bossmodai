@@ -360,7 +360,9 @@ def _ensure_floors(con: SQLiteCompatConnection) -> None:
     """Create Lobby and give every existing agent and thread that home.
 
     Rows that already name a floor are left alone. Only missing homes are
-    filled, so a later boot does not move anyone and does not wipe work.
+    filled, so a later boot does not move anyone and does not wipe work. An
+    agent on vacation (``vacation_since`` set) has no floor by design and is
+    never filled.
     """
     con.execute(
         """
@@ -377,8 +379,13 @@ def _ensure_floors(con: SQLiteCompatConnection) -> None:
     )
     _add_column_if_missing(con, "agents", "floor_id", "VARCHAR")
     _add_column_if_missing(con, "channels", "floor_id", "VARCHAR")
+    # Before the backfill, never after it: an agent on vacation has no floor
+    # on purpose, and a backfill that could not see the column would pull
+    # every vacationer back into Lobby on each boot.
+    _add_column_if_missing(con, "agents", "vacation_since", "TIMESTAMP")
     con.execute(
-        "UPDATE agents SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
+        "UPDATE agents SET floor_id = $1 "
+        "WHERE (floor_id IS NULL OR floor_id = '') AND vacation_since IS NULL",
         ["lobby"],
     )
     con.execute(

@@ -27,6 +27,7 @@ from db.agents import (
     get_agent_state,
     get_agents_by_ids,
     list_agents,
+    list_vacationing_agents,
     update_agent,
     update_agent_state,
 )
@@ -362,6 +363,7 @@ __all__ = [
     "get_agent_state",
     "get_agents_by_ids",
     "list_agents",
+    "list_vacationing_agents",
     "update_agent",
     "update_agent_state",
     "normalize_agent_personal_storage_roots",

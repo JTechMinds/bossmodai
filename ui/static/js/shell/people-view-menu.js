@@ -16,8 +16,13 @@
  * a first visit, or site data the browser will not read — is the harmless
  * direction. system-receipts.js defaults the other way for the opposite
  * reason: a receipt it failed to show would be one the operator needed.
+ *
+ * The panel's one action is "On vacation": agents on vacation are hidden from
+ * the rail, so the People menu is where they are found again. It opens
+ * shell/vacation-dialog.js.
  */
 const BossModPeopleViewMenu = (() => {
+    const { h } = BossModDom;
 
     const STORAGE_KEY = 'bossmod.roster.showRoles';
     /** The `⋯`'s accessible name, its tooltip and its panel's name: one string. */
@@ -68,19 +73,27 @@ const BossModPeopleViewMenu = (() => {
      *   `⋯` exists to go in it.
      * @param {(showRoles: boolean) => void} deps.onChange  Called after the new
      *   value has been persisted, so a repaint sees the stored truth.
+     * @param {object} deps.store  Handed to the On vacation view, which brings
+     *   an agent back to the floor the operator is on.
+     * @param {Function} deps.apiFetch  The shell's authenticated fetch, for
+     *   the On vacation view's requests.
      * @returns {{ button: HTMLElement, showRoles: () => boolean,
      *             close: () => void, destroy: () => void }}
-     * @throws {Error} When getContainer or onChange is missing — a switch
-     *   nothing listens to, or a panel with nowhere to hang, would render and
-     *   then do nothing.
+     * @throws {Error} When any dependency is missing — a switch nothing
+     *   listens to, a panel with nowhere to hang, or an On vacation row that
+     *   cannot load anyone would render and then do nothing.
      */
     function createPeopleViewMenu(deps) {
-        const { getContainer, onChange } = deps || {};
+        const { getContainer, onChange, store, apiFetch } = deps || {};
         if (typeof getContainer !== 'function') {
             throw new Error('[people-view-menu] deps.getContainer is required');
         }
         if (typeof onChange !== 'function') {
             throw new Error('[people-view-menu] deps.onChange is required');
+        }
+        if (!store) throw new Error('[people-view-menu] deps.store is required');
+        if (typeof apiFetch !== 'function') {
+            throw new Error('[people-view-menu] deps.apiFetch is required');
         }
 
         let showRoles = read();
@@ -95,12 +108,27 @@ const BossModPeopleViewMenu = (() => {
             },
         });
 
+        // Closed FIRST, so the dialog captures the `⋯` as where focus returns.
+        const vacation = h('button', {
+            class: 'menu-action',
+            type: 'button',
+            onclick: () => {
+                menu.close();
+                BossModVacationDialog.open({
+                    store,
+                    floorApi: BossModFloorApi.createFloorApi({ apiFetch }),
+                });
+            },
+        },
+            h('i', { 'data-lucide': 'tree-palm', 'aria-hidden': 'true' }),
+            h('span', {}, 'On vacation'));
+
         const menu = BossModRosterHeaderMenu.createHeaderMenu({
             id: 'roster-people-view',
             label: MENU_LABEL,
             menuName: 'people-view',
             getContainer,
-            items: [control.element],
+            items: [control.element, h('div', { class: 'menu-actions' }, vacation)],
         });
 
         return {

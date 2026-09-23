@@ -56,6 +56,10 @@ def heal_desk_seats() -> int:
     for agent in db.list_agents():
         if agent.desk_x is None or agent.desk_y is None:
             continue
+        # On vacation: off every floor and out of the office, so there is no
+        # body to seat. The desk is kept for when they come back.
+        if agent.vacation_since is not None:
+            continue
         state = db.get_agent_state(agent.id)
         if state is None:
             continue

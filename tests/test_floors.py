@@ -17,22 +17,29 @@ from core import config
 from core.agent_loop.actions_lifecycle import _queue_named_next_work
 from core.agent_loop.actions_work import _handle_message
 from core.agent_loop.activity_runtime import activate_work_activity
-from core.agent_loop.activity_scheduler import assignment_wake_trigger
+from core.agent_loop.activity_scheduler import assignment_wake_trigger, persist_result_triggers
+from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.channel_rounds import _ordered_members, start_channel_peer_round
 from core.agent_loop.chat_fade import _run_fade_job
 from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.sticky_slots import _allowed_sources
 from core.floors import (
     CROSS_FLOOR_DENY,
+    VACATION_DENY,
+    AgentOnVacation,
     FloorDenied,
     FloorMoveNeedsConfirm,
+    FloorOccupantsChoiceRequired,
+    delete_floor,
     keep_one_floor,
     move_home_floor,
+    send_home,
 )
+from core.messaging import route_human_dm
 from core.models.agent import AgentUpdate
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
-from db.floors import LOBBY_ID, create_floor
+from db.floors import LOBBY_ID, FloorNameTaken, create_floor, get_floor, rename_floor
 from db.sticky_slots import list_sticky_slots, upsert_sticky_slots
 from integrations.telegram.bot import cmd_channels, cmd_join, cmd_thread
 from integrations.telegram.join_list import reset_channel_list_snapshots
@@ -429,3 +436,235 @@ async def test_telegram_list_and_join_stay_on_the_named_floor() -> None:
     member_ids = {row["id"] for row in db.list_channel_member_details(opened_channel.id)}
     assert ada.id in member_ids
     assert bob.id not in member_ids
+
+
+# ─── Floor rename and delete, vacation ───
+
+
+class _Services:
+    """Records runtime resets. The floor delete must cancel a live turn per agent."""
+
+    def __init__(self) -> None:
+        self.resets: list[str] = []
+
+    async def reset_agent_runtime(self, agent_id: str) -> None:
+        self.resets.append(agent_id)
+
+    async def enqueue_trigger(self, **_kwargs: object) -> None:
+        raise AssertionError("a floor delete must not wake anyone")
+
+
+def _client() -> tuple[TestClient, dict[str, str]]:
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    return TestClient(app), {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
+
+
+def test_rename_floor_normalizes_and_refuses_a_taken_name() -> None:
+    finance = create_floor("Finance")
+    create_floor("Legal")
+    assert rename_floor(finance.id, "  Money   Room ").name == "Money Room"
+    assert rename_floor(finance.id, "money room").name == "money room"
+    with pytest.raises(FloorNameTaken):
+        rename_floor(finance.id, "LEGAL")
+    with pytest.raises(ValueError):
+        rename_floor(finance.id, "   ")
+    with pytest.raises(LookupError):
+        rename_floor("nope", "Anything")
+    assert rename_floor(LOBBY_ID, "Front desk").id == LOBBY_ID
+
+
+def test_floor_rename_api_maps_every_failure() -> None:
+    finance = create_floor("Finance")
+    create_floor("Legal")
+    client, headers = _client()
+    ok = client.patch(f"/api/floors/{finance.id}", headers=headers, json={"name": "Money"})
+    assert ok.status_code == 200
+    assert ok.json()["name"] == "Money"
+    taken = client.patch(f"/api/floors/{finance.id}", headers=headers, json={"name": "legal"})
+    assert taken.status_code == 409
+    missing = client.patch("/api/floors/nope", headers=headers, json={"name": "Else"})
+    assert missing.status_code == 404
+    blank = client.patch(f"/api/floors/{finance.id}", headers=headers, json={"name": "  "})
+    assert blank.status_code == 400
+    lobby = client.patch(f"/api/floors/{LOBBY_ID}", headers=headers, json={"name": "Front desk"})
+    assert lobby.status_code == 200
+    assert lobby.json() == {**lobby.json(), "id": LOBBY_ID, "name": "Front desk"}
+
+
+def test_floor_delete_api_refuses_lobby_missing_and_an_unchosen_crowd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    services = _Services()
+    monkeypatch.setattr("api.routes.floors.runtime_services", services)
+    finance = create_floor("Finance")
+    _agent("Ada", 1, floor_id=finance.id)
+    _agent("Bob", 2, floor_id=finance.id)
+    client, headers = _client()
+    assert client.delete(f"/api/floors/{LOBBY_ID}", headers=headers).status_code == 400
+    assert client.delete("/api/floors/nope", headers=headers).status_code == 404
+    bad = client.delete(f"/api/floors/{finance.id}?occupants=fire", headers=headers)
+    assert bad.status_code == 400
+    ask = client.delete(f"/api/floors/{finance.id}", headers=headers)
+    assert ask.status_code == 409
+    assert ask.json()["code"] == "occupants_choice_required"
+    assert ask.json()["agent_count"] == 2
+    assert get_floor(finance.id) is not None
+    assert services.resets == []
+
+
+async def test_delete_floor_sends_agents_home_and_archives_its_threads() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    stays = _agent("Stays", 3)
+    desk = db.create_channel(name="Desk", member_agent_ids=[ada.id, bob.id], created_by=ada.id)
+    lobby_thread = db.create_channel(name="Lobby", member_agent_ids=[stays.id], created_by=stays.id)
+    card = _bind(title="Open card", assigned_to=ada.id, owner_id=bob.id, channel_id=desk.id)
+    db.create_agent_trigger(
+        agent_id=ada.id, trigger_type="human_chat", source_channel="chat", payload={"content": "hi"},
+    )
+    services = _Services()
+
+    with pytest.raises(FloorOccupantsChoiceRequired):
+        await delete_floor(finance.id, occupants=None, services=services)
+
+    result = await delete_floor(finance.id, occupants="send_home", services=services)
+
+    assert sorted(result.agents_sent_home) == sorted([ada.id, bob.id])
+    assert result.agents_deleted == []
+    assert result.threads_archived == [desk.id]
+    assert sorted(services.resets) == sorted([ada.id, bob.id])
+    for agent_id in (ada.id, bob.id):
+        agent = db.get_agent(agent_id)
+        assert agent.floor_id is None
+        assert agent.vacation_since is not None
+    assert db.list_channel_members(desk.id) == []
+    assert [t for t in db.list_queued_triggers() if t.agent_id == ada.id] == []
+    assert db.get_channel(desk.id).status == "archived"
+    assert db.get_task(card.task.id).status == "cancelled"
+    assert db.get_channel(lobby_thread.id).status == "active"
+    assert db.get_agent(stays.id).floor_id == LOBBY_ID
+    assert get_floor(finance.id) is None
+
+
+async def test_delete_floor_can_delete_its_agents() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    services = _Services()
+    result = await delete_floor(finance.id, occupants="delete", services=services)
+    assert result.agents_deleted == [ada.id]
+    assert db.get_agent(ada.id) is None
+    assert get_floor(finance.id) is None
+
+
+def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -> None:
+    services = _Services()
+    monkeypatch.setattr("api.routes.floors.runtime_services", services)
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    desk = db.create_channel(name="Desk", member_agent_ids=[ada.id], created_by=ada.id)
+    client, headers = _client()
+    response = client.delete(f"/api/floors/{finance.id}?occupants=send_home", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {
+        "floor_id": finance.id,
+        "agents_sent_home": [ada.id],
+        "agents_deleted": [],
+        "threads_archived": [desk.id],
+    }
+
+
+def test_init_db_never_pulls_a_vacationer_back_into_lobby() -> None:
+    ada = _agent("Ada", 1)
+    send_home(ada.id)
+    db.init_db()
+    agent = db.get_agent(ada.id)
+    assert agent.floor_id is None
+    assert agent.vacation_since is not None
+
+
+async def test_a_vacationer_is_hidden_unassignable_and_never_woken() -> None:
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2)
+    send_home(ada.id)
+    assert send_home(ada.id).vacation_since is not None  # idempotent
+
+    assert ada.id not in {row["id"] for row in db.get_world_state()}
+    assert bob.id in {row["id"] for row in db.get_world_state()}
+
+    with pytest.raises(FloorDenied):
+        _bind(title="Card", assigned_to=ada.id, owner_id=bob.id, channel_id=None)
+    with pytest.raises(FloorDenied):
+        move_home_floor(ada.id, LOBBY_ID, confirm_open_work=True)
+
+    TurnDispatcher().enqueue_trigger(ada.id, "human_chat", "chat", {"content": "hi"})
+    persisted = persist_result_triggers({"trigger_requests": [{
+        "agent_id": ada.id, "trigger_type": "task_follow_up", "source_channel": "chat", "payload": {},
+    }]})
+    assert persisted == []
+    assert [t for t in db.list_queued_triggers() if t.agent_id == ada.id] == []
+
+    with pytest.raises(AgentOnVacation):
+        await route_human_dm(
+            agent_id=ada.id,
+            content="hello",
+            from_name="You",
+            broadcast_manager=SimpleNamespace(),
+            services=_Services(),
+        )
+    # Refused before anything is written: no message that looks delivered.
+    assert db.get_human_chat_thread(ada.id) == []
+
+
+async def test_dispatcher_fails_a_trigger_written_for_a_vacationer() -> None:
+    ada = _agent("Ada", 1)
+    send_home(ada.id)
+    # Written straight to the queue, the way a row from before the vacation
+    # or from a path that bypasses enqueue would be.
+    row = db.create_agent_trigger(
+        agent_id=ada.id, trigger_type="human_chat", source_channel="chat", payload={"content": "hi"},
+    )
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    started = await TurnDispatcher()._launch_claimed_trigger(claimed)
+    assert started is False
+    failed = db.get_agent_trigger(row.id)
+    assert failed.status == "failed"
+    assert failed.failure_reason == VACATION_DENY
+
+
+def test_vacation_api_lists_and_brings_back() -> None:
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2)
+    finance = create_floor("Finance")
+    send_home(ada.id)
+    client, headers = _client()
+
+    listed = client.get("/api/agents/vacation", headers=headers)
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert [row["id"] for row in rows] == [ada.id]
+    assert set(rows[0]) == {"id", "name", "role", "color", "vacation_since"}
+    assert rows[0]["vacation_since"]
+
+    missing_floor = client.post(f"/api/agents/{ada.id}/return", headers=headers, json={"floor_id": "nope"})
+    assert missing_floor.status_code == 404
+    not_away = client.post(f"/api/agents/{bob.id}/return", headers=headers, json={"floor_id": LOBBY_ID})
+    assert not_away.status_code == 409
+    back = client.post(f"/api/agents/{ada.id}/return", headers=headers, json={"floor_id": finance.id})
+    assert back.status_code == 200
+    agent = db.get_agent(ada.id)
+    assert agent.floor_id == finance.id
+    assert agent.vacation_since is None
+    assert client.get("/api/agents/vacation", headers=headers).json() == []
+
+
+def test_activate_answers_409_for_a_vacationer() -> None:
+    ada = _agent("Ada", 1)
+    send_home(ada.id)
+    client, headers = _client()
+    response = client.post(f"/api/agents/{ada.id}/activate", headers=headers, json={"content": "hi"})
+    assert response.status_code == 409
+    assert response.json()["detail"] == VACATION_DENY

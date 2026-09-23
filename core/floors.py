@@ -7,12 +7,20 @@ floor denies too: nothing is treated as Lobby at the moment of a wake.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from core.models.message import HUMAN_SENDER_ID
 from db.floors import LOBBY_ID, LOBBY_NAME
 
+logger = logging.getLogger(__name__)
+
 CROSS_FLOOR_DENY = "Cross-floor access denied"
+VACATION_DENY = "Agent is on vacation"
+
+FloorOccupants = Literal["send_home", "delete"]
 
 
 class FloorDenied(Exception):
@@ -32,6 +40,35 @@ class FloorMoveNeedsConfirm(FloorDenied):
             f"This agent has {open_task_count} open {noun} on the current floor. "
             "Confirm to move the home floor."
         )
+
+
+class AgentOnVacation(FloorDenied):
+    """The agent is on vacation: off every floor and never woken."""
+
+    def __init__(self, message: str = VACATION_DENY) -> None:
+        super().__init__(message)
+
+
+class FloorOccupantsChoiceRequired(Exception):
+    """A floor with agents on it cannot be deleted until the operator says
+    whether they go home (vacation) or are deleted with it."""
+
+    def __init__(self, agent_count: int) -> None:
+        self.agent_count = agent_count
+        noun = "agent works" if agent_count == 1 else "agents work"
+        super().__init__(
+            f"{agent_count} {noun} on this floor. Choose whether to send them home or delete them."
+        )
+
+
+@dataclass
+class FloorDeleteResult:
+    """What a floor delete did, in the order it did it."""
+
+    floor_id: str
+    agents_sent_home: list[str] = field(default_factory=list)
+    agents_deleted: list[str] = field(default_factory=list)
+    threads_archived: list[str] = field(default_factory=list)
 
 
 def home_floor_id(agent_id: str | None) -> str | None:
@@ -216,12 +253,18 @@ def move_home_floor(agent_id: str, floor_id: str, *, confirm_open_work: bool) ->
 
     Membership on any other floor's threads is released so those rosters
     stay single-floor. Tasks, soft-block, and sticky rows are not wiped.
+    An agent on vacation is refused with AgentOnVacation; ``bring_back``
+    is the only way back onto a floor.
     """
     import db
 
     agent = db.get_agent(agent_id)
     if agent is None:
         raise LookupError("Agent not found")
+    # A move would give a vacationer a floor while vacation_since stays set,
+    # breaking the one invariant the gates rely on. bring_back is the way home.
+    if is_on_vacation(agent):
+        raise AgentOnVacation()
     from db.floors import get_floor
 
     target = (floor_id or "").strip()
@@ -255,6 +298,165 @@ def _release_other_floor_memberships(agent_id: str, floor_id: str) -> None:
             )
 
 
+def is_on_vacation(agent: Any) -> bool:
+    """True when ``agent`` (an Agent or None) is on vacation. None is not."""
+    return agent is not None and getattr(agent, "vacation_since", None) is not None
+
+
+def agent_id_on_vacation(agent_id: str | None) -> bool:
+    """True when the agent with this id exists and is on vacation.
+
+    A missing agent is not "on vacation": that is a different failure, and
+    the paths that read this already have their own not-found handling.
+    """
+    token = (agent_id or "").strip()
+    if not token or token == HUMAN_SENDER_ID:
+        return False
+    import db
+
+    return is_on_vacation(db.get_agent(token))
+
+
+def send_home(agent_id: str) -> Any:
+    """Put one agent on vacation: off every floor, out of every thread, never woken.
+
+    Sets ``floor_id`` to NULL and stamps ``vacation_since`` together, which is
+    the invariant every floor gate relies on (no floor denies). Every channel
+    membership, active or archived, is released and queued triggers are
+    dropped. Tasks stay where they are, the same policy ``move_home_floor``
+    follows. Idempotent: an agent already on vacation is returned unchanged.
+
+    Raises:
+        LookupError: No agent has this id.
+    """
+    import db
+    from db.connection import transaction
+
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        raise LookupError("Agent not found")
+    if is_on_vacation(agent):
+        return agent
+    with transaction():
+        updated = db.update_agent(
+            agent.id,
+            floor_id=None,
+            vacation_since=datetime.now(timezone.utc),
+        )
+        if updated is None:
+            raise LookupError("Agent not found")
+        _release_all_memberships(updated.id)
+        db.delete_queued_triggers(updated.id)
+    return updated
+
+
+def bring_back(agent_id: str, floor_id: str) -> Any:
+    """End one agent's vacation onto ``floor_id``.
+
+    Raises:
+        LookupError: The agent or the floor does not exist.
+        ValueError: The agent is not on vacation.
+    """
+    import db
+    from db.floors import get_floor
+
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        raise LookupError("Agent not found")
+    floor = get_floor((floor_id or "").strip())
+    if floor is None:
+        raise LookupError("Floor not found")
+    if not is_on_vacation(agent):
+        raise ValueError("Agent is not on vacation")
+    updated = db.update_agent(agent.id, floor_id=floor.id, vacation_since=None)
+    if updated is None:
+        raise LookupError("Agent not found")
+    return updated
+
+
+async def delete_floor(
+    floor_id: str,
+    *,
+    occupants: FloorOccupants | None,
+    services: Any,
+    on_before_seal: Any = None,
+) -> FloorDeleteResult:
+    """Delete one floor: its agents go home or are deleted, its threads archive.
+
+    Order matters. Agents leave first (a live turn is cancelled through
+    ``services.reset_agent_runtime`` before the agent row changes), so no
+    turn can re-queue into a thread that is about to seal. Then every active
+    thread on the floor is archived through the operator path with its open
+    origin tasks cancelled. The floor row goes last.
+
+    ``on_before_seal`` is passed through to ``archive_thread_as_operator`` so
+    an API caller can paint each thread's closing lines live.
+
+    Raises:
+        ValueError: The floor is Lobby, or ``occupants`` is not a known choice.
+        LookupError: No floor has this id.
+        FloorOccupantsChoiceRequired: Agents live here and ``occupants`` is None.
+    """
+    import db
+    from core.channel_archive import archive_thread_as_operator
+    from db.floors import delete_floor_row, get_floor
+
+    token = (floor_id or "").strip()
+    if token == LOBBY_ID:
+        raise ValueError("Lobby cannot be deleted")
+    floor = get_floor(token)
+    if floor is None:
+        raise LookupError("Floor not found")
+    if occupants is not None and occupants not in ("send_home", "delete"):
+        raise ValueError(f"Unknown occupants choice: {occupants}")
+
+    residents = [
+        agent for agent in db.list_agents()
+        if str(getattr(agent, "floor_id", None) or "") == floor.id
+    ]
+    if residents and occupants is None:
+        raise FloorOccupantsChoiceRequired(len(residents))
+
+    result = FloorDeleteResult(floor_id=floor.id)
+    for agent in residents:
+        await services.reset_agent_runtime(agent.id)
+        if occupants == "send_home":
+            send_home(agent.id)
+            result.agents_sent_home.append(agent.id)
+        else:
+            if not db.delete_agent(agent.id):
+                raise LookupError(f"Agent {agent.id} disappeared during the floor delete")
+            result.agents_deleted.append(agent.id)
+
+    for channel in db.list_channels(status="active"):
+        if str(getattr(channel, "floor_id", None) or "") != floor.id:
+            continue
+        await archive_thread_as_operator(
+            channel.id,
+            cancel_open_tasks=True,
+            services=services,
+            on_before_seal=on_before_seal,
+        )
+        result.threads_archived.append(channel.id)
+
+    delete_floor_row(floor.id)
+    logger.info(
+        "Deleted floor %s: %d sent home, %d deleted, %d threads archived",
+        floor.id,
+        len(result.agents_sent_home),
+        len(result.agents_deleted),
+        len(result.threads_archived),
+    )
+    return result
+
+
+def _release_all_memberships(agent_id: str) -> None:
+    """Drop this agent from every thread, active or archived."""
+    import db
+
+    db.execute("DELETE FROM channel_members WHERE agent_id = $1", [agent_id])
+
+
 def same_floor_agents(agent_id: str) -> list[Any]:
     """Agents who share ``agent_id``'s home. The agent themself is included."""
     import db
@@ -269,14 +471,23 @@ __all__ = [
     "CROSS_FLOOR_DENY",
     "LOBBY_ID",
     "LOBBY_NAME",
+    "VACATION_DENY",
+    "AgentOnVacation",
+    "FloorDeleteResult",
     "FloorDenied",
     "FloorMoveNeedsConfirm",
+    "FloorOccupants",
+    "FloorOccupantsChoiceRequired",
+    "agent_id_on_vacation",
     "assert_assignment",
     "assert_on_channel",
     "assignment_stays_on_floor",
+    "bring_back",
     "channel_floor_id",
+    "delete_floor",
     "filter_ids",
     "home_floor_id",
+    "is_on_vacation",
     "keep_one_floor",
     "move_home_floor",
     "on_floor",
@@ -284,5 +495,6 @@ __all__ = [
     "peers_share_floor",
     "require_shared_home",
     "same_floor_agents",
+    "send_home",
     "task_floor_id",
 ]

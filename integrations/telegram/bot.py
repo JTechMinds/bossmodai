@@ -20,6 +20,7 @@ from telegram.ext import (
 )
 
 from core.bm_cli.approvals import resolve_approval_by_unique_prefix, resume_cli_approval
+from core.floors import AgentOnVacation
 from core.messaging import route_human_dm, route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
 import db
@@ -524,13 +525,18 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
             question = f"Can you explain why you need to run: {request.command}"
             services = context.bot_data["services"]
             broadcast_manager = context.bot_data["broadcast_manager"]
-            await route_human_dm(
-                agent_id=agent.id,
-                content=question,
-                from_name="Telegram User",
-                broadcast_manager=broadcast_manager,
-                services=services,
-            )
+            try:
+                await route_human_dm(
+                    agent_id=agent.id,
+                    content=question,
+                    from_name="Telegram User",
+                    broadcast_manager=broadcast_manager,
+                    services=services,
+                )
+            except AgentOnVacation:
+                clear_session(user_id)
+                await query.edit_message_text(f"{agent.name} is on vacation and cannot answer.")
+                return
             await query.edit_message_text(
                 f"Opened chat with {agent.name} and asked about: {request.command}"
             )
@@ -564,13 +570,20 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Session invalid. Use /chat <agent> to start a new one.")
             clear_session(user_id)
             return
-        await route_human_dm(
-            agent_id=session.target_agent_id,
-            content=text,
-            from_name="Telegram User",
-            broadcast_manager=broadcast_manager,
-            services=services,
-        )
+        try:
+            await route_human_dm(
+                agent_id=session.target_agent_id,
+                content=text,
+                from_name="Telegram User",
+                broadcast_manager=broadcast_manager,
+                services=services,
+            )
+        except AgentOnVacation:
+            clear_session(user_id)
+            await update.message.reply_text(
+                "That agent is on vacation. Use /chat <agent> to talk to someone else."
+            )
+            return
     elif session.session_type == "group":
         channel = db.get_channel(session.target_channel_id)
         if channel is None or channel.status != "active":

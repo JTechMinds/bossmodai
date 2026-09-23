@@ -185,6 +185,13 @@ class RuntimeServices:
         payload: dict[str, Any],
         task_id: str | None = None,
     ) -> None:
+        # Before start(): a trigger that will never be written has no reason
+        # to spin the runtime up.
+        from core.floors import agent_id_on_vacation
+
+        if agent_id_on_vacation(agent_id):
+            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
+            return
         await self.start()
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)

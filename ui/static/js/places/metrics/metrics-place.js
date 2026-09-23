@@ -88,7 +88,6 @@ const BossModMetricsPlace = (() => {
      */
     function scopedMetrics(state, data, roster) {
         if (!state.roster || state.roster.length === 0) return data;
-        if (BossModFloorScope.visibleFloorId(state) === null) return data;
         const ids = new Set(roster.map((agent) => agent.id));
         const tokens = Object.assign({}, data.tokens || {});
         tokens.by_agent = (tokens.by_agent || []).filter((row) => ids.has(row.agent_id));
@@ -188,7 +187,7 @@ const BossModMetricsPlace = (() => {
             // dashboard would sit on numbers read before an outage.
             disposers.push(ctx.bus.subscribe('resync', () => BossModMetricsPlace.resync()));
             disposers.push(ctx.store.subscribe(
-                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                (s) => s.currentFloorId,
                 () => { if (lastDashboard) paintDashboard(lastDashboard); },
             ));
             void refresh();

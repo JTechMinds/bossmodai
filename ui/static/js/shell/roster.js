@@ -64,6 +64,7 @@ const BossModRoster = (() => {
 
         const people = BossModRosterPeople.createPeople({
             store,
+            apiFetch,
             onOpenConversation: (agentId) => openConversation(agentId, 'agent'),
             onOpenDesk: openDesk,
             onSelectionChange: () => threads.applySelection(),

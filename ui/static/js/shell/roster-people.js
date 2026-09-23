@@ -93,6 +93,7 @@ const BossModRosterPeople = (() => {
      * @param {object} deps
      * @param {object} deps.store  Application store; `roster`, `rosterQuery`,
      *   `needs` and `runtimePaused` are the four slices this half reads.
+     * @param {Function} deps.apiFetch  For the People `⋯`'s On vacation view.
      * @param {(agentId: string) => void} deps.onOpenConversation
      * @param {(agentId: string) => void} deps.onOpenDesk
      * @param {() => void} deps.onSelectionChange  Called whenever the selection
@@ -112,7 +113,7 @@ const BossModRosterPeople = (() => {
      *   render rows whose clicks go nowhere.
      */
     function createPeople(deps) {
-        const { store, onOpenConversation, onOpenDesk, onSelectionChange, seat, onError } = deps || {};
+        const { store, apiFetch, onOpenConversation, onOpenDesk, onSelectionChange, seat, onError } = deps || {};
         if (!store) throw new Error('[roster-people] deps.store is required');
         if (typeof onOpenConversation !== 'function') {
             throw new Error('[roster-people] deps.onOpenConversation is required');
@@ -133,8 +134,7 @@ const BossModRosterPeople = (() => {
         // `getContainer` is a thunk for the reason Threads gives: the row the
         // panel hangs off cannot be built until the `⋯` exists to go in it.
         const view = BossModPeopleViewMenu.createPeopleViewMenu({
-            getContainer: () => head,
-            onChange: render,
+            getContainer: () => head, onChange: render, store, apiFetch,
         });
         // The seat group is mounted only while a live thread is open — a
         // hidden `roster-section-actions` would become the rail's first header
@@ -352,7 +352,7 @@ const BossModRosterPeople = (() => {
 
         disposers.push(store.subscribe((s) => s.roster, render));
         disposers.push(store.subscribe((s) => s.rosterQuery, render));
-        disposers.push(store.subscribe((s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`, render));
+        disposers.push(store.subscribe((s) => s.currentFloorId, render));
         disposers.push(store.subscribe((s) => s.needs, render));
         disposers.push(store.subscribe((s) => s.runtimePaused, render));
         disposers.push(store.subscribe((s) => s.conversationId, syncSeatAction));

@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import db
+from core.floors import AgentOnVacation, agent_id_on_vacation
 from core.agent_loop.channel_host import prepare_human_channel_message
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.thread_supersede import cancel_queued_older_thread_rounds
@@ -32,7 +33,12 @@ async def route_human_dm(
     ``trigger_from_name`` is what the agent sees in its prompt context.
 
     Returns a dict with ``message_id``.
+
+    Raises AgentOnVacation before anything is written when the agent is on
+    vacation: a message they will never answer must not look delivered.
     """
+    if agent_id_on_vacation(agent_id):
+        raise AgentOnVacation()
     human_msg = db.create_message(
         from_agent=HUMAN_SENDER_ID,
         to_agent=agent_id,

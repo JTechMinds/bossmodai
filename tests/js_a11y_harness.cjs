@@ -76,7 +76,7 @@ installIconsStub();
 
 const [
     dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, overlays, rowMeta,
-    places, floorSwitcher, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
+    places, scopeModule, floorApi, floorSwitcher, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
     rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -94,6 +94,8 @@ load(rowMeta, "BossModRosterRowMeta");
 load(overlayFocus, "BossModOverlayFocus");
 load(overlays, "BossModOverlays");
 load(places, "BossModPlaces");
+load(scopeModule, "BossModFloorScope");
+load(floorApi, "BossModFloorApi");
 load(floorSwitcher, "BossModFloorSwitcher");
 load(header, "BossModHeader");
 // Both section headers' `⋯`, then the People one's owner, before the half
@@ -152,15 +154,22 @@ function apiFetch(url) {
         return Promise.resolve({
             ok: true,
             json: () => Promise.resolve([
-                { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "idle", x: 1, y: 1 },
+                { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "idle", x: 1, y: 1, floor_id: "lobby" },
             ]),
+        });
+    }
+    // The header's floor switcher loads the floor list at mount.
+    if (url.startsWith("/api/floors")) {
+        return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ id: "lobby", name: "Lobby" }]),
         });
     }
     if (url.startsWith("/api/channels")) {
         return Promise.resolve({
             ok: true,
             json: () => Promise.resolve([
-                { id: "c1", name: "Launch plan", kind: "shared", status: "active", member_count: 2, members: [] },
+                { id: "c1", name: "Launch plan", kind: "shared", status: "active", member_count: 2, members: [], floor_id: "lobby" },
             ]),
         });
     }

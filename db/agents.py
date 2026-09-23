@@ -35,7 +35,7 @@ _AGENT_COLUMNS = (
     "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
-    "agents.floor_id, agents.created_at"
+    "agents.floor_id, agents.vacation_since, agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
@@ -46,7 +46,7 @@ _AGENT_VALID_COLUMNS = {
     "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
     "guardian_token_limit", "guardian_velocity_limit",
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
-    "floor_id",
+    "floor_id", "vacation_since",
 }
 
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
@@ -201,6 +201,24 @@ def list_agents() -> list[Agent]:
             FROM agents
             JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
             ORDER BY agents.created_at
+            """,
+            model_cls=Agent,
+        )
+        if (decrypted := _decrypt_agent(agent)) is not None
+    ]
+
+
+def list_vacationing_agents() -> list[Agent]:
+    """Return every agent on vacation, most recently sent home first."""
+    return [
+        decrypted
+        for agent in fetch_all(
+            f"""
+            SELECT {_AGENT_COLUMNS}
+            FROM agents
+            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+            WHERE agents.vacation_since IS NOT NULL
+            ORDER BY agents.vacation_since DESC
             """,
             model_cls=Agent,
         )

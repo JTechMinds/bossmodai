@@ -69,13 +69,29 @@ def list_floors() -> list[Floor]:
     )
 
 
-def create_floor(name: str) -> Floor:
-    """Create a labeled floor, or return the one that already has this name."""
+class FloorNameTaken(ValueError):
+    """Another floor already carries this label, ignoring case."""
+
+
+FLOOR_NAME_MAX_LENGTH = 80
+
+
+def _normalize_name(name: str) -> str:
+    """Collapse whitespace and validate a floor label.
+
+    Raises ValueError when the label is blank or longer than the cap.
+    """
     label = " ".join((name or "").split())
     if not label:
         raise ValueError("Floor name is required")
-    if len(label) > 80:
-        raise ValueError("Floor name must be 80 characters or fewer")
+    if len(label) > FLOOR_NAME_MAX_LENGTH:
+        raise ValueError(f"Floor name must be {FLOOR_NAME_MAX_LENGTH} characters or fewer")
+    return label
+
+
+def create_floor(name: str) -> Floor:
+    """Create a labeled floor, or return the one that already has this name."""
+    label = _normalize_name(name)
     existing = get_floor_by_name(label)
     if existing is not None:
         return existing
@@ -94,3 +110,42 @@ def create_floor(name: str) -> Floor:
     if created is None:
         raise RuntimeError("Floor insert did not return a row")
     return created
+
+
+def rename_floor(floor_id: str, name: str) -> Floor:
+    """Give one floor a new label. Lobby may be renamed; its id never changes.
+
+    The label is normalized and validated the way ``create_floor`` does it.
+    Renaming a floor to its own name (any case) is allowed.
+
+    Raises:
+        ValueError: The label is blank or too long.
+        LookupError: No floor has this id.
+        FloorNameTaken: Another floor already uses the label, ignoring case.
+    """
+    label = _normalize_name(name)
+    floor = get_floor(floor_id)
+    if floor is None:
+        raise LookupError("Floor not found")
+    clash = get_floor_by_name(label)
+    if clash is not None and clash.id != floor.id:
+        raise FloorNameTaken("Another floor already uses that name")
+    updated = fetch_one(
+        f"UPDATE floors SET name = $1 WHERE id = $2 RETURNING {_COLUMNS}",
+        [label, floor.id],
+        Floor,
+    )
+    if updated is None:
+        raise LookupError("Floor not found")
+    return updated
+
+
+def delete_floor_row(floor_id: str) -> None:
+    """Remove one floor row. Callers clear its agents and threads first.
+
+    Raises ValueError for Lobby, which every agent and thread falls back on.
+    """
+    token = (floor_id or "").strip()
+    if token == LOBBY_ID:
+        raise ValueError("Lobby cannot be deleted")
+    execute("DELETE FROM floors WHERE id = $1", [token])

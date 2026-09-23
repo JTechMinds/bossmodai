@@ -908,11 +908,11 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
     assert "door('building'" not in menu, "the Office already wears that mark"
     # An icon slot both rows fill, so the labels start on the same edge.
     overlays = _read(ROOT / "ui" / "static" / "css" / "overlays.css")
-    choice = overlays.split(".add-agent-choice {", 1)[1].split("}", 1)[0]
+    choice = overlays.split(".menu-door {", 1)[1].split("}", 1)[0]
     assert "display: flex;" in choice
     assert "align-items: center;" in choice
     assert "gap: 8px;" in choice
-    icon = overlays.split(".add-agent-choice svg {", 1)[1].split("}", 1)[0]
+    icon = overlays.split(".menu-door svg {", 1)[1].split("}", 1)[0]
     assert "width: 16px;" in icon and "height: 16px;" in icon
     assert "flex: 0 0 auto;" in icon
     # And the same ink .roster-hire carries — the coupling is the point: a menu
@@ -928,7 +928,7 @@ def test_both_menu_doors_are_an_icon_and_a_label() -> None:
     # The --blue-ink hover correction went with the blue: it existed because
     # --accent measures only 4.19:1 on --accent-bg, and neither row uses either
     # colour now. --hint is 4.83:1 on --panel, --ink is 15.45:1 on --bg.
-    assert ".add-agent-choice:hover { background: var(--bg); color: var(--ink); }" in overlays
+    assert ".menu-door:hover { background: var(--bg); color: var(--ink); }" in overlays
     hire_hover = shell_css.split(".roster-hire:hover {", 1)[1].split("}", 1)[0]
     assert "background: var(--bg)" in hire_hover and "color: var(--ink)" in hire_hover
 

@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS agents (
     guardian_repetition_threshold  FLOAT   DEFAULT 0.85,
     guardian_no_progress_threshold INTEGER DEFAULT 30,
     floor_id                      VARCHAR,
+    vacation_since                TIMESTAMP,
     created_at                    TIMESTAMP DEFAULT current_timestamp
 );
 

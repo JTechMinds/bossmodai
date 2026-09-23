@@ -38,9 +38,9 @@ const BossModOfficePlace = (() => {
      * token totals need /api/metrics, which this place does not load.
      */
     function countsText(state) {
-        const people = BossModFloorScope.officePeople(state, state.roster || []).length;
+        const people = BossModFloorScope.filterPeople(state, state.roster || []).length;
         const threads = (state.threads || []).filter(
-            (thread) => BossModFloorScope.floorOf(thread) === BossModFloorScope.officeFloorId(state),
+            (thread) => BossModFloorScope.floorOf(thread) === BossModFloorScope.visibleFloorId(state),
         ).length;
         return `${people} ${people === 1 ? 'person' : 'people'} · `
             + `${threads} ${threads === 1 ? 'thread' : 'threads'}`;
@@ -193,11 +193,11 @@ const BossModOfficePlace = (() => {
 
             function paintFloor() {
                 const state = ctx.store.getState();
-                const seated = BossModFloorScope.officePeople(state, state.roster || []);
+                const seated = BossModFloorScope.filterPeople(state, state.roster || []);
                 canvas.updateAgents(seated);
                 floorEcho.textContent = BossModFloorScope.floorName(
                     state,
-                    BossModFloorScope.officeFloorId(state),
+                    BossModFloorScope.visibleFloorId(state),
                 );
                 countsLine.textContent = countsText(state);
             }
@@ -209,7 +209,7 @@ const BossModOfficePlace = (() => {
             disposers.push(ctx.store.subscribe((s) => s.roster, paintFloor));
             disposers.push(ctx.store.subscribe((s) => s.threads, paintFloor));
             disposers.push(ctx.store.subscribe(
-                (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+                (s) => s.currentFloorId,
                 paintFloor,
             ));
             disposers.push(ctx.store.subscribe((s) => s.runtimePaused, paintRuntimeState));

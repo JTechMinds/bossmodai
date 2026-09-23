@@ -70,7 +70,12 @@ def _latest_human_chat_times() -> dict[str, datetime]:
 
 
 def get_world_state() -> list[dict[str, Any]]:
-    """Return all agents joined with their state for WebSocket broadcast."""
+    """Return every working agent joined with their state for WebSocket broadcast.
+
+    Agents on vacation are left out: they are off every floor and hidden
+    from the roster, the office and Telegram until an operator brings them
+    back (core/floors.py ``bring_back``).
+    """
     from core.world.seating import heal_desk_seats
 
     heal_desk_seats()
@@ -78,7 +83,7 @@ def get_world_state() -> list[dict[str, Any]]:
         """
         SELECT
             a.id, a.name, a.role, a.description, a.done_fail_bar, a.color,
-            a.desk_x, a.desk_y, a.floor_id,
+            a.desk_x, a.desk_y, a.floor_id, a.vacation_since,
             s.x, s.y, s.status,
             s.last_active_at, s.idle_since,
             act.kind AS currentActivityKind,
@@ -88,6 +93,7 @@ def get_world_state() -> list[dict[str, Any]]:
         LEFT JOIN agent_state s ON s.agent_id = a.id
         LEFT JOIN activities act
             ON act.agent_id = a.id AND act.status = 'active'
+        WHERE a.vacation_since IS NULL
         ORDER BY a.created_at
         """,
     )

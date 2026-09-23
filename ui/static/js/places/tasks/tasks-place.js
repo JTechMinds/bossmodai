@@ -341,7 +341,7 @@ const BossModTasksPlace = (() => {
             // The shell does not drive Place.resync() yet; subscribing here is
             // what keeps the list from sitting stale after an outage.
             disposers.push(ctx.bus.subscribe('resync', () => BossModTasksPlace.resync()));
-            disposers.push(ctx.store.subscribe((s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`, () => { if (ctxRef) paint(); }));
+            disposers.push(ctx.store.subscribe((s) => s.currentFloorId, () => { if (ctxRef) paint(); }));
 
             const linkedTaskId = String(ctx.store.getState().placeParams.taskId || '').trim();
             void refresh().then(() => {

@@ -949,7 +949,11 @@
   overflow-y: auto;
 }
 
-/* The doors read as the row that opens them. .roster-hire is --accent at
+/* A DOOR inside a menu: a row that opens something rather than choosing it —
+   the rail's Add agent doors and the floor switcher's `+ New floor`. Named
+   for what it is: it serves more than one menu.
+
+   The doors read as the row that opens them. .roster-hire is --accent at
    weight 500 and inherits base.css's 14px; these were --ink at 13px, so the
    control and the two things it offers looked like two different controls.
 
@@ -957,7 +961,7 @@
    one, so the two labels start on the same left edge; a row whose mark was a
    character typed into the label (`+ Add Agent`) or hung off the end of it
    (`Browse Marketplace →`) could not line up with anything. */
-.add-agent-choice {
+.menu-door {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -973,7 +977,7 @@
 /* Decorative, and it inherits the row's ink, so the mark never keeps a colour
    the label has left. It does not shrink: the label wraps before the icon
    gives up a pixel. */
-.add-agent-choice svg {
+.menu-door svg {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
@@ -988,7 +992,124 @@
    resting --accent measures only 4.19:1 on that tint. Neither is blue now, so
    the correction has nothing left to correct and goes with it: --hint is
    4.83:1 on --panel and --ink is 15.45:1 on --bg, both clear without help. */
-.add-agent-choice:hover { background: var(--bg); color: var(--ink); }
+.menu-door:hover { background: var(--bg); color: var(--ink); }
+
+/* The header's floor switcher (shell/floor-switcher.js). It hangs off
+   .floor-switcher, left edges aligned with the trigger, the way a dropdown
+   hangs off .menu-select. Capped and scrolling, because a company can have
+   more floors than a window has room for. */
+.menu[data-menu="floor"] {
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
+  min-width: 240px;
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+}
+
+/* Under 768px the trigger sits mid-header and a left-anchored 240px panel runs
+   off the right edge. It spans the window instead, 16px in from each side,
+   just under the header band — the same breakpoint the shell's one-column
+   layout uses (shell.css). */
+@media (max-width: 767px) {
+  .menu[data-menu="floor"] {
+    position: fixed;
+    top: calc(var(--bar) + 6px);
+    left: 16px;
+    right: 16px;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+/* A rule between a menu's choices and its doors. Decorative, so --line. */
+.menu-divider { width: 100%; height: 1px; margin: 0; border: 0; background: var(--line); }
+
+/* One floor: the choice takes the row, the `⋯` stays its own size beside it. */
+.floor-row { display: flex; align-items: center; gap: 2px; }
+
+.floor-row .floor-choice { flex: 1 1 auto; min-width: 0; }
+
+/* The check's slot is always there, so every floor name starts on one edge. */
+.floor-check { display: inline-flex; flex: none; width: 14px; height: 14px; }
+
+/* Always visible — a control that appears only on hover is unreachable by
+   touch and invisible to a keyboard until it is already focused. Quiet at
+   rest, --ink when its row is under the pointer or it has focus. base.css
+   gives it the 24px target floor (SC 2.5.8). */
+.floor-row-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r);
+  color: var(--hint);
+}
+
+.floor-row:hover .floor-row-more,
+.floor-row:focus-within .floor-row-more { color: var(--ink); }
+
+.floor-row-more:hover { background: var(--bg); }
+
+.floor-row-more svg { width: 14px; height: 14px; }
+
+/* `+ New floor`, turned into its name field in place. */
+.floor-new-form { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+
+/* The Delete floor layer's choice: two native radios, each a full-row target
+   with its consequence under the label. */
+.floor-delete { display: flex; flex-direction: column; gap: 12px; }
+
+.floor-delete p { margin: 0; }
+
+.floor-delete-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.floor-delete-choice legend { margin-bottom: 6px; padding: 0; }
+
+.floor-delete-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  cursor: pointer;
+}
+
+.floor-delete-option:hover { background: var(--bg); }
+
+.floor-delete-option > span { display: flex; flex-direction: column; gap: 2px; }
+
+.floor-delete-option-label { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+/* The On vacation view (shell/vacation-dialog.js): who, since when, and the
+   one way back. */
+.vacation-view { display: flex; flex-direction: column; gap: 8px; }
+
+.vacation-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+
+.vacation-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: var(--r);
+}
+
+.vacation-row:hover { background: var(--bg); }
+
+.vacation-who { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+
+.vacation-name { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+.vacation-meta { font-size: 12px; color: var(--muted); }
 
 /* Seat picker: one live agent per row, same left-edge as the add-agent doors.
    Name then specialty, so two Hughs are still distinguishable. */

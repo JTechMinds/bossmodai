@@ -12,7 +12,7 @@ const BossModSession = (() => {
     /** The only keys that persist. Server collections never do. */
     const PERSISTED_KEYS = Object.freeze([
         'place', 'conversationId', 'conversationKind', 'contextMode', 'railCollapsed',
-        'currentFloorId', 'floorScope', 'browseFloorId',
+        'currentFloorId',
     ]);
 
     const DEFAULTS = Object.freeze({
@@ -22,8 +22,6 @@ const BossModSession = (() => {
         contextMode: 'office',
         railCollapsed: false,
         currentFloorId: 'lobby',
-        floorScope: 'this',
-        browseFloorId: null,
     });
 
     /**
@@ -102,14 +100,8 @@ const BossModSession = (() => {
             result.contextMode = DEFAULTS.contextMode;
         }
         result.railCollapsed = result.railCollapsed === true;
-        if (result.floorScope !== 'this' && result.floorScope !== 'other' && result.floorScope !== 'all') {
-            result.floorScope = DEFAULTS.floorScope;
-        }
         if (typeof result.currentFloorId !== 'string' || !result.currentFloorId) {
             result.currentFloorId = DEFAULTS.currentFloorId;
-        }
-        if (typeof result.browseFloorId !== 'string' || !result.browseFloorId) {
-            result.browseFloorId = null;
         }
 
         return result;

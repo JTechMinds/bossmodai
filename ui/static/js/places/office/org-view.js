@@ -96,7 +96,7 @@ const BossModOrgView = (() => {
         }
 
         function seated() {
-            return BossModFloorScope.officePeople(store.getState(), agents);
+            return BossModFloorScope.filterPeople(store.getState(), agents);
         }
 
         function renderGrid() {
@@ -233,7 +233,7 @@ const BossModOrgView = (() => {
 
         const unsubscribe = store.subscribe((s) => s.roster, handleWorldUpdate);
         const unsubscribeFloor = store.subscribe(
-            (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+            (s) => s.currentFloorId,
             () => {
                 if (destroyed) return;
                 if (agents.length === 0) renderEmpty();

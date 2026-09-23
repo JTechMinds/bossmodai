@@ -27,6 +27,7 @@ from core.llm.call_budget import (
 )
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
+from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
     origin_thread_target,
@@ -117,7 +118,14 @@ class TurnDispatcher:
         payload: dict[str, Any],
         task_id: str | None = None,
     ) -> None:
-        """Persist a trigger and wake the dispatcher."""
+        """Persist a trigger and wake the dispatcher.
+
+        Writes nothing for a payload aimed at an archived thread or for an
+        agent on vacation; both are expected, documented skips.
+        """
+        if agent_id_on_vacation(agent_id):
+            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
+            return
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
         if db.payload_targets_archived_channel(payload):
@@ -530,6 +538,16 @@ class TurnDispatcher:
             db.fail_agent_trigger(
                 candidate.id,
                 "Agent not found",
+                claim_generation=candidate.claim_generation,
+            )
+            return False
+        # Backstop: enqueue already refuses a vacationer, but a row written
+        # before they went home, or by a path that bypasses enqueue, must
+        # still never start a turn.
+        if is_on_vacation(agent):
+            db.fail_agent_trigger(
+                candidate.id,
+                VACATION_DENY,
                 claim_generation=candidate.claim_generation,
             )
             return False

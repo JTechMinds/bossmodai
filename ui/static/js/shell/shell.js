@@ -34,10 +34,9 @@ const BossModShell = (() => {
         threads: [],
         rosterQuery: '',
         railCollapsed: false,
-        // Global floor scope. The header switcher writes it; every place reads it.
+        // The one floor the operator is on. The header switcher writes it;
+        // every place reads it.
         currentFloorId: 'lobby',
-        floorScope: 'this',
-        browseFloorId: null,
         floors: [{ id: 'lobby', name: 'Lobby' }],
         settingsOpen: false,
         runtimePaused: false,
@@ -212,8 +211,6 @@ const BossModShell = (() => {
             contextMode: startup.contextMode,
             railCollapsed: startup.railCollapsed,
             currentFloorId: startup.currentFloorId,
-            floorScope: startup.floorScope,
-            browseFloorId: startup.browseFloorId,
         });
         applyContextColumn(startup.place);
         // Applied, not left to the subscription: a session restored with the

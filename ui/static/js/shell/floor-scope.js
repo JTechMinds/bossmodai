@@ -1,11 +1,11 @@
 /**
- * BossMod AI — the operator's current floor scope.
+ * BossMod AI — the floor the operator is on.
  *
- * The header switcher is the only control. This module does not draw
- * anything. Chat, Office, Tasks, Files, Metrics, and Log read the same
- * store fields so the scope is global. "All floors" is browse: it finds
- * people and threads. It is not permission to assign, hire, or wake
- * across a floor. That denial stays in the engine.
+ * The operator is always on exactly one floor: `state.currentFloorId`.
+ * The header switcher is the only control that changes it, and this
+ * module draws nothing. Chat, Office, Tasks, Files, Metrics, and Log read
+ * the same store field, so the floor is global. There is no browse-every-
+ * floor mode; cross-floor denial stays in the engine regardless.
  */
 const BossModFloorScope = (() => {
     const LOBBY_ID = 'lobby';
@@ -31,41 +31,23 @@ const BossModFloorScope = (() => {
     }
 
     /**
-     * The floor a list should show. Null means every floor (browse).
-     *
-     * @param {object} state
-     * @returns {string|null}
-     */
-    function visibleFloorId(state) {
-        const scope = state && state.floorScope;
-        if (scope === 'all') return null;
-        if (scope === 'other') {
-            return state.browseFloorId || state.currentFloorId || LOBBY_ID;
-        }
-        return (state && state.currentFloorId) || LOBBY_ID;
-    }
-
-    /**
-     * The one floor the office draws. Browse-all does not mix the map.
+     * The floor every list, the office and the metrics show.
      *
      * @param {object} state
      * @returns {string}
      */
-    function officeFloorId(state) {
-        if (state && state.floorScope === 'other' && state.browseFloorId) {
-            return state.browseFloorId;
-        }
+    function visibleFloorId(state) {
         return (state && state.currentFloorId) || LOBBY_ID;
     }
 
     /**
-     * Home floor for a new hire: the concrete floor on screen, never "all".
+     * Home floor for a new hire: the floor the operator is on.
      *
      * @returns {string}
      */
     function hireFloorId() {
         const state = storeRef ? storeRef.getState() : {};
-        return officeFloorId(state);
+        return visibleFloorId(state);
     }
 
     /**
@@ -89,20 +71,6 @@ const BossModFloorScope = (() => {
     function filterPeople(state, people) {
         const floorId = visibleFloorId(state);
         const rows = Array.isArray(people) ? people : [];
-        if (!floorId) return rows.slice();
-        return rows.filter((agent) => floorOf(agent) === floorId);
-    }
-
-    /**
-     * People seated on the office's one floor, including while browsing all.
-     *
-     * @param {object} state
-     * @param {object[]} people
-     * @returns {object[]}
-     */
-    function officePeople(state, people) {
-        const floorId = officeFloorId(state);
-        const rows = Array.isArray(people) ? people : [];
         return rows.filter((agent) => floorOf(agent) === floorId);
     }
 
@@ -114,7 +82,6 @@ const BossModFloorScope = (() => {
     function filterThreads(state, threads) {
         const floorId = visibleFloorId(state);
         const rows = Array.isArray(threads) ? threads : [];
-        if (!floorId) return rows.slice();
         return rows.filter((thread) => floorOf(thread) === floorId);
     }
 
@@ -126,13 +93,12 @@ const BossModFloorScope = (() => {
     function filterTasks(state, tasks) {
         const floorId = visibleFloorId(state);
         const rows = Array.isArray(tasks) ? tasks : [];
-        if (!floorId) return rows.slice();
         return rows.filter((task) => floorOf(task) === floorId);
     }
 
     /**
      * Whether a log row's agent is on the visible floor.
-     * A row with no agent stays. An unknown agent is hidden while scoped.
+     * A row with no agent stays. An unknown agent is hidden.
      *
      * @param {object} state
      * @param {string|null|undefined} agentId
@@ -140,7 +106,6 @@ const BossModFloorScope = (() => {
      */
     function allowsAgent(state, agentId) {
         const floorId = visibleFloorId(state);
-        if (!floorId) return true;
         if (!agentId) return true;
         const roster = (state && state.roster) || [];
         const agent = roster.find((item) => item && item.id === agentId);
@@ -153,11 +118,9 @@ const BossModFloorScope = (() => {
         attach,
         floorOf,
         visibleFloorId,
-        officeFloorId,
         hireFloorId,
         floorName,
         filterPeople,
-        officePeople,
         filterThreads,
         filterTasks,
         allowsAgent,

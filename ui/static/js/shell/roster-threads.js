@@ -237,7 +237,7 @@ const BossModRosterThreads = (() => {
         disposers.push(store.subscribe((s) => s.threads, renderThreads));
         disposers.push(store.subscribe((s) => s.rosterQuery, renderThreads));
         disposers.push(store.subscribe(
-            (s) => `${s.floorScope}|${s.currentFloorId}|${s.browseFloorId}`,
+            (s) => s.currentFloorId,
             renderThreads,
         ));
 
