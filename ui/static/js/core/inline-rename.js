@@ -5,8 +5,10 @@
  * conversation/title-rename.js, was the first), built as one component so
  * the next one does not become a third copy. The semantics are the title's:
  *
- * - At rest it is the name and nothing else: no border, no fill, no label.
- *   Click it, or Tab to it and press Enter, to edit. A hairline appears
+ * - At rest it is the name and nothing else: no border, no fill — at most a
+ *   quiet visible label before it (`prefix`, e.g. "Floor:"), which is then
+ *   the field's accessible name. Click it, or Tab to it and press Enter, to
+ *   edit. A hairline appears
  *   under the row, with a ✓ and a ✕ beside the text; at rest neither exists.
  * - It is ONE control in two states, not a label that swaps for an input. A
  *   read-only text input already looks like text, is already a tab stop, and
@@ -30,8 +32,11 @@ const BossModInlineRename = (() => {
      * Build one renameable name.
      *
      * @param {object} opts
-     * @param {string} opts.label  The field's accessible name ("Floor name").
-     *   It reads as text, so its name has to say what it is.
+     * @param {string} [opts.label]  The field's accessible name when nothing
+     *   visible names it. It reads as text, so its name has to say what it is.
+     * @param {string} [opts.prefix]  A visible label before the name ("Floor:"),
+     *   rendered as the input's `<label for>`, so it IS the accessible name.
+     *   Give exactly one of `label` and `prefix`; `prefix` needs `id`.
      * @param {string} opts.placeholder  Shown when the name is empty.
      * @param {number} opts.maxLength  The server's cap.
      * @param {string} opts.emptyMessage  What an empty name is told.
@@ -40,7 +45,7 @@ const BossModInlineRename = (() => {
      * @param {string} opts.value  The name the server has now.
      * @param {(next: string) => Promise<void>} opts.onRename  Performs the
      *   rename; rejects with an Error whose message is shown on failure.
-     * @param {string} [opts.id]  The input's id, for a caller or a test.
+     * @param {string} [opts.id]  The input's id; required with `prefix`.
      * @returns {{element: HTMLElement, input: HTMLInputElement,
      *   isEditing: () => boolean, save: () => Promise<void>, cancel: () => void}}
      *   `save` never rejects: a failure is the error line's.
@@ -49,11 +54,16 @@ const BossModInlineRename = (() => {
      */
     function create(opts) {
         const {
-            label, placeholder, maxLength, emptyMessage, saveLabel, cancelLabel, value, onRename, id,
+            label, prefix, placeholder, maxLength, emptyMessage, saveLabel, cancelLabel, value, onRename, id,
         } = opts || {};
-        for (const [key, given] of Object.entries({ label, placeholder, emptyMessage, saveLabel, cancelLabel })) {
+        for (const [key, given] of Object.entries({ placeholder, emptyMessage, saveLabel, cancelLabel })) {
             if (!given) throw new Error(`[inline-rename] opts.${key} is required`);
         }
+        // One name, from one place: two would be announced twice or disagree.
+        if (Boolean(label) === Boolean(prefix)) {
+            throw new Error('[inline-rename] give exactly one of opts.label and opts.prefix');
+        }
+        if (prefix && !id) throw new Error('[inline-rename] opts.prefix needs opts.id for its <label for>');
         if (!Number.isInteger(maxLength) || maxLength < 1) {
             throw new Error('[inline-rename] opts.maxLength must be a positive integer');
         }
@@ -68,7 +78,7 @@ const BossModInlineRename = (() => {
             class: 'inline-rename-input',
             type: 'text',
             id: id || null,
-            'aria-label': label,
+            'aria-label': prefix ? null : label,
             placeholder,
             maxlength: String(maxLength),
             autocomplete: 'off',
@@ -78,18 +88,28 @@ const BossModInlineRename = (() => {
         });
         input.value = committed;
 
+        // A keyboard activation (click `detail` 0) puts focus back on the name,
+        // because the button it was on is about to go. A mouse one does not:
+        // a focused text field counts as :focus-visible in every browser, so
+        // the at-rest focus hairline would show after every mouse save.
         const icon = (name, className, text, onSelect) => h('button', {
             class: `btn btn-sm conversation-action ${className}`,
             type: 'button',
             'aria-label': text,
             'data-tooltip': text,
-            onclick: () => onSelect(),
+            onclick: async (event) => {
+                await onSelect();
+                if (event && event.detail === 0 && !editing) input.focus();
+            },
         }, h('i', { 'data-lucide': name, 'aria-hidden': 'true' }));
-        const saveButton = icon('check', 'inline-rename-save', saveLabel, () => { void save(); });
+        const saveButton = icon('check', 'inline-rename-save', saveLabel, () => save());
         const cancelButton = icon('x', 'inline-rename-cancel', cancelLabel, () => cancel());
         // Mounted only while editing, so at rest the row is the name alone.
         const buttons = h('span', { class: 'inline-rename-actions' });
-        const row = h('div', { class: 'inline-rename-row', 'data-editing': 'false' }, input, buttons);
+        const row = h('div', { class: 'inline-rename-row', 'data-editing': 'false' },
+            prefix ? h('label', { class: 'inline-rename-prefix', for: id }, prefix) : null,
+            input,
+            buttons);
         const error = h('p', { class: 'context-error', role: 'alert' });
         const element = h('div', { class: 'inline-rename' }, row, error);
 
@@ -118,8 +138,6 @@ const BossModInlineRename = (() => {
             input.value = committed;
             error.textContent = '';
             setEditing(false);
-            // The ✕ that was clicked is gone; the name is where focus belongs.
-            input.focus();
         }
 
         async function save() {
@@ -150,7 +168,6 @@ const BossModInlineRename = (() => {
             committed = next;
             input.value = next;
             setEditing(false);
-            input.focus();
         }
 
         function onKeydown(event) {

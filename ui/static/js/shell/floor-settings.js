@@ -175,7 +175,7 @@ const BossModFloorSettings = (() => {
 
         const nameField = BossModInlineRename.create({
             id: NAME_ID,
-            label: 'Floor name',
+            prefix: 'Floor:',
             placeholder: 'Floor name',
             maxLength: NAME_MAX_LENGTH,
             emptyMessage: 'Give the floor a name.',
@@ -228,6 +228,12 @@ const BossModFloorSettings = (() => {
             tools: deleteTool ? [deleteTool] : [],
             // No footer: Close would repeat the head's ✕, and Delete is a tool.
             actions: [],
+            // The body's first control is the name, which reads as text: a
+            // text field counts as :focus-visible even when focused by script,
+            // so opening on it drew its focus hairline under the name. With no
+            // actions, focus lands on the head's ✕ — inside the dialog, and
+            // one Tab from the name.
+            focusBody: false,
             closeOnBackdrop: false,
             onClose: () => off(),
         });

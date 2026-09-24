@@ -158,16 +158,23 @@ function keydown(el, key) {
         && !panel.querySelector(".floor-delete-tool")
         && /Lobby is the default floor and can't be deleted\./.test(panel.textContent);
 
-    // ─── The name at rest: text, no label, no ✓ / ✕ ───
+    // ─── The name at rest: "Floor:" then the name as text, no ✓ / ✕ ───
     const lobbyName = panel.querySelector("#floor-settings-name");
     const lobbyRow = panel.querySelector(".inline-rename-row");
-    verdict.nameRestsAsTextWithNoLabelOrButtons = lobbyName.getAttribute("aria-label") === "Floor name"
+    const prefix = lobbyRow.querySelector("label");
+    verdict.nameRestsAsTextWithItsVisibleLabelAndNoButtons = Boolean(prefix)
+        && prefix.classList.contains("inline-rename-prefix")
+        && prefix.getAttribute("for") === "floor-settings-name"
+        && prefix.textContent === "Floor:"
+        // The visible label IS the accessible name; no override competes.
+        && lobbyName.getAttribute("aria-label") === null
         && lobbyName.getAttribute("placeholder") === "Floor name"
         && lobbyName.hasAttribute("readonly")
         && lobbyName.classList.contains("inline-rename-input")
         && !lobbyName.classList.contains("field-input")
         && !panel.querySelector(".field-label")
         && !panel.querySelector("form")
+        && lobbyRow.children[0] === prefix && lobbyRow.children[1] === lobbyName
         && lobbyRow.getAttribute("data-editing") === "false"
         && !panel.querySelector(".inline-rename-save")
         && !panel.querySelector(".inline-rename-cancel");
@@ -272,6 +279,13 @@ function keydown(el, key) {
     const fin = BossModFloorSettings.open({ store, floorApi, floorId: "fin", reloadFloors });
     await drain();
     const finPanel = dialogs()[0];
+    // Opening lands inside the dialog but not on the name: a focused text
+    // field shows its focus hairline, which read as a stray line on open.
+    const openedOn = documentStub.activeElement;
+    verdict.openingDoesNotFocusTheName = Boolean(openedOn)
+        && openedOn !== finPanel.querySelector("#floor-settings-name")
+        && finPanel.contains(openedOn)
+        && openedOn.classList.contains("modal-close");
     const trash = finPanel.querySelector(".floor-delete-tool");
     verdict.otherFloorsOfferDeleteAsAHeadTool = finPanel.querySelectorAll(".modal-action").length === 0
         && Boolean(trash)
@@ -289,6 +303,7 @@ function keydown(el, key) {
     const saveIcon = finPanel.querySelector(".inline-rename-save");
     const cancelIcon = finPanel.querySelector(".inline-rename-cancel");
     verdict.clickOpensEditWithSaveAndCancel = nameRow.getAttribute("data-editing") === "true"
+        && nameRow.querySelector("label").textContent === "Floor:"
         && nameInput.readOnly === false
         && Boolean(saveIcon) && saveIcon.getAttribute("aria-label") === "Save floor name"
         && saveIcon.querySelector("[data-lucide=\"check\"]") !== null

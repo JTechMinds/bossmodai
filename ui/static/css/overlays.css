@@ -1115,7 +1115,10 @@
    panel, with the Lobby hint and the reload notice under it. */
 .floor-name { display: flex; flex-direction: column; gap: 4px; }
 
-.floor-name .inline-rename-input { font-size: 15px; font-weight: 600; }
+.floor-name .inline-rename-input,
+.floor-name .inline-rename-prefix { font-size: 15px; }
+
+.floor-name .inline-rename-input { font-weight: 600; }
 
 .floor-name > p { margin: 0; }
 

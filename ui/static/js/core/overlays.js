@@ -142,6 +142,9 @@ const BossModOverlays = (() => {
      *   click time, so a surface can refuse while it holds an unsaved edit.
      *   The scrim is shared, so a click closes every layer, and only when
      *   EVERY open layer allows it.
+     * @param {boolean} [options.focusBody=true]  False skips the body on open
+     *   (see "Focus on open"): for a view whose first control is a field that
+     *   reads as text, where focusing it paints its focus indicator on open.
      * @param {'default'|'panel'|'takeover'} [options.size='default']
      *   Geometry only. 'default' is the compact question/short-form size;
      *   'panel' is 80% x 85% of the window for anything that shows content;
@@ -164,13 +167,13 @@ const BossModOverlays = (() => {
      *   and the ‹ of the layer above it ("Back to …"), which reads the title.
      *
      *   Focus on open: the first control in the BODY that actually takes focus
-     *   (a hidden one does not); else the last action; else the frame's ✕, so
-     *   the keyboard always lands inside.
+     *   (a hidden one does not) unless `focusBody` is false; else the last
+     *   action; else the frame's ✕, so the keyboard always lands inside.
      * @throws {Error} When closeOnBackdrop is set to anything but a boolean or
      *   a function.
      */
     function createModal({
-        title, body, actions, onClose, size, lead, subtitle, tools, closeOnBackdrop,
+        title, body, actions, onClose, size, lead, subtitle, tools, closeOnBackdrop, focusBody = true,
     }) {
         if (closeOnBackdrop !== undefined && typeof closeOnBackdrop !== 'boolean'
             && typeof closeOnBackdrop !== 'function') {
@@ -312,7 +315,7 @@ const BossModOverlays = (() => {
             node.focus();
             return document.activeElement === node;
         };
-        const bodyStops = Array.from(bodyNode.querySelectorAll(FOCUSABLE));
+        const bodyStops = focusBody ? Array.from(bodyNode.querySelectorAll(FOCUSABLE)) : [];
         if (!bodyStops.some(takesFocus)) {
             if (buttons.length) buttons[buttons.length - 1].focus();
             else closeButton.focus();
