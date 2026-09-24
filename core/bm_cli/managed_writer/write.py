@@ -16,6 +16,7 @@ from core.bm_cli.managed_writer.types import (
 )
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.runtime import execute_bm_cli
+from core.loop_breathing import run_shell_off_request_loop
 from core.bm_cli.session import get_cli_cwd
 from core.models import Agent, AgentState
 
@@ -57,7 +58,8 @@ async def run_managed_write(
             chunks=generation.chunks,
         )
 
-    cli_result = execute_bm_cli(
+    cli_result = await run_shell_off_request_loop(
+        execute_bm_cli,
         agent,
         state,
         command,

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from core.loop_breathing import breathe, off_request_loop, run_shell_off_request_loop
+
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.decision_contract import (
@@ -160,6 +162,7 @@ async def _run_decision_turn(
                 )
                 current_context.extend(continuation_messages)
                 next_context_snapshot = _serialize_trace_value(continuation_messages)
+                await breathe()
                 continue
 
             return await _finish_decision_recovery(
@@ -276,6 +279,7 @@ async def _run_decision_turn(
                     [{"role": "assistant", "content": response.content}, *continuation_messages]
                 )
                 next_context_snapshot = _serialize_trace_value(continuation_messages)
+                await breathe()
                 continue
 
             return await _finish_decision_recovery(
@@ -307,7 +311,7 @@ async def _run_decision_turn(
                             kind=str(parse_kind or ""),
                         ),
                     )
-                    if promised_work or response_commits_to_work(response.content)
+                    if promised_work or await off_request_loop(response_commits_to_work, response.content)
                     else surface_decision_parse_failure(agent=agent, trigger=trigger)
                 ),
                 action=parsed,
@@ -444,7 +448,8 @@ async def _run_decision_turn(
                 step_total_tokens += managed_write.total_tokens
                 cli_result = managed_write.cli_result
             else:
-                cli_result = execute_bm_cli(
+                cli_result = await run_shell_off_request_loop(
+                    execute_bm_cli,
                     agent,
                     state,
                     cli_call.command,
@@ -653,7 +658,9 @@ async def _run_decision_turn(
                 start=start,
             )
 
-        result = apply_decision(decision.model_dump(), agent, state, trigger)
+        result = await off_request_loop(
+            apply_decision, decision.model_dump(), agent, state, trigger
+        )
         executed_actions.append(summarize_decision(decision.model_dump()))
 
         if result.get("feedback_code") == NUDGE_FEEDBACK_CODE:

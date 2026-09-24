@@ -14,6 +14,7 @@ import db
 from core.floors import AgentOnVacation, agent_id_on_vacation
 from core.agent_loop.channel_host import prepare_human_channel_message
 from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.loop_breathing import off_request_loop
 from core.agent_loop.thread_supersede import cancel_queued_older_thread_rounds
 from core.models.message import HUMAN_SENDER_ID
 
@@ -120,7 +121,8 @@ async def route_human_channel_message(
             notification_kind=marker.get("notification_kind"),
         )
     trigger_requests = (
-        start_channel_peer_round(
+        await off_request_loop(
+            start_channel_peer_round,
             channel_id=channel_id,
             message_id=message.id,
             content=message.content,

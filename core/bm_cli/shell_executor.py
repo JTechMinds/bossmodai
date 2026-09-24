@@ -14,6 +14,7 @@ does not bypass this check.
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
 import shlex
 import subprocess
@@ -21,8 +22,16 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from core.bm_cli.host_roots import allowed_workspace_roots, is_within_roots
+from core.loop_breathing import (
+    SHELL_WORKER_ENV,
+    in_shell_worker_process,
+    on_request_loop,
+    shell_is_long,
+    shell_uses_worker_process,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +75,15 @@ class ShellExecutionResult:
 
 class PathJailError(ValueError):
     """Raised when an argv path token resolves outside the allowed roots."""
+
+
+class ShellOnRequestLoopError(RuntimeError):
+    """A long shell wait ran on the serve loop.
+
+    Needs, channel reads, and WebSocket paint share that loop. The wait
+    belongs on a worker thread, and a stall-or-backstop wait belongs in a
+    child process.
+    """
 
 
 def allowed_shell_roots(agent_storage_key: str) -> tuple[Path, ...]:
@@ -240,6 +258,140 @@ def _redact_injected_secrets(text: str, extra_env: dict[str, str] | None) -> str
     return redact_secret_env_values(text, extra_env)
 
 
+def _shell_process_main(conn: Any, payload: dict[str, Any]) -> None:
+    """Run one shell command in a child process and send the result back."""
+    os.environ[SHELL_WORKER_ENV] = "1"
+    try:
+        raw_roots = payload.get("allowed_roots")
+        roots = tuple(Path(item) for item in raw_roots) if raw_roots else None
+        result = execute_shell_command(
+            str(payload["command"]),
+            cwd=Path(str(payload["cwd"])),
+            timeout_seconds=int(payload["timeout_seconds"]),
+            max_output_bytes=int(payload["max_output_bytes"]),
+            allowed_roots=roots,
+            extra_env=payload.get("extra_env"),
+        )
+        conn.send(result)
+    except Exception as exc:
+        conn.send(exc)
+    finally:
+        conn.close()
+
+
+def _run_shell_in_worker_thread(
+    command: str,
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    allowed_roots: Sequence[Path] | None,
+    extra_env: dict[str, str] | None,
+) -> ShellExecutionResult:
+    """Run one shell on this thread when the child process cannot start.
+
+    The caller is already off the serve loop. The env flag stops another spawn.
+    """
+    previous = os.environ.get(SHELL_WORKER_ENV)
+    os.environ[SHELL_WORKER_ENV] = "1"
+    try:
+        return execute_shell_command(
+            command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            allowed_roots=allowed_roots,
+            extra_env=extra_env,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop(SHELL_WORKER_ENV, None)
+        else:
+            os.environ[SHELL_WORKER_ENV] = previous
+
+
+def _execute_shell_in_process(
+    command: str,
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    allowed_roots: Sequence[Path] | None,
+    extra_env: dict[str, str] | None,
+) -> ShellExecutionResult:
+    """Wait for a stall-or-backstop shell in a child process.
+
+    The caller is a worker thread, not the serve loop. The child runs the
+    same executor with ``BOSSMOD_SHELL_WORKER`` set so it does not spawn again.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    parent, child = ctx.Pipe(duplex=False)
+    proc = ctx.Process(
+        target=_shell_process_main,
+        args=(
+            child,
+            {
+                "command": command,
+                "cwd": str(cwd),
+                "timeout_seconds": int(timeout_seconds),
+                "max_output_bytes": int(max_output_bytes),
+                "allowed_roots": [str(root) for root in allowed_roots] if allowed_roots else None,
+                "extra_env": extra_env,
+            },
+        ),
+    )
+    proc.start()
+    child.close()
+    message: object
+    try:
+        if not parent.poll(float(timeout_seconds) + 30.0):
+            proc.kill()
+            return ShellExecutionResult(
+                exit_code=124,
+                stdout="",
+                stderr=f"Command timed out after {timeout_seconds}s",
+                timed_out=True,
+                duration_ms=int(timeout_seconds * 1000),
+            )
+        try:
+            message = parent.recv()
+        except EOFError:
+            logger.warning(
+                "shell worker process exited before a result; waiting on the worker thread"
+            )
+            return _run_shell_in_worker_thread(
+                command,
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=max_output_bytes,
+                allowed_roots=allowed_roots,
+                extra_env=extra_env,
+            )
+    finally:
+        parent.close()
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=2)
+    if isinstance(message, ShellExecutionResult):
+        return message
+    if isinstance(message, BaseException):
+        return ShellExecutionResult(
+            exit_code=1,
+            stdout="",
+            stderr=f"Unexpected error: {message}",
+            timed_out=False,
+            duration_ms=0,
+        )
+    return ShellExecutionResult(
+        exit_code=1,
+        stdout="",
+        stderr="Unexpected error: shell worker returned nothing",
+        timed_out=False,
+        duration_ms=0,
+    )
+
+
 def execute_shell_command(
     command: str,
     *,
@@ -312,6 +464,22 @@ def execute_shell_command(
     if Path(args[0]).name.lower() in {"git", "git.exe"}:
         sanitized_env.setdefault("GIT_TERMINAL_PROMPT", "0")
         sanitized_env.setdefault("GCM_INTERACTIVE", "never")
+
+    long_wait = shell_is_long(timeout_seconds)
+    if long_wait and on_request_loop() and not in_shell_worker_process():
+        raise ShellOnRequestLoopError(
+            f"shell timeout {timeout_seconds}s must run off the request loop"
+        )
+    if shell_uses_worker_process(timeout_seconds) and not in_shell_worker_process():
+        return _execute_shell_in_process(
+            command,
+            cwd=Path(cwd),
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            allowed_roots=roots,
+            extra_env=extra_env,
+        )
+
     start = time.monotonic()
 
     try:

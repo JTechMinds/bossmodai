@@ -25,6 +25,7 @@ from core.llm.call_budget import (
     max_concurrent_model_calls,
     reset_turn_lane,
 )
+from core.llm.client import close_provider_sessions
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
@@ -44,6 +45,15 @@ _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "s
 _REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
 _WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 LEASE_HEARTBEAT_SECONDS = 10.0
+
+
+def _runtime_is_paused() -> bool:
+    """Return True as soon as Pause is stored, before the worker command runs.
+
+    The app writes the setting in its process. This process must read it
+    live so a new wake does not start on the next claim.
+    """
+    return config.get_live("runtime_control_state") == "paused"
 
 
 def _is_decision_llm_timeout(exc: Exception, trigger: dict[str, Any]) -> bool:
@@ -483,6 +493,8 @@ class TurnDispatcher:
 
     async def _run_social_probe(self, agent_id: str) -> None:
         self._social_timers.pop(agent_id, None)
+        if _runtime_is_paused():
+            return
         try:
             await self._maybe_enqueue_social_trigger(agent_id)
         finally:
@@ -626,6 +638,8 @@ class TurnDispatcher:
         from the same budget once claimed.
         """
         self._queue_notices = []
+        if _runtime_is_paused():
+            return None
         eligible = []
         for trigger in db.list_queued_triggers(limit=100):
             if trigger.agent_id in self._active_turns:
@@ -857,6 +871,10 @@ class TurnDispatcher:
                     channel_id=channel_id,
                 )
             self._release_turn_lane(agent.id)
+            try:
+                await close_provider_sessions(allow_inflight=0)
+            except Exception:
+                logger.debug("provider session close after turn failed", exc_info=True)
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -906,6 +924,8 @@ class TurnDispatcher:
             self.enqueue_trigger(**wake)
 
     async def _maybe_enqueue_social_trigger(self, agent_id: str) -> None:
+        if _runtime_is_paused():
+            return
         agent = db.get_agent(agent_id)
         state = db.get_agent_state(agent_id)
         if not agent or not state or state.status != "idle":
