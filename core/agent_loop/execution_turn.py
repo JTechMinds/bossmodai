@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from core.loop_breathing import breathe, run_shell_off_request_loop
+
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
 from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
@@ -118,7 +120,8 @@ async def _run_execution_turn(
         approval_status = approval_fields.get("status") or "rejected"
         if approval_status in _CLI_RESUME_EXECUTE_STATUSES:
             from core.bm_cli.runtime import execute_approved_command
-            cli_result = execute_approved_command(
+            cli_result = await run_shell_off_request_loop(
+                execute_approved_command,
                 agent,
                 state,
                 approval_fields.get("command", ""),
@@ -158,7 +161,8 @@ async def _run_execution_turn(
                     f"Host-path access granted for {path}. Use cli on that path now."
                 )
             else:
-                cli_result = execute_bm_cli(
+                cli_result = await run_shell_off_request_loop(
+                    execute_bm_cli,
                     agent,
                     state,
                     command,
@@ -319,6 +323,7 @@ async def _run_execution_turn(
                     [{"role": "assistant", "content": response.content}, *continuation_messages]
                 )
                 next_step_delta = _serialize_trace_value(continuation_messages)
+                await breathe()
                 continue
 
             result = {

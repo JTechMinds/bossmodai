@@ -286,6 +286,7 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
     return the approval gate without creating a request on dry-run.
     """
     from core.bm_cli.runtime import execute_bm_cli, preview_bm_cli
+    from core.loop_breathing import run_shell_off_request_loop
 
     if not body.command.strip():
         raise HTTPException(400, "Command cannot be empty")
@@ -300,7 +301,8 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
 
     execute_for_real = _simulator_executes_for_real(body)
     if execute_for_real:
-        cli_result = execute_bm_cli(
+        cli_result = await run_shell_off_request_loop(
+            execute_bm_cli,
             agent,
             state,
             body.command.strip(),

@@ -19,8 +19,11 @@ from core.llm.call_budget import budget, current_turn_lane
 
 logger = logging.getLogger(__name__)
 
-# Suppress litellm's verbose logging
+# Suppress litellm's verbose logging.
+# Provider retries default to a tight loop (BadRequest and 5xx). Decision
+# repair is the only retry. A second client retry starves the serve loop.
 litellm.suppress_debug_info = True
+litellm.num_retries = 0
 
 
 def validate_api_base(url: str) -> str:
@@ -358,6 +361,8 @@ async def completion(
     # backstop so a live call is not cut off short of that limit. Idle silence
     # on a stream is enforced separately by the stall timer.
     kwargs["timeout"] = backstop_seconds
+    kwargs["num_retries"] = 0
+    kwargs["max_retries"] = 0
     stream_for_progress = not _streaming_disabled(kwargs.get("extra_body"))
     if stream_for_progress:
         kwargs["stream"] = True
@@ -411,6 +416,30 @@ async def completion(
     finally:
         if owned is not None:
             budget.release(owned)
+        await close_provider_sessions(allow_inflight=1)
+
+
+async def close_provider_sessions(*, allow_inflight: int = 0) -> None:
+    """Close cached aiohttp and httpx clients left by litellm.
+
+    Turn end, cancel, and timeout all come through here. A sibling model
+    call keeps its session until it finishes; the last caller closes the cache.
+    """
+    try:
+        inflight = budget.inflight()
+    except Exception:
+        inflight = 0
+    if inflight > allow_inflight:
+        return
+    closer = getattr(litellm, "close_litellm_async_clients", None)
+    if closer is None:
+        return
+    try:
+        result = closer()
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:
+        logger.debug("provider session close failed", exc_info=True)
 
 
 def count_tokens(text: str, model: str | None = None) -> int:

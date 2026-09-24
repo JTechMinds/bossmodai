@@ -18,6 +18,9 @@ from typing import Any
 import litellm
 
 import db
+
+# Same rule as the agent client: one attempt. Decision repair is the retry.
+litellm.num_retries = 0
 from core import config
 from core.llm.call_budget import budget
 from core.llm.client import canonicalize_openai_compatible_model, validate_api_base
@@ -82,6 +85,8 @@ def complete_text(
         "max_tokens": max_tokens,
         "timeout": SYSTEM_COMPLETION_TIMEOUT_SECONDS,
         "stream": False,
+        "num_retries": 0,
+        "max_retries": 0,
     }
     if api_base:
         try:

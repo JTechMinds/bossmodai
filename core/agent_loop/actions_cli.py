@@ -10,6 +10,7 @@ from typing import Any
 from core.agent_loop.activity_runtime import get_active_task_id
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.bm_cli import execute_bm_cli
+from core.loop_breathing import run_shell_off_request_loop
 from core.bm_cli.host_path_consent import request_host_path_access
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.types import BossModCliResult
@@ -26,7 +27,8 @@ async def _handle_bm_cli(
     command = str(action.get("command") or "").strip()
     content = action.get("content")
     channel_id = consent_origin_channel_id(trigger, task_id=get_active_task_id(agent.id))
-    cli_result = execute_bm_cli(
+    cli_result = await run_shell_off_request_loop(
+        execute_bm_cli,
         agent,
         state,
         command,
