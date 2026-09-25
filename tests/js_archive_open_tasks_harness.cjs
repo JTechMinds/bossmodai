@@ -17,7 +17,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, gatesPath, consentPath,
+    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
     overlayFocusPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
     threadSourcePath,
     rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
@@ -31,6 +31,7 @@ load(avatarPath, "BossModAvatar");
 load(switchPath, "BossModSwitch");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
+load(operatorInvalidatePath, "BossModOperatorInvalidate");
 load(gatesPath, "BossModGates");
 load(consentPath, "BossModConsentCard");
 load(overlayFocusPath, "BossModOverlayFocus");
@@ -166,6 +167,7 @@ const api = async (url, opts = {}) => {
 };
 
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+BossModOperatorInvalidate.attach({ bus });
 const presence = BossModGates.createChannelPresenceController();
 const forgotten = [];
 const noop = () => {};

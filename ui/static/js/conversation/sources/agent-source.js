@@ -163,62 +163,67 @@ const BossModAgentSource = (() => {
          * @returns {() => void} One disposer that drains all three subscriptions.
          */
         function subscribe(on) {
-            const offs = [
-                bus.subscribe('chat_message', (data) => {
-                    if (!data) return;
-                    if (data.agent_id) {
-                        // Before the "is this my conversation" guard on purpose:
-                        // a reply that lands while the operator is looking
-                        // elsewhere must still clear THAT agent's indicator, or
-                        // it stays thinking forever.
-                        presence.stop(data.agent_id, data.agent_id);
+            return BossModOperatorInvalidate.register({
+                id: `agent:${agentId}`,
+                topics: [
+                    'chat_message',
+                    'chat_reset',
+                    'agent_presence',
+                    'channel_message',
+                    'meeting_message',
+                ],
+                onEvent(topic, data) {
+                    if (topic === 'chat_message') {
+                        if (!data) return;
+                        if (data.agent_id) {
+                            presence.stop(data.agent_id, data.agent_id);
+                            on.presence();
+                        }
+                        if (data.agent_id !== agentId) return;
+                        on.message(toMessage(data));
+                        return;
+                    }
+                    if (topic === 'chat_reset') {
+                        if (!data || data.agent_id !== agentId) return;
+                        on.reset();
+                        return;
+                    }
+                    if (topic === 'agent_presence') {
+                        if (!data || data.agent_id !== agentId) return;
+                        if (data.phase === 'thinking') {
+                            presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
+                        } else if (data.phase === 'queued') {
+                            presence.start(agentId, agentId, data.agent_name || agent().name, {
+                                phase: 'queued',
+                                ahead: data.ahead,
+                            });
+                        } else {
+                            presence.stop(agentId, agentId);
+                        }
                         on.presence();
+                        return;
                     }
-                    if (data.agent_id !== agentId) return;
-                    on.message(toMessage(data));
-                }),
-                bus.subscribe('chat_reset', (data) => {
-                    if (!data || data.agent_id !== agentId) return;
-                    on.reset();
-                }),
-                bus.subscribe('agent_presence', (data) => {
-                    if (!data || data.agent_id !== agentId) return;
-                    if (data.phase === 'thinking') {
-                        presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
-                    } else if (data.phase === 'queued') {
-                        presence.start(agentId, agentId, data.agent_name || agent().name, {
-                            phase: 'queued',
-                            ahead: data.ahead,
-                        });
-                    } else {
-                        presence.stop(agentId, agentId);
+                    if (topic === 'channel_message') {
+                        if (!data) return;
+                        const card = BossModConsentCard.cardFromMessage(data);
+                        if (!card) return;
+                        const owner = String(card.agent_id || data.author_agent_id || '');
+                        if (owner !== agentId) return;
+                        on.message(toMessage(data));
+                        return;
                     }
-                    on.presence();
-                }),
-                bus.subscribe('channel_message', (data) => {
-                    if (!data) return;
-                    const card = BossModConsentCard.cardFromMessage(data);
-                    if (!card) return;
-                    const owner = String(card.agent_id || data.author_agent_id || '');
-                    if (owner !== agentId) return;
-                    on.message(toMessage(data));
-                }),
-                bus.subscribe('meeting_message', (data) => {
-                    if (!data || data.agent_id !== agentId) return;
-                    // A meeting row carries an author, so it is labelled even
-                    // though ordinary DM turns are not.
-                    on.message(Object.assign(toMessage({
-                        id: data.message_id,
-                        from: data.author_type,
-                        from_name: data.author_name,
-                        content: data.content,
-                        created_at: data.created_at,
-                    }), { showAuthor: true }));
-                }),
-            ];
-            return () => {
-                offs.splice(0).forEach((off) => off());
-            };
+                    if (topic === 'meeting_message') {
+                        if (!data || data.agent_id !== agentId) return;
+                        on.message(Object.assign(toMessage({
+                            id: data.message_id,
+                            from: data.author_type,
+                            from_name: data.author_name,
+                            content: data.content,
+                            created_at: data.created_at,
+                        }), { showAuthor: true }));
+                    }
+                },
+            });
         }
 
         /**

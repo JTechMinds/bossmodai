@@ -68,6 +68,7 @@ const BossModShell = (() => {
         const store = BossModStore.createStore(Object.assign({}, INITIAL_STATE));
         if (typeof BossModFloorScope !== 'undefined') BossModFloorScope.attach(store);
         const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+        const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
 
         const layoutElement = requireElement('main-layout');
         const placeElement = requireElement('app-place');

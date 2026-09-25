@@ -284,25 +284,29 @@ const BossModNeeds = (() => {
 
         // ─── Live updates ───
 
-        disposers.push(bus.subscribe('diagnostic', (data) => {
-            const need = normaliseDiagnostic(data);
-            if (!need) return;
-            if (errorNeeds.has(need.id)) return;
-            errorNeeds.set(need.id, need);
-            recompute();
-        }));
-
-        disposers.push(bus.subscribe('activity', (entry) => {
-            if (!entry) return;
-            if (ACTIVITY_TRIGGERS.indexOf(String(entry.event || '')) === -1) return;
-            void refresh();
-        }));
-
-        // A dropped socket loses every activity broadcast in the gap. What
-        // comes back is a re-read, so it re-establishes the baseline.
-        disposers.push(bus.subscribe('resync', () => {
-            baselinePending = true;
-            void refresh();
+        disposers.push(BossModOperatorInvalidate.register({
+            id: 'needs-store',
+            topics: ['diagnostic', 'activity', 'resync'],
+            onEvent(topic, data) {
+                if (topic === 'diagnostic') {
+                    const need = normaliseDiagnostic(data);
+                    if (!need) return;
+                    if (errorNeeds.has(need.id)) return;
+                    errorNeeds.set(need.id, need);
+                    recompute();
+                    return;
+                }
+                if (topic === 'activity') {
+                    if (!data) return;
+                    if (ACTIVITY_TRIGGERS.indexOf(String(data.event || '')) === -1) return;
+                    void refresh();
+                    return;
+                }
+                if (topic === 'resync') {
+                    baselinePending = true;
+                    void refresh();
+                }
+            },
         }));
 
         // No polling interval, by design (spec 5.3): a timer would only mask a

@@ -31,13 +31,14 @@ def test_meeting_message_appends_into_agent_conversation() -> None:
     surface there is no reload path left to take at all.
     """
     source = (JS / "conversation" / "sources" / "agent-source.js").read_text(encoding="utf-8")
-    handler = source.split("bus.subscribe('meeting_message', (data) => {", 1)[1].split(
-        "];", 1
-    )[0]
-    assert "on.message(" in handler
-    assert "showAuthor: true" in handler
+    assert "topic === 'meeting_message'" in source
+    assert "on.message(" in source
+    assert "showAuthor: true" in source
+    assert "BossModOperatorInvalidate.register" in source
     for reload in ("load()", "reload", "remount", "renderMeeting"):
-        assert reload not in handler, f"the meeting handler must not {reload}"
+        assert reload not in source.split("topic === 'meeting_message'")[1].split("}", 1)[0], (
+            f"the meeting handler must not {reload}"
+        )
 
 
 def test_open_reuses_cached_transcript_without_loading_flash() -> None:

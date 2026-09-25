@@ -28,12 +28,13 @@ const pressKey = (key, shiftKey) => {
 
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 const [
-    domPath, storePath, busPath, gatesPath, formatPath, nestGitPath, cardsPath, shapePath,
+    domPath, storePath, busPath, operatorInvalidatePath, gatesPath, formatPath, nestGitPath, cardsPath, shapePath,
     coalescePath, needsPath, popoverPath, barPath, toastPath,
 ] = process.argv.slice(2);
 load(domPath, "BossModDom");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
+load(operatorInvalidatePath, "BossModOperatorInvalidate");
 // needs-store.js guards refresh() with the shared load generation.
 load(gatesPath, "BossModGates");
 load(formatPath, "BossModFormat");
@@ -172,14 +173,15 @@ async function main() {
 
     const store = BossModStore.createStore({ needs: [] });
     const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    BossModOperatorInvalidate.attach({ bus });
     const storeBaseline = store.subscriberCount();
-    const busBaseline = bus.subscriberCount();
 
     let notifications = 0;
     store.subscribe((s) => s.needs, () => { notifications += 1; });
 
     const needs = BossModNeeds.createNeedsStore({ store, bus, api });
     await drain();
+    const busBaseline = bus.subscriberCount();
 
     // ─── 1. The wire shape is normalised exactly once ───
 
@@ -666,6 +668,7 @@ async function main() {
         inlineNeedIds: [],
     });
     const bus2 = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offBus2Invalidate = BossModOperatorInvalidate.attach({ bus: bus2 });
     let queue2 = [];
     const api2 = (url) => {
         if (url.startsWith("/api/needs")) {
@@ -937,6 +940,7 @@ async function main() {
     // ─── 13h. Nest git Needs: POST body, Nest git label, schema mismatch → Dismiss ───
     const store3 = BossModStore.createStore({ needs: [] });
     const bus3 = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offBus3Invalidate = BossModOperatorInvalidate.attach({ bus: bus3 });
     const nestCalls = [];
     let nestQueue = [nestGitRow("ng1")];
     let nestSchema = false;
@@ -1041,6 +1045,7 @@ async function main() {
     }
     nestPopover.close();
     nestNeeds.destroy();
+    offBus3Invalidate();
     const nestGitGroupIsLabeled = true;
 
     // ─── 14. Suppressing the bar hides it without touching the queue ───
@@ -1088,6 +1093,7 @@ async function main() {
     bar.destroy();
     toastHost.destroy();
     needs2.destroy();
+    offBus2Invalidate();
     if (store2.subscriberCount() >= bar2Store) {
         throw new Error("the bar must drain its subscriptions on destroy");
     }

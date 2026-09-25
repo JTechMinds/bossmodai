@@ -23,6 +23,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
@@ -120,7 +121,8 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
         assert "live: isQueue" in source
         assert "cleared: isQueue && !String(text).trim()" in source
     assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote" in agent
-    assert "bus.subscribe('channel_message'" in agent
+    assert "BossModOperatorInvalidate.register" in agent
+    assert "'channel_message'" in agent
     assert "BossModConsentCard.cardFromMessage(data)" in agent
     transcript = _read(CONVERSATION / "transcript.js")
     assert "message.live" in transcript
@@ -158,6 +160,7 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
+            str(JS / "core" / "operator-invalidate.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),

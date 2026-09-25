@@ -171,48 +171,53 @@ const BossModThreadSource = (() => {
          */
         function subscribe(on) {
             signals = on;
-            const offs = [
-                bus.subscribe('channel_message', (data) => {
-                    if (!data || data.channel_id !== threadId) return;
-                    if (!isLiveThread()) {
-                        seal();
+            const off = BossModOperatorInvalidate.register({
+                id: `thread:${threadId}`,
+                topics: ['channel_message', 'channel_presence', 'channel_updated'],
+                onEvent(topic, data) {
+                    if (topic === 'channel_message') {
+                        if (!data || data.channel_id !== threadId) return;
+                        if (!isLiveThread()) {
+                            seal();
+                            return;
+                        }
+                        if (data.author_type === 'agent' && data.author_agent_id) {
+                            presence.stop(threadId, data.author_agent_id);
+                            on.presence();
+                        }
+                        if (isRoundMarker(data)) return;
+                        on.message(toMessage(data));
                         return;
                     }
-                    if (data.author_type === 'agent' && data.author_agent_id) {
-                        presence.stop(threadId, data.author_agent_id);
+                    if (topic === 'channel_presence') {
+                        if (!data || data.channel_id !== threadId || !data.agent_id) return;
+                        if (!isLiveThread()) {
+                            seal();
+                            return;
+                        }
+                        if (data.phase === 'thinking') {
+                            presence.start(threadId, data.agent_id, data.agent_name, { phase: 'thinking' });
+                        } else if (data.phase === 'queued') {
+                            presence.start(threadId, data.agent_id, data.agent_name, {
+                                phase: 'queued',
+                                ahead: data.ahead,
+                            });
+                        } else {
+                            presence.stop(threadId, data.agent_id);
+                        }
                         on.presence();
-                    }
-                    // Round markers stay posted for the engine; skip painting.
-                    if (isRoundMarker(data)) return;
-                    on.message(toMessage(data));
-                }),
-                bus.subscribe('channel_presence', (data) => {
-                    if (!data || data.channel_id !== threadId || !data.agent_id) return;
-                    if (!isLiveThread()) {
-                        seal();
                         return;
                     }
-                    if (data.phase === 'thinking') {
-                        presence.start(threadId, data.agent_id, data.agent_name, { phase: 'thinking' });
-                    } else if (data.phase === 'queued') {
-                        presence.start(threadId, data.agent_id, data.agent_name, {
-                            phase: 'queued',
-                            ahead: data.ahead,
-                        });
-                    } else {
-                        presence.stop(threadId, data.agent_id);
+                    if (topic === 'channel_updated') {
+                        if (!data || data.id !== threadId) return;
+                        channel = data;
+                        if (!isLiveThread()) seal();
+                        on.chrome();
                     }
-                    on.presence();
-                }),
-                bus.subscribe('channel_updated', (data) => {
-                    if (!data || data.id !== threadId) return;
-                    channel = data;
-                    if (!isLiveThread()) seal();
-                    on.chrome();
-                }),
-            ];
+                },
+            });
             return () => {
-                offs.splice(0).forEach((off) => off());
+                off();
                 signals = null;
             };
         }

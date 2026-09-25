@@ -30,7 +30,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate",
     "BossModFormat", "BossModGates", "BossModConsentCard",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
@@ -77,6 +77,7 @@ const api = async (url, opts = {}) => {
 
 const store = BossModStore.createStore({ roster: [], threads: [], hasUsableModel: true });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+BossModOperatorInvalidate.attach({ bus });
 // The needs bar is part of the surface; its own behaviour is proven in
 // js_needs_harness.cjs, so an empty queue is enough to build the conversation.
 const needsStub = {

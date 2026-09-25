@@ -8,6 +8,8 @@ const SettingsView = (() => {
     let activeSection = 'connections';
     let isOpen = false;
     let sectionOptions = null;
+    let repaintActive = null;
+    let offInvalidate = null;
 
     const NAV_ITEMS = [
         { id: 'connections',   label: 'AI Connections',  icon: 'plug' },
@@ -114,12 +116,35 @@ const SettingsView = (() => {
             </button>`;
     }
 
+    function bindRepaint(fn) {
+        repaintActive = typeof fn === 'function' ? fn : null;
+    }
+
+    function ensureInvalidateRegistration() {
+        if (offInvalidate || typeof BossModOperatorInvalidate === 'undefined') return;
+        offInvalidate = BossModOperatorInvalidate.register({
+            id: 'settings-takeover',
+            topics: ['operator_invalidate'],
+            onEvent(topic, data) {
+                if (topic !== 'operator_invalidate') return;
+                const surfaces = (data && data.surfaces) || [];
+                if (surfaces.length
+                    && surfaces.indexOf(activeSection) === -1
+                    && surfaces.indexOf('settings') === -1) {
+                    return;
+                }
+                if (typeof repaintActive === 'function') void repaintActive();
+            },
+        });
+    }
+
     // ─── Section switching ───
 
     function switchSection(sectionId) {
         activeSection = sectionId;
         const pendingOptions = sectionOptions;
         sectionOptions = null;
+        ensureInvalidateRegistration();
         renderNav();
 
         const content = document.getElementById('settings-content');
@@ -155,5 +180,5 @@ const SettingsView = (() => {
         }
     }
 
-    return { open, close, isOpen: () => isOpen, onViewChange };
+    return { open, close, isOpen: () => isOpen, onViewChange, bindRepaint };
 })();

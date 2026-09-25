@@ -17,6 +17,7 @@ NEEDS_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     # needs-store.js guards refresh() with the shared load generation, so the
     # harness loads the real gates module rather than a second copy of it.
     JS / "core" / "gates.js",
@@ -115,9 +116,10 @@ def test_needs_never_polls() -> None:
     assert "setInterval" not in source
     assert "setTimeout" not in source
     # The three things that do drive a refresh, named positively.
-    assert "bus.subscribe('activity'" in source
-    assert "bus.subscribe('resync'" in source
-    assert "bus.subscribe('diagnostic'" in source
+    assert "BossModOperatorInvalidate.register" in source
+    assert "'activity'" in source
+    assert "'resync'" in source
+    assert "'diagnostic'" in source
 
 
 def test_failed_resolution_restores_the_need() -> None:
@@ -263,7 +265,7 @@ def test_no_toast_on_the_first_snapshot() -> None:
     assert "needs.subscribeArrivals(" in toast
     assert "store.subscribe(" not in toast
     assert "baselinePending" in store_source
-    assert "baselinePending = true;" in store_source.split("bus.subscribe('resync'", 1)[1]
+    assert "baselinePending = true;" in store_source.split("topic === 'resync'", 1)[1]
 
 
 def test_bar_renders_through_event_cards() -> None:

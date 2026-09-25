@@ -308,6 +308,7 @@ const SystemSection = (() => {
                     await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
                         method: 'PUT',
                     });
+                    BossModOperatorInvalidate.notifyLocal(['system']);
                     e.target.classList.add('border-emerald-400');
                     setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
                 } catch {

@@ -11,7 +11,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModGates",
+    "BossModDom", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModThreadSource",
 ];
@@ -83,6 +83,7 @@ const store = BossModStore.createStore({
     threads: [thread],
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+BossModOperatorInvalidate.attach({ bus });
 const presence = BossModGates.createChannelPresenceController();
 
 async function main() {
