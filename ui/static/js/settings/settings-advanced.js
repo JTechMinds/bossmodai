@@ -3,7 +3,11 @@
  */
 
 const AdvancedSystemSection = (() => {
+    let container = null;
+
     async function render(el) {
+        container = el;
+        SettingsView.bindRepaint('advanced-system', () => render(container));
         let settings = [];
         let folderOpenerMeta = { current: null, options: [] };
         try {
@@ -161,7 +165,8 @@ const AdvancedSystemSection = (() => {
             if (!confirm('Reset all editable seed settings to defaults? This will overwrite your saved system prompt template and other seed settings.')) return;
             try {
                 await apiFetchOk('/api/settings/reseed', { method: 'POST' });
-                render(el); // Re-render to show updated values
+                BossModOperatorInvalidate.notifyLocal(['advanced-system', 'prompt-template', 'system']);
+                render(container);
             } catch {
                 alert('Reseed failed');
             }
@@ -199,6 +204,7 @@ const AdvancedSystemSection = (() => {
 
             try {
                 await apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`, { method: 'PUT' });
+                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
             } catch {
                 alert('Failed to update diagnostics setting.');
                 return;
@@ -216,6 +222,7 @@ const AdvancedSystemSection = (() => {
             const value = e.target.value;
             try {
                 await apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
                 e.target.classList.add('border-emerald-400');
                 setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
             } catch {
@@ -228,6 +235,7 @@ const AdvancedSystemSection = (() => {
             const value = e.target.value;
             try {
                 await apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
                 e.target.classList.add('border-emerald-400');
                 setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
             } catch {
@@ -266,6 +274,7 @@ const AdvancedSystemSection = (() => {
             const resolvedValue = selected === '__custom__' ? openerCustom.value.trim() : selected;
             try {
                 await apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`, { method: 'PUT' });
+                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
                 setFolderOpenerStatus(resolvedValue ? `Saved: ${resolvedValue}` : 'BossMod will ask on first use.');
             } catch {
                 setFolderOpenerStatus('Failed to save folder opener.', true);
@@ -275,6 +284,7 @@ const AdvancedSystemSection = (() => {
         document.getElementById('btn-reset-folder-opener').addEventListener('click', async () => {
             try {
                 await apiFetchOk('/api/settings/desktop_open_folder_handler?value=&category=advanced', { method: 'PUT' });
+                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
                 openerSelect.value = '';
                 openerCustom.value = '';
                 setFolderOpenerStatus('BossMod will ask on first use.');

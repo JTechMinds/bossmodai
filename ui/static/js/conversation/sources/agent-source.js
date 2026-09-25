@@ -160,70 +160,61 @@ const BossModAgentSource = (() => {
         /**
          * Subscribe to this agent's live traffic.
          * @param {{message: Function, reset: Function, presence: Function, chrome: Function}} on
-         * @returns {() => void} One disposer that drains all three subscriptions.
+         * @returns {{ dispose: () => void, onLiveEvent: (topic: string, data: any) => void }}
          */
         function subscribe(on) {
-            return BossModOperatorInvalidate.register({
-                id: `agent:${agentId}`,
-                topics: [
-                    'chat_message',
-                    'chat_reset',
-                    'agent_presence',
-                    'channel_message',
-                    'meeting_message',
-                ],
-                onEvent(topic, data) {
-                    if (topic === 'chat_message') {
-                        if (!data) return;
-                        if (data.agent_id) {
-                            presence.stop(data.agent_id, data.agent_id);
-                            on.presence();
-                        }
-                        if (data.agent_id !== agentId) return;
-                        on.message(toMessage(data));
-                        return;
-                    }
-                    if (topic === 'chat_reset') {
-                        if (!data || data.agent_id !== agentId) return;
-                        on.reset();
-                        return;
-                    }
-                    if (topic === 'agent_presence') {
-                        if (!data || data.agent_id !== agentId) return;
-                        if (data.phase === 'thinking') {
-                            presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
-                        } else if (data.phase === 'queued') {
-                            presence.start(agentId, agentId, data.agent_name || agent().name, {
-                                phase: 'queued',
-                                ahead: data.ahead,
-                            });
-                        } else {
-                            presence.stop(agentId, agentId);
-                        }
+            function onLiveEvent(topic, data) {
+                if (topic === 'chat_message') {
+                    if (!data) return;
+                    if (data.agent_id) {
+                        presence.stop(data.agent_id, data.agent_id);
                         on.presence();
-                        return;
                     }
-                    if (topic === 'channel_message') {
-                        if (!data) return;
-                        const card = BossModConsentCard.cardFromMessage(data);
-                        if (!card) return;
-                        const owner = String(card.agent_id || data.author_agent_id || '');
-                        if (owner !== agentId) return;
-                        on.message(toMessage(data));
-                        return;
+                    if (data.agent_id !== agentId) return;
+                    on.message(toMessage(data));
+                    return;
+                }
+                if (topic === 'chat_reset') {
+                    if (!data || data.agent_id !== agentId) return;
+                    on.reset();
+                    return;
+                }
+                if (topic === 'agent_presence') {
+                    if (!data || data.agent_id !== agentId) return;
+                    if (data.phase === 'thinking') {
+                        presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
+                    } else if (data.phase === 'queued') {
+                        presence.start(agentId, agentId, data.agent_name || agent().name, {
+                            phase: 'queued',
+                            ahead: data.ahead,
+                        });
+                    } else {
+                        presence.stop(agentId, agentId);
                     }
-                    if (topic === 'meeting_message') {
-                        if (!data || data.agent_id !== agentId) return;
-                        on.message(Object.assign(toMessage({
-                            id: data.message_id,
-                            from: data.author_type,
-                            from_name: data.author_name,
-                            content: data.content,
-                            created_at: data.created_at,
-                        }), { showAuthor: true }));
-                    }
-                },
-            });
+                    on.presence();
+                    return;
+                }
+                if (topic === 'channel_message') {
+                    if (!data) return;
+                    const card = BossModConsentCard.cardFromMessage(data);
+                    if (!card) return;
+                    const owner = String(card.agent_id || data.author_agent_id || '');
+                    if (owner !== agentId) return;
+                    on.message(toMessage(data));
+                    return;
+                }
+                if (topic === 'meeting_message') {
+                    if (!data || data.agent_id !== agentId) return;
+                    on.message(Object.assign(toMessage({
+                        id: data.message_id,
+                        from: data.author_type,
+                        from_name: data.author_name,
+                        content: data.content,
+                        created_at: data.created_at,
+                    }), { showAuthor: true }));
+                }
+            }
+            return { dispose() {}, onLiveEvent };
         }
 
         /**

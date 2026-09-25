@@ -64,6 +64,7 @@ CONVERSATION_STACK = [
     JS / "conversation" / "sources" / "thread-requests.js",
     JS / "conversation" / "sources" / "thread-source.js",
     JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
     JS / "conversation" / "conversation.js",
 ]
 

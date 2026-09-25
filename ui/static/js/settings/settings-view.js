@@ -8,7 +8,8 @@ const SettingsView = (() => {
     let activeSection = 'connections';
     let isOpen = false;
     let sectionOptions = null;
-    let repaintActive = null;
+    /** @type {Map<string, () => (void|Promise<void>)>} */
+    const repaints = new Map();
     let offInvalidate = null;
 
     const NAV_ITEMS = [
@@ -116,8 +117,21 @@ const SettingsView = (() => {
             </button>`;
     }
 
-    function bindRepaint(fn) {
-        repaintActive = typeof fn === 'function' ? fn : null;
+    /**
+     * Register how one Settings section repaints after a mutation or
+     * operator_invalidate. Only the visible section is repainted so a
+     * sibling surface is never wiped by another section's invalidate.
+     *
+     * @param {string} sectionId  Must match server surface ids and nav ids.
+     * @param {() => (void|Promise<void>)} fn
+     */
+    function bindRepaint(sectionId, fn) {
+        if (!sectionId) throw new Error('[settings-view] bindRepaint needs a section id');
+        if (typeof fn !== 'function') {
+            repaints.delete(sectionId);
+            return;
+        }
+        repaints.set(sectionId, fn);
     }
 
     function ensureInvalidateRegistration() {
@@ -127,13 +141,14 @@ const SettingsView = (() => {
             topics: ['operator_invalidate'],
             onEvent(topic, data) {
                 if (topic !== 'operator_invalidate') return;
+                if (!isOpen) return;
                 const surfaces = (data && data.surfaces) || [];
-                if (surfaces.length
-                    && surfaces.indexOf(activeSection) === -1
-                    && surfaces.indexOf('settings') === -1) {
-                    return;
+                const targets = surfaces.length ? surfaces : [activeSection];
+                for (const surface of targets) {
+                    if (surface !== activeSection) continue;
+                    const repaint = repaints.get(surface);
+                    if (typeof repaint === 'function') void repaint();
                 }
-                if (typeof repaintActive === 'function') void repaintActive();
             },
         });
     }

@@ -48,6 +48,7 @@ CONVERSATION_MODULES = [
     SOURCES / "thread-requests.js",
     SOURCES / "thread-source.js",
     SOURCES / "agent-source.js",
+    CONVERSATION / "conversation-focus-invalidate.js",
     CONVERSATION / "conversation.js",
 ]
 
@@ -121,8 +122,10 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
         assert "live: isQueue" in source
         assert "cleared: isQueue && !String(text).trim()" in source
     assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote" in agent
-    assert "BossModOperatorInvalidate.register" in agent
-    assert "'channel_message'" in agent
+    focus = _read(CONVERSATION / "conversation-focus-invalidate.js")
+    assert "conversation-focus" in focus
+    assert "'chat_message'" in focus
+    assert "onLiveEvent" in agent
     assert "BossModConsentCard.cardFromMessage(data)" in agent
     transcript = _read(CONVERSATION / "transcript.js")
     assert "message.live" in transcript

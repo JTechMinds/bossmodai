@@ -349,7 +349,7 @@ async function main() {
         || sealedChrome.actions[0].label !== "Reopen") {
         throw new Error("an archived thread must offer Reopen and only Reopen");
     }
-    offAnn();
+    offAnn.dispose();
     let leaked = 0;
     const offSpam = annSource.subscribe({ ...signals, message: () => { leaked += 1; } });
     bus.publish("channel_message", {
@@ -370,7 +370,7 @@ async function main() {
         && forgotten.includes("open-a")
         && annSource.canSend() === false;
     if (!archivedNotLive) throw new Error("live handlers must not revive an archived thread");
-    offSpam();
+    offSpam.dispose();
 
     // ─── 5. Reopen unseals ───
 
@@ -393,9 +393,9 @@ async function main() {
         && item.url.includes("/api/channels/none-c/messages"));
     if (!reopenUnseals) throw new Error("an unsealed thread must accept a new post");
 
-    offBea();
-    offDee();
-    offCal();
+    offBea.dispose();
+    offDee.dispose();
+    offCal.dispose();
 
     // ─── 6. The archived list is still reachable, from the roster ───
 

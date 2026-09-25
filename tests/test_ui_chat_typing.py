@@ -49,8 +49,8 @@ def test_a_reply_clears_its_own_agents_indicator_even_when_unwatched() -> None:
     elsewhere leaves that agent thinking forever, with every test still green.
     """
     source = _read("conversation/sources/agent-source.js")
-    handler = source.split("bus.subscribe('chat_message', (data) => {", 1)[1].split(
-        "bus.subscribe('chat_reset'", 1
+    handler = source.split("if (topic === 'chat_message') {", 1)[1].split(
+        "if (topic === 'chat_reset')", 1
     )[0]
     assert "presence.stop(data.agent_id, data.agent_id)" in handler
     assert "if (data.agent_id !== agentId) return;" in handler

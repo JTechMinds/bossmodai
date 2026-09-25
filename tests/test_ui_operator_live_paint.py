@@ -33,19 +33,37 @@ def test_operator_invalidate_harness() -> None:
     }
 
 
+def test_conversation_focus_registers_operator_invalidate() -> None:
+    focus = (JS / "conversation" / "conversation-focus-invalidate.js").read_text(encoding="utf-8")
+    conversation = (JS / "conversation" / "conversation.js").read_text(encoding="utf-8")
+    assert "id: 'conversation-focus'" in focus
+    assert "'channel_presence'" in focus
+    assert "'chat_message'" in focus
+    assert "BossModConversationFocus.attach" in conversation
+
+
 def test_conversation_sources_route_through_operator_invalidate() -> None:
     agent = (JS / "conversation" / "sources" / "agent-source.js").read_text(encoding="utf-8")
     thread = (JS / "conversation" / "sources" / "thread-source.js").read_text(encoding="utf-8")
-    assert "BossModOperatorInvalidate.register" in agent
-    assert "BossModOperatorInvalidate.register" in thread
-    assert "bus.subscribe('chat_message'" not in agent
-    assert "bus.subscribe('channel_message'" not in thread
+    assert "onLiveEvent" in agent
+    assert "onLiveEvent" in thread
+    assert "BossModOperatorInvalidate.register" not in agent
+    assert "BossModOperatorInvalidate.register" not in thread
 
 
 def test_settings_mutations_broadcast_operator_invalidate() -> None:
     source = (ROOT / "api" / "routes" / "settings.py").read_text(encoding="utf-8")
     assert "broadcast_operator_invalidate" in source
     assert "await _broadcast_operator_surfaces" in source
+
+
+def test_settings_sections_bind_repaint_by_id() -> None:
+    view = (JS / "settings" / "settings-view.js").read_text(encoding="utf-8")
+    system = (JS / "settings" / "settings-system.js").read_text(encoding="utf-8")
+    connections = (JS / "settings" / "settings-connections.js").read_text(encoding="utf-8")
+    assert "repaints.set" in view
+    assert "bindRepaint('system'" in system
+    assert "bindRepaint('connections'" in connections
 
 
 def test_shell_attaches_operator_invalidate_before_socket() -> None:

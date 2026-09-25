@@ -3,6 +3,7 @@
  */
 
 const SystemSection = (() => {
+    let container = null;
     let activeCategory = 'simulation';
 
     const CATEGORIES = [
@@ -207,6 +208,8 @@ const SystemSection = (() => {
     }
 
     async function render(el) {
+        container = el;
+        SettingsView.bindRepaint('system', () => render(container));
         let settings = [];
         try {
             const res = await apiFetch('/api/settings');
@@ -295,7 +298,7 @@ const SystemSection = (() => {
         el.querySelectorAll('[data-system-category]').forEach(btn => {
             btn.addEventListener('click', () => {
                 activeCategory = btn.dataset.systemCategory;
-                render(el);
+                render(container);
             });
         });
 

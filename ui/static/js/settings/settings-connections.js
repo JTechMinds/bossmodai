@@ -84,7 +84,7 @@ const ConnectionsSection = (() => {
 
     async function render(el) {
         container = el;
-        SettingsView.bindRepaint(() => renderList());
+        SettingsView.bindRepaint('connections', () => renderList());
         await renderList();
     }
 
