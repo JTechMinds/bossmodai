@@ -65,7 +65,7 @@ const NestGitSection = (() => {
                     </p>
                     <div id="nest-git-cred-list" class="space-y-3">${creds.map(credentialCard).join('') || emptyList()}</div>
                 </div>
-                <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
+                <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4" data-credential-form="new">
                     <h3 class="text-sm font-semibold mb-2">Add a credential</h3>
                     <label class="block text-sm font-medium mb-1">Name</label>
                     <input type="text" id="nest-git-label" value=""
@@ -76,25 +76,30 @@ const NestGitSection = (() => {
                            placeholder="github.com/Org/* or github.com/Org/repo"
                            class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-3">
                     <label class="flex items-center gap-2 text-xs text-bm-muted mb-3">
-                        <input type="checkbox" id="nest-git-default" ${creds.some((item) => item.is_default) ? '' : 'checked'}>
+                        <input type="checkbox" id="nest-git-default" data-nest-default ${creds.some((item) => item.is_default) ? '' : 'checked'}>
                         Use for remotes that don’t match another credential
                     </label>
                     <label class="block text-sm font-medium mb-1">GitHub access token</label>
                     <p class="text-xs text-bm-muted mb-1.5">
                         A special password from GitHub → Settings → Developer settings.
                     </p>
-                    <input type="password" id="nest-git-pat" data-focus="pat" value=""
-                           placeholder="GitHub access token"
-                           class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono">
+                    <div class="flex gap-2">
+                        <input type="text" id="nest-git-pat" data-focus="pat" data-credential-field="pat" data-secret-field="pat"
+                               autocomplete="off" spellcheck="false" autocapitalize="off"
+                               placeholder="GitHub access token"
+                               class="setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono bm-secret-masked">
+                        <button type="button" id="nest-git-pat-toggle" data-secret-toggle="#nest-git-pat"
+                                class="hpc-action text-sm" aria-pressed="false">Show</button>
+                    </div>
                     <div class="flex gap-2 mt-2 mb-4">
-                        <button type="button" id="nest-git-pat-save" class="hpc-action hpc-action-primary text-sm">Save</button>
+                        <button type="button" id="nest-git-pat-save" data-save-field="pat" class="hpc-action hpc-action-primary text-sm">Save</button>
                     </div>
                     <label class="block text-sm font-medium mb-1">SSH key (optional)</label>
-                    <textarea id="nest-git-ssh" rows="4"
+                    <textarea id="nest-git-ssh" data-credential-field="ssh" rows="4"
                               class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono"
                               placeholder="SSH key (optional)"></textarea>
                     <div class="flex gap-2 mt-2">
-                        <button type="button" id="nest-git-ssh-save" class="hpc-action hpc-action-primary text-sm">Save</button>
+                        <button type="button" id="nest-git-ssh-save" data-save-field="ssh" class="hpc-action hpc-action-primary text-sm">Save</button>
                     </div>
                 </div>
                 <p class="text-xs text-bm-muted">${BossModFormat.escapeHtml(how)}</p>
@@ -139,12 +144,18 @@ const NestGitSection = (() => {
                            value="${BossModFormat.escapeAttribute(item.label || '')}" placeholder="Name">
                     <input type="text" class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-match"
                            value="${BossModFormat.escapeAttribute(item.match || '')}" placeholder="github.com/Org/* or github.com/Org/repo">
-                    <input type="password" class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-pat"
-                           placeholder="${item.has_pat ? '••••' + BossModFormat.escapeAttribute(item.pat_last4 || '') : 'GitHub access token'}">
-                    <textarea rows="3" class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-ssh"
+                    <div class="flex gap-2">
+                        <input type="text" data-credential-field="pat" data-secret-field="pat"
+                               autocomplete="off" spellcheck="false" autocapitalize="off"
+                               class="setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-pat bm-secret-masked"
+                               placeholder="${item.has_pat ? '••••' + BossModFormat.escapeAttribute(item.pat_last4 || '') : 'GitHub access token'}">
+                        <button type="button" data-secret-toggle=".nest-edit-pat" class="hpc-action text-xs" aria-pressed="false">Show</button>
+                    </div>
+                    <textarea rows="3" data-credential-field="ssh"
+                              class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-ssh"
                               placeholder="SSH key (optional)"></textarea>
                     <label class="flex items-center gap-2 text-xs text-bm-muted">
-                        <input type="checkbox" class="nest-edit-default" ${item.is_default ? 'checked' : ''}>
+                        <input type="checkbox" class="nest-edit-default" data-nest-default ${item.is_default ? 'checked' : ''}>
                         Use for remotes that don’t match another credential
                     </label>
                     <button type="button" class="hpc-action hpc-action-primary text-sm nest-git-save-edit" data-id="${BossModFormat.escapeAttribute(item.id || '')}">Save</button>
@@ -172,8 +183,18 @@ const NestGitSection = (() => {
                 showStatus(el, 'Couldn’t update this computer’s Git login.', 'error');
             }
         });
-        el.querySelector('#nest-git-pat-save').addEventListener('click', () => saveNew(el, 'pat'));
-        el.querySelector('#nest-git-ssh-save').addEventListener('click', () => saveNew(el, 'ssh_key'));
+        el.querySelectorAll('[data-save-field]').forEach((btn) => {
+            btn.addEventListener('click', () => saveNew(el, btn.getAttribute('data-save-field')));
+        });
+        el.querySelectorAll('[data-secret-field]').forEach((input) => BossModSecretField.bind(input));
+        el.querySelectorAll('[data-secret-toggle]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const selector = btn.getAttribute('data-secret-toggle');
+                const scope = selector.charAt(0) === '#' ? el : (btn.closest('[data-cred-id]') || el);
+                BossModSecretField.toggle(scope.querySelector(selector), btn);
+            });
+        });
+        bindDefaultToggles(el);
         el.querySelectorAll('.nest-git-remove').forEach((btn) => {
             btn.addEventListener('click', () => removeItem(el, btn.getAttribute('data-id')));
         });
@@ -190,31 +211,68 @@ const NestGitSection = (() => {
         void status;
     }
 
+    function controlValue(scope, field) {
+        const input = scope && scope.querySelector(`[data-credential-field="${field}"]`);
+        if (field === 'pat') return BossModSecretField.read(input);
+        const raw = String((input && input.value) || '');
+        return raw.trim() ? raw : '';
+    }
+
+    function bindDefaultToggles(root) {
+        root.querySelectorAll('[data-nest-default]').forEach((box) => {
+            box.addEventListener('change', () => {
+                if (!box.checked) return;
+                root.querySelectorAll('[data-nest-default]').forEach((other) => {
+                    if (other !== box) other.checked = false;
+                });
+            });
+        });
+    }
+
+    /**
+     * One unmatched-remotes default. A second check clears the others in the
+     * form. Saving a card that lost its check to that sibling does not clear
+     * the stored default — the checked card’s Save is what claims it.
+     */
+    function editDefaultFlag(box, root) {
+        if (!box) return undefined;
+        if (box.checked) return true;
+        const others = root.querySelectorAll('[data-nest-default]');
+        for (let index = 0; index < others.length; index += 1) {
+            if (others[index] !== box && others[index].checked) return undefined;
+        }
+        return false;
+    }
+
     async function saveNew(el, field) {
-        const input = el.querySelector(field === 'pat' ? '#nest-git-pat' : '#nest-git-ssh');
-        const value = (input && input.value) || '';
-        if (!value.trim()) {
+        const form = el.querySelector('[data-credential-form="new"]') || el;
+        const input = form.querySelector(`[data-credential-field="${field}"]`);
+        const value = controlValue(form, field);
+        if (!value) {
             showStatus(el, 'Paste a GitHub access token or an SSH key. An empty field doesn’t save.', 'error');
             return;
         }
-        const label = (el.querySelector('#nest-git-label') && el.querySelector('#nest-git-label').value) || '';
-        const match = (el.querySelector('#nest-git-match') && el.querySelector('#nest-git-match').value) || '';
-        const asDefault = Boolean(el.querySelector('#nest-git-default') && el.querySelector('#nest-git-default').checked);
+        const label = (form.querySelector('#nest-git-label') && form.querySelector('#nest-git-label').value) || '';
+        const match = (form.querySelector('#nest-git-match') && form.querySelector('#nest-git-match').value) || '';
+        const defaultBox = form.querySelector('#nest-git-default');
+        const asDefault = Boolean(defaultBox && defaultBox.checked);
         const named = Boolean(label.trim() || match.trim());
+        const apiField = field === 'ssh' ? 'ssh_key' : 'pat';
         try {
             const res = await apiFetch(named ? '/api/nest-git/items' : '/api/nest-git/credentials', {
                 method: named ? 'POST' : 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(named
-                    ? { [field]: value, label: label.trim() || 'GitHub', match: match.trim(), is_default: asDefault }
-                    : { [field]: value }),
+                    ? { [apiField]: value, label: label.trim() || 'GitHub', match: match.trim(), is_default: asDefault }
+                    : { [apiField]: value }),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 showStatus(el, err.detail || 'Couldn’t save.', 'error');
                 return;
             }
-            if (input) input.value = '';
+            if (field === 'pat') BossModSecretField.clear(input);
+            else if (input) input.value = '';
             render(el);
         } catch {
             showStatus(el, 'Couldn’t save.', 'error');
@@ -227,9 +285,9 @@ const NestGitSection = (() => {
         const id = btn.getAttribute('data-id');
         const label = (card.querySelector('.nest-edit-label') || {}).value || '';
         const match = (card.querySelector('.nest-edit-match') || {}).value || '';
-        const pat = (card.querySelector('.nest-edit-pat') || {}).value || '';
-        const ssh = (card.querySelector('.nest-edit-ssh') || {}).value || '';
-        const isDefault = Boolean(card.querySelector('.nest-edit-default') && card.querySelector('.nest-edit-default').checked);
+        const pat = controlValue(card, 'pat');
+        const ssh = controlValue(card, 'ssh');
+        const isDefault = editDefaultFlag(card.querySelector('[data-nest-default]'), el);
         try {
             const res = await apiFetch(`/api/nest-git/items/${encodeURIComponent(id)}`, {
                 method: 'PUT',
@@ -237,8 +295,8 @@ const NestGitSection = (() => {
                 body: JSON.stringify({
                     label,
                     match,
-                    pat: pat.trim() || undefined,
-                    ssh_key: ssh.trim() || undefined,
+                    pat: pat || undefined,
+                    ssh_key: ssh || undefined,
                     is_default: isDefault,
                 }),
             });

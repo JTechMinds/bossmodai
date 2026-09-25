@@ -364,6 +364,24 @@ class FakeEl {
         return this.closest("form");
     }
 
+    /**
+     * Fire listeners for one event type.
+     *
+     * Input and change are how a paste commits. A click-only fake cannot see
+     * that the value landed before Save read it.
+     *
+     * @param {{ type?: string, target?: object }} event
+     * @returns {boolean}
+     */
+    dispatchEvent(event) {
+        const evt = event || {};
+        const type = String(evt.type || "");
+        if (!evt.target) evt.target = this;
+        const handlers = [...(this.listeners[type] || [])];
+        for (const fn of handlers) fn(evt);
+        return true;
+    }
+
     /** Fire every click handler, including the onclick property. @returns {Promise<void>} */
     async dispatchClick() {
         const event = { preventDefault() {}, stopPropagation() {}, target: this, key: "", shiftKey: false };
