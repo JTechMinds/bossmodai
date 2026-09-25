@@ -83,6 +83,7 @@ const BossModNestGitCard = (() => {
         pat.setAttribute('autocomplete', 'off');
         pat.setAttribute('spellcheck', 'false');
         pat.setAttribute('autocapitalize', 'off');
+        pat.dataset.credentialField = 'pat';
         pat.className = 'setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono bm-secret-masked';
         BossModSecretField.bind(pat);
         const reveal = document.createElement('button');
@@ -98,6 +99,7 @@ const BossModNestGitCard = (() => {
         ssh.rows = 3;
         ssh.placeholder = 'SSH key (optional)';
         ssh.setAttribute('aria-label', 'SSH key (optional)');
+        ssh.dataset.credentialField = 'ssh';
         ssh.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
         const row = document.createElement('div');
         row.className = 'host-path-consent-actions';
@@ -114,17 +116,12 @@ const BossModNestGitCard = (() => {
                 SettingsView.open('nest-git', { focus: 'pat' });
             }
         });
+        const formScope = actionsEl;
         save.addEventListener('click', async () => {
-            const token = BossModSecretField.read(pat);
-            const rawKey = String(ssh.value || '');
-            const key = rawKey.trim() ? rawKey : '';
-            if (!token && !key) {
-                const note = document.createElement('div');
-                note.className = 'hpc-status';
-                note.textContent = 'Paste a GitHub access token or an SSH key. An empty field doesn’t save.';
-                container.appendChild(note);
-                return;
-            }
+            const secrets = BossModNestGitCredentialForm.payloadForSave(formScope, { requireSecret: true });
+            if (secrets.blocked) return;
+            const { ssh: sshDraft } = BossModNestGitCredentialForm.read(formScope);
+            const sshLeftInvalid = Boolean(sshDraft) && !secrets.ssh_key;
             save.disabled = true;
             settings.disabled = true;
             try {
@@ -132,8 +129,8 @@ const BossModNestGitCard = (() => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        pat: token || undefined,
-                        ssh_key: key || undefined,
+                        pat: secrets.pat || undefined,
+                        ssh_key: secrets.ssh_key || undefined,
                         label: label.value,
                         match: match.value,
                     }),
@@ -143,9 +140,14 @@ const BossModNestGitCard = (() => {
                     if (absorbFailure(container, card, res, bodyText)) return;
                     throw new Error(operatorMessage(bodyText) || 'Consent update failed.');
                 }
-                BossModSecretField.clear(pat);
-                ssh.value = '';
-                afterSave(bodyText ? JSON.parse(bodyText) : {});
+                if (secrets.pat) BossModSecretField.clear(pat);
+                if (secrets.ssh_key) ssh.value = '';
+                if (!sshLeftInvalid) {
+                    afterSave(bodyText ? JSON.parse(bodyText) : {});
+                } else {
+                    save.disabled = false;
+                    settings.disabled = false;
+                }
             } catch (err) {
                 if (absorbFailure(container, card, null, err?.message)) return;
                 save.disabled = false;

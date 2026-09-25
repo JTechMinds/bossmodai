@@ -15,8 +15,10 @@ global.BossModFormat = {
 
 const [domPath, nestPath, consentPath, settingsPath] = process.argv.slice(2);
 const secretPath = path.join(path.dirname(nestPath), "secret-field.js");
+const credentialFormPath = path.join(path.dirname(nestPath), "nest-git-credential-form.js");
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(secretPath, "utf8")}\n;global.BossModSecretField = BossModSecretField;\n`);
+eval(`${fs.readFileSync(credentialFormPath, "utf8")}\n;global.BossModNestGitCredentialForm = BossModNestGitCredentialForm;\n`);
 eval(`${fs.readFileSync(nestPath, "utf8")}\n;global.BossModNestGitCard = BossModNestGitCard;\n`);
 eval(`${fs.readFileSync(consentPath, "utf8")}\n;global.BossModConsentCard = BossModConsentCard;\n`);
 eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGitSection;\n`);
@@ -354,8 +356,15 @@ if (!patInput.classList.contains("bm-secret-masked") || patInput.value !== secre
 }
 dropLiveValue(patInput);
 if (patInput.value !== "") throw new Error("live value was not dropped");
-const savePat = settingsRoot.querySelector("#nest-git-pat-save");
-await savePat.dispatchClick();
+const saveBtn = settingsRoot.querySelector("#nest-git-save");
+if (!saveBtn || !saveBtn.classList.contains("btn-primary")) {
+    throw new Error("Add form must have one primary Save button");
+}
+const saveButtons = settingsRoot.querySelectorAll("#nest-git-save, [data-save-field]");
+if (saveButtons.length !== 1) {
+    throw new Error(`expected one Save on Add, got ${saveButtons.length}`);
+}
+await saveBtn.dispatchClick();
 const maskedPost = credentialPosts[credentialPosts.length - 1];
 const maskedPastePersists = Boolean(maskedPost)
     && maskedPost.body.pat === secret
@@ -368,35 +377,54 @@ const patNotLeftInDom = !settingsRoot.innerHTML.includes(secret)
     && (!after || after.value === "");
 if (!patNotLeftInDom) throw new Error("token lingered in the Settings DOM");
 
-const siblingToken = "ghp_sibling-must-not-count";
-settingsRoot.querySelector("#nest-git-pat").value = siblingToken;
+await NestGitSection.render(settingsRoot);
+const tokenOnly = "ghp_token-only-save";
+settingsRoot.querySelector("#nest-git-pat").value = tokenOnly;
 settingsRoot.querySelector("#nest-git-ssh").value = "";
-const postsBeforeSsh = credentialPosts.length;
-await settingsRoot.querySelector("#nest-git-ssh-save").dispatchClick();
-const sshStatus = settingsRoot.querySelector("#nest-git-status");
-const sshSaveIgnoresToken = credentialPosts.length === postsBeforeSsh
-    && Boolean(sshStatus)
-    && sshStatus.textContent.includes("empty field");
-if (!sshSaveIgnoresToken) {
-    throw new Error(`ssh save validated the token field: posts=${credentialPosts.length} status=${sshStatus && sshStatus.textContent}`);
-}
-settingsRoot.querySelector("#nest-git-ssh").value = "ssh-key-material-only";
-await settingsRoot.querySelector("#nest-git-ssh-save").dispatchClick();
-const sshPost = credentialPosts[credentialPosts.length - 1];
-if (!sshPost || sshPost.body.ssh_key !== "ssh-key-material-only" || sshPost.body.pat) {
-    throw new Error(`ssh save posted the wrong control: ${JSON.stringify(sshPost)}`);
+await settingsRoot.querySelector("#nest-git-save").dispatchClick();
+const tokenOnlyPost = credentialPosts[credentialPosts.length - 1];
+const tokenOnlySaves = Boolean(tokenOnlyPost)
+    && tokenOnlyPost.body.pat === tokenOnly
+    && !tokenOnlyPost.body.ssh_key;
+if (!tokenOnlySaves) {
+    throw new Error(`token-only save failed: ${JSON.stringify(tokenOnlyPost)}`);
 }
 
-settingsRoot.querySelector("#nest-git-ssh").value = "ssh-sibling-ignored";
+await NestGitSection.render(settingsRoot);
 settingsRoot.querySelector("#nest-git-pat").value = "";
-const postsBeforePat = credentialPosts.length;
-await settingsRoot.querySelector("#nest-git-pat-save").dispatchClick();
-const patStatus = settingsRoot.querySelector("#nest-git-status");
-const tokenSaveIgnoresSsh = credentialPosts.length === postsBeforePat
-    && Boolean(patStatus)
-    && patStatus.textContent.includes("empty field");
-if (!tokenSaveIgnoresSsh) {
-    throw new Error(`token save validated the ssh field: posts=${credentialPosts.length} status=${patStatus && patStatus.textContent}`);
+settingsRoot.querySelector("#nest-git-ssh").value = "";
+const postsBeforeEmpty = credentialPosts.length;
+await settingsRoot.querySelector("#nest-git-save").dispatchClick();
+const emptyError = settingsRoot.querySelector('[data-credential-field-error="pat"]');
+const emptyRefusesFieldError = credentialPosts.length === postsBeforeEmpty
+    && Boolean(emptyError)
+    && emptyError.textContent.includes("empty field");
+if (!emptyRefusesFieldError) {
+    throw new Error("empty Add must field-error, not banner");
+}
+
+await NestGitSection.render(settingsRoot);
+settingsRoot.querySelector("#nest-git-pat").value = "ghp_with-bad-ssh";
+settingsRoot.querySelector("#nest-git-ssh").value = "not-a-key";
+const postsBeforePartial = credentialPosts.length;
+await settingsRoot.querySelector("#nest-git-save").dispatchClick();
+const sshFieldError = settingsRoot.querySelector('[data-credential-field-error="ssh"]');
+const tokenPersistsBadSsh = credentialPosts.length === postsBeforePartial + 1
+    && credentialPosts[credentialPosts.length - 1].body.pat === "ghp_with-bad-ssh"
+    && Boolean(sshFieldError);
+if (!tokenPersistsBadSsh) {
+    throw new Error(`bad ssh must field-error while saving token: ${JSON.stringify(credentialPosts[credentialPosts.length - 1])}`);
+}
+
+await NestGitSection.render(settingsRoot);
+settingsRoot.querySelector("#nest-git-ssh").value = "-----BEGIN OPENSSH PRIVATE KEY-----\nline\n-----END OPENSSH PRIVATE KEY-----\n";
+await settingsRoot.querySelector("#nest-git-save").dispatchClick();
+const sshOnlyPost = credentialPosts[credentialPosts.length - 1];
+const sshOnlySaves = Boolean(sshOnlyPost)
+    && sshOnlyPost.body.ssh_key
+    && !sshOnlyPost.body.pat;
+if (!sshOnlySaves) {
+    throw new Error(`ssh-only save failed: ${JSON.stringify(sshOnlyPost)}`);
 }
 
 statusCredentials = [
@@ -470,8 +498,11 @@ process.stdout.write(JSON.stringify({
     schemaMismatchDismisses: true,
     maskedPastePersists: true,
     showHideKeepsToken: true,
-    sshSaveIgnoresToken: true,
-    tokenSaveIgnoresSsh: true,
+    onePrimarySaveOnAdd: true,
+    tokenOnlySaves: true,
+    emptyRefusesFieldError: true,
+    tokenPersistsBadSsh: true,
+    sshOnlySaves: true,
     oneDefaultToggle: true,
     cardMaskedPastePersists: true,
 }));

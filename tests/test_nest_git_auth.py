@@ -417,8 +417,11 @@ def test_card_and_settings_harness() -> None:
         "schemaMismatchDismisses": True,
         "maskedPastePersists": True,
         "showHideKeepsToken": True,
-        "sshSaveIgnoresToken": True,
-        "tokenSaveIgnoresSsh": True,
+        "onePrimarySaveOnAdd": True,
+        "tokenOnlySaves": True,
+        "emptyRefusesFieldError": True,
+        "tokenPersistsBadSsh": True,
+        "sshOnlySaves": True,
         "oneDefaultToggle": True,
         "cardMaskedPastePersists": True,
     }
