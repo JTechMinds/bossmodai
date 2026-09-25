@@ -182,7 +182,7 @@ def test_router_prompt_is_intent_first() -> None:
 
 def test_next_owners_parses_on_the_decision_envelope() -> None:
     decision = parse_decision(
-        '{"act":"reply","intent":"status","msg":"Draft is saved.","next_owners":["laura"],"th":"hand off"}'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Draft is saved.","next_owners":["laura"],"th":"hand off"}'
     )
     assert decision["nextOwners"] == ["laura"]
     action = parse_action(
@@ -498,6 +498,7 @@ def test_status_next_owners_do_not_bind_work(monkeypatch: pytest.MonkeyPatch) ->
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Still on the evidence.",
             "proceedUntagged": True,
@@ -563,6 +564,7 @@ def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> 
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Draft is saved.",
             "proceedUntagged": True,

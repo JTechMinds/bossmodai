@@ -1,13 +1,17 @@
 """BossMod AI — Task liveness bookkeeping.
 
-Successful project writes and other mutating CLI outcomes reset the
-no-progress streak. Reads, failed writes, and consent pauses do not.
+Each execution step is classified by :func:`classify_step`. Successful
+project writes and other mutating outcomes are ``progress`` and reset the
+no-progress streak. A successful first read of something new is ``novel``
+and leaves the streak alone. A repeat of a step already taken on this work
+activity, or any failed command, is ``stale`` and grows it.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import db
 from core.bm_cli.command_registry import resolve_virtual_command_name
@@ -96,15 +100,134 @@ def record_task_progress(task_id: str | None, *, at: datetime | None = None) -> 
     )
 
 
-def next_actions_since_progress(streak: int, *, progressed: bool) -> int:
-    """Return the no-progress streak after one action.
+StepKind = Literal["progress", "novel", "stale"]
 
-    A landed write or other real outcome resets it to zero. The guardian
-    compares the returned streak with ``guardian_no_progress_threshold``.
+# Non-CLI results that mean the step did not do what it asked for.
+_FAILED_EVENTS = frozenset({"agent_error", "bm_cli_error"})
+
+
+def classify_step(
+    action: dict[str, Any],
+    result: dict[str, Any],
+    seen_fingerprints: set[str] | frozenset[str],
+) -> StepKind:
+    """Classify one executed step for the no-progress guardian.
+
+    Args:
+        action: The parsed execution action.
+        result: The turn-local action result.
+        seen_fingerprints: Fingerprints of every step already taken on this
+            work activity, across pauses. Not mutated.
+
+    Returns:
+        ``progress`` for a mutation or lifecycle outcome, ``novel`` for a
+        successful step with an unseen fingerprint, ``stale`` for a repeat
+        fingerprint or any failed command.
     """
-    if progressed:
+    if outcome_resets_no_progress(action, result):
+        return "progress"
+    if result.get("event") in _FAILED_EVENTS:
+        return "stale"
+    if step_fingerprint(action) in seen_fingerprints:
+        return "stale"
+    return "novel"
+
+
+def next_stale_streak(streak: int, kind: StepKind) -> int:
+    """Return the consecutive-stale streak after one classified step.
+
+    ``progress`` resets it, ``novel`` leaves it, ``stale`` adds one. The
+    guardian compares the result with ``guardian_no_progress_threshold``.
+    """
+    if kind == "progress":
         return 0
+    if kind == "novel":
+        return max(streak, 0)
     return max(streak, 0) + 1
+
+
+def step_fingerprint(action: dict[str, Any]) -> str:
+    """Stable identity for one execution step.
+
+    A CLI step is its :func:`command_fingerprint`. Any other action is its
+    name plus its canonical JSON arguments; the free-text ``thought`` is not
+    part of the identity.
+    """
+    if action.get("action") == "bm_cli":
+        content = action.get("content") if isinstance(action.get("content"), str) else None
+        return command_fingerprint(str(action.get("command") or ""), content)
+    arguments = {
+        key: value
+        for key, value in action.items()
+        if key != "thought" and not str(key).startswith("_")
+    }
+    return json.dumps(arguments, sort_keys=True, default=str)
+
+
+def command_fingerprint(command: str, content: str | None = None) -> str:
+    """Stable identity for a CLI command.
+
+    Path tweaks must not dodge the check: ``ls a`` ≡ ``ls a/`` ≡ ``ls ./a``.
+    Command aliases and extra whitespace collapse. Write-body content is part
+    of the identity when present.
+    """
+    try:
+        parsed = parse_cli_command(command)
+    except ValueError:
+        collapsed = " ".join((command or "").split())
+        return _join_fingerprint(collapsed.lower(), content)
+
+    args = tuple(
+        normalized
+        for normalized in (_normalize_fingerprint_arg(arg) for arg in parsed.args)
+        if normalized
+    )
+    body = " ".join((parsed.name, *args)).strip()
+    return _join_fingerprint(body, content)
+
+
+def _join_fingerprint(command_body: str, content: str | None) -> str:
+    extra = (content or "").strip()
+    if extra:
+        return f"{command_body}\n{extra}"
+    return command_body
+
+
+def _normalize_fingerprint_arg(arg: str) -> str:
+    token = arg.strip()
+    if token.startswith("-") and token != "-":
+        return token
+    return _normalize_fingerprint_path(token)
+
+
+def _normalize_fingerprint_path(raw: str) -> str:
+    text = raw.strip().replace("\\", "/")
+    if not text:
+        return ""
+    while "//" in text:
+        text = text.replace("//", "/")
+    if text != "/":
+        text = text.rstrip("/")
+    while text.startswith("./"):
+        text = text[2:]
+        if text != "/":
+            text = text.rstrip("/")
+    if text in {"", "."}:
+        return ""
+
+    absolute = text.startswith("/")
+    parts: list[str] = []
+    for item in text.split("/"):
+        if item in {"", "."}:
+            continue
+        if item == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(item)
+    if absolute:
+        return "/" + "/".join(parts) if parts else "/"
+    return "/".join(parts)
 
 
 def outcome_resets_no_progress(action: dict[str, Any], result: dict[str, Any]) -> bool:

@@ -7,41 +7,20 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
-from core.agent_loop.activity_scheduler import (
-    build_activity_resume_trigger,
-    build_task_resume_trigger,
-)
+from core.agent_loop.activity_scheduler import build_task_resume_trigger
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.soft_blocks import resume_soft_blocked_work
 from core.models import Agent
 
 
-def _resume_previous_work_if_needed(result: dict[str, Any], active_work: Any | None) -> None:
-    """Queue a work resume trigger after a direct interruption if work stayed active."""
-    if active_work is None:
-        return
-    if any(item.get("trigger_type") == "activity_resumed" for item in result["trigger_requests"]):
-        return
-    result["trigger_requests"].append(
-        build_activity_resume_trigger(
-            active_work,
-            reason=f'Resume work on "{active_work.title or "your task"}".',
-        )
-    )
+def _continue_soft_blocked_work_after_status(agent: Agent) -> Any | None:
+    """Unstick Soft-block after a status-only reply and return the work it reactivated.
 
-
-def _continue_soft_blocked_work_after_status(
-    result: dict[str, Any],
-    agent: Agent,
-    active_work: Any | None,
-) -> Any | None:
-    """Unstick Soft-block after a status-only reply when work continues."""
-    work = resume_soft_blocked_work(agent.id)
-    if work is not None:
-        _resume_previous_work_if_needed(result, work)
-        return work
-    _resume_previous_work_if_needed(result, active_work)
-    return active_work
+    Queuing the next execution turn is not done here: the dispatcher's
+    live-work continuation invariant resumes any reactivated work once this
+    turn ends.
+    """
+    return resume_soft_blocked_work(agent.id)
 
 
 def _resume_waiting_work_after_task_attention(
@@ -140,8 +119,13 @@ def _resume_waiting_work_after_task_update(
         )
     )
 
-def _record_watchdog_reply_if_needed(*, agent_id: str, trigger: dict[str, Any], reply: str | None) -> None:
-    """Refresh task liveness when the agent answers a watchdog ping."""
+def _record_watchdog_reply_if_needed(*, trigger: dict[str, Any], reply: str | None) -> None:
+    """Refresh task liveness when the agent answers a watchdog ping.
+
+    The reply becomes the task's operator-facing ``status_note``. It does not
+    overwrite the work activity's detail: the frozen work transcript is the
+    record of what the agent did, and a reply is only what it said.
+    """
     if trigger.get("type") != "watchdog_status_ping":
         return
     task_id = trigger.get("task_id")
@@ -158,10 +142,6 @@ def _record_watchdog_reply_if_needed(*, agent_id: str, trigger: dict[str, Any], 
     if status_note:
         update_fields["status_note"] = status_note
     db.update_task(task_id, **update_fields)
-
-    active = activity_runtime.get_active_work_activity(agent_id)
-    if active and active.task_id == task_id and status_note:
-        db.update_activity(active.id, detail=status_note)
 
 def _complete_assignment_if_present(agent_id: str) -> None:
     """Complete the active assignment wrapper, if one exists."""

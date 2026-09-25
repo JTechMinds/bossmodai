@@ -26,16 +26,21 @@ _CONSENT_GRANT_STATUSES = frozenset(
     }
 )
 
-_INTERRUPT_TRIGGER_TYPES = {
-    "human_chat",
-    "peer_message",
-    "task_follow_up",
-    "session_message",
-    "session_response",
-    "channel_message",
-    "channel_response",
-    "watchdog_status_ping",
-}
+# Wakes that make a running execution turn yield between steps. The
+# dispatcher records each one handled while work is frozen as an interlude.
+INTERRUPT_TRIGGER_TYPES = frozenset(
+    {
+        "human_chat",
+        "peer_message",
+        "task_follow_up",
+        "session_message",
+        "session_response",
+        "channel_message",
+        "channel_response",
+        "watchdog_status_ping",
+    }
+)
+_CONTINUABLE_TASK_STATUSES = frozenset({"accepted", "active"})
 
 
 def can_dispatch_trigger(
@@ -345,31 +350,39 @@ def build_task_resume_trigger(task: Task, *, reason: str) -> dict[str, Any]:
     }
 
 
-def plan_post_turn_follow_up(
-    *,
-    agent_id: str,
-    trigger: dict[str, Any],
-    initial_activity: Activity | None,
-    final_activity: Activity | None,
-    result: dict[str, Any],
-    action: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    """Return follow-up triggers after a turn completes."""
-    planned: list[dict[str, Any]] = list(result.get("trigger_requests", []))
-    if action is None:
-        return planned
+def ensure_live_work_continuation(agent_id: str) -> dict[str, Any] | None:
+    """Return the resume that keeps live work moving after a turn ends, if one is owed.
 
-    trigger_type = trigger.get("type")
-    action_name = action.get("action")
-    if trigger_type in _INTERRUPT_TRIGGER_TYPES and action_name == "message":
-        if final_activity and initial_activity and final_activity.id == initial_activity.id and final_activity.kind == "work":
-            if not db.has_queued_trigger_matching(agent_id, trigger_types=list(_INTERRUPT_TRIGGER_TYPES)):
-                planned.append(build_activity_resume_trigger(
-                    final_activity,
-                    reason=f'You sent the requested update. Resume work on "{final_activity.title or "your task"}".',
-                ))
+    This is the runtime invariant behind every turn: an agent with an
+    accepted or active task on its live work activity always has a next
+    execution turn queued. It returns a resume spec only when all hold:
 
-    return planned
+    - the agent has an active work activity bound to a task;
+    - that task is live and ``accepted`` or ``active``;
+    - no operator gate (CLI approval or consent card) is pending, since the
+      resolve trigger resumes that work;
+    - no ``activity_resumed`` for the task is already queued or claimed.
+
+    Waiting and blocked work is excluded by construction: ``wait`` and a
+    soft block pause the activity or move the task off those statuses.
+
+    Returns:
+        A ``trigger_requests``-shaped spec, or ``None``.
+    """
+    active = activity_runtime.get_active_work_activity(agent_id)
+    if active is None or not active.task_id:
+        return None
+    task = db.get_task(active.task_id)
+    if not activity_runtime.is_live_work_task(task) or task.status not in _CONTINUABLE_TASK_STATUSES:
+        return None
+    if db.agent_has_pending_operator_gate(agent_id):
+        return None
+    if db.has_open_trigger_matching(agent_id, trigger_types=["activity_resumed"], task_id=task.id):
+        return None
+    return build_activity_resume_trigger(
+        active,
+        reason=f'Resume work on "{task.title or active.title or "your task"}".',
+    )
 
 
 def plan_arrival_follow_up(agent_id: str, resumed_activity: Activity | None, room_name: str) -> list[dict[str, Any]]:

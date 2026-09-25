@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timezone
 
 from core.default_prompts import (
+    load_default_prompt,
     RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE,
     RUNTIME_BLOCK_CONVERSATION_ENVELOPE_TEMPLATE,
     RUNTIME_BLOCK_FILE_DELIVERABLE_GUIDANCE_TEMPLATE,
@@ -112,6 +113,15 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("watchdog_check_interval_seconds", "5", "simulation"),
     ("watchdog_soft_ping_minutes", "15", "simulation"),
     ("watchdog_escalation_minutes", "15", "simulation"),
+    # Frozen work transcript (core/agent_loop/work_snapshot.py). Char
+    # budgets, not tokens: count_tokens is 0 with no tokenizer configured.
+    # The full transcript is restored on execution resumes; decision turns
+    # see only the most recent steps that fit the smaller chat-view budget.
+    ("work_snapshot_max_chars", "120000", "simulation"),
+    ("work_snapshot_chat_view_max_chars", "24000", "simulation"),
+    # Checkpoints (a "you are repeating steps" resume) before a no-progress
+    # trip blocks the task.
+    ("guardian_no_progress_checkpoints", "1", "simulation"),
     # HA-LOOP-P1-07: meeting watchdog keys (fallbacks in meeting_watchdog.py
     # must stay equal to these seed values).
     ("meeting_watchdog_check_interval_seconds", "5", "simulation"),
@@ -210,6 +220,7 @@ def seed_defaults() -> None:
     reconcile_factory_round_cap()
     reconcile_factory_max_tokens()
     reconcile_factory_cli_default_policy()
+    reconcile_work_commit_prompt_contract()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -278,6 +289,40 @@ def reconcile_factory_cli_default_policy() -> None:
     if row is not None and str(row.get("value") or "") == _FACTORY_CLI_DEFAULT_POLICY:
         set_setting("cli_default_policy", _DEFAULT_CLI_POLICY, "cli_policy")
     set_setting(_CLI_DEFAULT_POLICY_FACTORY_RECONCILED, "true", "cli_policy")
+
+
+# The required-``work_commit`` / TURN MODEL contract lives in these two
+# prompt rows. Stored copies predate it, and seeding never overwrites, so
+# they are moved to the shipped defaults once per database. After the pass,
+# any stored text is an operator choice and is not rewritten.
+_WORK_COMMIT_PROMPT_KEYS = ("system_prompt_template", "runtime_contract_decision")
+_WORK_COMMIT_PROMPTS_RECONCILED = "work_commit_prompt_contract_reconciled"
+
+
+def reconcile_work_commit_prompt_contract() -> None:
+    """Overwrite the system prompt and decision contract rows with the shipped defaults once.
+
+    Guarded by a marker row, like ``reconcile_factory_cli_default_policy``:
+    the first pass on a database writes the current file-backed defaults,
+    records the marker, and every later pass is a no-op, so later operator
+    edits are never touched.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_WORK_COMMIT_PROMPTS_RECONCILED],
+    )
+    if seen is not None:
+        return
+    for key in _WORK_COMMIT_PROMPT_KEYS:
+        seeded = get_seed_setting_default(key)
+        if seeded is None:
+            raise RuntimeError(f"Prompt setting '{key}' has no seeded default")
+        set_setting(key, load_default_prompt(key), seeded[1])
+    set_setting(_WORK_COMMIT_PROMPTS_RECONCILED, "true", "advanced")
+    logger.info(
+        "Reconciled prompt settings to the work_commit contract: %s",
+        ", ".join(_WORK_COMMIT_PROMPT_KEYS),
+    )
 
 
 def ensure_local_api_token() -> str:

@@ -70,6 +70,7 @@ class _RecordingServices:
 def _answer(reply: str) -> dict[str, Any]:
     return {
         "decision": "answer",
+        "workCommit": False,
         "intentKind": "status_request",
         "reply": reply,
         "proceedUntagged": True,

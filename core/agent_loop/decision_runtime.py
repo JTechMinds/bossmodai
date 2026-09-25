@@ -30,11 +30,11 @@ from core.agent_loop.say_before_actions import (
 )
 from core.agent_loop.thread_supersede import supersede_stale_thread_turn
 from core.agent_loop.next_owner import maybe_next_owner_nudge
+from core.agent_loop.decision_parse_fail import requeue_commitment
 from core.agent_loop.decision_resume import (
     _complete_assignment_if_present,
     _continue_soft_blocked_work_after_status,
     _record_watchdog_reply_if_needed,
-    _resume_previous_work_if_needed,
     _resume_waiting_work_after_task_attention,
     _resume_waiting_work_after_task_update,
 )
@@ -52,15 +52,11 @@ from core.agent_loop.decision_work_plan import (
 )
 from core.agent_loop.channel_host import note_channel_work, stop_active_talk_rounds
 from core.agent_loop.channel_work_bind import record_round_work_bind
-from core.agent_loop.promise_lock import (
-    EMPTY_ACTIONS_WHY,
-    merge_promise_gap,
-    say_commits_to_work,
-    surface_promise_gap,
-)
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
 from core.tasking.transitions import transition_task
+
+_DECLARED_COMMIT_RESUME_REASON = "You committed to this work in your reply. Continue it now."
 
 
 def apply_decision(
@@ -115,22 +111,21 @@ def apply_decision(
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=False)
         else:
-            _resume_previous_work_if_needed(result, active_work)
             _resume_waiting_work_after_task_update(
                 result=result,
                 agent_id=agent.id,
                 trigger=trigger,
             )
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "answer":
         result["detail"] = f"{agent.name} answered the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
-            _continue_soft_blocked_work_after_status(result, agent, None)
+            _continue_soft_blocked_work_after_status(agent)
         else:
-            live_work = _continue_soft_blocked_work_after_status(result, agent, active_work)
+            live_work = _continue_soft_blocked_work_after_status(agent) or active_work
             _resume_waiting_work_after_task_attention(
                 result=result,
                 agent=agent,
@@ -139,26 +134,17 @@ def apply_decision(
                 active_work=live_work,
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
-        if say_commits_to_work(decision.reply, work_commit=decision.workCommit):
-            merge_promise_gap(
-                result,
-                surface_promise_gap(
-                    agent=agent,
-                    trigger=trigger,
-                    why=EMPTY_ACTIONS_WHY,
-                ),
-            )
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        if decision.workCommit and active_work is None:
+            _requeue_declared_commitment(result, agent=agent, trigger=trigger)
         return result
 
     if decision.decision == "clarify":
         result["detail"] = f"{agent.name} asked for clarification"
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
-        else:
-            _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "cancel":
@@ -194,7 +180,7 @@ def apply_decision(
                 kind="cancelled",
                 reason=decision.reply or decision.detail or "Cancelled by human request.",
             )
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "decline":
@@ -215,8 +201,6 @@ def apply_decision(
         result["detail"] = f"{agent.name} declined the request"
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
-        else:
-            _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         declined_task = db.get_task(trigger["task_id"]) if trigger.get("task_id") else None
         if declined_task is not None:
@@ -227,7 +211,7 @@ def apply_decision(
                 kind="declined",
                 reason=decision.reply or decision.detail or "Assignment declined.",
             )
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "defer":
@@ -257,10 +241,8 @@ def apply_decision(
         _complete_assignment_if_present(agent.id)
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
-        else:
-            _resume_previous_work_if_needed(result, active_work)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "work":
@@ -323,7 +305,7 @@ def apply_decision(
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         attach_operator_status_line(result, task=task, agent=agent, kind="accepted")
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "meeting":
@@ -351,7 +333,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "break":
@@ -375,7 +357,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
         return result
 
     conversation = activity_runtime.begin_commitment_activity(
@@ -399,8 +381,40 @@ def apply_decision(
     )
     _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
     _attach_reply_artifacts(result, agent, state, trigger, decision)
-    _record_watchdog_reply_if_needed(agent_id=agent.id, trigger=trigger, reply=decision.reply)
+    _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
     return result
+
+
+def _requeue_declared_commitment(
+    result: dict[str, Any],
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+) -> None:
+    """Requeue exactly the trigger's task after a reply declared ``work_commit``.
+
+    ``validate_decision_for_trigger`` only lets ``work_commit: true`` through
+    with no live work when the trigger's task is open and assigned to this
+    agent (a reply on its own waiting or blocked task, where accept is not
+    allowed), so the task is resolved from the trigger alone.
+
+    Raises:
+        ValueError: The trigger does not name an open task of this agent;
+            validation should have rejected the decision.
+    """
+    task_id = trigger.get("task_id")
+    task = db.get_task(task_id) if isinstance(task_id, str) and task_id.strip() else None
+    if task is None or task.assigned_to != agent.id or not activity_runtime.is_live_work_task(task):
+        raise ValueError("work_commit reply reached apply_decision without an open task of this agent")
+    queued = {
+        (item.get("trigger_type"), item.get("task_id"))
+        for item in result["trigger_requests"]
+        if isinstance(item, dict)
+    }
+    for spec in requeue_commitment(agent, task, resume_reason=_DECLARED_COMMIT_RESUME_REASON):
+        if (spec.get("trigger_type"), spec.get("task_id")) not in queued:
+            result["trigger_requests"].append(spec)
+
 
 def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: ConversationDecision, task: Any) -> None:
     """End peer Talk when this channel turn bound a real board task.

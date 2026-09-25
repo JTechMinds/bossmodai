@@ -205,6 +205,27 @@ def count_pending_requests(agent_id: str | None = None) -> int:
     return int(row["cnt"]) if row else 0
 
 
+def agent_has_pending_operator_gate(agent_id: str) -> bool:
+    """Return whether the agent is paused on an operator decision.
+
+    A gate is a ``pending`` CLI approval, or a ``pending`` consent card in
+    ``host_path_consent_requests`` (host path, workspace preference, shell
+    executor and nest git cards all persist there). While one is open the
+    operator's resolve trigger resumes the work, so nothing else may.
+    """
+    row = query_one(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM cli_approval_requests
+             WHERE agent_id = $1 AND status = 'pending')
+          + (SELECT COUNT(*) FROM host_path_consent_requests
+             WHERE agent_id = $1 AND status = 'pending') AS cnt
+        """,
+        [agent_id],
+    )
+    return bool(row and int(row["cnt"]) > 0)
+
+
 # ---------------------------------------------------------------------------
 # Update — decisions
 # ---------------------------------------------------------------------------

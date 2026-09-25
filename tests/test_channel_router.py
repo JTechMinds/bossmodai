@@ -484,6 +484,7 @@ def test_selected_member_still_posts_a_speak_turn(monkeypatch: pytest.MonkeyPatc
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Shipping today.",
             "proceedUntagged": True,

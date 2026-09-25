@@ -14,6 +14,7 @@ from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_parse_fail import (
     DEFAULT_DECISION_REPAIR_ATTEMPTS,
+    PARSE_FAIL_IDLE_NOTE,
     PARSE_FAIL_NOTE,
     decision_repair_attempt_limit,
     surface_decision_parse_failure,
@@ -26,7 +27,7 @@ from core.llm.client import LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 
 _REPAIR_MARK = "one JSON object, no fences/markdown"
-_ENVELOPE = '{"say":"string","actions":[]}'
+_ENVELOPE = '{"say":"string","actions":[],"work_commit":false}'
 
 
 def setup_function() -> None:
@@ -97,7 +98,7 @@ def test_decision_repair_attempts_defaults_to_six() -> None:
     ("kind", "snippet"),
     [
         ("prose_status", "I'll do the tests next."),
-        ("invalid_decision", '{"act":"reply","th2":"x"}'),
+        ("invalid_decision", '{"act":"reply","work_commit":false,"th2":"x"}'),
         ("invalid_json", '{"act":'),
     ],
 )
@@ -220,8 +221,8 @@ async def test_repair_can_recover_before_fail_close(
     seen, prompts = _script_completions(
         monkeypatch,
         [
-            '{"act":"reply","msg":"Continuing.","th2":"nope"}',
-            '{"say":"Still on the clone.","actions":[]}',
+            '{"act":"reply","work_commit":false,"msg":"Continuing.","th2":"nope"}',
+            '{"say":"Still on the clone.","actions":[],"work_commit":false}',
         ],
     )
     outcome = await run_turn(
@@ -271,7 +272,9 @@ async def test_truncated_json_repairs_then_stops(
         assert _ENVELOPE in text
     assert outcome.result.get("parse_steer") is True
     assert outcome.result.get("chat_message")
-    assert PARSE_FAIL_NOTE in str(outcome.result["chat_message"].get("content") or "")
+    # Nothing was open to re-queue, so the note must not claim a re-queue.
+    assert PARSE_FAIL_IDLE_NOTE in str(outcome.result["chat_message"].get("content") or "")
+    assert PARSE_FAIL_NOTE not in str(outcome.result["chat_message"].get("content") or "")
     notes = db.list_notifications(agent_id=agent.id, limit=8)
-    assert sum(1 for item in notes if (item.content or "").strip() == PARSE_FAIL_NOTE) == 1
+    assert sum(1 for item in notes if (item.content or "").strip() == PARSE_FAIL_IDLE_NOTE) == 1
     assert outcome.result.get("trigger_requests") == []

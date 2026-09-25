@@ -16,6 +16,7 @@ from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_parse_fail import (
+    TIMEOUT_IDLE_NOTE,
     TIMEOUT_NOTE,
     surface_llm_timeout_failure,
 )
@@ -26,8 +27,8 @@ from core.bm_cli.policy_engine import policy_engine
 from core.llm.client import LLMError, LLMResponse, LLMTimeoutError, completion
 from core.models.message import HUMAN_SENDER_ID
 
-_ENVELOPE = '{"say":"string","actions":[]}'
-_OK = '{"say":"Still on the clone.","actions":[]}'
+_ENVELOPE = '{"say":"string","actions":[],"work_commit":false}'
+_OK = '{"say":"Still on the clone.","actions":[],"work_commit":false}'
 
 
 def setup_function() -> None:
@@ -306,6 +307,16 @@ async def test_soft_blocked_commitment_is_requeued_after_timeout(
     assert _note_count(task.id) == 1
     assert db.get_agent(agent.id) is not None
     assert db.list_cli_approval_requests(status="pending", agent_id=agent.id) == []
+
+
+def test_timeout_with_nothing_open_says_no_work_was_requeued() -> None:
+    """The note follows the outcome: no open commitment means no re-queue claim."""
+    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock", desk_x=1, desk_y=1)
+    surfaced = surface_llm_timeout_failure(agent=agent, trigger=_chat_trigger())
+    assert surfaced["trigger_requests"] == []
+    content = str((surfaced.get("chat_message") or {}).get("content") or "")
+    assert TIMEOUT_IDLE_NOTE in content
+    assert TIMEOUT_NOTE not in content
 
 
 @pytest.mark.asyncio

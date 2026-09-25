@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 from core.agent_loop import decision_runtime, loop
@@ -67,8 +68,12 @@ def test_apply_decision_collaborators_live_in_focused_modules() -> None:
     assert callable(decision_task_bind._ensure_deferred_task)
     assert callable(decision_replies._persist_reply)
     assert callable(decision_replies._prepare_shared_response_trigger)
-    assert callable(decision_resume._resume_previous_work_if_needed)
+    # Per-branch resumes are gone: the dispatcher's continuation invariant
+    # queues the next execution turn for live work.
+    assert not hasattr(decision_resume, "_resume_previous_work_if_needed")
+    assert "_resume_previous_work_if_needed" not in runtime_source
     assert callable(decision_resume._continue_soft_blocked_work_after_status)
+    assert list(inspect.signature(decision_resume._continue_soft_blocked_work_after_status).parameters) == ["agent"]
     assert callable(decision_resume._complete_assignment_if_present)
 
 

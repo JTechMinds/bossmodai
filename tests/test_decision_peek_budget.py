@@ -15,8 +15,8 @@ from core.agent_loop.decision_peek import (
     SOFT_PEEK_BUDGET,
     SOFT_PEEK_STEER,
     DecisionPeekBudget,
-    normalize_peek_fingerprint,
 )
+from core.agent_loop.liveness import command_fingerprint
 from core.agent_loop.loop import run_turn
 from core.bm_cli.types import BossModCliResult
 from core.llm.client import LLMResponse
@@ -75,7 +75,7 @@ def _cli(cmd: str) -> str:
 
 
 def _reply(msg: str = "Ready.") -> str:
-    return '{"act":"reply","intent":"question","msg":"%s","th":"answer"}' % msg
+    return '{"act":"reply","work_commit":false,"intent":"question","msg":"%s","th":"answer"}' % msg
 
 
 def _host_access(path: str, why: str = "Need the file") -> str:
@@ -133,17 +133,17 @@ def _human_chat_trigger() -> dict[str, Any]:
 
 
 def test_peek_fingerprint_normalizes_path_tweaks() -> None:
-    assert normalize_peek_fingerprint("ls a") == normalize_peek_fingerprint("ls a/")
-    assert normalize_peek_fingerprint("ls a") == normalize_peek_fingerprint("ls ./a")
-    assert normalize_peek_fingerprint("ls a") == normalize_peek_fingerprint("ls ./a/")
-    assert normalize_peek_fingerprint("ls  a") == normalize_peek_fingerprint("ls a")
-    assert normalize_peek_fingerprint("ls /me/notes") == normalize_peek_fingerprint("ls /me/notes/")
-    assert normalize_peek_fingerprint("cat /me/foo.md") == normalize_peek_fingerprint("cat /me/foo.md/")
-    assert normalize_peek_fingerprint("ls -l a/") == normalize_peek_fingerprint("ls -l a")
-    assert normalize_peek_fingerprint("ls") == normalize_peek_fingerprint("ls .")
-    assert normalize_peek_fingerprint("ls") == normalize_peek_fingerprint("ls ./")
-    assert normalize_peek_fingerprint("ls a") != normalize_peek_fingerprint("ls b")
-    assert normalize_peek_fingerprint("ls a") != normalize_peek_fingerprint("cat a")
+    assert command_fingerprint("ls a") == command_fingerprint("ls a/")
+    assert command_fingerprint("ls a") == command_fingerprint("ls ./a")
+    assert command_fingerprint("ls a") == command_fingerprint("ls ./a/")
+    assert command_fingerprint("ls  a") == command_fingerprint("ls a")
+    assert command_fingerprint("ls /me/notes") == command_fingerprint("ls /me/notes/")
+    assert command_fingerprint("cat /me/foo.md") == command_fingerprint("cat /me/foo.md/")
+    assert command_fingerprint("ls -l a/") == command_fingerprint("ls -l a")
+    assert command_fingerprint("ls") == command_fingerprint("ls .")
+    assert command_fingerprint("ls") == command_fingerprint("ls ./")
+    assert command_fingerprint("ls a") != command_fingerprint("ls b")
+    assert command_fingerprint("ls a") != command_fingerprint("cat a")
 
 
 def test_peek_budget_soft_ten_and_identical_triple() -> None:

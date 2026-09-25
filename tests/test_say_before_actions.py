@@ -202,7 +202,7 @@ async def test_human_chat_say_posts_before_cli_action(
         monkeypatch,
         [
             '{"say":"Checking the clone.\\n\\n- Listing /me.","actions":[{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}]}',
-            '{"say":"Clone looks ready.","actions":[]}',
+            '{"say":"Clone looks ready.","actions":[],"work_commit":false}',
         ],
     )
     outcome = await run_turn(
@@ -247,7 +247,7 @@ async def test_actions_only_cli_does_not_post_early_say(
         monkeypatch,
         [
             '{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}',
-            '{"say":"Listed /me. Ready.","actions":[]}',
+            '{"say":"Listed /me. Ready.","actions":[],"work_commit":false}',
         ],
     )
     outcome = await run_turn(
@@ -273,6 +273,7 @@ def test_say_only_status_is_not_treated_as_side_effect_actions() -> None:
     decision = ConversationDecision.model_validate(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Still on the clone.",
             "commitmentKind": "none",

@@ -5,7 +5,7 @@ Four rules from the vision doc:
   1. Token explosion — single output exceeds per-agent token limit
   2. Velocity burst — too many messages sent per minute
   3. Repetition — consecutive near-identical outputs
-  4. No-progress — too many actions without progress (for multi-turn loop)
+  4. No-progress — too many consecutive repeated or failed steps (multi-turn loop)
 """
 
 from __future__ import annotations
@@ -90,20 +90,21 @@ def check_post_action(
 
 def check_no_progress(
     agent: Agent,
-    action_count: int,
+    stale_streak: int,
 ) -> GuardianViolation | None:
     """No-progress detection for the multi-turn loop.
 
-    ``action_count`` is actions since the last real outcome (a landed
-    write, a mutating CLI, or another progress action). The caller resets
-    that streak. This only compares it with ``guardian_no_progress_threshold``.
+    ``stale_streak`` is consecutive stale steps (a repeat of a step already
+    taken on this work, or a failed command), maintained by the caller with
+    ``liveness.next_stale_streak``. Progress resets it; a novel read leaves
+    it. This only compares it with ``guardian_no_progress_threshold``.
     """
-    if action_count < agent.guardian_no_progress_threshold:
+    if stale_streak < agent.guardian_no_progress_threshold:
         return None
 
     return GuardianViolation(
         "no_progress",
-        f"{action_count} actions with no progress (limit: {agent.guardian_no_progress_threshold})",
+        f"{stale_streak} consecutive repeated or failed steps (limit: {agent.guardian_no_progress_threshold})",
         hard_stop=False,
     )
 

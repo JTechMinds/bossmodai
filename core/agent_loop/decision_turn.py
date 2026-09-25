@@ -23,12 +23,6 @@ from core.agent_loop.decision_parse_fail import (
     surface_decision_parse_failure,
     surface_llm_timeout_failure,
 )
-from core.agent_loop.promise_lock import (
-    commitment_signal,
-    promise_fail_why,
-    response_commits_to_work,
-    surface_promise_gap,
-)
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.say_before_actions import (
     early_say_fail_result,
@@ -118,7 +112,8 @@ async def _run_decision_turn(
     peek_budget = DecisionPeekBudget()
     last_response_content = ""
     decision_repair_attempts = 0
-    promised_work = False
+    # Live work at turn start decides what ``work_commit: true`` may mean.
+    has_live_work = activity_runtime.get_active_work_activity(agent.id) is not None
 
     while True:
         step_started = time.monotonic()
@@ -236,8 +231,6 @@ async def _run_decision_turn(
         total_completion_tokens += response.completion_tokens
         total_tokens += response.total_tokens
         last_response_content = response.content
-        if commitment_signal(response.content)[1] is True:
-            promised_work = True
         step_prompt_tokens = response.prompt_tokens
         step_completion_tokens = response.completion_tokens
         step_total_tokens = response.total_tokens
@@ -302,18 +295,7 @@ async def _run_decision_turn(
                 step_completion_tokens=step_completion_tokens,
                 step_total_tokens=step_total_tokens,
                 error=error,
-                surfaced=(
-                    surface_promise_gap(
-                        agent=agent,
-                        trigger=trigger,
-                        why=promise_fail_why(
-                            repair_attempts=decision_repair_attempts,
-                            kind=str(parse_kind or ""),
-                        ),
-                    )
-                    if promised_work or await off_request_loop(response_commits_to_work, response.content)
-                    else surface_decision_parse_failure(agent=agent, trigger=trigger)
-                ),
+                surfaced=surface_decision_parse_failure(agent=agent, trigger=trigger),
                 action=parsed,
                 flags={"parse_steer": True},
                 start=start,
@@ -614,8 +596,47 @@ async def _run_decision_turn(
             decision,
             trigger_type=trigger_type,
             active_task_id=initial_task_id,
+            has_live_work=has_live_work,
+            agent_id=agent.id,
             trigger=trigger,
         )
+        if validation_error and parse_failure_should_repair(
+            kind="invalid_decision",
+            repair_attempts=decision_repair_attempts,
+            max_repairs=decision_repair_attempt_limit(),
+            decision=True,
+        ):
+            # Same budget as parse repairs. Validation runs before
+            # apply_decision, so nothing has been posted yet: the model
+            # corrects its object in this turn instead of the dispatcher
+            # retrying the whole turn blind.
+            decision_repair_attempts += 1
+            continuation_messages = _build_decision_repair_messages(
+                parsed_error=validation_error,
+            )
+            step_traces.append(
+                _build_step_trace(
+                    step_index=len(step_traces) + 1,
+                    context_snapshot=next_context_snapshot,
+                    raw_response=response.content,
+                    action=decision.model_dump(),
+                    result={
+                        "event": "decision_repair_requested",
+                        "detail": "Conversation decision was invalid for this turn; asked the model to correct it.",
+                    },
+                    prompt_tokens=step_prompt_tokens,
+                    completion_tokens=step_completion_tokens,
+                    total_tokens=step_total_tokens,
+                    duration_ms=int((time.monotonic() - step_started) * 1000),
+                    error=validation_error,
+                )
+            )
+            current_context.extend(
+                [{"role": "assistant", "content": response.content}, *continuation_messages]
+            )
+            next_context_snapshot = _serialize_trace_value(continuation_messages)
+            await breathe()
+            continue
         if validation_error:
             result = {
                 "event": "agent_error",

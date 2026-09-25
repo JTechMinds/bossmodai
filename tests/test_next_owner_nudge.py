@@ -84,6 +84,7 @@ def _channel_trigger(channel, *, trigger_type: str = "channel_response") -> dict
 def _answer(reply: str, *, proceed: bool = False) -> dict:
     payload = {
         "decision": "answer",
+        "workCommit": False,
         "intentKind": "status_request",
         "reply": reply,
     }
@@ -329,6 +330,7 @@ def test_focus_dm_never_nudges() -> None:
     dm = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "question",
             "reply": "Can you take the rewrite?",
         },
@@ -366,7 +368,7 @@ def test_explicit_proceed_on_first_attempt_skips_nudge() -> None:
 
 def test_compact_proceed_flag_parses() -> None:
     parsed = parse_direct_turn_response(
-        '{"act":"reply","intent":"status","msg":"Ready.","data":{"proceed":true},"th":"go"}'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Ready.","data":{"proceed":true},"th":"go"}'
     )
     assert parsed["decision"] == "answer"
     assert parsed["proceedUntagged"] is True

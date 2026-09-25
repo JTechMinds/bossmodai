@@ -62,6 +62,7 @@ from core.models.task import (
 from core.models.task_event import TaskEvent
 from core.models.trigger import AgentTrigger
 from core.models.work_contract import DeliverableSpec, TaskWorkContract, WorkContract
+from core.models.work_snapshot import WorkInterlude, WorkSnapshot
 
 __all__ = [
     # Agent
@@ -109,6 +110,8 @@ __all__ = [
     "DeliverableSpec",
     "TaskWorkContract",
     "WorkContract",
+    "WorkInterlude",
+    "WorkSnapshot",
     # Message
     "Message",
     "MessageCreate",

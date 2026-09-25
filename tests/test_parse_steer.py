@@ -129,7 +129,7 @@ def test_parse_action_prose_is_parse_failed_prose_kind() -> None:
 
 def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     raw = (
-        '{"act":"reply","intent":"status","msg":"Continuing.",'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Continuing.",'
         '"_needsApproval":true,"th":"need a card"}'
     )
     parsed = parse_direct_turn_response(raw)
@@ -147,7 +147,7 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
     other = parse_direct_turn_response(
-        '{"act":"reply","intent":"status","msg":"Continuing.","extraField":1}'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Continuing.","extraField":1}'
     )
     assert other["decision"] == "_parse_failed"
     assert other.get("_parse_kind") == "invalid_decision"
@@ -157,7 +157,7 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     assert say_extra["decision"] == "_parse_failed"
     assert say_extra.get("_parse_kind") == "invalid_decision"
     valid = parse_direct_turn_response(
-        '{"act":"reply","intent":"status","msg":"Continuing.","th":"ok"}'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Continuing.","th":"ok"}'
     )
     assert valid.get("decision") == "answer"
     assert "_needsApproval" not in valid
@@ -166,7 +166,7 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
 
 def test_invented_th2_key_is_invalid_decision_not_schema_key() -> None:
     raw = (
-        '{"act":"reply","intent":"status","msg":"Continuing.",'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Continuing.",'
         '"th2":"need a card"}'
     )
     parsed = parse_direct_turn_response(raw)
@@ -182,10 +182,10 @@ def test_invented_th2_key_is_invalid_decision_not_schema_key() -> None:
     assert kind_for_schema_error("unexpected top-level keys: th2") == "invalid_decision"
     assert kind_for_schema_error(
         'unexpected top-level keys: th2',
-        {"act": "reply", "intent": "status", "msg": "Continuing.", "th2": "x"},
+        {"act": "reply", "work_commit": False, "intent": "status", "msg": "Continuing.", "th2": "x"},
     ) == "invalid_decision"
     valid = parse_direct_turn_response(
-        '{"act":"reply","intent":"status","msg":"Continuing.","th":"ok"}'
+        '{"act":"reply","work_commit":false,"intent":"status","msg":"Continuing.","th":"ok"}'
     )
     assert valid.get("decision") == "answer"
     assert "th2" not in ConversationDecision.model_fields
@@ -250,7 +250,7 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
     seen = _script_completions(
         monkeypatch,
         [
-            '{"act":"reply","intent":"status","msg":"I will continue.",'
+            '{"act":"reply","work_commit":false,"intent":"status","msg":"I will continue.",'
             '"_needsApproval":true,"th":"waiting"}'
         ],
     )
@@ -289,7 +289,7 @@ async def test_decision_invented_th2_fail_closes_without_repair(
     seen = _script_completions(
         monkeypatch,
         [
-            '{"act":"reply","intent":"status","msg":"I will continue.",'
+            '{"act":"reply","work_commit":false,"intent":"status","msg":"I will continue.",'
             '"th2":"waiting"}'
         ],
     )
@@ -351,9 +351,12 @@ def test_work_commit_flag_is_intent_not_an_invented_key() -> None:
     assert parsed.get("workCommit") is True
     assert parsed.get("reply") == "Committing now to land the notes"
     assert parsed.get("commitmentKind") == "none"
+    declined = parse_direct_turn_response('{"say":"Still reading the brief.","actions":[],"work_commit":false}')
+    assert declined.get("decision") == "answer"
+    assert declined.get("workCommit") is False
     omitted = parse_direct_turn_response('{"say":"Still reading the brief.","actions":[]}')
-    assert omitted.get("decision") == "answer"
-    assert omitted.get("workCommit") is None
+    assert omitted["decision"] == "_parse_failed"
+    assert 'reply requires "work_commit": true or false' in omitted["_raw_snippet"]
     compact = parse_direct_turn_response(
         '{"act":"reply","intent":"status","msg":"Committing now to land the notes",'
         '"work_commit":false,"th":"status"}'
@@ -383,29 +386,29 @@ def test_peel_say_alias_and_empty_actions() -> None:
 
 def test_say_only_decision_is_a_status_reply() -> None:
     parsed = parse_direct_turn_response(
-        '{"say":"Committed and pushed.\\n\\n- Next: pytest.","actions":[]}'
+        '{"say":"Committed and pushed.\\n\\n- Next: pytest.","actions":[],"work_commit":false}'
     )
     assert parsed.get("decision") == "answer"
     assert parsed.get("intentKind") == "status_request"
     assert parsed.get("reply") == "Committed and pushed.\n\n- Next: pytest."
     assert parsed.get("commitmentKind") == "none"
-    also = parse_direct_turn_response('{"say":"Still on the clone. No Board change."}')
+    also = parse_direct_turn_response('{"say":"Still on the clone. No Board change.","work_commit":false}')
     assert also.get("decision") == "answer"
     assert also.get("reply") == "Still on the clone. No Board change."
     aliased = parse_direct_turn_response(
-        '{"act":"reply","intent":"status","say":"Continuing.","msg":"Continuing.","th":"ok"}'
+        '{"act":"reply","work_commit":false,"intent":"status","say":"Continuing.","msg":"Continuing.","th":"ok"}'
     )
     assert aliased.get("decision") == "answer"
     assert aliased.get("reply") == "Continuing."
     mismatched = parse_direct_turn_response(
-        '{"say":"Committed.","msg":"Something else.","actions":[]}'
+        '{"say":"Committed.","msg":"Something else.","actions":[],"work_commit":false}'
     )
     assert mismatched["decision"] == "_parse_failed"
     assert mismatched.get("_parse_kind") == "invalid_decision"
 
 
 def test_say_only_does_not_parse_as_done() -> None:
-    parsed = parse_action('{"say":"Done. Tests passed.","actions":[]}')
+    parsed = parse_action('{"say":"Done. Tests passed.","actions":[],"work_commit":false}')
     assert parsed["action"] == "_parse_failed"
     assert parsed.get("_parse_kind") == "invalid_decision"
     nested = parse_action(
@@ -426,7 +429,7 @@ async def test_one_to_one_say_only_posts_to_chat_without_board_actions(
     assert state is not None
     seen = _script_completions(
         monkeypatch,
-        ['{"say":"Committed and pushed.\\n\\n- Next: pytest on the clone.","actions":[]}'],
+        ['{"say":"Committed and pushed.\\n\\n- Next: pytest on the clone.","actions":[],"work_commit":false}'],
     )
     outcome = await run_turn(
         agent,
@@ -463,7 +466,7 @@ async def test_say_only_does_not_complete_or_block_active_work(
     activate_work_activity(agent.id, task)
     seen = _script_completions(
         monkeypatch,
-        ['{"say":"Done. Tests passed. Waiting on review.","actions":[]}'],
+        ['{"say":"Done. Tests passed. Waiting on review.","actions":[],"work_commit":false}'],
     )
     outcome = await run_turn(
         agent,

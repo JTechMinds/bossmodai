@@ -97,6 +97,7 @@ from db.host_path_consent import (
     resolve_consent_request,
 )
 from db.cli_approval_requests import (
+    agent_has_pending_operator_gate,
     approve_request as approve_cli_approval_request,
     bind_approval_channel as bind_cli_approval_channel,
     count_pending_requests as count_pending_cli_approval_requests,
@@ -307,6 +308,15 @@ from db.activities import (
     get_resumable_work_activity,
     list_activities,
     update_activity,
+)
+from db.work_snapshots import (
+    append_work_interlude,
+    clear_work_interludes,
+    delete_agent_work_snapshots,
+    delete_work_snapshot,
+    get_work_snapshot,
+    save_work_snapshot,
+    set_work_snapshot_checkpoints,
 )
 
 # AI Connections
@@ -557,6 +567,14 @@ __all__ = [
     "get_resumable_work_activity",
     "list_activities",
     "update_activity",
+    # Work snapshots
+    "append_work_interlude",
+    "clear_work_interludes",
+    "delete_agent_work_snapshots",
+    "delete_work_snapshot",
+    "get_work_snapshot",
+    "save_work_snapshot",
+    "set_work_snapshot_checkpoints",
     "get_recent_activity_log_entries",
     "classify_category",
     "get_unified_feed",
@@ -618,6 +636,7 @@ __all__ = [
     "list_pending_for_grant_root_scope",
     "resolve_consent_request",
     # CLI Approval Requests
+    "agent_has_pending_operator_gate",
     "approve_cli_approval_request",
     "bind_cli_approval_channel",
     "count_pending_cli_approval_requests",

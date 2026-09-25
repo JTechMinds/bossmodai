@@ -27,11 +27,19 @@ PARSE_FAIL_NOTE = (
     "Decision parse failed — the turn did not return one JSON envelope. "
     "The commitment was re-queued."
 )
+PARSE_FAIL_IDLE_NOTE = (
+    "Decision parse failed — the turn did not return one JSON envelope. "
+    "No work was re-queued."
+)
 RESUME_REASON = "Decision parse failed. Continue the committed work."
 
 TIMEOUT_NOTE = (
     "LLM request timed out — the turn did not return one JSON envelope. "
     "The commitment was re-queued."
+)
+TIMEOUT_IDLE_NOTE = (
+    "LLM request timed out — the turn did not return one JSON envelope. "
+    "No work was re-queued."
 )
 TIMEOUT_RESUME_REASON = "LLM request timed out. Continue the committed work."
 
@@ -56,7 +64,8 @@ def surface_decision_parse_failure(
     return surface_commitment_recovery(
         agent=agent,
         trigger=trigger,
-        note=PARSE_FAIL_NOTE,
+        requeued_note=PARSE_FAIL_NOTE,
+        idle_note=PARSE_FAIL_IDLE_NOTE,
         resume_reason=RESUME_REASON,
     )
 
@@ -70,7 +79,8 @@ def surface_llm_timeout_failure(
     return surface_commitment_recovery(
         agent=agent,
         trigger=trigger,
-        note=TIMEOUT_NOTE,
+        requeued_note=TIMEOUT_NOTE,
+        idle_note=TIMEOUT_IDLE_NOTE,
         resume_reason=TIMEOUT_RESUME_REASON,
     )
 
@@ -79,17 +89,21 @@ def surface_commitment_recovery(
     *,
     agent: Agent,
     trigger: dict[str, Any] | None,
-    note: str,
+    requeued_note: str,
+    idle_note: str,
     resume_reason: str,
 ) -> dict[str, Any]:
-    """Post one operator-visible note and re-queue an open work commitment.
+    """Re-queue an open work commitment and post one note that says whether it was.
 
-    A second call for the same task does not post another copy of the note.
-    A commitment wake is skipped when that resume is already queued.
+    The requeue runs first so the note is chosen from its outcome: the
+    operator is never told work was re-queued when nothing was. A second
+    call for the same task does not post another copy of the same note. A
+    commitment wake is skipped when that resume is already queued.
     """
     task = _task_for_note(agent, trigger)
+    requests = requeue_commitment(agent, task, resume_reason=resume_reason)
+    note = requeued_note if requests else idle_note
     posted = _post_note(agent, trigger, task, note=note)
-    requests = _requeue_commitment(agent, task, resume_reason=resume_reason)
     result: dict[str, Any] = {"trigger_requests": requests}
     if posted.get("chat_message"):
         result["chat_message"] = posted["chat_message"]
@@ -119,16 +133,18 @@ def _task_for_note(agent: Agent, trigger: dict[str, Any] | None) -> Task | None:
     return None
 
 
-def _requeue_commitment(
+def requeue_commitment(
     agent: Agent,
     task: Task | None,
     *,
     resume_reason: str,
 ) -> list[dict[str, Any]]:
-    """Queue one activity resume for an open commitment.
+    """Return one activity resume for an open commitment, or ``[]``.
 
-    A pending assignment with no paused work is left alone so this path
-    cannot re-fire the decision turn.
+    Reactivates paused or soft-blocked work on ``task`` when needed. A
+    pending assignment with no paused work is left alone so this path
+    cannot re-fire the decision turn. Nothing is returned when a resume for
+    the task is already queued.
     """
     if task is None:
         return []

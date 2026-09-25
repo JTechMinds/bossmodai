@@ -597,6 +597,7 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "The drain should stay ordered for this design.",
             "proceedUntagged": True,

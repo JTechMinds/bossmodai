@@ -12,10 +12,14 @@ from core.loop_breathing import breathe, run_shell_off_request_loop
 
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import TERMINAL_ACTIONS, execute_action, parse_action
-from core.agent_loop.activity_scheduler import plan_post_turn_follow_up
 from core.agent_loop.guardian import check_no_progress, check_post_action
-from core.agent_loop.soft_blocks import apply_no_progress_block
-from core.agent_loop.liveness import next_actions_since_progress, outcome_resets_no_progress, record_action_liveness
+from core.agent_loop.soft_blocks import (
+    WAITING_WITHOUT_TASK_CODE,
+    apply_no_progress_block,
+    apply_no_progress_checkpoint,
+)
+from core.agent_loop.liveness import classify_step, next_stale_streak, record_action_liveness, step_fingerprint
+from core.agent_loop.work_snapshot import freeze_work_turn
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.task_origins import consent_origin_channel_id
@@ -54,6 +58,7 @@ from core.default_prompts import load_default_prompt
 from core.llm import client
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
+import db
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +114,25 @@ async def _run_execution_turn(
     api_config: dict[str, Any],
     context: list[dict[str, str]],
     initial_context_json: str,
-    initial_activity,
     policy,
     start: float,
 ) -> TurnOutcome:
-    """Handle CLI-approval resume and the multi-step execution action loop."""
+    """Handle CLI-approval resume and the multi-step execution action loop.
+
+    ``context`` may already carry a restored frozen transcript (see
+    ``work_snapshot.restore_work_turn``). Everything appended from here on is
+    this turn's working transcript; it is frozen onto the work activity at
+    every exit that leaves the work live, and ``seen`` fingerprints carry
+    across pauses so a re-read counts as stale.
+    """
+    # Everything from here on, including approval/consent results, is this
+    # turn's working transcript; the preamble before it is never frozen.
+    initial_len = len(context)
+    work_activity = activity_runtime.get_active_work_activity(agent.id)
+    prior_snapshot = db.get_work_snapshot(work_activity.id) if work_activity else None
+    seen_fingerprints: list[str] = list(prior_snapshot.fingerprints) if prior_snapshot else []
+    no_progress_checkpoints = prior_snapshot.no_progress_checkpoints if prior_snapshot else 0
+
     # 3b. Handle cli_approval_resolved / host_path_consent_resolved resume
     if trigger_type == "cli_approval_resolved":
         approval_fields = _resume_fields(trigger)
@@ -195,7 +214,7 @@ async def _run_execution_turn(
 
     # 4. Multi-turn loop
     action_count = 0
-    actions_since_progress = 0
+    stale_streak = 0
     action: dict[str, Any] | None = None
     executed_actions: list[str] = []
     result: dict[str, Any] = {}
@@ -207,6 +226,7 @@ async def _run_execution_turn(
     next_step_delta: str | None = None
     scheduled_triggers: list[dict[str, Any]] = []
     execution_repair_attempts = 0
+    step_messages: list[dict[str, str]] = []
 
     while True:
         action_count += 1
@@ -229,6 +249,15 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
+            # A failed turn is retried; freeze so the retry resumes from these steps.
+            _freeze_if_live(
+                agent=agent,
+                work_activity=work_activity,
+                initial_len=initial_len,
+                context=context,
+                fingerprints=seen_fingerprints,
+                no_progress_checkpoints=no_progress_checkpoints,
+            )
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -333,6 +362,15 @@ async def _run_execution_turn(
             }
             await manager.broadcast_activity(**result)
             result["parse_steer"] = True
+            # A failed turn is retried; freeze so the retry resumes from these steps.
+            _freeze_if_live(
+                agent=agent,
+                work_activity=work_activity,
+                initial_len=initial_len,
+                context=context,
+                fingerprints=seen_fingerprints,
+                no_progress_checkpoints=no_progress_checkpoints,
+            )
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -382,6 +420,15 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
+            # A failed turn is retried; freeze so the retry resumes from these steps.
+            _freeze_if_live(
+                agent=agent,
+                work_activity=work_activity,
+                initial_len=initial_len,
+                context=context,
+                fingerprints=seen_fingerprints,
+                no_progress_checkpoints=no_progress_checkpoints,
+            )
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -556,9 +603,18 @@ async def _run_execution_turn(
         )
 
         record_action_liveness(active_task_id, action, result, at=datetime.now(timezone.utc))
-        actions_since_progress = next_actions_since_progress(
-            actions_since_progress,
-            progressed=outcome_resets_no_progress(action, result),
+        step_kind = classify_step(action, result, frozenset(seen_fingerprints))
+        stale_streak = next_stale_streak(stale_streak, step_kind)
+        if step_kind == "progress":
+            no_progress_checkpoints = 0
+        fingerprint = step_fingerprint(action)
+        if fingerprint not in seen_fingerprints:
+            seen_fingerprints.append(fingerprint)
+        step_messages = _step_messages(
+            action_name=action_name,
+            response_content=response.content,
+            result=result,
+            active_activity_kind=active_activity.kind if active_activity else None,
         )
 
         # Guardian hard-stop checks (token explosion, velocity, repetition)
@@ -571,6 +627,15 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
+            # A failed turn is retried; freeze so the retry resumes from these steps.
+            _freeze_if_live(
+                agent=agent,
+                work_activity=work_activity,
+                initial_len=initial_len,
+                context=[*context, *step_messages],
+                fingerprints=seen_fingerprints,
+                no_progress_checkpoints=no_progress_checkpoints,
+            )
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -606,13 +671,23 @@ async def _run_execution_turn(
                 start=start,
             )
 
-        # Guardian no-progress: block + @ next owner, not diagnostic spam.
-        # Landed writes reset actions_since_progress, so a scaffold cannot
-        # trip this on its own.
-        violation = check_no_progress(agent, actions_since_progress)
+        # Guardian no-progress: consecutive stale steps (repeats, failures).
+        # First spend a checkpoint (one resume telling the agent it is
+        # repeating itself); only then block + @ next owner. Landed writes
+        # reset the streak and novel reads leave it, so investigation alone
+        # cannot trip this.
+        violation = check_no_progress(agent, stale_streak)
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
-            result = apply_no_progress_block(agent, trigger)
+            _freeze_if_live(
+                agent=agent,
+                work_activity=work_activity,
+                initial_len=initial_len,
+                context=[*context, *step_messages],
+                fingerprints=seen_fingerprints,
+                no_progress_checkpoints=no_progress_checkpoints,
+            )
+            result = apply_no_progress_checkpoint(agent, trigger) or apply_no_progress_block(agent, trigger)
             await manager.broadcast_activity(
                 event=result.get("event") or "status_changed",
                 detail=result.get("detail") or "",
@@ -672,7 +747,11 @@ async def _run_execution_turn(
         # Terminal lifecycle actions only end the turn when they succeeded.
         # Validation-style feedback (for example missing deliverables before
         # `done`) should keep the same turn alive so the model can correct it.
-        if action_name == "waiting" and result.get("event") != "status_changed":
+        # A wait with no bound task already posted its Blocked line and has no
+        # work for the runtime to resume, so it ends the turn. Any other wait
+        # feedback (missing data.msg, a verbal host-access steer) falls
+        # through to the continuation below, like done-validation feedback.
+        if action_name == "waiting" and result.get("feedback_code") == WAITING_WITHOUT_TASK_CODE:
             break
         if action_name in TERMINAL_ACTIONS and result.get("event") not in {"world_feedback", "agent_error"}:
             break
@@ -699,42 +778,25 @@ async def _run_execution_turn(
             break
 
         # Non-terminal action — feed result back and continue
-        if action_name == "bm_cli" and result.get("cli_prompt_content"):
-            continuation_messages = cli_continuation_messages(
-                assistant_content=response.content,
-                cli_prompt_content=result["cli_prompt_content"],
-                followup_content=load_default_prompt("internal_loop_execution_cli_followup"),
-            )
-        else:
-            continuation_messages = [
-                {"role": "assistant", "content": response.content},
-                {
-                    "role": "user",
-                    "content": _build_continuation_instruction(
-                        result=result,
-                        action_name=action_name,
-                        active_activity_kind=active_activity.kind if active_activity else None,
-                    ),
-                },
-            ]
-        context.extend(continuation_messages)
-        next_step_delta = _serialize_trace_value(continuation_messages)
+        context.extend(step_messages)
+        next_step_delta = _serialize_trace_value(step_messages)
+        step_messages = []
 
-    final_activity = activity_runtime.get_active_activity(agent.id)
+    # The step that ended the loop has not been appended yet; it is part of
+    # what the agent did, so the freeze includes it.
+    _freeze_if_live(
+        agent=agent,
+        work_activity=work_activity,
+        initial_len=initial_len,
+        context=[*context, *step_messages],
+        fingerprints=seen_fingerprints,
+        no_progress_checkpoints=no_progress_checkpoints,
+    )
     if trigger_type == "host_path_consent_resolved":
-        import db
-
         db.consume_turn_once_grants(agent.id)
 
     final_result = dict(result)
-    final_result["trigger_requests"] = plan_post_turn_follow_up(
-        agent_id=agent.id,
-        trigger=trigger,
-        initial_activity=initial_activity,
-        final_activity=final_activity,
-        result={**final_result, "trigger_requests": scheduled_triggers},
-        action=action,
-    )
+    final_result["trigger_requests"] = scheduled_triggers
 
     return await _finalize_turn(
         agent=agent,
@@ -755,4 +817,65 @@ async def _run_execution_turn(
             steps=step_traces,
         ),
         start=start,
+    )
+
+
+def _step_messages(
+    *,
+    action_name: str,
+    response_content: str,
+    result: dict[str, Any],
+    active_activity_kind: str | None,
+) -> list[dict[str, str]]:
+    """Return one step's working-transcript messages: the action, then its result."""
+    if action_name == "bm_cli" and result.get("cli_prompt_content"):
+        return cli_continuation_messages(
+            assistant_content=response_content,
+            cli_prompt_content=result["cli_prompt_content"],
+            followup_content=load_default_prompt("internal_loop_execution_cli_followup"),
+        )
+    return [
+        {"role": "assistant", "content": response_content},
+        {
+            "role": "user",
+            "content": _build_continuation_instruction(
+                result=result,
+                action_name=action_name,
+                active_activity_kind=active_activity_kind,
+            ),
+        },
+    ]
+
+
+def _freeze_if_live(
+    *,
+    agent: Agent,
+    work_activity,
+    initial_len: int,
+    context: list[dict[str, str]],
+    fingerprints: list[str],
+    no_progress_checkpoints: int,
+) -> None:
+    """Freeze the working transcript when the turn's work activity is still live.
+
+    Live means active or paused on a non-terminal task: an interrupt,
+    approval, consent, walk, wait, block or no-progress exit. A terminal exit
+    (done, drop, deleg, cancel) has already ended the activity, and ending an
+    activity deletes its snapshot, so nothing is frozen for it.
+    """
+    if work_activity is None:
+        return
+    current = db.get_activity(work_activity.id)
+    if current is None or current.status not in {"active", "paused"}:
+        return
+    task = db.get_task(current.task_id) if current.task_id else None
+    if task is not None and not activity_runtime.is_live_work_task(task):
+        return
+    freeze_work_turn(
+        agent=agent,
+        activity=current,
+        initial_len=initial_len,
+        context=context,
+        fingerprints=fingerprints,
+        no_progress_checkpoints=no_progress_checkpoints,
     )

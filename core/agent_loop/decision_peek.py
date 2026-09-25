@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.bm_cli.parser import parse_cli_command
+from core.agent_loop.liveness import command_fingerprint
 
 SOFT_PEEK_BUDGET = 10
 IDENTICAL_PEEK_STREAK_LIMIT = 3
@@ -41,7 +41,7 @@ class DecisionPeekBudget:
 
     def consider(self, command: str, content: str | None = None) -> PeekBudgetVerdict:
         """Record one CLI peek and return whether it may execute."""
-        fingerprint = normalize_peek_fingerprint(command, content)
+        fingerprint = command_fingerprint(command, content)
         next_streak = self.identical_streak + 1 if fingerprint == self.last_fingerprint else 1
 
         if next_streak >= IDENTICAL_PEEK_STREAK_LIMIT:
@@ -61,69 +61,3 @@ class DecisionPeekBudget:
         self.identical_streak = next_streak
         self.peek_count += 1
         return PeekBudgetVerdict(allowed=True)
-
-
-def normalize_peek_fingerprint(command: str, content: str | None = None) -> str:
-    """Stable identity for a decision-turn CLI peek.
-
-    Path tweaks must not dodge the budget: ``ls a`` ≡ ``ls a/`` ≡ ``ls ./a``.
-    Command aliases and extra whitespace collapse. Write-body content is part
-    of the identity when present. ``request_host_access`` is not a peek.
-    """
-    try:
-        parsed = parse_cli_command(command)
-    except ValueError:
-        collapsed = " ".join((command or "").split())
-        return _join_fingerprint(collapsed.lower(), content)
-
-    args = tuple(
-        normalized
-        for normalized in (_normalize_peek_arg(arg) for arg in parsed.args)
-        if normalized
-    )
-    body = " ".join((parsed.name, *args)).strip()
-    return _join_fingerprint(body, content)
-
-
-def _join_fingerprint(command_body: str, content: str | None) -> str:
-    extra = (content or "").strip()
-    if extra:
-        return f"{command_body}\n{extra}"
-    return command_body
-
-
-def _normalize_peek_arg(arg: str) -> str:
-    token = arg.strip()
-    if token.startswith("-") and token != "-":
-        return token
-    return _normalize_peek_path(token)
-
-
-def _normalize_peek_path(raw: str) -> str:
-    text = raw.strip().replace("\\", "/")
-    if not text:
-        return ""
-    while "//" in text:
-        text = text.replace("//", "/")
-    if text != "/":
-        text = text.rstrip("/")
-    while text.startswith("./"):
-        text = text[2:]
-        if text != "/":
-            text = text.rstrip("/")
-    if text in {"", "."}:
-        return ""
-
-    absolute = text.startswith("/")
-    parts: list[str] = []
-    for item in text.split("/"):
-        if item in {"", "."}:
-            continue
-        if item == "..":
-            if parts:
-                parts.pop()
-            continue
-        parts.append(item)
-    if absolute:
-        return "/" + "/".join(parts) if parts else "/"
-    return "/".join(parts)

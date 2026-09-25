@@ -1,8 +1,10 @@
 """Soft blocked one-liners: wait-without-task and guardian no_progress.
 
 These must not become hard ``agent_error`` / diagnostic spam. Origin thread
-gets one locked line. Wait without a task does not freeze the agent. No-progress
-blocks the bound task (when there is one) and tags a next owner.
+gets one locked line. Wait without a task does not freeze the agent. A
+no-progress trip first spends a checkpoint (one resume that tells the agent it
+is repeating itself); only after that does it block the bound task (when there
+is one) and tag a next owner.
 
 Soft-block stays an operator safety control. It auto-clears when the agent is
 actually working the bound task so Board / Needs do not stay sticky Blocked.
@@ -15,11 +17,6 @@ from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
-from core.agent_loop.next_owner import (
-    HUMAN_MENTION_NAMES,
-    is_multi_party_channel,
-    mention_names_for_channel,
-)
 from core.agent_loop.blocked_origin import (
     NO_PROGRESS_KIND,
     NO_PROGRESS_WHY,
@@ -45,6 +42,9 @@ WAITING_WITHOUT_TASK_LINE = "Blocked — wait needs an active task"
 
 NO_PROGRESS_CODE = "no_progress_block"
 NO_PROGRESS_LINE = format_blocked_line(NO_PROGRESS_WHY)
+
+NO_PROGRESS_CHECKPOINTS_SETTING = "guardian_no_progress_checkpoints"
+NO_PROGRESS_CHECKPOINT_CODE = "no_progress_checkpoint"
 
 
 def clear_soft_block_for_live_work(agent_id: str) -> Task | None:
@@ -113,7 +113,7 @@ def apply_no_progress_block(
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Block the bound task (if any) and post a next-owner line. Not guardian noise."""
-    mention = next_owner_mention(agent, trigger=trigger)
+    mention = next_owner_mention(agent)
     content = format_blocked_line(NO_PROGRESS_WHY, mention)
     task_id = activity_runtime.get_active_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
@@ -168,40 +168,66 @@ def apply_no_progress_block(
     return result
 
 
-def next_owner_mention(
+def apply_no_progress_checkpoint(
     agent: Agent,
     trigger: dict[str, Any] | None = None,
-) -> str | None:
-    """Return ``@Name`` for the next owner, or ``@Human Operator`` when none is clearer."""
+) -> dict[str, Any] | None:
+    """Spend one no-progress checkpoint before a no-progress trip blocks the task.
+
+    The caller has already frozen the turn, so the snapshot row exists and
+    carries the checkpoint count (reset on any progress step). While that
+    count is below ``guardian_no_progress_checkpoints`` this records one more
+    checkpoint and returns a result that queues one ``activity_resumed`` with
+    the checkpoint prompt as its reason; the task stays active. Otherwise it
+    returns ``None`` and the caller blocks via :func:`apply_no_progress_block`.
+
+    ``trigger`` mirrors :func:`apply_no_progress_block`; the checkpoint
+    resumes the bound work activity whatever woke this turn.
+
+    Raises:
+        LookupError: The work activity has no frozen snapshot to count on.
+    """
+    from core import config
+    from core.agent_loop.activity_scheduler import build_activity_resume_trigger
+    from core.default_prompts import load_default_prompt
+
+    active = activity_runtime.get_active_work_activity(agent.id)
+    if active is None:
+        return None
+    snapshot = db.get_work_snapshot(active.id)
+    if snapshot is None:
+        raise LookupError(f"No frozen work for activity {active.id}; freeze before a checkpoint")
+    limit = config.require_int(NO_PROGRESS_CHECKPOINTS_SETTING)
+    if snapshot.no_progress_checkpoints >= limit:
+        return None
+    db.set_work_snapshot_checkpoints(active.id, snapshot.no_progress_checkpoints + 1)
+    reason = load_default_prompt("internal_loop_execution_no_progress_checkpoint")
+    return {
+        "event": "world_feedback",
+        "feedback_code": NO_PROGRESS_CHECKPOINT_CODE,
+        "detail": f"{agent.name} is repeating steps; resuming with a no-progress checkpoint.",
+        "agent_name": agent.name,
+        "trigger_requests": [build_activity_resume_trigger(active, reason=reason)],
+    }
+
+
+def next_owner_mention(agent: Agent) -> str:
+    """Return ``@Name`` for the next owner of the agent's bound task.
+
+    Precedence: the task's requester, then its owner — each only when it is
+    not the agent itself and shares the agent's floor — else
+    ``@Human Operator``. A teammate who merely shares the thread is never
+    named: they did not ask for the work.
+    """
     task_id = activity_runtime.get_active_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
-    channel_id = _channel_id(task, trigger)
-    author = (agent.name or "").strip().lower()
-    if channel_id and is_multi_party_channel(channel_id):
-        names = mention_names_for_channel(channel_id)
-        teammates = [
-            name
-            for name in names
-            if name
-            and name.strip().lower() != author
-            and name not in HUMAN_MENTION_NAMES
-        ]
-        if teammates:
-            return f"@{teammates[0]}"
-        return "@Human Operator"
     if task is not None:
-        requester = getattr(task, "requester_id", None)
-        if requester and requester != agent.id:
-            if requester == HUMAN_SENDER_ID:
+        for party_id in (getattr(task, "requester_id", None), getattr(task, "owner_id", None)):
+            if not party_id or party_id == agent.id:
+                continue
+            if party_id == HUMAN_SENDER_ID:
                 return "@Human Operator"
-            other = db.get_agent(requester)
-            if other is not None and (other.name or "").strip() and _same_home(agent.id, other.id):
-                return f"@{other.name}"
-        owner = getattr(task, "owner_id", None)
-        if owner and owner != agent.id:
-            if owner == HUMAN_SENDER_ID:
-                return "@Human Operator"
-            other = db.get_agent(owner)
+            other = db.get_agent(party_id)
             if other is not None and (other.name or "").strip() and _same_home(agent.id, other.id):
                 return f"@{other.name}"
     return "@Human Operator"

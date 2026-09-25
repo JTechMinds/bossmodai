@@ -105,7 +105,7 @@ def create_agent(
     guardian_token_limit: int = 30_000,
     guardian_velocity_limit: int = 10,
     guardian_repetition_threshold: float = 0.85,
-    guardian_no_progress_threshold: int = 30,
+    guardian_no_progress_threshold: int = 100,
     floor_id: str | None = None,
 ) -> Agent:
     """Insert a new agent, its companion state rows and its snapshot atomically.
@@ -308,6 +308,8 @@ def delete_agent(agent_id: str) -> bool:
     execute("UPDATE meeting_session_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
     execute("UPDATE meeting_sessions SET created_by_agent_id = NULL WHERE created_by_agent_id = $1", [agent_id])
     execute("DELETE FROM meeting_response_candidates WHERE agent_id = $1", [agent_id])
+    # frozen work transcripts reference activities
+    execute("DELETE FROM work_snapshots WHERE agent_id = $1", [agent_id])
     # activities (clear self-referential parent_activity_id first)
     execute(
         "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",

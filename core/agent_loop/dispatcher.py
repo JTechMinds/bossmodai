@@ -12,7 +12,9 @@ from typing import Any
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import (
+    INTERRUPT_TRIGGER_TYPES,
     can_dispatch_trigger,
+    ensure_live_work_continuation,
     persist_result_triggers,
     plan_arrival_follow_up,
     prepare_trigger_context,
@@ -29,6 +31,7 @@ from core.llm.client import close_provider_sessions
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
+from core.agent_loop.work_snapshot import finish_restored_turn, paused_work_snapshot
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
     origin_thread_target,
@@ -324,6 +327,7 @@ class TurnDispatcher:
                 agent.id,
                 detail=f"Cancelled after retry exhaustion: {failure_detail}",
             )
+            db.delete_agent_work_snapshots(agent.id)
             activity_runtime.refresh_agent_status(agent.id)
             await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=task)
             await manager.broadcast_activity(
@@ -823,6 +827,9 @@ class TurnDispatcher:
                     self._rebuild_backlog_queue(agent.id)
                 db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
                 self._enqueue_result_triggers(result)
+                finish_restored_turn(trigger)
+                self._record_work_interlude(agent.id, trigger)
+                self._ensure_live_work_continuation(agent.id)
 
                 if result.get("path") and result.get("agent_id"):
                     from core.world.simulation import simulation
@@ -833,6 +840,11 @@ class TurnDispatcher:
                 # trigger avoids _exhaust_failed_trigger, which would mark the
                 # row failed and can stall the bound task (HA-CORR-P0-03).
                 db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
+                # A skipped resume is not re-queued: with no model it would
+                # only skip again, forever. Any other skip still owes the
+                # live work its next turn.
+                if trigger.get("type") != "activity_resumed":
+                    self._ensure_live_work_continuation(agent.id)
             else:
                 await self._supervise_failed_turn(
                     agent=agent,
@@ -885,6 +897,42 @@ class TurnDispatcher:
                 self.notify_agent_idle(agent.id)
             await emit_queue_visibility(agent.id)
             self.notify()
+
+    def _ensure_live_work_continuation(self, agent_id: str) -> None:
+        """Queue the next execution turn when a finished turn left live work.
+
+        The dispatcher is the one place that knows a turn has ended, so the
+        continuation invariant runs here rather than in each decision branch.
+        """
+        spec = ensure_live_work_continuation(agent_id)
+        if spec is None:
+            return
+        self.enqueue_trigger(**spec)
+
+    @staticmethod
+    def _record_work_interlude(agent_id: str, trigger: dict[str, Any]) -> None:
+        """Record an interrupt handled while work was frozen, with the agent's reply.
+
+        ``spoken_text`` is set on this same trigger dict by ``apply_decision``;
+        an empty value means the agent observed or passed. The next resume
+        renders the interlude first so the agent sees what changed.
+        """
+        if trigger.get("type") not in INTERRUPT_TRIGGER_TYPES:
+            return
+        found = paused_work_snapshot(agent_id)
+        if found is None:
+            return
+        activity, _snapshot = found
+        db.append_work_interlude(
+            activity.id,
+            {
+                # Runtime pings and some peer wakes carry no speaker name;
+                # the trigger type names the source instead.
+                "from_name": str(trigger.get("from_name") or trigger.get("type")),
+                "content": str(trigger.get("content") or ""),
+                "reply": str(trigger.get("spoken_text") or ""),
+            },
+        )
 
     async def handle_arrival(self, agent_id: str, room_name: str) -> None:
         """Resolve movement arrival and schedule the resumed activity, if any."""

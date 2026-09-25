@@ -312,7 +312,7 @@ def surface_blocked_origin(
     )
     from core.agent_loop import activity_runtime
 
-    mention = next_owner_mention(agent, trigger=trigger)
+    mention = next_owner_mention(agent)
     content = format_blocked_line(why, mention)
     task_id = activity_runtime.get_active_task_id(getattr(agent, "id", None) or "")
     task = db.get_task(task_id) if task_id else None

@@ -1,12 +1,12 @@
 Return one JSON object, no fences/markdown.
 
 Minimal allowed envelope for this turn (no Board change):
-{"say":"string","actions":[]}
+{"say":"string","actions":[],"work_commit":false}
 
 Allowed keys only:
 - `say` (alias `msg`) is the operator-visible chat text
 - `actions` is optional; empty is valid for a 1:1 status update with no Board/CLI work
-- `work_commit` is an optional boolean. True only when `say` commits to doing the work on this turn. Omit it for status. It is not Done.
+- `work_commit` is a required boolean on every reply (including the say-only envelope). `false` for status, questions, and reports. `true` only to continue work already active on your Board; to start new work, use act `accept` with commit `work` instead. It is not Done.
 - `act` is the response mode when you are not using the say-only envelope
 - `intent` is the topic
 - `commit` is the commitment kind when the contract allows it

@@ -108,6 +108,7 @@ class TaskWatchdog:
                         task.assigned_to,
                         detail="Cancelled after watchdog escalation.",
                     )
+                    db.delete_agent_work_snapshots(task.assigned_to)
                     activity_runtime.refresh_agent_status(task.assigned_to)
                     agent = db.get_agent(task.assigned_to)
                     if agent is not None:

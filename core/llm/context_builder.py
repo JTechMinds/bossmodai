@@ -18,6 +18,7 @@ from core.agent_loop.role_contracts import format_role_contract_block, operator_
 from core.agent_loop.runtime_core import format_runtime_core_block, workspace_preference_context
 from core.agent_loop.standing_prefs import read_standing_prefs, render_warm_section
 from core.agent_loop.turn_context import _determine_mode
+from core.agent_loop.work_snapshot import paused_work_snapshot, render_paused_work_view
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
@@ -186,6 +187,11 @@ def build_context(
         communication_snapshot = _render_communication_snapshot(turn, template_overrides)
         if communication_snapshot:
             messages.append({"role": "system", "content": communication_snapshot})
+        # After the stable blocks and before chat history, so the cached
+        # prefix is unchanged when there is no paused work.
+        paused_work = _render_paused_work(turn)
+        if paused_work:
+            messages.append({"role": "system", "content": paused_work})
 
     for msg in turn.conversation_history:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
@@ -201,6 +207,23 @@ def build_context(
     messages.append({"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind, template_overrides)})
 
     return messages
+
+
+def _render_paused_work(turn: TurnContext) -> str | None:
+    """Return the read-only paused-work view for a decision turn, if any.
+
+    Built by code from the frozen execution transcript of the agent's active
+    (else newest paused) work activity, so a status reply is grounded in what
+    the agent actually ran. Execution turns get the full restored transcript
+    instead and never this view.
+    """
+    found = paused_work_snapshot(turn.agent.id)
+    if found is None:
+        return None
+    activity, snapshot = found
+    task = db.get_task(activity.task_id) if activity.task_id else None
+    title = (task.title if task is not None else None) or activity.title or "your task"
+    return render_paused_work_view(snapshot, task_title=title)
 
 
 def _default_role_prompt(agent: Agent) -> str:

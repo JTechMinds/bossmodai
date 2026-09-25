@@ -81,6 +81,13 @@ _ALLOWED_ACTS_BY_TRIGGER = {
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
 
+REPLY_WORK_COMMIT_REQUIRED = 'reply requires "work_commit": true or false'
+WORK_COMMIT_STARTS_NOTHING = (
+    '"work_commit": true on a reply starts nothing — this is your only turn. '
+    'Use act "accept" with commit "work" (and data.task for new work), or set work_commit false.'
+)
+WORK_COMMIT_CANNOT_START = "you cannot start work from this turn; set work_commit false."
+
 class DelegatedWorkItem(BaseModel):
     """One delegated child-task request embedded in an accepted work decision."""
 
@@ -137,11 +144,14 @@ class ConversationDecision(BaseModel):
     proceedUntagged: bool = False
     nextOwners: list[str] = Field(default_factory=list)
     thought: str = Field(default="")
-    # Envelope intent. None means the model omitted work_commit.
+    # Envelope intent. Required on every reply (``answer``): the model must
+    # declare whether this reply commits to work. None means it was omitted.
     workCommit: bool | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ConversationDecision":
+        if self.decision == "answer" and self.workCommit is None:
+            raise ValueError(REPLY_WORK_COMMIT_REQUIRED)
         if self.decision in {"answer", "clarify", "cancel", "decline", "observe"} and self.commitmentKind != "none":
             raise ValueError(f'"{self.decision}" decisions must use commitmentKind="none"')
         if self.decision == "observe":
@@ -232,16 +242,14 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
 
     try:
         normalized = _normalize_conversation_payload(wire)
+        normalized["workCommit"] = work_commit
         decision = ConversationDecision.model_validate(normalized)
     except (ValidationError, ValueError) as exc:
         error = _validation_message(exc)
         logger.warning("Invalid decision payload: %s", error)
         return _schema_failed_payload(raw_response, parsed, exc)
 
-    dumped = decision.model_dump()
-    if work_commit is not None:
-        dumped["workCommit"] = work_commit
-    return dumped
+    return decision.model_dump()
 
 
 def _operator_say_before_peel(payload: dict[str, Any]) -> str | None:
@@ -504,9 +512,17 @@ def validate_decision_for_trigger(
     *,
     trigger_type: str,
     active_task_id: str | None,
+    has_live_work: bool,
+    agent_id: str,
     trigger: dict[str, Any] | None = None,
 ) -> str | None:
-    """Validate a parsed decision against the conversation turn context."""
+    """Validate a parsed decision against the conversation turn context.
+
+    ``has_live_work`` is whether the agent had an active work activity when
+    the turn started; it decides what a reply's ``work_commit: true`` may
+    mean (see :func:`_work_commit_error`). ``agent_id`` is the replying
+    agent, needed to check that a committed reply names its own open task.
+    """
     if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
         return "watchdog status pings require a direct reply"
 
@@ -600,4 +616,59 @@ def validate_decision_for_trigger(
     if trigger_type in {"session_message", "channel_message"} and decision.decision == "defer":
         return 'shared-message intake turns may observe, reply, accept, clarify, or decline; defer only after you are actively replying'
 
+    if decision.decision == "answer" and decision.workCommit:
+        return _work_commit_error(
+            trigger_type=trigger_type,
+            trigger=trigger,
+            has_live_work=has_live_work,
+            agent_id=agent_id,
+        )
+
     return None
+
+
+def _work_commit_error(
+    *,
+    trigger_type: str,
+    trigger: dict[str, Any] | None,
+    has_live_work: bool,
+    agent_id: str,
+) -> str | None:
+    """Return why a reply's ``work_commit: true`` is invalid, or ``None``.
+
+    A reply is the agent's only round: nothing runs after it unless work is
+    already live (the runtime continues that) or the reply is on the
+    agent's own open task (``apply_decision`` requeues exactly that task).
+    Anywhere ``accept`` is allowed, new work must be accepted instead.
+    """
+    if has_live_work:
+        return None
+    if _accept_allowed(trigger_type, trigger):
+        return WORK_COMMIT_STARTS_NOTHING
+    if _trigger_task_is_open_for(trigger, agent_id):
+        return None
+    return WORK_COMMIT_CANNOT_START
+
+
+def _accept_allowed(trigger_type: str, trigger: dict[str, Any] | None) -> bool:
+    """Return whether this turn could legally ``accept`` instead of replying."""
+    if "accept" not in allowed_decisions_for_trigger(trigger_type):
+        return False
+    if trigger_type == "task_follow_up":
+        task_status = str((trigger or {}).get("task_status") or "").strip().lower()
+        task_party = str((trigger or {}).get("task_party") or "").strip().lower()
+        return task_status == "pending" and task_party == "assignee"
+    return True
+
+
+def _trigger_task_is_open_for(trigger: dict[str, Any] | None, agent_id: str) -> bool:
+    """Return whether the trigger's task is open and assigned to ``agent_id``."""
+    # Local: db and tasking import this module on their way in.
+    import db
+    from core.tasking.resolution import OPEN_TASK_STATUSES
+
+    task_id = (trigger or {}).get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return False
+    task = db.get_task(task_id)
+    return task is not None and task.assigned_to == agent_id and task.status in OPEN_TASK_STATUSES

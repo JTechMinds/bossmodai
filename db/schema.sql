@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS agents (
     guardian_token_limit           INTEGER DEFAULT 30000,
     guardian_velocity_limit        INTEGER DEFAULT 10,
     guardian_repetition_threshold  FLOAT   DEFAULT 0.85,
-    guardian_no_progress_threshold INTEGER DEFAULT 30,
+    guardian_no_progress_threshold INTEGER DEFAULT 100,
     floor_id                      VARCHAR,
     vacation_since                TIMESTAMP,
     created_at                    TIMESTAMP DEFAULT current_timestamp
@@ -608,6 +608,21 @@ CREATE TABLE IF NOT EXISTS activities (
     created_at         TIMESTAMP DEFAULT current_timestamp,
     updated_at         TIMESTAMP DEFAULT current_timestamp,
     ended_at           TIMESTAMP
+);
+
+-- Frozen working transcript of one work activity (see db/work_snapshots.py).
+-- Separate from activities: the transcript can be large and activities are
+-- read on nearly every path.
+CREATE TABLE IF NOT EXISTS work_snapshots (
+    activity_id              VARCHAR PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+    agent_id                 VARCHAR NOT NULL,
+    task_id                  VARCHAR,
+    transcript               TEXT NOT NULL DEFAULT '[]',
+    fingerprints             TEXT NOT NULL DEFAULT '[]',
+    interludes               TEXT NOT NULL DEFAULT '[]',
+    no_progress_checkpoints  INTEGER NOT NULL DEFAULT 0,
+    created_at               TIMESTAMP DEFAULT current_timestamp,
+    updated_at               TIMESTAMP DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS notifications (

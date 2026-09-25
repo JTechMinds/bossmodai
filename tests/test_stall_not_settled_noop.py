@@ -1,6 +1,7 @@
 """Stall is not a settled no-op.
 
-Landed project writes reset the no-progress streak. A real reply to
+Landed project writes reset the no-progress streak; repeated or failed steps
+grow it and novel reads leave it. A real reply to
 ``Blocked — … @NextOwner`` hard-wakes the blocked agent. A settled essay
 still ends as empty speak and stay-out.
 """
@@ -21,8 +22,9 @@ from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.guardian import check_no_progress
 from core.agent_loop.liveness import (
+    classify_step,
     command_mutates_project,
-    next_actions_since_progress,
+    next_stale_streak,
     outcome_resets_no_progress,
     record_action_liveness,
 )
@@ -48,13 +50,19 @@ def teardown_function() -> None:
     db.close_connection()
 
 
-def _thread_task(*, assignee_id: str, channel_id: str, title: str = "Scaffold"):
+def _thread_task(
+    *,
+    assignee_id: str,
+    channel_id: str,
+    title: str = "Scaffold",
+    requester_id: str = HUMAN_SENDER_ID,
+):
     return create_or_bind_task(
         title=title,
         description="Write the project.",
         project=None,
         assigned_to=assignee_id,
-        requester_id=HUMAN_SENDER_ID,
+        requester_id=requester_id,
         owner_id=None,
         created_by=HUMAN_SENDER_ID,
         parent_task_id=None,
@@ -128,24 +136,23 @@ def test_project_writes_reset_the_no_progress_streak() -> None:
     agent = db.create_agent("Charles", role="Builder", desk_x=1, desk_y=1)
     agent.guardian_no_progress_threshold = 3
     streak = 0
+    seen: set[str] = set()
     for index in range(5):
         action, result = _write(f"/projects/diablo-poc/file{index}.py")
         assert outcome_resets_no_progress(action, result) is True
-        streak = next_actions_since_progress(streak, progressed=True)
+        streak = next_stale_streak(streak, classify_step(action, result, seen))
         assert streak == 0
         assert check_no_progress(agent, streak) is None
 
+    read = {"action": "bm_cli", "command": "ls /projects/diablo-poc"}
+    streak = next_stale_streak(streak, classify_step(read, {"event": "bm_cli_result"}, seen))
+    assert streak == 0, "a first read is novel, not stale"
+    seen.add("ls /projects/diablo-poc")
     for _ in range(2):
-        streak = next_actions_since_progress(
-            streak,
-            progressed=outcome_resets_no_progress(
-                {"action": "bm_cli", "command": "ls /projects/diablo-poc"},
-                {"event": "bm_cli_result"},
-            ),
-        )
+        streak = next_stale_streak(streak, classify_step(read, {"event": "bm_cli_result"}, seen))
     assert streak == 2
     assert check_no_progress(agent, streak) is None
-    streak = next_actions_since_progress(streak, progressed=False)
+    streak = next_stale_streak(streak, classify_step(read, {"event": "bm_cli_result"}, seen))
     assert check_no_progress(agent, streak) is not None
 
 
@@ -210,7 +217,7 @@ def test_blocked_next_owner_reply_hard_wakes_and_does_not_stay_out(
 ) -> None:
     """What's the block? reopens Charles. Empty speak must not stay him out."""
     charles, brad, ada, channel = _pair()
-    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id, requester_id=brad.id)
     activate_work_activity(charles.id, creation.task)
     result = apply_no_progress_block(
         charles,
@@ -258,7 +265,7 @@ def test_operator_at_stays_ahead_of_the_blocked_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     charles, brad, ada, channel = _pair()
-    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id, requester_id=brad.id)
     activate_work_activity(charles.id, creation.task)
     blocked = apply_no_progress_block(
         charles,
@@ -333,7 +340,7 @@ def test_settled_essay_stays_out_and_does_not_reopen_the_blocked_agent(
 ) -> None:
     """A settled no-op is still empty speak and stay-out, not a hard wake."""
     charles, brad, ada, channel = _pair()
-    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id, requester_id=brad.id)
     activate_work_activity(charles.id, creation.task)
     blocked = apply_no_progress_block(
         charles,
@@ -387,7 +394,7 @@ def test_ack_to_the_blocked_line_does_not_reopen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     charles, brad, _ada, channel = _pair()
-    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=charles.id, channel_id=channel.id, requester_id=brad.id)
     activate_work_activity(charles.id, creation.task)
     result = apply_no_progress_block(
         charles,

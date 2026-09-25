@@ -317,6 +317,46 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "cli_approval_requests", "review_note", "TEXT",
     )
     _backfill_task_closed_at(con)
+    _create_work_snapshots_table_if_missing(con)
+    _raise_default_no_progress_threshold(con)
+
+
+def _create_work_snapshots_table_if_missing(con: SQLiteCompatConnection) -> None:
+    """Backfill the frozen work-transcript table for existing databases."""
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS work_snapshots (
+            activity_id              VARCHAR PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+            agent_id                 VARCHAR NOT NULL,
+            task_id                  VARCHAR,
+            transcript               TEXT NOT NULL DEFAULT '[]',
+            fingerprints             TEXT NOT NULL DEFAULT '[]',
+            interludes               TEXT NOT NULL DEFAULT '[]',
+            no_progress_checkpoints  INTEGER NOT NULL DEFAULT 0,
+            created_at               TIMESTAMP DEFAULT current_timestamp,
+            updated_at               TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+
+
+# The shipped per-agent no-progress default before it was raised to 100.
+_FACTORY_NO_PROGRESS_THRESHOLD = 30
+_DEFAULT_NO_PROGRESS_THRESHOLD = 100
+
+
+def _raise_default_no_progress_threshold(con: SQLiteCompatConnection) -> None:
+    """Move agents still on the old factory no-progress threshold to 100.
+
+    The column is not exposed in the UI or API, so 30 can only be the old
+    default, never an operator choice. Idempotent: rows already at another
+    value are left alone.
+    """
+    con.execute(
+        "UPDATE agents SET guardian_no_progress_threshold = $1 "
+        "WHERE guardian_no_progress_threshold = $2",
+        [_DEFAULT_NO_PROGRESS_THRESHOLD, _FACTORY_NO_PROGRESS_THRESHOLD],
+    )
 
 
 def _ensure_source_keyed_sticky_slots(con: SQLiteCompatConnection) -> None:

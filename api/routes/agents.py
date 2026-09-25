@@ -1244,6 +1244,7 @@ async def reset_agent_runtime(agent_id: str):
 
     deleted_triggers = db.delete_open_triggers(agent_id)
     cancelled_activities = db.cancel_open_activities(agent_id, detail=reset_note)
+    db.delete_agent_work_snapshots(agent_id)
     activity_runtime.refresh_agent_status(agent_id)
     from core.agent_loop.queue_visibility import emit_queue_visibility
 

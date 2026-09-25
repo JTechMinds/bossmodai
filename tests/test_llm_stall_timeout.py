@@ -20,7 +20,7 @@ from core.llm.client import LLMError, LLMResponse, LLMTimeoutError, completion
 from core.models.message import HUMAN_SENDER_ID
 from db.settings import get_seed_setting_default
 
-_OK = '{"say":"Still on the clone.","actions":[]}'
+_OK = '{"say":"Still on the clone.","actions":[],"work_commit":false}'
 
 
 def setup_function() -> None:

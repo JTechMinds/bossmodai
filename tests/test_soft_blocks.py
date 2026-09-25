@@ -12,7 +12,7 @@ from api.routes.needs import _blocked_needs
 from core import config
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity, refresh_agent_status
-from core.agent_loop.activity_scheduler import prepare_trigger_context
+from core.agent_loop.activity_scheduler import ensure_live_work_continuation, prepare_trigger_context
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.guardian import check_no_progress
 from core.agent_loop.policies import TriggerPolicy
@@ -45,13 +45,19 @@ def teardown_function() -> None:
     db.close_connection()
 
 
-def _thread_task(*, assignee_id: str, channel_id: str, title: str = "Spec"):
+def _thread_task(
+    *,
+    assignee_id: str,
+    channel_id: str,
+    title: str = "Spec",
+    requester_id: str = HUMAN_SENDER_ID,
+):
     return create_or_bind_task(
         title=title,
         description="Author the spec.",
         project=None,
         assigned_to=assignee_id,
-        requester_id=HUMAN_SENDER_ID,
+        requester_id=requester_id,
         owner_id=None,
         created_by=HUMAN_SENDER_ID,
         parent_task_id=None,
@@ -120,7 +126,8 @@ def test_no_progress_blocks_and_tags_next_owner() -> None:
         member_agent_ids=[gerry.id, debra.id],
         created_by=HUMAN_SENDER_ID,
     )
-    creation = _thread_task(assignee_id=gerry.id, channel_id=channel.id)
+    # Debra asked for the spec, so she is the next owner by precedence.
+    creation = _thread_task(assignee_id=gerry.id, channel_id=channel.id, requester_id=debra.id)
     activate_work_activity(gerry.id, creation.task)
     gerry.guardian_no_progress_threshold = 2
     assert check_no_progress(gerry, 1) is None
@@ -215,6 +222,7 @@ def test_status_reply_does_not_leave_sticky_block_when_work_is_live() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "I'm on it next. Not waiting on anyone.",
         },
@@ -226,7 +234,11 @@ def test_status_reply_does_not_leave_sticky_block_when_work_is_live() -> None:
     assert db.get_task(task.id).status == "active"
     assert task.id not in _board_blocked_ids(agent.id)
     assert task.id not in _need_blocked_ids()
-    assert any(item.get("trigger_type") == "activity_resumed" for item in result["trigger_requests"])
+    # The decision no longer queues the resume itself; the dispatcher's
+    # continuation invariant does, once the turn ends.
+    assert not any(item.get("trigger_type") == "activity_resumed" for item in result["trigger_requests"])
+    spec = ensure_live_work_continuation(agent.id)
+    assert spec is not None and spec["task_id"] == task.id
 
 
 def test_status_reply_resumes_paused_no_progress_soft_block() -> None:
@@ -249,6 +261,7 @@ def test_status_reply_resumes_paused_no_progress_soft_block() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "I'm on it next. Not waiting on anyone.",
         },
@@ -264,7 +277,9 @@ def test_status_reply_resumes_paused_no_progress_soft_block() -> None:
     assert live.kind == "work"
     assert live.task_id == creation.task.id
     assert creation.task.id not in _board_blocked_ids(agent.id)
-    assert any(item.get("trigger_type") == "activity_resumed" for item in result["trigger_requests"])
+    assert not any(item.get("trigger_type") == "activity_resumed" for item in result["trigger_requests"])
+    spec = ensure_live_work_continuation(agent.id)
+    assert spec is not None and spec["task_id"] == creation.task.id
 
 
 def test_soft_block_stays_when_work_is_not_live() -> None:

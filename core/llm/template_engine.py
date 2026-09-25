@@ -124,7 +124,7 @@ def _parse_nodes(
             nodes.append(node)
             continue
 
-        path = _canonical_path(value)
+        path = _value_path(value)
         _require_allowed_path(path, allowed_paths)
         nodes.append(ValueNode(path))
         index += 1
@@ -181,7 +181,7 @@ def _parse_condition(expr: str, *, allowed_paths: set[str]) -> Condition:
     if not match:
         raise TemplateError(f"Invalid condition: {expr}")
 
-    path = _canonical_path(match.group("path"))
+    path = _condition_path(match.group("path"))
     _require_allowed_path(path, allowed_paths)
     operator = match.group("op") or "truthy"
     expected = match.group("value")
@@ -249,10 +249,24 @@ def _stringify_value(value: Any, *, path: str) -> str:
     raise TemplateError(f"Template variable '{path}' does not resolve to printable text")
 
 
-def _canonical_path(path: str) -> str:
+def _condition_path(path: str) -> str:
+    """Resolve a condition path, applying the bare-name shorthand aliases.
+
+    ``{{if task = 'active'}}`` means ``task.status``. Aliases exist only for
+    this condition shorthand; value tags never use them.
+    """
     candidate = path.strip()
     if candidate in _ALIAS_PATHS:
         candidate = _ALIAS_PATHS[candidate]
+    return _value_path(candidate)
+
+
+def _value_path(path: str) -> str:
+    """Validate a value-tag path without aliasing.
+
+    ``{{task}}`` stays ``task`` so it renders the full ``task.value`` block.
+    """
+    candidate = path.strip()
     if not _PATH_RE.match(candidate):
         raise TemplateError(f"Invalid template variable: {path}")
     return candidate

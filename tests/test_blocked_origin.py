@@ -32,7 +32,7 @@ from core.agent_loop.blocked_origin import (
     is_host_deny_result,
     should_open_auto_github_issue,
 )
-from core.agent_loop.soft_blocks import NO_PROGRESS_LINE, apply_no_progress_block
+from core.agent_loop.soft_blocks import NO_PROGRESS_LINE, apply_no_progress_block, next_owner_mention
 from core.bm_cli.results import error_result
 from core.bm_cli.runtime import execute_bm_cli
 from core.models.message import HUMAN_SENDER_ID
@@ -59,14 +59,21 @@ def _named(agent, line: str) -> str:
     return f"{agent.name} {line}"
 
 
-def _thread_task(*, assignee_id: str, channel_id: str, title: str = "Spec"):
+def _thread_task(
+    *,
+    assignee_id: str,
+    channel_id: str,
+    title: str = "Spec",
+    requester_id: str = HUMAN_SENDER_ID,
+    owner_id: str | None = None,
+):
     return create_or_bind_task(
         title=title,
         description="Author the spec.",
         project=None,
         assigned_to=assignee_id,
-        requester_id=HUMAN_SENDER_ID,
-        owner_id=None,
+        requester_id=requester_id,
+        owner_id=owner_id,
         created_by=HUMAN_SENDER_ID,
         parent_task_id=None,
         work_contract=None,
@@ -125,7 +132,7 @@ def test_blocked_line_is_why_plus_next_owner() -> None:
 def test_no_progress_origin_wakes_tagged_next_owner() -> None:
     """2. @Debra on the no-progress line is a wake, not a hope tag."""
     jim, debra, channel = _jim_debra_channel()
-    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id, requester_id=debra.id)
     activate_work_activity(jim.id, creation.task)
     result = apply_no_progress_block(
         jim,
@@ -140,6 +147,37 @@ def test_no_progress_origin_wakes_tagged_next_owner() -> None:
     )
     assert result["auto_github_issue"] is False
     assert _debra_wakes(debra.id), "tagged next owner must receive a wake"
+
+
+def test_next_owner_is_requester_then_owner_then_operator() -> None:
+    """A teammate who only shares the thread is never tagged; the task's parties are."""
+    jim, debra, channel = _jim_debra_channel()
+    ada = db.create_agent("Ada", role="QA", desk_x=3, desk_y=1)
+    db.add_channel_members(channel.id, [ada.id])
+
+    operator_task = _thread_task(assignee_id=jim.id, channel_id=channel.id, title="Operator spec")
+    activate_work_activity(jim.id, operator_task.task)
+    assert next_owner_mention(jim) == "@Human Operator"
+
+    owned = _thread_task(
+        assignee_id=jim.id,
+        channel_id=channel.id,
+        title="Owned spec",
+        requester_id=jim.id,
+        owner_id=ada.id,
+    )
+    activate_work_activity(jim.id, owned.task)
+    assert next_owner_mention(jim) == "@Ada"
+
+    requested = _thread_task(
+        assignee_id=jim.id,
+        channel_id=channel.id,
+        title="Requested spec",
+        requester_id=debra.id,
+        owner_id=ada.id,
+    )
+    activate_work_activity(jim.id, requested.task)
+    assert next_owner_mention(jim) == "@Debra"
 
 
 def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
@@ -157,7 +195,7 @@ def test_auto_github_does_not_open_when_next_owner_is_on_origin_line(
         _capture_open,
     )
     jim, _debra, channel = _jim_debra_channel()
-    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id, requester_id=_debra.id)
     activate_work_activity(jim.id, creation.task)
     result = apply_no_progress_block(
         jim,
@@ -237,7 +275,7 @@ async def test_host_deny_after_branch_surfaces_in_thread(tmp_path: Path) -> None
     headers = {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
 
     jim, debra, channel = _jim_debra_channel()
-    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id)
+    creation = _thread_task(assignee_id=jim.id, channel_id=channel.id, requester_id=debra.id)
     activate_work_activity(jim.id, creation.task)
     state = db.get_agent_state(jim.id)
     assert state is not None

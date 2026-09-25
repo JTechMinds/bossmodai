@@ -380,6 +380,7 @@ def test_channel_response_reply_does_not_open_nested_peer_round() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "On it — I will walk the team through the findings next.",
             "proceedUntagged": True,
@@ -417,6 +418,7 @@ def test_task_channel_share_via_decision_reply_opens_peer_round() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Jtech-CLI review summary is ready at /me/jtech-cli-review-summary.md",
             "proceedUntagged": True,

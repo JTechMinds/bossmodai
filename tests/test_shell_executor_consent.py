@@ -428,7 +428,9 @@ async def test_deny_refuses_and_blocked_why_names_the_gate(
         trigger={"type": "channel_response", "channel_id": channel.id},
     )
     persist_result_triggers(result)
-    expected = f"{agent.name} {format_blocked_line(SHELL_EXECUTOR_WHY, '@Debra')}"
+    # The operator requested the task; a teammate who only shares the thread
+    # is never the next owner.
+    expected = f"{agent.name} {format_blocked_line(SHELL_EXECUTOR_WHY, '@Human Operator')}"
     contents = [item.content for item in db.list_channel_messages(channel.id)]
     assert expected in contents
     assert not any("desk" in (item or "").lower() and "can't" in (item or "").lower() for item in contents)

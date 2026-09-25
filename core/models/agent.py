@@ -63,7 +63,7 @@ class Agent(BaseModel):
     guardian_token_limit: int = 30_000
     guardian_velocity_limit: int = 10
     guardian_repetition_threshold: float = 0.85
-    guardian_no_progress_threshold: int = 30
+    guardian_no_progress_threshold: int = 100
 
     # Home floor. One per agent. Lobby until an operator moves them.
     floor_id: str | None = None

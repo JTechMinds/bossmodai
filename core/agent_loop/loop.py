@@ -36,6 +36,7 @@ from core.agent_loop.turn_context import (
     _get_nearby_agents,
     _get_reference_materials,
 )
+from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
 from core.agent_loop.turn_helpers import (
     _cli_result_to_turn_result,
     _finalize_turn,
@@ -87,7 +88,6 @@ async def run_turn(
     is_decision_turn = _is_decision_turn(trigger)
     prompt_history = build_prompt_history_view(agent, trigger, token_model=model)
     nearby = _get_nearby_agents(agent.id, state)
-    initial_activity = activity_runtime.get_active_activity(agent.id)
     current_task = _get_current_task(agent.id)
     current_activity = _get_current_activity(agent.id)
     current_session = _get_current_session(agent.id, trigger)
@@ -121,6 +121,14 @@ async def run_turn(
         communication_snapshot_json=communication_snapshot_json(communication_snapshot) if communication_snapshot else None,
     )
     context = context_builder.build_context(turn_context)
+    if not is_decision_turn and trigger_type in RESUME_TRIGGER_TYPES:
+        # Resuming frozen work: fresh preamble, then the agent's own steps.
+        work_activity = activity_runtime.get_active_work_activity(agent.id)
+        if work_activity is not None:
+            restored = restore_work_turn(activity=work_activity, context=context)
+            if restored is not context:
+                mark_restored(trigger, work_activity)
+            context = restored
     initial_context_json = json.dumps(context)
 
     if is_decision_turn:
@@ -178,7 +186,6 @@ async def run_turn(
         api_config=api_config,
         context=context,
         initial_context_json=initial_context_json,
-        initial_activity=initial_activity,
         policy=policy,
         start=start,
     )

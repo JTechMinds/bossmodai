@@ -173,6 +173,7 @@ def close_terminal_work_activity(
             resumable = db.get_resumable_work_activity(agent_id, task_id)
             if resumable:
                 db.update_activity(resumable.id, status="completed", detail=reason)
+                db.delete_work_snapshot(resumable.id)
                 refresh_agent_status(agent_id)
                 closed = db.get_activity(resumable.id) or closed
     return closed
@@ -277,8 +278,9 @@ def pause_active_work(agent_id: str, reason: str, *, task_status: str = "pending
 
 
 def complete_activity(activity_id: str, detail: str | None = None) -> Activity | None:
-    """Complete a runtime activity."""
+    """Complete a runtime activity and drop its frozen work, which cannot resume."""
     updated = db.update_activity(activity_id, status="completed", detail=detail)
+    db.delete_work_snapshot(activity_id)
     if updated:
         if updated.parent_activity_id:
             parent = db.get_activity(updated.parent_activity_id)
@@ -289,8 +291,9 @@ def complete_activity(activity_id: str, detail: str | None = None) -> Activity |
 
 
 def cancel_activity(activity_id: str, detail: str | None = None) -> Activity | None:
-    """Cancel a runtime activity."""
+    """Cancel a runtime activity and drop its frozen work, which cannot resume."""
     updated = db.update_activity(activity_id, status="cancelled", detail=detail)
+    db.delete_work_snapshot(activity_id)
     if updated:
         if updated.parent_activity_id:
             parent = db.get_activity(updated.parent_activity_id)

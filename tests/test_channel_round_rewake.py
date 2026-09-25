@@ -174,6 +174,7 @@ def test_pass_does_not_post_and_advances_the_queue() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "I'll stay quiet.",
             "proceedUntagged": True,
@@ -262,6 +263,7 @@ def test_mid_round_mention_waits_for_the_next_round() -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "status_request",
             "reply": "Shipping today. @Ada please take the next look.",
             "proceedUntagged": True,

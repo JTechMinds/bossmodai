@@ -8,8 +8,9 @@ Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
 tools / CLI). Those map onto the existing compact keys ``msg`` and
 ``act``/``data`` — not a second protocol. Empty ``actions`` is a valid 1:1
 status wake. ``say`` alone is never Done / Blocked / F.
-Optional ``work_commit`` is a boolean intent flag on that envelope. It is
-not a phrase list and it is not Board Done.
+``work_commit`` is a boolean intent flag on that envelope, required on
+every reply (see ``decision_contract``). It is not a phrase list and it is
+not Board Done.
 """
 
 from __future__ import annotations

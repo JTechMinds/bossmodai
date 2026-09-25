@@ -100,6 +100,24 @@ _RUNTIME_PROMPT_SURFACES: tuple[RuntimePromptSurface, ...] = (
     ),
     RuntimePromptSurface("internal_loop_execution_continue_break", "Internal Execution Break Follow-up", "default_file", "internal_loop"),
     RuntimePromptSurface("internal_loop_execution_continue_generic", "Internal Execution Generic Follow-up", "default_file", "internal_loop"),
+    RuntimePromptSurface(
+        "internal_loop_execution_resume_frozen",
+        "Internal Execution Frozen-Work Resume",
+        "default_file",
+        "internal_loop",
+    ),
+    RuntimePromptSurface(
+        "internal_loop_execution_no_progress_checkpoint",
+        "Internal Execution No-Progress Checkpoint",
+        "default_file",
+        "internal_loop",
+    ),
+    RuntimePromptSurface(
+        "internal_loop_decision_paused_work_view",
+        "Internal Decision Paused-Work View",
+        "default_file",
+        "internal_loop",
+    ),
 )
 
 

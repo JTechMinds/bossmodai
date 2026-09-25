@@ -771,6 +771,7 @@ def test_verbal_decision_reply_does_not_open_a_card(tmp_path: Path) -> None:
     result = apply_decision(
         {
             "decision": "answer",
+            "workCommit": False,
             "intentKind": "work_request",
             "commitmentKind": "none",
             "reply": f"Please confirm I can access {fixture} before I continue.",
