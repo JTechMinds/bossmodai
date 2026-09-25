@@ -7,6 +7,7 @@ const TelegramSection = (() => {
 
     async function render(el) {
         container = el;
+        SettingsView.bindRepaint('telegram', () => render(container));
 
         let settings = [];
         try {

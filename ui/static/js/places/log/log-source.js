@@ -196,20 +196,28 @@ const BossModLogSource = (() => {
 
         // Both live feeds, owned here. A consumer that subscribed to one of
         // them itself would be the second renderer this merge exists to remove.
-        disposers.push(bus.subscribe('activity', (entry) => {
-            if (entry && entry.id !== undefined) upsertActivity(entry);
-        }));
-        disposers.push(bus.subscribe('activity_update', (entry) => {
-            if (entry && entry.id !== undefined) upsertActivity(entry);
-        }));
-        disposers.push(bus.subscribe('diagnostic', (summary) => {
-            if (!summary || summary.id === undefined) return;
-            const row = SHAPE.fromDiagnostic(summary);
-            const index = diagnosticRows.findIndex((item) => item.key === row.key);
-            if (index === -1) diagnosticRows.unshift(row);
-            else diagnosticRows[index] = row;
-            if (diagnosticRows.length > MAX_LIVE_DIAGNOSTICS) diagnosticRows.pop();
-            announce();
+        disposers.push(BossModOperatorInvalidate.register({
+            id: 'log-source',
+            topics: ['activity', 'activity_update', 'diagnostic'],
+            onEvent(topic, data) {
+                if (topic === 'activity') {
+                    if (data && data.id !== undefined) upsertActivity(data);
+                    return;
+                }
+                if (topic === 'activity_update') {
+                    if (data && data.id !== undefined) upsertActivity(data);
+                    return;
+                }
+                if (topic === 'diagnostic') {
+                    if (!data || data.id === undefined) return;
+                    const row = SHAPE.fromDiagnostic(data);
+                    const index = diagnosticRows.findIndex((item) => item.key === row.key);
+                    if (index === -1) diagnosticRows.unshift(row);
+                    else diagnosticRows[index] = row;
+                    if (diagnosticRows.length > MAX_LIVE_DIAGNOSTICS) diagnosticRows.pop();
+                    announce();
+                }
+            },
         }));
 
         return {

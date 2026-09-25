@@ -1,37 +1,10 @@
-/**
- * BossMod AI — the one conversation controller.
- *
- * It owns everything that must outlive a single conversation: the load
- * generation, the presence model, the transcript cache, and the composer. The
- * transcript and the composer are built once and reconfigured on every open,
- * because rebuilding the composer on a switch would take the operator's draft
- * and caret with it.
- *
- * Sources normalise a backend conversation into Messages and never touch the
- * DOM; the views render Messages and never read a backend field. This module
- * is the only place the two meet.
- */
+/** BossMod AI — one conversation controller (sources meet transcript + composer). */
 const BossModConversation = (() => {
     const { h } = BossModDom;
 
     const NO_CONVERSATION_REASON = 'Pick someone from the roster to start talking.';
 
-    /**
-     * Build the conversation surface.
-     *
-     * @param {object} deps
-     * @param {object} deps.store
-     * @param {object} deps.bus
-     * @param {Function} deps.api  Authenticated fetch helper, injected by the shell.
-     * @param {(placeId: string, params?: object) => void} deps.navigate
-     * @param {object} deps.needs  From createNeedsStore. The bar above the
-     *   composer shows the open conversation's share of the queue (spec 5.5).
-     * @param {(path: string) => void} [deps.openDesk]  Optional; Phase 2B injects it.
-     * @returns {{ element: HTMLElement,
-     *             open: (id: string, kind: 'agent'|'thread') => Promise<void>,
-     *             destroy: () => void }}
-     * @throws {Error} When store, bus, api, navigate, or needs is missing.
-     */
+    /** @param {object} deps store, bus, api, navigate, needs; optional openDesk */
     function createConversation(deps) {
         const { store, bus, api, navigate, needs, openDesk } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
@@ -61,6 +34,8 @@ const BossModConversation = (() => {
 
         let source = null;
         let unsubscribe = null;
+        /** @type {((topic: string, data: any) => void)|null} */
+        let liveSink = null;
         let currentId = null;
         let currentKind = null;
         // Live messages that land between subscribing and the first paint are
@@ -227,6 +202,22 @@ const BossModConversation = (() => {
             }
         }
 
+        /** Fail-closed refetch when resync or operator_invalidate says Focus drifted. */
+        const refetchOpenConversation = BossModConversationFocus.createRefetch({
+            getContext: () => ({
+                id: currentId,
+                kind: currentKind,
+                source,
+                pendingLive,
+            }),
+            cache,
+            paint,
+            applyChrome,
+            applyComposer: () => composer.applyState(),
+            transcript,
+            reopen: open,
+        });
+
         const handlers = {
             message(message) {
                 if (pendingLive) {
@@ -251,6 +242,7 @@ const BossModConversation = (() => {
         function disposeSource() {
             if (unsubscribe) unsubscribe();
             unsubscribe = null;
+            liveSink = null;
             source = null;
         }
 
@@ -302,7 +294,9 @@ const BossModConversation = (() => {
             cardCtx.agentId = kind === 'agent' ? id : null;
             source = buildSource(id, kind);
             pendingLive = [];
-            unsubscribe = source.subscribe(handlers);
+            const live = source.subscribe(handlers);
+            unsubscribe = live.dispose;
+            liveSink = live.onLiveEvent;
 
             const cached = cache.recall(id);
             if (cached) paint(cached);
@@ -378,6 +372,12 @@ const BossModConversation = (() => {
             (s) => s.needs,
             () => { void reloadIfPendingChromeMissing(); },
         ));
+
+        disposers.push(BossModConversationFocus.attach({
+            getLiveSink: () => liveSink,
+            getOpenTarget: () => ({ id: currentId, kind: currentKind }),
+            refetchOpen: refetchOpenConversation,
+        }));
 
         return {
             element,

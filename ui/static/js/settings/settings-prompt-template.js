@@ -3,6 +3,7 @@
  */
 
 const PromptTemplateSection = (() => {
+    let container = null;
     const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
         + 'bg-bm-bg resize-none font-mono leading-relaxed';
 
@@ -20,6 +21,8 @@ const PromptTemplateSection = (() => {
     }
 
     async function render(el) {
+        container = el;
+        SettingsView.bindRepaint('prompt-template', () => render(container));
         let settings = [];
         let runtimeMeta = { allowed_variables: [], template_syntax: [] };
         try {

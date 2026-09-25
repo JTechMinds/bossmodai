@@ -27,6 +27,7 @@ const BossModBus = (() => {
         'activity_update',
         'unified_feed',
         'floors_updated',
+        'operator_invalidate',
         'resync',
     ]);
 

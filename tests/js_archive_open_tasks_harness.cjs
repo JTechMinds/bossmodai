@@ -17,7 +17,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, gatesPath, consentPath,
+    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
     overlayFocusPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
     threadSourcePath,
     rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
@@ -31,6 +31,7 @@ load(avatarPath, "BossModAvatar");
 load(switchPath, "BossModSwitch");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
+load(operatorInvalidatePath, "BossModOperatorInvalidate");
 load(gatesPath, "BossModGates");
 load(consentPath, "BossModConsentCard");
 load(overlayFocusPath, "BossModOverlayFocus");
@@ -166,6 +167,7 @@ const api = async (url, opts = {}) => {
 };
 
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+BossModOperatorInvalidate.attach({ bus });
 const presence = BossModGates.createChannelPresenceController();
 const forgotten = [];
 const noop = () => {};
@@ -347,7 +349,7 @@ async function main() {
         || sealedChrome.actions[0].label !== "Reopen") {
         throw new Error("an archived thread must offer Reopen and only Reopen");
     }
-    offAnn();
+    offAnn.dispose();
     let leaked = 0;
     const offSpam = annSource.subscribe({ ...signals, message: () => { leaked += 1; } });
     bus.publish("channel_message", {
@@ -368,7 +370,7 @@ async function main() {
         && forgotten.includes("open-a")
         && annSource.canSend() === false;
     if (!archivedNotLive) throw new Error("live handlers must not revive an archived thread");
-    offSpam();
+    offSpam.dispose();
 
     // ─── 5. Reopen unseals ───
 
@@ -391,9 +393,9 @@ async function main() {
         && item.url.includes("/api/channels/none-c/messages"));
     if (!reopenUnseals) throw new Error("an unsealed thread must accept a new post");
 
-    offBea();
-    offDee();
-    offCal();
+    offBea.dispose();
+    offDee.dispose();
+    offCal.dispose();
 
     // ─── 6. The archived list is still reachable, from the roster ───
 

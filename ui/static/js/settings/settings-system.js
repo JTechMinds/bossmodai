@@ -3,6 +3,7 @@
  */
 
 const SystemSection = (() => {
+    let container = null;
     let activeCategory = 'simulation';
 
     const CATEGORIES = [
@@ -207,6 +208,8 @@ const SystemSection = (() => {
     }
 
     async function render(el) {
+        container = el;
+        SettingsView.bindRepaint('system', () => render(container));
         let settings = [];
         try {
             const res = await apiFetch('/api/settings');
@@ -295,7 +298,7 @@ const SystemSection = (() => {
         el.querySelectorAll('[data-system-category]').forEach(btn => {
             btn.addEventListener('click', () => {
                 activeCategory = btn.dataset.systemCategory;
-                render(el);
+                render(container);
             });
         });
 
@@ -308,6 +311,7 @@ const SystemSection = (() => {
                     await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
                         method: 'PUT',
                     });
+                    BossModOperatorInvalidate.notifyLocal(['system']);
                     e.target.classList.add('border-emerald-400');
                     setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
                 } catch {

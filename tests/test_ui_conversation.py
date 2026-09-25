@@ -23,6 +23,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
@@ -47,6 +48,7 @@ CONVERSATION_MODULES = [
     SOURCES / "thread-requests.js",
     SOURCES / "thread-source.js",
     SOURCES / "agent-source.js",
+    CONVERSATION / "conversation-focus-invalidate.js",
     CONVERSATION / "conversation.js",
 ]
 
@@ -120,7 +122,10 @@ def test_sources_map_queue_visibility_as_a_live_note() -> None:
         assert "live: isQueue" in source
         assert "cleared: isQueue && !String(text).trim()" in source
     assert "systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote" in agent
-    assert "bus.subscribe('channel_message'" in agent
+    focus = _read(CONVERSATION / "conversation-focus-invalidate.js")
+    assert "conversation-focus" in focus
+    assert "'chat_message'" in focus
+    assert "onLiveEvent" in agent
     assert "BossModConsentCard.cardFromMessage(data)" in agent
     transcript = _read(CONVERSATION / "transcript.js")
     assert "message.live" in transcript
@@ -158,6 +163,7 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
+            str(JS / "core" / "operator-invalidate.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),

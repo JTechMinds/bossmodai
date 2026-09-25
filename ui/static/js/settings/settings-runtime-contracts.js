@@ -11,6 +11,7 @@
  */
 
 const RuntimeContractsSection = (() => {
+    let container = null;
     const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
         + 'bg-bm-bg resize-none font-mono leading-relaxed';
     const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
@@ -33,6 +34,8 @@ const RuntimeContractsSection = (() => {
     }
 
     async function render(el) {
+        container = el;
+        SettingsView.bindRepaint('runtime-contracts', () => render(container));
         let payload = null;
         try {
             const res = await apiFetch('/api/runtime/contracts');
@@ -198,7 +201,7 @@ const RuntimeContractsSection = (() => {
             });
         });
 
-        BossModRuntimeContractActions.bindActions({ onRefresh: () => render(el) });
+        BossModRuntimeContractActions.bindActions({ onRefresh: () => render(container) });
     }
 
     return { render };

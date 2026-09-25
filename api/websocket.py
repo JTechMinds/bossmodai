@@ -249,6 +249,18 @@ class ConnectionManager:
         """
         await self.broadcast({"type": "floors_updated", "data": floors})
 
+    async def broadcast_operator_invalidate(self, surfaces: list[str]) -> None:
+        """Tell every open operator surface to repaint what it owns.
+
+        HTTP mutations that do not carry a WebSocket payload of their own —
+        settings rows, connection strings — still have to reach the takeover
+        the operator is staring at without a tab poke.
+        """
+        cleaned = [str(name).strip() for name in surfaces if str(name).strip()]
+        if not cleaned:
+            return
+        await self.broadcast({"type": "operator_invalidate", "data": {"surfaces": cleaned}})
+
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         """Broadcast a diagnostic summary to all connected clients."""
         await self.broadcast({"type": "diagnostic", "data": summary})

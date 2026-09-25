@@ -8,6 +8,9 @@ const SettingsView = (() => {
     let activeSection = 'connections';
     let isOpen = false;
     let sectionOptions = null;
+    /** @type {Map<string, () => (void|Promise<void>)>} */
+    const repaints = new Map();
+    let offInvalidate = null;
 
     const NAV_ITEMS = [
         { id: 'connections',   label: 'AI Connections',  icon: 'plug' },
@@ -114,12 +117,49 @@ const SettingsView = (() => {
             </button>`;
     }
 
+    /**
+     * Register how one Settings section repaints after a mutation or
+     * operator_invalidate. Only the visible section is repainted so a
+     * sibling surface is never wiped by another section's invalidate.
+     *
+     * @param {string} sectionId  Must match server surface ids and nav ids.
+     * @param {() => (void|Promise<void>)} fn
+     */
+    function bindRepaint(sectionId, fn) {
+        if (!sectionId) throw new Error('[settings-view] bindRepaint needs a section id');
+        if (typeof fn !== 'function') {
+            repaints.delete(sectionId);
+            return;
+        }
+        repaints.set(sectionId, fn);
+    }
+
+    function ensureInvalidateRegistration() {
+        if (offInvalidate || typeof BossModOperatorInvalidate === 'undefined') return;
+        offInvalidate = BossModOperatorInvalidate.register({
+            id: 'settings-takeover',
+            topics: ['operator_invalidate'],
+            onEvent(topic, data) {
+                if (topic !== 'operator_invalidate') return;
+                if (!isOpen) return;
+                const surfaces = (data && data.surfaces) || [];
+                const targets = surfaces.length ? surfaces : [activeSection];
+                for (const surface of targets) {
+                    if (surface !== activeSection) continue;
+                    const repaint = repaints.get(surface);
+                    if (typeof repaint === 'function') void repaint();
+                }
+            },
+        });
+    }
+
     // ─── Section switching ───
 
     function switchSection(sectionId) {
         activeSection = sectionId;
         const pendingOptions = sectionOptions;
         sectionOptions = null;
+        ensureInvalidateRegistration();
         renderNav();
 
         const content = document.getElementById('settings-content');
@@ -155,5 +195,5 @@ const SettingsView = (() => {
         }
     }
 
-    return { open, close, isOpen: () => isOpen, onViewChange };
+    return { open, close, isOpen: () => isOpen, onViewChange, bindRepaint };
 })();

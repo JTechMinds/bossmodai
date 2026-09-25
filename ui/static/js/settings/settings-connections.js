@@ -84,6 +84,7 @@ const ConnectionsSection = (() => {
 
     async function render(el) {
         container = el;
+        SettingsView.bindRepaint('connections', () => renderList());
         await renderList();
     }
 
@@ -196,6 +197,7 @@ const ConnectionsSection = (() => {
                     await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
                         method: 'PUT',
                     });
+                    BossModOperatorInvalidate.notifyLocal(['connections']);
                     e.target.classList.add('border-emerald-400');
                     setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
                 } catch {

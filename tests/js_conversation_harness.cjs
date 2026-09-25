@@ -20,13 +20,14 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource", "BossModConversation",
+    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
+    "BossModConversationFocus", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -119,6 +120,7 @@ const store = BossModStore.createStore({
     hasUsableModel: true,
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
 
 // The bar is part of the surface now; the queue behind it is exercised in
 // js_needs_harness.cjs, so an empty one is enough to build the conversation.
@@ -775,6 +777,7 @@ async function main() {
 
     // Destroying drains everything the controller ever subscribed.
     conversation.destroy();
+    offOperatorInvalidate();
     if (bus.subscriberCount() !== 0) {
         throw new Error(`destroy left ${bus.subscriberCount()} bus subscribers`);
     }

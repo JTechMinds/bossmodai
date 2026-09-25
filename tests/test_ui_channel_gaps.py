@@ -40,6 +40,7 @@ CONVERSATION_STACK = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
@@ -63,6 +64,7 @@ CONVERSATION_STACK = [
     JS / "conversation" / "sources" / "thread-requests.js",
     JS / "conversation" / "sources" / "thread-source.js",
     JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
     JS / "conversation" / "conversation.js",
 ]
 
@@ -268,13 +270,14 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     # switch in app.js and the AgentContext delegation it called are gone; the
     # bus and the source carry the topic now.
     assert "'channel_presence'," in bus
-    assert "bus.subscribe('channel_presence'" in thread
+    assert "'channel_presence'," in bus
+    assert "topic === 'channel_presence'" in thread
 
 
 def test_live_channel_message_appends_without_loading_remount() -> None:
     source = _read("conversation/sources/thread-source.js")
-    handler = source.split("bus.subscribe('channel_message', (data) => {", 1)[1].split(
-        "bus.subscribe('channel_presence'", 1
+    handler = source.split("if (topic === 'channel_message') {", 1)[1].split(
+        "if (topic === 'channel_presence'", 1
     )[0]
     assert "on.message(" in handler
     assert "isLiveThread(" in handler
@@ -340,6 +343,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "switch.js"),
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
+            str(JS / "core" / "operator-invalidate.js"),
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),

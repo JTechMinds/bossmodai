@@ -171,8 +171,8 @@ const BossModThreadSource = (() => {
          */
         function subscribe(on) {
             signals = on;
-            const offs = [
-                bus.subscribe('channel_message', (data) => {
+            function onLiveEvent(topic, data) {
+                if (topic === 'channel_message') {
                     if (!data || data.channel_id !== threadId) return;
                     if (!isLiveThread()) {
                         seal();
@@ -182,11 +182,11 @@ const BossModThreadSource = (() => {
                         presence.stop(threadId, data.author_agent_id);
                         on.presence();
                     }
-                    // Round markers stay posted for the engine; skip painting.
                     if (isRoundMarker(data)) return;
                     on.message(toMessage(data));
-                }),
-                bus.subscribe('channel_presence', (data) => {
+                    return;
+                }
+                if (topic === 'channel_presence') {
                     if (!data || data.channel_id !== threadId || !data.agent_id) return;
                     if (!isLiveThread()) {
                         seal();
@@ -203,17 +203,18 @@ const BossModThreadSource = (() => {
                         presence.stop(threadId, data.agent_id);
                     }
                     on.presence();
-                }),
-                bus.subscribe('channel_updated', (data) => {
+                    return;
+                }
+                if (topic === 'channel_updated') {
                     if (!data || data.id !== threadId) return;
                     channel = data;
                     if (!isLiveThread()) seal();
                     on.chrome();
-                }),
-            ];
-            return () => {
-                offs.splice(0).forEach((off) => off());
-                signals = null;
+                }
+            }
+            return {
+                dispose() { signals = null; },
+                onLiveEvent,
             };
         }
 

@@ -11,7 +11,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModGates",
+    "BossModDom", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModThreadSource",
 ];
@@ -83,6 +83,7 @@ const store = BossModStore.createStore({
     threads: [thread],
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+BossModOperatorInvalidate.attach({ bus });
 const presence = BossModGates.createChannelPresenceController();
 
 async function main() {
@@ -103,14 +104,14 @@ async function main() {
         && loaded.some((row) => row.text === "Thread paused.");
 
     const painted = [];
-    const off = source.subscribe({
+    const sub = source.subscribe({
         message(msg) { painted.push(msg); },
         reset() {},
         presence() {},
         chrome() {},
     });
 
-    bus.publish("channel_message", {
+    sub.onLiveEvent("channel_message", {
         channel_id: "t1",
         message_id: "live-round",
         content: "Round 3",
@@ -118,7 +119,7 @@ async function main() {
         author_name: "BossMod",
         notification_kind: "channel_round_marker",
     });
-    bus.publish("channel_message", {
+    sub.onLiveEvent("channel_message", {
         channel_id: "t1",
         message_id: "live-ok",
         content: "Still here.",
@@ -126,7 +127,7 @@ async function main() {
         author_name: "Jim",
         author_agent_id: "jim",
     });
-    off();
+    sub.dispose();
 
     const liveHidesRound = painted.every((row) => row.text !== "Round 3")
         && painted.some((row) => row.text === "Still here.");

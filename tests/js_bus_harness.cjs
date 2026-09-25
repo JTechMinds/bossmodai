@@ -16,7 +16,7 @@ const REQUIRED = [
     "world_update", "runtime_state", "chat_message", "chat_reset",
     "meeting_message", "channel_message", "channel_presence", "channel_updated",
     "diagnostic", "agent_thought", "activity", "activity_update",
-    "unified_feed", "resync",
+    "unified_feed", "floors_updated", "operator_invalidate", "resync",
 ];
 for (const topic of REQUIRED) {
     if (!KNOWN_TOPICS.includes(topic)) throw new Error(`KNOWN_TOPICS missing ${topic}`);

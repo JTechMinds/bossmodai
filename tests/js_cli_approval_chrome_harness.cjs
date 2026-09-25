@@ -16,13 +16,14 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource", "BossModConversation",
+    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
+    "BossModConversationFocus", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -107,6 +108,7 @@ function actionLabels(root) {
         needsBarDismissed: false,
     });
     const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    BossModOperatorInvalidate.attach({ bus });
     const needsStub = {
         refresh: () => Promise.resolve(),
         resolve: () => Promise.resolve(),

@@ -250,6 +250,7 @@ const BossModConnectionForm = (() => {
                         body: JSON.stringify(data),
                     });
                 }
+                BossModOperatorInvalidate.notifyLocal(['connections']);
                 await onDone();
                 // BossModApp died with the dock shell; the banner moved to
                 // shell/banners.js. The old typeof guard silently swallowed

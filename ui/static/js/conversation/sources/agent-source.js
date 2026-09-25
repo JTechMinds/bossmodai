@@ -160,28 +160,26 @@ const BossModAgentSource = (() => {
         /**
          * Subscribe to this agent's live traffic.
          * @param {{message: Function, reset: Function, presence: Function, chrome: Function}} on
-         * @returns {() => void} One disposer that drains all three subscriptions.
+         * @returns {{ dispose: () => void, onLiveEvent: (topic: string, data: any) => void }}
          */
         function subscribe(on) {
-            const offs = [
-                bus.subscribe('chat_message', (data) => {
+            function onLiveEvent(topic, data) {
+                if (topic === 'chat_message') {
                     if (!data) return;
                     if (data.agent_id) {
-                        // Before the "is this my conversation" guard on purpose:
-                        // a reply that lands while the operator is looking
-                        // elsewhere must still clear THAT agent's indicator, or
-                        // it stays thinking forever.
                         presence.stop(data.agent_id, data.agent_id);
                         on.presence();
                     }
                     if (data.agent_id !== agentId) return;
                     on.message(toMessage(data));
-                }),
-                bus.subscribe('chat_reset', (data) => {
+                    return;
+                }
+                if (topic === 'chat_reset') {
                     if (!data || data.agent_id !== agentId) return;
                     on.reset();
-                }),
-                bus.subscribe('agent_presence', (data) => {
+                    return;
+                }
+                if (topic === 'agent_presence') {
                     if (!data || data.agent_id !== agentId) return;
                     if (data.phase === 'thinking') {
                         presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
@@ -194,19 +192,19 @@ const BossModAgentSource = (() => {
                         presence.stop(agentId, agentId);
                     }
                     on.presence();
-                }),
-                bus.subscribe('channel_message', (data) => {
+                    return;
+                }
+                if (topic === 'channel_message') {
                     if (!data) return;
                     const card = BossModConsentCard.cardFromMessage(data);
                     if (!card) return;
                     const owner = String(card.agent_id || data.author_agent_id || '');
                     if (owner !== agentId) return;
                     on.message(toMessage(data));
-                }),
-                bus.subscribe('meeting_message', (data) => {
+                    return;
+                }
+                if (topic === 'meeting_message') {
                     if (!data || data.agent_id !== agentId) return;
-                    // A meeting row carries an author, so it is labelled even
-                    // though ordinary DM turns are not.
                     on.message(Object.assign(toMessage({
                         id: data.message_id,
                         from: data.author_type,
@@ -214,11 +212,9 @@ const BossModAgentSource = (() => {
                         content: data.content,
                         created_at: data.created_at,
                     }), { showAuthor: true }));
-                }),
-            ];
-            return () => {
-                offs.splice(0).forEach((off) => off());
-            };
+                }
+            }
+            return { dispose() {}, onLiveEvent };
         }
 
         /**

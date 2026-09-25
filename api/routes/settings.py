@@ -29,6 +29,29 @@ import db
 router = APIRouter()
 
 
+def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
+    """Map one persisted setting to the Settings section ids the UI owns."""
+    if key == "system_ai_connection":
+        return ["connections"]
+    if category == "llm" and key.startswith("compaction_"):
+        return ["system"]
+    if category in {"simulation", "social", "context", "desk"}:
+        return ["system"]
+    if category == "advanced":
+        return ["advanced-system"]
+    if key in _RUNTIME_CONTRACT_KEYS.values():
+        return ["runtime-contracts"]
+    if key == "system_prompt_template":
+        return ["prompt-template"]
+    if category == "telegram" or key.startswith("telegram_"):
+        return ["telegram"]
+    return ["system"]
+
+
+async def _broadcast_operator_surfaces(surfaces: list[str]) -> None:
+    await manager.broadcast_operator_invalidate(surfaces)
+
+
 # ─── Settings ───
 
 @router.get("/settings")
@@ -132,6 +155,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.reload()  # Invalidate cache so changes take effect immediately
+    await _broadcast_operator_surfaces(_operator_surfaces_for_setting(key, category))
     return serialize_setting(result)
 
 
@@ -152,13 +176,15 @@ async def get_connection(connection_id: str):
 
 @router.post("/connections", status_code=201)
 async def create_connection(body: AIConnectionCreate):
-    return serialize_connection(db.create_connection(
+    conn = serialize_connection(db.create_connection(
         name=body.name,
         api_base_url=body.api_base_url,
         api_key=body.api_key,
         model=body.model,
         extra_body=body.extra_body,
     ))
+    await _broadcast_operator_surfaces(["connections"])
+    return conn
 
 
 @router.patch("/connections/{connection_id}")
@@ -171,6 +197,7 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
     conn = db.update_connection(connection_id, **fields)
     if not conn:
         raise HTTPException(404, "Connection not found")
+    await _broadcast_operator_surfaces(["connections"])
     return serialize_connection(conn)
 
 
@@ -187,6 +214,7 @@ async def duplicate_connection(connection_id: str):
     conn = db.duplicate_connection(connection_id)
     if not conn:
         raise HTTPException(404, "Connection not found")
+    await _broadcast_operator_surfaces(["connections"])
     return serialize_connection(conn)
 
 
@@ -194,6 +222,7 @@ async def duplicate_connection(connection_id: str):
 async def delete_connection(connection_id: str):
     if not db.delete_connection(connection_id):
         raise HTTPException(404, "Connection not found")
+    await _broadcast_operator_surfaces(["connections"])
 
 
 class TestConnectionBody(BaseModel):
