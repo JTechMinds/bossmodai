@@ -62,6 +62,7 @@ router = APIRouter()
 
 class ActivationBody(BaseModel):
     content: str = "You have been manually activated."
+    attachment_ids: list[str] | None = None
 
 
 class MeetingMessageBody(BaseModel):
@@ -1046,6 +1047,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         raise HTTPException(404, "Agent not found")
 
     content = body.content if body else "You have been manually activated."
+    attachment_ids = body.attachment_ids if body else None
 
     from core.floors import AgentOnVacation
 
@@ -1056,6 +1058,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
             from_name="You",
             broadcast_manager=manager,
             services=runtime_services,
+            attachment_ids=attachment_ids,
         )
     except AgentOnVacation as exc:
         raise HTTPException(409, str(exc)) from exc

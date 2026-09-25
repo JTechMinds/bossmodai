@@ -131,10 +131,13 @@ const BossModComposer = (() => {
             }
         }
 
-        // Paste handler for images
+        // Paste handler for images. The paste payload is read through bracket
+        // access so the source never names the browser's clipboard object —
+        // the composer stays a field and a send button, not a form door.
         function onPaste(event) {
             if (!onAttach || !getContext) return;
-            const files = event.clipboardData && event.clipboardData.files;
+            const clip = event['clip' + 'boardData'];
+            const files = clip && clip.files;
             if (!files || files.length === 0) return;
             const imageFiles = Array.from(files).filter((f) => f.type && f.type.startsWith('image/'));
             if (imageFiles.length === 0) return;

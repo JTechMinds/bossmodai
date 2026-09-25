@@ -955,20 +955,20 @@ span.mention-pill { cursor: default; }
   gap: 4px;
   padding: 3px 8px;
   border-radius: 4px;
-  background: var(--surface, #f4f4f5);
-  border: 1px solid var(--border, #e4e4e7);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--line);
   text-decoration: none;
-  color: var(--ink, #18181b);
+  color: var(--ink);
   font-size: 0.85em;
 }
 
 .file-chip:hover {
-  background: var(--surface-hover, #e4e4e7);
+  background: var(--bg);
 }
 
 .file-chip-icon { font-size: 0.9em; }
 .file-chip-name { font-weight: 500; }
-.file-chip-size { color: var(--muted, #71717a); font-size: 0.85em; }
+.file-chip-size { color: var(--muted); font-size: 0.85em; }
 
 .composer-attachments {
   display: flex;
@@ -983,8 +983,8 @@ span.mention-pill { cursor: default; }
   gap: 4px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--surface, #f4f4f5);
-  border: 1px solid var(--border, #e4e4e7);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--line);
   font-size: 0.8em;
 }
 
@@ -992,7 +992,7 @@ span.mention-pill { cursor: default; }
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--muted, #71717a);
+  color: var(--muted);
   font-size: 1em;
   padding: 0 2px;
 }
@@ -1001,10 +1001,10 @@ span.mention-pill { cursor: default; }
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--muted, #71717a);
+  color: var(--muted);
   padding: 4px;
   display: inline-flex;
   align-items: center;
 }
 
-.composer-attach:hover { color: var(--ink, #18181b); }
+.composer-attach:hover { color: var(--ink); }

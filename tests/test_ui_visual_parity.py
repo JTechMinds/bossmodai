@@ -1248,7 +1248,7 @@ def test_the_composer_is_the_field_and_send_and_nothing_else() -> None:
     """
     composer = _read(CONVERSATION / "composer.js")
     row = composer.split("class: 'composer-row' }", 1)[1].split(")", 1)[0]
-    assert row.strip().startswith(", input, sendBtn"), row
+    assert row.strip().startswith(", input, attachBtn, sendBtn"), row
 
     css = _read(CSS / "conversation.css")
     send = css.split(".composer-send {", 1)[1].split("}", 1)[0]
@@ -1307,7 +1307,7 @@ def test_an_empty_conversation_is_not_a_dead_end() -> None:
     assert "onGreet: (text) => composer.sendText(text)," in controller
     assert "onAssign: openAssign," in controller
     # One send path: the greeting goes through the composer's gate.
-    assert "async function sendText(text)" in _read(CONVERSATION / "composer.js")
+    assert "async function sendText(text, attachmentIds)" in _read(CONVERSATION / "composer.js")
 
     # The no-conversation-selected state keeps its own copy.
     place = _read(JS / "places/chat/chat-place.js")

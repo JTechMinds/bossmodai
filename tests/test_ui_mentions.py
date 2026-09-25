@@ -65,7 +65,7 @@ def test_composer_binds_the_picker_and_keeps_the_row_as_field_and_send() -> None
     assert "mentions.handleKeyDown(event)" in composer
     assert "insertMention:" in composer
     row = composer.split("class: 'composer-row' }", 1)[1].split(")", 1)[0]
-    assert row.strip().startswith(", input, sendBtn"), row
+    assert row.strip().startswith(", input, attachBtn, sendBtn"), row
 
 
 def test_messages_linkify_pills_and_a_click_opens_the_menu() -> None:

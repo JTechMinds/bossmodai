@@ -97,6 +97,14 @@ Phase 1 is in scope when it delivers:
    - The posted image appears as an image attachment in the conversation, with the same display and retrieval behavior as operator-sent images.
    - This is the only agent-side attachment capability in Phase 1. Agent arbitrary file creation remains out of scope.
 
+9. **Context-dependent storage**
+   - Attachment storage location is derived from the conversation context (task thread, operator chat, etc.).
+   - See §6.8 for the storage path derivation rules.
+
+10. **Format tier preview**
+    - The composer displays a format-tier indicator for pasted or attached images.
+    - See §6.9 for the tier definitions and preview behavior.
+
 ## 5. Scope out
 
 Phase 1 does not include:

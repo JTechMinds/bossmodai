@@ -81,10 +81,12 @@ const BossModMessage = (() => {
                     alt: name,
                     loading: 'lazy',
                 });
-                img.addEventListener('click', () => {
-                    window.open(`/api/attachments/${id}`, '_blank');
-                });
-                row.append(img);
+                const link = h('a', {
+                    class: 'msg-att-img-link',
+                    href: `/api/attachments/${id}`,
+                    'aria-label': `Open ${name}`,
+                }, img);
+                row.append(link);
             } else {
                 const icon = tier === 'document' ? '📄' : tier === 'text' ? '📝' : '📎';
                 const chip = h('a', {

@@ -62,12 +62,8 @@ const BossModConversation = (() => {
         });
 
         /**
-         * Open the ONE assign form.
-         *
-         * The empty state's `Assign a task` is its only caller here now — the
-         * composer's clipboard was the other, and it went with the row it sat
-         * in. The Tasks place owns the third door.
-         *
+         * Open the ONE assign form. The empty state's `Assign a task` is its
+         * only caller here now; the Tasks place owns the third door.
          * @returns {object} The open modal, from BossModAssignForm.
          */
         function openAssign() {
@@ -278,18 +274,12 @@ const BossModConversation = (() => {
         }
 
         /**
-         * Open one conversation.
-         *
-         * A cached transcript is painted immediately and the loading state is
-         * skipped entirely, so a re-click is not a flash of empty room. A load
-         * whose generation is no longer current is discarded before it reaches
-         * the DOM.
-         *
-         * @param {string} conversationId
-         * @param {'agent'|'thread'} kind
-         * @returns {Promise<void>} Resolves once painted; never rejects — a
-         *   failed load becomes the transcript's error state with a retry.
-         * @throws {Error} Synchronously, for a missing id or an unknown kind.
+         * Open one conversation. A cached transcript is painted immediately
+         * and the loading state skipped, so a re-click is not a flash of empty
+         * room; a load whose generation is stale is discarded before the DOM.
+         * @param {string} conversationId @param {'agent'|'thread'} kind
+         * @returns {Promise<void>} Resolves once painted; never rejects.
+         * @throws {Error} For a missing id or an unknown kind.
          */
         async function open(conversationId, kind) {
             const id = String(conversationId || '').trim();

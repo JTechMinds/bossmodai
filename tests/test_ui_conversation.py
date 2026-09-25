@@ -521,7 +521,7 @@ def test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it() -> None
     assert "openAssignForm" not in composer
     # What is left in the row is the field and Send, in that order.
     row = composer.split("class: 'composer-row' }", 1)[1].split(")", 1)[0]
-    assert row.strip().startswith(", input, sendBtn"), row
+    assert row.strip().startswith(", input, attachBtn, sendBtn"), row
 
     controller = _read(CONVERSATION / "conversation.js")
     # Still exactly one caller of exactly one form. The empty state is its only

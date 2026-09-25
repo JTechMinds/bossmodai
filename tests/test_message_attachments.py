@@ -9,12 +9,13 @@ import pytest
 from db import attachments as db_att
 from db import messages as db_msg
 from db.crud import execute
-from db.connection import get_connection
+from db.connection import get_connection, init_db
 
 
 @pytest.fixture(autouse=True)
 def _clean():
     """Clean up attachments before and after each test."""
+    init_db()
     con = get_connection()
     con.execute("DELETE FROM attachments WHERE message_id = 'pending'")
     con.execute("DELETE FROM attachments")
