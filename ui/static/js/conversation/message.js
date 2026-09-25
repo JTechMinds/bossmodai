@@ -47,6 +47,61 @@ const BossModMessage = (() => {
     }
 
     /**
+     * Format a byte count as a human-readable size string.
+     *
+     * @param {number} bytes
+     * @returns {string}
+     */
+    function humanSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    /**
+     * Render the attachment row for a message.
+     *
+     * T1 (image): thumbnail img, click opens full-size download.
+     * T2/T3/T4:   file chip (name + size), click triggers download.
+     *
+     * @param {Array<object>} attachments  Normalised attachment metadata.
+     * @returns {HTMLElement}
+     */
+    function renderAttachments(attachments) {
+        const row = h('div', { class: 'msg-attachments' });
+        for (const att of attachments) {
+            const id = att.id;
+            const name = att.file_name || 'file';
+            const size = att.file_size || 0;
+            const tier = att.preview_tier || 'other';
+            if (tier === 'image') {
+                const img = h('img', {
+                    class: 'msg-att-img',
+                    src: `/api/attachments/${id}/preview`,
+                    alt: name,
+                    loading: 'lazy',
+                });
+                img.addEventListener('click', () => {
+                    window.open(`/api/attachments/${id}`, '_blank');
+                });
+                row.append(img);
+            } else {
+                const icon = tier === 'document' ? '📄' : tier === 'text' ? '📝' : '📎';
+                const chip = h('a', {
+                    class: 'file-chip',
+                    href: `/api/attachments/${id}`,
+                    'aria-label': `Download ${name} (${humanSize(size)})`,
+                },
+                    h('span', { class: 'file-chip-icon', 'aria-hidden': 'true' }, icon),
+                    h('span', { class: 'file-chip-name' }, name),
+                    h('span', { class: 'file-chip-size' }, humanSize(size)));
+                row.append(chip);
+            }
+        }
+        return row;
+    }
+
+    /**
      * Build one message node.
      *
      * @param {object} message  A normalised Message. `showAuthor` decides
@@ -64,9 +119,11 @@ const BossModMessage = (() => {
         const author = AUTHORS.has(message.author) ? message.author : 'other';
         const key = String(message.key || '').trim();
         const createdAt = String(message.createdAt || '').trim();
+        const text = String(message.text || '');
+        const attachments = Array.isArray(message.attachments) ? message.attachments : null;
 
         const body = h('div', { class: 'msg-body md' },
-            BossModMarkdown.render(String(message.text || '')));
+            BossModMarkdown.render(text));
         if (typeof BossModMentionPills !== 'undefined') {
             BossModMentionPills.linkify(body);
         }
@@ -77,11 +134,24 @@ const BossModMessage = (() => {
         const faceName = label || (author === 'human' ? 'You' : 'Agent');
         const color = message.authorColor || null;
         const tint = color ? BossModAvatar.tintFor(color) : null;
-        const bubble = h('div', { class: `msg msg-${author}` },
-            body,
-            createdAt
-                ? h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt))
-                : null);
+
+        // If the message has no text but has attachments, skip the empty body
+        // and render only the attachment row.
+        const hasText = text.trim().length > 0;
+        const hasAtts = attachments && attachments.length > 0;
+
+        const bubbleChildren = [];
+        if (hasText) {
+            bubbleChildren.push(body);
+        }
+        if (hasAtts) {
+            bubbleChildren.push(renderAttachments(attachments));
+        }
+        if (createdAt) {
+            bubbleChildren.push(h('time', { class: 'msg-time', datetime: createdAt }, timeLabel(createdAt)));
+        }
+
+        const bubble = h('div', { class: `msg msg-${author}` }, ...bubbleChildren);
 
         return h('div', {
             class: `msg-turn msg-turn-${author}`,

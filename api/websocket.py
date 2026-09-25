@@ -89,6 +89,7 @@ class ConnectionManager:
         host_path_consent: dict[str, Any] | None = None,
         cli_approval: dict[str, Any] | None = None,
         task_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
 
@@ -110,6 +111,7 @@ class ConnectionManager:
                 "host_path_consent": host_path_consent,
                 "cli_approval": cli_approval,
                 "task_id": task_id,
+                "attachments": attachments,
             },
         })
 
@@ -160,6 +162,7 @@ class ConnectionManager:
         author_agent_id: str | None = None,
         desk_path: str | None = None,
         task_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
         """Broadcast one shared channel transcript message."""
         if db.is_channel_archived(channel_id):
@@ -179,6 +182,7 @@ class ConnectionManager:
                 "cli_approval": cli_approval,
                 "desk_path": desk_path,
                 "task_id": task_id,
+                "attachments": attachments,
             },
         })
 

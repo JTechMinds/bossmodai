@@ -65,6 +65,30 @@
         return URL.createObjectURL(blob);
     }
 
+    /**
+     * Upload one file attachment. Returns the server metadata object.
+     * @param {File} file
+     * @param {{type: string, id: string}} context
+     * @returns {Promise<object>}
+     */
+    async function uploadAttachment(file, context) {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('message_context', JSON.stringify(context || { type: 'unscoped', id: '' }));
+        form.append('original_name', file.name);
+        const res = await apiFetch('/api/attachments/upload', { method: 'POST', body: form });
+        if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            const detail = (payload && payload.detail) || payload || {};
+            const message = (typeof detail === 'object' && detail.error) || detail.error || formatApiError(payload, res.status);
+            const err = new Error(message);
+            err.code = (typeof detail === 'object' && detail.code) || detail.code || null;
+            err.fileName = file.name;
+            throw err;
+        }
+        return res.json();
+    }
+
     window.apiFetch = apiFetch;
     window.apiFetchOk = apiFetchOk;
     window.apiFetchBlobUrl = apiFetchBlobUrl;
@@ -72,6 +96,7 @@
         fetch: apiFetch,
         fetchOk: apiFetchOk,
         fetchBlobUrl: apiFetchBlobUrl,
+        uploadAttachment: uploadAttachment,
         formatError: formatApiError,
         tokenHeader: TOKEN_HEADER,
     };

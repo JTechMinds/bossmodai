@@ -183,6 +183,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("runtime_block_communication_snapshot", RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE, "advanced"),
     ("runtime_block_trigger_event", RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE, "advanced"),
     ("runtime_control_state", RUNTIME_CONTROL_STATE, "advanced"),
+    # Attachments (paste/attach Phase-1)
+    ("bossmod.attach.max_size_mb", "10", "advanced"),
 ]
 _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     key: (value, category) for key, value, category in _SEED_SETTINGS

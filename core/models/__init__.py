@@ -7,6 +7,7 @@ Re-exports every model for convenient top-level imports::
 
 from __future__ import annotations
 
+from core.models.attachment import Attachment, PreviewTier
 from core.models.floor import Floor
 from core.models.cli import AgentCliState
 from core.models.cli_policy import CliApprovalRequest, CliPolicyRule, CliPolicyRuleCreate
@@ -112,6 +113,8 @@ __all__ = [
     # Message
     "Message",
     "MessageCreate",
+    "Attachment",
+    "PreviewTier",
     "Notification",
     "NotificationLink",
     "TaskNotificationSettings",

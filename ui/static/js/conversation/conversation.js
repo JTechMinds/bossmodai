@@ -80,12 +80,23 @@ const BossModConversation = (() => {
 
         const composer = BossModComposer.createComposer({
             store,
-            onSend: (text) => {
+            onSend: (text, attachmentIds) => {
                 if (!source) throw new Error('[conversation] no conversation is open');
-                return source.send(text);
+                return source.send(text, attachmentIds);
             },
             canSend: () => Boolean(source) && source.canSend(),
             disabledReason: () => (source ? source.disabledReason() : NO_CONVERSATION_REASON),
+            onAttach: (files, ctx) => {
+                const results = [];
+                for (const f of files) {
+                    results.push(BossModApi.uploadAttachment(f, ctx));
+                }
+                return Promise.all(results);
+            },
+            getContext: () => {
+                if (!source) return { type: 'unscoped', id: '' };
+                return source.context ? source.context() : { type: 'direct', id: '' };
+            },
         });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({

@@ -891,3 +891,19 @@ CREATE TABLE IF NOT EXISTS sticky_slot_gate (
     turns_since_run INTEGER NOT NULL DEFAULT 0,
     last_run_at     TIMESTAMP
 );
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Attachments — Phase-1 paste/attach metadata. File bytes live on disk.
+-- ───────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    message_id      VARCHAR NOT NULL,
+    file_name       VARCHAR NOT NULL,
+    file_size       BIGINT  NOT NULL,
+    mime_type       VARCHAR NOT NULL,
+    storage_path    VARCHAR NOT NULL,
+    preview_tier    VARCHAR NOT NULL CHECK (preview_tier IN ('image', 'text', 'document', 'other')),
+    created_at      TIMESTAMP DEFAULT current_timestamp
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);

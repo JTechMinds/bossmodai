@@ -1,0 +1,24 @@
+Paste/Attach feature — test evidence
+Run: 2026-09-25 13:49 EDT
+Command: uv run pytest tests/test_attachments_core.py tests/test_attachments_db.py tests/test_attachments_api.py tests/test_message_attachments.py -v
+
+Result: 44 passed in 2.31s (0 failures)
+
+Fixes applied this session:
+1. test_attachments_api.py fixture: added BOSSMOD_LOCAL_API_TOKEN env + X-BossMod-Token header to TestClient (auth gate was rejecting all API calls with 401).
+2. test_attachments_api.py: error-code assertions now read r.json()["detail"]["code"] to match the route's HTTPException detail shape.
+
+Files touched (TDD touch-list only):
+- tests/test_attachments_api.py
+
+Artifacts:
+- core/models/attachment.py
+- core/models/__init__.py
+- core/attachments.py
+- db/attachments.py
+- api/routes/attachments.py
+- api/routes/__init__.py
+- tests/test_attachments_core.py
+- tests/test_attachments_db.py
+- tests/test_attachments_api.py
+- tests/test_message_attachments.py
