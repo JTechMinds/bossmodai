@@ -415,6 +415,12 @@ def test_card_and_settings_harness() -> None:
         "cardShowsPickSaved": True,
         "enablePostsBody": True,
         "schemaMismatchDismisses": True,
+        "maskedPastePersists": True,
+        "showHideKeepsToken": True,
+        "sshSaveIgnoresToken": True,
+        "tokenSaveIgnoresSsh": True,
+        "oneDefaultToggle": True,
+        "cardMaskedPastePersists": True,
     }
 
 

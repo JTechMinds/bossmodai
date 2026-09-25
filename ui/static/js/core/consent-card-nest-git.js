@@ -77,10 +77,23 @@ const BossModNestGitCard = (() => {
         match.value = (card && card.suggested_match) || '';
         match.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
         const pat = document.createElement('input');
-        pat.type = 'password';
+        pat.type = 'text';
         pat.placeholder = 'GitHub access token';
         pat.setAttribute('aria-label', 'GitHub access token');
-        pat.className = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-2';
+        pat.setAttribute('autocomplete', 'off');
+        pat.setAttribute('spellcheck', 'false');
+        pat.setAttribute('autocapitalize', 'off');
+        pat.className = 'setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono bm-secret-masked';
+        BossModSecretField.bind(pat);
+        const reveal = document.createElement('button');
+        reveal.type = 'button';
+        reveal.className = 'hpc-action';
+        reveal.textContent = 'Show';
+        reveal.setAttribute('aria-pressed', 'false');
+        reveal.addEventListener('click', () => BossModSecretField.toggle(pat, reveal));
+        const tokenRow = document.createElement('div');
+        tokenRow.className = 'flex gap-2 mb-2';
+        tokenRow.append(pat, reveal);
         const ssh = document.createElement('textarea');
         ssh.rows = 3;
         ssh.placeholder = 'SSH key (optional)';
@@ -102,6 +115,16 @@ const BossModNestGitCard = (() => {
             }
         });
         save.addEventListener('click', async () => {
+            const token = BossModSecretField.read(pat);
+            const rawKey = String(ssh.value || '');
+            const key = rawKey.trim() ? rawKey : '';
+            if (!token && !key) {
+                const note = document.createElement('div');
+                note.className = 'hpc-status';
+                note.textContent = 'Paste a GitHub access token or an SSH key. An empty field doesn’t save.';
+                container.appendChild(note);
+                return;
+            }
             save.disabled = true;
             settings.disabled = true;
             try {
@@ -109,8 +132,8 @@ const BossModNestGitCard = (() => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        pat: pat.value,
-                        ssh_key: ssh.value,
+                        pat: token || undefined,
+                        ssh_key: key || undefined,
                         label: label.value,
                         match: match.value,
                     }),
@@ -120,7 +143,7 @@ const BossModNestGitCard = (() => {
                     if (absorbFailure(container, card, res, bodyText)) return;
                     throw new Error(operatorMessage(bodyText) || 'Consent update failed.');
                 }
-                pat.value = '';
+                BossModSecretField.clear(pat);
                 ssh.value = '';
                 afterSave(bodyText ? JSON.parse(bodyText) : {});
             } catch (err) {
@@ -137,7 +160,7 @@ const BossModNestGitCard = (() => {
         row.appendChild(settings);
         actionsEl.appendChild(label);
         actionsEl.appendChild(match);
-        actionsEl.appendChild(pat);
+        actionsEl.appendChild(tokenRow);
         actionsEl.appendChild(ssh);
         actionsEl.appendChild(row);
     }

@@ -3,6 +3,7 @@
  * Invoked by tests/test_nest_git_auth.py. Not a browser bundle.
  */
 const fs = require("fs");
+const path = require("path");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
@@ -13,7 +14,9 @@ global.BossModFormat = {
 };
 
 const [domPath, nestPath, consentPath, settingsPath] = process.argv.slice(2);
+const secretPath = path.join(path.dirname(nestPath), "secret-field.js");
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
+eval(`${fs.readFileSync(secretPath, "utf8")}\n;global.BossModSecretField = BossModSecretField;\n`);
 eval(`${fs.readFileSync(nestPath, "utf8")}\n;global.BossModNestGitCard = BossModNestGitCard;\n`);
 eval(`${fs.readFileSync(consentPath, "utf8")}\n;global.BossModConsentCard = BossModConsentCard;\n`);
 eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGitSection;\n`);
@@ -194,42 +197,67 @@ if (!schemaMismatchDismisses) {
 }
 
 const settingsRoot = h("div", { id: "settings-content" });
+const VOID_TAGS = new Set(["input"]);
+const TREE_TAGS = /<\/?(input|textarea|button|div)\b/g;
+
+function attrsFrom(raw) {
+    const attrs = {};
+    const attrRe = /([:@\w-]+)(?:="([^"]*)")?/g;
+    let attr;
+    while ((attr = attrRe.exec(raw || ""))) {
+        attrs[attr[1]] = attr[2] === undefined ? "" : attr[2];
+    }
+    return attrs;
+}
+
 Object.defineProperty(settingsRoot, "innerHTML", {
     configurable: true,
     get() { return this._html || ""; },
     set(html) {
-        this._html = String(html);
+        const source = String(html);
+        this._html = source;
         this.replaceChildren();
-        for (const match of String(html).matchAll(/id="([^"]+)"/g)) {
-            const id = match[1];
-            const before = String(html).slice(0, match.index);
-            const lastTextarea = before.lastIndexOf("<textarea");
-            const lastInput = before.lastIndexOf("<input");
-            const lastButton = before.lastIndexOf("<button");
-            const lastDiv = before.lastIndexOf("<div");
-            const tag = lastTextarea > lastInput && lastTextarea > lastButton && lastTextarea > lastDiv
-                ? "textarea"
-                : lastInput > lastButton && lastInput > lastDiv
-                    ? "input"
-                    : lastButton > lastDiv
-                        ? "button"
-                        : "div";
-            const node = h(tag, { id });
-            if (id === "btn-toggle-nest-git") {
-                node.setAttribute("role", "switch");
-                node.setAttribute("aria-checked", /aria-checked="true"/.test(html) ? "true" : "false");
+        const stack = [this];
+        TREE_TAGS.lastIndex = 0;
+        let match;
+        while ((match = TREE_TAGS.exec(source))) {
+            const fullStart = match.index;
+            const closing = source[fullStart + 1] === "/";
+            const tag = match[1];
+            if (closing) {
+                const top = stack[stack.length - 1];
+                if (stack.length > 1 && top.tagName === tag.toUpperCase()) stack.pop();
+                continue;
             }
-            if (id === "nest-git-pat") node.setAttribute("data-focus", "pat");
-            this.append(node);
+            const openEnd = source.indexOf(">", fullStart);
+            const rawAttrs = source.slice(fullStart + match[0].length, openEnd);
+            const attrs = attrsFrom(rawAttrs);
+            const node = document.createElement(tag);
+            for (const [name, value] of Object.entries(attrs)) {
+                node.setAttribute(name, value);
+            }
+            if (attrs.type) node.type = attrs.type;
+            if (attrs.placeholder) node.placeholder = attrs.placeholder;
+            if (Object.prototype.hasOwnProperty.call(attrs, "checked")) node.checked = true;
+            if (tag === "button") {
+                const text = source.slice(openEnd + 1).split("<")[0];
+                if (text.trim()) node.textContent = text.trim();
+            }
+            stack[stack.length - 1].append(node);
+            const selfClose = source[openEnd - 1] === "/" || VOID_TAGS.has(tag);
+            if (!selfClose) stack.push(node);
+            TREE_TAGS.lastIndex = openEnd + 1;
         }
     },
 });
 documentStub.body.append(settingsRoot);
 let hostEnabled = false;
+let statusCredentials = [];
+const credentialPosts = [];
 const secret = "ghp_harness-must-not-linger";
 global.apiFetch = async (url, init) => {
-    const path = String(url);
-    if (path === "/api/nest-git/status") {
+    const requestPath = String(url);
+    if (requestPath === "/api/nest-git/status") {
         return {
             ok: true,
             async json() {
@@ -243,28 +271,43 @@ global.apiFetch = async (url, init) => {
                     probe_via: null,
                     probe_why: "Host git is not visible to Shell",
                     how_to: "Configure a git credential helper the Shell can see.",
-                    credentials: [],
-                    default_id: null,
+                    credentials: statusCredentials,
+                    default_id: (statusCredentials.find((item) => item.is_default) || {}).id || null,
                     match_how_to: "Add a credential for this remote, or pick which saved one to use.",
                 };
             },
         };
     }
-    if (path.includes("nest_git_host_enabled") && init && init.method === "PUT") {
+    if (requestPath.includes("nest_git_host_enabled") && init && init.method === "PUT") {
         return {
             ok: false,
             async json() { return { detail: "Host git is not visible to Shell. Configure a helper." }; },
         };
     }
-    if (path === "/api/nest-git/credentials") {
+    if (requestPath === "/api/nest-git/credentials" || requestPath.startsWith("/api/nest-git/items")) {
         const body = JSON.parse(init.body || "{}");
+        credentialPosts.push({ url: requestPath, method: init && init.method, body });
         if (body.pat && body.pat.includes("linger")) {
-            return { ok: true, async json() { return { has_pat: true, pat_last4: "nger" }; } };
+            return { ok: true, async json() { return { has_pat: true, pat_last4: "nger", credentials: statusCredentials }; } };
         }
-        return { ok: true, async json() { return { has_pat: true }; } };
+        return { ok: true, async json() { return { has_pat: true, credentials: statusCredentials }; } };
     }
-    throw new Error(`unexpected settings URL ${path}`);
+    throw new Error(`unexpected settings URL ${requestPath}`);
 };
+
+function dropLiveValue(input) {
+    const token = String(input.value || "");
+    let stored = token;
+    let dropped = false;
+    Object.defineProperty(input, "value", {
+        configurable: true,
+        get() { return dropped ? "" : stored; },
+        set(next) { stored = String(next == null ? "" : next); },
+    });
+    input.dispatchEvent({ type: "input" });
+    dropped = true;
+    return token;
+}
 
 await NestGitSection.render(settingsRoot);
 const settingsHtml = settingsRoot.innerHTML;
@@ -287,13 +330,130 @@ const stillOff = toggle.getAttribute("aria-checked") === "false";
 if (!stillOff) throw new Error("probe fail must not flip Enable On");
 
 const patInput = settingsRoot.querySelector("#nest-git-pat");
+if (!patInput) throw new Error("token field missing");
+if (patInput.type === "password" || settingsRoot.innerHTML.includes('type="password"')) {
+    throw new Error("token field is a password control; the mask must not be the value");
+}
+if (!patInput.classList.contains("bm-secret-masked")) {
+    throw new Error("token field is not masked");
+}
 patInput.value = secret;
+const reveal = settingsRoot.querySelector("#nest-git-pat-toggle");
+if (!reveal) throw new Error("show/hide toggle missing");
+await reveal.dispatchClick();
+const showHideKeepsToken = reveal.textContent === "Hide"
+    && reveal.getAttribute("aria-pressed") === "true"
+    && !patInput.classList.contains("bm-secret-masked")
+    && patInput.value === secret;
+if (!showHideKeepsToken) {
+    throw new Error(`show/hide changed the token: text=${reveal.textContent} value=${JSON.stringify(patInput.value)}`);
+}
+await reveal.dispatchClick();
+if (!patInput.classList.contains("bm-secret-masked") || patInput.value !== secret) {
+    throw new Error("hiding the token cleared the paste");
+}
+dropLiveValue(patInput);
+if (patInput.value !== "") throw new Error("live value was not dropped");
 const savePat = settingsRoot.querySelector("#nest-git-pat-save");
 await savePat.dispatchClick();
+const maskedPost = credentialPosts[credentialPosts.length - 1];
+const maskedPastePersists = Boolean(maskedPost)
+    && maskedPost.body.pat === secret
+    && !maskedPost.body.ssh_key;
+if (!maskedPastePersists) {
+    throw new Error(`masked paste was not saved: ${JSON.stringify(maskedPost)}`);
+}
 const after = settingsRoot.querySelector("#nest-git-pat");
 const patNotLeftInDom = !settingsRoot.innerHTML.includes(secret)
     && (!after || after.value === "");
 if (!patNotLeftInDom) throw new Error("token lingered in the Settings DOM");
+
+const siblingToken = "ghp_sibling-must-not-count";
+settingsRoot.querySelector("#nest-git-pat").value = siblingToken;
+settingsRoot.querySelector("#nest-git-ssh").value = "";
+const postsBeforeSsh = credentialPosts.length;
+await settingsRoot.querySelector("#nest-git-ssh-save").dispatchClick();
+const sshStatus = settingsRoot.querySelector("#nest-git-status");
+const sshSaveIgnoresToken = credentialPosts.length === postsBeforeSsh
+    && Boolean(sshStatus)
+    && sshStatus.textContent.includes("empty field");
+if (!sshSaveIgnoresToken) {
+    throw new Error(`ssh save validated the token field: posts=${credentialPosts.length} status=${sshStatus && sshStatus.textContent}`);
+}
+settingsRoot.querySelector("#nest-git-ssh").value = "ssh-key-material-only";
+await settingsRoot.querySelector("#nest-git-ssh-save").dispatchClick();
+const sshPost = credentialPosts[credentialPosts.length - 1];
+if (!sshPost || sshPost.body.ssh_key !== "ssh-key-material-only" || sshPost.body.pat) {
+    throw new Error(`ssh save posted the wrong control: ${JSON.stringify(sshPost)}`);
+}
+
+settingsRoot.querySelector("#nest-git-ssh").value = "ssh-sibling-ignored";
+settingsRoot.querySelector("#nest-git-pat").value = "";
+const postsBeforePat = credentialPosts.length;
+await settingsRoot.querySelector("#nest-git-pat-save").dispatchClick();
+const patStatus = settingsRoot.querySelector("#nest-git-status");
+const tokenSaveIgnoresSsh = credentialPosts.length === postsBeforePat
+    && Boolean(patStatus)
+    && patStatus.textContent.includes("empty field");
+if (!tokenSaveIgnoresSsh) {
+    throw new Error(`token save validated the ssh field: posts=${credentialPosts.length} status=${patStatus && patStatus.textContent}`);
+}
+
+statusCredentials = [
+    { id: "a", label: "A", match: "", is_default: true, has_pat: true, pat_last4: "abcd", has_ssh: false },
+    { id: "b", label: "B", match: "github.com/B/*", is_default: false, has_pat: true, pat_last4: "efgh", has_ssh: false },
+];
+await NestGitSection.render(settingsRoot);
+const boxes = [...settingsRoot.querySelectorAll("[data-nest-default]")];
+if (boxes.filter((box) => box.checked).length !== 1 || !boxes[0].checked) {
+    throw new Error(`expected one default, got ${boxes.map((box) => box.checked).join(",")}`);
+}
+boxes[1].checked = true;
+boxes[1].dispatchEvent({ type: "change" });
+const oneDefaultToggle = boxes.filter((box) => box.checked).length === 1 && boxes[1].checked && !boxes[0].checked;
+if (!oneDefaultToggle) {
+    throw new Error(`second default did not clear the first: ${boxes.map((box) => box.checked).join(",")}`);
+}
+const editPat = settingsRoot.querySelector(".nest-edit-pat");
+editPat.value = "ghp_edit-masked-paste";
+dropLiveValue(editPat);
+await settingsRoot.querySelector(".nest-git-save-edit").dispatchClick();
+const editPost = credentialPosts[credentialPosts.length - 1];
+if (!editPost || editPost.body.pat !== "ghp_edit-masked-paste" || !editPost.url.includes("/api/nest-git/items/a")) {
+    throw new Error(`edit masked paste missed: ${JSON.stringify(editPost)}`);
+}
+
+const maskedCard = pendingNestCard("nest-mask", "git push origin main");
+const maskedEl = paintCard(list, maskedCard);
+let cardBody = null;
+maskedEl.replaceChildren();
+Card.renderHostPathConsentCard(maskedEl, maskedCard, async (url, init) => {
+    cardBody = JSON.parse((init && init.body) || "{}");
+    if (!String(url).endsWith("/credentials")) throw new Error(`unexpected card URL ${url}`);
+    return { ok: true, async text() { return "{}"; } };
+});
+const maskAdd = actionButtons(maskedEl).find((btn) => btn.textContent === ADD_LABEL);
+if (!maskAdd) throw new Error("card add button missing");
+await maskAdd.dispatchClick();
+const cardToken = [...maskedEl.querySelectorAll("input")].find((node) => node.placeholder === "GitHub access token");
+const cardShow = actionButtons(maskedEl).find((btn) => btn.textContent === "Show");
+if (!cardToken || cardToken.type === "password" || !cardShow) {
+    throw new Error("card token field has no show/hide");
+}
+cardToken.value = "ghp_card-masked-paste";
+await cardShow.dispatchClick();
+if (cardShow.textContent !== "Hide" || cardToken.value !== "ghp_card-masked-paste") {
+    throw new Error("card show/hide changed the token");
+}
+dropLiveValue(cardToken);
+const cardSave = actionButtons(maskedEl).find((btn) => btn.textContent === "Save");
+await cardSave.dispatchClick();
+const cardMaskedPastePersists = Boolean(cardBody)
+    && cardBody.pat === "ghp_card-masked-paste"
+    && !cardBody.ssh_key;
+if (!cardMaskedPastePersists) {
+    throw new Error(`card masked paste was not saved: ${JSON.stringify(cardBody)}`);
+}
 
 process.stdout.write(JSON.stringify({
     ok: true,
@@ -308,6 +468,12 @@ process.stdout.write(JSON.stringify({
     cardShowsPickSaved: true,
     enablePostsBody: true,
     schemaMismatchDismisses: true,
+    maskedPastePersists: true,
+    showHideKeepsToken: true,
+    sshSaveIgnoresToken: true,
+    tokenSaveIgnoresSsh: true,
+    oneDefaultToggle: true,
+    cardMaskedPastePersists: true,
 }));
 })().catch((err) => {
     console.error(err && err.stack ? err.stack : err);

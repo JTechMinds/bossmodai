@@ -659,3 +659,10 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
    shapes differ as well as the hues (SC 1.4.1). */
 .inline-rename-save { color: var(--ok); }
 .inline-rename-cancel { color: var(--alert); }
+
+/* Token fields stay type=text so a paste is the value. The mask is paint:
+   a password control can show bullets while Save still reads empty. */
+.bm-secret-masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}

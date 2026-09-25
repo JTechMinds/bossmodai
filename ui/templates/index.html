@@ -167,6 +167,9 @@
     <!-- A dropdown is the shared menu panel, so it loads after menu.js. -->
     <script src="{{ static_url('js/core/menu-select.js') }}"></script>
     <script src="{{ static_url('js/core/gates.js') }}"></script>
+    <!-- Token paste/Save shares one reader. The nest git card and Settings
+         both use it, so it loads before either. -->
+    <script src="{{ static_url('js/core/secret-field.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card-nest-git.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card.js') }}"></script>
 

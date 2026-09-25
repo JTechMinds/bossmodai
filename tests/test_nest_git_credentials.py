@@ -367,6 +367,49 @@ def test_needs_nest_git_actions_post_multi_cred_bodies(monkeypatch: pytest.Monke
     assert "ghp_needs-body-acme-LLLL" not in used.text
 
 
+def test_a_second_unmatched_default_clears_the_first() -> None:
+    """Checking another unmatched default replaces the previous one.
+
+    The secrets stay. Moving the default must not wipe a token.
+    """
+    from core.bm_cli.nest_git_store import credential_secrets, update_credential
+
+    first = "ghp_first-default-MMMM"
+    second = "ghp_second-default-NNNN"
+    third = "ghp_third-default-OOOO"
+    add_credential(
+        label="First",
+        match="",
+        pat=first,
+        is_default=True,
+        credential_id="first",
+    )
+    add_credential(
+        label="Second",
+        match="",
+        pat=second,
+        is_default=True,
+        credential_id="second",
+    )
+    creds = load_credentials()
+    assert [item.id for item in creds if item.is_default] == ["second"]
+    assert credential_secrets("first")[0] == first
+    assert credential_secrets("second")[0] == second
+
+    add_credential(
+        label="Third",
+        match="github.com/Third/*",
+        pat=third,
+        is_default=False,
+        credential_id="third",
+    )
+    update_credential("third", is_default=True)
+    creds = load_credentials()
+    assert [item.id for item in creds if item.is_default] == ["third"]
+    assert credential_secrets("second")[0] == second
+    assert credential_secrets("third")[0] == third
+
+
 def test_always_allow_unmatched_still_hits_nest_git_card() -> None:
     add_credential(
         label="Acme",
