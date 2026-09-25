@@ -96,7 +96,8 @@ const NestGitSection = (() => {
                               class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono"
                               placeholder="SSH key (optional)"></textarea>
                     <div class="flex gap-2 mt-4">
-                        <button type="button" id="nest-git-save" class="btn btn-primary btn-sm">Save</button>
+                        <button type="button" id="nest-git-save"
+                                class="${BossModSettingsChrome.PRIMARY_ACTION}">Save</button>
                     </div>
                 </div>
                 <p class="text-xs text-bm-muted">${BossModFormat.escapeHtml(how)}</p>
@@ -155,7 +156,8 @@ const NestGitSection = (() => {
                         <input type="checkbox" class="nest-edit-default" data-nest-default ${item.is_default ? 'checked' : ''}>
                         Use for remotes that don’t match another credential
                     </label>
-                    <button type="button" class="btn btn-primary btn-sm nest-git-save-edit" data-id="${BossModFormat.escapeAttribute(item.id || '')}">Save</button>
+                    <button type="button" class="${BossModSettingsChrome.PRIMARY_ACTION} nest-git-save-edit"
+                            data-id="${BossModFormat.escapeAttribute(item.id || '')}">Save</button>
                 </div>
             </div>`;
     }

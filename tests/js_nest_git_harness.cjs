@@ -16,11 +16,13 @@ global.BossModFormat = {
 const [domPath, nestPath, consentPath, settingsPath] = process.argv.slice(2);
 const secretPath = path.join(path.dirname(nestPath), "secret-field.js");
 const credentialFormPath = path.join(path.dirname(nestPath), "nest-git-credential-form.js");
+const settingsChromePath = path.join(path.dirname(settingsPath), "settings-chrome.js");
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(secretPath, "utf8")}\n;global.BossModSecretField = BossModSecretField;\n`);
 eval(`${fs.readFileSync(credentialFormPath, "utf8")}\n;global.BossModNestGitCredentialForm = BossModNestGitCredentialForm;\n`);
 eval(`${fs.readFileSync(nestPath, "utf8")}\n;global.BossModNestGitCard = BossModNestGitCard;\n`);
 eval(`${fs.readFileSync(consentPath, "utf8")}\n;global.BossModConsentCard = BossModConsentCard;\n`);
+eval(`${fs.readFileSync(settingsChromePath, "utf8")}\n;global.BossModSettingsChrome = BossModSettingsChrome;\n`);
 eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGitSection;\n`);
 
 const { h } = global.BossModDom;
@@ -357,8 +359,9 @@ if (!patInput.classList.contains("bm-secret-masked") || patInput.value !== secre
 dropLiveValue(patInput);
 if (patInput.value !== "") throw new Error("live value was not dropped");
 const saveBtn = settingsRoot.querySelector("#nest-git-save");
-if (!saveBtn || !saveBtn.classList.contains("btn-primary")) {
-    throw new Error("Add form must have one primary Save button");
+const settingsPrimaryChrome = global.BossModSettingsChrome.PRIMARY_ACTION.split(/\s+/);
+if (!saveBtn || !settingsPrimaryChrome.every((token) => saveBtn.classList.contains(token))) {
+    throw new Error("Add form must use Settings primary action chrome");
 }
 const saveButtons = settingsRoot.querySelectorAll("#nest-git-save, [data-save-field]");
 if (saveButtons.length !== 1) {
