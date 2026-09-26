@@ -8,6 +8,7 @@ from pathlib import Path
 import db
 from core import config
 from core.agent_loop.runtime_core import NOTES_STORE_RETRIEVE, preview_runtime_core
+from core.agent_loop.standing_prefs import TEXT_MAX_CHARS
 from core.llm import context_preview
 
 
@@ -41,10 +42,11 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     assert "Never dump." in block
     assert "Never invent Board/Done from note text." in block
     assert "Standing prefs (warm):" in block
-    assert "Agent prefs store /me/standing_prefs.json (not notes)." in block
+    assert "record it with `pref set <id> <kind> <source>`" in block
+    assert f"the rule as one line (≤{TEXT_MAX_CHARS} chars) in the body." in block
     assert "Kinds: preference / constraint / style / tool_bias." in block
-    assert "On a clear operator statement, write a short sticky + sources there." in block
-    assert "Engine injects those pointers every work turn" in block
+    assert "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`." in block
+    assert "The engine injects them every work turn" in block
     assert "the agent does not re-open prefs for inject." in block
     assert "Supersede only when the operator replaces." in block
     assert "Optional note pointer for prose" in block
@@ -53,6 +55,10 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     assert "standing personal context go in /me/notes" not in block
     assert "short sticky plus a path pointer under /me/notes" not in block
     assert "sticky-slot" not in block.lower()
+    # The store is system-owned: the guidance names the command, never a file.
+    assert "sticky" not in NOTES_STORE_RETRIEVE.lower()
+    assert "/me/standing_prefs.json" not in block
+    assert "file" not in NOTES_STORE_RETRIEVE.split("Standing prefs (warm):", 1)[1]
     assert "chat fade" not in block.lower()
     lowered = block.lower()
     assert "memory dump" not in lowered

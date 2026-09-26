@@ -22,6 +22,7 @@ CONTEXT_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "specialty.js",
@@ -50,6 +51,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "thread-requests.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-source.js",
+    CONVERSATION / "conversation-focus-invalidate.js",
     CONVERSATION / "conversation.js",
     JS / "shell" / "places.js",
     # The shared viewer the desk browser opens, with the two modules it is
@@ -614,6 +616,66 @@ def test_agent_edit_modules_stay_focused() -> None:
     guarded = recovery + _read(CONTEXT / "agent-edit.js") + _read(CONTEXT / "agent-form-save.js")
     for copy in ("Clear chat history", "Reset runtime", "Delete agent"):
         assert copy in guarded, copy
+
+
+def _delete_warnings() -> dict:
+    """What context/agent-api.js says before a delete, evaluated for real."""
+    probe = (
+        "const fs = require('fs');"
+        "eval(fs.readFileSync(process.argv[1], 'utf8') + ';global.Api = BossModAgentApi;');"
+        "let refusesNoName = false;"
+        "try { Api.agentDeleteWarning(''); } catch (err) { refusesNoName = true; }"
+        "process.stdout.write(JSON.stringify({"
+        "one: Api.agentDeleteWarning('Jim'), all: Api.allAgentsDeleteWarning(), refusesNoName}));"
+    )
+    result = subprocess.run(
+        ["node", "-e", probe, str(CONTEXT / "agent-api.js")],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    return json.loads(result.stdout)
+
+
+def test_the_delete_warning_says_what_is_destroyed() -> None:
+    """Every door to a delete says what goes, and to back it up first.
+
+    The desk's Remove used to promise that artifacts and diagnostics were
+    preserved while the delete removed both. The copy now has one owner,
+    agent-api.js beside apiDeleteAgent, and each entry point reads it from
+    there. Settings' delete-all keeps its native confirm(), so what the
+    operator sees there is exactly the string it is handed.
+    """
+    warnings = _delete_warnings()
+    assert warnings["one"].startswith("Deleting Jim permanently deletes their files")
+    assert warnings["all"].startswith("Deleting all agents permanently deletes every agent")
+    for text in (warnings["one"], warnings["all"]):
+        assert "back up anything you need" in text
+        assert "cancels their open tasks" in text
+        assert "preserved" not in text
+    # A warning about "Deleting undefined" would not say whose files go.
+    assert warnings["refusesNoName"] is True
+
+    desk = _read(CONTEXT / "desk-actions.js")
+    assert "BossModAgentApi.agentDeleteWarning(detail.name)" in desk
+    assert "diagnostics are preserved" not in desk
+    save = _read(CONTEXT / "agent-form-save.js")
+    assert "BossModAgentApi.agentDeleteWarning(agent.name)" in save
+    advanced = _read(JS / "settings" / "settings-advanced.js")
+    assert "if (!confirm(BossModAgentApi.allAgentsDeleteWarning())) return;" in advanced
+
+
+def test_the_desk_and_the_form_render_the_delete_warning() -> None:
+    """The warning is what the Remove and Delete dialogs actually show.
+
+    Read off the rendered dialogs, because a source check passes while the
+    wrong string reaches the screen. Remove also has no dialog before the
+    agent's name has loaded: the footer says why and the read is retried.
+    """
+    payload = _harness()
+    assert payload["removeWarnsWhatIsDeleted"] is True
+    assert payload["removeWaitsForTheName"] is True
+    assert payload["removeOpensOnceTheNameIsIn"] is True
+    assert payload["deleteWarnsWhatIsDeleted"] is True
 
 
 def test_context_modules_stay_focused() -> None:

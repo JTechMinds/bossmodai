@@ -22,13 +22,14 @@ from db.crud import execute, fetch_all, fetch_one, query, query_one
 # Agents + state
 from db.agents import (
     create_agent,
-    delete_agent,
+    delete_agent_rows,
     get_agent,
     get_agent_by_storage_key,
     get_agent_state,
     get_agents_by_ids,
     list_agents,
     list_vacationing_agents,
+    purge_orphan_agent_rows,
     update_agent,
     update_agent_state,
 )
@@ -197,6 +198,7 @@ from db.meeting_sessions import (
 )
 from db.meeting_response_rounds import (
     activate_next_response_candidate,
+    complete_meeting_response_round,
     create_meeting_response_candidate,
     create_meeting_response_round,
     delete_meeting_response_rounds,
@@ -204,6 +206,7 @@ from db.meeting_response_rounds import (
     get_meeting_response_candidate,
     get_meeting_response_round,
     list_meeting_response_candidates,
+    list_meeting_response_rounds,
     mark_candidate_observed,
     mark_candidate_responded,
     maybe_complete_meeting_response_round,
@@ -216,6 +219,8 @@ from db.meeting_orchestration import (
     get_meeting_session_meta,
     list_meeting_participant_details,
     list_meeting_session_participants,
+    list_unfinished_meetings_hosted_by,
+    list_unfinished_meetings_without_host,
     mark_meeting_participant_pinged,
     meeting_all_required_accounted_for,
     get_meeting_session_participant,
@@ -236,6 +241,7 @@ from db.agent_triggers import (
     delete_queued_triggers_for_agent_channels,
     delete_queued_triggers_for_channel,
     delete_queued_triggers_for_round,
+    delete_queued_triggers_for_session,
     delete_queued_triggers_for_task,
     fail_agent_trigger,
     get_agent_trigger,
@@ -272,7 +278,14 @@ from db.runtime_control import (
 )
 
 # Tasks
-from db.tasks import create_task, get_task, list_recent_tasks, list_tasks, update_task
+from db.tasks import (
+    create_task,
+    get_task,
+    list_open_task_ids_owned_by_missing_agents,
+    list_recent_tasks,
+    list_tasks,
+    update_task,
+)
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import (
@@ -372,13 +385,14 @@ __all__ = [
     "query_one",
     # Agents
     "create_agent",
-    "delete_agent",
+    "delete_agent_rows",
     "get_agent",
     "get_agent_by_storage_key",
     "get_agent_state",
     "get_agents_by_ids",
     "list_agents",
     "list_vacationing_agents",
+    "purge_orphan_agent_rows",
     "update_agent",
     "update_agent_state",
     "normalize_agent_personal_storage_roots",
@@ -474,6 +488,7 @@ __all__ = [
     "create_meeting_session",
     "create_meeting_session_message",
     "create_meeting_response_candidate",
+    "complete_meeting_response_round",
     "create_meeting_response_round",
     "delete_meeting_response_rounds",
     "end_meeting_session",
@@ -488,6 +503,7 @@ __all__ = [
     "get_recent_meeting_summaries_for_agent",
     "list_active_meeting_participants",
     "list_meeting_response_candidates",
+    "list_meeting_response_rounds",
     "list_meeting_session_messages",
     "mark_candidate_observed",
     "mark_candidate_responded",
@@ -507,6 +523,7 @@ __all__ = [
     "delete_queued_triggers_for_agent_channels",
     "delete_queued_triggers_for_channel",
     "delete_queued_triggers_for_round",
+    "delete_queued_triggers_for_session",
     "delete_queued_triggers_for_task",
     "fail_agent_trigger",
     "get_agent_trigger",
@@ -542,6 +559,7 @@ __all__ = [
     "create_task",
     "create_task_event",
     "get_task",
+    "list_open_task_ids_owned_by_missing_agents",
     "list_tasks",
     "list_recent_task_events",
     "list_task_events",

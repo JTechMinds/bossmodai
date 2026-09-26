@@ -406,8 +406,15 @@ def mirror_task_created(task: Any) -> dict[str, Any]:
     return mirror_origin_status(task=task, agent=agent, kind="created")
 
 
-def mirror_task_cancelled_by_operator(task: Any) -> dict[str, Any]:
-    """Post Cancelled — Operator cancelled on the origin thread."""
+def mirror_task_cancelled_by_operator(task: Any, *, reason: str) -> dict[str, Any]:
+    """Post ``Cancelled — <reason>`` on the origin thread.
+
+    ``reason`` is the cancel's own reason (``OPERATOR_CANCEL_REASON`` from
+    the board or a thread archive, the deleted owner from an agent delete),
+    so the line never claims an operator cancel that did not happen.
+    Returns the posted line, or ``{}`` when the task has no origin thread or
+    no live agent to author the line.
+    """
     if task is None or origin_thread_target(task) is None:
         return {}
     agent = _origin_author_agent(task)
@@ -417,5 +424,5 @@ def mirror_task_cancelled_by_operator(task: Any) -> dict[str, Any]:
         task=task,
         agent=agent,
         kind="cancelled",
-        reason=OPERATOR_CANCEL_REASON,
+        reason=reason,
     )

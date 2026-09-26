@@ -82,6 +82,50 @@ def upsert_meeting_session_meta(
     return row
 
 
+# A meeting is unfinished while its session is open and it is still gathering
+# or running. Shared by both host lookups below so they cannot disagree.
+_UNFINISHED_MEETINGS_SQL = """
+    SELECT m.session_id, m.phase
+    FROM meeting_session_meta m
+    JOIN meeting_sessions s ON s.id = m.session_id
+    WHERE s.status = 'active' AND m.phase IN ('assembling', 'active') AND {host_condition}
+    ORDER BY s.created_at ASC, m.session_id ASC
+"""
+
+
+def list_unfinished_meetings_hosted_by(host_agent_id: str) -> list[dict[str, Any]]:
+    """Return the unfinished meetings one agent hosts, oldest first.
+
+    Args:
+        host_agent_id: The host.
+
+    Returns:
+        Rows with ``session_id`` and ``phase`` (``assembling`` or ``active``)
+        for every meeting whose session is still ``active``.
+    """
+    return query(
+        _UNFINISHED_MEETINGS_SQL.format(host_condition="m.host_agent_id = $1"),
+        [host_agent_id],
+    )
+
+
+def list_unfinished_meetings_without_host() -> list[dict[str, Any]]:
+    """Return the unfinished meetings whose host no longer exists, oldest first.
+
+    The host is either NULL (an earlier delete detached it; a meeting is
+    always created with a host) or an id no agent has any more.
+
+    Returns:
+        Rows with ``session_id`` and ``phase``, as
+        ``list_unfinished_meetings_hosted_by`` returns them.
+    """
+    return query(
+        _UNFINISHED_MEETINGS_SQL.format(
+            host_condition="(m.host_agent_id IS NULL OR m.host_agent_id NOT IN (SELECT id FROM agents))"
+        ),
+    )
+
+
 def update_meeting_session_meta(
     session_id: str,
     *,

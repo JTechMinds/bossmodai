@@ -18,6 +18,7 @@ from api.routes._shared import (
 from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
+from core.agent_repository import agent_repository
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.llm.template_engine import TemplateError
 from core.messaging import route_human_channel_message, route_human_dm
@@ -425,6 +426,12 @@ async def _broadcast_archive_side_effects(posted_lines: list[dict[str, object]])
                 created_at=chat.get("created_at"),
                 notification_kind=chat.get("notification_kind"),
             )
+        # Only an agent delete that ended a hosted meeting produces this: the
+        # meeting is painted per attendee conversation, so once per agent.
+        meeting = posted.get("meeting_message") if isinstance(posted, dict) else None
+        if meeting:
+            for agent_id in posted["agent_ids"]:
+                await manager.broadcast_meeting_message(agent_id=agent_id, **meeting)
 
 
 @router.get("/channels/{channel_id}")
@@ -584,7 +591,7 @@ async def create_agent(body: AgentCreate) -> Agent:
     })
     desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
     try:
-        agent = db.create_agent(
+        agent = agent_repository.create(
             name=body.name,
             role=body.role,
             description=body.description,
@@ -706,27 +713,21 @@ async def update_agent_prompt_history_policy(
 
 @router.delete("/agents", status_code=200)
 async def delete_all_agents():
-    """Delete every agent, their DB history, and their artifact files from disk."""
-    import shutil as _shutil
+    """Delete every agent, their DB history, their artifact files, and their standing prefs.
 
-    from core.bm_cli.filesystem import agents_artifact_root, ensure_artifact_roots
-
-    agents = db.list_agents()
-    for agent in agents:
-        db.delete_agent(agent.id)
-
-    # Wipe agent artifact directories from disk
-    root = agents_artifact_root()
-    if root.exists():
-        _shutil.rmtree(root)
-    ensure_artifact_roots()
+    Each agent's live turn is cancelled first, so nothing writes while its
+    rows and files go.
+    """
+    for agent in db.list_agents():
+        await runtime_services.reset_agent_runtime(agent.id)
+    deleted = agent_repository.delete_all()
 
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
         event="all_agents_deleted",
-        detail=f"All {len(agents)} agent(s) deleted with artifacts",
+        detail=f"All {deleted} agent(s) deleted with artifacts",
     )
-    return {"status": "ok", "deleted": len(agents)}
+    return {"status": "ok", "deleted": deleted}
 
 
 @router.delete("/agents/{agent_id}", status_code=204)
@@ -736,8 +737,18 @@ async def delete_agent(agent_id: str):
     if not agent:
         raise HTTPException(404, "Agent not found")
 
-    db.delete_agent(agent_id)
+    # Before any row changes: a live turn must not keep writing for an agent
+    # that is being deleted.
+    await runtime_services.reset_agent_runtime(agent_id)
+    try:
+        posted_lines = agent_repository.delete(agent_id)
+    except LookupError as exc:
+        raise HTTPException(404, "Agent not found") from exc
 
+    # Same painting as a thread archive's task cancels: the origin lines of
+    # the open tasks this delete cancelled, plus the "Meeting ended" line of
+    # each meeting it hosted, to every other participant.
+    await _broadcast_archive_side_effects(posted_lines)
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
         event="agent_deleted",

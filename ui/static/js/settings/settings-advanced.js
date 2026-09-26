@@ -173,7 +173,7 @@ const AdvancedSystemSection = (() => {
         });
 
         document.getElementById('btn-delete-all-agents').addEventListener('click', async () => {
-            if (!confirm('Delete ALL agents, their history, and artifact files from disk? Settings and projects are preserved.')) return;
+            if (!confirm(BossModAgentApi.allAgentsDeleteWarning())) return;
             try {
                 const res = await apiFetch('/api/agents', { method: 'DELETE' });
                 if (!res.ok) throw new Error();

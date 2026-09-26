@@ -8,7 +8,6 @@ still ends as empty speak and stay-out.
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -33,6 +32,7 @@ from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
 from core.time import ensure_utc
 from db import channel_response_rounds as channel_round_db
+from tests._router_fakes import route_reply
 
 
 def setup_function() -> None:
@@ -98,10 +98,6 @@ def _enable_system_ai() -> None:
     config.reload()
 
 
-def _payload(speak: list[str], stay_out: list[str]) -> str:
-    return json.dumps({"speak": speak, "stay_out": stay_out})
-
-
 def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, Any]:
     calls: dict[str, Any] = {"n": 0, "prompts": []}
 
@@ -111,7 +107,7 @@ def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, An
         calls["prompts"].append(blob)
         if calls["n"] > len(replies):
             raise AssertionError("router was called more times than scripted")
-        return replies[calls["n"] - 1]
+        return route_reply(messages, replies[calls["n"] - 1])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     return calls
@@ -238,7 +234,7 @@ def test_blocked_next_owner_reply_hard_wakes_and_does_not_stay_out(
     _enable_system_ai()
     calls = _script(
         monkeypatch,
-        [_payload([], [charles.id, owner.id])],
+        [[]],
     )
     progress = advance_channel_round(
         payload,
@@ -278,8 +274,8 @@ def test_operator_at_stays_ahead_of_the_blocked_agent(
     calls = _script(
         monkeypatch,
         [
-            _payload([], [charles.id, brad.id, ada.id]),
-            _payload([], [charles.id, brad.id, ada.id]),
+            [],
+            [],
         ],
     )
     message = db.create_channel_message(
@@ -357,8 +353,8 @@ def test_settled_essay_stays_out_and_does_not_reopen_the_blocked_agent(
     calls = _script(
         monkeypatch,
         [
-            _payload([], others),
-            _payload([], others),
+            [],
+            [],
         ],
     )
     message = db.create_channel_message(
@@ -407,8 +403,8 @@ def test_ack_to_the_blocked_line_does_not_reopen(
     calls = _script(
         monkeypatch,
         [
-            _payload([], [owner.id]),
-            _payload([], [owner.id]),
+            [],
+            [],
         ],
     )
     progress = advance_channel_round(

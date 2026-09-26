@@ -7,7 +7,13 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 import db
+from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
+from api.routes import router
 from core import config
 from core.llm.system_completion import resolve_system_connection
 from db.settings import get_seed_setting_default, seed_defaults
@@ -119,6 +125,7 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
     assert order == [
         "decision_repair_attempts",
         "max_concurrent_agent_turns",
+        "system_ai_max_tokens",
         "compaction_mode",
         "compaction_task_budget_headroom_percent",
         "compaction_chat_budget_headroom_percent",
@@ -138,6 +145,11 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
     assert "repairs" in turns["paragraphs"][0]
     assert "one turn" in turns["paragraphs"][0]
     assert "health warning" in turns["paragraphs"][0]
+
+    max_tokens = rows["system_ai_max_tokens"]
+    assert max_tokens["label"] == "System AI Max Output Tokens"
+    assert max_tokens["value"] == "6144"
+    assert "reasoning" in max_tokens["paragraphs"][0]
 
     mode = rows["compaction_mode"]
     assert mode["label"] == "Compaction Mode"
@@ -170,6 +182,37 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
     assert custom["options"][-1]["value"] == "custom_mode"
     assert custom["options"][-1]["selected"] is True
     assert custom["value"] == "custom_mode"
+
+
+def _settings_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    return TestClient(app)
+
+
+def _put_max_tokens(value: str):
+    return _settings_client().put(
+        "/api/settings/system_ai_max_tokens",
+        params={"value": value, "category": "llm"},
+        headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()},
+    )
+
+
+@pytest.mark.parametrize("bad", ["6k", "0", "-5"])
+def test_settings_put_rejects_a_bad_system_ai_max_tokens(bad: str) -> None:
+    res = _put_max_tokens(bad)
+    assert res.status_code == 400
+    assert res.json()["detail"] == "System AI max output tokens must be a whole number of at least 1."
+    config.reload()
+    assert config.get("system_ai_max_tokens") == "6144"
+    assert config.require_int("system_ai_max_tokens") == 6144
+
+
+def test_settings_put_accepts_a_whole_system_ai_max_tokens() -> None:
+    res = _put_max_tokens("4096")
+    assert res.status_code == 200, res.text
+    assert config.require_int("system_ai_max_tokens") == 4096
 
 
 def _stored_system_ai() -> str:

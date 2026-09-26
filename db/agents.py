@@ -7,6 +7,8 @@ more before a delete removes anything, stamped deleted.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,7 +25,11 @@ from db.crud import (
     insert_returning_dict,
     query,
 )
-from db.agent_storage_identities import delete_agent_storage_identity, ensure_agent_storage_identity
+from db.agent_storage_identities import (
+    delete_agent_storage_identity,
+    ensure_agent_storage_identity,
+    retire_agent_storage_key,
+)
 from db.secret_store import decrypt_secret, encrypt_secret
 
 _AGENT_COLUMNS = (
@@ -69,7 +75,7 @@ def _capture_snapshot(agent: Agent, *, deleted: bool) -> None:
     Raises whatever ``capture_agent_snapshot`` raises; a caller inside a
     transaction rolls its own write back with it.
     """
-    # Imported here, not at module top, the way delete_agent imports
+    # Imported here, not at module top, the way delete_agent_rows imports
     # db.host_path_consent: db.agent_prompt_history_policies imports this
     # module back to re-capture after a policy change, and keeping the
     # snapshot hooks' imports inside functions keeps the db package's load
@@ -274,74 +280,195 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     return agent
 
 
-def delete_agent(agent_id: str) -> bool:
-    """Delete an agent and all dependent rows, keeping its setup as a snapshot.
+def delete_agent_rows(agent_id: str) -> bool:
+    """Remove or detach every row the agent owns, in one transaction.
+
+    Called only by ``core.agent_repository.AgentRepository``, which cancels
+    the agent's open tasks before this and removes its files after it.
 
     The snapshot is captured, stamped deleted, BEFORE the first row goes: its
-    prompt-history policy is one of the rows this removes. Returns False when
-    there is no such agent. Raises ``RuntimeError`` when the agent row exists
-    but cannot be read whole, since deleting it then would lose the setup the
-    snapshot exists to keep.
-    """
-    result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
-    if not result:
-        return False
-    agent = get_agent(agent_id)
-    if agent is None:
-        raise RuntimeError(
-            f"Agent {agent_id} exists but could not be read for its last snapshot; "
-            "refusing to delete it"
-        )
-    _capture_snapshot(agent, deleted=True)
-    # notification_links -> notifications
-    notification_ids = [r["id"] for r in query(
-        "SELECT id FROM notifications WHERE agent_id = $1", [agent_id],
-    )]
-    for nid in notification_ids:
-        execute("DELETE FROM notification_links WHERE notification_id = $1", [nid])
-    execute("DELETE FROM notifications WHERE agent_id = $1", [agent_id])
-    # clear shared-channel authored references and queue membership
-    execute("UPDATE channel_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
-    execute("DELETE FROM channel_response_candidates WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM channel_members WHERE agent_id = $1", [agent_id])
-    # clear shared-meeting authored references and queue membership
-    execute("UPDATE meeting_session_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
-    execute("UPDATE meeting_sessions SET created_by_agent_id = NULL WHERE created_by_agent_id = $1", [agent_id])
-    execute("DELETE FROM meeting_response_candidates WHERE agent_id = $1", [agent_id])
-    # frozen work transcripts reference activities
-    execute("DELETE FROM work_snapshots WHERE agent_id = $1", [agent_id])
-    # activities (clear self-referential parent_activity_id first)
-    execute(
-        "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",
-        [agent_id],
-    )
-    execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
-    # tasks & task events
-    execute("UPDATE task_events SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
-    execute("UPDATE tasks SET owner_id = NULL WHERE owner_id = $1", [agent_id])
-    execute("UPDATE tasks SET requester_id = NULL WHERE requester_id = $1", [agent_id])
-    # host-path consent (grants first — FK to requests)
-    from db.host_path_consent import delete_agent_consent
+    prompt-history policy is one of the rows this removes, and Add agent's
+    Recent keeps it. Private rows (notifications, DMs, diagnostics, triggers,
+    activities, CLI audit and approvals, agent-scoped CLI policy rules, the
+    companion rows) are deleted. Shared history (channel and meeting
+    messages, task events, tasks, channels, meetings it created or hosted)
+    stays with this agent's id detached to NULL so teammates' transcripts stay
+    whole. The storage key
+    is retired in the ledger, never freed.
 
-    delete_agent_consent(agent_id)
-    # bm_cli_events.approval_request_id references cli_approval_requests.
-    # Drop this agent's audit rows before those requests, and before the agent.
-    execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM cli_approval_requests WHERE agent_id = $1", [agent_id])
-    # CLI policy rules (nullable agent_id)
-    execute("UPDATE cli_policy_rules SET agent_id = NULL WHERE agent_id = $1", [agent_id])
-    # Telegram sessions (nullable target_agent_id)
-    execute("UPDATE telegram_sessions SET target_agent_id = NULL WHERE target_agent_id = $1", [agent_id])
-    # remaining FK dependents
-    execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM agent_triggers WHERE agent_id = $1", [agent_id])
-    # companion tables
-    execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
-    execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
-    delete_agent_storage_identity(agent_id)
-    execute("DELETE FROM agents WHERE id = $1", [agent_id])
+    Returns False when there is no such agent. Raises ``RuntimeError`` when
+    the agent row exists but cannot be read whole (deleting it then would
+    lose the setup the snapshot exists to keep) or has no live ledger key.
+    Any failure rolls back every row.
+    """
+    with transaction():
+        result = query("SELECT id FROM agents WHERE id = $1", [agent_id])
+        if not result:
+            return False
+        agent = get_agent(agent_id)
+        if agent is None:
+            raise RuntimeError(
+                f"Agent {agent_id} exists but could not be read for its last snapshot; "
+                "refusing to delete it"
+            )
+        _capture_snapshot(agent, deleted=True)
+        # notification_links -> notifications
+        notification_ids = [r["id"] for r in query(
+            "SELECT id FROM notifications WHERE agent_id = $1", [agent_id],
+        )]
+        for nid in notification_ids:
+            execute("DELETE FROM notification_links WHERE notification_id = $1", [nid])
+        execute("DELETE FROM notifications WHERE agent_id = $1", [agent_id])
+        # diagnostics are this agent's own turn traces (steps first — FK to diagnostics)
+        execute(
+            "DELETE FROM diagnostic_steps WHERE diagnostic_id IN (SELECT id FROM diagnostics WHERE agent_id = $1)",
+            [agent_id],
+        )
+        execute("DELETE FROM diagnostics WHERE agent_id = $1", [agent_id])
+        # DMs are private to the agent. HUMAN_SENDER_ID and the other non-agent
+        # sender values are never an agent id, so the other side's rows stay.
+        execute("DELETE FROM messages WHERE from_agent = $1 OR to_agent = $1", [agent_id])
+        # clear shared-channel authored references and queue membership
+        execute("UPDATE channel_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+        execute("DELETE FROM channel_response_candidates WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM channel_members WHERE agent_id = $1", [agent_id])
+        # a thread the agent started stays; round order already falls back to
+        # the first member when the creator is gone (channel_rounds._lead_id)
+        execute("UPDATE channels SET created_by = NULL WHERE created_by = $1", [agent_id])
+        execute("UPDATE channel_host_state SET work_agent_id = NULL WHERE work_agent_id = $1", [agent_id])
+        # clear shared-meeting authored references and queue membership
+        execute("UPDATE meeting_session_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+        execute("UPDATE meeting_sessions SET created_by_agent_id = NULL WHERE created_by_agent_id = $1", [agent_id])
+        # a meeting it hosted stays; every host reader skips a NULL host
+        execute("UPDATE meeting_session_meta SET host_agent_id = NULL WHERE host_agent_id = $1", [agent_id])
+        execute("DELETE FROM meeting_response_candidates WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM meeting_session_participants WHERE agent_id = $1", [agent_id])
+        # frozen work transcripts reference activities
+        execute("DELETE FROM work_snapshots WHERE agent_id = $1", [agent_id])
+        # activities (clear self-referential parent_activity_id first)
+        execute(
+            "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",
+            [agent_id],
+        )
+        execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
+        # tasks & task events
+        execute("UPDATE task_events SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+        execute("UPDATE tasks SET owner_id = NULL WHERE owner_id = $1", [agent_id])
+        execute("UPDATE tasks SET requester_id = NULL WHERE requester_id = $1", [agent_id])
+        execute("UPDATE tasks SET assigned_to = NULL WHERE assigned_to = $1", [agent_id])
+        execute("UPDATE tasks SET created_by = NULL WHERE created_by = $1", [agent_id])
+        # host-path consent (grants first — FK to requests)
+        from db.host_path_consent import delete_agent_consent
+
+        delete_agent_consent(agent_id)
+        # bm_cli_events.approval_request_id references cli_approval_requests.
+        # Drop this agent's audit rows before those requests, and before the agent.
+        execute("DELETE FROM bm_cli_events WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM cli_approval_requests WHERE agent_id = $1", [agent_id])
+        # An agent-scoped rule belongs to this agent. Detaching it would make it
+        # global (agent_id IS NULL means "every agent"), so it is deleted.
+        execute("DELETE FROM cli_policy_rules WHERE agent_id = $1", [agent_id])
+        # Telegram sessions (nullable target_agent_id)
+        execute("UPDATE telegram_sessions SET target_agent_id = NULL WHERE target_agent_id = $1", [agent_id])
+        # remaining FK dependents
+        execute("DELETE FROM artifacts WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM agent_triggers WHERE agent_id = $1", [agent_id])
+        # companion tables
+        execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
+        retire_agent_storage_key(agent_id)
+        delete_agent_storage_identity(agent_id)
+        execute("DELETE FROM agents WHERE id = $1", [agent_id])
     return True
+
+
+# The one-time orphan cleanup (AgentRepository.purge_orphans) applies the same
+# rules as delete_agent_rows to ids an older delete left behind. Each entry is
+# (count key, statement template); ``{missing:<column>}`` expands to "names an
+# agent that no longer exists". Order matters: steps before their diagnostics.
+_ORPHAN_STATEMENTS: tuple[tuple[str, str], ...] = (
+    (
+        "diagnostic_steps",
+        "DELETE FROM diagnostic_steps WHERE diagnostic_id IN "
+        "(SELECT id FROM diagnostics WHERE {missing:agent_id}) RETURNING 1",
+    ),
+    ("diagnostics", "DELETE FROM diagnostics WHERE {missing:agent_id} RETURNING 1"),
+    ("messages", "DELETE FROM messages WHERE {missing:from_agent} OR {missing:to_agent} RETURNING 1"),
+    (
+        "meeting_session_participants",
+        "DELETE FROM meeting_session_participants WHERE {missing:agent_id} RETURNING 1",
+    ),
+    ("channel_members", "DELETE FROM channel_members WHERE {missing:agent_id} RETURNING 1"),
+    (
+        "channel_response_candidates",
+        "DELETE FROM channel_response_candidates WHERE {missing:agent_id} RETURNING 1",
+    ),
+    (
+        "meeting_response_candidates",
+        "DELETE FROM meeting_response_candidates WHERE {missing:agent_id} RETURNING 1",
+    ),
+    ("tasks.assigned_to", "UPDATE tasks SET assigned_to = NULL WHERE {missing:assigned_to} RETURNING 1"),
+    ("tasks.created_by", "UPDATE tasks SET created_by = NULL WHERE {missing:created_by} RETURNING 1"),
+    ("tasks.owner_id", "UPDATE tasks SET owner_id = NULL WHERE {missing:owner_id} RETURNING 1"),
+    ("tasks.requester_id", "UPDATE tasks SET requester_id = NULL WHERE {missing:requester_id} RETURNING 1"),
+    ("channels.created_by", "UPDATE channels SET created_by = NULL WHERE {missing:created_by} RETURNING 1"),
+    (
+        "channel_host_state.work_agent_id",
+        "UPDATE channel_host_state SET work_agent_id = NULL WHERE {missing:work_agent_id} RETURNING 1",
+    ),
+    (
+        "meeting_session_meta.host_agent_id",
+        "UPDATE meeting_session_meta SET host_agent_id = NULL WHERE {missing:host_agent_id} RETURNING 1",
+    ),
+)
+
+_MISSING_TOKEN_RE = re.compile(r"\{missing:([a-z_]+)\}")
+
+
+def purge_orphan_agent_rows(non_agent_ids: Iterable[str]) -> dict[str, int]:
+    """Delete or detach rows that still name an agent that no longer exists.
+
+    Called only by ``core.agent_repository.AgentRepository.purge_orphans``,
+    after it has cancelled the open tasks such ids own. The rules match
+    ``delete_agent_rows``: private rows (diagnostics and their steps, DMs,
+    meeting participation, thread membership, response candidates) are
+    deleted; shared rows (tasks, threads, host state, meeting hosts) keep
+    their row with the id set to NULL. NULL is never an orphan, and neither is any value in
+    ``non_agent_ids`` (``HUMAN_SENDER_ID`` and the like), which are senders
+    and requesters that were never agents.
+
+    Idempotent: a second run matches nothing and returns all zeros. Runs in
+    one transaction, so a failure changes nothing.
+
+    Args:
+        non_agent_ids: Values these columns legitimately hold that are not
+            agent ids. Must not be empty: an empty list would mean nobody
+            decided which values are safe.
+
+    Returns:
+        Rows changed per ``table`` or ``table.column`` key, every key present.
+
+    Raises:
+        ValueError: ``non_agent_ids`` is empty.
+    """
+    sentinels = sorted({str(value) for value in non_agent_ids})
+    if not sentinels:
+        raise ValueError("purge_orphan_agent_rows needs the non-agent id values to keep")
+    placeholders = ", ".join(f"${index}" for index in range(1, len(sentinels) + 1))
+
+    def _missing(match: re.Match[str]) -> str:
+        column = match.group(1)
+        return (
+            f"({column} IS NOT NULL AND {column} NOT IN (SELECT id FROM agents) "
+            f"AND {column} NOT IN ({placeholders}))"
+        )
+
+    counts: dict[str, int] = {}
+    with transaction():
+        for key, template in _ORPHAN_STATEMENTS:
+            counts[key] = len(query(_MISSING_TOKEN_RE.sub(_missing, template), sentinels))
+    return counts
 
 
 def get_agents_by_ids(agent_ids: list[str]) -> dict[str, Agent]:

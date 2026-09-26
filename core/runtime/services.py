@@ -26,6 +26,8 @@ _COMMAND_POLL_INTERVAL_SECONDS = 0.05
 _HEARTBEAT_STALE_SECONDS = 5.0
 _WORKER_NAME = "primary"
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
+# Set to "1" in the worker's own environment (see ``_start_unlocked``).
+_WORKER_ENV = "BOSSMOD_RUNTIME_WORKER"
 
 
 class EventSink(Protocol):
@@ -484,3 +486,35 @@ class RuntimeServices:
 
 
 runtime_services = RuntimeServices()
+
+
+def request_dispatcher_wake() -> None:
+    """Ask the runtime worker's dispatcher to look at its queue now.
+
+    For app-process code that has just persisted work (a released model-call
+    lane, triggers written outside ``RuntimeServices.enqueue_trigger``) and
+    should not wait for the worker's next poll. It files one
+    ``wake_dispatcher`` runtime command, and only when the worker process is
+    recorded as running and no wake is already open, so repeated calls
+    collapse into one. Inside the worker process it does nothing: the
+    dispatcher there is already awake.
+
+    Synchronous and safe to call from sync code; it reads the worker state
+    from the database rather than this process's ``RuntimeServices``, since
+    callers such as the model-call budget run outside it.
+
+    Failure: any error is logged at debug level and swallowed, so a caller's
+    own work never fails on the wake. The worker's poll still picks the work
+    up, only later.
+    """
+    if os.environ.get(_WORKER_ENV) == "1":
+        return
+    try:
+        state = db.get_runtime_worker_state("primary")
+        if state is None or state.lifecycle_state != "running":
+            return
+        if db.has_open_runtime_command(["wake_dispatcher"]):
+            return
+        db.create_runtime_command("wake_dispatcher")
+    except Exception:
+        logger.debug("model-call lane release did not wake the worker", exc_info=True)

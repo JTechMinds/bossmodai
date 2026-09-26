@@ -494,7 +494,12 @@ def activate_work_activity(
 
 
 def resolve_arrival(agent_id: str) -> Activity | None:
-    """Complete active movement and resume the paused parent activity."""
+    """Complete active movement and resume the paused parent activity.
+
+    A parent ``meeting`` whose session ended during the walk is not resumed:
+    it is completed the way ``idle`` leaves a meeting, which resumes the work
+    paused under it, and that work is returned instead.
+    """
     active = get_active_activity(agent_id)
     if not active or active.kind != "movement":
         refresh_agent_status(agent_id)
@@ -503,6 +508,14 @@ def resolve_arrival(agent_id: str) -> Activity | None:
     db.update_activity(active.id, status="completed")
     parent = db.get_activity(active.parent_activity_id) if active.parent_activity_id else None
     if parent and parent.status == "paused":
+        # Imported here: actions_meetings imports this module at load time.
+        from core.agent_loop.actions_meetings import _finished_meeting_hint
+
+        # Every arrival (dispatcher, startup movement recovery, desk seating)
+        # passes here, the one place a walker's meeting becomes current again.
+        if _finished_meeting_hint(parent) is not None:
+            complete_activity(parent.id, detail=parent.detail)
+            return get_active_activity(agent_id)
         update_fields: dict[str, Any] = {"status": "active"}
         if parent.kind == "work":
             refreshed_parent = _clear_satisfied_desk_preference(agent_id, parent)

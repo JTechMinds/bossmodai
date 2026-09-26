@@ -263,14 +263,31 @@ def list_open_origin_tasks_for_channel(channel_id: str) -> list[Task]:
     return tasks
 
 
-def cancel_task_as_operator(task_id: str) -> tuple[Task, dict[str, Any]]:
-    """Kill one task from the operator board. Does not archive the origin thread."""
-    from core.agent_loop import activity_runtime
-    from core.agent_loop.task_origin_mirrors import (
-        OPERATOR_CANCEL_REASON,
-        mirror_task_cancelled_by_operator,
-    )
+def cancel_task_as_operator(task_id: str, *, reason: str) -> tuple[Task, dict[str, Any]]:
+    """Kill one task on the operator's behalf. Does not archive the origin thread.
 
+    Args:
+        task_id: The task to cancel.
+        reason: Why, in the operator's words. It becomes the task event, the
+            status note, the cancelled activities' detail and the origin
+            thread's ``Cancelled — <reason>`` line. The board and a thread
+            archive pass ``OPERATOR_CANCEL_REASON``; an agent delete names
+            the deleted owner.
+
+    Returns:
+        The task as stored now, and the origin line that was posted (empty
+        when the task was already cancelled or has no origin to mirror to).
+
+    Raises:
+        ValueError: No such task, or ``reason`` is blank.
+        IllegalTaskTransition: The task is closed with another status.
+    """
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.task_origin_mirrors import mirror_task_cancelled_by_operator
+
+    note = (reason or "").strip()
+    if not note:
+        raise ValueError("A task cancel needs a reason")
     task = db.get_task(task_id)
     if task is None:
         raise ValueError("Task not found")
@@ -282,23 +299,25 @@ def cancel_task_as_operator(task_id: str) -> tuple[Task, dict[str, Any]]:
     updated = transition_task(
         task.id,
         "cancelled",
-        reason=OPERATOR_CANCEL_REASON,
+        reason=note,
         actor="Human Operator",
         actor_type="human",
-        status_note=OPERATOR_CANCEL_REASON,
+        status_note=note,
         completion_summary=None,
         watchdog_pinged_at=None,
     )
     for activity in db.list_activities(task_id=updated.id, limit=200):
         if activity.status in {"active", "paused"}:
-            activity_runtime.cancel_activity(activity.id, detail=OPERATOR_CANCEL_REASON)
+            activity_runtime.cancel_activity(activity.id, detail=note)
     db.delete_queued_triggers_for_task(updated.id)
-    posted = mirror_task_cancelled_by_operator(updated)
+    posted = mirror_task_cancelled_by_operator(updated, reason=note)
     return db.get_task(updated.id) or updated, posted
 
 
-def cancel_tasks_as_operator(task_ids: list[str]) -> tuple[list[Task], list[dict[str, Any]]]:
-    """Kill each listed task. Missing IDs raise; other terminal statuses raise."""
+def cancel_tasks_as_operator(
+    task_ids: list[str], *, reason: str,
+) -> tuple[list[Task], list[dict[str, Any]]]:
+    """Kill each listed task with one ``reason``. Missing IDs raise; other terminal statuses raise."""
     unique: list[str] = []
     seen: set[str] = set()
     for raw_id in task_ids:
@@ -320,7 +339,7 @@ def cancel_tasks_as_operator(task_ids: list[str]) -> tuple[list[Task], list[dict
     cancelled: list[Task] = []
     posted_lines: list[dict[str, Any]] = []
     for task in pending:
-        updated, posted = cancel_task_as_operator(task.id)
+        updated, posted = cancel_task_as_operator(task.id, reason=reason)
         cancelled.append(updated)
         if posted:
             posted_lines.append(posted)

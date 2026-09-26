@@ -35,6 +35,7 @@ from core.agent_loop.turn_context import (
     _get_current_task,
     _get_nearby_agents,
     _get_reference_materials,
+    stamp_channel_latest_line,
 )
 from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
 from core.agent_loop.turn_helpers import (
@@ -72,6 +73,7 @@ async def run_turn(
 
     trigger_type = trigger.get("type", "unknown")
     stamp_trigger_origin_channel(trigger, task_id=activity_runtime.get_active_task_id(agent.id))
+    stamp_channel_latest_line(agent.id, trigger)
     policy = get_trigger_policy(trigger_type)
 
     # 1. Determine activation mode

@@ -17,6 +17,7 @@ from core.agent_loop.role_contracts import (
     rank_agents_for_work,
     suggested_assignees,
 )
+from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCancelRequest, TaskCreate, TaskCreateResponse
@@ -320,7 +321,7 @@ async def get_task_board(agent_id: str, scope: Literal["self", "owned", "delegat
 async def cancel_tasks(body: TaskCancelRequest):
     """Cancel selected tasks. Threads stay open unless the operator archives them."""
     try:
-        tasks, posted_lines = cancel_tasks_as_operator(body.task_ids)
+        tasks, posted_lines = cancel_tasks_as_operator(body.task_ids, reason=OPERATOR_CANCEL_REASON)
     except IllegalTaskTransition as exc:
         raise HTTPException(
             409,
@@ -338,7 +339,7 @@ async def cancel_tasks(body: TaskCancelRequest):
 async def cancel_task(task_id: str):
     """Cancel one task from the operator board."""
     try:
-        task, posted = cancel_task_as_operator(task_id)
+        task, posted = cancel_task_as_operator(task_id, reason=OPERATOR_CANCEL_REASON)
     except IllegalTaskTransition as exc:
         raise HTTPException(
             409,

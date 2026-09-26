@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -202,6 +203,58 @@ def list_tasks(
         params,
     )
     return [_task_from_row(row) for row in rows]
+
+
+def list_open_task_ids_owned_by_missing_agents(
+    *,
+    terminal_statuses: Iterable[str],
+    non_agent_ids: Iterable[str],
+) -> list[str]:
+    """Return ids of open tasks whose owner or assignee names an agent that no longer exists.
+
+    Used only by ``core.agent_repository.AgentRepository.purge_orphans`` to
+    cancel work an older delete left running with nobody on it. NULL is not
+    an orphan, and neither is any value in ``non_agent_ids``.
+
+    Args:
+        terminal_statuses: Closed statuses (``TERMINAL_TASK_STATUSES``); every
+            other status is open.
+        non_agent_ids: Values these columns hold that are not agent ids
+            (``HUMAN_SENDER_ID``). Must not be empty.
+
+    Returns:
+        Task ids, oldest first.
+
+    Raises:
+        ValueError: Either argument is empty.
+    """
+    closed = sorted({str(value) for value in terminal_statuses})
+    sentinels = sorted({str(value) for value in non_agent_ids})
+    if not closed or not sentinels:
+        raise ValueError("terminal_statuses and non_agent_ids must both be given")
+    params: list[Any] = [*closed, *sentinels]
+    closed_marks = ", ".join(f"${index}" for index in range(1, len(closed) + 1))
+    sentinel_marks = ", ".join(
+        f"${index}" for index in range(len(closed) + 1, len(params) + 1)
+    )
+
+    def _missing(column: str) -> str:
+        return (
+            f"(t.{column} IS NOT NULL AND t.{column} NOT IN (SELECT id FROM agents) "
+            f"AND t.{column} NOT IN ({sentinel_marks}))"
+        )
+
+    rows = query(
+        f"""
+        SELECT t.id
+        FROM tasks t
+        WHERE t.status NOT IN ({closed_marks})
+          AND ({_missing("owner_id")} OR {_missing("assigned_to")})
+        ORDER BY t.created_at, t.id
+        """,
+        params,
+    )
+    return [str(row["id"]) for row in rows]
 
 
 def list_recent_tasks(

@@ -205,6 +205,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_nest_git_consent_schema(con)
     _ensure_notification_kind_values(con)
     _ensure_notification_link_target_kinds(con)
+    _ensure_meeting_host_nullable(con)
     _ensure_cli_approval_origin_schema(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
@@ -319,6 +320,74 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _backfill_task_closed_at(con)
     _create_work_snapshots_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
+    # Last, and before init_db backfills missing identities: a backfill
+    # allocates from this ledger, so the ledger must already know every key
+    # that was issued or it would hand one out again.
+    _seed_agent_storage_keys(con)
+
+
+_STORAGE_KEY_NAME_RE = re.compile(r"^agent_(\d+)$")
+
+
+def _storage_index_in_name(name: str) -> int | None:
+    """Return ``NNNN`` from an ``agent_NNNN`` name, or None for any other name."""
+    match = _STORAGE_KEY_NAME_RE.match(name)
+    return int(match.group(1)) if match else None
+
+
+def _seed_agent_storage_keys(con: SQLiteCompatConnection) -> None:
+    """Teach the storage-key ledger every key already issued, from rows and from disk.
+
+    1. Each ``agent_storage_identities`` row not yet in ``agent_storage_keys``
+       is copied there with the same index and key, ``retired_at`` NULL.
+    2. The ledger's AUTOINCREMENT high-water mark (``sqlite_sequence``) is
+       raised to the highest ``NNNN`` among the ``agent_NNNN`` folders under
+       the agents root and the ``agent_NNNN.json`` files under the standing
+       prefs root. A key whose files survived an old delete (before the
+       ledger existed) is then never issued again, so no new hire inherits
+       those files.
+
+    Idempotent: keys already in the ledger are skipped and the high-water
+    mark is only ever raised. Raises ``sqlite3.IntegrityError`` when an
+    identity's index is already in the ledger under a different key, a state
+    the ledger cannot have produced; ``OSError`` when a root cannot be listed.
+    """
+    # Imported here, not at module top: db must be importable before core.
+    from core.bm_cli.filesystem import agents_artifact_root, standing_prefs_root
+
+    con.execute(
+        """
+        INSERT INTO agent_storage_keys (storage_index, storage_key, agent_id)
+        SELECT storage_index, storage_key, agent_id
+        FROM agent_storage_identities
+        WHERE storage_key NOT IN (SELECT storage_key FROM agent_storage_keys)
+        """
+    )
+    on_disk = [
+        _storage_index_in_name(entry.name)
+        for entry in agents_artifact_root().iterdir()
+        if entry.is_dir()
+    ] + [
+        _storage_index_in_name(entry.stem)
+        for entry in standing_prefs_root().iterdir()
+        if entry.is_file() and entry.suffix == ".json"
+    ]
+    highest = max((index for index in on_disk if index is not None), default=0)
+    if highest == 0:
+        return
+    # sqlite_sequence has no row for a table AUTOINCREMENT has never issued
+    # from, and SQLite reads a missing row as 0.
+    con.execute(
+        """
+        INSERT INTO sqlite_sequence (name, seq)
+        SELECT 'agent_storage_keys', 0
+        WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'agent_storage_keys')
+        """
+    )
+    con.execute(
+        "UPDATE sqlite_sequence SET seq = $1 WHERE name = 'agent_storage_keys' AND seq < $1",
+        [highest],
+    )
 
 
 def _create_work_snapshots_table_if_missing(con: SQLiteCompatConnection) -> None:
@@ -841,6 +910,58 @@ def _ensure_notification_link_target_kinds(con: SQLiteCompatConnection) -> None:
         con.execute("PRAGMA foreign_keys = ON")
 
 
+# Whitespace-tolerant: the stored CREATE TABLE text keeps schema.sql's column
+# alignment, which a plain substring test would be coupled to.
+_NOT_NULL_MEETING_HOST_RE = re.compile(r"\bhost_agent_id\s+VARCHAR\s+NOT\s+NULL\b", re.IGNORECASE)
+
+
+def _ensure_meeting_host_nullable(con: SQLiteCompatConnection) -> None:
+    """Rebuild meeting_session_meta if host_agent_id is still NOT NULL.
+
+    Deleting an agent detaches the meetings it hosted (host set to NULL) so
+    the shared meeting history stays; with foreign keys on, a NOT NULL host
+    made that delete fail and roll back.
+    """
+    sql = _table_sql(con, "meeting_session_meta")
+    if not _NOT_NULL_MEETING_HOST_RE.search(sql):
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS meeting_session_meta__new (
+                session_id        VARCHAR PRIMARY KEY REFERENCES meeting_sessions(id),
+                host_agent_id     VARCHAR REFERENCES agents(id),
+                meeting_mode      VARCHAR NOT NULL
+                                      CHECK (meeting_mode IN ('room', 'remote')),
+                phase             VARCHAR NOT NULL
+                                      CHECK (phase IN ('assembling', 'active', 'ended', 'canceled')),
+                context_packet_id VARCHAR REFERENCES meeting_context_packets(id),
+                kickoff_round_id  VARCHAR REFERENCES meeting_response_rounds(id),
+                created_at        TIMESTAMP DEFAULT current_timestamp,
+                updated_at        TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO meeting_session_meta__new (
+                session_id, host_agent_id, meeting_mode, phase,
+                context_packet_id, kickoff_round_id, created_at, updated_at
+            )
+            SELECT
+                session_id, host_agent_id, meeting_mode, phase,
+                context_packet_id, kickoff_round_id, created_at, updated_at
+            FROM meeting_session_meta
+            """
+        )
+        con.execute("DROP TABLE meeting_session_meta")
+        con.execute("ALTER TABLE meeting_session_meta__new RENAME TO meeting_session_meta")
+        logger.info("Migration: rebuilt meeting_session_meta to make host_agent_id nullable")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
+
+
 def _ensure_cli_approval_origin_schema(con: SQLiteCompatConnection) -> None:
     """Allow CLI approval cards to stamp a thread origin and persist inline."""
     notifications_sql = _table_sql(con, "notifications")
@@ -1212,8 +1333,17 @@ def init_db() -> None:
     from db.agent_storage_identities import ensure_all_agent_storage_identities
     ensure_all_agent_storage_identities()
 
+    # The orphan cleanup (AgentRepository.purge_orphans) is NOT run here: this
+    # function also runs on every runtime start (services.start, the worker),
+    # and the cleanup runs once per app start, from main.py's lifespan.
+
     from db.agent_storage import normalize_agent_personal_storage_roots
     normalize_agent_personal_storage_roots()
+
+    # After the storage-key normalization above, so a legacy agent-written
+    # /me/standing_prefs.json sits under agents/<storage_key>. Idempotent.
+    from core.agent_loop.standing_prefs import migrate_workspace_standing_prefs
+    migrate_workspace_standing_prefs()
 
     # After the floors migration: every floor gets its company folder. This is
     # also where a retired BOSSMOD_PROJECTS_ROOT stops startup.
@@ -1284,14 +1414,20 @@ def backup_database(dest_dir: Path) -> Path:
 def reset_database() -> None:
     """Recreate the database file from the current schema and seed data.
 
-    Clears per-agent artifact workspaces so reseeded agents start clean.
+    Clears per-agent artifact workspaces and the system-owned standing prefs
+    so reseeded agents start clean.
 
     Note: Shared project files under the company root are preserved. A reset
     does not move or delete them.
     """
     import shutil
 
-    from core.bm_cli.filesystem import agents_artifact_root, artifacts_root, ensure_artifact_roots
+    from core.bm_cli.filesystem import (
+        agents_artifact_root,
+        artifacts_root,
+        ensure_artifact_roots,
+        standing_prefs_root,
+    )
 
     close_connection()
     db_path = Path(_DB_PATH)
@@ -1316,5 +1452,7 @@ def reset_database() -> None:
     if root.exists():
         shutil.rmtree(root)
     ensure_artifact_roots()
+    # Standing prefs are keyed by storage key; reseeded agents reuse those keys.
+    shutil.rmtree(standing_prefs_root())
 
     init_db()

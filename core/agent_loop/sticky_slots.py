@@ -46,12 +46,14 @@ logger = logging.getLogger(__name__)
 SLOT_ID_PREFIX = "sticky-slot:"
 SlotKind = Literal["plan", "next_owner", "verdict_path", "blockers"]
 _OPEN_STATUSES = frozenset({"blocked", "stalled", "waiting"})
-_FACT_MAX_CHARS = 180
+# The body length the fill prompt asks the model for.
+_FACT_TARGET_CHARS = 180
+# Backstop clip at 2x the target, so an ordinary overrun is kept, not cut.
+_FACT_MAX_CHARS = _FACT_TARGET_CHARS * 2
 _FACT_MIN_CHARS = 2
 _SOURCE_ID_MAX = 300
 _SOURCE_MESSAGE_CHARS = 280
 _SOURCE_MESSAGE_CAP = 16
-_FILL_MAX_TOKENS = 280
 _HEADROOM_MAX = 95
 _KIND_ORDER = {kind: index for index, kind in enumerate(SLOT_KINDS)}
 _LABELS = {
@@ -64,6 +66,7 @@ _LABELS = {
 _FILL_SYSTEM = (
     "Extract task-side sticky slots from the task record. "
     'Return one JSON object {"slots":[{"source_id":"string","slot_kind":"plan|next_owner|verdict_path|blockers","body":"string"}]}. '
+    f"Keep each body under {_FACT_TARGET_CHARS} characters. "
     "Use only source ids and kinds from the allowed list. "
     "Do not invent tasks, owners, paths, or blockers. "
     "Omit a slot rather than clearing it. "
@@ -324,7 +327,7 @@ def _run_fill_job(task_ids: tuple[str, ...]) -> None:
                     preserve.add(task.id)
         if not allowed:
             return
-        raw = complete_text(_fill_messages(allowed, lines), max_tokens=_FILL_MAX_TOKENS)
+        raw = complete_text(_fill_messages(allowed, lines))
         slots = [
             slot
             for slot in _accepted_slots(raw, allowed)
@@ -607,6 +610,7 @@ def _clean_fact(value: str) -> str | None:
     if len(text) < _FACT_MIN_CHARS:
         return None
     if len(text) > _FACT_MAX_CHARS:
+        logger.warning("sticky slot body clipped: %d > %d chars", len(text), _FACT_MAX_CHARS)
         text = text[:_FACT_MAX_CHARS].rstrip()
     if len(text) < _FACT_MIN_CHARS:
         return None

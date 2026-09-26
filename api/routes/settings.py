@@ -133,6 +133,29 @@ def _validate_telegram_settings(key: str, value: str) -> None:
             )
 
 
+def _validate_system_ai_max_tokens(key: str, value: str) -> None:
+    """Reject a ``system_ai_max_tokens`` value that is not a whole number ≥ 1.
+
+    Every System AI completion reads this setting with ``config.require_int``,
+    so a bad value (``6k``, ``0``) would fail every route, fade and sticky
+    fill. It is rejected here, at the write boundary, instead.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 when the stripped value is not a base-10 integer
+            of at least 1.
+    """
+    if key != "system_ai_max_tokens":
+        return
+    stripped = value.strip()
+    # isascii + isdigit: base-10 digits only; int() alone would take "+5" or "1_000".
+    if not (stripped.isascii() and stripped.isdigit()) or int(stripped, 10) < 1:
+        raise HTTPException(400, "System AI max output tokens must be a whole number of at least 1.")
+
+
 @router.put("/settings/{key}")
 async def set_setting(key: str, value: str, category: str = "general"):
     if key == "system_prompt_template" or key in _RUNTIME_CONTRACT_KEYS.values():
@@ -142,6 +165,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
             raise HTTPException(400, str(exc)) from exc
     _validate_telegram_settings(key, value)
     _validate_nest_git_settings(key, value)
+    _validate_system_ai_max_tokens(key, value)
     if key == "workspace_host_roots":
         from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
 

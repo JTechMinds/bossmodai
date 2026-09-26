@@ -9,6 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.agent_loop.standing_prefs import (
+    ID_MAX_CHARS,
+    PREF_KINDS,
+    SOURCE_MAX_CHARS,
+    SOURCES_MAX,
+    STORE_TEXT_BYTE_CAP,
+    TEXT_MAX_CHARS,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class VirtualCommandMeta:
@@ -34,6 +43,13 @@ VIRTUAL_CATEGORIES: dict[str, str] = {
     "world": "Environment and physical context",
     "help": "Command discovery and reference",
 }
+
+# The pref forms, shared with the handler's usage errors so they cannot drift.
+PREF_FORMS: tuple[str, ...] = (
+    "pref set <id> <kind> <source> [<source> …]   — with body: the rule as one line",
+    "pref remove <id>",
+    "pref list",
+)
 
 # ---------------------------------------------------------------------------
 # Command registry — every built-in virtual command
@@ -175,11 +191,7 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             '  write notes.md   — with body: "# My Notes"\n'
             "  write config.json — with body containing JSON\n"
-            "  write report.md   — no body to let the runtime author the file\n"
-            "\n"
-            "Standing prefs are /me/standing_prefs.json (schema_version 1: "
-            "id, kind, text, sources). A write replaces matching ids and keeps "
-            "the rest. Append is rejected."
+            "  write report.md   — no body to let the runtime author the file"
         ),
         discovery_hint="body = exact file text; no body = runtime-managed full-file authoring",
     ),
@@ -437,6 +449,37 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             "  task 1234         — inspect task 1234 and its thread"
         ),
+    ),
+    "pref": VirtualCommandMeta(
+        name="pref",
+        category="agent",
+        description="Set, remove, or list your standing prefs.",
+        usage_syntax="pref <set|remove|list> [args]",
+        help_text=(
+            "Standing prefs are the operator's lasting rules for you. The\n"
+            "engine injects them on every work turn. The store is\n"
+            "system-owned: manage it only with pref, never with a file.\n"
+            "\n"
+            "Forms:\n"
+            + "".join(f"  {form}\n" for form in PREF_FORMS)
+            + "\n"
+            "set adds a pref, or replaces the pref with the same id.\n"
+            "Quote a source that has spaces.\n"
+            "\n"
+            f"Kinds: {', '.join(PREF_KINDS)}\n"
+            "Limits:\n"
+            f"  id       1 to {ID_MAX_CHARS} letters, digits, \".\", \"_\" or \"-\"\n"
+            f"  text     one line, up to {TEXT_MAX_CHARS} characters (the body)\n"
+            f"  sources  1 to {SOURCES_MAX}, each up to {SOURCE_MAX_CHARS} characters\n"
+            f"  store    up to {STORE_TEXT_BYTE_CAP} bytes of text across all prefs\n"
+            "\n"
+            "Examples:\n"
+            '  pref set uv-envs tool_bias operator-2026-09-22   — with body: "Use uv for Python envs and installs, not pip."\n'
+            '  pref set tone style "operator chat" /me/notes/tone.md   — with body: "Short sentences, no filler."\n'
+            "  pref remove uv-envs   — drop that pref\n"
+            "  pref list             — every pref in full"
+        ),
+        discovery_hint="body = the rule as one line; id, kind, and sources are args",
     ),
 
     # ── world ─────────────────────────────────────────────────────────────

@@ -368,7 +368,7 @@ def test_deleting_the_agent_removes_its_snapshots() -> None:
         context=[{"role": "assistant", "content": _STATUS_STEP}, {"role": "user", "content": "ok"}],
         fingerprints=["status"], no_progress_checkpoints=0,
     )
-    assert db.delete_agent(agent.id) is True
+    assert db.delete_agent_rows(agent.id) is True
     assert db.get_work_snapshot(activity.id) is None
 
 

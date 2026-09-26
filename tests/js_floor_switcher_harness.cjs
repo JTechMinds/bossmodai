@@ -26,7 +26,7 @@ installIconsStub();
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
     "BossModInlineRename",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
+    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModAgentApi",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings", "BossModFloorSwitcher",
@@ -201,6 +201,10 @@ async function submit(form) {
     // Finance has a company folder, so the layer says where its files go.
     verdict.deleteLayerSaysTheFilesAreArchived = /Its files move to Company › Archived floors\./
         .test(layer.textContent);
+    // "Delete them" warns what goes and to back it up first (agent-api.js's floor copy).
+    const deleteHint = layer.querySelectorAll(".floor-delete-option")[1].querySelector(".field-hint").textContent;
+    verdict.deleteThemWarnsToBackUp = deleteHint.includes("back up anything you need")
+        && deleteHint.includes("cancels their open tasks");
     (radios[0].listeners.change || []).forEach((fn) => fn({ target: radios[0] }));
     verdict.choosingEnablesDelete = layer.querySelector("#floor-delete-confirm").disabled === false;
     // ✕ on the top layer closes every layer.

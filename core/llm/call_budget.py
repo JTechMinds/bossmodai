@@ -19,14 +19,13 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
 from core.agent_loop.channel_round_plan import max_concurrent_agent_turns
+from core.runtime.services import request_dispatcher_wake
 from db.connection import transaction
 
 logger = logging.getLogger(__name__)
 
 # At most one System AI route at a time. Counted inside the knob.
 SYSTEM_LANE_RESERVE = 1
-
-_WORKER_ENV = "BOSSMOD_RUNTIME_WORKER"
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +181,7 @@ class ModelCallBudget:
         if self._waiters:
             self._waiters.pop(0).set()
         else:
-            _wake_worker_if_needed()
+            request_dispatcher_wake()
 
     async def acquire(self, *, kind: str, owner: str) -> Lane:
         """Wait until a lane is free, then take it.
@@ -203,23 +202,6 @@ class ModelCallBudget:
             finally:
                 if event in self._waiters:
                     self._waiters.remove(event)
-
-
-def _wake_worker_if_needed() -> None:
-    """Ask the runtime worker to look again after the app releases a lane."""
-    if os.environ.get(_WORKER_ENV) == "1":
-        return
-    try:
-        import db
-
-        state = db.get_runtime_worker_state("primary")
-        if state is None or state.lifecycle_state != "running":
-            return
-        if db.has_open_runtime_command(["wake_dispatcher"]):
-            return
-        db.create_runtime_command("wake_dispatcher")
-    except Exception:
-        logger.debug("model-call lane release did not wake the worker", exc_info=True)
 
 
 budget = ModelCallBudget()

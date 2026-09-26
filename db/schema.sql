@@ -86,6 +86,19 @@ CREATE TABLE IF NOT EXISTS agent_storage_identities (
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 
+-- Every storage key ever issued. A row outlives its agent (retired_at is set
+-- on delete), so there is no FK to agents. AUTOINCREMENT makes SQLite keep the
+-- high-water mark in sqlite_sequence, so an index is never issued twice, even
+-- after the newest agent is deleted: a new hire never inherits a /me folder
+-- or standing prefs keyed by an old agent's key.
+CREATE TABLE IF NOT EXISTS agent_storage_keys (
+    storage_index INTEGER PRIMARY KEY AUTOINCREMENT,
+    storage_key   VARCHAR NOT NULL UNIQUE,
+    agent_id      VARCHAR NOT NULL,
+    issued_at     TIMESTAMP DEFAULT current_timestamp,
+    retired_at    TIMESTAMP
+);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Messages — inter-agent and system communication
 -- ───────────────────────────────────────────────────────────────────────────
@@ -165,7 +178,7 @@ CREATE TABLE IF NOT EXISTS meeting_context_packets (
 
 CREATE TABLE IF NOT EXISTS meeting_session_meta (
     session_id        VARCHAR PRIMARY KEY REFERENCES meeting_sessions(id),
-    host_agent_id     VARCHAR NOT NULL REFERENCES agents(id),
+    host_agent_id     VARCHAR REFERENCES agents(id),
     meeting_mode      VARCHAR NOT NULL
                           CHECK (meeting_mode IN ('room', 'remote')),
     phase             VARCHAR NOT NULL

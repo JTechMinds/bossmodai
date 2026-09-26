@@ -36,6 +36,7 @@ from core.bm_cli.help_commands import (
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
+from core.bm_cli.pref_commands import handle_pref
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
 from core.bm_cli.host_path_consent import handle_named_path_consent, looks_like_command_flag
@@ -90,6 +91,7 @@ _HANDLERS: dict[str, CliHandler] = {
     "delegated-tasks": handle_delegated_tasks,
     "waiting-on-me": handle_waiting_on_me,
     "task": handle_task_detail,
+    "pref": handle_pref,
     "help": handle_help,
     "categories": handle_commands,
     "fsearch": handle_fsearch,

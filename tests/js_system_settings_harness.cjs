@@ -101,6 +101,10 @@ global.apiFetchOk = async (url, init) => {
     return { ok: true };
 };
 
+// settings-system.js registers a repaint hook on render; the harness drives
+// renders directly, so the hook is a no-op.
+global.SettingsView = { bindRepaint() {} };
+
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.SystemSection = SystemSection;\n`);
 
@@ -157,6 +161,7 @@ async function main() {
         setting("decision_repair_attempts", "6", "llm"),
         setting("max_concurrent_agent_turns", "2", "llm"),
         setting("system_ai_connection", "", "llm"),
+        setting("system_ai_max_tokens", "6144", "llm"),
         setting("compaction_mode", "pressure_only", "llm"),
         setting("compaction_task_budget_headroom_percent", "25", "llm"),
         setting("compaction_chat_budget_headroom_percent", "35", "llm"),

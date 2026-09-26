@@ -69,6 +69,66 @@ const BossModAgentApi = (() => {
         if (!res.ok) throw new Error(await res.text());
     }
 
+    // What a delete destroys, said once for every place that offers one — the
+    // desk's Remove, the Edit role form's Delete, a floor delete's "Delete them",
+    // and Settings' delete-all. Kept
+    // beside apiDeleteAgent because it is a claim about what that call does: a
+    // change to the server's delete must change this sentence with it, and four
+    // copies is how one of them came to promise diagnostics were preserved.
+    // `{name}` is filled by agentDeleteWarning, which is how callers read it.
+    const AGENT_DELETE_WARNING = 'Deleting {name} permanently deletes their files '
+        + '(/me workspace), chat and work history, standing prefs, and diagnostics, '
+        + 'and cancels their open tasks. Messages they posted in shared threads stay. '
+        + 'This cannot be undone — back up anything you need from their Desk first.';
+    const ALL_AGENTS_DELETE_WARNING = 'Deleting all agents permanently deletes every '
+        + 'agent’s files (/me workspace), chat and work history, standing prefs, and '
+        + 'diagnostics, and cancels their open tasks. Messages they posted in shared '
+        + 'threads stay. This cannot be undone — back up anything you need from their '
+        + 'Desks first. Settings and /projects files stay.';
+    // Subject-less: the floor dialog already says whose agents these are, and a
+    // floor delete removes only that floor's residents, not "all agents".
+    const FLOOR_AGENTS_DELETE_WARNING = 'Permanently deletes their files (/me workspace), '
+        + 'chat and work history, standing prefs, and diagnostics, and cancels their open '
+        + 'tasks. Messages they posted in shared threads stay. This cannot be undone — '
+        + 'back up anything you need from their Desks first.';
+
+    /**
+     * The warning shown before one agent is deleted, naming them.
+     *
+     * @param {string} name  The agent's name as the operator knows it.
+     * @returns {string}
+     * @throws {Error} When `name` is not a non-empty string: a warning about
+     *   "Deleting undefined" would ask the operator to confirm without saying
+     *   whose files go, so the caller must have the name before it asks.
+     */
+    function agentDeleteWarning(name) {
+        if (typeof name !== 'string' || !name.trim()) {
+            throw new Error('[agent-api] agentDeleteWarning needs the agent’s name');
+        }
+        // A replacer function, so a `$&` or `$'` in a name is text, not a pattern.
+        return AGENT_DELETE_WARNING.replace('{name}', () => name);
+    }
+
+    /**
+     * The warning shown before every agent is deleted at once.
+     *
+     * @returns {string}
+     */
+    function allAgentsDeleteWarning() {
+        return ALL_AGENTS_DELETE_WARNING;
+    }
+
+    /**
+     * The warning shown as the "Delete them" choice when a floor with agents
+     * is deleted. It names no subject, because the dialog above it already
+     * says which floor's agents these are.
+     *
+     * @returns {string}
+     */
+    function floorAgentsDeleteWarning() {
+        return FLOOR_AGENTS_DELETE_WARNING;
+    }
+
     /**
      * @param {string} id
      * @returns {Promise<object>} The agent's prompt-history policy.
@@ -171,6 +231,11 @@ const BossModAgentApi = (() => {
         apiCreateAgent,
         apiUpdateAgent,
         apiDeleteAgent,
+        AGENT_DELETE_WARNING,
+        agentDeleteWarning,
+        allAgentsDeleteWarning,
+        FLOOR_AGENTS_DELETE_WARNING,
+        floorAgentsDeleteWarning,
         fetchPromptHistoryPolicy,
         apiUpdatePromptHistoryPolicy,
         apiClearChatHistory,

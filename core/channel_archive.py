@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import db
+from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON
 from core.bm_cli.host_path_consent import resume_host_path_consent
 from core.models import Channel
 from core.models.channel import THREAD_ARCHIVED_CANCEL_LINE, THREAD_ARCHIVED_CONSENT_DENY
@@ -36,7 +37,9 @@ async def archive_thread_as_operator(
     if cancel_open_tasks:
         open_tasks = list_open_origin_tasks_for_channel(channel.id)
         if open_tasks:
-            _cancelled, posted_lines = cancel_tasks_as_operator([task.id for task in open_tasks])
+            _cancelled, posted_lines = cancel_tasks_as_operator(
+                [task.id for task in open_tasks], reason=OPERATOR_CANCEL_REASON,
+            )
             cancelled_any = True
 
     await deny_pending_consent_for_archived_channel(

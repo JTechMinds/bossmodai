@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from core.messaging import route_human_channel_message
 from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 from db.settings import reconcile_factory_round_cap
+from tests._router_fakes import route_reply, speak_reply
 
 
 def setup_function() -> None:
@@ -76,10 +76,6 @@ def _enable_system_ai() -> None:
     )
     db.set_setting("system_ai_connection", connection.id, "llm")
     config.reload()
-
-
-def _payload(speak: list[str], stay_out: list[str]) -> str:
-    return json.dumps({"speak": speak, "stay_out": stay_out})
 
 
 def _base(channel, message) -> dict[str, Any]:
@@ -158,13 +154,13 @@ def test_empty_speak_stops_the_snapshot_and_leaves_work_wakes(monkeypatch) -> No
     _enable_system_ai()
     calls = {"n": 0}
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         calls["n"] += 1
         if calls["n"] == 1:
-            return _payload([jim.id, laura.id], [ada.id])
+            return speak_reply(messages, [jim.id, laura.id])
         if calls["n"] == 2:
-            return _payload([laura.id], [])
-        return _payload([], [jim.id, laura.id, ada.id])
+            return speak_reply(messages, [laura.id])
+        return speak_reply(messages, [])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     message = _message(channel.id, "Where are we?")
@@ -194,11 +190,11 @@ def test_empty_speak_stops_after_a_passed_human_mention(monkeypatch) -> None:
     _enable_system_ai()
     calls = {"n": 0}
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         calls["n"] += 1
         if calls["n"] == 1:
-            return _payload([jim.id], [laura.id, ada.id])
-        return _payload([], [jim.id, laura.id, ada.id])
+            return speak_reply(messages, [jim.id])
+        return speak_reply(messages, [])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     message = _message(channel.id, "@Jim where are we?")
@@ -241,14 +237,14 @@ def test_two_passes_demote_until_a_peer_speaks_or_a_human_at(monkeypatch) -> Non
     jim, laura, ada, channel = _trio()
     _enable_system_ai()
     replies = [
-        _payload([jim.id, laura.id], [ada.id]),
-        _payload([jim.id, laura.id], [ada.id]),
-        _payload([jim.id, laura.id, ada.id], []),
-        _payload([laura.id], [jim.id, ada.id]),
+        [jim.id, laura.id],
+        [jim.id, laura.id],
+        [jim.id, laura.id, ada.id],
+        [laura.id],
     ]
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
-        return replies.pop(0)
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return route_reply(messages, replies.pop(0))
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     message = _message(channel.id, "Where are we?")
@@ -289,13 +285,13 @@ def test_human_mention_is_not_demoted_away(monkeypatch) -> None:
     jim, laura, _ada, channel = _trio()
     _enable_system_ai()
     replies = [
-        _payload([jim.id, laura.id], [_ada.id]),
-        _payload([laura.id], [jim.id, _ada.id]),
-        _payload([laura.id], [jim.id, _ada.id]),
+        [jim.id, laura.id],
+        [laura.id],
+        [laura.id],
     ]
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
-        return replies.pop(0)
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return route_reply(messages, replies.pop(0))
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     message = _message(channel.id, "@Jim where are we?")
@@ -487,8 +483,8 @@ def test_substantive_rounds_are_not_stopped_by_the_old_cap_of_four(monkeypatch) 
     jim, laura, ada, channel = _trio()
     _enable_system_ai()
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
-        return _payload([jim.id], [laura.id, ada.id])
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return speak_reply(messages, [jim.id])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     message = _message(channel.id, "Let's design the queue.")

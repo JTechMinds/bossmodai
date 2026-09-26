@@ -143,7 +143,7 @@ def test_a_policy_change_recaptures() -> None:
 def test_delete_stamps_the_snapshot_and_it_outlives_the_agent() -> None:
     agent = db.create_agent("Ada", role="Writer", description="Drafts.")
     db.update_agent_prompt_history_policy(agent.id, last_n_histories=12)
-    assert db.delete_agent(agent.id) is True
+    assert db.delete_agent_rows(agent.id) is True
     assert db.get_agent(agent.id) is None
     assert db.get_agent_prompt_history_policy(agent.id) is None
     snap = _only(agent.id)
@@ -153,7 +153,7 @@ def test_delete_stamps_the_snapshot_and_it_outlives_the_agent() -> None:
     # Captured BEFORE the policy row went, so it still holds what was set.
     assert snap.prompt_history_policy["last_n_histories"] == 12
     # Deleting what is not there captures nothing.
-    assert db.delete_agent("no-such-agent") is False
+    assert db.delete_agent_rows("no-such-agent") is False
     assert len(_raw_rows()) == 1
 
 
@@ -173,7 +173,7 @@ def test_an_agent_with_credentials_leaves_no_trace_of_them() -> None:
     assert db.get_agent(agent.id).api_key == SECRET_KEY
     db.update_agent(agent.id, role="Editor", api_key=SECRET_KEY)
     db.update_agent_prompt_history_policy(agent.id, last_n_histories=3)
-    db.delete_agent(agent.id)
+    db.delete_agent_rows(agent.id)
     rows = _raw_rows()
     assert len(rows) == 1
     stored = json.dumps(rows, default=str)
@@ -233,7 +233,7 @@ def test_the_route_lists_newest_first() -> None:
     older = db.create_agent("Older", role="Writer")
     newer = db.create_agent("Newer", role="Editor")
     gone = db.create_agent("Gone", role="Auditor", api_key=SECRET_KEY)
-    db.delete_agent(gone.id)
+    db.delete_agent_rows(gone.id)
     # A save puts an agent at the top again.
     db.update_agent(older.id, description="Now first.")
     response = _client().get(

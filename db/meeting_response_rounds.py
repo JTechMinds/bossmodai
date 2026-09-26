@@ -20,6 +20,21 @@ def get_meeting_response_round(round_id: str) -> MeetingResponseRound | None:
     return shared.get_round(_SCHEMA, round_id)
 
 
+def list_meeting_response_rounds(
+    session_id: str,
+    *,
+    status: str | None = None,
+) -> list[MeetingResponseRound]:
+    """Return response rounds for one meeting session, newest first.
+
+    Args:
+        session_id: The meeting session.
+        status: Only rounds in this status (``active`` for the open ones);
+            every round when None.
+    """
+    return shared.list_rounds_for_parent(_SCHEMA, session_id, status=status)
+
+
 def update_meeting_response_round(
     round_id: str,
     *,

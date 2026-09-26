@@ -9,7 +9,6 @@ round does not.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -32,6 +31,7 @@ from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import transition_task
 from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
+from tests._router_fakes import route_reply
 
 
 def setup_function() -> None:
@@ -70,10 +70,6 @@ def _enable_system_ai() -> None:
     )
     db.set_setting("system_ai_connection", connection.id, "llm")
     config.reload()
-
-
-def _payload(speak: list[str], stay_out: list[str]) -> str:
-    return json.dumps({"speak": speak, "stay_out": stay_out})
 
 
 def _record_log_tool_evidence(agent_id: str) -> None:
@@ -139,7 +135,7 @@ def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, in
         calls["last"] = blob
         if calls["n"] > len(replies):
             raise AssertionError("router was called more times than scripted")
-        return replies[calls["n"] - 1]
+        return route_reply(messages, replies[calls["n"] - 1])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     return calls
@@ -166,7 +162,7 @@ async def _done(jimothy, channel, *, follow_up: str, next_owners: list[str] | No
 
 
 def test_router_prompt_is_intent_first() -> None:
-    messages = build_router_messages(
+    messages, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
         latest_message="Where are we?",
         pending_mention_ids=["jim"],
@@ -176,7 +172,7 @@ def test_router_prompt_is_intent_first() -> None:
     assert "from intent, not wording" in blob
     assert "Do not wake people merely because their name appears" in blob
     assert "Board next: laura | Laura" in blob
-    assert '"speak"' in blob and '"stay_out"' in blob
+    assert '"speak"' in blob and "stay_out" not in blob
     assert "at most 2" in blob
 
 
@@ -198,7 +194,7 @@ def test_next_owners_parses_on_the_decision_envelope() -> None:
 def test_operator_at_still_hard_pins(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id], [laura.id, jimothy.id])])
+    _script(monkeypatch, [[jim.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="human",
@@ -221,7 +217,7 @@ def test_operator_at_still_hard_pins(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ambient_talk_does_not_wake_a_prose_name(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([jim.id], [laura.id, jimothy.id])])
+    calls = _script(monkeypatch, [[jim.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="human",
@@ -246,7 +242,7 @@ def test_ambient_talk_does_not_wake_a_prose_name(monkeypatch: pytest.MonkeyPatch
 def test_agent_at_is_not_an_operator_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id], [laura.id])])
+    _script(monkeypatch, [[jim.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="agent",
@@ -273,7 +269,7 @@ def test_agent_at_is_not_an_operator_pin(monkeypatch: pytest.MonkeyPatch) -> Non
 async def test_done_opens_a_system_ai_peer_round(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([laura.id], [jim.id])])
+    calls = _script(monkeypatch, [[laura.id]])
     _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
     wakes = _channel_wakes(completed)
     assert calls["n"] == 1
@@ -290,8 +286,8 @@ async def test_empty_handoff_speak_repairs_once_then_stops(monkeypatch: pytest.M
     calls = _script(
         monkeypatch,
         [
-            _payload([], [jim.id, laura.id]),
-            _payload([], [jim.id, laura.id]),
+            [],
+            [],
         ],
     )
     _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
@@ -310,8 +306,8 @@ async def test_handoff_repair_can_name_the_next_speaker(monkeypatch: pytest.Monk
     calls = _script(
         monkeypatch,
         [
-            _payload([], [jim.id, laura.id]),
-            _payload([laura.id], [jim.id]),
+            [],
+            [laura.id],
         ],
     )
     _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
@@ -323,7 +319,7 @@ async def test_handoff_repair_can_name_the_next_speaker(monkeypatch: pytest.Monk
 async def test_next_owners_hard_wake_without_an_at(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([], [jim.id, laura.id])])
+    calls = _script(monkeypatch, [[]])
     _task, completed = await _done(
         jimothy,
         channel,
@@ -342,7 +338,7 @@ async def test_next_owners_hard_wake_without_an_at(monkeypatch: pytest.MonkeyPat
 async def test_board_next_owner_wakes_with_no_chat_syntax(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([], [jim.id, laura.id])])
+    calls = _script(monkeypatch, [[]])
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id, title="Write the draft")
     assert creation.task is not None
     nxt = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
@@ -380,7 +376,7 @@ async def test_board_next_owner_wakes_with_no_chat_syntax(monkeypatch: pytest.Mo
 async def test_deleg_handoff_opens_a_system_ai_round(monkeypatch: pytest.MonkeyPatch) -> None:
     _jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([], [laura.id])])
+    calls = _script(monkeypatch, [[]])
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id, title="Write the status note")
     assert creation.task is not None
     activity_runtime.activate_work_activity(jimothy.id, creation.task)
@@ -409,7 +405,7 @@ async def test_deleg_handoff_opens_a_system_ai_round(monkeypatch: pytest.MonkeyP
 async def test_done_prose_name_does_not_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id], [laura.id])])
+    _script(monkeypatch, [[jim.id]])
     _task, completed = await _done(
         jimothy,
         channel,
@@ -425,7 +421,7 @@ async def test_done_prose_name_does_not_pin(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_next_owners_pending_card_is_a_work_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([jim.id, laura.id], [])])
+    calls = _script(monkeypatch, [[jim.id, laura.id]])
     audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
     assert audit.task is not None
     _task, completed = await _done(
@@ -447,7 +443,7 @@ async def test_next_owners_pending_card_is_a_work_bind(monkeypatch: pytest.Monke
 async def test_done_work_bind_leaves_other_speakers_on_talk(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id, laura.id], [])])
+    _script(monkeypatch, [[jim.id, laura.id]])
     nxt = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
     assert nxt.task is not None
     _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
@@ -460,7 +456,7 @@ async def test_done_work_bind_leaves_other_speakers_on_talk(monkeypatch: pytest.
 def test_status_who_is_up_does_not_invent_work(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id, laura.id, jimothy.id], [])])
+    _script(monkeypatch, [[jim.id, laura.id, jimothy.id]])
     audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
     assert audit.task is not None
     message = db.create_channel_message(
@@ -488,7 +484,7 @@ def test_status_who_is_up_does_not_invent_work(monkeypatch: pytest.MonkeyPatch) 
 def test_status_next_owners_do_not_bind_work(monkeypatch: pytest.MonkeyPatch) -> None:
     _jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([], [laura.id])])
+    calls = _script(monkeypatch, [[]])
     audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
     assert audit.task is not None
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
@@ -523,7 +519,7 @@ def test_status_next_owners_do_not_bind_work(monkeypatch: pytest.MonkeyPatch) ->
 async def test_soft_blocked_next_card_stays_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([], [jim.id, laura.id])])
+    _script(monkeypatch, [[]])
     blocked = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="G0 re-audit")
     assert blocked.task is not None
     transition_task(
@@ -556,7 +552,7 @@ async def test_soft_blocked_next_card_stays_blocked(monkeypatch: pytest.MonkeyPa
 def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([], [jim.id, laura.id])])
+    calls = _script(monkeypatch, [[]])
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
     assert creation.task is not None
     state = db.get_agent_state(jimothy.id)
@@ -658,16 +654,16 @@ async def test_work_bind_stays_out_across_later_talk_slices(monkeypatch: pytest.
     _enable_system_ai()
     prompts: list[str] = []
     replies = [
-        _payload([jim.id, laura.id], [ada.id]),
-        _payload([laura.id, ada.id], [jim.id]),
-        _payload([laura.id], [jim.id, ada.id]),
+        [jim.id, laura.id],
+        [laura.id, ada.id],
+        [laura.id],
     ]
 
     def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         prompts.append("\n".join(item.get("content") or "" for item in messages))
         if len(prompts) > len(replies):
             raise AssertionError("router was called more times than scripted")
-        return replies[len(prompts) - 1]
+        return route_reply(messages, replies[len(prompts) - 1])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
@@ -690,8 +686,9 @@ async def test_work_bind_stays_out_across_later_talk_slices(monkeypatch: pytest.
     assert channel_round_db.get_channel_round_meta(follow_id)["work_bind_ids"] == [laura.id]
     assert laura.id not in host_db.get_channel_host_state(channel.id)["pass_streaks"]
     assert "Work-bound:" in prompts[1]
-    assert laura.id in prompts[1].split("Work-bound:", 1)[1]
-    assert "If you are unsure whether an already-spoke id would add new substance" in prompts[1]
+    assert "| Laura" in prompts[1].split("Work-bound:", 1)[1]
+    assert laura.id not in prompts[1]
+    assert "If you are unsure whether an already-spoke member would add new substance" in prompts[1]
     transition_task(
         audit.task.id,
         "blocked",

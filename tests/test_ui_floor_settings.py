@@ -20,6 +20,7 @@ MODULES = [
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "context" / "agent-api.js",
     JS / "shell" / "floor-scope.js",
     JS / "shell" / "floor-api.js",
     JS / "shell" / "floor-delete.js",

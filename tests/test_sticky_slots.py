@@ -16,7 +16,13 @@ from core import config
 from core.agent_loop.loop import run_turn
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.standing_prefs import standing_prefs_file
-from core.agent_loop.sticky_slots import SLOT_ID_PREFIX, note_sticky_slot_turn, set_sticky_slot_scheduler
+from core.agent_loop.sticky_slots import (
+    _FILL_SYSTEM,
+    SLOT_ID_PREFIX,
+    _clean_fact,
+    note_sticky_slot_turn,
+    set_sticky_slot_scheduler,
+)
 from core.bm_cli import filesystem
 from core.llm import context_builder
 from core.models.message import HUMAN_SENDER_ID
@@ -394,9 +400,11 @@ def test_fill_keeps_open_blockers_and_rejects_invented_sources(
     jobs = _capture_scheduler()
     prompts: list[str] = []
     before_tasks = len(db.list_tasks())
+    caps: list[int | None] = []
 
-    def _complete(messages, max_tokens=280):
+    def _complete(messages, max_tokens=None):
         prompts.append(messages[1]["content"])
+        caps.append(max_tokens)
         payload = {
             "slots": [
                 {"source_id": task.id, "slot_kind": "plan", "body": PLAN},
@@ -426,6 +434,8 @@ def test_fill_keeps_open_blockers_and_rejects_invented_sources(
     assert db.get_task("invented-task") is None
     assert len(db.list_tasks()) == before_tasks
     assert db.get_task(task.id).status == "blocked"
+    # No per-call cap: the fill uses the system_ai_max_tokens setting.
+    assert caps == [None]
     assert task.id in prompts[0]
     assert blocker.id in prompts[0]
     assert "/me/notes" not in prompts[0]
@@ -567,7 +577,7 @@ def test_fill_does_not_block_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     caller = threading.get_ident()
     seen: dict[str, int] = {}
 
-    def _complete(messages, max_tokens=280):
+    def _complete(messages, max_tokens=None):
         seen["thread"] = threading.get_ident()
         entered.set()
         release.wait(timeout=5)
@@ -602,6 +612,8 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     _patch_tokens(monkeypatch)
     _knob("compaction_task_budget_headroom_percent", "0")
     monkeypatch.setattr(filesystem, "_AGENTS_ROOT", tmp_path / "agents")
+    # The prefs store is system-owned, outside the agents root; keep it per-test too.
+    monkeypatch.setattr(filesystem, "_SYSTEM_ROOT", tmp_path / "system")
     agent, _channel = _agent_channel()
     task, blocker = _task(agent)
     _events(task.id, 8)
@@ -624,7 +636,7 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
         }
     )
     path.write_text(document, encoding="utf-8")
-    notes = path.parent / "notes"
+    notes = tmp_path / "agents" / agent.storage_key / "notes"
 
     history = _task_history(agent, task.id)
     state = db.get_agent_state(agent.id)
@@ -688,3 +700,19 @@ async def test_skipped_turn_counts_toward_the_gap_and_returns() -> None:
     outcome = await run_turn(agent, state, {"type": "human_chat"})
     assert outcome.trigger_status == "skipped"
     assert get_sticky_slot_gate()["turns_since_run"] == 1
+
+
+def test_fill_prompt_states_the_body_length_target() -> None:
+    assert "under 180 characters" in _FILL_SYSTEM
+
+
+def test_body_overrun_is_kept_until_the_backstop(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING", logger="core.agent_loop.sticky_slots")
+    within = "a" * 300
+    assert _clean_fact(within) == within
+    assert not [r for r in caplog.records if "clipped" in r.getMessage()]
+
+    clipped = _clean_fact("b" * 400)
+    assert clipped == "b" * 360
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert [r.getMessage() for r in warnings] == ["sticky slot body clipped: 400 > 360 chars"]

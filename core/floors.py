@@ -322,6 +322,7 @@ async def delete_floor(
         FloorOccupantsChoiceRequired: Agents live here and ``occupants`` is None.
     """
     import db
+    from core.agent_repository import agent_repository
     from core.channel_archive import archive_thread_as_operator
     from db.floors import delete_floor_row, get_floor
 
@@ -348,8 +349,10 @@ async def delete_floor(
             send_home(agent.id)
             result.agents_sent_home.append(agent.id)
         else:
-            if not db.delete_agent(agent.id):
-                raise LookupError(f"Agent {agent.id} disappeared during the floor delete")
+            try:
+                agent_repository.delete(agent.id)
+            except LookupError as exc:
+                raise LookupError(f"Agent {agent.id} disappeared during the floor delete") from exc
             result.agents_deleted.append(agent.id)
 
     for channel in db.list_channels(status="active"):

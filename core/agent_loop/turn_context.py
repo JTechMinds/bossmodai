@@ -139,3 +139,55 @@ def _get_reference_materials(agent_id: str) -> list[str]:
         materials.append(f"- {teammate.name}{role} — agentId: {teammate.id}{suffix}")
 
     return materials
+
+_CHANNEL_WAKE_TYPES = {"channel_message", "channel_response"}
+_LATEST_LINE_KEYS = ("latest_from_name", "latest_content", "latest_author_type", "latest_from_agent")
+# Same window as channel_rounds._latest_channel_line.
+_LATEST_LINE_WINDOW = 12
+
+
+def stamp_channel_latest_line(agent_id: str, trigger: dict[str, Any]) -> None:
+    """Stamp the newest thread line on a shared-channel wake, resolved at turn time.
+
+    A channel wake keeps its snapshot opener (``content``, ``from_name``,
+    ``author_type``, ``from_agent``, ``source_message_id``) because engine
+    logic reads it. When a newer human or agent line exists by someone
+    other than ``agent_id``, this sets ``latest_from_name``,
+    ``latest_content``, ``latest_author_type`` and ``latest_from_agent``
+    so the model-facing "current message" is that line, not the opener.
+    Resolving here, when the turn runs, means queue delay can never make
+    it stale.
+
+    Args:
+        agent_id: The agent taking the turn. Its own posts are never its
+            current message.
+        trigger: The wake payload, mutated in place. Only
+            ``channel_message`` / ``channel_response`` triggers with a
+            non-empty ``channel_id`` are touched.
+
+    When the newest qualifying line is the opener itself, or there is
+    none, any ``latest_*`` keys are removed so a retried trigger does not
+    carry old values. System lines and round markers are skipped.
+    """
+    if trigger.get("type") not in _CHANNEL_WAKE_TYPES:
+        return
+    channel_id = trigger.get("channel_id")
+    if not isinstance(channel_id, str) or not channel_id.strip():
+        return
+    for key in _LATEST_LINE_KEYS:
+        trigger.pop(key, None)
+    for row in reversed(db.list_channel_messages(channel_id, limit=_LATEST_LINE_WINDOW)):
+        if row.author_type not in {"human", "agent"}:
+            continue
+        if row.author_agent_id == agent_id:
+            continue
+        content = (row.content or "").strip()
+        if not content:
+            continue
+        if row.id == trigger.get("source_message_id"):
+            return
+        trigger["latest_from_name"] = row.author_name
+        trigger["latest_content"] = content
+        trigger["latest_author_type"] = row.author_type
+        trigger["latest_from_agent"] = row.author_agent_id or ""
+        return

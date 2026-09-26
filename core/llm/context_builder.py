@@ -89,6 +89,8 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("trigger.type", "Current trigger type"),
     ("trigger.from_name", "Trigger speaker/sender name"),
     ("trigger.content", "Trigger message content"),
+    ("trigger.latest_from_name", "Newest thread line author on a shared-channel wake when it is not the opener"),
+    ("trigger.latest_content", "Newest thread line on a shared-channel wake when it is not the opener"),
     ("trigger.source_channel", "Trigger source channel"),
     ("trigger.task_title", "Assigned task title when present"),
     ("trigger.task_description", "Assigned task description when present"),
@@ -475,6 +477,8 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "type": str(trigger.get("type") or ""),
         "from_name": str(trigger.get("from_name") or ""),
         "content": str(trigger.get("content") or ""),
+        "latest_from_name": str(trigger.get("latest_from_name") or ""),
+        "latest_content": str(trigger.get("latest_content") or ""),
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
         "task_description": str(trigger.get("task_description") or ""),
@@ -996,6 +1000,13 @@ def _conversation_speaker(trigger: dict[str, Any]) -> tuple[str, str, str]:
         if trigger.get("from_agent"):
             return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
         return "human", str(trigger.get("from_name") or "Human Operator"), "human"
+    if trigger_type in {"channel_message", "channel_response"} and trigger.get("latest_content"):
+        # The envelope speaker must match the current message the trigger
+        # block shows, which is the newest thread line, not the opener.
+        if trigger.get("latest_author_type") == "human":
+            return "human", str(trigger.get("latest_from_name") or "Human Operator"), "human"
+        # stamp_channel_latest_line only stamps human or agent lines.
+        return "agent", str(trigger.get("latest_from_name") or "Coworker"), str(trigger.get("latest_from_agent") or "")
     if trigger.get("author_type") == "human":
         return "human", str(trigger.get("from_name") or "Human Operator"), "human"
     if trigger.get("from_agent"):

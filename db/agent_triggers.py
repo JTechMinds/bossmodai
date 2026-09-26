@@ -220,6 +220,37 @@ def delete_queued_triggers_for_round(round_id: str) -> int:
     return deleted
 
 
+def delete_queued_triggers_for_session(session_id: str) -> int:
+    """Delete queued (not claimed) triggers bound to one meeting session.
+
+    The meeting counterpart of ``delete_queued_triggers_for_round``: an ended
+    meeting's invites and resumes (payload ``session_id``) must not wake
+    anyone back into it. Claimed triggers belong to a running turn and are
+    left alone.
+
+    Args:
+        session_id: The meeting session; blank deletes nothing.
+
+    Returns:
+        How many queued triggers were deleted.
+    """
+    token = (session_id or "").strip()
+    if not token:
+        return 0
+    rows = query("SELECT id, payload FROM agent_triggers WHERE status = 'queued'")
+    deleted = 0
+    for row in rows:
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("session_id") or "").strip() != token:
+            continue
+        execute(
+            "DELETE FROM agent_triggers WHERE id = $1 AND status = 'queued'",
+            [row["id"]],
+        )
+        deleted += 1
+    return deleted
+
+
 def delete_queued_triggers_for_channel(channel_id: str) -> int:
     """Delete queued triggers bound to one origin thread so archived rooms stay quiet."""
     token = (channel_id or "").strip()

@@ -192,7 +192,6 @@ def start_channel_peer_round(
         agent_line=author_type == "agent",
         sticky_note=sticky,
         repair_empty=not (handoff and bound),
-        snapshot_id=message_id,
         work_bind_ids=[pair["agent_id"] for pair in binds if pair["agent_id"] in bound],
     )
 
@@ -485,8 +484,6 @@ def _plan_for_members(
     agent_line: bool = False,
     sticky_note: str = "",
     repair_empty: bool = True,
-    snapshot_id: str = "",
-    round_id: str = "",
     already_spoke_ids: list[str] | None = None,
     work_bind_ids: list[str] | None = None,
 ) -> RoundPlan:
@@ -509,8 +506,6 @@ def _plan_for_members(
         agent_line=agent_line,
         sticky_note=sticky_note,
         repair_empty=repair_empty,
-        snapshot_id=snapshot_id,
-        round_id=round_id,
         already_spoke_ids=already_spoke_ids,
         work_bind_ids=work_bind_ids,
     )
@@ -715,8 +710,6 @@ def _redecide_remaining(
         opening_message=opening_message,
         agent_line=True,
         repair_empty=False,
-        snapshot_id=source_id,
-        round_id=round_id,
         already_spoke_ids=spoke_ids,
         work_bind_ids=bind_ids,
     )
@@ -1035,8 +1028,6 @@ def _open_follow_up_round(
         opening_message=str(trigger.get("content") or ""),
         agent_line=agent_line,
         sticky_note=sticky,
-        snapshot_id=source_id,
-        round_id=round_id,
         already_spoke_ids=spoke_ids,
         work_bind_ids=bind_ids,
     )

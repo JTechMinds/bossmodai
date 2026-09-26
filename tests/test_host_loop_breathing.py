@@ -32,6 +32,7 @@ from core.loop_breathing import (
 )
 from core.messaging import route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
+from tests._router_fakes import speak_reply
 
 
 def setup_function() -> None:
@@ -182,16 +183,9 @@ async def test_channel_route_system_ai_leaves_the_serve_loop(
     loop_thread = threading.get_ident()
     seen: list[int] = []
 
-    def _route(_messages: list[dict[str, str]], **_kwargs: Any) -> str:
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         seen.append(threading.get_ident())
-        ids = [jim.id, laura.id]
-        return (
-            '{"speak": ["'
-            + ids[0]
-            + '"], "stay_out": ["'
-            + ids[1]
-            + '"]}'
-        )
+        return speak_reply(messages, [jim.id])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     services = _Services()

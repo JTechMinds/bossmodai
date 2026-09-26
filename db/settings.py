@@ -85,6 +85,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # connection is kept on upgrade; this seed does not overwrite it.
     # Channel rounds use it for one short route. compaction_mode is off | pressure_only.
     ("system_ai_connection", "", "llm"),
+    # Default output cap for System AI completions. Reasoning tokens count
+    # against it on reasoning models, so a small cap truncates the answer.
+    # Every System AI completion uses it: channel routes, chat fade, sticky
+    # slots, CLI auto-approve.
+    ("system_ai_max_tokens", "6144", "llm"),
     ("compaction_mode", "pressure_only", "llm"),
     ("compaction_task_budget_headroom_percent", "25", "llm"),
     ("compaction_chat_budget_headroom_percent", "35", "llm"),

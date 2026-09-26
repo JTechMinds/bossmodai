@@ -37,14 +37,17 @@ logger = logging.getLogger(__name__)
 
 FADE_ID_PREFIX = "chat-fade:"
 _SUMMARY_NAME = "Earlier"
-_SUMMARY_MAX_CHARS = 400
+# The length the fade prompt asks the model for.
+_SUMMARY_TARGET_CHARS = 400
+# Backstop clip at 2x the target, so an ordinary overrun is kept, not cut.
+_SUMMARY_MAX_CHARS = _SUMMARY_TARGET_CHARS * 2
 _SOURCE_MESSAGE_CHARS = 280
 _SOURCE_MESSAGE_CAP = 16
-_CHAT_FADE_MAX_TOKENS = 180
 _HEADROOM_MAX = 95
 
 _FADE_SYSTEM = (
     "Summarize older channel turns into one short factual note. "
+    f"Keep it under {_SUMMARY_TARGET_CHARS} characters. "
     "Keep decisions, names, and open questions that are in the turns. "
     "Do not add tasks, preferences, or notes. "
     "Plain text only."
@@ -251,10 +254,7 @@ def _run_fade_job(
         rows = kept
         if not rows:
             return
-        raw = complete_text(
-            _fade_messages(rows, prior_summary),
-            max_tokens=_CHAT_FADE_MAX_TOKENS,
-        )
+        raw = complete_text(_fade_messages(rows, prior_summary))
         summary = _clean_summary(raw)
         if summary is None:
             logger.info("chat fade skipped: system AI returned no usable summary")
@@ -355,6 +355,7 @@ def _clean_summary(raw: Any) -> str | None:
     if len(text) < 8:
         return None
     if len(text) > _SUMMARY_MAX_CHARS:
+        logger.warning("chat fade summary clipped: %d > %d chars", len(text), _SUMMARY_MAX_CHARS)
         text = text[:_SUMMARY_MAX_CHARS].rstrip()
     return text or None
 

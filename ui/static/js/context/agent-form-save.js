@@ -241,8 +241,12 @@ const BossModAgentFormSave = (() => {
         if (deleteBtn) {
             deleteBtn.addEventListener('click', () => {
                 if (!currentAgentId) return;
+                // The saved name, not the field: the delete removes the agent
+                // as it exists, whatever the operator has typed since.
                 RECOVERY.confirmDestructive(
-                    'Delete this agent?', 'This cannot be undone.', 'Delete agent',
+                    'Delete this agent?',
+                    BossModAgentApi.agentDeleteWarning(agent.name),
+                    'Delete agent',
                     () => {
                         void BossModAgentApi.apiDeleteAgent(currentAgentId)
                             .then(() => { if (onDelete) onDelete(); })

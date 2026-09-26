@@ -113,6 +113,10 @@ global.apiFetchOk = async (url, init) => {
 
 global.showRowError = () => {};
 
+// settings-system.js registers a repaint hook on render; the harness drives
+// renders directly, so the hook is a no-op.
+global.SettingsView = { bindRepaint() {} };
+
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.ConnectionsSection = ConnectionsSection;\n`);
 

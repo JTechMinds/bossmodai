@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 # Bound for this helper only. It does not change llm_stall_timeout_seconds
 # or llm_request_timeout_seconds.
 SYSTEM_COMPLETION_TIMEOUT_SECONDS = 20
-SYSTEM_COMPLETION_MAX_TOKENS = 256
 
 
 def _usable(connection: AIConnection | None) -> AIConnection | None:
@@ -69,20 +68,38 @@ def system_ai_is_configured() -> bool:
 def complete_text(
     messages: list[dict[str, str]],
     *,
-    max_tokens: int = SYSTEM_COMPLETION_MAX_TOKENS,
+    max_tokens: int | None = None,
 ) -> str | None:
-    """Run one short non-streaming completion. None means no usable connection or a failed call."""
+    """Run one short non-streaming completion on the System AI connection.
+
+    Args:
+        messages: Chat messages for the completion.
+        max_tokens: Output cap for this call. ``None`` reads the
+            ``system_ai_max_tokens`` setting. Reasoning models spend hidden
+            reasoning tokens against this cap too.
+
+    Returns:
+        The completion text, or ``None`` when there is no usable connection,
+        the call-budget lane is full, the call fails, or the text is empty.
+        A ``finish_reason`` of ``length`` is logged as a truncation warning;
+        the (possibly partial) text is still returned for the caller to judge.
+
+    Raises:
+        ConfigError: ``max_tokens`` is ``None`` and the setting is missing or
+            not an integer.
+    """
     connection = resolve_system_connection()
     if connection is None:
         logger.debug("system completion skipped: system AI unavailable")
         return None
+    cap = config.require_int("system_ai_max_tokens") if max_tokens is None else max_tokens
     model = str(connection.model or "").strip()
     api_base = str(connection.api_base_url or "").strip() or None
     kwargs: dict[str, Any] = {
         "model": canonicalize_openai_compatible_model(model, api_base=api_base),
         "messages": messages,
         "temperature": 0,
-        "max_tokens": max_tokens,
+        "max_tokens": cap,
         "timeout": SYSTEM_COMPLETION_TIMEOUT_SECONDS,
         "stream": False,
         "num_retries": 0,
@@ -112,6 +129,8 @@ def complete_text(
             return None
     finally:
         budget.release(lane)
+    if _finish_reason(response) == "length":
+        logger.warning("system completion truncated at max_tokens=%d", cap)
     text = _message_text(response)
     if not text.strip():
         logger.warning("system completion returned empty text")
@@ -144,3 +163,15 @@ def _message_text(response: Any) -> str:
         message = getattr(choice, "message", None) if choice is not None else None
         content = getattr(message, "content", None) if message is not None else None
     return content if isinstance(content, str) else ""
+
+
+def _finish_reason(response: Any) -> str:
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        choice = choices[0] if choices else {}
+        reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    else:
+        choices = getattr(response, "choices", None) or []
+        choice = choices[0] if choices else None
+        reason = getattr(choice, "finish_reason", None) if choice is not None else None
+    return reason if isinstance(reason, str) else ""

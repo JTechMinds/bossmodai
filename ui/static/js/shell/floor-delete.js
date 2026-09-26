@@ -93,7 +93,7 @@ const BossModFloorDelete = (() => {
                     option('send_home', 'Send them home',
                         'They go on vacation: inactive and off every floor. '
                         + 'Bring them back from People ⋯ → On vacation.'),
-                    option('delete', 'Delete them', 'Permanently removes the agents.')),
+                    option('delete', 'Delete them', BossModAgentApi.floorAgentsDeleteWarning())),
             );
         }
         // `has_folder` comes with the floor list (floor-api.js). The folder is never

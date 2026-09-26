@@ -12,7 +12,7 @@ not require @.
 
 from __future__ import annotations
 
-from core.agent_loop.standing_prefs import STANDING_PREFS_PATH
+from core.agent_loop.standing_prefs import PREF_KINDS, TEXT_MAX_CHARS
 from core.bm_cli.host_roots import configured_host_roots
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
@@ -59,10 +59,11 @@ NOTES_STORE_RETRIEVE = (
     "Open on demand for how-to. Pointers-first. Never dump. "
     "Never invent Board/Done from note text.\n"
     "Standing prefs (warm): "
-    f"Agent prefs store {STANDING_PREFS_PATH} (not notes). "
-    "Kinds: preference / constraint / style / tool_bias. "
-    "On a clear operator statement, write a short sticky + sources there. "
-    "Engine injects those pointers every work turn — "
+    "on a clear operator statement, record it with `pref set <id> <kind> <source>` "
+    f"and the rule as one line (≤{TEXT_MAX_CHARS} chars) in the body. "
+    f"Kinds: {' / '.join(PREF_KINDS)}. "
+    "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`. "
+    "The engine injects them every work turn — "
     "the agent does not re-open prefs for inject. "
     "Supersede only when the operator replaces. "
     "Optional note pointer for prose — warm inject does not scrape notes. "

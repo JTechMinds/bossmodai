@@ -113,13 +113,13 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
-    "BossModConversation", "BossModPlaces",
+    "BossModConversationFocus", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModMiniOffice",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
@@ -297,6 +297,13 @@ const creates = [];
 // CREATE, and the only way to prove that scoping is to watch an edit that
 // would have tripped it reach the server anyway.
 const updates = [];
+// What GET /api/agents/{id} answers, shaped as the server's `Agent`: the desk
+// footer reads the workspace and model off it, and Remove reads the NAME its
+// warning is about.
+const AGENT_DETAIL = { id: "a1", name: "Jim", storage_key: "jim-workspace", model_work: "gpt-test" };
+// Set by the section that clicks Remove before that read has landed: while it
+// holds a promise, every GET /api/agents/{id} waits on it.
+let heldAgentDetail = null;
 
 // The one browser API the real submit path needs that the shared fake does not
 // carry. Node HAS a FormData and its constructor REFUSES an argument, so
@@ -371,7 +378,8 @@ function api(url, init) {
             updates.push({ id: oneAgent[1], body: JSON.parse(init.body) });
             return jsonResponse({ id: oneAgent[1] });
         }
-        return jsonResponse({ id: "a1", storage_key: "jim-workspace", model_work: "gpt-test" });
+        if (heldAgentDetail) return heldAgentDetail.promise;
+        return jsonResponse(AGENT_DETAIL);
     }
     const desk = String(url).match(/^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/);
     if (desk) {
@@ -650,6 +658,67 @@ async function main() {
         throw new Error("the contract must be a disclosure, not a standing alert");
     }
 
+    // ─── Remove says what a delete destroys, and whose ───
+    //
+    // The old copy promised "artifacts, and diagnostics are preserved" after
+    // the delete had started removing both. What the operator reads is the
+    // dialog, so the dialog is what is read here: the agent by name, the
+    // tasks it cancels, and the back-up instruction — and never the promise.
+    const deskFooterAction = (label) => contextEl.querySelectorAll(".desk-action")
+        .find((node) => node.textContent === label);
+    const openPanels = () => documentStub.body.querySelectorAll(".modal-panel");
+    await deskFooterAction("Remove").dispatchClick();
+    await drain();
+    const removeDialog = openPanels()
+        .find((panel) => panel.textContent.includes("Remove this agent?"));
+    const removeText = removeDialog ? removeDialog.textContent : "";
+    const removeWarnsWhatIsDeleted = openPanels().length === 1
+        && removeText.includes("Deleting Jim permanently deletes their files")
+        && removeText.includes("cancels their open tasks")
+        && removeText.includes("back up anything you need")
+        && !removeText.includes("preserved");
+    if (!removeWarnsWhatIsDeleted) {
+        throw new Error(`Remove must warn what it deletes, got "${removeText}"`);
+    }
+    await removeDialog.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Cancel").dispatchClick();
+    await drain();
+    if (openPanels().length !== 0) throw new Error("Cancel must close the Remove dialog");
+
+    // Before the detail read lands there is no name, so there is no dialog:
+    // the footer says why and asks again, and once the name is in, Remove
+    // opens the warning that names them.
+    let releaseAgentDetail = null;
+    heldAgentDetail = { promise: new Promise((resolve) => { releaseAgentDetail = resolve; }) };
+    store.setState({ contextMode: "office" });
+    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    await drain();
+    await deskFooterAction("Remove").dispatchClick();
+    await drain();
+    const footerErrors = () => contextEl.querySelector(".desk-footer")
+        .querySelectorAll(".context-error").map((node) => node.textContent).join(" ");
+    const removeWaitsForTheName = openPanels().length === 0
+        && footerErrors().includes("haven’t loaded yet");
+    if (!removeWaitsForTheName) {
+        throw new Error(`Remove before the name loads must not open a dialog, got `
+            + `${openPanels().length} dialogs, footer "${footerErrors()}"`);
+    }
+    heldAgentDetail = null;
+    releaseAgentDetail(jsonResponse(AGENT_DETAIL));
+    await drain();
+    await deskFooterAction("Remove").dispatchClick();
+    await drain();
+    const removeOpensOnceTheNameIsIn = footerErrors() === ""
+        && openPanels().length === 1
+        && openPanels()[0].textContent.includes("Deleting Jim permanently deletes");
+    if (!removeOpensOnceTheNameIsIn) {
+        throw new Error(`Remove must open once the name loads, got ${openPanels().length} `
+            + `dialogs, footer "${footerErrors()}"`);
+    }
+    await openPanels()[0].querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Cancel").dispatchClick();
+    await drain();
+
     const askedFor = requestLog.filter((entry) => entry.agentId === "a1" && entry.path === "/me/notes");
     const readsTheWorkspace = askedFor.length > 0;
     if (!readsTheWorkspace) {
@@ -800,6 +869,31 @@ async function main() {
         && Boolean(modalBody.querySelector("#btn-delete-agent"));
     if (!deleteIsNotPinned) {
         throw new Error("Delete must stay in the form body, not beside the primary");
+    }
+    // The form's Delete asks with the same warning the desk's Remove does.
+    // The fake builds one node per `id=` and copies no attributes, so the
+    // markup's `type="button"` is carried over by hand; without it the fake
+    // takes the button for the form's default submit and saves instead.
+    if (!formMarkup.includes('<button type="button" id="btn-delete-agent"')) {
+        throw new Error("the form's Delete must be a type=\"button\" button");
+    }
+    const formDelete = opened.querySelector("#btn-delete-agent");
+    formDelete.setAttribute("type", "button");
+    await formDelete.dispatchClick();
+    await drain();
+    const deleteDialog = modals().find((panel) => panel.textContent.includes("Delete this agent?"));
+    const deleteText = deleteDialog ? deleteDialog.textContent : "";
+    const deleteWarnsWhatIsDeleted = deleteText.includes("Deleting Jim permanently deletes their files")
+        && deleteText.includes("cancels their open tasks")
+        && deleteText.includes("back up anything you need");
+    if (!deleteWarnsWhatIsDeleted) {
+        throw new Error(`Delete must warn what it deletes, got "${deleteText}"`);
+    }
+    await deleteDialog.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Keep it").dispatchClick();
+    await drain();
+    if (modals().length !== 1 || panelModal() !== opened) {
+        throw new Error(`Keep it must leave only the edit dialog open, got ${modals().length}`);
     }
 
     // Dismissing puts the desk back in front and repaints it. BY NAME: the
@@ -1688,6 +1782,10 @@ async function main() {
         primaryIsSubmitType,
         submitIdCount,
         deleteIsNotPinned,
+        removeWarnsWhatIsDeleted,
+        removeWaitsForTheName,
+        removeOpensOnceTheNameIsIn,
+        deleteWarnsWhatIsDeleted,
         pinnedPrimarySubmitsTheForm,
         pinnedPrimaryDoesNotCloseTheDialog,
         setAllFansOutAfterPublish,

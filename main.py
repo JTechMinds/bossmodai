@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from api.auth import ensure_local_api_token, install_local_api_auth
 from api.routes import router as api_router
+from core.agent_repository import agent_repository
 from core.runtime import runtime_services
 from db import init_db, close_connection
 
@@ -32,6 +33,10 @@ STATIC_DIR = BASE_DIR / "ui" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Once per app start: after init_db (ledger seeding and identity backfill
+    # know every live agent) and before the runtime worker starts. Not inside
+    # init_db, which runs again on every runtime start.
+    agent_repository.purge_orphans()
     ensure_local_api_token()
     from api.websocket import manager
 

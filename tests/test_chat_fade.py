@@ -13,7 +13,9 @@ import pytest
 import db
 from core import config
 from core.agent_loop.chat_fade import (
+    _FADE_SYSTEM,
     FADE_ID_PREFIX,
+    _clean_summary,
     consider_channel_chat_fade,
     note_agent_turn,
     set_chat_fade_scheduler,
@@ -277,9 +279,11 @@ def test_fade_softens_older_turns_without_wiping_the_transcript(
     before = [(item.id, item.content) for item in db.list_channel_messages(channel.id)]
     jobs = _capture_scheduler()
     prompts: list[str] = []
+    caps: list[int | None] = []
 
-    def _complete(messages, max_tokens=180):
+    def _complete(messages, max_tokens=None):
         prompts.append(messages[1]["content"])
+        caps.append(max_tokens)
         return SUMMARY
 
     monkeypatch.setattr("core.agent_loop.chat_fade.complete_text", _complete)
@@ -293,6 +297,8 @@ def test_fade_softens_older_turns_without_wiping_the_transcript(
     stored = get_channel_chat_fade(channel.id)
     assert stored is not None
     assert stored["summary"] == SUMMARY
+    # No per-call cap: the fade uses the system_ai_max_tokens setting.
+    assert caps == [None]
     assert "OLD-TURN-0" in prompts[0]
     assert "TAIL-KEEP-7" not in prompts[0]
     assert "/me/notes" not in prompts[0]
@@ -322,7 +328,7 @@ def test_channel_history_does_not_block_the_turn_on_system_ai(
     caller = threading.get_ident()
     seen: dict[str, int] = {}
 
-    def _complete(messages, max_tokens=180):
+    def _complete(messages, max_tokens=None):
         seen["thread"] = threading.get_ident()
         entered.set()
         release.wait(timeout=5)
@@ -388,3 +394,19 @@ def test_runner_stays_off_standing_prefs_notes_and_soft_blocks() -> None:
     prompt_history = (ROOT / "core" / "agent_loop" / "prompt_history.py").read_text(encoding="utf-8")
     assert "consider_channel_chat_fade" in prompt_history
     assert "apply_channel_chat_fade" in prompt_history
+
+
+def test_fade_prompt_states_the_length_target() -> None:
+    assert "under 400 characters" in _FADE_SYSTEM
+
+
+def test_summary_overrun_is_kept_until_the_backstop(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING", logger="core.agent_loop.chat_fade")
+    within = "a" * 600
+    assert _clean_summary(within) == within
+    assert not [r for r in caplog.records if "clipped" in r.getMessage()]
+
+    clipped = _clean_summary("b" * 900)
+    assert clipped == "b" * 800
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert [r.getMessage() for r in warnings] == ["chat fade summary clipped: 900 > 800 chars"]

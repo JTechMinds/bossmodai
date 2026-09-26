@@ -32,6 +32,8 @@ def _configured_artifacts_root() -> Path:
 
 _ARTIFACTS_ROOT = _configured_artifacts_root()
 _AGENTS_ROOT = _ARTIFACTS_ROOT / "agents"
+# System-owned state. A sibling of agents/, so no /me mount reaches it.
+_SYSTEM_ROOT = _ARTIFACTS_ROOT / "system"
 # Shared project folders are not here: they live under the company root, one
 # folder per floor (core/bm_cli/floor_roots.py). The in-tree
 # artifacts/projects tree is not rewritten.
@@ -56,6 +58,20 @@ def agents_artifact_root() -> Path:
     """Return the bounded BossMod per-agent artifact root."""
     ensure_artifact_roots()
     return _AGENTS_ROOT
+
+
+def standing_prefs_root() -> Path:
+    """Return the system-owned standing-prefs root, creating it when missing.
+
+    ``<artifacts>/system/standing_prefs`` holds one ``<storage_key>.json`` per
+    agent. It is never agent-visible: no virtual mount maps it (``/me`` is
+    ``agents/<key>``, ``/projects`` is the floor folder) and it is not a
+    path-jail root, so neither the virtual CLI nor the shell can reach it.
+    Agents manage their prefs only through the ``pref`` command.
+    """
+    root = _SYSTEM_ROOT / "standing_prefs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def is_denied_company_file(path: Path) -> bool:

@@ -17,7 +17,7 @@ from core.agent_loop.actions_shared import (
 )
 from core.agent_loop.meeting_orchestrator import maybe_start_meeting_kickoff_round
 from core.default_prompts import render_default_prompt
-from core.models import Agent, AgentState
+from core.models import Activity, Agent, AgentState, MeetingSession
 from core.world.tilemap import get_room_at
 import db
 
@@ -109,6 +109,36 @@ async def _handle_remote_meeting(
     }
 
 
+def _finished_meeting_hint(active: Activity | None) -> MeetingSession | None:
+    """Return the meeting ``active`` points at when that meeting is already over.
+
+    A ``meeting`` activity carries its session in ``metadata.session_id``.
+    The session can end while the agent is away from it (walking there, or
+    paused under other work), e.g. when its host is deleted; the activity
+    then points at a meeting that must not be joined again. Over means the
+    session is no longer ``active``, or its orchestration phase is ``ended``
+    or ``canceled``.
+
+    Returns:
+        The hinted session when it is over; ``None`` when ``active`` is not a
+        meeting, has no session hint, the session is gone, or it is still on.
+    """
+    if active is None or active.kind != "meeting":
+        return None
+    session_id = str((active.metadata or {}).get("session_id") or "").strip()
+    if not session_id:
+        return None
+    session = db.get_meeting_session(session_id)
+    if session is None:
+        return None
+    if session.status != "active":
+        return session
+    meta = db.get_meeting_session_meta(session_id)
+    if meta is not None and str(meta.get("phase") or "") in {"ended", "canceled"}:
+        return session
+    return None
+
+
 async def _handle_attend_meeting(
     agent: Agent,
     state: AgentState,
@@ -125,6 +155,17 @@ async def _handle_attend_meeting(
         return {
             "event": "world_feedback",
             "detail": f"You're in the {room_name}. Walk to the meetingRoom first.",
+            "agent_name": agent.name,
+        }
+
+    # A meeting that ended while this agent was away is left the way ``idle``
+    # leaves it: complete_activity resumes the paused parent work.
+    current = activity_runtime.get_active_activity(agent.id)
+    if current is not None and _finished_meeting_hint(current) is not None:
+        activity_runtime.complete_activity(current.id, detail=current.detail)
+        return {
+            "event": "world_feedback",
+            "detail": "That meeting has ended. Back to your previous work.",
             "agent_name": agent.name,
         }
 
@@ -209,7 +250,8 @@ async def _handle_attend_meeting(
     session = None
     if active and active.kind == "meeting":
         session_id_hint = str((active.metadata or {}).get("session_id") or "").strip()
-        if session_id_hint:
+        # A finished meeting is never reattached; the room's session is used instead.
+        if session_id_hint and _finished_meeting_hint(active) is None:
             session = db.get_meeting_session(session_id_hint)
     if session is None:
         session = db.ensure_room_meeting_session(

@@ -133,6 +133,11 @@ const SystemSection = (() => {
             label: 'Max concurrent model calls',
             description: 'How many model calls may run at once. Agent turns, System AI routes, and repairs share this budget. Default 2. Each agent still runs at most one turn. Repair wakes use a lane and wait behind a live channel lead. When a local server reports fewer parallel calls than this number, the connection test shows that as a health warning.',
         },
+        system_ai_max_tokens: {
+            order: 37,
+            label: 'System AI Max Output Tokens',
+            description: 'Output cap for every System AI completion: channel routing, chat fade, sticky slots, and CLI auto-approve. Reasoning models spend hidden reasoning tokens against this cap, so a small value cuts the answer off. Default 6144.',
+        },
         compaction_mode: {
             order: 38,
             control: 'select',

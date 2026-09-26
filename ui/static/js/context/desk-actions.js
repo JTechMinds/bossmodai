@@ -18,8 +18,10 @@ const BossModDeskActions = (() => {
     const { h, clear } = BossModDom;
 
     const REMOVE_TITLE = 'Remove this agent?';
-    const REMOVE_BODY = 'Their open tasks stop, their desk is released, and this cannot be '
-        + 'undone. Completed work, artifacts, and diagnostics are preserved.';
+    // Said instead of the warning while GET /api/agents/{id} has not landed:
+    // the warning names whose files go, so there is no dialog without the name.
+    const REMOVE_NOT_READY = 'This agent’s details haven’t loaded yet, so Remove '
+        + 'can’t say whose files it deletes. Try again in a moment.';
     /**
      * One footer fact: a label and its value, on one row.
      *
@@ -61,7 +63,7 @@ const BossModDeskActions = (() => {
         const metaEl = h('div', { class: 'desk-meta-block' });
         const errorEl = h('p', { class: 'context-error', role: 'alert' });
         let destroyed = false;
-        /** From GET /api/agents/{id}: storage key and model overrides. */
+        /** From GET /api/agents/{id}: name, storage key and model overrides. */
         let detail = null;
 
         function reportError(message, err) {
@@ -138,6 +140,29 @@ const BossModDeskActions = (() => {
             }
         }
 
+        /**
+         * Open Remove's confirmation, which names the agent it deletes.
+         *
+         * The name is `detail.name`, so until the detail read lands there is
+         * no dialog: the footer's error line says why and the read is retried,
+         * which also covers a read that failed rather than one still in flight.
+         * @returns {void}
+         */
+        function confirmRemove() {
+            if (!detail) {
+                clear(errorEl);
+                errorEl.append(REMOVE_NOT_READY);
+                void refresh();
+                return;
+            }
+            confirmThen({
+                title: REMOVE_TITLE,
+                body: BossModAgentApi.agentDeleteWarning(detail.name),
+                confirm: 'Remove agent',
+                run: removeAgent,
+            });
+        }
+
         async function removeAgent() {
             clear(errorEl);
             try {
@@ -178,12 +203,7 @@ const BossModDeskActions = (() => {
                 h('button', {
                     class: 'btn-link desk-action danger',
                     type: 'button',
-                    onclick: () => confirmThen({
-                        title: REMOVE_TITLE,
-                        body: REMOVE_BODY,
-                        confirm: 'Remove agent',
-                        run: removeAgent,
-                    }),
+                    onclick: () => confirmRemove(),
                 }, 'Remove')));
 
         renderMeta();

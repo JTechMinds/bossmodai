@@ -1,9 +1,13 @@
 {{if trigger.type = 'channel_message'}}
-CURRENT SHARED CHANNEL MESSAGE FROM [{{trigger.from_name}}]: {{trigger.content}}
-Choose speak or pass. One line is enough. Pass uses observe and does not post to the channel.
+{{if trigger.latest_content}}CURRENT SHARED CHANNEL MESSAGE FROM [{{trigger.latest_from_name}}]: {{trigger.latest_content}}
+Earlier message that opened this exchange, from [{{trigger.from_name}}]: {{trigger.content}}
+{{else}}CURRENT SHARED CHANNEL MESSAGE FROM [{{trigger.from_name}}]: {{trigger.content}}
+{{end}}Choose speak or pass. One line is enough. Pass uses observe and does not post to the channel.
 {{elseif trigger.type = 'channel_response'}}
-YOUR TURN TO RESPOND IN THE SHARED CHANNEL after [{{trigger.from_name}}] said: {{trigger.content}}
-Choose speak or pass. One line is enough. Pass uses observe and does not post to the channel.
+{{if trigger.latest_content}}YOUR TURN TO RESPOND IN THE SHARED CHANNEL after [{{trigger.latest_from_name}}] said: {{trigger.latest_content}}
+Earlier message that opened this exchange, from [{{trigger.from_name}}]: {{trigger.content}}
+{{else}}YOUR TURN TO RESPOND IN THE SHARED CHANNEL after [{{trigger.from_name}}] said: {{trigger.content}}
+{{end}}Choose speak or pass. One line is enough. Pass uses observe and does not post to the channel.
 {{elseif trigger.type = 'session_message'}}
 CURRENT MEETING MESSAGE FROM [{{trigger.from_name}}]: {{trigger.content}}
 {{elseif trigger.type = 'session_response'}}

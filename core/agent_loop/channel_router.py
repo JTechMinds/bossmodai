@@ -1,13 +1,16 @@
 """System AI route for one channel response round.
 
 One short completion on ``system_ai_connection`` sees the latest message,
-member specialties, pending @ ids, and a short sticky clip. The only
-accepted payload is:
+member specialties, pending @ members, and a short sticky clip. Members
+are numbered ``1…N`` for that one call; no agent id appears in the
+prompt. The only accepted payload is:
 
-    {"speak": ["agent-id", ...], "stay_out": ["agent-id", ...]}
+    {"speak": [2, 5]}
 
-``speak`` is ordered. Any other key, an unknown id, a duplicate, overlap
-between the lists, or a non-list rejects the payload. The caller then
+``speak`` is ordered and lists member numbers. Any other key, an unknown
+number, a duplicate, a non-integer, or a non-list rejects the payload.
+Stay-out is not asked of the model: it is every member left out of
+``speak``. On a rejected payload, or no completion at all, the caller
 uses the existing drain order and each member gets a normal soft-judge
 turn.
 
@@ -46,7 +49,7 @@ logger = logging.getLogger(__name__)
 # Required @ ids are not dropped to satisfy this number. Default 2 stops
 # a route from waking the whole channel into essays.
 ROUTER_SPEAK_CAP = 2
-ROUTER_KEYS = frozenset({"speak", "stay_out"})
+ROUTER_KEYS = frozenset({"speak"})
 
 _LATEST_MESSAGE_CHARS = 800
 _STICKY_CHARS = 400
@@ -60,22 +63,21 @@ _ROLE_BLURB_CHARS = 80
 AGENT_LINE_ROUTE = (
     "The latest message is an agent speak. Judge that line, not the opening sticky. "
     "Put an id in speak only when the line adds new work, a question, or a handoff. "
-    "Settled status, an echo of a line the thread already shows, or a no-op is an empty speak array, with every member id in stay_out. "
+    "Settled status, an echo of a line the thread already shows, or a no-op is an empty speak array. "
     "A peer @ on that line is not a pending pin and does not open another round."
 )
 
 # Re-route / later slice. Engine facts are Already spoke and Work-bound.
 # Echo versus new substance is the guess. Unsure stays out.
 REROUTE_ECHO_ROUTE = (
-    "Already spoke lists ids that already took a turn on this human snapshot. "
-    "Work-bound lists ids on live work. "
-    "Do not put an already-spoke id in speak when that turn would only restate what the thread already shows. "
-    "If you are unsure whether an already-spoke id would add new substance, put that id in stay_out. "
+    "Already spoke lists members who already took a turn on this operator message. "
+    "Work-bound lists members on live work. "
+    "Do not put an already-spoke member in speak when that turn would only restate what the thread already shows. "
+    "If you are unsure whether an already-spoke member would add new substance, leave them out of speak. "
     "An empty speak array is the stop when nobody has new substance. "
     "Do not name someone because they might have something. "
-    "An id that has not spoken may still be named for new work, a question, or a handoff. "
-    "Work-bound member ids go in stay_out. "
-    "Ids under Already spoke that are not in Members must not be copied into either array."
+    "A member who has not spoken may still be named for new work, a question, or a handoff. "
+    "Leave work-bound members out of speak."
 )
 
 
@@ -107,8 +109,6 @@ def plan_channel_route(
     agent_line: bool = False,
     sticky_note: str = "",
     repair_empty: bool = True,
-    snapshot_id: str = "",
-    round_id: str = "",
     already_spoke_ids: list[str] | None = None,
     work_bind_ids: list[str] | None = None,
 ) -> RoundPlan:
@@ -119,6 +119,14 @@ def plan_channel_route(
     the front of ``speak`` in that order and are stored on ``pinned``.
     Operator @ ids and other hard pins are passed there so the router
     cannot drop them.
+
+    The model answers with per-call member numbers, mapped back to ids
+    here. ``stay_out`` on the plan is the complement of the capped speak
+    list. No completion, or a rejected payload, logs a warning and
+    returns the drain order.
+
+    ``already_spoke_ids`` and ``work_bind_ids`` are engine facts for a
+    re-route or later slice; they reach the prompt as member numbers only.
 
     ``handoff`` is a Done/handoff round. ``agent_line`` is a peer round
     opened from an agent speak. An empty parsed speak with no pin gets
@@ -151,31 +159,30 @@ def plan_channel_route(
     note = (sticky_note or "").strip()
     if note:
         sticky = _clip("\n".join(part for part in (sticky, note) if part), _STICKY_CHARS)
-    messages = build_router_messages(
+    messages, number_map = build_router_messages(
         members=roster,
         latest_message=latest_message,
         pending_mention_ids=pinned,
         sticky=sticky,
         agent_line=agent_line,
-        snapshot_id=snapshot_id,
-        round_id=round_id,
         already_spoke_ids=already_spoke_ids,
         work_bind_ids=work_bind_ids,
     )
     raw = complete_text(messages)
     if raw is None:
+        logger.warning("channel router fell back to drain order: %s", "no_completion")
         return fallback
-    parsed = parse_router_payload(raw, universe)
+    parsed = parse_router_payload(raw, number_map)
     if parsed is None:
-        logger.info("channel router rejected payload; using drain order")
+        logger.warning("channel router fell back to drain order: %s", "rejected")
         return fallback
-    if repair_empty and (handoff or agent_line) and not parsed[0] and not pinned:
-        parsed = _repair_empty_speak(messages, universe) or parsed
-    named = tuple(parsed[0])
+    if repair_empty and (handoff or agent_line) and not parsed and not pinned:
+        parsed = _repair_empty_speak(messages, number_map) or parsed
+    named = tuple(parsed)
     speak, stay_out = finalize_router_lists(
         universe,
         forced_ids=pinned,
-        speak=parsed[0],
+        speak=parsed,
         cap=ROUTER_SPEAK_CAP,
     )
     kept_pins = [agent_id for agent_id in pinned if agent_id in set(speak)]
@@ -188,22 +195,27 @@ def plan_channel_route(
     )
 
 
-def parse_router_payload(raw: str, member_ids: list[str]) -> tuple[list[str], list[str]] | None:
-    """Parse a fail-closed router object. None rejects the payload."""
+def parse_router_payload(raw: str, number_map: dict[int, str]) -> list[str] | None:
+    """Parse a fail-closed ``{"speak": [numbers]}`` object into ordered agent ids.
+
+    Args:
+        raw: Completion text. One code fence around the JSON is unwrapped.
+        number_map: The per-call member number to agent id map returned by
+            :func:`build_router_messages` for the same prompt.
+
+    Returns:
+        The speak ids in the model's order, or ``None`` when the payload is
+        rejected: not JSON, not an object, keys other than ``speak``, a
+        non-list, a non-integer item (``bool`` included), an unknown number,
+        or a duplicate.
+    """
     try:
         payload = json.loads(_unwrap_json(raw))
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict) or set(payload) != ROUTER_KEYS:
         return None
-    allowed = {agent_id for agent_id in member_ids if agent_id}
-    speak = _id_list(payload.get("speak"), allowed)
-    stay_out = _id_list(payload.get("stay_out"), allowed)
-    if speak is None or stay_out is None:
-        return None
-    if set(speak) & set(stay_out):
-        return None
-    return speak, stay_out
+    return _number_list(payload.get("speak"), number_map)
 
 
 def finalize_router_lists(
@@ -241,8 +253,8 @@ def finalize_router_lists(
 
 def _repair_empty_speak(
     messages: list[dict[str, str]],
-    member_ids: list[str],
-) -> tuple[list[str], list[str]] | None:
+    number_map: dict[int, str],
+) -> list[str] | None:
     """One "who speaks next?" repair. None keeps the empty speak (hard stop).
 
     Used for a Done/handoff round and for an agent-line round. A bad
@@ -258,8 +270,8 @@ def _repair_empty_speak(
     raw = complete_text(repair)
     if raw is None:
         return None
-    parsed = parse_router_payload(raw, member_ids)
-    if parsed is None or not parsed[0]:
+    parsed = parse_router_payload(raw, number_map)
+    if not parsed:
         return None
     return parsed
 
@@ -277,12 +289,15 @@ def role_blurb(text: str | None) -> str:
     return _clip(" ".join(first.split()), _ROLE_BLURB_CHARS)
 
 
-def format_member_line(member: dict[str, str]) -> str:
-    """``id | name | specialty``, plus `` — blurb`` when a hire summary exists."""
-    agent_id = str(member.get("id") or "").strip()
-    name = str(member.get("name") or "").strip() or agent_id
+def format_member_line(member: dict[str, str], number: int) -> str:
+    """``number | name | specialty``, plus `` — blurb`` when a hire summary exists.
+
+    ``number`` is the member's per-call router number. The agent id is
+    never printed; a member with no name shows as ``Member <number>``.
+    """
+    name = str(member.get("name") or "").strip() or f"Member {number}"
     specialty = str(member.get("role") or "").strip() or "unspecified"
-    line = f"{agent_id} | {name} | {specialty}"
+    line = f"{number} | {name} | {specialty}"
     blurb = role_blurb(member.get("description") or member.get("blurb"))
     if blurb:
         return f"{line} — {blurb}"
@@ -296,25 +311,39 @@ def build_router_messages(
     pending_mention_ids: list[str],
     sticky: str,
     agent_line: bool = False,
-    snapshot_id: str = "",
-    round_id: str = "",
     already_spoke_ids: list[str] | None = None,
     work_bind_ids: list[str] | None = None,
-) -> list[dict[str, str]]:
-    """Build the short route prompt. Specialties and one role line, not bios."""
-    by_id = {str(member.get("id") or ""): member for member in members}
-    spoke = _unique(list(already_spoke_ids or []))
-    bound = _unique(list(work_bind_ids or []))
+) -> tuple[list[dict[str, str]], dict[int, str]]:
+    """Build the short route prompt and its per-call member number map.
+
+    Members are numbered ``1…N`` in roster order. The same numbers are used
+    under Pending @, Already spoke and Work-bound, so the model only ever
+    sees numbers, never agent ids. An id in those sections that is not a
+    member is left out. Specialties and one role line, not bios. Already
+    spoke and Work-bound are appended only when either is non-empty. No
+    message or round id is printed: the model cannot act on either.
+
+    Returns:
+        ``(messages, number_map)``. ``number_map`` maps each number to its
+        agent id and is only valid for this one completion; pass it to
+        :func:`parse_router_payload`.
+    """
+    number_map: dict[int, str] = {}
+    number_by_id: dict[str, int] = {}
+    by_id: dict[str, dict[str, str]] = {}
     member_lines = []
     for member in members:
-        if not str(member.get("id") or "").strip():
+        agent_id = str(member.get("id") or "").strip()
+        if not agent_id or agent_id in number_by_id:
             continue
-        member_lines.append(format_member_line(member))
-    pending_lines = []
-    for agent_id in pending_mention_ids:
-        member = by_id.get(agent_id) or {}
-        name = str(member.get("name") or "").strip() or agent_id
-        pending_lines.append(f"{agent_id} | {name}")
+        number = len(number_map) + 1
+        number_map[number] = agent_id
+        number_by_id[agent_id] = number
+        by_id[agent_id] = member
+        member_lines.append(format_member_line(member, number))
+    spoke = _unique(list(already_spoke_ids or []))
+    bound = _unique(list(work_bind_ids or []))
+    pending_lines = _fact_lines(_unique(list(pending_mention_ids)), number_by_id, by_id)
     sticky_text = (sticky or "").strip() or "(none)"
     user = "\n".join(
         [
@@ -325,7 +354,7 @@ def build_router_messages(
             "\n".join(member_lines) or "(none)",
             "",
             "Pending @:",
-            "\n".join(pending_lines) or "(none)",
+            pending_lines,
             "",
             "Sticky context:",
             _clip(sticky_text, _STICKY_CHARS),
@@ -337,19 +366,20 @@ def build_router_messages(
         "must answer, who is only being discussed. Prefer Board/task next owners when "
         "the sticky implies them. Do not wake people merely because their name appears "
         "in prose. Use the one-line role blurb to match the work to who owns it. "
-        "Operator @ ids (pending) are already required — keep them first. "
+        "Operator @ members (pending) are already required — keep them first. "
         "Reply with only one JSON object and no other text. "
-        'The only keys are "speak" and "stay_out". '
-        "Each value is an array of member ids from the list below. "
-        "Every member id appears in exactly one list. "
+        'The only key is "speak". '
+        "Its value is an array of member numbers (integers) from the list below, "
+        'for example {"speak": [2, 1]}. '
+        "Leave everyone who should not talk out of speak. "
         'Order in "speak" is the order they should talk. '
-        f"speak is ordered and short (at most {ROUTER_SPEAK_CAP} ids after the pending @ ids). "
-        "Pending @ ids are required in speak and must come first, even when that "
+        f"speak is ordered and short (at most {ROUTER_SPEAK_CAP} numbers after the pending @ members). "
+        "Pending @ members are required in speak and must come first, even when that "
         f"makes speak longer than {ROUTER_SPEAK_CAP}. "
-        "Do not add anyone else past that cap once pending @ ids are included. "
+        "Do not add anyone else past that cap once pending @ members are included. "
         "Someone left out of this slice is not finished: a later route can name them if they still need to act. "
         "An empty speak array ends the snapshot only when no one needs to act next. "
-        "Do not add keys or ids."
+        "Do not add keys or numbers that are not in Members."
     )
     if agent_line:
         system = f"{system} {AGENT_LINE_ROUTE}"
@@ -359,35 +389,38 @@ def build_router_messages(
             [
                 user,
                 "",
-                "Human snapshot:",
-                (snapshot_id or "").strip() or "(none)",
-                "",
-                "Round:",
-                (round_id or "").strip() or "(none)",
-                "",
                 "Already spoke:",
-                _fact_lines(spoke, by_id),
+                _fact_lines(spoke, number_by_id, by_id),
                 "",
                 "Work-bound:",
-                _fact_lines(bound, by_id),
+                _fact_lines(bound, number_by_id, by_id),
             ]
         )
-    return [
+    messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+    return messages, number_map
 
 
-def _fact_lines(agent_ids: list[str], by_id: dict[str, dict[str, str]]) -> str:
-    """``id | name`` lines for engine facts. Empty stays ``(none)``."""
-    if not agent_ids:
-        return "(none)"
+def _fact_lines(
+    agent_ids: list[str],
+    number_by_id: dict[str, int],
+    by_id: dict[str, dict[str, str]],
+) -> str:
+    """``number | name`` lines for engine facts. Empty stays ``(none)``.
+
+    An id that is not on the Members roster has no number and is left out,
+    so the model cannot copy it into ``speak``.
+    """
     lines: list[str] = []
     for agent_id in agent_ids:
-        member = by_id.get(agent_id) or {}
-        name = str(member.get("name") or "").strip()
-        lines.append(f"{agent_id} | {name}" if name else agent_id)
-    return "\n".join(lines)
+        number = number_by_id.get(agent_id)
+        if number is None:
+            continue
+        name = str((by_id.get(agent_id) or {}).get("name") or "").strip()
+        lines.append(f"{number} | {name}" if name else str(number))
+    return "\n".join(lines) or "(none)"
 
 
 def short_sticky_context(
@@ -436,19 +469,19 @@ def _unwrap_json(raw: str) -> str:
     return "\n".join(lines[1:-1]).strip()
 
 
-def _id_list(value: object, allowed: set[str]) -> list[str] | None:
+def _number_list(value: object, number_map: dict[int, str]) -> list[str] | None:
     if not isinstance(value, list):
         return None
     found: list[str] = []
-    seen: set[str] = set()
+    seen: set[int] = set()
     for item in value:
-        if not isinstance(item, str):
+        # bool is an int subclass; true/false is not a member number.
+        if isinstance(item, bool) or not isinstance(item, int):
             return None
-        token = item.strip()
-        if not token or token not in allowed or token in seen:
+        if item not in number_map or item in seen:
             return None
-        seen.add(token)
-        found.append(token)
+        seen.add(item)
+        found.append(number_map[item])
     return found
 
 

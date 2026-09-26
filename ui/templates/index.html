@@ -217,6 +217,7 @@
     <script src="{{ static_url('js/shell/places.js') }}"></script>
     <script src="{{ static_url('js/shell/navigator.js') }}"></script>
     <script src="{{ static_url('js/shell/session.js') }}"></script>
+    <script src="{{ static_url('js/context/agent-api.js') }}"></script>
     <script src="{{ static_url('js/shell/floor-scope.js') }}"></script>
     <script src="{{ static_url('js/shell/floor-api.js') }}"></script>
     <script src="{{ static_url('js/shell/floor-delete.js') }}"></script>
@@ -292,7 +293,6 @@
          SettingsView, and the desk browser, which opens the shared file
          viewer. Both must already be defined, so this block loads last before
          the shell boots. -->
-    <script src="{{ static_url('js/context/agent-api.js') }}"></script>
     <script src="{{ static_url('js/context/agent-templates-api.js') }}"></script>
 
     <!-- Marketplace: the pane that installs agent templates, one of the

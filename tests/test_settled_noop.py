@@ -6,7 +6,6 @@ still is. Empty speak on that agent line gets one repair, then stops.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,7 @@ from core.agent_loop.channel_rounds import advance_channel_round, start_channel_
 from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT
 from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
+from tests._router_fakes import route_reply
 
 _LOOP_FILES = (
     "channel_router.py",
@@ -66,10 +66,6 @@ def _enable_system_ai() -> None:
     config.reload()
 
 
-def _payload(speak: list[str], stay_out: list[str]) -> str:
-    return json.dumps({"speak": speak, "stay_out": stay_out})
-
-
 def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, Any]:
     calls: dict[str, Any] = {"n": 0, "prompts": []}
 
@@ -79,7 +75,7 @@ def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, An
         calls["prompts"].append(blob)
         if calls["n"] > len(replies):
             raise AssertionError("router was called more times than scripted")
-        return replies[calls["n"] - 1]
+        return route_reply(messages, replies[calls["n"] - 1])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
     return calls
@@ -114,7 +110,7 @@ def test_gate_does_not_string_match_settled_phrases() -> None:
 def test_operator_at_still_hard_pins(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, laura, ada, channel = _trio()
     _enable_system_ai()
-    _script(monkeypatch, [_payload([jim.id], [laura.id, ada.id])])
+    _script(monkeypatch, [[jim.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="human",
@@ -145,7 +141,7 @@ def test_operator_at_still_hard_pins(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_progress_question_and_handoff_still_wake(monkeypatch: pytest.MonkeyPatch, line: str) -> None:
     jim, laura, ada, channel = _trio()
     _enable_system_ai()
-    calls = _script(monkeypatch, [_payload([laura.id], [ada.id])])
+    calls = _script(monkeypatch, [[laura.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="agent",
@@ -179,8 +175,8 @@ def test_settled_essay_is_empty_speak_and_stay_out(monkeypatch: pytest.MonkeyPat
     calls = _script(
         monkeypatch,
         [
-            _payload([], [laura.id, ada.id]),
-            _payload([], [laura.id, ada.id]),
+            [],
+            [],
         ],
     )
     message = db.create_channel_message(
@@ -203,7 +199,7 @@ def test_settled_essay_is_empty_speak_and_stay_out(monkeypatch: pytest.MonkeyPat
     assert calls["n"] == 2
     assert "Who speaks next?" in calls["prompts"][-1]
     assert "Settled status, an echo of a line the thread already shows, or a no-op" in calls["prompts"][0]
-    assert laura.id not in _pending_block(calls["prompts"][0])
+    assert "| Laura" not in _pending_block(calls["prompts"][0])
     assert triggers == []
     rounds = db.list_channel_response_rounds(channel.id)
     assert len(rounds) == 1
@@ -218,8 +214,8 @@ def test_empty_agent_line_repair_can_name_the_next_speaker(monkeypatch: pytest.M
     calls = _script(
         monkeypatch,
         [
-            _payload([], [laura.id, ada.id]),
-            _payload([laura.id], [ada.id]),
+            [],
+            [laura.id],
         ],
     )
     message = db.create_channel_message(
@@ -256,9 +252,9 @@ def test_peer_at_on_a_settled_line_does_not_open_an_essay_round(
     calls = _script(
         monkeypatch,
         [
-            _payload([jim.id], [laura.id, ada.id]),
-            _payload([], [jim.id, laura.id, ada.id]),
-            _payload([], [jim.id, laura.id, ada.id]),
+            [jim.id],
+            [],
+            [],
         ],
     )
     message = db.create_channel_message(
@@ -302,8 +298,8 @@ def test_peer_at_on_a_settled_line_does_not_open_an_essay_round(
     assert essay in follow
     assert "The latest message is an agent speak." in follow
     assert "A peer @ on that line is not a pending pin" in follow
-    assert laura.id not in _pending_block(follow)
-    assert ada.id not in _pending_block(follow)
+    assert "| Laura" not in _pending_block(follow)
+    assert "| Ada" not in _pending_block(follow)
     assert "Who speaks next?" in calls["prompts"][-1]
     assert progress["trigger_requests"] == []
     indexes = [
@@ -323,7 +319,7 @@ def test_words_in_the_line_do_not_override_a_real_wake(monkeypatch: pytest.Monke
         f"@{laura.name} nothing new on the old note, but the signature check "
         "is still open. Can you take it?"
     )
-    calls = _script(monkeypatch, [_payload([laura.id], [ada.id])])
+    calls = _script(monkeypatch, [[laura.id]])
     message = db.create_channel_message(
         channel_id=channel.id,
         author_type="agent",
@@ -343,4 +339,4 @@ def test_words_in_the_line_do_not_override_a_real_wake(monkeypatch: pytest.Monke
     )
     assert calls["n"] == 1
     assert [item["agent_id"] for item in triggers] == [laura.id]
-    assert laura.id not in _pending_block(calls["prompts"][0])
+    assert "| Laura" not in _pending_block(calls["prompts"][0])
