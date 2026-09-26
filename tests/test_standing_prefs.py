@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,13 +19,13 @@ import db
 from core import config
 from core.agent_loop import standing_prefs
 from core.agent_loop.standing_prefs import (
-    STORE_TEXT_BYTE_CAP,
-    WARM_SECTION_CHAR_CAP,
+    line_max_chars,
     list_standing_prefs,
     migrate_workspace_standing_prefs,
     read_standing_prefs,
     remove_standing_pref,
     render_warm_section,
+    section_max_chars,
     set_standing_pref,
     standing_prefs_file,
 )
@@ -148,7 +150,7 @@ def test_work_turns_inject_prefs_and_do_not_read_note_bodies(monkeypatch: pytest
         assert "/me/notes/how.md" in section
         assert "tool_bias pytest" in section
         assert "use uv run pytest" in section
-        assert len(section) <= WARM_SECTION_CHAR_CAP
+        assert len(section) <= section_max_chars()
         joined = "\n".join(str(message.get("content") or "") for message in context)
         assert "NOTEBODY_SHOULD_NOT_BE_READ" not in joined
         assert "PROJECT_NOTE_BODY" not in joined
@@ -165,20 +167,136 @@ def test_social_turn_does_not_inject_standing_prefs() -> None:
     assert _warm_sections(context) == []
 
 
-def test_warm_section_soft_cap_keeps_the_store_and_points_at_pref_list() -> None:
+def _long_prefs(key: str, count: int) -> list[standing_prefs.StandingPref]:
+    # 300-character rules: each renders as one full ~340-character line, and
+    # 13 of them (3900 characters) still fit the store cap while overflowing the section.
+    for index in range(count):
+        _set(key, f"pref-{index:02d}", text=f"rule {index:02d} " + "w" * 292, sources=[f"src-{index:02d}"])
+    return read_standing_prefs(key)
+
+
+def test_many_long_prefs_render_whole_within_the_section_cap_with_no_more_line() -> None:
+    assert section_max_chars() == 4000
     agent = db.create_agent("Ada", role="Writer")
-    for index in range(6):
-        _set(agent.storage_key, f"pref-{index}", text=f"sticky number {index} " + ("word " * 12), sources=[f"src-{index}"])
-    loaded = read_standing_prefs(agent.storage_key)
+    loaded = _long_prefs(agent.storage_key, 10)
     section = render_warm_section(loaded)
     assert section is not None
-    assert len(section) <= WARM_SECTION_CHAR_CAP
+    assert len(section) <= section_max_chars()
+    lines = section.splitlines()
+    assert lines[0] == "# Standing prefs (manage with pref)"
+    assert lines[1:] == [f"- preference {p.id} — {p.text} sources: {p.sources[0]}" for p in loaded]
+    assert not any(line.startswith("more:") for line in lines)
+
+
+def test_warm_section_soft_cap_keeps_the_store_and_points_at_pref_list() -> None:
+    agent = db.create_agent("Ada", role="Writer")
+    loaded = _long_prefs(agent.storage_key, 13)
+    full_lines = [f"- preference {p.id} — {p.text} sources: {p.sources[0]}" for p in loaded]
+    full = "\n".join(["# Standing prefs (manage with pref)", *full_lines])
+    assert len(full) > section_max_chars()
+    section = render_warm_section(loaded)
+    assert section is not None
+    assert len(section) <= section_max_chars()
     assert section.startswith("# Standing prefs (manage with pref)")
     omitted = len(loaded) - sum(1 for line in section.splitlines() if line.startswith("- "))
     assert omitted > 0
     assert section.splitlines()[-1] == f"more: {omitted} not shown — run pref list"
     assert "/me/standing_prefs.json" not in section
-    assert [item.id for item in loaded] == [f"pref-{index}" for index in range(6)]
+    assert [item.id for item in loaded] == [f"pref-{index:02d}" for index in range(13)]
+
+
+def test_sources_drop_when_text_plus_suffix_is_over_the_limit_and_the_text_stays_whole() -> None:
+    assert line_max_chars() == 400
+    key = db.create_agent("Ada", role="Writer").storage_key
+    text = "Keep " + "r" * 370 + " end."
+    pref = _set(key, "tone", text=text, sources=["operator-2026-09-22", "/me/notes/tone.md"])
+    assert len(f"{text} sources: operator-2026-09-22, /me/notes/tone.md") > line_max_chars()
+    section = render_warm_section([pref])
+    assert section is not None
+    line = section.splitlines()[1]
+    assert line == f"- preference tone — {text}"
+    assert len(line) - len("- preference tone — ") <= line_max_chars()
+    assert "sources:" not in line
+    assert "..." not in line
+    # Provenance is dropped only from the warm line; the store keeps it.
+    assert list_standing_prefs(key)[0].sources == ["operator-2026-09-22", "/me/notes/tone.md"]
+
+
+def test_a_text_exactly_at_the_limit_with_a_64_char_id_renders_whole() -> None:
+    # The limit bounds the text only; the "- kind id — " prefix never counts,
+    # so any text that saves shows whole, however long the id.
+    key = db.create_agent("Ada", role="Writer").storage_key
+    long_id = "x" * 64
+    text = "Keep " + "r" * (line_max_chars() - 5)
+    assert len(text) == line_max_chars()
+    pref = _set(key, long_id, text=text, sources=["operator"])
+    section = render_warm_section([pref])
+    assert section is not None
+    line = section.splitlines()[1]
+    assert line == f"- preference {long_id} — {text}"
+    assert "..." not in line
+    assert "sources:" not in line
+
+
+def test_sources_show_when_text_plus_suffix_fits_the_limit_exactly() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    suffix = " sources: operator"
+    text = "t" * (line_max_chars() - len(suffix))
+    pref = _set(key, "tone", text=text, sources=["operator"])
+    section = render_warm_section([pref])
+    assert section is not None
+    assert section.splitlines()[1] == f"- preference tone — {text}{suffix}"
+
+
+def _set_limit(key: str, value: int) -> None:
+    db.set_setting(key, str(value), "context")
+    config.reload()
+
+
+def test_a_lowered_limit_cuts_an_existing_longer_text_in_the_warm_line_only() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    text = "Keep " + "r" * 290 + " end."
+    _set(key, "long", text=text, sources=["operator"])
+    _set_limit("standing_prefs_line_max_chars", 100)
+    # Parsing never checks the operator limit, so the store still loads.
+    loaded = read_standing_prefs(key)
+    assert [(item.id, item.text) for item in loaded] == [("long", text)]
+    section = render_warm_section(loaded)
+    assert section is not None
+    line = section.splitlines()[1]
+    assert line == f"- preference long — {text[:97]}..."
+    assert len(line) - len("- preference long — ") == 100
+    assert "sources:" not in line
+    assert list_standing_prefs(key)[0].text == text
+
+
+def test_render_reads_both_limits_live() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    prefs = [
+        _set(key, "one", text="a" * 60, sources=["operator"]),
+        _set(key, "two", text="b" * 60, sources=["operator"]),
+    ]
+    before = render_warm_section(prefs)
+    assert before is not None
+    assert "sources: operator" in before
+    assert "more:" not in before
+    _set_limit("standing_prefs_line_max_chars", 50)
+    _set_limit("standing_prefs_section_max_chars", 150)
+    after = render_warm_section(prefs)
+    assert after is not None
+    assert len(after) <= 150
+    lines = after.splitlines()
+    assert lines[1] == f"- preference one — {'a' * 47}..."
+    assert lines[-1] == "more: 1 not shown — run pref list"
+
+
+def test_save_rejects_text_over_the_line_setting_with_its_number() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    _set_limit("standing_prefs_line_max_chars", 50)
+    with pytest.raises(ValueError, match="^pref text is 51 characters; the limit is 50 on one line$"):
+        _set(key, "tone", text="x" * 51)
+    assert not standing_prefs_file(key).exists()
+    assert _set(key, "tone", text="x" * 50).text == "x" * 50
 
 
 def test_prefs_text_does_not_invent_board_done() -> None:
@@ -232,9 +350,9 @@ def test_remove_drops_one_id_and_a_missing_id_raises() -> None:
 @pytest.mark.parametrize(
     ("fields", "message"),
     [
-        ({"text": "x" * 161}, "^pref text is 161 characters; the limit is 160 on one line$"),
-        ({"text": "first line\nsecond line"}, "^pref text has a line break; the limit is one line up to 160 characters$"),
-        ({"text": "   "}, "^pref text is empty; give the rule as one line up to 160 characters$"),
+        ({"text": "x" * 401}, "^pref text is 401 characters; the limit is 400 on one line$"),
+        ({"text": "first line\nsecond line"}, "^pref text has a line break; the rule must be one line$"),
+        ({"text": "   "}, "^pref text is empty; give the rule as one line$"),
         ({"kind": "rule"}, '^kind "rule" is not one of: preference, constraint, style, tool_bias$'),
         ({"sources": []}, "^pref needs 1 to 4 sources; got 0$"),
         ({"sources": ["a", "b", "c", "d", "e"]}, "^pref needs 1 to 4 sources; got 5$"),
@@ -252,13 +370,20 @@ def test_each_validation_error_is_one_sentence_naming_its_limit(fields: dict, me
     assert not standing_prefs_file(key).exists()
 
 
-def test_store_cap_rejects_the_set_without_dropping_existing_prefs(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert STORE_TEXT_BYTE_CAP == 4096
-    monkeypatch.setattr(standing_prefs, "STORE_TEXT_BYTE_CAP", 20)
+def test_text_at_the_line_setting_saves_whole() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    text = "y" * line_max_chars()
+    assert _set(key, "long", text=text).text == text
+    assert list_standing_prefs(key)[0].text == text
+
+
+def test_store_cap_rejects_the_set_without_dropping_existing_prefs() -> None:
+    assert section_max_chars() == 4000
+    _set_limit("standing_prefs_section_max_chars", 20)
     key = db.create_agent("Ada", role="Writer").storage_key
     _set(key, "tone", text="short sentences")
     before = standing_prefs_file(key).read_text(encoding="utf-8")
-    with pytest.raises(ValueError, match=r"^standing prefs would hold 36 bytes of text; the limit is 20\. "):
+    with pytest.raises(ValueError, match=r"^standing prefs would hold 36 characters of text; the limit is 20\. "):
         _set(key, "extra", text="another standing rule")
     assert standing_prefs_file(key).read_text(encoding="utf-8") == before
 
@@ -427,3 +552,29 @@ def test_reset_database_removes_the_prefs_root() -> None:
     _set("agent_0042", "tone")
     db.reset_database()
     assert not standing_prefs_file("agent_0042").exists()
+
+
+# ── cold import ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "core.agent_loop.standing_prefs",
+        "core.agent_loop.runtime_core",
+        "core.bm_cli.command_registry",
+        "core.bm_cli.pref_commands",
+    ],
+)
+def test_each_prefs_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
+    # standing_prefs → core.bm_cli (eager runtime) → command_registry →
+    # standing_prefs was a cycle; only a cold first import shows it. The
+    # child inherits conftest's temp DB and artifacts roots via os.environ.
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

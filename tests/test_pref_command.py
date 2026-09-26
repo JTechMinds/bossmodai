@@ -14,9 +14,9 @@ from core.agent_loop.standing_prefs import (
     PREF_KINDS,
     SOURCE_MAX_CHARS,
     SOURCES_MAX,
-    STORE_TEXT_BYTE_CAP,
-    TEXT_MAX_CHARS,
+    line_max_chars,
     read_standing_prefs,
+    render_warm_section,
 )
 from core.bm_cli import filesystem
 from core.bm_cli.command_registry import PREF_FORMS
@@ -79,7 +79,7 @@ def test_set_with_body_and_a_quoted_source_with_spaces(ada) -> None:
 
 
 def test_set_reusing_the_id_replaces_and_list_shows_every_pref_in_full(ada) -> None:
-    long_text = "w" * TEXT_MAX_CHARS
+    long_text = "w" * line_max_chars()
     assert _run(ada, "pref set tone style operator", content="Short sentences.").ok
     assert _run(ada, "pref set long preference operator", content=long_text).ok
     assert _run(ada, "pref set tone style thread-9", content="Plain words.").ok
@@ -110,17 +110,15 @@ def test_remove_of_a_missing_id_is_the_store_error(ada) -> None:
 
 
 def test_store_validation_sentence_reaches_the_agent_unchanged(ada) -> None:
-    too_long = _run(ada, "pref set tone style operator", content="x" * 212)
+    too_long = _run(ada, "pref set tone style operator", content="x" * 401)
     assert too_long.ok is False
-    assert too_long.data == {"error": f"pref text is 212 characters; the limit is {TEXT_MAX_CHARS} on one line"}
+    assert too_long.data == {"error": "pref text is 401 characters; the limit is 400 on one line"}
     bad_kind = _run(ada, "pref set tone rule operator", content="Short sentences.")
     assert bad_kind.data == {"error": 'kind "rule" is not one of: preference, constraint, style, tool_bias'}
     too_many = _run(ada, "pref set tone style a b c d e", content="Short sentences.")
     assert too_many.data == {"error": f"pref needs 1 to {SOURCES_MAX} sources; got 5"}
     multi_line = _run(ada, "pref set tone style operator", content="one\ntwo")
-    assert multi_line.data == {
-        "error": f"pref text has a line break; the limit is one line up to {TEXT_MAX_CHARS} characters"
-    }
+    assert multi_line.data == {"error": "pref text has a line break; the rule must be one line"}
     assert read_standing_prefs(ada[0].storage_key) == []
 
 
@@ -152,9 +150,17 @@ def test_learn_pref_shows_the_limits_from_the_constants(ada) -> None:
         assert form in text
     assert f"Kinds: {', '.join(PREF_KINDS)}" in text
     assert f"1 to {ID_MAX_CHARS} letters" in text
-    assert f"one line, up to {TEXT_MAX_CHARS} characters" in text
+    # The text row asks for shorthand and states no number; only the rejection error does.
+    text_rows = [line for line in text.splitlines() if line.lstrip().startswith("text ")]
+    assert text_rows == ["  text     one shorthand sentence (the body)"]
+    assert "shorthand sentence" in text
+    assert "160" not in text_rows[0] and str(line_max_chars()) not in text_rows[0]
     assert f"1 to {SOURCES_MAX}, each up to {SOURCE_MAX_CHARS} characters" in text
-    assert f"up to {STORE_TEXT_BYTE_CAP} bytes of text" in text
+    # The store cap is an operator setting; the static help names where it lives, not a number.
+    store_rows = [line for line in text.splitlines() if line.lstrip().startswith("store ")]
+    assert store_rows == [
+        "  store    total text across all prefs is capped (Settings → System → Context Window)"
+    ]
 
 
 def test_write_help_no_longer_mentions_standing_prefs(ada) -> None:
@@ -174,3 +180,25 @@ def test_writing_me_standing_prefs_json_is_an_ordinary_file_the_system_ignores(a
     appended = _run(ada, "append /me/standing_prefs.json", content="more")
     assert appended.ok is True
     assert read_standing_prefs(ada[0].storage_key) == []
+
+
+def test_lowering_the_line_limit_never_hides_a_saved_pref(ada) -> None:
+    text = "Keep " + "r" * 290 + " end."
+    assert len(text) == 300
+    assert _run(ada, "pref set long preference operator-2026-09-22", content=text).ok
+    db.set_setting("standing_prefs_line_max_chars", "100", "context")
+    config.reload()
+    key = ada[0].storage_key
+    loaded = read_standing_prefs(key)
+    assert [(item.id, item.text) for item in loaded] == [("long", text)]
+    section = render_warm_section(loaded)
+    assert section is not None
+    line = section.splitlines()[1]
+    # Sources drop first, then the text is cut to the lowered limit.
+    assert line == f"- preference long — {text[:97]}..."
+    assert len(line) - len("- preference long — ") == 100
+    listed = _run(ada, "pref list")
+    assert listed.ok is True
+    assert f"preference long — {text} sources: operator-2026-09-22" in listed.prompt_content
+    refused = _run(ada, "pref set long preference operator", content=text)
+    assert refused.data == {"error": "pref text is 300 characters; the limit is 100 on one line"}

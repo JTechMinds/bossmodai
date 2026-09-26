@@ -341,7 +341,8 @@ def _current_cli_cwd(agent_id: str) -> str:
 def _standing_prefs_warm_message(turn: TurnContext) -> dict[str, str] | None:
     """Inject standing prefs on work turns. Social turns and an empty store stay quiet.
 
-    The reader opens ``/me/standing_prefs.json`` only. Note files are not scraped.
+    The reader opens the system prefs store (``standing_prefs.standing_prefs_file``) only.
+    Note files are not scraped.
     """
     if _determine_mode(turn.trigger) != "work":
         return None

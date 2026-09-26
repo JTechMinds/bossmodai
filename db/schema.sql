@@ -545,6 +545,36 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP DEFAULT current_timestamp
 );
 
+-- One-row change counter for settings. Each process caches settings
+-- (core/config.py) and reloads when rev moves, so a write by the app reaches
+-- the runtime worker, and the reverse, with no restart. The database bumps
+-- it, so every write path counts: set_setting, seeding, reseed, migrations
+-- and raw SQL. updated_at is not used: it is written in mixed formats.
+CREATE TABLE IF NOT EXISTS settings_revision (
+    id  INTEGER PRIMARY KEY CHECK (id = 1),
+    rev INTEGER NOT NULL
+);
+
+INSERT OR IGNORE INTO settings_revision (id, rev) VALUES (1, 0);
+
+CREATE TRIGGER IF NOT EXISTS settings_revision_after_insert
+AFTER INSERT ON settings
+BEGIN
+    UPDATE settings_revision SET rev = rev + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS settings_revision_after_update
+AFTER UPDATE ON settings
+BEGIN
+    UPDATE settings_revision SET rev = rev + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS settings_revision_after_delete
+AFTER DELETE ON settings
+BEGIN
+    UPDATE settings_revision SET rev = rev + 1 WHERE id = 1;
+END;
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Agent triggers — durable wake-up queue
 -- ───────────────────────────────────────────────────────────────────────────

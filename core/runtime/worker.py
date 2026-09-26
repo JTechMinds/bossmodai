@@ -141,6 +141,9 @@ class RuntimeWorker:
 
     async def _command_loop(self) -> None:
         while not self._stopping.is_set():
+            # Commands start services that read settings; refresh first so a
+            # resume after an app-side change sees it (one integer read per poll).
+            config.refresh_if_changed()
             command = self._claim_next_command()
             if command is None:
                 await asyncio.sleep(_COMMAND_POLL_INTERVAL_SECONDS)

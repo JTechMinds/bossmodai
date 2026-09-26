@@ -11,13 +11,28 @@ operations here (``set_standing_pref``, ``remove_standing_pref``,
 A set adds a new id or replaces that same id. Other ids stay. The store is
 not compacted and prefs are not dropped to make room. Writes are atomic.
 
-Caps (the warm section is display-only; the store keeps every accepted pref):
+Fixed invariants, enforced on every parse (including a stored document):
 
-- pref text: one line, 160 characters
+- pref text: non-empty, one line
+- id: a short token, 1 to 64 characters
 - sources: 1 to 4, each at most 80 characters
-- store text: 4096 bytes total across pref text
-- warm line: 140 characters
-- warm section: 480 characters
+
+Operator limits (Settings → System → Context Window), read live on each save
+and render, never on parse:
+
+- ``standing_prefs_line_max_chars``: the longest pref text ``set`` accepts,
+  and the most of one pref's text the warm line shows. It limits the text
+  only; the ``- kind id — `` prefix never counts, so a saved text always
+  shows whole. The `` sources: …`` suffix is shown only when text plus
+  suffix fits the limit (the rule is the payload, sources are provenance).
+- ``standing_prefs_section_max_chars``: the most characters of the rendered
+  warm section (whole lines, prefix included), and the cap on total pref
+  text, in characters, across one agent's store at save time.
+
+Lowering a limit never hides a stored pref: the document still parses and
+the pref is still injected. A text longer than a lowered line limit is cut
+with ``...`` in the warm line only; ``set`` refuses new text over the limit,
+and ``pref list`` still shows every pref whole.
 
 ``migrate_workspace_standing_prefs`` moves a valid legacy agent-written
 ``/me/standing_prefs.json`` into the store once, at startup.
@@ -34,8 +49,6 @@ from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from core.bm_cli import filesystem
-
 logger = logging.getLogger(__name__)
 
 # The legacy agent-written file name inside ``/me``. Only the startup
@@ -44,12 +57,11 @@ STANDING_PREFS_FILENAME = "standing_prefs.json"
 SCHEMA_VERSION = 1
 
 ID_MAX_CHARS = 64
-TEXT_MAX_CHARS = 160
 SOURCE_MAX_CHARS = 80
 SOURCES_MAX = 4
-STORE_TEXT_BYTE_CAP = 4096
-WARM_LINE_CHARS = 140
-WARM_SECTION_CHAR_CAP = 480
+
+LINE_MAX_CHARS_SETTING = "standing_prefs_line_max_chars"
+SECTION_MAX_CHARS_SETTING = "standing_prefs_section_max_chars"
 
 PrefKind = Literal["preference", "constraint", "style", "tool_bias"]
 PREF_KINDS: tuple[str, ...] = get_args(PrefKind)
@@ -92,13 +104,15 @@ class StandingPref(BaseModel):
     @field_validator("text")
     @classmethod
     def _short_text(cls, value: str) -> str:
+        # No length check here: this runs on every parse of the stored
+        # document, and the length limit is an operator setting. Checking it
+        # here would make a lowered limit fail the whole store and silently
+        # drop every pref. ``set_standing_pref`` enforces it at save time.
         text = value.strip()
         if not text:
-            raise ValueError(f"pref text is empty; give the rule as one line up to {TEXT_MAX_CHARS} characters")
+            raise ValueError("pref text is empty; give the rule as one line")
         if "\n" in text or "\r" in text:
-            raise ValueError(f"pref text has a line break; the limit is one line up to {TEXT_MAX_CHARS} characters")
-        if len(text) > TEXT_MAX_CHARS:
-            raise ValueError(f"pref text is {len(text)} characters; the limit is {TEXT_MAX_CHARS} on one line")
+            raise ValueError("pref text has a line break; the rule must be one line")
         return text
 
     @field_validator("sources")
@@ -144,10 +158,56 @@ def standing_prefs_file(storage_key: str) -> Path:
     Raises:
         ValueError: ``storage_key`` is empty or could escape the root.
     """
+    # Imported here, not at module top: ``core.bm_cli`` eagerly imports its
+    # runtime, which reaches ``command_registry`` → this module while it is
+    # still initialising, so a top-level import breaks a cold import of this
+    # module (and of ``runtime_core``). A call-time import also reads the
+    # module attributes tests monkeypatch (``_SYSTEM_ROOT``).
+    from core.bm_cli import filesystem
+
     key = (storage_key or "").strip()
     if not key or key in {".", ".."} or "/" in key or "\\" in key:
         raise ValueError("standing prefs require an agent storage key")
     return filesystem.standing_prefs_root() / f"{key}.json"
+
+
+def line_max_chars() -> int:
+    """Return the operator's pref text limit, read live from Settings.
+
+    ``standing_prefs_line_max_chars`` is the longest text ``set`` accepts and
+    the most of one pref's text the warm line shows. It limits the text only;
+    the ``- kind id — `` prefix never counts.
+
+    Raises:
+        config.ConfigError: The setting is missing, not an integer, or below 1.
+    """
+    return _positive_int_setting(LINE_MAX_CHARS_SETTING)
+
+
+def section_max_chars() -> int:
+    """Return the operator's warm section and store cap, read live from Settings.
+
+    ``standing_prefs_section_max_chars`` caps the rendered warm section
+    (whole lines) and, at save time, the total characters of pref text in
+    one agent's store.
+
+    Raises:
+        config.ConfigError: The setting is missing, not an integer, or below 1.
+    """
+    return _positive_int_setting(SECTION_MAX_CHARS_SETTING)
+
+
+def _positive_int_setting(key: str) -> int:
+    # Call-time import: ``core.config`` imports ``db``, which reaches
+    # ``core.bm_cli`` and the same cycle described in ``standing_prefs_file``.
+    from core import config
+
+    value = config.require_int(key)
+    # The API refuses values below 1; a raw DB write could still store one,
+    # and a zero or negative cap would render nonsense instead of failing.
+    if value < 1:
+        raise config.ConfigError(f"Setting '{key}' must be at least 1: {value}")
+    return value
 
 
 def parse_standing_prefs_document(raw: str) -> StandingPrefsDocument:
@@ -217,7 +277,7 @@ def set_standing_pref(
         storage_key: The agent's storage key.
         pref_id: Short token, 1 to ``ID_MAX_CHARS`` characters.
         kind: One of ``PREF_KINDS``.
-        text: The rule, one line up to ``TEXT_MAX_CHARS`` characters.
+        text: The rule, one line up to ``line_max_chars()`` characters.
         sources: 1 to ``SOURCES_MAX`` pointers, each up to ``SOURCE_MAX_CHARS``.
 
     Returns:
@@ -225,8 +285,9 @@ def set_standing_pref(
 
     Raises:
         ValueError: One sentence naming the failed rule: a field limit, the
-            ``STORE_TEXT_BYTE_CAP`` store cap, or a corrupt current store
-            (which is never overwritten). The store is unchanged.
+            text limit, the ``section_max_chars()`` store cap, or a corrupt
+            current store (which is never overwritten). The store is unchanged.
+        config.ConfigError: A limit setting is missing or invalid.
         OSError: The atomic write failed. The previous store is intact.
     """
     try:
@@ -235,6 +296,10 @@ def set_standing_pref(
         )
     except ValidationError as exc:
         raise ValueError(_first_error_sentence(exc)) from exc
+    # The operator limit applies at save time only; parsing never checks it.
+    limit = line_max_chars()
+    if len(pref.text) > limit:
+        raise ValueError(f"pref text is {len(pref.text)} characters; the limit is {limit} on one line")
     existing = _read_existing_for_write(storage_key)
     merged = _merge_prefs(existing, [pref])
     _enforce_store_cap(merged)
@@ -272,6 +337,9 @@ def migrate_workspace_standing_prefs() -> None:
 
     Nothing is repaired and no ids are invented.
     """
+    # Call-time import: see ``standing_prefs_file`` for the import cycle.
+    from core.bm_cli import filesystem
+
     for legacy in sorted(filesystem.agents_artifact_root().glob(f"*/{STANDING_PREFS_FILENAME}")):
         key = legacy.parent.name
         target = standing_prefs_file(key)
@@ -299,14 +367,25 @@ def migrate_workspace_standing_prefs() -> None:
 
 
 def render_warm_section(prefs: list[StandingPref]) -> str | None:
-    """Render the warm section, or None when there is nothing to inject."""
+    """Render the warm section, or None when there is nothing to inject.
+
+    Reads ``line_max_chars()`` and ``section_max_chars()`` at render time, so
+    a Settings change applies to the next turn. Whole lines are kept in store
+    order until the section cap; the rest are counted in a ``more:`` line that
+    points at ``pref list``.
+
+    Raises:
+        config.ConfigError: A limit setting is missing or invalid.
+    """
     if not prefs:
         return None
+    line_limit = line_max_chars()
+    section_limit = section_max_chars()
     header = "# Standing prefs (manage with pref)"
-    lines = [_sticky_line(pref) for pref in prefs]
+    lines = [_sticky_line(pref, line_limit) for pref in prefs]
     kept: list[str] = []
     for line in lines:
-        if len(_compose(header, kept + [line], more=None)) <= WARM_SECTION_CHAR_CAP:
+        if len(_compose(header, kept + [line], more=None)) <= section_limit:
             kept.append(line)
             continue
         break
@@ -314,14 +393,14 @@ def render_warm_section(prefs: list[StandingPref]) -> str | None:
     if omitted == 0:
         return _compose(header, kept, more=None)
     more = _more_line(omitted)
-    while kept and len(_compose(header, kept, more=more)) > WARM_SECTION_CHAR_CAP:
+    while kept and len(_compose(header, kept, more=more)) > section_limit:
         kept.pop()
         omitted = len(lines) - len(kept)
         more = _more_line(omitted)
     rendered = _compose(header, kept, more=more)
-    if len(rendered) <= WARM_SECTION_CHAR_CAP:
+    if len(rendered) <= section_limit:
         return rendered
-    return rendered[:WARM_SECTION_CHAR_CAP].rstrip()
+    return rendered[:section_limit].rstrip()
 
 
 def _load_store(path: Path) -> list[StandingPref]:
@@ -367,10 +446,12 @@ def _merge_prefs(existing: list[StandingPref], incoming: list[StandingPref]) -> 
 
 
 def _enforce_store_cap(prefs: list[StandingPref]) -> None:
-    total = sum(len(item.text.encode("utf-8")) for item in prefs)
-    if total > STORE_TEXT_BYTE_CAP:
+    # Characters, not bytes: the cap is the section cap, which counts characters.
+    cap = section_max_chars()
+    total = sum(len(item.text) for item in prefs)
+    if total > cap:
         raise ValueError(
-            f"standing prefs would hold {total} bytes of text; the limit is {STORE_TEXT_BYTE_CAP}. "
+            f"standing prefs would hold {total} characters of text; the limit is {cap}. "
             "Replace or remove a pref instead of adding past the limit."
         )
 
@@ -393,22 +474,23 @@ def _dump(document: StandingPrefsDocument) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
-def _sticky_line(pref: StandingPref) -> str:
+def _sticky_line(pref: StandingPref, limit: int) -> str:
+    # ``limit`` bounds the text only. The prefix never counts, so a text that
+    # saved under the limit always shows whole, however long the id.
     prefix = f"- {pref.kind} {pref.id} — "
+    text = pref.text
+    if len(text) > limit:
+        # Only after the operator lowered the limit below a stored pref: the
+        # pref still shows, cut, and ``pref list`` shows it whole.
+        if limit <= 3:
+            return f"{prefix}{text[:limit]}"
+        return f"{prefix}{text[: limit - 3].rstrip()}..."
+    # The rule is the payload and sources are provenance, so provenance is
+    # what drops; ``pref list`` still shows the sources.
     suffix = f" sources: {', '.join(pref.sources)}"
-    line = f"{prefix}{pref.text}{suffix}"
-    if len(line) <= WARM_LINE_CHARS:
-        return line
-    budget = WARM_LINE_CHARS - len(prefix) - len(suffix)
-    if budget >= 4:
-        clipped = pref.text if len(pref.text) <= budget else pref.text[: budget - 3].rstrip() + "..."
-        return f"{prefix}{clipped}{suffix}"
-    short = f"{prefix}{pref.text}"
-    if len(short) <= WARM_LINE_CHARS:
-        return short
-    if WARM_LINE_CHARS <= 3:
-        return prefix[:WARM_LINE_CHARS]
-    return short[: WARM_LINE_CHARS - 3].rstrip() + "..."
+    if len(text) + len(suffix) <= limit:
+        return f"{prefix}{text}{suffix}"
+    return f"{prefix}{text}"
 
 
 def _more_line(omitted: int) -> str:

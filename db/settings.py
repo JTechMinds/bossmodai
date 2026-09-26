@@ -101,6 +101,14 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Context window ──
     ("context_recent_work_artifacts", "5", "context"),
     ("context_recent_completed_tasks", "3", "context"),
+    # Longest pref text an agent can save, and the most of one pref's text the
+    # warm section shows. One knob for both, so any pref that saves shows whole.
+    # The "- kind id — " prefix never counts against it.
+    ("standing_prefs_line_max_chars", "400", "context"),
+    # Most characters of the injected "Standing prefs" section, and the cap on
+    # total pref text in one agent's store: storing more than can ever be
+    # shown makes no sense. Lowering either never hides a stored pref.
+    ("standing_prefs_section_max_chars", "4000", "context"),
 
     # ── Desk ──
     ("desk_preview_max_chars", "50000", "desk"),

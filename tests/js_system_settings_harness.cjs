@@ -1,6 +1,7 @@
 /**
  * Node harness: Settings → System → AI Output renders the compaction knobs,
- * and a change saves through the existing settings PUT. System AI lives
+ * and a change saves through the existing settings PUT. Context Window
+ * renders the standing-prefs limits. System AI lives
  * under AI Connections. Invoked by tests/test_system_ai_compaction_settings.py.
  * Not a browser bundle.
  */
@@ -138,12 +139,16 @@ async function settle() {
     }
 }
 
-async function openAiOutput(root) {
+async function openCategory(root, key) {
     const tab = root.querySelectorAll("[data-system-category]")
-        .find((button) => button.dataset.systemCategory === "llm");
-    if (!tab) throw new Error("AI Output tab missing");
+        .find((button) => button.dataset.systemCategory === key);
+    if (!tab) throw new Error(`${key} tab missing`);
     await tab.dispatchClick();
     await settle();
+}
+
+async function openAiOutput(root) {
+    await openCategory(root, "llm");
 }
 
 async function dispatchChange(control) {
@@ -168,6 +173,10 @@ async function main() {
         setting("compaction_min_turns_between_runs", "8", "llm"),
         setting("compaction_cooldown_minutes", "10", "llm"),
         setting("max_concurrent_llm_calls", "5", "llm"),
+        setting("context_recent_work_artifacts", "5", "context"),
+        setting("context_recent_completed_tasks", "3", "context"),
+        setting("standing_prefs_line_max_chars", "400", "context"),
+        setting("standing_prefs_section_max_chars", "4000", "context"),
     ];
     const root = new FakeEl("div");
     await SystemSection.render(root);
@@ -192,6 +201,9 @@ async function main() {
     await openAiOutput(root);
     const degraded = snapshot(root);
 
+    await openCategory(root, "context");
+    const context = snapshot(root);
+
     process.stdout.write(JSON.stringify({
         ok: true,
         openedOnSimulation,
@@ -202,6 +214,7 @@ async function main() {
         saves,
         fresh,
         degraded,
+        context,
     }));
 }
 

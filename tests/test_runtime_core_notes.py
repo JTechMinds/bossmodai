@@ -8,7 +8,7 @@ from pathlib import Path
 import db
 from core import config
 from core.agent_loop.runtime_core import NOTES_STORE_RETRIEVE, preview_runtime_core
-from core.agent_loop.standing_prefs import TEXT_MAX_CHARS
+from core.agent_loop.standing_prefs import line_max_chars
 from core.llm import context_preview
 
 
@@ -43,7 +43,7 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     assert "Never invent Board/Done from note text." in block
     assert "Standing prefs (warm):" in block
     assert "record it with `pref set <id> <kind> <source>`" in block
-    assert f"the rule as one line (≤{TEXT_MAX_CHARS} chars) in the body." in block
+    assert "the rule in the body as one shorthand sentence: the essence only, no preamble." in block
     assert "Kinds: preference / constraint / style / tool_bias." in block
     assert "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`." in block
     assert "The engine injects them every work turn" in block
@@ -58,7 +58,12 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     # The store is system-owned: the guidance names the command, never a file.
     assert "sticky" not in NOTES_STORE_RETRIEVE.lower()
     assert "/me/standing_prefs.json" not in block
-    assert "file" not in NOTES_STORE_RETRIEVE.split("Standing prefs (warm):", 1)[1]
+    prefs_guidance = NOTES_STORE_RETRIEVE.split("Standing prefs (warm):", 1)[1]
+    assert "file" not in prefs_guidance
+    # Shorthand guidance states no character limit; only the rejection error does.
+    assert "shorthand sentence" in prefs_guidance
+    for number in ("160", "400", str(line_max_chars())):
+        assert number not in prefs_guidance
     assert "chat fade" not in block.lower()
     lowered = block.lower()
     assert "memory dump" not in lowered

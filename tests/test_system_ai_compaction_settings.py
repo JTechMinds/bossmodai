@@ -215,6 +215,98 @@ def test_settings_put_accepts_a_whole_system_ai_max_tokens() -> None:
     assert config.require_int("system_ai_max_tokens") == 4096
 
 
+def _put_setting(key: str, value: str, category: str):
+    return _settings_client().put(
+        f"/api/settings/{key}",
+        params={"value": value, "category": category},
+        headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()},
+    )
+
+
+# (key, category, label named by the 400, seeded default)
+POSITIVE_INT_KEYS = (
+    ("system_ai_max_tokens", "llm", "System AI max output tokens", "6144"),
+    ("standing_prefs_line_max_chars", "context", "Standing Pref Line Limit", "400"),
+    ("standing_prefs_section_max_chars", "context", "Standing Prefs Section Limit", "4000"),
+)
+
+
+@pytest.mark.parametrize("bad", ["6k", "0", "-5"])
+@pytest.mark.parametrize(("key", "category", "label", "default"), POSITIVE_INT_KEYS)
+def test_settings_put_rejects_a_bad_positive_int_for_every_key(
+    key: str, category: str, label: str, default: str, bad: str
+) -> None:
+    res = _put_setting(key, bad, category)
+    assert res.status_code == 400
+    assert res.json()["detail"] == f"{label} must be a whole number of at least 1."
+    config.reload()
+    assert config.get(key) == default
+
+
+def test_prefs_section_below_line_is_rejected_in_both_directions() -> None:
+    lowered_section = _put_setting("standing_prefs_section_max_chars", "399", "context")
+    assert lowered_section.status_code == 400
+    assert lowered_section.json()["detail"] == (
+        "Standing Prefs Section Limit (399) must be at least the Standing Pref Line Limit (400)."
+    )
+    raised_line = _put_setting("standing_prefs_line_max_chars", "4001", "context")
+    assert raised_line.status_code == 400
+    assert raised_line.json()["detail"] == (
+        "Standing Prefs Section Limit (4000) must be at least the Standing Pref Line Limit (4001)."
+    )
+    config.reload()
+    assert config.require_int("standing_prefs_line_max_chars") == 400
+    assert config.require_int("standing_prefs_section_max_chars") == 4000
+
+
+def test_prefs_limits_accept_section_equal_to_line() -> None:
+    res = _put_setting("standing_prefs_line_max_chars", "4000", "context")
+    assert res.status_code == 200, res.text
+    res = _put_setting("standing_prefs_section_max_chars", "4000", "context")
+    assert res.status_code == 200, res.text
+    assert config.require_int("standing_prefs_line_max_chars") == 4000
+    assert config.require_int("standing_prefs_section_max_chars") == 4000
+
+
+def test_fresh_db_seeds_the_standing_prefs_limits() -> None:
+    settings = {row.key: row for row in db.get_settings()}
+    for key, default in (
+        ("standing_prefs_line_max_chars", "400"),
+        ("standing_prefs_section_max_chars", "4000"),
+    ):
+        assert get_seed_setting_default(key) == (default, "context")
+        assert settings[key].value == default
+        assert settings[key].category == "context"
+
+
+def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
+    payload = _render_system_settings()
+    order = [row["key"] for row in payload["context"]]
+    assert order == [
+        "context_recent_work_artifacts",
+        "context_recent_completed_tasks",
+        "standing_prefs_line_max_chars",
+        "standing_prefs_section_max_chars",
+    ]
+    rows = _by_key(payload["context"])
+    line = rows["standing_prefs_line_max_chars"]
+    assert line["label"] == "Standing Pref Line Limit (chars)"
+    assert line["value"] == "400"
+    assert line["category"] == "context"
+    assert line["paragraphs"][0].startswith(
+        "Longest standing pref text an agent can save; that text is always shown whole in the prompt."
+    )
+    assert "Default 400." in line["paragraphs"][0]
+    section = rows["standing_prefs_section_max_chars"]
+    assert section["label"] == "Standing Prefs Section Limit (chars)"
+    assert section["value"] == "4000"
+    assert section["category"] == "context"
+    assert "Must be at least the line limit." in section["paragraphs"][0]
+    assert "Default 4000." in section["paragraphs"][0]
+    for row in (line, section):
+        assert "restart" not in row["paragraphs"][0].lower()
+
+
 def _stored_system_ai() -> str:
     return next(row.value for row in db.get_settings() if row.key == "system_ai_connection")
 

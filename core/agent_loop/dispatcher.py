@@ -507,6 +507,8 @@ class TurnDispatcher:
     async def _loop(self) -> None:
         while self._running:
             try:
+                # Pick up settings another process wrote (one integer read per wake).
+                config.refresh_if_changed()
                 await self._drain_queue()
                 self._wake_event.clear()
                 await asyncio.wait_for(self._wake_event.wait(), timeout=30)
@@ -819,6 +821,9 @@ class TurnDispatcher:
             ):
                 db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
                 return
+            # Every turn starts from the current settings, including ones the
+            # app wrote while this turn waited for a lane.
+            config.refresh_if_changed()
             outcome = await run_turn(agent, state, trigger)
             result = outcome.result
 

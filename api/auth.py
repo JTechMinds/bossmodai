@@ -3,6 +3,10 @@
 A settings-backed token is generated on first run and required on /api
 REST routes (header) and the WebSocket (query or header). The desktop UI
 receives the token via the index page and attaches it automatically.
+
+Also holds the app's other request middleware, ``SettingsRefreshMiddleware``,
+which keeps this process's settings cache current with the runtime worker's
+writes.
 """
 
 from __future__ import annotations
@@ -116,6 +120,34 @@ class LocalApiTokenMiddleware:
                     await response(scope, receive, send)
                     return
         await self.app(scope, receive, send)
+
+
+class SettingsRefreshMiddleware:
+    """Refresh the settings cache at the start of each HTTP request.
+
+    The runtime worker is a separate process that can write settings too.
+    This process reloads after its own writes; ``config.refresh_if_changed``
+    catches the other process's writes with one integer read per request.
+    WebSocket and lifespan scopes pass through untouched.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            config.refresh_if_changed()
+        await self.app(scope, receive, send)
+
+
+def install_settings_refresh(app: Any) -> None:
+    """Attach ``SettingsRefreshMiddleware`` to a FastAPI/Starlette app.
+
+    Install it after ``install_local_api_auth`` so it wraps the token gate:
+    Starlette runs the last-added middleware first, and the gate then reads
+    the refreshed token setting.
+    """
+    app.add_middleware(SettingsRefreshMiddleware)
 
 
 def install_local_api_auth(app: Any) -> None:

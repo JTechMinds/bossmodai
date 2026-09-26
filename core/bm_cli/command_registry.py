@@ -14,8 +14,6 @@ from core.agent_loop.standing_prefs import (
     PREF_KINDS,
     SOURCE_MAX_CHARS,
     SOURCES_MAX,
-    STORE_TEXT_BYTE_CAP,
-    TEXT_MAX_CHARS,
 )
 
 
@@ -469,9 +467,11 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             f"Kinds: {', '.join(PREF_KINDS)}\n"
             "Limits:\n"
             f"  id       1 to {ID_MAX_CHARS} letters, digits, \".\", \"_\" or \"-\"\n"
-            f"  text     one line, up to {TEXT_MAX_CHARS} characters (the body)\n"
+            "  text     one shorthand sentence (the body)\n"
             f"  sources  1 to {SOURCES_MAX}, each up to {SOURCE_MAX_CHARS} characters\n"
-            f"  store    up to {STORE_TEXT_BYTE_CAP} bytes of text across all prefs\n"
+            # No number: the store cap is an operator setting and this help
+            # is a module-level constant, so a live value can't be put in it.
+            "  store    total text across all prefs is capped (Settings → System → Context Window)\n"
             "\n"
             "Examples:\n"
             '  pref set uv-envs tool_bias operator-2026-09-22   — with body: "Use uv for Python envs and installs, not pip."\n'

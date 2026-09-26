@@ -133,12 +133,30 @@ def _validate_telegram_settings(key: str, value: str) -> None:
             )
 
 
-def _validate_system_ai_max_tokens(key: str, value: str) -> None:
-    """Reject a ``system_ai_max_tokens`` value that is not a whole number ≥ 1.
+# Settings read with ``config.require_int`` where 0 or a non-number would break
+# every reader. Key → the label the 400 names, matching the Settings UI.
+POSITIVE_INT_SETTINGS = frozenset({
+    "system_ai_max_tokens",
+    "standing_prefs_line_max_chars",
+    "standing_prefs_section_max_chars",
+})
+_POSITIVE_INT_SETTING_LABELS = {
+    "system_ai_max_tokens": "System AI max output tokens",
+    "standing_prefs_line_max_chars": "Standing Pref Line Limit",
+    "standing_prefs_section_max_chars": "Standing Prefs Section Limit",
+}
 
-    Every System AI completion reads this setting with ``config.require_int``,
-    so a bad value (``6k``, ``0``) would fail every route, fade and sticky
-    fill. It is rejected here, at the write boundary, instead.
+
+def _validate_positive_int_setting(key: str, value: str) -> None:
+    """Reject a value for a ``POSITIVE_INT_SETTINGS`` key that is not a whole number ≥ 1.
+
+    Each of these keys is read with ``config.require_int``: System AI
+    completions (``system_ai_max_tokens``), and every standing-prefs save and
+    warm render (the two prefs limits). A bad value (``6k``, ``0``) would fail
+    all of them, so it is rejected here, at the write boundary, instead.
+
+    For the prefs limits it also requires section ≥ line, reading the other
+    limit from ``config``, so a section can always hold one full pref text.
 
     Args:
         key: Setting key being written. Other keys are not checked.
@@ -146,14 +164,28 @@ def _validate_system_ai_max_tokens(key: str, value: str) -> None:
 
     Raises:
         HTTPException: 400 when the stripped value is not a base-10 integer
-            of at least 1.
+            of at least 1, naming the setting's label; or 400 naming both
+            prefs limits when the section limit would be below the line limit.
     """
-    if key != "system_ai_max_tokens":
+    if key not in POSITIVE_INT_SETTINGS:
         return
     stripped = value.strip()
     # isascii + isdigit: base-10 digits only; int() alone would take "+5" or "1_000".
     if not (stripped.isascii() and stripped.isdigit()) or int(stripped, 10) < 1:
-        raise HTTPException(400, "System AI max output tokens must be a whole number of at least 1.")
+        raise HTTPException(400, f"{_POSITIVE_INT_SETTING_LABELS[key]} must be a whole number of at least 1.")
+    written = int(stripped, 10)
+    if key == "standing_prefs_line_max_chars":
+        line, section = written, config.require_int("standing_prefs_section_max_chars")
+    elif key == "standing_prefs_section_max_chars":
+        line, section = config.require_int("standing_prefs_line_max_chars"), written
+    else:
+        return
+    if section < line:
+        raise HTTPException(
+            400,
+            f"Standing Prefs Section Limit ({section}) must be at least the "
+            f"Standing Pref Line Limit ({line}).",
+        )
 
 
 @router.put("/settings/{key}")
@@ -165,7 +197,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
             raise HTTPException(400, str(exc)) from exc
     _validate_telegram_settings(key, value)
     _validate_nest_git_settings(key, value)
-    _validate_system_ai_max_tokens(key, value)
+    _validate_positive_int_setting(key, value)
     if key == "workspace_host_roots":
         from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
 

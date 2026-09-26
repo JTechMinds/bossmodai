@@ -90,6 +90,8 @@ class WorldSimulation:
             elapsed = max(tick_started_at - last_tick_at, 0.0)
             last_tick_at = tick_started_at
             try:
+                # Pick up settings another process wrote (one integer read per tick).
+                config.refresh_if_changed()
                 await self._tick(elapsed)
                 consecutive_errors = 0
             except asyncio.CancelledError:

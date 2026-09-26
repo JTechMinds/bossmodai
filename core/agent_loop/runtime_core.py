@@ -12,7 +12,7 @@ not require @.
 
 from __future__ import annotations
 
-from core.agent_loop.standing_prefs import PREF_KINDS, TEXT_MAX_CHARS
+from core.agent_loop.standing_prefs import PREF_KINDS
 from core.bm_cli.host_roots import configured_host_roots
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
@@ -60,7 +60,7 @@ NOTES_STORE_RETRIEVE = (
     "Never invent Board/Done from note text.\n"
     "Standing prefs (warm): "
     "on a clear operator statement, record it with `pref set <id> <kind> <source>` "
-    f"and the rule as one line (≤{TEXT_MAX_CHARS} chars) in the body. "
+    "and the rule in the body as one shorthand sentence: the essence only, no preamble. "
     f"Kinds: {' / '.join(PREF_KINDS)}. "
     "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`. "
     "The engine injects them every work turn — "

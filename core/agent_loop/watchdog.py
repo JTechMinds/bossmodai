@@ -50,6 +50,8 @@ class TaskWatchdog:
     async def _loop(self) -> None:
         while self._running:
             try:
+                # Pick up settings another process wrote (one integer read per tick).
+                config.refresh_if_changed()
                 await self._check_tasks()
             except asyncio.CancelledError:
                 break

@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from api.auth import ensure_local_api_token, install_local_api_auth
+from api.auth import ensure_local_api_token, install_local_api_auth, install_settings_refresh
 from api.routes import router as api_router
 from core.agent_repository import agent_repository
 from core.runtime import runtime_services
@@ -75,6 +75,7 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(api_router)
 install_local_api_auth(app)
+install_settings_refresh(app)
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
