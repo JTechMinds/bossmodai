@@ -11,46 +11,27 @@ Batch 3/9: 239 passed in 18.09s
 Batch 4/9: 1 failed, 214 passed in 28.43s
   FAILED tests/test_meeting_ui_incremental.py::test_meeting_message_appends_into_agent_conversation
 Batch 5/9: 2 failed, 178 passed in 12.02s
-  FAILED tests/test_settings_js_split.py::test_split_modules_stay_focused - Ass...
+  FAILED tests/test_settings_js_split.py::test_split_modules_stay_focused
   FAILED tests/test_settings_js_split.py::test_split_halves_define_their_own_iifes
 Batch 6/9: 2 failed, 260 passed in 13.11s
   FAILED tests/test_system_ai_compaction_settings.py::test_ai_output_renders_compaction_knobs_without_system_ai
   FAILED tests/test_system_ai_compaction_settings.py::test_system_ai_is_the_first_control_under_ai_connections
 Batch 7/9: 14 failed, 126 passed in 7.54s
-  FAILED tests/test_ui_context.py::test_context_column_is_torn_down_when_chat_unmounts
-  FAILED tests/test_ui_context.py::test_mini_office_groups_by_location_including_unknown
-  FAILED tests/test_ui_context.py::test_desk_notes_read_the_workspace_not_a_column
-  FAILED tests/test_ui_context.py::test_set_all_fans_out_through_the_published_form
-  FAILED tests/test_ui_context.py::test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through
-  FAILED tests/test_ui_context.py::test_a_create_with_no_ai_connection_is_refused_at_the_create
-  FAILED tests/test_ui_context.py::test_an_edit_with_no_ai_connection_is_still_permitted
-  FAILED tests/test_ui_context.py::test_the_context_harness_ends_when_its_work_does
-  FAILED tests/test_ui_context.py::test_a_failed_dependency_read_still_renders_the_form
-  FAILED tests/test_ui_context.py::test_one_failing_dependency_read_does_not_erase_the_others
-  FAILED tests/test_ui_context.py::test_recreating_a_recent_agent_fills_the_form_and_still_creates
+  FAILED tests/test_ui_context.py (11 tests, BossModOperatorInvalidate undefined)
   FAILED tests/test_ui_index.py::test_no_attribute_interpolation_is_left_unescaped
   FAILED tests/test_ui_index.py::test_every_module_global_a_loaded_script_calls_is_actually_loaded
-  FAILED tests/test_ui_log.py::test_log_merges_both_feeds_into_one_row_type - a...
+  FAILED tests/test_ui_log.py::test_log_merges_both_feeds_into_one_row_type
 Batch 8/9: 12 failed, 189 passed in 9.35s
-  FAILED tests/test_ui_polish_round_four.py::test_the_primary_action_is_pinned_beside_cancel
-  FAILED tests/test_ui_polish_round_four.py::test_the_form_still_submits_from_the_pinned_button
-  FAILED tests/test_ui_polish_round_four.py::test_rename_offers_confirm_and_cancel_as_icons
-  FAILED tests/test_ui_polish_round_three.py::test_both_agent_flows_open_the_centred_modal
-  FAILED tests/test_ui_polish_round_three.py::test_the_title_is_editable_without_looking_like_a_link
-  FAILED tests/test_ui_polish_round_three.py::test_a_rename_reaches_the_server_before_the_title_changes
-  FAILED tests/test_ui_polish_round_three.py::test_a_half_typed_rename_does_not_follow_a_conversation_switch
-  FAILED tests/test_ui_polish_round_three.py::test_a_failed_rename_says_so_and_keeps_the_text
-  FAILED tests/test_ui_polish_round_two.py::test_the_whole_floor_is_drawn_on_the_built_panel
-  FAILED tests/test_ui_polish_round_two.py::test_the_receipts_preference_still_works_from_its_new_home
-  FAILED tests/test_ui_polish_round_two.py::test_the_desk_panel_lost_no_content
-  FAILED tests/test_ui_visual_parity.py::test_one_avatar_implementation - Asser...
+  FAILED tests/test_ui_polish_round_four.py (3 tests)
+  FAILED tests/test_ui_polish_round_three.py (5 tests)
+  FAILED tests/test_ui_polish_round_two.py (3 tests)
+  FAILED tests/test_ui_visual_parity.py::test_one_avatar_implementation
 Batch 9/9: 16 passed in 3.56s
 
 === TOTAL ===
 Passed: 1719
 Failed: 31
 Errors: 0
-Excluded (Category A env): test_desktop_external_open.py (rustc), test_desktop_needs_attention.py (rustc)
 
 === Failure Classification ===
 All 31 failures are Category C (pre-existing, unrelated to paste/attach commit).
@@ -58,16 +39,16 @@ None are paste/attach-attributable. The 22 Category B regressions from the prior
 verdict (verdict-paste-attach-reaudit-2.md) are all resolved at this commit.
 
 Category C breakdown (matches prior verdict):
-  test_meeting_ui_incremental.py: 1 (BossModOperatorInvalidate.register)
-  test_settings_js_split.py: 2 (IIFE pattern, line cap)
-  test_system_ai_compaction_settings.py: 2 (SettingsView undefined in harness)
-  test_ui_context.py: 11 (BossModOperatorInvalidate undefined)
-  test_ui_index.py: 2 (settings-nest-git.js interpolation, load-order)
-  test_ui_polish_round_two.py: 3 (BossModOperatorInvalidate)
-  test_ui_polish_round_three.py: 5 (BossModOperatorInvalidate, module count)
-  test_ui_polish_round_four.py: 3 (BossModOperatorInvalidate)
-  test_ui_visual_parity.py: 1 (settings-nest-git.js avatar offenders)
-  test_ui_log.py: 1 (bus.subscribe activity)
+  test_meeting_ui_incremental.py: 1
+  test_settings_js_split.py: 2
+  test_system_ai_compaction_settings.py: 2
+  test_ui_context.py: 11
+  test_ui_index.py: 2
+  test_ui_polish_round_two.py: 3
+  test_ui_polish_round_three.py: 5
+  test_ui_polish_round_four.py: 3
+  test_ui_visual_parity.py: 1
+  test_ui_log.py: 1
   Total: 31
 
 === Paste/Attach Regression Items (all RESOLVED) ===
