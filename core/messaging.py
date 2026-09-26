@@ -27,6 +27,7 @@ async def route_human_dm(
     trigger_from_name: str = "Human Operator",
     broadcast_manager: Any,
     services: Any,
+    attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a human DM, broadcast to WebSocket clients, enqueue an agent trigger.
 
@@ -46,6 +47,16 @@ async def route_human_dm(
         content=content,
         message_type="human",
     )
+    attachments: list[dict[str, Any]] | None = None
+    if attachment_ids:
+        from db import attachments as db_att
+        db_att.link_attachments_to_message(attachment_ids, human_msg.id)
+        atts = db_att.get_attachments_for_message(human_msg.id)
+        attachments = [
+            {"id": a.id, "file_name": a.file_name, "file_size": a.file_size,
+             "mime_type": a.mime_type, "preview_tier": a.preview_tier}
+            for a in atts
+        ]
     await broadcast_manager.broadcast_chat_message(
         agent_id=agent_id,
         content=content,
@@ -54,6 +65,7 @@ async def route_human_dm(
         message_type="human",
         message_id=human_msg.id,
         created_at=human_msg.created_at,
+        attachments=attachments,
     )
     await services.enqueue_trigger(
         agent_id=agent_id,
@@ -79,6 +91,7 @@ async def route_human_channel_message(
     from_name: str,
     broadcast_manager: Any,
     services: Any,
+    attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a human channel message, broadcast, enqueue triggers for all members.
 
@@ -91,6 +104,16 @@ async def route_human_channel_message(
         content=content,
         source_channel="channel",
     )
+    attachments: list[dict[str, Any]] | None = None
+    if attachment_ids:
+        from db import attachments as db_att
+        db_att.link_attachments_to_message(attachment_ids, message.id)
+        atts = db_att.get_attachments_for_message(message.id)
+        attachments = [
+            {"id": a.id, "file_name": a.file_name, "file_size": a.file_size,
+             "mime_type": a.mime_type, "preview_tier": a.preview_tier}
+            for a in atts
+        ]
     await broadcast_manager.broadcast_channel_message(
         channel_id=channel_id,
         content=message.content,
@@ -98,6 +121,7 @@ async def route_human_channel_message(
         author_name=message.author_name,
         message_id=message.id,
         created_at=message.created_at,
+        attachments=attachments,
     )
 
     members = db.list_channel_member_details(channel_id)

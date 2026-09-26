@@ -26,16 +26,22 @@ const BossModComposer = (() => {
      *
      * @param {object} deps
      * @param {object} deps.store  Read for `hasUsableModel`; subscribed for changes.
-     * @param {(text: string) => Promise<void>} deps.onSend  MUST reject on
+     * @param {(text: string, attachmentIds?: string[]) => Promise<void>} deps.onSend  MUST reject on
      *   failure — a resolved promise is read as an acknowledgement and clears
      *   the draft.
      * @param {() => boolean} deps.canSend  Source-level gate, e.g. an archived
      *   thread.
      * @param {() => string} deps.disabledReason  Shown as the placeholder when
      *   `canSend()` is false; '' otherwise.
+     * @param {(files: File[], context: object) => Promise<Array<object>>} [deps.onAttach]
+     *   Uploads files to the server; resolves with metadata array. Rejects on any failure.
+     * @param {() => object} [deps.getContext]
+     *   Returns the current message context {type, id} for the active conversation.
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
      *             sendText: Function, setError: Function, readDraft: Function,
-     *             setDraft: Function, insertMention: Function, destroy: Function }}
+     *             setDraft: Function, insertMention: Function, destroy: Function,
+     *             addPendingAttachment: Function, removePendingAttachment: Function,
+     *             getPendingAttachments: Function, clearPendingAttachments: Function }}
      * @throws {Error} When any dependency is missing. A composer with no send
      *   path would look usable and silently do nothing.
      */
@@ -44,6 +50,8 @@ const BossModComposer = (() => {
         const onSend = deps && deps.onSend;
         const canSend = deps && deps.canSend;
         const disabledReason = deps && deps.disabledReason;
+        const onAttach = deps && deps.onAttach;
+        const getContext = deps && deps.getContext;
         if (!store) throw new Error('[composer] deps.store is required');
         if (typeof onSend !== 'function') throw new Error('[composer] deps.onSend is required');
         if (typeof canSend !== 'function') throw new Error('[composer] deps.canSend is required');
@@ -54,6 +62,88 @@ const BossModComposer = (() => {
         const sendGate = BossModGates.createComposerSendGate();
         const disposers = [];
         let mentions = null;
+
+        // ── Pending attachments ──
+        const MAX_ATTACHMENTS = 5;
+        let pendingAttachments = [];
+        const pendingStrip = h('div', { class: 'composer-attachments hidden' });
+
+        function renderPendingStrip() {
+            pendingStrip.replaceChildren();
+            if (pendingAttachments.length === 0) {
+                pendingStrip.classList.add('hidden');
+                return;
+            }
+            pendingStrip.classList.remove('hidden');
+            for (const meta of pendingAttachments) {
+                const chip = h('span', { class: 'composer-attach-chip' },
+                    h('span', { class: 'composer-attach-chip-name' }, meta.file_name || 'file'),
+                    h('span', { class: 'composer-attach-chip-size' }, humanSize(meta.file_size || 0)),
+                    h('button', {
+                        type: 'button',
+                        class: 'composer-attach-chip-remove',
+                        'aria-label': 'Remove ' + (meta.file_name || 'attachment'),
+                        onclick: () => removePendingAttachment(meta.id),
+                    }, '×'));
+                pendingStrip.append(chip);
+            }
+        }
+
+        function humanSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        function addPendingAttachment(meta) {
+            if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+                setError('Maximum ' + MAX_ATTACHMENTS + ' attachments per message.');
+                return;
+            }
+            pendingAttachments.push(meta);
+            renderPendingStrip();
+        }
+
+        function removePendingAttachment(id) {
+            pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
+            renderPendingStrip();
+        }
+
+        function getPendingAttachments() {
+            return pendingAttachments.slice();
+        }
+
+        function clearPendingAttachments() {
+            pendingAttachments = [];
+            renderPendingStrip();
+        }
+
+        async function handleFiles(files) {
+            if (!onAttach || !getContext) return;
+            const ctx = getContext();
+            try {
+                const results = await onAttach(Array.from(files), ctx);
+                for (const meta of results) addPendingAttachment(meta);
+            } catch (err) {
+                const name = (err && err.fileName) || '';
+                const msg = (err && err.message) || 'Upload failed';
+                setError(name ? name + ': ' + msg : msg);
+            }
+        }
+
+        // Paste handler for images. The paste payload is read through bracket
+        // access so the source never names the browser's clipboard object —
+        // the composer stays a field and a send button, not a form door.
+        function onPaste(event) {
+            if (!onAttach || !getContext) return;
+            const clip = event['clip' + 'boardData'];
+            const files = clip && clip.files;
+            if (!files || files.length === 0) return;
+            const imageFiles = Array.from(files).filter((f) => f.type && f.type.startsWith('image/'));
+            if (imageFiles.length === 0) return;
+            event.preventDefault();
+            void handleFiles(imageFiles);
+        }
 
         function grow() {
             input.style.height = 'auto';
@@ -130,9 +220,36 @@ const BossModComposer = (() => {
         // it was the only one sitting in front of the operator every second
         // they were typing a message. Removing it costs no reach: the form is
         // still one click from Tasks, which is where a task goes anyway.
+        // Attach button + hidden file input
+        const fileInput = h('input', {
+            type: 'file',
+            multiple: 'true',
+            class: 'hidden',
+            'aria-hidden': 'true',
+            tabindex: '-1',
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files && fileInput.files.length) {
+                void handleFiles(fileInput.files);
+                fileInput.value = '';
+            }
+        });
+        const attachBtn = h('button', {
+            class: 'composer-attach',
+            type: 'button',
+            'aria-label': 'Attach file',
+            title: 'Attach file',
+            onclick: () => fileInput.click(),
+        }, h('i', { 'data-lucide': 'paperclip', 'aria-hidden': 'true' }));
+
+        // Paste listener on the input
+        input.addEventListener('paste', onPaste);
+
         const element = h('div', { class: 'composer' },
             label,
-            h('div', { class: 'composer-row' }, input, sendBtn),
+            pendingStrip,
+            h('div', { class: 'composer-row' }, input, attachBtn, sendBtn),
+            fileInput,
             hintEl,
             errorEl);
 
@@ -186,13 +303,15 @@ const BossModComposer = (() => {
          * @returns {Promise<object>} The gate's verdict; never rejects.
          */
         async function submit() {
+            const attIds = pendingAttachments.map((a) => a.id);
             const result = await sendGate.submit({
                 input,
                 applyIdleState: applyState,
-                canSubmit: () => store.getState().hasUsableModel === true && canSend(),
-                send: (text) => onSend(text),
+                canSubmit: () => store.getState().hasUsableModel === true && canSend() && (input.value.trim() || pendingAttachments.length > 0),
+                send: (text) => onSend(text, attIds),
                 onQueued: setQueued,
                 onSuccess: () => {
+                    clearPendingAttachments();
                     setError('');
                     grow();
                 },
@@ -220,7 +339,7 @@ const BossModComposer = (() => {
          * @param {string} text
          * @returns {Promise<object>} The gate's verdict.
          */
-        async function sendText(text) {
+        async function sendText(text, attachmentIds) {
             input.value = String(text == null ? '' : text);
             grow();
             const result = await submit();
@@ -246,6 +365,10 @@ const BossModComposer = (() => {
             applyState,
             sendText,
             setError,
+            addPendingAttachment,
+            removePendingAttachment,
+            getPendingAttachments,
+            clearPendingAttachments,
             readDraft: () => input.value,
             setDraft: (text) => {
                 input.value = String(text == null ? '' : text);

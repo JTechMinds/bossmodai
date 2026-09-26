@@ -91,6 +91,7 @@ API_BY_INJECTION = {
     "context/desk-tasks.js",
     "context/desk-actions.js",
     "conversation/conversation.js",
+    "conversation/message.js",
     "conversation/sources/agent-source.js",
     "conversation/sources/thread-source.js",
     "conversation/sources/thread-requests.js",

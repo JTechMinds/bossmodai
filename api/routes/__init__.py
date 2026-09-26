@@ -11,6 +11,7 @@ from api.routes import (
     agent_snapshots,
     agent_templates,
     agents,
+    attachments,
     cli_policy,
     company_files,
     floors,
@@ -38,3 +39,4 @@ router.include_router(host_path_consent.router)
 router.include_router(nest_git.router)
 router.include_router(needs.router)
 router.include_router(settings.router)
+router.include_router(attachments.router)

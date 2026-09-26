@@ -931,3 +931,80 @@ span.mention-pill { cursor: default; }
 }
 
 .needs-bar-dismiss:hover { border-color: var(--line-strong); color: var(--ink); }
+
+/* ─── Attachments (paste/attach Phase-1) ─── */
+
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.msg-attachments img {
+  max-height: 120px;
+  max-width: 220px;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--line);
+  text-decoration: none;
+  color: var(--ink);
+  font-size: 0.85em;
+}
+
+.file-chip:hover {
+  background: var(--bg);
+}
+
+.file-chip-icon { font-size: 0.9em; }
+.file-chip-name { font-weight: 500; }
+.file-chip-size { color: var(--muted); font-size: 0.85em; }
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.composer-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--line);
+  font-size: 0.8em;
+}
+
+.composer-attach-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 1em;
+  padding: 0 2px;
+}
+
+.composer-attach {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-attach:hover { color: var(--ink); }

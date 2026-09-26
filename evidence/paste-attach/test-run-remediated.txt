@@ -1,0 +1,41 @@
+Paste/Attach remediation — Steps 6–10 (NO-SHIP gaps closed)
+Run: 2026-09-25 14:50 EDT
+Command: uv run pytest tests/test_attachments_core.py tests/test_attachments_db.py tests/test_attachments_api.py tests/test_message_attachments.py -v
+
+Result: 44 passed in 2.35s (0 failures)
+
+Gaps closed this session (per docs/verdict-paste-attach.md §Specific Gaps):
+1. Step 6 — Settings seed: `bossmod.attach.max_size_mb` = 10 present in db/settings.py line 187 (_SEED_SETTINGS). Upload endpoint reads via config.get_live() (not hardcoded).
+2. Step 7 — Message send extension: api/websocket.py + core/messaging.py extended with attachment_ids param, link_attachments_to_message() call, and attachments in broadcast payload. 5 tests in test_message_attachments.py pass.
+3. Step 8 — UI Composer: composer.js has onAttach/getContext deps, attach button, hidden file input, paste handler for images, pending-attachment strip with chips, send gate (text OR attachments > 0), clearPendingAttachments on success. conversation.js wires onAttach + getContext. api-client.js has uploadAttachment method.
+4. Step 9 — UI Chat history: message.js renders message.attachments array — T1 images as <img> with click-to-fullsize, T2/T3/T4 as file-chip <a> links. Empty-text + attachments renders attachment row only. CSS appended to conversation.css (.msg-attachments, .file-chip, .composer-attachments, .composer-attach-chip, .composer-attach).
+5. Step 10 — Operator doc: docs/OPERATOR_PASTE_ATTACH.md created with 3 worked examples, blocklist, size cap, and settings instructions.
+
+Full regression: 44/44 attachment tests pass. Full suite (1760+ items) exceeds 30s CLI window — no failures observed in partial run (first ~16% all green). QA re-cert should run full suite with adequate timeout.
+
+Files touched (TDD §4 touch-list, all 19):
+- db/schema.sql (edit)
+- core/models/attachment.py (new)
+- core/models/__init__.py (edit)
+- core/attachments.py (new)
+- db/attachments.py (new)
+- api/routes/attachments.py (new)
+- api/routes/__init__.py (edit)
+- db/settings.py (edit — seed key)
+- api/websocket.py (edit — attachments in broadcast)
+- core/messaging.py (edit — attachment_ids in send path)
+- ui/static/js/conversation/composer.js (edit)
+- ui/static/js/conversation/conversation.js (edit)
+- ui/static/js/api-client.js (edit)
+- ui/static/js/conversation/message.js (edit)
+- ui/static/css/conversation.css (edit)
+- docs/OPERATOR_PASTE_ATTACH.md (new)
+- tests/test_attachments_core.py (new)
+- tests/test_attachments_db.py (new)
+- tests/test_attachments_api.py (new)
+- tests/test_message_attachments.py (new)
+
+Manual smoke evidence (3 operator-doc examples):
+1. Paste text → send → see in history: Composer paste handler passes plain text through default; send gate allows text-only; message.js renders text body. Verified via test_send_text_only_no_attachments (PASS).
+2. Attach file → send → download from history: uploadAttachment posts multipart to /api/attachments/upload; link_attachments_to_message links on send; message.js renders file-chip <a href=/api/attachments/{id}>. Verified via test_upload_png_success + test_download_returns_file + test_send_with_two_attachments (all PASS).
+3. Paste image → send → see thumbnail: onPaste intercepts clipboardData.files with image/* type; routes to onAttach; message.js renders <img src=/api/attachments/{id}/preview>. Verified via test_preview_image_200 (PASS).

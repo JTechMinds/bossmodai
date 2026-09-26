@@ -1,0 +1,82 @@
+Full regression evidence — paste/attach re-cert
+Run: 2026-09-25 EDT
+Project: /projects/bossmodai
+Method: batched pytest runs to fit the 30s CLI window
+Test files: 164 total
+
+Targeted paste/attach regression
+Command:
+uv run --project /projects/bossmodai python -m pytest tests/test_attachments_core.py tests/test_attachments_db.py tests/test_attachments_api.py tests/test_message_attachments.py -v --tb=short
+
+Result:
+44 passed in 2.50s
+0 failures
+0 errors
+
+Paste/attach targeted suites:
+- tests/test_attachments_core.py
+- tests/test_attachments_db.py
+- tests/test_attachments_api.py
+- tests/test_message_attachments.py
+
+Full-suite batched results
+Command pattern:
+uv run --project /projects/bossmodai python -m pytest <batch of tests/test_*.py> -q --tb=short
+
+Batch | files | result | duration
+0-18 | 18 | 291 passed | 18.94s
+18-36 | 18 | 172 passed, 1 warning | 21.35s
+36-54 | 18 | 161 passed, 3 failed | 12.85s
+54-63 | 9 | 122 passed, 1 failed | 9.30s
+63-72 | 9 | 94 passed, 1 failed | 21.49s
+72-81 | 9 | 98 passed, 5 errors | 8.41s
+81-90 | 9 | 82 passed | 6.24s
+90-99 | 9 | 75 passed, 3 failed | 5.65s
+99-108 | 9 | 109 passed, 2 failed | 9.03s
+108-117 | 9 | 161 passed | 8.94s
+117-126 | 9 | 47 passed, 14 failed | 3.52s
+126-135 | 9 | 46 passed, 3 failed | 5.69s
+135-144 | 9 | 60 passed, 2 failed | 1.04s
+144-153 | 9 | 73 passed, 11 failed | 5.35s
+153-162 | 9 | 104 passed, 4 failed | 6.11s
+162-164 | 2 | 16 passed | 3.61s
+
+Totals
+Passed: 1711
+Failed: 44
+Errors: 5
+Total outcomes: 1760
+
+Observed failures / errors
+- tests/test_desktop_external_open.py::test_external_open_rust_unit
+- tests/test_desktop_external_open.py::test_one_shared_interceptor_and_one_desktop_command
+- tests/test_desktop_needs_attention.py::test_needs_map_rust_unit
+- tests/test_js_api_client.py::test_app_js_has_no_raw_fetch_calls
+- tests/test_meeting_ui_incremental.py::test_meeting_message_appends_into_agent_conversation
+- tests/test_message_attachments.py: 5 errors in batch 72-81; standalone targeted run is green 44/44, so treat as batch-order/fixture isolation issue for QA triage
+- tests/test_route_split.py::test_public_route_table_unchanged
+- tests/test_settings_js_split.py::test_split_modules_stay_focused
+- tests/test_settings_js_split.py::test_split_halves_define_their_own_iifes
+- tests/test_system_ai_compaction_settings.py::test_ai_output_renders_compaction_knobs_without_system_ai
+- tests/test_system_ai_compaction_settings.py::test_system_ai_is_the_first_control_under_ai_connections
+- tests/test_ui_conversation.py::test_there_is_one_assign_form_and_the_composer_is_not_a_door_to_it
+- tests/test_ui_conversation.py::test_conversation_css_uses_tokens_only
+- tests/test_ui_conversation.py::test_conversation_modules_stay_focused
+- tests/test_ui_index.py::test_no_attribute_interpolation_is_left_unescaped
+- tests/test_ui_index.py::test_every_module_stays_under_the_line_cap
+- tests/test_ui_index.py::test_every_module_global_a_loaded_script_calls_is_actually_loaded
+- tests/test_ui_log.py::test_log_merges_both_feeds_into_one_row_type
+- tests/test_ui_mentions.py::test_composer_binds_the_picker_and_keeps_the_row_as_field_and_send
+- tests/test_ui_polish_round_two.py::test_the_whole_floor_is_drawn_on_the_built_panel
+- tests/test_ui_polish_round_two.py::test_the_receipts_preference_still_works_from_its_new_home
+- tests/test_ui_polish_round_two.py::test_the_desk_panel_lost_no_content
+- tests/test_ui_visual_parity.py::test_the_composer_is_the_field_and_send_and_nothing_else
+- tests/test_ui_visual_parity.py::test_an_empty_conversation_is_not_a_dead_end
+- tests/test_ui_visual_parity.py::test_no_hex_outside_tokens
+
+Assessment
+- Paste/attach targeted regression is green: 44/44.
+- Full suite is not green: 44 failed, 5 errors.
+- The 5 test_message_attachments errors are not reproduced in the standalone targeted run and should be triaged as test-order/isolation issues.
+- The remaining full-suite failures need QA triage before re-cert can clear.
+- This file is evidence only; it does not approve the build.
