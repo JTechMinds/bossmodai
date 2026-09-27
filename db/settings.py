@@ -71,6 +71,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # including round 1. Empty speak, Pause, demotion, and narrow dup-ack
     # stop a live thread. This number must not be that brake.
     ("channel_response_round_cap", "64", "llm"),
+    # Number of prior thread lines the System AI router reads before the
+    # latest message. 0 means the router sees no transcript.
+    ("channel_router_transcript_messages", "10", "llm"),
     # System AI + compaction pressure knobs. The System AI picker is the
     # first control under Settings → AI Connections. Compaction knobs stay
     # on Settings → System → AI Output.

@@ -297,11 +297,11 @@ def persist_origin_status_line(
             return {}
         from core.agent_loop.channel_host import (
             SPEAK_WORTHY_ORIGIN_KINDS,
-            note_speak_worthy_outcome,
+            release_work_hold,
         )
 
         if kind in SPEAK_WORTHY_ORIGIN_KINDS:
-            note_speak_worthy_outcome(
+            release_work_hold(
                 channel_id,
                 agent_id=agent.id,
                 task_id=str(getattr(task, "id", "") or ""),

@@ -20,6 +20,8 @@ DISPATCH_FANOUT = "fanout"
 
 DEFAULT_ROUND_CAP = 64
 ROUND_CAP_SETTING = "channel_response_round_cap"
+ROUTER_TRANSCRIPT_SETTING = "channel_router_transcript_messages"
+DEFAULT_ROUTER_TRANSCRIPT_MESSAGES = 10
 MAX_CONCURRENT_AGENT_TURNS_SETTING = "max_concurrent_agent_turns"
 DEFAULT_MAX_CONCURRENT_AGENT_TURNS = 2
 
@@ -61,6 +63,18 @@ def channel_response_round_cap() -> int:
     configured = config.get_int(ROUND_CAP_SETTING)
     if configured is None or configured < 1:
         return DEFAULT_ROUND_CAP
+    return configured
+
+
+def router_transcript_limit() -> int:
+    """Return how many prior thread lines the System AI router reads.
+
+    ``0`` is legal and means no transcript. A negative or non-integer
+    value uses the default; ``config.get_int`` already logs a non-integer.
+    """
+    configured = config.get_int(ROUTER_TRANSCRIPT_SETTING)
+    if configured is None or configured < 0:
+        return DEFAULT_ROUTER_TRANSCRIPT_MESSAGES
     return configured
 
 

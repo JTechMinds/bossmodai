@@ -1,7 +1,8 @@
 """System AI route for one channel response round.
 
-One short completion on ``system_ai_connection`` sees the latest message,
-member specialties, pending @ members, and a short sticky clip. Members
+One short completion on ``system_ai_connection`` sees the latest message
+and its author, the last N thread lines, member specialties and role
+summaries, pending @ members, and a short sticky clip. Members
 are numbered ``1…N`` for that one call; no agent id appears in the
 prompt. The only accepted payload is:
 
@@ -54,15 +55,16 @@ ROUTER_KEYS = frozenset({"speak"})
 _LATEST_MESSAGE_CHARS = 800
 _STICKY_CHARS = 400
 _PREF_CHARS = 80
-_OPENING_CHARS = 160
 _PREFS_IN_STICKY = 3
-# One hire-role line on the member roster. Not a bio, prompt, or note body.
-_ROLE_BLURB_CHARS = 80
+# First description paragraph on the member roster. Not a prompt or note body.
+_ROLE_SUMMARY_CHARS = 320
+# One prior thread line in Recent thread.
+_TRANSCRIPT_LINE_CHARS = 280
 
 # Intent gate for a peer round opened from an agent speak. Not a phrase list.
 AGENT_LINE_ROUTE = (
     "The latest message is an agent speak. Judge that line, not the opening sticky. "
-    "Put an id in speak only when the line adds new work, a question, or a handoff. "
+    "Put an id in speak only when the line adds new work, a question, or a handoff (naming who is next, even without @). "
     "Settled status, an echo of a line the thread already shows, or a no-op is an empty speak array. "
     "A peer @ on that line is not a pending pin and does not open another round."
 )
@@ -79,6 +81,19 @@ REROUTE_ECHO_ROUTE = (
     "A member who has not spoken may still be named for new work, a question, or a handoff. "
     "Leave work-bound members out of speak."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RouterLine:
+    """One prior thread line for the router's Recent thread section.
+
+    ``status`` marks a system task card (Accepted, Writing, Done, Blocked)
+    so the model reads it as state, not speech.
+    """
+
+    author: str
+    text: str
+    status: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,9 +117,10 @@ def plan_channel_route(
     members: list[dict[str, str]],
     fallback_order: list[str],
     latest_message: str,
+    latest_author: str,
+    transcript: list[RouterLine],
     pending_mention_ids: list[str],
     forced_ids: list[str],
-    opening_message: str = "",
     handoff: bool = False,
     agent_line: bool = False,
     sticky_note: str = "",
@@ -128,6 +144,10 @@ def plan_channel_route(
     ``already_spoke_ids`` and ``work_bind_ids`` are engine facts for a
     re-route or later slice; they reach the prompt as member numbers only.
 
+    ``latest_author`` labels the latest message and ``transcript`` is the
+    prior thread lines, oldest first. Both are required so a caller cannot
+    route without the conversation.
+
     ``handoff`` is a Done/handoff round. ``agent_line`` is a peer round
     opened from an agent speak. An empty parsed speak with no pin gets
     one repair on either path when ``repair_empty`` is set. A still-empty
@@ -150,9 +170,8 @@ def plan_channel_route(
     if not universe or not system_ai_is_configured():
         return fallback
     roster = [member for member in members if str(member.get("id") or "") in allowed]
-    opening = opening_message if opening_message.strip() != (latest_message or "").strip() else ""
     try:
-        sticky = short_sticky_context(roster, opening_message=opening)
+        sticky = short_sticky_context(roster)
     except Exception:
         logger.warning("channel router skipped sticky context")
         sticky = ""
@@ -162,6 +181,8 @@ def plan_channel_route(
     messages, number_map = build_router_messages(
         members=roster,
         latest_message=latest_message,
+        latest_author=latest_author,
+        transcript=transcript,
         pending_mention_ids=pinned,
         sticky=sticky,
         agent_line=agent_line,
@@ -276,21 +297,44 @@ def _repair_empty_speak(
     return parsed
 
 
-def role_blurb(text: str | None) -> str:
-    """Return the first line of a hire summary, clipped.
+def role_summary(text: str | None) -> str:
+    """Return the first paragraph of a hire description, flattened and clipped.
 
-    Later paragraphs, prompt text, and note bodies are not part of this
-    line. Empty input stays empty so the member row keeps ``id | name | specialty``.
+    The paragraph ends at the first blank line, so standing-note bodies
+    and prompt text after it stay off the roster. Multi-line bullets in
+    that paragraph (``Specialty:``, ``Description:``, ``Mission:``) are
+    kept. Empty input stays empty so the member row keeps
+    ``number | name | specialty``.
     """
     raw = (text or "").strip()
     if not raw:
         return ""
-    first = raw.splitlines()[0]
-    return _clip(" ".join(first.split()), _ROLE_BLURB_CHARS)
+    lines: list[str] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            break
+        lines.append(line)
+    return _clip(" ".join(" ".join(lines).split()), _ROLE_SUMMARY_CHARS)
+
+
+def format_transcript(lines: list[RouterLine]) -> str:
+    """Render prior thread lines oldest first, one per line.
+
+    Speech is ``Name: text``. A status card is ``[status] text``. Each
+    text is flattened and clipped. An empty list renders ``(none)``.
+    """
+    rendered: list[str] = []
+    for line in lines:
+        text = _clip(" ".join((line.text or "").split()), _TRANSCRIPT_LINE_CHARS)
+        if line.status:
+            rendered.append(f"[status] {text}")
+        else:
+            rendered.append(f"{line.author}: {text}")
+    return "\n".join(rendered) or "(none)"
 
 
 def format_member_line(member: dict[str, str], number: int) -> str:
-    """``number | name | specialty``, plus `` — blurb`` when a hire summary exists.
+    """``number | name | specialty``, plus `` — summary`` when a description exists.
 
     ``number`` is the member's per-call router number. The agent id is
     never printed; a member with no name shows as ``Member <number>``.
@@ -298,9 +342,9 @@ def format_member_line(member: dict[str, str], number: int) -> str:
     name = str(member.get("name") or "").strip() or f"Member {number}"
     specialty = str(member.get("role") or "").strip() or "unspecified"
     line = f"{number} | {name} | {specialty}"
-    blurb = role_blurb(member.get("description") or member.get("blurb"))
-    if blurb:
-        return f"{line} — {blurb}"
+    summary = role_summary(member.get("description") or member.get("blurb"))
+    if summary:
+        return f"{line} — {summary}"
     return line
 
 
@@ -308,6 +352,8 @@ def build_router_messages(
     *,
     members: list[dict[str, str]],
     latest_message: str,
+    latest_author: str,
+    transcript: list[RouterLine],
     pending_mention_ids: list[str],
     sticky: str,
     agent_line: bool = False,
@@ -319,9 +365,11 @@ def build_router_messages(
     Members are numbered ``1…N`` in roster order. The same numbers are used
     under Pending @, Already spoke and Work-bound, so the model only ever
     sees numbers, never agent ids. An id in those sections that is not a
-    member is left out. Specialties and one role line, not bios. Already
-    spoke and Work-bound are appended only when either is non-empty. No
-    message or round id is printed: the model cannot act on either.
+    member is left out. Specialties and the first description paragraph,
+    not full prompts. Recent thread comes first, then the latest message
+    under its author label. Already spoke and Work-bound are appended only
+    when either is non-empty. No message or round id is printed: the model
+    cannot act on either.
 
     Returns:
         ``(messages, number_map)``. ``number_map`` maps each number to its
@@ -345,9 +393,13 @@ def build_router_messages(
     bound = _unique(list(work_bind_ids or []))
     pending_lines = _fact_lines(_unique(list(pending_mention_ids)), number_by_id, by_id)
     sticky_text = (sticky or "").strip() or "(none)"
+    author = (latest_author or "").strip() or "(unknown)"
     user = "\n".join(
         [
-            "Latest message:",
+            "Recent thread (oldest first):",
+            format_transcript(transcript),
+            "",
+            f"Latest message from {author}:",
             _clip(latest_message, _LATEST_MESSAGE_CHARS) or "(none)",
             "",
             "Members:",
@@ -364,8 +416,15 @@ def build_router_messages(
         "You choose who should wake for this channel round from intent, not wording. "
         "Read the latest message and sticky context: who is being handed work, who "
         "must answer, who is only being discussed. Prefer Board/task next owners when "
-        "the sticky implies them. Do not wake people merely because their name appears "
-        "in prose. Use the one-line role blurb to match the work to who owns it. "
+        "the sticky implies them. "
+        "A member is addressed when the line hands them work, asks them something, or names them "
+        "as next ('Next up: Brian…', 'Brian, can you…', 'waiting on Brian'): wake them. "
+        "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed. "
+        "Use Recent thread to resolve pronouns and 'me' / 'you' from the Latest message author. "
+        "Status lines show who is already working. "
+        "When one handoff needs two related members in sequence (e.g. an author then a reviewer), "
+        "name both in that order. "
+        "Use the role summary to match the work to who owns it. "
         "Operator @ members (pending) are already required — keep them first. "
         "Reply with only one JSON object and no other text. "
         'The only key is "speak". '
@@ -423,20 +482,13 @@ def _fact_lines(
     return "\n".join(lines) or "(none)"
 
 
-def short_sticky_context(
-    members: list[dict[str, str]],
-    *,
-    opening_message: str = "",
-) -> str:
-    """A short sticky clip: optional opening line plus a few standing prefs.
+def short_sticky_context(members: list[dict[str, str]]) -> str:
+    """A short sticky clip: a few standing prefs.
 
     This is router input only. It is not the warm section injected on an
     agent turn, and it does not read note bodies.
     """
     parts: list[str] = []
-    opening = " ".join((opening_message or "").split())
-    if opening:
-        parts.append("Opening: " + _clip(opening, _OPENING_CHARS))
     kept = 0
     for member in members:
         if kept >= _PREFS_IN_STICKY:

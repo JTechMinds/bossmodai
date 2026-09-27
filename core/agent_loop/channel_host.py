@@ -201,10 +201,10 @@ def note_channel_work(channel_id: str, *, agent_id: str, task_id: str) -> None:
     host_db.save_channel_host_state(state)
 
 
-def note_speak_worthy_outcome(channel_id: str, *, agent_id: str, task_id: str) -> None:
-    """Clear work silence when that commitment is done, blocked, or Needs.
+def release_work_hold(channel_id: str, *, agent_id: str, task_id: str) -> None:
+    """End work silence because this agent's commitment on the thread ended (done, waiting, delegated, blocked, Needs).
 
-    The origin line already in the thread is the re-entry. This does not
+    The hold clears only when the holder and task match. This does not
     open a Talk round and does not invent a human snapshot.
     """
     token = (channel_id or "").strip()

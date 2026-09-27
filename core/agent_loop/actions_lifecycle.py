@@ -65,6 +65,7 @@ async def _handle_waiting(
         return waiting_without_task_result(agent, trigger)
 
     task = db.get_task(task_id)
+    _release_origin_work_hold(task, agent)
     result = {
         "event": "status_changed",
         "detail": f'{agent.name} is waiting on "{task.title if task else "the current task"}"' + (f" — {reason}" if reason else ""),
@@ -181,6 +182,7 @@ async def _handle_complete(
         watchdog_pinged_at=None,
     )
     task = db.get_task(task_id)
+    _release_origin_work_hold(task, agent)
     active = activity_runtime.get_active_work_activity(agent.id)
     if active:
         activity_runtime.complete_activity(active.id, detail=summary or active.detail)
@@ -525,6 +527,7 @@ async def _handle_delegated(
         status_note=f"Delegated to {target.name}",
         watchdog_pinged_at=None,
     )
+    _release_origin_work_hold(original_task, agent)
 
     # Create a child task for the target agent (vision doc: delegation
     # creates a formal task record with its own watchdog)
@@ -701,6 +704,24 @@ async def _handle_abandoned(
     if task is not None:
         attach_operator_status_line(result, task=task, agent=agent, kind="cancelled", reason=reason)
     return result
+
+
+def _release_origin_work_hold(task: Any, agent: Agent) -> None:
+    """End this agent's work silence on the task's origin thread.
+
+    The commitment ends when the task transitions, so the silence it
+    created ends there too, before the follow-up share tries to open the
+    handoff round. A task that is missing or not on a channel has no
+    origin hold, and nothing happens.
+    """
+    if task is None or getattr(task, "source_channel", None) != "channel":
+        return
+    channel_id = str(getattr(task, "notification_channel_id", None) or "").strip()
+    if not channel_id:
+        return
+    from core.agent_loop.channel_host import release_work_hold
+
+    release_work_hold(channel_id, agent_id=agent.id, task_id=str(task.id))
 
 
 def _named_next_work_cards(task: Any, action: dict[str, Any], *, author_id: str) -> list[Any]:

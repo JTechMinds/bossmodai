@@ -20,7 +20,7 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.channel_router import build_router_messages
-from core.agent_loop.channel_host import note_human_snapshot
+from core.agent_loop.channel_host import note_channel_work, note_human_snapshot, work_holds_talk
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.decision_contract import parse_decision
 from core.agent_loop.decision_runtime import apply_decision
@@ -141,9 +141,24 @@ def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, in
     return calls
 
 
-async def _done(jimothy, channel, *, follow_up: str, next_owners: list[str] | None = None):
+def _hold(channel, agent, task) -> None:
+    """Reproduce "accepted in the thread": this agent's work holds Talk."""
+    note_channel_work(channel.id, agent_id=agent.id, task_id=task.id)
+    assert work_holds_talk(channel.id)
+
+
+async def _done(
+    jimothy,
+    channel,
+    *,
+    follow_up: str,
+    next_owners: list[str] | None = None,
+    hold: bool = False,
+):
     creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
     assert creation.task is not None
+    if hold:
+        _hold(channel, jimothy, creation.task)
     activity_runtime.activate_work_activity(jimothy.id, creation.task)
     state = db.get_agent_state(jimothy.id)
     assert state is not None
@@ -165,12 +180,21 @@ def test_router_prompt_is_intent_first() -> None:
     messages, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
         latest_message="Where are we?",
+        latest_author="Human Operator",
+        transcript=[],
         pending_mention_ids=["jim"],
         sticky="Board next: laura | Laura",
     )
     blob = "\n".join(item["content"] for item in messages)
     assert "from intent, not wording" in blob
-    assert "Do not wake people merely because their name appears" in blob
+    assert "Do not wake people merely because their name appears" not in blob
+    assert (
+        "A member is addressed when the line hands them work, asks them something, or names them as next"
+        in blob
+    )
+    assert "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed." in blob
+    assert "Recent thread" in blob
+    assert "Latest message from" in blob
     assert "Board next: laura | Laura" in blob
     assert '"speak"' in blob and "stay_out" not in blob
     assert "at most 2" in blob
@@ -277,6 +301,102 @@ async def test_done_opens_a_system_ai_peer_round(monkeypatch: pytest.MonkeyPatch
     round_id = wakes[0]["payload"]["round_id"]
     assert channel_round_db.get_channel_round_meta(round_id)["router_mode"] == "system"
     assert "from intent, not wording" in calls["last"]
+
+
+@pytest.mark.asyncio
+async def test_done_after_channel_accept_opens_the_handoff_round(monkeypatch: pytest.MonkeyPatch) -> None:
+    _jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    calls = _script(monkeypatch, [[laura.id]])
+    _task, completed = await _done(
+        jimothy,
+        channel,
+        follow_up="Plan is in the doc. Next up: Laura writes the spec.",
+        hold=True,
+    )
+    assert calls["n"] == 1
+    wakes = _channel_wakes(completed)
+    assert [item["agent_id"] for item in wakes] == [laura.id]
+    agent_message_id = completed["channel_message"]["message_id"]
+    assert completed["channel_message"]["author_type"] == "agent"
+    round_row = db.get_channel_response_round_for_source(
+        channel_id=channel.id,
+        source_message_id=agent_message_id,
+    )
+    assert round_row is not None
+    assert wakes[0]["payload"]["round_id"] == round_row.id
+    assert not work_holds_talk(channel.id)
+
+
+@pytest.mark.asyncio
+async def test_delegate_after_channel_accept_releases_the_hold_and_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _jim, laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    calls = _script(monkeypatch, [[]])
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id, title="Write the status note")
+    assert creation.task is not None
+    _hold(channel, jimothy, creation.task)
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "delegated",
+            "agentId": laura.id,
+            "followUpMessage": "Needs a writer.",
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    assert calls["n"] == 1
+    wakes = _channel_wakes(result)
+    assert wakes[0]["agent_id"] == laura.id
+    agent_message_id = result["channel_message"]["message_id"]
+    round_row = db.get_channel_response_round_for_source(
+        channel_id=channel.id,
+        source_message_id=agent_message_id,
+    )
+    assert round_row is not None
+    assert wakes[0]["payload"]["round_id"] == round_row.id
+    assert not work_holds_talk(channel.id)
+
+
+@pytest.mark.asyncio
+async def test_waiting_after_channel_accept_releases_the_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, _laura, jimothy, channel = _trio()
+    _enable_system_ai()
+    calls = _script(monkeypatch, [[jim.id]])
+    creation = _channel_task(assignee_id=jimothy.id, channel_id=channel.id)
+    assert creation.task is not None
+    _hold(channel, jimothy, creation.task)
+    activity_runtime.activate_work_activity(jimothy.id, creation.task)
+    state = db.get_agent_state(jimothy.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "waiting",
+            "reason": "Waiting on the fixture.",
+            "followUpMessage": "Jim, can you share the fixture?",
+        },
+        jimothy,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    assert db.get_task(creation.task.id).status == "waiting"
+    assert calls["n"] == 1
+    agent_message_id = result["channel_message"]["message_id"]
+    assert (
+        db.get_channel_response_round_for_source(
+            channel_id=channel.id,
+            source_message_id=agent_message_id,
+        )
+        is not None
+    )
+    assert [item["agent_id"] for item in _channel_wakes(result)] == [jim.id]
+    assert not work_holds_talk(channel.id)
 
 
 @pytest.mark.asyncio

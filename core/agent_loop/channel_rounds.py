@@ -32,6 +32,7 @@ from core.agent_loop.channel_round_plan import (
     classify_channel_dispatch,
     mention_ids_in_order,
     order_round_members,
+    router_transcript_limit,
 )
 from core.agent_loop.channel_host import (
     blocks_peer_round,
@@ -47,7 +48,7 @@ from core.agent_loop.channel_host import (
     stop_active_talk_rounds,
     talk_closed,
 )
-from core.agent_loop.channel_router import RoundPlan, plan_channel_route
+from core.agent_loop.channel_router import RoundPlan, RouterLine, plan_channel_route
 from core.llm.attachment_parts import attachment_route_line
 from core.agent_loop.channel_work_bind import (
     live_work_bind_ids,
@@ -196,6 +197,8 @@ def start_channel_peer_round(
         latest_message=(
             f"{attachment_route_line(attachment_ids)}\n{content}" if attachment_ids else content
         ),
+        latest_author=_author_label(channel_id, from_agent, from_name),
+        transcript=_router_transcript(channel_id, before_message_id=message_id),
         required_ids=pins,
         handoff=handoff,
         agent_line=author_type == "agent",
@@ -455,6 +458,7 @@ def advance_channel_round(
             pinned_ids=list(meta.get("pinned_ids") or []),
             opening_message=str(trigger.get("content") or ""),
             latest_message=spoken,
+            speaker_id=speaker,
         )
     pending = _drop_bound_pending(round_id, channel_id, pending)
     if pending:
@@ -489,8 +493,9 @@ def _plan_for_members(
     members: list[dict[str, str]],
     fallback_order: list[str],
     latest_message: str,
+    latest_author: str,
+    transcript: list[RouterLine],
     required_ids: list[str],
-    opening_message: str = "",
     handoff: bool = False,
     agent_line: bool = False,
     sticky_note: str = "",
@@ -510,9 +515,10 @@ def _plan_for_members(
         members=members,
         fallback_order=fallback_order,
         latest_message=latest_message,
+        latest_author=latest_author,
+        transcript=transcript,
         pending_mention_ids=list(required_ids),
         forced_ids=list(required_ids),
-        opening_message=opening_message,
         handoff=handoff,
         agent_line=agent_line,
         sticky_note=sticky_note,
@@ -680,6 +686,7 @@ def _redecide_remaining(
     pinned_ids: list[str],
     opening_message: str,
     latest_message: str,
+    speaker_id: str,
 ) -> list[Any]:
     """Re-route who still might speak after one post.
 
@@ -691,6 +698,9 @@ def _redecide_remaining(
     re-routed. An already-observed pass is not counted again when the new
     set still leaves them out. @ ids stored from the speak wait for the
     next round and are not pulled ahead here.
+
+    ``opening_message`` is only the latest-line fallback when the speak
+    text is empty. ``speaker_id`` labels that latest line for the route.
     """
     remaining_ids = [candidate.agent_id for candidate in pending]
     remaining_set = set(remaining_ids)
@@ -716,9 +726,10 @@ def _redecide_remaining(
         members=_members_in_order(channel_id, eligible_ids),
         fallback_order=eligible_ids,
         latest_message=latest,
+        latest_author=_author_label(channel_id, speaker_id, ""),
+        transcript=_router_transcript(channel_id, before_message_id=None),
         pending_mention_ids=forced,
         forced_ids=forced,
-        opening_message=opening_message,
         agent_line=True,
         repair_empty=False,
         already_spoke_ids=spoke_ids,
@@ -776,15 +787,74 @@ def _members_in_order(channel_id: str, agent_ids: list[str]) -> list[dict[str, s
     return [by_id[agent_id] for agent_id in agent_ids if agent_id in by_id]
 
 
-def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str]:
-    """Newest transcript line and its author, skipping round-boundary markers."""
+def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str, str]:
+    """Newest transcript line, skipping round-boundary markers.
+
+    Returns ``(text, author_type, author_agent_id, author_name)``. With no
+    such line, returns ``fallback`` and empty author fields.
+    """
     for row in reversed(db.list_channel_messages(channel_id, limit=12)):
         if row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND:
             continue
         text = (row.content or "").strip()
         if text:
-            return text, str(row.author_type or "")
-    return fallback, ""
+            return (
+                text,
+                str(row.author_type or ""),
+                str(row.author_agent_id or ""),
+                str(row.author_name or ""),
+            )
+    return fallback, "", "", ""
+
+
+def _router_transcript(channel_id: str, *, before_message_id: str | None) -> list[RouterLine]:
+    """Prior thread lines for the System AI route, oldest first.
+
+    Reads ``router_transcript_limit() + 1`` rows and skips round markers.
+    The latest line is not part of the transcript: the row whose id is
+    ``before_message_id`` is dropped, or, when that is ``None``, the newest
+    remaining row. A system row is a status card. No id reaches the lines.
+    """
+    limit = router_transcript_limit()
+    rows = [
+        row
+        for row in db.list_channel_messages(channel_id, limit=limit + 1)
+        if not (row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND)
+    ]
+    if before_message_id is None:
+        rows = rows[:-1]
+    else:
+        rows = [row for row in rows if row.id != before_message_id]
+    kept = rows[-limit:] if limit > 0 else []
+    return [
+        RouterLine(
+            author=str(row.author_name or ""),
+            text=str(row.content or ""),
+            status=row.author_type == "system",
+        )
+        for row in kept
+    ]
+
+
+def _author_label(channel_id: str, agent_id: str | None, fallback_name: str) -> str:
+    """``Name (role)`` for a member agent, otherwise ``fallback_name``.
+
+    ``fallback_name`` is the caller's display name for a non-member author,
+    such as "Human Operator" or "BossMod".
+    """
+    token = (agent_id or "").strip()
+    if token:
+        for member in db.list_channel_member_details(channel_id):
+            if str(member.get("id") or "") != token:
+                continue
+            name = str(member.get("name") or "").strip()
+            role = str(member.get("role") or "").strip()
+            if name and role:
+                return f"{name} ({role})"
+            if name:
+                return name
+            break
+    return fallback_name
 
 
 def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
@@ -1016,9 +1086,21 @@ def _open_follow_up_round(
     if agent_text:
         latest = agent_text
         agent_line = True
+        latest_author = _author_label(channel_id, speaker_id or str(trigger.get("from_agent") or ""), "")
     else:
-        latest, author = _latest_channel_line(channel_id, str(trigger.get("content") or ""))
+        latest, author, author_agent_id, author_name = _latest_channel_line(
+            channel_id, str(trigger.get("content") or "")
+        )
         agent_line = author == "agent"
+        if author:
+            latest_author = _author_label(channel_id, author_agent_id, author_name)
+        else:
+            # No transcript line: the latest is the trigger's own content.
+            latest_author = _author_label(
+                channel_id,
+                str(trigger.get("from_agent") or ""),
+                str(trigger.get("from_name") or ""),
+            )
     # Peer @ is context for an agent line. It is not a hard pin. Fallback
     # with no system route still wakes the @ ids it already required.
     route_required = operator_pins if agent_line else fallback_required
@@ -1039,8 +1121,9 @@ def _open_follow_up_round(
         members=roster,
         fallback_order=ordered,
         latest_message=latest,
+        latest_author=latest_author,
+        transcript=_router_transcript(channel_id, before_message_id=None),
         required_ids=route_required,
-        opening_message=str(trigger.get("content") or ""),
         agent_line=agent_line,
         sticky_note=sticky,
         already_spoke_ids=spoke_ids,

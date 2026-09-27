@@ -17,9 +17,10 @@ from core.agent_loop.channel_router import (
     ROUTER_SPEAK_CAP,
     build_router_messages,
     finalize_router_lists,
+    RouterLine,
     format_member_line,
     parse_router_payload,
-    role_blurb,
+    role_summary,
     short_sticky_context,
 )
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
@@ -109,6 +110,7 @@ def test_speak_cap_and_stall_defaults_stay_put() -> None:
     assert config.get("llm_stall_timeout_seconds") == "120"
     assert config.get("llm_request_timeout_seconds") == "720"
     assert config.get("channel_response_round_cap") == "64"
+    assert config.get("channel_router_transcript_messages") == "10"
 
 
 def test_parser_rejects_invented_keys_and_unknown_numbers() -> None:
@@ -168,6 +170,8 @@ def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
             {"id": "laura", "name": "Laura", "role": "Eng"},
         ],
         latest_message="Where are we?",
+        latest_author="Human Operator",
+        transcript=[],
         pending_mention_ids=["laura"],
         sticky="Jim: keep notes short",
     )
@@ -182,13 +186,15 @@ def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
     assert "stay_out" not in blob
     assert "exactly one list" not in blob
     assert f"at most {ROUTER_SPEAK_CAP}" in blob
-    assert "role blurb" in blob
+    assert "role summary" in blob
     assert "left out of this slice is not finished" in blob
 
 
-def test_member_line_keeps_specialty_and_one_role_blurb() -> None:
+def test_member_line_uses_the_first_description_paragraph() -> None:
     essay = (
-        "owns M0 build / stack lock\n\n"
+        "- Specialty: Implementation Spec Author\n"
+        "- Description: Hire when milestones need TDDs.\n"
+        "- Mission: translate milestones into TDDs\n\n"
         + ("biography paragraph " * 20)
     )
     line = format_member_line(
@@ -200,14 +206,19 @@ def test_member_line_keeps_specialty_and_one_role_blurb() -> None:
         },
         3,
     )
-    assert line == "3 | Charles | Engineer — owns M0 build / stack lock"
-    assert role_blurb(essay) == "owns M0 build / stack lock"
-    long_first = "owns the product requirements " + ("detail " * 30)
-    clipped = role_blurb(long_first)
-    assert clipped.startswith("owns the product requirements")
-    assert len(clipped) <= 80
+    summary = (
+        "- Specialty: Implementation Spec Author "
+        "- Description: Hire when milestones need TDDs. "
+        "- Mission: translate milestones into TDDs"
+    )
+    assert line == f"3 | Charles | Engineer — {summary}"
+    assert role_summary(essay) == summary
+    assert "biography" not in role_summary(essay)
+    long_first = "owns the product requirements\n" + ("detail " * 60)
+    clipped = role_summary(long_first)
+    assert clipped.startswith("owns the product requirements detail")
+    assert len(clipped) <= 320
     assert clipped.endswith("...")
-    assert long_first not in clipped
     bare = format_member_line({"id": "jim", "name": "Jim", "role": "PM"}, 1)
     assert bare == "1 | Jim | PM"
 
@@ -227,6 +238,8 @@ def test_prompt_numbers_members_and_shows_no_member_id() -> None:
     messages, number_map = build_router_messages(
         members=members,
         latest_message="Great news folks. Let's try and continue.",
+        latest_author="Human Operator",
+        transcript=[],
         pending_mention_ids=[members[2]["id"]],
         sticky="",
         already_spoke_ids=[members[0]["id"], outsider],
@@ -282,6 +295,96 @@ def test_route_sees_the_hire_blurb_and_not_the_prompt(
     assert " — " not in prompt.split(laura_line, 1)[1].split("\n", 1)[0]
     for agent in (jim, laura, ada):
         assert agent.id not in prompt
+
+
+def _harley_thread(channel_id: str) -> Any:
+    """Seed 12 prior lines with a round marker and a status card, then Harley's latest."""
+    harley = db.create_agent("Harley", role="Feature Planner", desk_x=4, desk_y=1, model_work="identity-big")
+    db.add_channel_members(channel_id, [harley.id])
+    for index in range(1, 13):
+        if index == 5:
+            db.create_channel_message(
+                channel_id=channel_id,
+                author_type="system",
+                author_name="BossMod",
+                content="Round 2",
+                source_channel="channel",
+                notification_kind="channel_round_marker",
+            )
+        elif index == 9:
+            db.create_channel_message(
+                channel_id=channel_id,
+                author_type="system",
+                author_name="BossMod",
+                content="Harley Accepted: Sequence the M2 plan",
+                source_channel="channel",
+                notification_kind="task_update",
+            )
+        else:
+            _message(channel_id, f"prior line {index}")
+    latest = db.create_channel_message(
+        channel_id=channel_id,
+        author_type="agent",
+        author_name=harley.name,
+        author_agent_id=harley.id,
+        content="M2 plan is in the doc. Next up: Laura translates it.",
+        source_channel="channel",
+    )
+    return harley, latest
+
+
+def test_router_sees_prior_lines_and_the_latest_author(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    harley, latest = _harley_thread(channel.id)
+    prompts = _scripted_route(monkeypatch, [[laura.id]])
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=latest.id,
+        content=latest.content,
+        from_name=harley.name,
+        author_type="agent",
+        exclude_agent_ids={harley.id},
+        from_agent=harley.id,
+    )
+    assert [item["agent_id"] for item in triggers] == [laura.id]
+    prompt = prompts[0]
+    # The router reads limit + 1 rows (11) and skips the marker inside
+    # that window, so the transcript holds the non-marker rows 3..12.
+    expected = "\n".join(
+        "[status] Harley Accepted: Sequence the M2 plan"
+        if index == 9
+        else f"Human Operator: prior line {index}"
+        for index in range(3, 13)
+        if index != 5
+    )
+    assert _block(prompt, "Recent thread (oldest first):", "Latest message from") == expected
+    assert "Round 2" not in prompt
+    assert "prior line 2" not in prompt
+    assert _block(prompt, "Latest message from Harley (Feature Planner):", "Members:") == latest.content
+    assert prompt.count(latest.content) == 1
+    for agent in (jim, laura, ada, harley):
+        assert agent.id not in prompt
+
+
+def test_transcript_limit_setting_zero_renders_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _jim, laura, _ada, channel = _trio()
+    _enable_system_ai()
+    db.set_setting("channel_router_transcript_messages", "0", "llm")
+    config.reload()
+    harley, latest = _harley_thread(channel.id)
+    prompts = _scripted_route(monkeypatch, [[laura.id]])
+    start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=latest.id,
+        content=latest.content,
+        from_name=harley.name,
+        author_type="agent",
+        exclude_agent_ids={harley.id},
+        from_agent=harley.id,
+    )
+    assert _block(prompts[0], "Recent thread (oldest first):", "Latest message from") == "(none)"
+    assert "prior line" not in prompts[0]
 
 
 def test_unset_system_ai_keeps_drain_order_and_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -894,11 +997,8 @@ def test_sticky_context_is_short_and_skips_note_bodies(
         ),
         encoding="utf-8",
     )
-    sticky = short_sticky_context(
-        [{"id": jim.id, "name": "Jim", "role": "PM"}],
-        opening_message="Opening question that is not the latest line.",
-    )
-    assert sticky.startswith("Opening:")
+    sticky = short_sticky_context([{"id": jim.id, "name": "Jim", "role": "PM"}])
+    assert sticky.startswith("Jim:")
     assert "Jim:" in sticky
     assert "keep status lines short" in sticky
     assert pref_text not in sticky
@@ -1022,6 +1122,8 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
             {"id": "laura", "name": "Laura", "role": "Eng"},
         ],
         latest_message="The plan is filed.",
+        latest_author="Jim (PM)",
+        transcript=[],
         pending_mention_ids=[],
         sticky="",
         already_spoke_ids=["jim"],
@@ -1039,6 +1141,8 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
     plain, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
         latest_message="Where are we?",
+        latest_author="Human Operator",
+        transcript=[],
         pending_mention_ids=[],
         sticky="",
     )
