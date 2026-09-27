@@ -139,6 +139,7 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 
 .switch-row[aria-checked="true"] { color: var(--ink); }
+.switch-row:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .switch {
   position: relative;

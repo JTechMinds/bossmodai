@@ -41,6 +41,7 @@ from core.tasking.transitions import transition_task
 from core.world.seating import place_agent_at_desk
 from core.world.tilemap import first_unoccupied_chair, get_room_at
 import db
+from db.attachments import AttachmentLinkError, get_attachments_for_messages
 
 
 def _auto_assign_desk(
@@ -77,6 +78,7 @@ class ChannelCreateBody(BaseModel):
 
 class ChannelMessageBody(BaseModel):
     content: str
+    attachment_ids: list[str] | None = None
 
 
 class ChannelRenameBody(BaseModel):
@@ -442,9 +444,11 @@ async def get_channel(channel_id: str, limit: int = 80):
     if channel is None:
         raise HTTPException(404, "Channel not found")
 
+    rows = db.list_channel_messages(channel.id, limit=limit)
+    attachments = get_attachments_for_messages([item.id for item in rows])
     messages = [
-        _serialize_channel_message(item)
-        for item in db.list_channel_messages(channel.id, limit=limit)
+        _serialize_channel_message(item, attachments[item.id])
+        for item in rows
     ]
     members = db.list_channel_member_details(channel.id)
     return {
@@ -461,7 +465,7 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
         raise HTTPException(404, "Channel not found")
 
     content = body.content.strip()
-    if not content:
+    if not content and not body.attachment_ids:
         raise HTTPException(400, "Channel message content cannot be empty")
 
     try:
@@ -472,7 +476,10 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
             from_name="Human Operator",
             broadcast_manager=manager,
             services=runtime_services,
+            attachment_ids=body.attachment_ids,
         )
+    except AttachmentLinkError as exc:
+        raise HTTPException(422, _attachment_link_detail(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc))
 
@@ -483,7 +490,9 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
     )
     return {
         "status": "ok",
-        "message": _serialize_channel_message(message),
+        "message": _serialize_channel_message(
+            message, get_attachments_for_messages([message.id])[message.id],
+        ),
         "member_count": len(result["members"]),
     }
 
@@ -812,6 +821,10 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     formatted.sort(key=lambda item: item.get("created_at") or "")
     formatted = formatted[-limit:]
 
+    # Notification rows have their own ids and never carry attachments; the
+    # batch maps them to empty lists like any message without files.
+    attachments = get_attachments_for_messages([msg["id"] for msg in formatted])
+
     # Add from_type classification for the frontend
     result = []
     for msg in formatted:
@@ -835,6 +848,7 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
             "task_id": msg.get("task_id"),
             "host_path_consent": msg.get("host_path_consent"),
             "cli_approval": msg.get("cli_approval"),
+            "attachments": [_serialize_attachment(att) for att in attachments[msg["id"]]],
             "created_at": msg["created_at"],
         })
 
@@ -957,8 +971,33 @@ def _serialize_meeting_session_message(item) -> dict[str, object]:
     }
 
 
-def _serialize_channel_message(item) -> dict[str, object]:
-    """Serialize one shared channel transcript message."""
+def _serialize_attachment(att) -> dict[str, object]:
+    """The client-facing fields of one linked attachment (never its disk path)."""
+    return {
+        "id": att.id,
+        "file_name": att.file_name,
+        "file_size": att.file_size,
+        "mime_type": att.mime_type,
+        "preview_tier": att.preview_tier,
+    }
+
+
+def _attachment_link_detail(exc: AttachmentLinkError) -> dict[str, object]:
+    """The 422 body for a send whose attachments could not be linked."""
+    return {"error": str(exc), "code": "ATTACHMENT_LINK", "missing_ids": exc.missing_ids}
+
+
+def _serialize_channel_message(item, attachments) -> dict[str, object]:
+    """Serialize one shared channel transcript message.
+
+    Args:
+        item: The channel message row.
+        attachments: Its linked attachments, pre-fetched in one batch by the
+            caller via ``get_attachments_for_messages``.
+
+    Returns:
+        The transcript dict the thread source renders.
+    """
     consent_card = None
     consent_id = getattr(item, "consent_id", None)
     if consent_id:
@@ -984,6 +1023,7 @@ def _serialize_channel_message(item) -> dict[str, object]:
         "cli_approval": approval_card,
         "desk_path": getattr(item, "desk_path", None),
         "task_id": getattr(item, "task_id", None),
+        "attachments": [_serialize_attachment(att) for att in attachments],
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
@@ -1073,6 +1113,8 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         )
     except AgentOnVacation as exc:
         raise HTTPException(409, str(exc)) from exc
+    except AttachmentLinkError as exc:
+        raise HTTPException(422, _attachment_link_detail(exc)) from exc
 
     return {"status": "ok", "message": "Message queued"}
 

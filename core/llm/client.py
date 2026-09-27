@@ -15,6 +15,7 @@ from typing import Any
 import litellm
 
 from core import config
+from core.llm.attachment_parts import expand_attachment_messages
 from core.llm.call_budget import budget, current_turn_lane
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ def _chunk_usage(chunk: Any) -> tuple[int, int, int] | None:
     return _usage_counts(usage)
 
 
-def _response_from_chunks(chunks: list[Any], messages: list[dict[str, str]], model: str) -> LLMResponse:
+def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], model: str) -> LLMResponse:
     """Rebuild one completion from streamed chunks.
 
     litellm's builder keeps usage accounting. A chunk shape it cannot rebuild
@@ -241,7 +242,7 @@ async def _close_stream(stream: Any) -> None:
 async def _read_stream(
     stream: Any,
     *,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     model: str,
     started: float,
     backstop_seconds: float,
@@ -286,7 +287,7 @@ async def _read_stream(
 
 async def completion(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
     api_base: str | None = None,
@@ -307,7 +308,9 @@ async def completion(
     model : str
         Model identifier passed directly to litellm.
     messages : list
-        Chat messages in OpenAI format (role + content).
+        Chat messages in OpenAI format (role + content). A message may name
+        attachments under ``attachment_parts.ATTACHMENT_IDS_KEY``; they are
+        expanded into content parts for this ``model`` before the call.
     temperature : float | None
         Sampling temperature. Read from settings if not provided.
     max_tokens : int | None
@@ -326,7 +329,14 @@ async def completion(
         If the LLM call fails.
     LLMTimeoutError
         If the stream is idle for the stall window, or the absolute backstop expires.
+    AttachmentUnavailableError
+        If a named attachment's row or file is missing.
     """
+    # The raw model name is the image-capability key, so expand before the
+    # provider prefix is added; both the call and the stream rebuild below
+    # see the expanded list.
+    messages = expand_attachment_messages(messages, model=model)
+
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7
     if max_tokens is None:

@@ -29,23 +29,34 @@ class AIConnection(BaseModel):
 
 
 class AIConnectionCreate(BaseModel):
-    """Payload for creating a new AI connection."""
+    """Payload for creating a new AI connection.
+
+    ``supports_images`` is not a connection column: it is stored per model
+    name in ``model_capabilities`` and applies to every agent using ``model``.
+    None (not sent) leaves any existing flag for that model untouched.
+    """
 
     name: str
     api_base_url: str
     api_key: str | None = None
     model: str | None = None
     extra_body: str | None = None
+    supports_images: bool | None = None
 
 
 class AIConnectionUpdate(BaseModel):
-    """Partial update for an AI connection."""
+    """Partial update for an AI connection.
+
+    ``supports_images`` is written to ``model_capabilities`` for the
+    effective model (the patched one, else the stored one).
+    """
 
     name: str | None = None
     api_base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
     extra_body: str | None = None
+    supports_images: bool | None = None
 
 
 # ---------------------------------------------------------------------------

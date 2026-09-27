@@ -30,6 +30,37 @@ TEMPLATES_DIR = BASE_DIR / "ui" / "templates"
 STATIC_DIR = BASE_DIR / "ui" / "static"
 
 
+def _sweep_stale_pending_attachments() -> None:
+    """Delete uploads that were never sent within ``bossmod.attach.pending_ttl_hours``.
+
+    Each file is removed before its row, so a file that cannot be removed
+    keeps its row and is retried on the next start. A file that is already
+    gone is logged and only loses its row.
+
+    Raises:
+        core.config.ConfigError: The TTL setting is missing or not an integer.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from core import config
+    from db import attachments as db_att
+
+    ttl_hours = config.require_int("bossmod.attach.pending_ttl_hours")
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+    removed = 0
+    for att in db_att.list_stale_pending(cutoff):
+        try:
+            os.remove(att.storage_path)
+        except FileNotFoundError:
+            logger.warning("Stale attachment %s had no file at %s", att.id, att.storage_path)
+        except OSError as exc:
+            logger.warning("Could not remove stale attachment file %s: %s", att.storage_path, exc)
+            continue
+        if db_att.delete_pending_attachment(att.id) is not None:
+            removed += 1
+    logger.info("Swept %d stale pending attachment(s)", removed)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -37,6 +68,9 @@ async def lifespan(app: FastAPI):
     # know every live agent) and before the runtime worker starts. Not inside
     # init_db, which runs again on every runtime start.
     agent_repository.purge_orphans()
+    # Also once per app start: an upload abandoned in a draft is only stale
+    # after its TTL, so this cannot race a send in progress.
+    _sweep_stale_pending_attachments()
     ensure_local_api_token()
     from api.websocket import manager
 

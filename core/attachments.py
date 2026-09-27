@@ -9,6 +9,17 @@ from __future__ import annotations
 import mimetypes
 import os
 import re
+from pathlib import Path
+from typing import Literal
+
+# The two real conversation kinds an upload can belong to: an agent DM and a
+# shared thread (channel).
+ContextType = Literal["direct", "thread"]
+_CONTEXT_TYPES: frozenset[str] = frozenset({"direct", "thread"})
+
+# Dot-prefixed so floor tooling that skips hidden entries (floor moves,
+# listings) leaves it alone, like ``.archived-floors``.
+ATTACHMENTS_DIRNAME = ".attachments"
 
 # ---------------------------------------------------------------------------
 # Blocklist
@@ -38,6 +49,13 @@ _DOCUMENT_EXTS: frozenset[str] = frozenset({
     ".odt", ".ods", ".odp", ".rtf",
 })
 
+# The image formats providers broadly accept as model image input. Other
+# image-tier files (SVG, TIFF, BMP) still preview in the UI but reach the
+# model as a path reference, since most providers reject them outright.
+MODEL_IMAGE_MIME_TYPES: frozenset[str] = frozenset({
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+})
+
 # ---------------------------------------------------------------------------
 # MIME overrides (extensions where mimetypes stdlib is unreliable)
 # ---------------------------------------------------------------------------
@@ -65,31 +83,49 @@ MAX_FILE_NAME_LEN = 255
 # Functions
 # ---------------------------------------------------------------------------
 
-def derive_storage_root(context_type: str, context_id: str, base_dir: str) -> str:
-    """Return the absolute directory where attachments for this context live.
+def storage_dir(floor_root: Path, context_type: ContextType, context_id: str) -> Path:
+    """Return the directory that holds one conversation's attachments.
 
-    - thread   → {base_dir}/projects/{context_id}/attachments
-    - direct   → {base_dir}/agents/{context_id}/attachments
-    - channel  → {base_dir}/projects/{project_id}/channels/{channel_id}/attachments
-    - unscoped → {base_dir}/shared/attachments
+    Layout: ``<floor_root>/.attachments/<context_type>/<context_id>``. The
+    dot folder sits inside the floor, which is the agent's ``/projects``, so
+    the files are readable through the agent CLI at :func:`virtual_path`.
 
-    For channel context, context_id is expected to be "project_id/channel_id".
+    Args:
+        floor_root: The conversation's floor folder (``floor_root(floor_id)``).
+        context_type: ``"direct"`` for an agent DM, ``"thread"`` for a channel.
+        context_id: The agent id or channel id. Callers must have matched it
+            to a real row first: it becomes a path component here.
+
+    Returns:
+        The directory path. It is not created.
+
+    Raises:
+        ValueError: ``context_type`` is not a known conversation kind.
     """
-    if context_type == "thread":
-        return os.path.join(base_dir, "projects", context_id, "attachments")
-    elif context_type == "direct":
-        return os.path.join(base_dir, "agents", context_id, "attachments")
-    elif context_type == "channel":
-        # context_id format: "project_id/channel_id"
-        parts = context_id.split("/", 1)
-        if len(parts) == 2:
-            project_id, channel_id = parts
-            return os.path.join(base_dir, "projects", project_id, "channels", channel_id, "attachments")
-        return os.path.join(base_dir, "projects", context_id, "attachments")
-    elif context_type == "unscoped":
-        return os.path.join(base_dir, "shared", "attachments")
-    else:
+    if context_type not in _CONTEXT_TYPES:
         raise ValueError(f"Invalid context_type: {context_type!r}")
+    return floor_root / ATTACHMENTS_DIRNAME / context_type / context_id
+
+
+def virtual_path(context_type: ContextType, context_id: str, disk_name: str) -> str:
+    """Return the agent-visible CLI path of one stored attachment.
+
+    Mirrors :func:`storage_dir` under the agent's ``/projects`` mount.
+
+    Args:
+        context_type: ``"direct"`` or ``"thread"``.
+        context_id: The agent id or channel id.
+        disk_name: The stored file name (``<uuid>_<safe_name>``).
+
+    Returns:
+        ``/projects/.attachments/<context_type>/<context_id>/<disk_name>``.
+
+    Raises:
+        ValueError: ``context_type`` is not a known conversation kind.
+    """
+    if context_type not in _CONTEXT_TYPES:
+        raise ValueError(f"Invalid context_type: {context_type!r}")
+    return f"/projects/{ATTACHMENTS_DIRNAME}/{context_type}/{context_id}/{disk_name}"
 
 
 def sanitize_file_name(name: str) -> str:

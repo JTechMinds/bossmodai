@@ -98,6 +98,7 @@ def start_channel_peer_round(
     required_ids: list[str] | None = None,
     board_owner_ids: list[str] | None = None,
     work_bind_ids: list[str] | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Open a new channel response round so peers can react to one message.
 
@@ -105,6 +106,9 @@ def start_channel_peer_round(
     that turn drains. Fan-out still wakes every included member at once.
     Agent deliverable posts exclude the author. In-round replies must not
     call this — finishing the turn already advances the queue.
+
+    ``attachment_ids`` are the files linked to the source message; they ride
+    on every wake's payload so each turn can hand them to its model.
     """
     excluded = {
         item.strip()
@@ -257,6 +261,8 @@ def start_channel_peer_round(
     }
     if isinstance(from_agent, str) and from_agent.strip():
         payload["from_agent"] = from_agent
+    if attachment_ids:
+        payload["attachment_ids"] = list(attachment_ids)
 
     if mode == DISPATCH_ROUNDS and not wake_ids:
         db.maybe_complete_channel_response_round(round_record.id)
@@ -900,6 +906,10 @@ def _wake_trigger(
         "dispatch_mode": DISPATCH_ROUNDS,
         "round_index": meta.get("round_index") or 1,
     }
+    # Serial rounds wake later members from this trigger, not from the
+    # original payload; the source message's files must reach them too.
+    if trigger.get("attachment_ids"):
+        payload["attachment_ids"] = list(trigger["attachment_ids"])
     return {
         "agent_id": agent_id,
         "trigger_type": "channel_message",

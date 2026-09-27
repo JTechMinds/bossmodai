@@ -2,45 +2,51 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 import pytest
 
 from core.attachments import (
     BLOCKLIST,
-    derive_storage_root,
     detect_mime_type,
     detect_preview_tier,
     get_file_extension,
     is_blocklisted,
     sanitize_file_name,
+    storage_dir,
+    virtual_path,
 )
 
 
 # ---------------------------------------------------------------------------
-# derive_storage_root
+# storage_dir / virtual_path
 # ---------------------------------------------------------------------------
 
-class TestDeriveStorageRoot:
-    def test_derive_storage_root_thread(self):
-        result = derive_storage_root("thread", "task-123", "/data")
-        assert result == os.path.join("/data", "projects", "task-123", "attachments")
+class TestStorageDir:
+    def test_direct_lives_under_the_floor(self):
+        result = storage_dir(Path("/company/floor-1"), "direct", "agent-42")
+        assert result == Path("/company/floor-1/.attachments/direct/agent-42")
 
-    def test_derive_storage_root_direct(self):
-        result = derive_storage_root("direct", "agent-42", "/data")
-        assert result == os.path.join("/data", "agents", "agent-42", "attachments")
+    def test_thread_lives_under_the_floor(self):
+        result = storage_dir(Path("/company/floor-1"), "thread", "chan-2")
+        assert result == Path("/company/floor-1/.attachments/thread/chan-2")
 
-    def test_derive_storage_root_channel(self):
-        result = derive_storage_root("channel", "proj-1/chan-2", "/data")
-        assert result == os.path.join("/data", "projects", "proj-1", "channels", "chan-2", "attachments")
-
-    def test_derive_storage_root_unscoped(self):
-        result = derive_storage_root("unscoped", "", "/data")
-        assert result == os.path.join("/data", "shared", "attachments")
-
-    def test_derive_storage_root_invalid_type_raises(self):
+    @pytest.mark.parametrize("retired", ["channel", "unscoped", "bogus"])
+    def test_only_real_conversation_kinds_are_accepted(self, retired):
         with pytest.raises(ValueError, match="Invalid context_type"):
-            derive_storage_root("bogus", "x", "/data")
+            storage_dir(Path("/company/floor-1"), retired, "x")
+
+
+class TestVirtualPath:
+    def test_mirrors_storage_dir_under_projects(self):
+        assert (
+            virtual_path("thread", "chan-2", "u_a.png")
+            == "/projects/.attachments/thread/chan-2/u_a.png"
+        )
+
+    def test_invalid_type_raises(self):
+        with pytest.raises(ValueError, match="Invalid context_type"):
+            virtual_path("unscoped", "", "u_a.png")
 
 
 # ---------------------------------------------------------------------------

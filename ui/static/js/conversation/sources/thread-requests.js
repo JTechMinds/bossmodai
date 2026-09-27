@@ -32,6 +32,11 @@ const BossModThreadRequests = (() => {
                 const data = JSON.parse(text);
                 const detail = data && data.detail;
                 if (typeof detail === 'string' && detail.trim()) return detail.trim();
+                // Structured refusals (e.g. a 422 attachment link) say
+                // `{detail: {error, code, ...}}`; the error is the reason.
+                if (detail && typeof detail.error === 'string' && detail.error.trim()) {
+                    return detail.error.trim();
+                }
             } catch { /* keep the raw body */ }
         }
         return text || fallback;

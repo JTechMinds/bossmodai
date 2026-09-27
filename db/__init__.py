@@ -343,6 +343,9 @@ from db.ai_connections import (
     update_connection,
 )
 
+# Model capabilities (operator-set, keyed by raw model name)
+from db.model_capabilities import set_supports_images, supports_images
+
 # AI Personalities
 from db.ai_personalities import (
     create_personality,
@@ -607,6 +610,8 @@ __all__ = [
     "list_connections",
     "restore_connections",
     "update_connection",
+    "set_supports_images",
+    "supports_images",
     # AI Personalities
     "create_personality",
     "delete_personality",

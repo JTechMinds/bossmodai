@@ -141,6 +141,8 @@ EXPECTED_ROUTES = {
     (("PATCH",), "/api/personalities/{personality_id}", "update_personality"),
     (("DELETE",), "/api/personalities/{personality_id}", "delete_personality"),
     (("POST",), "/api/attachments/upload", "upload_attachment"),
+    (("GET",), "/api/attachments/limits", "attachment_limits"),
+    (("DELETE",), "/api/attachments/{attachment_id}", "delete_attachment"),
     (("GET",), "/api/attachments/{attachment_id}", "download_attachment"),
     (("GET",), "/api/attachments/{attachment_id}/preview", "preview_attachment"),
 }
@@ -157,7 +159,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 133
+    assert len(got) == 135
 
 
 def test_from_api_routes_import_router_still_works() -> None:

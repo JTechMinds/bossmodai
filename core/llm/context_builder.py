@@ -23,6 +23,7 @@ from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.models import Agent, AgentState
 from core.models.notification import Notification
+from core.llm.attachment_parts import history_manifests, mark_trigger_attachments
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.tasking import build_task_board
@@ -153,9 +154,15 @@ class TurnContext:
 def build_context(
     turn: TurnContext,
     template_overrides: dict[str, str] | None = None,
-) -> list[dict[str, str]]:
-    """Assemble the full message list for an agent turn."""
-    messages: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    """Assemble the full message list for an agent turn.
+
+    Messages stay text-only. A trigger with ``attachment_ids`` names them
+    under ``ATTACHMENT_IDS_KEY`` (expanded later, per model, by
+    ``client.completion``) and gains a manifest line; earlier messages with
+    attachments get the manifest line only, so files are not resent.
+    """
+    messages: list[dict[str, Any]] = []
     render_context = _build_prompt_render_context(turn)
     system_prompt = _render_system_prompt(turn, render_context, template_overrides)
 
@@ -195,10 +202,13 @@ def build_context(
         if paused_work:
             messages.append({"role": "system", "content": paused_work})
 
+    manifests = history_manifests(turn.conversation_history)
     for msg in turn.conversation_history:
         role = "assistant" if msg.get("from_agent") == turn.agent.id else "user"
         sender = msg.get("from_name", "Unknown")
         content = msg.get("content", "")
+        if msg.get("id") in manifests:
+            content = f"{content}\n{manifests[msg['id']]}"
 
         if role == "user":
             messages.append({"role": "user", "content": f"[{sender}]: {content}"})
@@ -206,7 +216,8 @@ def build_context(
             messages.append({"role": "assistant", "content": content})
 
     # ─── Trigger event ───
-    messages.append({"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind, template_overrides)})
+    trigger_message = {"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind, template_overrides)}
+    messages.append(mark_trigger_attachments(trigger_message, turn.trigger.get("attachment_ids")))
 
     return messages
 

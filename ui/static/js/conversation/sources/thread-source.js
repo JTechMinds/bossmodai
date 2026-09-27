@@ -119,6 +119,9 @@ const BossModThreadSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
+                // History rows and live echoes both carry the linked files;
+                // a row without any has none, which the renderer skips.
+                attachments: Array.isArray(raw.attachments) ? raw.attachments : null,
                 systemReceipt: false,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
@@ -150,6 +153,8 @@ const BossModThreadSource = (() => {
          * and keep the text.
          *
          * @param {string} text
+         * @param {string[]} [attachmentIds]  Pending uploads to link to this
+         *   post; the server rejects any that are unknown or already sent.
          * @returns {Promise<void>}
          * @throws {Error} On any failure, so the send gate keeps the draft.
          */
@@ -160,9 +165,20 @@ const BossModThreadSource = (() => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+            });
             if (!res.ok) {
                 throw new Error(await refusal(res, 'Could not post to this thread.'));
             }
+        }
+
+        /**
+         * Where an upload for this thread belongs. The server resolves the
+         * thread's floor from this, so the id must be the real thread id.
+         *
+         * @returns {{type: 'thread', id: string}}
+         */
+        function context() {
+            return { type: 'thread', id: threadId };
         }
 
         /**
@@ -367,6 +383,7 @@ const BossModThreadSource = (() => {
             kind: 'thread',
             load,
             send,
+            context,
             subscribe,
             chrome,
             emptyState: () => ({ title: 'No thread messages yet.', hint: '' }),

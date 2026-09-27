@@ -1007,4 +1007,5 @@ span.mention-pill { cursor: default; }
   align-items: center;
 }
 
-.composer-attach:hover { color: var(--ink); }
+.composer-attach:hover:not(:disabled) { color: var(--ink); }
+.composer-attach:disabled { opacity: 0.5; cursor: not-allowed; }

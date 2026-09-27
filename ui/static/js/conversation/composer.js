@@ -33,15 +33,15 @@ const BossModComposer = (() => {
      *   thread.
      * @param {() => string} deps.disabledReason  Shown as the placeholder when
      *   `canSend()` is false; '' otherwise.
-     * @param {(files: File[], context: object) => Promise<Array<object>>} [deps.onAttach]
-     *   Uploads files to the server; resolves with metadata array. Rejects on any failure.
-     * @param {() => object} [deps.getContext]
-     *   Returns the current message context {type, id} for the active conversation.
+     * @param {Function} deps.onAttach  Uploads files (see composer-attachments.js).
+     * @param {Function} deps.getContext  The open conversation {type, id}; throws when none.
+     * @param {Function} deps.onRemoveAttachment  Discards one pending upload.
+     * @param {Function} deps.getAttachmentLimits  Resolves `{max_per_message}`.
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
-     *             sendText: Function, setError: Function, readDraft: Function,
-     *             setDraft: Function, insertMention: Function, destroy: Function,
-     *             addPendingAttachment: Function, removePendingAttachment: Function,
-     *             getPendingAttachments: Function, clearPendingAttachments: Function }}
+     *             sendText: Function, setError: Function,
+     *             readDraft: () => {text: string, attachments: object[]},
+     *             setDraft: (draft: {text: string, attachments: object[]}|null) => void,
+     *             insertMention: Function, destroy: Function }}
      * @throws {Error} When any dependency is missing. A composer with no send
      *   path would look usable and silently do nothing.
      */
@@ -50,8 +50,6 @@ const BossModComposer = (() => {
         const onSend = deps && deps.onSend;
         const canSend = deps && deps.canSend;
         const disabledReason = deps && deps.disabledReason;
-        const onAttach = deps && deps.onAttach;
-        const getContext = deps && deps.getContext;
         if (!store) throw new Error('[composer] deps.store is required');
         if (typeof onSend !== 'function') throw new Error('[composer] deps.onSend is required');
         if (typeof canSend !== 'function') throw new Error('[composer] deps.canSend is required');
@@ -63,86 +61,27 @@ const BossModComposer = (() => {
         const disposers = [];
         let mentions = null;
 
-        // ── Pending attachments ──
-        const MAX_ATTACHMENTS = 5;
-        let pendingAttachments = [];
-        const pendingStrip = h('div', { class: 'composer-attachments hidden' });
-
-        function renderPendingStrip() {
-            pendingStrip.replaceChildren();
-            if (pendingAttachments.length === 0) {
-                pendingStrip.classList.add('hidden');
-                return;
-            }
-            pendingStrip.classList.remove('hidden');
-            for (const meta of pendingAttachments) {
-                const chip = h('span', { class: 'composer-attach-chip' },
-                    h('span', { class: 'composer-attach-chip-name' }, meta.file_name || 'file'),
-                    h('span', { class: 'composer-attach-chip-size' }, humanSize(meta.file_size || 0)),
-                    h('button', {
-                        type: 'button',
-                        class: 'composer-attach-chip-remove',
-                        'aria-label': 'Remove ' + (meta.file_name || 'attachment'),
-                        onclick: () => removePendingAttachment(meta.id),
-                    }, '×'));
-                pendingStrip.append(chip);
-            }
-        }
-
-        function humanSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / 1048576).toFixed(1) + ' MB';
-        }
-
-        function addPendingAttachment(meta) {
-            if (pendingAttachments.length >= MAX_ATTACHMENTS) {
-                setError('Maximum ' + MAX_ATTACHMENTS + ' attachments per message.');
-                return;
-            }
-            pendingAttachments.push(meta);
-            renderPendingStrip();
-        }
-
-        function removePendingAttachment(id) {
-            pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
-            renderPendingStrip();
-        }
-
-        function getPendingAttachments() {
-            return pendingAttachments.slice();
-        }
-
-        function clearPendingAttachments() {
-            pendingAttachments = [];
-            renderPendingStrip();
-        }
-
-        async function handleFiles(files) {
-            if (!onAttach || !getContext) return;
-            const ctx = getContext();
-            try {
-                const results = await onAttach(Array.from(files), ctx);
-                for (const meta of results) addPendingAttachment(meta);
-            } catch (err) {
-                const name = (err && err.fileName) || '';
-                const msg = (err && err.message) || 'Upload failed';
-                setError(name ? name + ': ' + msg : msg);
-            }
-        }
+        // Uploads, the cap and the chips live in the tray; it throws on any
+        // missing attachment dependency.
+        const tray = BossModComposerAttachments.createAttachmentTray({
+            onAttach: deps.onAttach,
+            getContext: deps.getContext,
+            onRemoveAttachment: deps.onRemoveAttachment,
+            getAttachmentLimits: deps.getAttachmentLimits,
+            setError: (message) => setError(message),
+        });
 
         // Paste handler for images. The paste payload is read through bracket
         // access so the source never names the browser's clipboard object —
         // the composer stays a field and a send button, not a form door.
         function onPaste(event) {
-            if (!onAttach || !getContext) return;
             const clip = event['clip' + 'boardData'];
             const files = clip && clip.files;
             if (!files || files.length === 0) return;
             const imageFiles = Array.from(files).filter((f) => f.type && f.type.startsWith('image/'));
             if (imageFiles.length === 0) return;
             event.preventDefault();
-            void handleFiles(imageFiles);
+            void tray.addFiles(imageFiles);
         }
 
         function grow() {
@@ -230,7 +169,7 @@ const BossModComposer = (() => {
         });
         fileInput.addEventListener('change', () => {
             if (fileInput.files && fileInput.files.length) {
-                void handleFiles(fileInput.files);
+                void tray.addFiles(fileInput.files);
                 fileInput.value = '';
             }
         });
@@ -247,7 +186,7 @@ const BossModComposer = (() => {
 
         const element = h('div', { class: 'composer' },
             label,
-            pendingStrip,
+            tray.element,
             h('div', { class: 'composer-row' }, input, attachBtn, sendBtn),
             fileInput,
             hintEl,
@@ -267,6 +206,8 @@ const BossModComposer = (() => {
             const allowed = canSend();
             const enabled = hasUsableModel && allowed;
             sendBtn.disabled = !enabled;
+            // No open conversation (or a sealed one) has nowhere to file an upload.
+            attachBtn.disabled = !enabled;
             input.disabled = !enabled;
             input.setAttribute('contenteditable', enabled ? 'true' : 'false');
             input.setAttribute('aria-disabled', enabled ? 'false' : 'true');
@@ -303,16 +244,18 @@ const BossModComposer = (() => {
          * @returns {Promise<object>} The gate's verdict; never rejects.
          */
         async function submit() {
-            const attIds = pendingAttachments.map((a) => a.id);
+            const attIds = tray.ids();
             const result = await sendGate.submit({
                 input,
                 applyIdleState: applyState,
-                canSubmit: () => store.getState().hasUsableModel === true && canSend() && (input.value.trim() || pendingAttachments.length > 0),
-                hasPayload: pendingAttachments.length > 0,
+                canSubmit: () => store.getState().hasUsableModel === true && canSend() && (input.value.trim() || attIds.length > 0),
+                hasPayload: attIds.length > 0,
                 send: (text) => onSend(text, attIds),
                 onQueued: setQueued,
                 onSuccess: () => {
-                    clearPendingAttachments();
+                    // Only what this send linked: files attached while it was
+                    // in flight belong to the next message.
+                    tray.removeSent(attIds);
                     setError('');
                     grow();
                 },
@@ -366,13 +309,12 @@ const BossModComposer = (() => {
             applyState,
             sendText,
             setError,
-            addPendingAttachment,
-            removePendingAttachment,
-            getPendingAttachments,
-            clearPendingAttachments,
-            readDraft: () => input.value,
-            setDraft: (text) => {
-                input.value = String(text == null ? '' : text);
+            // A draft is the text plus its pending uploads: both are scoped to
+            // one conversation, so they are stashed and restored together.
+            readDraft: () => ({ text: input.value, attachments: tray.list() }),
+            setDraft: (draft) => {
+                input.value = draft ? String(draft.text == null ? '' : draft.text) : '';
+                tray.replace(draft ? draft.attachments : null);
                 grow();
                 if (mentions) mentions.sync();
             },

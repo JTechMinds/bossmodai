@@ -90,9 +90,11 @@ const BossModConversation = (() => {
                 return Promise.all(results);
             },
             getContext: () => {
-                if (!source) return { type: 'unscoped', id: '' };
-                return source.context ? source.context() : { type: 'direct', id: '' };
+                if (!source) throw new Error(NO_CONVERSATION_REASON);
+                return source.context();
             },
+            onRemoveAttachment: (id) => BossModApi.deleteAttachment(id),
+            getAttachmentLimits: () => BossModApi.getAttachmentLimits(),
         });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({
@@ -308,7 +310,7 @@ const BossModConversation = (() => {
             }
             chrome.reset();  // a half-typed rename must not follow the switch
             applyChrome();
-            composer.setDraft(drafts.get(id) || '');
+            composer.setDraft(drafts.get(id) || null);
             composer.applyState();
 
             let messages;

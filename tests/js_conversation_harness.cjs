@@ -24,7 +24,7 @@ const NAMES = [
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
-    "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
+    "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation",
@@ -68,14 +68,29 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 const activations = [];
+// Held open to keep a send in flight; null lets activations answer at once.
+let activationGate = null;
+// The 422 a send gets when its attachments cannot be linked.
+let linkRefused = false;
+const LINK_REFUSAL = "Some attachments are unknown, already sent, or belong to another conversation.";
+const linkRefusal = () => ({
+    ok: false,
+    status: 422,
+    async text() {
+        return JSON.stringify({ detail: { error: LINK_REFUSAL, code: "ATTACHMENT_LINK", missing_ids: ["gone"] } });
+    },
+});
 const api = async (url, init) => {
     const text = String(url);
     requestLog.push(text);
     const activate = text.match(/^\/api\/agents\/([^/]+)\/activate$/);
     if (activate) {
         activations.push({ id: activate[1], body: JSON.parse((init && init.body) || "{}") });
+        if (activationGate) await activationGate;
+        if (linkRefused) return linkRefusal();
         return { ok: true, async json() { return {}; } };
     }
+    if (/^\/api\/channels\/[^/]+\/messages$/.test(text) && linkRefused) return linkRefusal();
     const agent = text.match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
         const id = agent[1];
@@ -107,6 +122,17 @@ const api = async (url, init) => {
         };
     }
     throw new Error(`unhandled ${text}`);
+};
+
+// conversation.js uploads through the shared client, which the browser
+// defines in api-client.js. Scripted here: the id names the conversation it
+// was uploaded for, so a chip that followed the wrong conversation shows.
+global.BossModApi = {
+    async uploadAttachment(file, context) {
+        return { id: `${context.id}:${file.name}`, file_name: file.name, file_size: 1, mime_type: file.type, preview_tier: "image" };
+    },
+    async deleteAttachment() {},
+    async getAttachmentLimits() { return { max_size_mb: 10, max_per_message: 5 }; },
 };
 
 const store = BossModStore.createStore({
@@ -775,6 +801,69 @@ async function main() {
         throw new Error(`the greeting must send through the composer: ${JSON.stringify(activations)}`);
     }
 
+    // ─── attachmentsFollowTheirConversation ───
+    // Pending uploads are scoped to one conversation on the server, so they
+    // are stashed and restored with that conversation's text draft.
+    const chips = () => conversation.element
+        .querySelectorAll(".composer-attach-chip-name").map((node) => node.textContent);
+    const paste = async (name) => {
+        composerInput.dispatchEvent({
+            type: "paste",
+            clipboardData: { files: [{ name, type: "image/png" }] },
+            preventDefault() {},
+        });
+        for (let i = 0; i < 5; i += 1) await tick();
+    };
+    await conversation.open("a", "agent");
+    composerInput.value = "see file";
+    await paste("x.png");
+    const onA = chips().join("|");
+    await conversation.open("b", "agent");
+    const onB = chips().join("|");
+    await conversation.open("a", "agent");
+    const attachmentsFollowTheirConversation = onA === "x.png" && onB === ""
+        && chips().join("|") === "x.png" && composerInput.value === "see file";
+    if (!attachmentsFollowTheirConversation) {
+        throw new Error(`chips must follow their conversation: a="${onA}" b="${onB}" back="${chips().join("|")}"`);
+    }
+
+    // ─── inFlightSendKeepsNewerChips ───
+    // A send drops only the uploads it linked; one attached while it was in
+    // flight belongs to the next message.
+    let release = null;
+    activationGate = new Promise((resolve) => { release = resolve; });
+    const sent = activations.length;
+    await conversation.element.querySelector(".composer-send").dispatchClick();
+    await tick();
+    await paste("y.png");
+    release();
+    activationGate = null;
+    for (let i = 0; i < 5; i += 1) await tick();
+    const inFlightSendKeepsNewerChips = chips().join("|") === "y.png"
+        && JSON.stringify(activations[sent].body.attachment_ids) === JSON.stringify(["a:x.png"]);
+    if (!inFlightSendKeepsNewerChips) {
+        throw new Error(`in-flight send wrong: chips="${chips().join("|")}" sent=${JSON.stringify(activations[sent])}`);
+    }
+
+    // ─── structuredRefusalShowsItsError ───
+    // A 422 with `{detail: {error, code, missing_ids}}` reads as its error
+    // text on the composer, for a DM and a thread alike — never raw JSON.
+    const composerError = () => conversation.element.querySelector(".composer-error").textContent;
+    linkRefused = true;
+    const refusedErrors = [];
+    for (const [id, kind] of [["a", "agent"], ["t1", "thread"]]) {
+        await conversation.open(id, kind);
+        composerInput.value = "refused";
+        await conversation.element.querySelector(".composer-send").dispatchClick();
+        for (let i = 0; i < 5; i += 1) await tick();
+        refusedErrors.push(composerError());
+    }
+    linkRefused = false;
+    const structuredRefusalShowsItsError = refusedErrors.every((text) => text === LINK_REFUSAL);
+    if (!structuredRefusalShowsItsError) {
+        throw new Error(`a structured refusal must show its error: ${JSON.stringify(refusedErrors)}`);
+    }
+
     // Destroying drains everything the controller ever subscribed.
     conversation.destroy();
     offOperatorInvalidate();
@@ -808,6 +897,9 @@ async function main() {
         receiptsNodeSurvivesReopen,
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
+        attachmentsFollowTheirConversation,
+        inFlightSendKeepsNewerChips,
+        structuredRefusalShowsItsError,
         agentNameIsChromeOutside,
         quietAuthor,
         authorUsesAgentColor,

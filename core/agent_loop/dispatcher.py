@@ -27,6 +27,7 @@ from core.llm.call_budget import (
     max_concurrent_model_calls,
     reset_turn_lane,
 )
+from core.llm.attachment_parts import AttachmentUnavailableError
 from core.llm.client import close_provider_sessions
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
@@ -869,11 +870,13 @@ class TurnDispatcher:
                     )
                 else:
                     await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
+                    # A missing attachment file will not reappear on retry;
+                    # retrying only burns calls. It is still recorded above.
                     await self._supervise_failed_turn(
                         agent=agent,
                         trigger=trigger,
                         failure_detail=str(exc),
-                        retryable=True,
+                        retryable=not isinstance(exc, AttachmentUnavailableError),
                     )
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")

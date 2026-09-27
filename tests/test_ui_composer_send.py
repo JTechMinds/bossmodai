@@ -110,7 +110,8 @@ def test_composer_passes_has_payload_to_gate() -> None:
     submit = composer.split("async function submit() {", 1)[1].split(
         "disposers.push(", 1
     )[0]
-    assert "hasPayload: pendingAttachments.length > 0" in submit
+    assert "const attIds = tray.ids();" in submit
+    assert "hasPayload: attIds.length > 0" in submit
 
 
 def test_sources_include_attachment_ids_in_payload() -> None:
@@ -135,3 +136,28 @@ def test_attach_button_not_gated_by_text_validation() -> None:
     assert "fileInput.click()" in attach_block
     assert "input.value" not in attach_block
     assert "canSend" not in attach_block
+
+
+def test_conversation_sources_parse() -> None:
+    """Every script the chat pane depends on must at least parse.
+
+    The substring checks above passed on unparseable code: PR #160 dropped a
+    `});` from both sources, `BossModAgentSource` / `BossModThreadSource`
+    were never defined, and the chat pane died. `node --check` catches that.
+    """
+    for name in (
+        "conversation/sources/agent-source.js",
+        "conversation/sources/thread-source.js",
+        "conversation/composer.js",
+        "conversation/composer-attachments.js",
+        "core/gates.js",
+        "conversation/conversation.js",
+        "api-client.js",
+    ):
+        result = subprocess.run(
+            ["node", "--check", str(JS / name)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{name} does not parse:\n{result.stderr}"

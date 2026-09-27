@@ -66,15 +66,34 @@
     }
 
     /**
+     * The message an attachment endpoint refused with. Those endpoints send
+     * `detail: {error, code}`; anything else falls back to the shared reader.
+     * @param {Response} res
+     * @returns {Promise<string>}
+     */
+    async function attachmentErrorMessage(res) {
+        const payload = await res.json().catch(() => ({}));
+        const detail = payload && payload.detail;
+        if (detail && typeof detail === 'object' && typeof detail.error === 'string') return detail.error;
+        return formatApiError(payload, res.status);
+    }
+
+    /**
      * Upload one file attachment. Returns the server metadata object.
      * @param {File} file
-     * @param {{type: string, id: string}} context
-     * @returns {Promise<object>}
+     * @param {{type: 'direct'|'thread', id: string}} context  The open
+     *   conversation; required, because the server files the upload under it.
+     * @returns {Promise<object>} `{id, file_name, file_size, mime_type, preview_tier}`.
+     * @throws {Error} When no context is given, or the server refuses the file
+     *   (`err.code` and `err.fileName` are set).
      */
     async function uploadAttachment(file, context) {
+        if (!context || !context.type || !context.id) {
+            throw new Error('[api] uploadAttachment needs the conversation context');
+        }
         const form = new FormData();
         form.append('file', file);
-        form.append('message_context', JSON.stringify(context || { type: 'unscoped', id: '' }));
+        form.append('message_context', JSON.stringify(context));
         form.append('original_name', file.name);
         const res = await apiFetch('/api/attachments/upload', { method: 'POST', body: form });
         if (!res.ok) {
@@ -89,6 +108,33 @@
         return res.json();
     }
 
+    /**
+     * Discard a pending upload the operator removed before sending.
+     * @param {string} id
+     * @returns {Promise<void>}
+     * @throws {Error} With the server's reason (e.g. the file was already sent).
+     */
+    async function deleteAttachment(id) {
+        if (!id) throw new Error('[api] deleteAttachment needs an attachment id');
+        const res = await apiFetch(`/api/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await attachmentErrorMessage(res));
+    }
+
+    /**
+     * The operator-set upload limits.
+     * @returns {Promise<{max_size_mb: number, max_per_message: number}>}
+     * @throws {Error} On a failed request or a response without both limits.
+     */
+    async function getAttachmentLimits() {
+        const res = await apiFetch('/api/attachments/limits', { cache: 'no-store' });
+        if (!res.ok) throw new Error(await attachmentErrorMessage(res));
+        const limits = await res.json();
+        if (!limits || !Number.isInteger(limits.max_size_mb) || !Number.isInteger(limits.max_per_message)) {
+            throw new Error('[api] attachment limits response is malformed');
+        }
+        return limits;
+    }
+
     window.apiFetch = apiFetch;
     window.apiFetchOk = apiFetchOk;
     window.apiFetchBlobUrl = apiFetchBlobUrl;
@@ -97,6 +143,8 @@
         fetchOk: apiFetchOk,
         fetchBlobUrl: apiFetchBlobUrl,
         uploadAttachment: uploadAttachment,
+        deleteAttachment: deleteAttachment,
+        getAttachmentLimits: getAttachmentLimits,
         formatError: formatApiError,
         tokenHeader: TOKEN_HEADER,
     };

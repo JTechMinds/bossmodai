@@ -96,6 +96,9 @@ const BossModAgentSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
+                // History rows and live echoes both carry the linked files;
+                // a row without any has none, which the renderer skips.
+                attachments: Array.isArray(raw.attachments) ? raw.attachments : null,
                 systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote,
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
@@ -132,6 +135,11 @@ const BossModAgentSource = (() => {
                     const data = JSON.parse(text);
                     const detail = data && data.detail;
                     if (typeof detail === 'string' && detail.trim()) return detail.trim();
+                    // Structured refusals (e.g. a 422 attachment link) say
+                    // `{detail: {error, code, ...}}`; the error is the reason.
+                    if (detail && typeof detail.error === 'string' && detail.error.trim()) {
+                        return detail.error.trim();
+                    }
                 } catch { /* keep the fallback */ }
             }
             return text || fallback;
@@ -145,6 +153,8 @@ const BossModAgentSource = (() => {
          * the server's reason so the composer can show it.
          *
          * @param {string} text
+         * @param {string[]} [attachmentIds]  Pending uploads to link to this
+         *   message; the server rejects any that are unknown or already sent.
          * @returns {Promise<void>}
          * @throws {Error} On any failure, so the send gate keeps the draft.
          */
@@ -155,7 +165,18 @@ const BossModAgentSource = (() => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+            });
             if (!res.ok) throw new Error(await refusal(res));
+        }
+
+        /**
+         * Where an upload for this conversation belongs. The server resolves
+         * the agent's floor from this, so the id must be the real agent id.
+         *
+         * @returns {{type: 'direct', id: string}}
+         */
+        function context() {
+            return { type: 'direct', id: agentId };
         }
 
         /**
@@ -262,6 +283,7 @@ const BossModAgentSource = (() => {
             kind: 'agent',
             load,
             send,
+            context,
             subscribe,
             chrome,
             // The face too: a conversation nobody has spoken in is where the

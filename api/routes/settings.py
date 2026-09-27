@@ -29,6 +29,8 @@ import db
 
 router = APIRouter()
 
+_IMAGE_FLAG_NEEDS_MODEL = "Set a model before marking it image-capable"
+
 
 def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
     """Map one persisted setting to the Settings section ids the UI owns."""
@@ -247,27 +249,62 @@ async def get_connection(connection_id: str):
 
 @router.post("/connections", status_code=201)
 async def create_connection(body: AIConnectionCreate):
-    conn = serialize_connection(db.create_connection(
+    """Create an AI connection and, when sent, record its model's image flag.
+
+    The flag is keyed by model name and shared with every other connection
+    naming that model, so an omitted flag writes nothing.
+
+    Raises:
+        HTTPException: 400 when ``supports_images`` is set without a model,
+            since the flag is keyed by model name.
+    """
+    has_model = bool(body.model and body.model.strip())
+    if body.supports_images and not has_model:
+        raise HTTPException(400, _IMAGE_FLAG_NEEDS_MODEL)
+    created = db.create_connection(
         name=body.name,
         api_base_url=body.api_base_url,
         api_key=body.api_key,
         model=body.model,
         extra_body=body.extra_body,
-    ))
+    )
+    if has_model and body.supports_images is not None:
+        db.set_supports_images(body.model, body.supports_images)
+    conn = serialize_connection(created)
     await _broadcast_operator_surfaces(["connections"])
     return conn
 
 
 @router.patch("/connections/{connection_id}")
 async def update_connection(connection_id: str, body: AIConnectionUpdate):
+    """Patch an AI connection and, when sent, its model's image flag.
+
+    The flag is written for the effective model (the patched ``model`` if
+    present, else the stored one) after the connection update succeeds.
+
+    Raises:
+        HTTPException: 400 when nothing is sent, or ``supports_images`` is
+            true with no effective model; 404 for an unknown connection.
+    """
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
     if fields.get("api_key") == "":
         fields.pop("api_key", None)
+    image_flag = fields.pop("supports_images", None)
+    effective_model: str | None = None
+    if image_flag is not None:
+        existing = db.get_connection_by_id(connection_id)
+        if existing is None:
+            raise HTTPException(404, "Connection not found")
+        effective_model = fields["model"] if "model" in fields else existing.model
+        if image_flag and not (effective_model and effective_model.strip()):
+            raise HTTPException(400, _IMAGE_FLAG_NEEDS_MODEL)
     conn = db.update_connection(connection_id, **fields)
     if not conn:
         raise HTTPException(404, "Connection not found")
+    if image_flag is not None and effective_model and effective_model.strip():
+        db.set_supports_images(effective_model, image_flag)
     await _broadcast_operator_surfaces(["connections"])
     return serialize_connection(conn)
 

@@ -415,3 +415,27 @@ def test_all_split_files_exist_and_are_nonempty() -> None:
         path = JS / name
         assert path.is_file(), name
         assert path.stat().st_size > 80, name
+
+
+def test_connection_form_sends_the_supports_images_switch() -> None:
+    """The form's image flag is the shared switch, sent only once toggled.
+
+    Create and edit share one ``data`` payload, so the key being added to it
+    once covers the POST and the PATCH. The flag is shared by every
+    connection naming the model, so an untouched switch must not send it.
+    The switch is the project's one toggle, gated on a model being named.
+    """
+    source = _read("settings/settings-connections-form.js")
+    assert "BossModSwitch.create({" in source
+    assert "label: 'Supports images'" in source
+    assert "pressed: supportsImages" in source
+    assert "let supportsImages = conn?.supports_images === true;" in source
+    assert "onChange: (pressed) => { supportsImages = pressed; imagesToggled = true; }," in source
+    assert "if (imagesToggled) data.supports_images = supportsImages;" in source
+    assert "supports_images: supportsImages," not in source
+    assert "type=\"checkbox\"" not in source
+    assert "imagesSwitch.element.disabled = !hasModel;" in source
+    assert "Applies to every agent using this model." in source
+    body = source.split("addEventListener('submit'", 1)[1]
+    assert "if (imagesToggled) data.supports_images = supportsImages;" in body
+    assert body.count("body: JSON.stringify(data)") == 2

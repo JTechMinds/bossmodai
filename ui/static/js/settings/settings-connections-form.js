@@ -57,6 +57,8 @@ const BossModConnectionForm = (() => {
      * @param {object|null} conn  The connection to edit, or null to create.
      *   An existing connection never carries its full key — only the last four
      *   digits — so a blank key field means "keep the saved one".
+     *   `supports_images` seeds the "Supports images" switch; the create and
+     *   the update payload send it only after the switch was toggled.
      * @param {object} options
      * @param {Element} options.container  The section's content element; the
      *   form replaces the list in place, as it did before the split.
@@ -122,6 +124,8 @@ const BossModConnectionForm = (() => {
                                placeholder="e.g. llama3 or openai/gpt-4.1-mini"
                                class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                       bg-bm-bg">
+                        <div id="connection-supports-images" class="mt-2"></div>
+                        <p class="text-xs text-bm-muted mt-1">Applies to every agent using this model. Names match exactly: <code>gpt-4o</code> and <code>openai/gpt-4o</code> are separate.</p>
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Extra Body Params</label>
@@ -155,6 +159,30 @@ const BossModConnectionForm = (() => {
 
         document.getElementById('btn-cancel-conn').addEventListener('click', onDone);
         bindApiKeyFieldControls(container);
+
+        // Image support is keyed by model name, so it means nothing until a
+        // model is named. The switch is the project's one toggle component.
+        // The flag is shared by every connection naming the model, so it is
+        // only sent once the operator has actually toggled it here.
+        let supportsImages = conn?.supports_images === true;
+        let imagesToggled = false;
+        const imagesSwitch = BossModSwitch.create({
+            label: 'Supports images',
+            pressed: supportsImages,
+            onChange: (pressed) => { supportsImages = pressed; imagesToggled = true; },
+        });
+        document.getElementById('connection-supports-images').append(imagesSwitch.element);
+        const modelInput = document.querySelector('#connection-form [name="model"]');
+        function syncImagesSwitch() {
+            const hasModel = String(modelInput.value || '').trim() !== '';
+            imagesSwitch.element.disabled = !hasModel;
+            if (!hasModel && supportsImages) {
+                supportsImages = false;
+                imagesSwitch.set(false);
+            }
+        }
+        modelInput.addEventListener('input', syncImagesSwitch);
+        syncImagesSwitch();
 
         document.getElementById('btn-test-conn').addEventListener('click', async () => {
             const form = document.getElementById('connection-form');
@@ -224,6 +252,7 @@ const BossModConnectionForm = (() => {
                 model: fd.get('model') || null,
                 extra_body: fd.get('extra_body')?.trim() || null,
             };
+            if (imagesToggled) data.supports_images = supportsImages;
             const enteredKey = fd.get('api_key');
             if (enteredKey) {
                 data.api_key = enteredKey;

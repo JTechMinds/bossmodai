@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from core.attachments import ContextType
+
 PreviewTier = Literal["image", "text", "document", "other"]
 
 
@@ -26,4 +28,6 @@ class Attachment(BaseModel):
     mime_type: str
     storage_path: str
     preview_tier: PreviewTier
+    context_type: ContextType
+    context_id: str
     created_at: datetime

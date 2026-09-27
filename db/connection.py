@@ -319,6 +319,8 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     )
     _backfill_task_closed_at(con)
     _create_work_snapshots_table_if_missing(con)
+    _ensure_attachment_context_columns(con)
+    _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
     # Last, and before init_db backfills missing identities: a backfill
     # allocates from this ledger, so the ledger must already know every key
@@ -404,6 +406,102 @@ def _create_work_snapshots_table_if_missing(con: SQLiteCompatConnection) -> None
             no_progress_checkpoints  INTEGER NOT NULL DEFAULT 0,
             created_at               TIMESTAMP DEFAULT current_timestamp,
             updated_at               TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+
+
+def _ensure_attachment_context_columns(con: SQLiteCompatConnection) -> None:
+    """Rebuild ``attachments`` with its conversation scope columns.
+
+    ``context_type``/``context_id`` are NOT NULL with a CHECK, which SQLite
+    cannot add with ALTER TABLE, so the table is rebuilt once. Linked rows
+    are backfilled from their message: a DM row gets ``direct`` and the
+    agent's id, a channel row gets ``thread`` and the channel id. Pending
+    rows are deleted: they predate conversation scoping, were stored in the
+    wrong folder, and can never be linked under the new rules.
+
+    Raises:
+        RuntimeError: A linked row points at a message that no longer exists,
+            so its conversation cannot be derived. Nothing is changed.
+    """
+    columns = {row[1] for row in con.execute("PRAGMA table_info(attachments)").fetchall()}
+    if "context_type" in columns and "context_id" in columns:
+        return
+    from core.models.message import HUMAN_SENDER_ID
+
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("DELETE FROM attachments WHERE message_id = 'pending'")
+        unresolved = con.execute(
+            """
+            SELECT COUNT(*) FROM attachments a
+            WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = a.message_id)
+              AND NOT EXISTS (SELECT 1 FROM channel_messages c WHERE c.id = a.message_id)
+            """
+        ).fetchone()[0]
+        if unresolved:
+            raise RuntimeError(
+                f"Migration: {unresolved} attachment row(s) are linked to messages that no "
+                "longer exist, so their conversation cannot be derived. Resolve those rows "
+                "before starting BossMod."
+            )
+        con.execute(
+            """
+            CREATE TABLE attachments__new (
+                id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                message_id      VARCHAR NOT NULL,
+                file_name       VARCHAR NOT NULL,
+                file_size       BIGINT  NOT NULL,
+                mime_type       VARCHAR NOT NULL,
+                storage_path    VARCHAR NOT NULL,
+                preview_tier    VARCHAR NOT NULL CHECK (preview_tier IN ('image', 'text', 'document', 'other')),
+                context_type    VARCHAR NOT NULL CHECK (context_type IN ('direct', 'thread')),
+                context_id      VARCHAR NOT NULL,
+                created_at      TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO attachments__new (
+                id, message_id, file_name, file_size, mime_type, storage_path,
+                preview_tier, context_type, context_id, created_at
+            )
+            SELECT a.id, a.message_id, a.file_name, a.file_size, a.mime_type,
+                   a.storage_path, a.preview_tier, 'direct',
+                   CASE WHEN m.from_agent = $1 THEN m.to_agent ELSE m.from_agent END,
+                   a.created_at
+            FROM attachments a JOIN messages m ON m.id = a.message_id
+            UNION ALL
+            SELECT a.id, a.message_id, a.file_name, a.file_size, a.mime_type,
+                   a.storage_path, a.preview_tier, 'thread', c.channel_id, a.created_at
+            FROM attachments a JOIN channel_messages c ON c.id = a.message_id
+            """,
+            [HUMAN_SENDER_ID],
+        )
+        con.execute("DROP TABLE attachments")
+        con.execute("ALTER TABLE attachments__new RENAME TO attachments")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id)")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attachments_message_created "
+            "ON attachments(message_id, created_at)"
+        )
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    logger.info("Migration: rebuilt attachments with context_type/context_id")
+
+
+def _create_model_capabilities_table_if_missing(con: SQLiteCompatConnection) -> None:
+    """Create the operator-set, model-keyed capability table on older databases."""
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_capabilities (
+            model           VARCHAR PRIMARY KEY,
+            supports_images BOOLEAN NOT NULL,
+            updated_at      TIMESTAMP DEFAULT current_timestamp
         )
         """
     )

@@ -954,6 +954,9 @@ CREATE TABLE IF NOT EXISTS sticky_slot_gate (
 -- Attachments — Phase-1 paste/attach metadata. File bytes live on disk.
 -- ───────────────────────────────────────────────────────────────────────────
 
+-- context_type/context_id name the conversation the upload was made for
+-- (an agent DM or a thread). Linking to a message only succeeds inside that
+-- same conversation, and the file lives under that conversation's floor.
 CREATE TABLE IF NOT EXISTS attachments (
     id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     message_id      VARCHAR NOT NULL,
@@ -962,6 +965,19 @@ CREATE TABLE IF NOT EXISTS attachments (
     mime_type       VARCHAR NOT NULL,
     storage_path    VARCHAR NOT NULL,
     preview_tier    VARCHAR NOT NULL CHECK (preview_tier IN ('image', 'text', 'document', 'other')),
+    context_type    VARCHAR NOT NULL CHECK (context_type IN ('direct', 'thread')),
+    context_id      VARCHAR NOT NULL,
     created_at      TIMESTAMP DEFAULT current_timestamp
 );
 CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id);
+-- The stale-pending sweep filters message_id = 'pending' by age.
+CREATE INDEX IF NOT EXISTS idx_attachments_message_created ON attachments(message_id, created_at);
+
+-- Operator-set model capabilities, keyed by the raw model string an agent or
+-- connection names (before any provider prefix is added). No row means the
+-- model is treated as text-only.
+CREATE TABLE IF NOT EXISTS model_capabilities (
+    model           VARCHAR PRIMARY KEY,
+    supports_images BOOLEAN NOT NULL,
+    updated_at      TIMESTAMP DEFAULT current_timestamp
+);

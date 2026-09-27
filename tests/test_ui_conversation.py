@@ -39,6 +39,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome-menu.js",
     CONVERSATION / "chrome.js",
+    CONVERSATION / "composer-attachments.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
     JS / "needs" / "need-shape.js",
@@ -294,6 +295,12 @@ def test_conversation_harness() -> None:
         "subtitleIsWithTheActions": True,
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
+        # A draft is its text plus its pending uploads, and a send drops only
+        # the uploads it linked.
+        "attachmentsFollowTheirConversation": True,
+        "inFlightSendKeepsNewerChips": True,
+        # A 422 attachment refusal shows its `detail.error`, not raw JSON.
+        "structuredRefusalShowsItsError": True,
         "agentNameIsChromeOutside": True,
         "quietAuthor": True,
         "authorUsesAgentColor": True,

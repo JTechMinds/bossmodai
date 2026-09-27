@@ -40,6 +40,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome-menu.js",
     CONVERSATION / "chrome.js",
+    CONVERSATION / "composer-attachments.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
     NEEDS / "need-shape.js",

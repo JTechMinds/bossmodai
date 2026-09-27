@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import AIConnection, Setting
+from db.model_capabilities import supports_images
 from db.secret_store import is_secret_setting_key
 
 # Never listed on GET /api/settings — injected into the desktop page instead.
@@ -53,7 +54,11 @@ def serialize_settings(settings: list[Setting]) -> list[dict[str, Any]]:
 
 
 def serialize_connection(connection: AIConnection) -> dict[str, Any]:
-    """Serialize an AI connection without the raw API key."""
+    """Serialize an AI connection without the raw API key.
+
+    ``supports_images`` is read from ``model_capabilities`` for this
+    connection's model, so every connection naming the same model agrees.
+    """
     created_at = connection.created_at
     if isinstance(created_at, datetime):
         created_at_out: datetime | str = created_at
@@ -68,6 +73,9 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
         "created_at": created_at_out,
         "has_api_key": bool(connection.api_key),
         "api_key_last4": secret_last4(connection.api_key) if connection.api_key else None,
+        # Keyed by model name, not by connection: a connection with no model
+        # has nothing to flag.
+        "supports_images": supports_images(connection.model) if connection.model else False,
     }
 
 
