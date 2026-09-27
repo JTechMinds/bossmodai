@@ -1,0 +1,116 @@
+PASS test/grid-protocol.test.js
+  setPrecision
+    ✓ N=48 is valid (2 ms)
+    ✓ N=96 is valid (1 ms)
+    ✓ N=1 is valid
+    ✓ N=960 is valid (1 ms)
+    ✓ N=0 is invalid
+    ✓ N=-5 is invalid
+    ✓ N=961 is invalid (1 ms)
+    ✓ N=48.5 is invalid
+    ✓ N='48' string is invalid
+  validateCoordinate
+    ✓ (48, 0, 0) is valid (1 ms)
+    ✓ (48, 19, 19) is valid (1 ms)
+    ✓ (48, -1, 0) is invalid
+    ✓ (48, 20, 0) is invalid (1 ms)
+    ✓ (48, 0, 20) is invalid
+    ✓ (48, 20, 20) is invalid
+    ✓ (1, 959, 959) is valid
+    ✓ (1, 960, 0) is invalid
+    ✓ (960, 0, 0) is valid
+    ✓ (960, 1, 0) is invalid
+  cellCenter
+    ✓ cellCenter(48, 0, 0) (1 ms)
+    ✓ cellCenter(48, 19, 19)
+    ✓ cellCenter(96, 0, 0)
+    ✓ cellCenter(96, 9, 9)
+    ✓ cellCenter(1, 0, 0)
+    ✓ cellCenter(1, 959, 959)
+    ✓ cellCenter(960, 0, 0) (1 ms)
+  gridMetadata
+    ✓ gridMetadata(48)
+    ✓ gridMetadata(1)
+    ✓ gridMetadata(960)
+
+PASS test/lifecycle.test.js
+  extension lifecycle
+    ✓ register() registers exactly the four manifest tools with the host (3 ms)
+    ✓ tool handlers called before registration or initialization return NO_PAGE (1 ms)
+    ✓ init() creates a HeadlessCapture instance and calls init on it (1 ms)
+    ✓ destroy() closes the capture instance and is idempotent
+  extension card (§2.5)
+    ✓ extension-card.json exists and parses as valid JSON
+    ✓ extension card name and version match manifest.json
+    ✓ extension card lists exactly view, click, type, scroll in manifest order with non-empty one_liner (3 ms)
+  CLI invocation pattern (§2.6)
+    parseBvCommand
+      ✓ valid view command
+      ✓ unknown tool returns UNKNOWN_TOOL
+      ✓ missing --params-json returns MISSING_PARAMS_JSON
+      ✓ invalid JSON returns INVALID_PARAMS_JSON
+    dispatchBvCommand
+      ✓ dispatches to the correct handler and returns its result
+      ✓ returns INVALID_PARAMS_JSON without calling handler on bad JSON
+      ✓ returns UNKNOWN_TOOL for unregistered tool
+      ✓ returns handler error object unchanged
+
+PASS test/type.test.js
+  type tool
+    ✓ precision 96 returns PRECISION_NOT_ALLOWED (1 ms)
+    ✓ precision 48 succeeds at the boundary (1 ms)
+    ✓ precision 1 succeeds at the maximum-density edge (1 ms)
+    ✓ precision 0 returns INVALID_PRECISION
+    ✓ precision -1 returns INVALID_PRECISION
+    ✓ returns NO_PAGE when no page is loaded (1 ms)
+    ✓ out-of-bounds coordinate returns COORD_OUT_OF_BOUNDS
+
+PASS test/scroll.test.js
+  scroll tool
+    ✓ precision 12 returns PRECISION_NOT_ALLOWED (1 ms)
+    ✓ precision 24 succeeds at boundary
+    ✓ precision 960 succeeds at edge
+    ✓ precision 0 returns INVALID_PRECISION
+    ✓ scroll down amount 3 precision 48 produces delta y 144
+    ✓ scroll up amount 2 precision 96 produces delta y -192 (1 ms)
+    ✓ scroll left amount 1 precision 48 produces delta x -48
+    ✓ scroll right amount 1 precision 48 produces delta x 48
+    ✓ NO_PAGE when hasPage is false (1 ms)
+    ✓ successful result includes scrolled_at, delta, post_scroll_screenshot_path, and grid
+
+PASS test/view.test.js
+  view tool
+    ✓ returns grid metadata with default precision 48 (1 ms)
+    ✓ returns grid metadata for precision 96
+    ✓ returns INVALID_PRECISION for precision 0 (1 ms)
+    ✓ returns INVALID_PRECISION for non-integer precision 48.5
+    ✓ returns INVALID_PRECISION for negative precision -1
+    ✓ returns INVALID_PRECISION for precision 961
+    ✓ returns structured result with screenshot and metadata fields (1 ms)
+
+PASS test/preclick.test.js
+  preclick
+    ✓ returns PRECLICK_CAPTURE_FAILED and does not click when pre-click screenshot fails (1 ms)
+    ✓ logs pre_click_screenshot before execute for successful click
+
+PASS test/click.test.js
+  click tool
+    ✓ valid click col0 row0 precision48 returns clicked_at {x:24,y:24} with pre/post screenshot paths and grid (1 ms)
+    ✓ out-of-bounds col20 row0 precision48 returns COORD_OUT_OF_BOUNDS and capture.click NOT called (1 ms)
+    ✓ NO_PAGE when hasPage false
+    ✓ precision 0 returns INVALID_PRECISION
+    ✓ precision 1.5 returns INVALID_PRECISION (1 ms)
+    ✓ precision -3 returns INVALID_PRECISION
+    ✓ precision 1 col0 row0 succeeds
+    ✓ precision 960 col0 row0 succeeds (1 ms)
+
+Test Suites: 7 passed, 7 total
+Tests:       78 passed, 78 total
+Snapshots:   0 total
+Time:        0.334 s, estimated 1 s
+Ran all test suites.
+
+---
+Run date: 2026-09-27T19:01 EDT
+Commit: 8158ffa (master)
+Command: npx jest --verbose

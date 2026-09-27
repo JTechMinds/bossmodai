@@ -1,0 +1,24 @@
+=== E5: Screenshot includes coordinate-grid metadata ===
+Date: 2026-09-27T19:03:26.664Z
+
+Grid object from view result:
+{
+  "precision": 48,
+  "cols": 20,
+  "rows": 20,
+  "cell_width_px": 48,
+  "cell_height_px": 48,
+  "viewport": {
+    "width": 960,
+    "height": 960
+  }
+}
+
+Fields present:
+  precision: 48
+  cols: 20
+  rows: 20
+  cell_width: undefined
+  cell_height: undefined
+
+RESULT: PASS — grid metadata includes precision, cols, rows, cell sizes
