@@ -58,10 +58,20 @@ const DESK = {
     "/projects/x.md": { kind: "file", path: "/projects/x.md", company_path: "/floor-1/x.md" },
     "/me/x.md": { kind: "file", path: "/me/x.md", company_path: null },
 };
+const COMPANY = {
+    "/floor-1/reports": { kind: "directory", path: "/floor-1/reports" },
+};
 async function api(url, init) {
     requests.push({ url, method: (init && init.method) || "GET" });
+    // The host refuses the company open-folder request, the way it does when
+    // the operator's folder handler is not usable.
+    if (url === "/api/company/files/open-folder") {
+        return { ok: false, async json() { return {}; },
+                 async text() { return "desk_open_folder_handler_invalid"; } };
+    }
     const path = decodeURIComponent(String(url).split("path=")[1] || "");
-    return { ok: true, async json() { return DESK[path]; }, async text() { return ""; } };
+    const listing = String(url).startsWith("/api/company/files?") ? COMPANY[path] : DESK[path];
+    return { ok: true, async json() { return listing; }, async text() { return ""; } };
 }
 
 (async () => {
@@ -74,7 +84,15 @@ async function api(url, init) {
     } catch (err) {
         noAgentError = err.message;
     }
-    process.stdout.write(`${JSON.stringify({ requests, viewed, noAgentError })}\n`);
+    const beforeFolder = requests.length;
+    let folderError = null;
+    try {
+        await openDeliverablePath(api, "/floor-1/reports", "a1");
+    } catch (err) {
+        folderError = err.message;
+    }
+    const folderRequests = requests.splice(beforeFolder);
+    process.stdout.write(`${JSON.stringify({ requests, viewed, noAgentError, folderRequests, folderError })}\n`);
 })().catch((err) => { console.error(err); process.exit(1); });
 """
 
@@ -85,7 +103,8 @@ def test_deliverable_open_resolves_agent_virtual_paths_through_the_desk() -> Non
     A `/projects` file opens at the company path the desk returns, so the
     viewer's image preview and Save use company endpoints. A `/me` file has no
     company path and opens through the desk endpoint. With no agent recorded,
-    the open rejects instead of guessing whose namespace it is.
+    the open rejects instead of guessing whose namespace it is. A company
+    folder whose open-folder request fails rejects with the server's text.
     """
     tests = Path(__file__).resolve().parent
     result = subprocess.run(
@@ -110,6 +129,13 @@ def test_deliverable_open_resolves_agent_virtual_paths_through_the_desk() -> Non
         {"path": "/me/x.md", "apiUrl": "/api/agents/a1/desk?path=%2Fme%2Fx.md"},
     ]
     assert payload["noAgentError"] == "That path belongs to an agent, but no agent is recorded for it."
+    # A company folder whose open-folder POST fails rejects with the server's
+    # reason, so the card can mark itself failed instead of doing nothing.
+    assert payload["folderRequests"] == [
+        {"url": "/api/company/files?path=%2Ffloor-1%2Freports", "method": "GET"},
+        {"url": "/api/company/files/open-folder", "method": "POST"},
+    ]
+    assert payload["folderError"] == "desk_open_folder_handler_invalid"
 
 
 def test_deliverable_open_does_not_remap_host_paths_through_me() -> None:

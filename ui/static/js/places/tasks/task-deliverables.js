@@ -99,7 +99,7 @@ const BossModTaskDeliverables = (() => {
             await BossModFileViewer.open(payload.path || target, { api });
             return;
         }
-        await api('/api/company/files/open-folder', {
+        await requestOpenFolder(api, '/api/company/files/open-folder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: payload.path || target }),

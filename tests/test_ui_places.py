@@ -74,7 +74,7 @@ const fs = require("fs");
 const { installDom } = require(process.argv[1]);
 const documentStub = installDom();
 global.window.dispatchEvent = () => true;
-const NAMES = ["BossModDom", "BossModTabs", "BossModPlaces", "BossModFloorScope", "BossModOfficePlace"];
+const NAMES = ["BossModDom", "BossModTabs", "BossModPlaces", "BossModFloorScope", "BossModGates", "BossModOfficePlace"];
 NAMES.forEach((name, index) => {
     eval(`${fs.readFileSync(process.argv[index + 2], "utf8")}\n;global.${name} = ${name};\n`);
 });
@@ -133,6 +133,7 @@ def test_office_tab_survives_a_remount() -> None:
             str(JS / "core" / "tabs.js"),
             str(JS / "shell" / "places.js"),
             str(JS / "shell" / "floor-scope.js"),
+            str(JS / "core" / "gates.js"),
             str(JS / "places" / "office" / "office-place.js"),
         ],
         check=False,

@@ -459,7 +459,7 @@ async function main() {
         api,
         needs,
         contextEl,
-        navigate: (placeId) => navigated.push(placeId),
+        navigate: (placeId, params) => navigated.push({ placeId, params }),
     };
 
     const chat = global.BossModPlaces.get("chat");
@@ -667,6 +667,21 @@ async function main() {
     const deskFooterAction = (label) => contextEl.querySelectorAll(".desk-action")
         .find((node) => node.textContent === label);
     const openPanels = () => documentStub.body.querySelectorAll(".modal-panel");
+
+    // Diagnostics opens the Log filtered to this agent. The Log reads
+    // `agentId` (as Metrics sends it); `agentFilter` is the Tasks param and
+    // left the Log unfiltered.
+    const navigatedBefore = navigated.length;
+    await deskFooterAction("Diagnostics").dispatchClick();
+    await drain();
+    const diagnosticsNav = navigated.slice(navigatedBefore);
+    const diagnosticsFiltersTheLog = diagnosticsNav.length === 1
+        && diagnosticsNav[0].placeId === "log"
+        && JSON.stringify(diagnosticsNav[0].params) === JSON.stringify({ agentId: "a1" });
+    if (!diagnosticsFiltersTheLog) {
+        throw new Error(`Diagnostics must open the Log with { agentId }, got ${JSON.stringify(diagnosticsNav)}`);
+    }
+
     await deskFooterAction("Remove").dispatchClick();
     await drain();
     const removeDialog = openPanels()
@@ -1782,6 +1797,7 @@ async function main() {
         primaryIsSubmitType,
         submitIdCount,
         deleteIsNotPinned,
+        diagnosticsFiltersTheLog,
         removeWarnsWhatIsDeleted,
         removeWaitsForTheName,
         removeOpensOnceTheNameIsIn,

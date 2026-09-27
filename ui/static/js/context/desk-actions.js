@@ -188,7 +188,7 @@ const BossModDeskActions = (() => {
                 h('button', {
                     class: 'btn-link desk-action',
                     type: 'button',
-                    onclick: () => navigate('log', { agentFilter: agentId }),
+                    onclick: () => navigate('log', { agentId }),
                 }, 'Diagnostics'),
                 h('button', {
                     class: 'btn-link desk-action danger',

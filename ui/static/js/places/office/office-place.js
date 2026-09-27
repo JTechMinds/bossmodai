@@ -30,6 +30,8 @@ const BossModOfficePlace = (() => {
     let countsLine = null;
     /** Map | Org — core/tabs.js, which owns the tabs; the panes are this file's. */
     let tabs = null;
+    /** Drops a map load that settles after unmount or behind a newer one. */
+    let load = null;
     // Survives unmount, so a trip to another place comes back to the same tab.
     let lastTab = 'map';
     const disposers = [];
@@ -112,15 +114,23 @@ const BossModOfficePlace = (() => {
      * Load the map and paint it.
      *
      * @returns {Promise<void>} Never rejects: a failed /api/map becomes the
-     *   error state with a retry, never a blank rectangle.
+     *   error state with a retry, never a blank rectangle. A load that
+     *   settles after unmount, or behind a newer load, is dropped: the place
+     *   it belonged to no longer exists.
      */
     async function startCanvas() {
+        // The generation this load belongs to, not whichever is live when it
+        // settles: a remount starts a new one whose ids restart at 1.
+        const generation = load;
+        const loadId = generation.next();
         const holder = mapPane.querySelector('.office-canvas-wrap');
         holder.querySelectorAll('.place-error-panel').forEach((node) => node.remove());
         try {
             await canvas.init();
+            if (!generation.isCurrent(loadId)) return;
             canvas.updateAgents(ctxRef.store.getState().roster || []);
         } catch (err) {
+            if (!generation.isCurrent(loadId)) return;
             console.error('[office] the floor could not be loaded', err);
             showCanvasError((err && err.message) || 'The request failed.');
         }
@@ -137,6 +147,7 @@ const BossModOfficePlace = (() => {
          */
         mount(el, ctx) {
             ctxRef = ctx;
+            load = BossModGates.createLoadGeneration();
             clear(el);
 
             statePill = h('span', { class: 'office-state', 'data-state': 'live' }, 'live');
@@ -251,6 +262,8 @@ const BossModOfficePlace = (() => {
          */
         unmount() {
             disposers.splice(0).forEach((off) => off());
+            // Invalidate an in-flight map load before the nodes it paints go.
+            if (load) load.next();
             closeAgentActions();
             if (canvas) canvas.destroy();
             if (orgView) orgView.destroy();
@@ -264,6 +277,7 @@ const BossModOfficePlace = (() => {
             statePill = null;
             countsLine = null;
             tabs = null;
+            load = null;
             ctxRef = null;
         },
     };

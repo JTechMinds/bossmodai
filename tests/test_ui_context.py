@@ -674,6 +674,9 @@ def test_the_desk_and_the_form_render_the_delete_warning() -> None:
     agent's name has loaded: the footer says why and the read is retried.
     """
     payload = _harness()
+    # Diagnostics opens the Log filtered to this agent, by the Log's own
+    # param name (`agentId`), not the Tasks one.
+    assert payload["diagnosticsFiltersTheLog"] is True
     assert payload["removeWarnsWhatIsDeleted"] is True
     assert payload["removeWaitsForTheName"] is True
     assert payload["removeOpensOnceTheNameIsIn"] is True
