@@ -74,6 +74,16 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Number of prior thread lines the System AI router reads before the
     # latest message. 0 means the router sees no transcript.
     ("channel_router_transcript_messages", "10", "llm"),
+    # Thread idle check: whether the quiet-period owed-work check runs.
+    ("channel_idle_check_enabled", "true", "llm"),
+    # How long a thread must be silent before the idle check judges it.
+    ("channel_idle_check_delay_seconds", "45", "llm"),
+    # How often the worker scans threads for the idle check.
+    ("channel_idle_check_interval_seconds", "5", "llm"),
+    # Cap on members one idle check may wake.
+    ("channel_idle_check_max_wakes", "2", "llm"),
+    # A thread quiet longer than this is dormant; the idle check leaves it alone.
+    ("channel_idle_check_max_age_minutes", "30", "llm"),
     # System AI + compaction pressure knobs. The System AI picker is the
     # first control under Settings → AI Connections. Compaction knobs stay
     # on Settings → System → AI Output.

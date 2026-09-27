@@ -282,6 +282,14 @@ CREATE TABLE IF NOT EXISTS channel_host_state (
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 
+CREATE TABLE IF NOT EXISTS channel_idle_checks (
+    channel_id          VARCHAR PRIMARY KEY REFERENCES channels(id),
+    checked_message_id  VARCHAR,
+    human_message_id    VARCHAR,
+    woken_agent_ids     TEXT NOT NULL DEFAULT '[]',
+    updated_at          TIMESTAMP DEFAULT current_timestamp
+);
+
 CREATE TABLE IF NOT EXISTS channel_response_candidates (
     id             VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     round_id       VARCHAR NOT NULL REFERENCES channel_response_rounds(id),

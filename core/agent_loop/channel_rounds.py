@@ -129,7 +129,7 @@ def start_channel_peer_round(
     if blocks_peer_round(channel_id, author_type=author_type):
         return []
 
-    members = _ordered_members(channel_id, excluded)
+    members = ordered_channel_members(channel_id, excluded)
     if author_type == "human":
         note_human_snapshot(channel_id, mention_ids_in_order(content, members))
     if not members:
@@ -198,7 +198,7 @@ def start_channel_peer_round(
             f"{attachment_route_line(attachment_ids)}\n{content}" if attachment_ids else content
         ),
         latest_author=_author_label(channel_id, from_agent, from_name),
-        transcript=_router_transcript(channel_id, exclude_message_id=message_id),
+        transcript=router_transcript(channel_id, exclude_message_id=message_id),
         required_ids=pins,
         handoff=handoff,
         agent_line=author_type == "agent",
@@ -340,6 +340,85 @@ def post_agent_channel_share(
     )
 
 
+def open_idle_check_round(
+    *,
+    channel_id: str,
+    source_message_id: str,
+    agent_ids: list[str],
+    note: str,
+) -> list[dict[str, Any]]:
+    """Open a private round that wakes ``agent_ids`` one at a time with ``note`` as the current message. Posts nothing.
+
+    The round is a normal rounds-mode channel round, so the woken agent
+    keeps the channel machinery: a speak posts to the thread, an accept
+    binds work to it, and supersede applies. ``router_mode`` is
+    ``fallback`` so a re-route cannot drop the second woken member. No
+    stay-outs are installed, so no engine pass touches pass streaks. No
+    round marker is posted.
+
+    Returns ``[]`` when the thread is missing, not active, closed to Talk,
+    has no woken id among its members, or the round cap is reached.
+    Otherwise returns the one ``channel_message`` trigger for the first
+    wake; its payload carries ``idle_check``.
+    """
+    channel = db.get_channel(channel_id)
+    if channel is None or channel.status != "active":
+        return []
+    if talk_closed(channel_id):
+        return []
+    member_ids = {member["id"] for member in ordered_channel_members(channel_id, set())}
+    ids: list[str] = []
+    for agent_id in agent_ids:
+        if agent_id in member_ids and agent_id not in ids:
+            ids.append(agent_id)
+    if not ids:
+        return []
+    round_index = _next_round_index(channel_id, source_message_id)
+    if round_index > channel_response_round_cap():
+        return []
+    round_record = db.create_channel_response_round(
+        channel_id=channel_id,
+        source_message_id=source_message_id,
+    )
+    channel_round_db.set_channel_round_meta(
+        round_record.id,
+        round_index=round_index,
+        dispatch_mode=DISPATCH_ROUNDS,
+        stepped_out=[],
+        next_mentions=[],
+        router_mode="fallback",
+        pinned_ids=list(ids),
+        work_binds=live_work_binds(channel_id),
+    )
+    wake_ids = _install_round_queue(
+        round_id=round_record.id,
+        channel_id=channel_id,
+        speak_ids=ids,
+        stay_out_ids=[],
+        wake_all=False,
+    )
+    payload: dict[str, Any] = {
+        "content": note,
+        "channel_id": channel_id,
+        "round_id": round_record.id,
+        "from_name": "BossMod",
+        "author_type": "system",
+        "source_message_id": source_message_id,
+        "channel_name": channel.name,
+        "dispatch_mode": DISPATCH_ROUNDS,
+        "round_index": round_index,
+        "idle_check": True,
+    }
+    return [
+        {
+            "agent_id": wake_ids[0],
+            "trigger_type": "channel_message",
+            "source_channel": "channel",
+            "payload": payload,
+        }
+    ]
+
+
 def observe_channel_message(
     agent: Agent,
     trigger: dict[str, Any],
@@ -435,13 +514,17 @@ def advance_channel_round(
         return empty
 
     spoken = spoken_text or str(trigger.get("spoken_text") or "")
+    idle_check = bool(trigger.get("idle_check"))
     stay_before = copy_stay(channel_id) if spoke else None
-    dup_ack = record_channel_turn(
-        channel_id,
-        spoke=spoke,
-        speaker_id=speaker,
-        spoken_text=spoken,
-    )
+    # An idle-check pass is not a Talk pass: no pass streak, no demotion.
+    dup_ack = False
+    if not (idle_check and not spoke):
+        dup_ack = record_channel_turn(
+            channel_id,
+            spoke=spoke,
+            speaker_id=speaker,
+            spoken_text=spoken,
+        )
     if dup_ack or talk_closed(channel_id):
         stop_active_talk_rounds(channel_id)
         return empty
@@ -472,6 +555,9 @@ def advance_channel_round(
         return {"trigger_requests": [_wake_trigger(trigger, nxt.agent_id, round_id, meta)]}
 
     db.maybe_complete_channel_response_round(round_id)
+    # Every idle-check wake passed: there is no speak to route.
+    if idle_check and not any(str(candidate.status or "") == "responded" for candidate in candidates):
+        return empty
     progress = _open_follow_up_round(
         trigger,
         round_id=round_id,
@@ -735,7 +821,7 @@ def _redecide_remaining(
         fallback_order=eligible_ids,
         latest_message=latest,
         latest_author=latest_author,
-        transcript=_router_transcript(channel_id, exclude_message_id=exclude_id),
+        transcript=router_transcript(channel_id, exclude_message_id=exclude_id),
         pending_mention_ids=forced,
         forced_ids=forced,
         agent_line=True,
@@ -791,7 +877,7 @@ def _pending_candidates(candidates: list[Any]) -> list[Any]:
 
 
 def _members_in_order(channel_id: str, agent_ids: list[str]) -> list[dict[str, str]]:
-    by_id = {member["id"]: member for member in _ordered_members(channel_id, set())}
+    by_id = {member["id"]: member for member in ordered_channel_members(channel_id, set())}
     return [by_id[agent_id] for agent_id in agent_ids if agent_id in by_id]
 
 
@@ -849,7 +935,7 @@ def _route_latest(
     return fallback_text, _author_label(channel_id, fallback_agent_id, fallback_name), False, None
 
 
-def _router_transcript(channel_id: str, *, exclude_message_id: str | None) -> list[RouterLine]:
+def router_transcript(channel_id: str, *, exclude_message_id: str | None) -> list[RouterLine]:
     """The newest ``router_transcript_limit()`` thread lines, oldest first.
 
     Round markers are left out in SQL. Only the row whose id is
@@ -873,6 +959,7 @@ def _router_transcript(channel_id: str, *, exclude_message_id: str | None) -> li
             author=str(row.author_name or ""),
             text=str(row.content or ""),
             status=row.author_type == "system",
+            author_agent_id=str(row.author_agent_id or ""),
         )
         for row in kept
     ]
@@ -899,7 +986,7 @@ def _author_label(channel_id: str, agent_id: str | None, fallback_name: str) -> 
     return fallback_name
 
 
-def _ordered_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
+def ordered_channel_members(channel_id: str, excluded: set[str]) -> list[dict[str, str]]:
     """Membership order with names, skipping excluded and cross-floor agents.
 
     A member whose home is not this thread's floor is not woken. A thread
@@ -995,7 +1082,7 @@ def _append_mentions(existing: list[str], channel_id: str, text: str) -> list[st
     """Reserve @mentions for the next round without touching the current queue."""
     if not text.strip():
         return list(existing)
-    members = _ordered_members(channel_id, set())
+    members = ordered_channel_members(channel_id, set())
     found = mention_ids_in_order(text, members)
     merged = list(existing)
     for agent_id in found:
@@ -1027,6 +1114,9 @@ def _wake_trigger(
     # original payload; the source message's files must reach them too.
     if trigger.get("attachment_ids"):
         payload["attachment_ids"] = list(trigger["attachment_ids"])
+    # The second serial idle-check wake must stay an idle-check wake.
+    if trigger.get("idle_check"):
+        payload["idle_check"] = True
     return {
         "agent_id": agent_id,
         "trigger_type": "channel_message",
@@ -1076,7 +1166,7 @@ def _open_follow_up_round(
 
     mention_ids = [agent_id for agent_id in meta.get("next_mentions") or [] if agent_id]
     stepped = set(meta.get("stepped_out") or [])
-    member_ids = [member["id"] for member in _ordered_members(channel_id, set())]
+    member_ids = [member["id"] for member in ordered_channel_members(channel_id, set())]
     member_set = set(member_ids)
     reopen_id = ""
     if (agent_speak or "").strip() and (speaker_id or "").strip():
@@ -1153,7 +1243,7 @@ def _open_follow_up_round(
         fallback_order=ordered,
         latest_message=latest,
         latest_author=latest_author,
-        transcript=_router_transcript(channel_id, exclude_message_id=exclude_id),
+        transcript=router_transcript(channel_id, exclude_message_id=exclude_id),
         required_ids=route_required,
         agent_line=agent_line,
         sticky_note=sticky,
@@ -1245,6 +1335,17 @@ def _open_follow_up_round(
     if marker:
         progress["round_marker"] = marker
     return progress
+
+
+def _next_round_index(channel_id: str, source_id: str) -> int:
+    """1 + the highest ``round_index`` among rounds on ``source_id``, or 1 when none."""
+    highest = 0
+    for row in db.list_channel_response_rounds(channel_id):
+        if row.source_message_id != source_id:
+            continue
+        meta = channel_round_db.get_channel_round_meta(row.id)
+        highest = max(highest, int(meta.get("round_index") or 1))
+    return highest + 1
 
 
 def _round_index_exists(channel_id: str, source_id: str, round_index: int) -> bool:

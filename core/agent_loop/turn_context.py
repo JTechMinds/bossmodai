@@ -168,6 +168,7 @@ def stamp_channel_latest_line(agent_id: str, trigger: dict[str, Any]) -> None:
     When the newest qualifying line is the opener itself, or there is
     none, any ``latest_*`` keys are removed so a retried trigger does not
     carry old values. System lines and round markers are skipped.
+    An idle-check wake keeps its note as the current message; the thread is in history.
     """
     if trigger.get("type") not in _CHANNEL_WAKE_TYPES:
         return
@@ -176,6 +177,8 @@ def stamp_channel_latest_line(agent_id: str, trigger: dict[str, Any]) -> None:
         return
     for key in _LATEST_LINE_KEYS:
         trigger.pop(key, None)
+    if trigger.get("idle_check"):
+        return
     for row in reversed(db.list_channel_messages(channel_id, limit=_LATEST_LINE_WINDOW)):
         if row.author_type not in {"human", "agent"}:
             continue

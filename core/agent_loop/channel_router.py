@@ -89,12 +89,14 @@ class RouterLine:
     """One prior thread line for the router's Recent thread section.
 
     ``status`` marks a system task card (Accepted, Writing, Done, Blocked)
-    so the model reads it as state, not speech.
+    so the model reads it as state, not speech. ``author_agent_id`` is the
+    row's agent author, or empty; it is engine data and is never printed.
     """
 
     author: str
     text: str
     status: bool
+    author_agent_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +234,7 @@ def parse_router_payload(raw: str, number_map: dict[int, str]) -> list[str] | No
         or a duplicate.
     """
     try:
-        payload = json.loads(_unwrap_json(raw))
+        payload = json.loads(unwrap_json(raw))
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict) or set(payload) != ROUTER_KEYS:
@@ -512,7 +514,8 @@ def short_sticky_context(members: list[dict[str, str]]) -> str:
     return _clip("\n".join(parts), _STICKY_CHARS)
 
 
-def _unwrap_json(raw: str) -> str:
+def unwrap_json(raw: str) -> str:
+    """Strip one code fence around a JSON completion. Unfenced text is returned trimmed."""
     text = (raw or "").strip()
     if not text.startswith("```"):
         return text
