@@ -308,6 +308,7 @@ const BossModComposer = (() => {
                 input,
                 applyIdleState: applyState,
                 canSubmit: () => store.getState().hasUsableModel === true && canSend() && (input.value.trim() || pendingAttachments.length > 0),
+                hasPayload: pendingAttachments.length > 0,
                 send: (text) => onSend(text, attIds),
                 onQueued: setQueued,
                 onSuccess: () => {
