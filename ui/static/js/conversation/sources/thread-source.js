@@ -153,12 +153,13 @@ const BossModThreadSource = (() => {
          * @returns {Promise<void>}
          * @throws {Error} On any failure, so the send gate keeps the draft.
          */
-        async function send(text) {
+        async function send(text, attachmentIds) {
+            const payload = { content: text };
+            if (attachmentIds && attachmentIds.length > 0) payload.attachment_ids = attachmentIds;
             const res = await api(`/api/channels/${threadId}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: text }),
-            });
+                body: JSON.stringify(payload),
             if (!res.ok) {
                 throw new Error(await refusal(res, 'Could not post to this thread.'));
             }

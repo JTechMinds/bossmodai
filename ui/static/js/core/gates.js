@@ -88,12 +88,13 @@ const BossModGates = (() => {
             onError,
             onQueued,
             canSubmit,
+            hasPayload,
         } = {}) {
             if (typeof canSubmit === 'function' && !canSubmit()) {
                 return { submitted: false, ok: false, reason: 'blocked' };
             }
             const draft = String(input && input.value != null ? input.value : '').trim();
-            if (!draft) return { submitted: false, ok: false, reason: 'empty' };
+            if (!draft && !hasPayload) return { submitted: false, ok: false, reason: 'empty' };
             if (typeof send !== 'function') {
                 return { submitted: false, ok: false, reason: 'blocked' };
             }
