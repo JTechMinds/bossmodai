@@ -495,6 +495,31 @@ async function main() {
     }
     place.unmount();
 
+    // ── staleLoadDropped ────────────────────────────────────────────────
+    // Away and back before the first list read settles: that read settles
+    // last and must not paint the new mount.
+    const pendingLists = [];
+    const slowApi = (url) => (String(url).startsWith("/api/tasks") && !String(url).includes("/events")
+        ? new Promise((resolve) => { pendingLists.push(resolve); })
+        : api(url));
+    const listOf = (id) => ({ ok: true, json: () => Promise.resolve([
+        { ...person, id, title: id, status: "pending", last_activity: todayIso, closed_at: null },
+    ]) });
+    const staleContainer = document.createElement("div");
+    document.body.append(staleContainer);
+    place.mount(staleContainer, { store: storeFor({}), bus, api: slowApi, needs: {}, navigate });
+    place.unmount();
+    place.mount(staleContainer, { store: storeFor({}), bus, api: slowApi, needs: {}, navigate });
+    pendingLists[1](listOf("t-fresh"));
+    await drain();
+    pendingLists[0](listOf("t-stale"));
+    await drain();
+    const staleLoadDropped = pendingLists.length === 2
+        && Boolean(staleContainer.querySelector('[data-task-id="t-fresh"]'))
+        && !staleContainer.querySelector('[data-task-id="t-stale"]');
+    if (!staleLoadDropped) fail("a list read from a left mount painted the next one");
+    place.unmount();
+
     process.stdout.write(JSON.stringify({
         ok: true,
         ...pure,
@@ -516,6 +541,7 @@ async function main() {
         refetchesOnResync,
         opensLinkedTask,
         offFloorTaskHidden,
+        staleLoadDropped,
     }));
 }
 

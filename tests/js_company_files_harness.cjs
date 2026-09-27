@@ -5,6 +5,7 @@
  * shut there (still focusable, with its reason) until a floor is open.
  * The place opens on the active floor's folder, follows a floor switch, and
  * comes back to the folder (and scroll) it left; a deep link wins over both.
+ * A read still in flight when the place is left never paints the next mount.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -282,6 +283,35 @@ async function main() {
     const floorSwitchFollows = lastRequest() === "/lobby";
     BossModFilesPlace.unmount();
 
+    // ─── A load from a left mount never paints the next one ───
+    // Away and back before the first read settles: both mounts ask for the
+    // same remembered folder, so only the load generation can tell them apart.
+    const pendingReads = [];
+    fetchImpl = () => new Promise((resolve) => { pendingReads.push(resolve); });
+    const listing = (name) => ok({
+        kind: "directory",
+        path: "/lobby",
+        entries: [{ name, path: `/lobby/${name}`, is_dir: true, floor_name: null }],
+        breadcrumbs: [],
+        workspace_note: "",
+        host_roots: [],
+    });
+    const staleCtx = {
+        store: BossModStore.createStore({ placeParams: {}, currentFloorId: "lobby" }),
+        bus, api: (...args) => fetchImpl(...args), navigate() {},
+    };
+    BossModFilesPlace.mount(root, staleCtx);
+    BossModFilesPlace.unmount();
+    BossModFilesPlace.mount(root, staleCtx);
+    pendingReads[1](listing("fresh"));
+    await drain();
+    pendingReads[0](listing("stale"));
+    await drain();
+    const shownRows = root.querySelectorAll(".file-entry-name").map((el) => el.textContent).join("|");
+    const staleLoadDropped = pendingReads.length === 2
+        && shownRows.includes("fresh") && !shownRows.includes("stale");
+    BossModFilesPlace.unmount();
+
     process.stdout.write(JSON.stringify({
         ok: true,
         floorRowsShowNames,
@@ -304,6 +334,7 @@ async function main() {
         returnsToScroll,
         deepLinkWins,
         floorSwitchFollows,
+        staleLoadDropped,
     }));
 }
 

@@ -185,3 +185,5 @@ def test_company_files_named_path_harness() -> None:
     assert payload["returnsToScroll"] is True
     assert payload["deepLinkWins"] is True
     assert payload["floorSwitchFollows"] is True
+    # Away and back before the first read settles: that read does not paint.
+    assert payload["staleLoadDropped"] is True

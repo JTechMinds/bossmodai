@@ -36,7 +36,8 @@ const BossModTasksPlace = (() => {
     /** The open Archive, or null. */
     let archive = null;
     let refreshTimer = null;
-    let load = null;
+    // Module-lifetime, so load ids never repeat across mounts.
+    const load = BossModGates.createLoadGeneration();
     const disposers = [];
 
     // ─── Painting ───
@@ -282,7 +283,6 @@ const BossModTasksPlace = (() => {
          */
         mount(el, ctx) {
             ctxRef = ctx;
-            load = BossModGates.createLoadGeneration();
             tasks = [];
             selected = new Set();
             progress = new Map();
@@ -376,7 +376,7 @@ const BossModTasksPlace = (() => {
             if (toolbar) lastView = { windowDays, sortDirection, filters: toolbar.filters() };
             disposers.splice(0).forEach((off) => off());
             clearTimeout(refreshTimer);
-            if (load) load.next();
+            load.next();
             if (toolbar) toolbar.destroy();
             if (menu) menu.destroy();
             closeDetails();

@@ -20,7 +20,8 @@ const BossModMetricsPlace = (() => {
     const SKELETON_CARDS = 4;
 
     let ctxRef = null;
-    let load = null;
+    // Module-lifetime, so load ids never repeat across mounts.
+    const load = BossModGates.createLoadGeneration();
     let bodyEl = null;
     let summaryEl = null;
     let lastDashboard = null;
@@ -166,7 +167,6 @@ const BossModMetricsPlace = (() => {
          */
         mount(el, ctx) {
             ctxRef = ctx;
-            load = BossModGates.createLoadGeneration();
             summaryEl = h('p', { class: 'place-summary' }, '');
             bodyEl = h('div', { class: 'metrics-body' });
 
@@ -208,7 +208,7 @@ const BossModMetricsPlace = (() => {
          */
         unmount() {
             disposers.splice(0).forEach((off) => off());
-            if (load) load.next();
+            load.next();
             lastDashboard = null;
             bodyEl = null;
             summaryEl = null;

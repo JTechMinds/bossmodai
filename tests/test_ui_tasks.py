@@ -336,6 +336,7 @@ def test_tasks_harness() -> None:
         "refetchesOnResync": True,
         "opensLinkedTask": True,
         "offFloorTaskHidden": True,
+        "staleLoadDropped": True,
     }
 
     # Every refresh trigger must still be emitted somewhere in the engine.

@@ -30,7 +30,8 @@ const BossModFilesPlace = (() => {
     const disposers = [];
     const state = Object.assign({}, EMPTY_STATE);
     let ctxRef = null;
-    let load = null;
+    // Module-lifetime, so load ids never repeat across mounts.
+    const load = BossModGates.createLoadGeneration();
     let toolbar = null;
     let rowMenu = null;
     let frame = null;
@@ -297,7 +298,6 @@ const BossModFilesPlace = (() => {
          */
         mount(el, ctx) {
             ctxRef = ctx;
-            load = BossModGates.createLoadGeneration();
             const current = ctx.store.getState();
             const floorId = BossModFloorScope.visibleFloorId(current);
             const path = startPath(current.placeParams, floorId, lastView);
@@ -340,7 +340,7 @@ const BossModFilesPlace = (() => {
                 };
             }
             disposers.splice(0).forEach((off) => off());
-            if (load) load.next();
+            load.next();
             if (rowMenu) rowMenu.close();
             if (toolbar) toolbar.destroy();
             BossModFileViewer.close();
