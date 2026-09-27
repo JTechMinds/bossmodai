@@ -19,6 +19,7 @@ if [ ! -f "$BINARY" ] || \
    [ "desktop/src/main.rs" -nt "$BINARY" ] || \
    [ "desktop/src/needs_attention.rs" -nt "$BINARY" ] || \
    [ "desktop/src/needs_map.rs" -nt "$BINARY" ] || \
+   [ "desktop/src/clipboard_image.rs" -nt "$BINARY" ] || \
    [ "desktop/Cargo.toml" -nt "$BINARY" ] || \
    [ "desktop/tauri.conf.json" -nt "$BINARY" ] || \
    [ "desktop/icons/icon.png" -nt "$BINARY" ] || \

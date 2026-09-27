@@ -474,3 +474,50 @@ def test_system_completion_card_does_not_open_peer_round() -> None:
     assert not _queued_channel_messages(jim.id)
     assert not _queued_channel_messages(laura.id)
     assert not _queued_channel_messages(jimothy.id)
+
+
+def test_start_channel_peer_round_tells_the_router_about_attachments(monkeypatch) -> None:
+    """The router reads text only, so a file-only post must not look empty.
+
+    The attachment line goes in front of the text, where the router's
+    length clip cannot cut it off.
+    """
+    from core.agent_loop import channel_rounds
+    from db import attachments as db_att
+
+    jim, laura, jimothy, channel = _three_members()
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="thoughts?",
+        source_channel="channel",
+    )
+    shot = db_att.create_attachment(
+        message.id, "shot.png", 3, "image/png", "/tmp/shot.png", "image",
+        context_type="thread", context_id=channel.id,
+    )
+    spec = db_att.create_attachment(
+        message.id, "spec.pdf", 3, "application/pdf", "/tmp/spec.pdf", "document",
+        context_type="thread", context_id=channel.id,
+    )
+    seen: list[str] = []
+    real_plan = channel_rounds._plan_for_members
+
+    def _capture(**kwargs: Any):
+        seen.append(kwargs["latest_message"])
+        return real_plan(**kwargs)
+
+    monkeypatch.setattr(channel_rounds, "_plan_for_members", _capture)
+
+    start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+        attachment_ids=[shot.id, spec.id],
+    )
+
+    assert seen == ["Attachments: shot.png (image), spec.pdf (document)\nthoughts?"]

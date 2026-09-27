@@ -258,6 +258,10 @@ def test_history_returns_attachments_for_dm_and_thread(client):
     assert [a["id"] for a in by_content["dm"]["attachments"]] == [dm_aid]
     assert by_content["dm"]["attachments"][0]["file_name"] == "dm.txt"
     assert "storage_path" not in by_content["dm"]["attachments"][0]
+    # The Files viewer opens it by its company-relative path.
+    assert by_content["dm"]["attachments"][0]["company_path"].startswith(
+        f"/{ada.floor_id}/.attachments/direct/{ada.id}/"
+    )
     assert by_content["plain"]["attachments"] == []
 
     channel = db.create_channel(name="Room", member_agent_ids=[ada.id])
@@ -266,3 +270,6 @@ def test_history_returns_attachments_for_dm_and_thread(client):
     messages = client.get(f"/api/channels/{channel.id}").json()["messages"]
     posted = next(m for m in messages if m["content"] == "thread")
     assert [a["id"] for a in posted["attachments"]] == [th_aid]
+    assert posted["attachments"][0]["company_path"].startswith(
+        f"/{channel.floor_id}/.attachments/thread/{channel.id}/"
+    )

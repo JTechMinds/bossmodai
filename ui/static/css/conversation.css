@@ -962,9 +962,12 @@ span.mention-pill { cursor: default; }
   font-size: 0.85em;
 }
 
-.file-chip:hover {
+.file-chip:hover:not(:disabled) {
   background: var(--bg);
 }
+
+.file-chip.is-failed { border-color: var(--alert); }
+.file-chip:disabled { cursor: not-allowed; color: var(--muted); }
 
 .file-chip-icon { font-size: 0.9em; }
 .file-chip-name { font-weight: 500; }

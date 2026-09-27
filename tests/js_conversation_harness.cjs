@@ -24,7 +24,7 @@ const NAMES = [
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
-    "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
+    "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation",
@@ -127,12 +127,22 @@ const api = async (url, init) => {
 // conversation.js uploads through the shared client, which the browser
 // defines in api-client.js. Scripted here: the id names the conversation it
 // was uploaded for, so a chip that followed the wrong conversation shows.
+const uploads = [];
+const blobFetches = [];
 global.BossModApi = {
     async uploadAttachment(file, context) {
+        uploads.push(file.name);
         return { id: `${context.id}:${file.name}`, file_name: file.name, file_size: 1, mime_type: file.type, preview_tier: "image" };
     },
     async deleteAttachment() {},
     async getAttachmentLimits() { return { max_size_mb: 10, max_per_message: 5 }; },
+    // Thumbnails load through the token-carrying fetch, never a bare <img src>.
+    async fetchBlobUrl(url) {
+        blobFetches.push(url);
+        if (url.includes("broken")) throw new Error("Request failed (401)");
+        return `blob:${url}`;
+    },
+    fetch: api,
 };
 
 const store = BossModStore.createStore({
@@ -845,6 +855,152 @@ async function main() {
         throw new Error(`in-flight send wrong: chips="${chips().join("|")}" sent=${JSON.stringify(activations[sent])}`);
     }
 
+    // ─── pickedFileSurvivesInputReset / emptyPickSaysSo ───
+    // A file input's FileList is live: resetting `value` right after the
+    // change handler hands it off empties it. The tray must copy it first.
+    await conversation.open("b", "agent");
+    const errorText = () => conversation.element.querySelector(".composer-error").textContent;
+    const fileInput = conversation.element.querySelector("input[type=file]");
+    let liveFiles = null;
+    const liveFileList = (files) => ({
+        items: files.slice(),
+        get length() { return this.items.length; },
+        item(index) { return this.items[index] || null; },
+        [Symbol.iterator]() { return this.items[Symbol.iterator](); },
+    });
+    Object.defineProperty(fileInput, "files", { configurable: true, get: () => liveFiles });
+    Object.defineProperty(fileInput, "value", {
+        configurable: true,
+        get: () => "",
+        set: (next) => { if (next === "" && liveFiles) liveFiles.items.length = 0; },
+    });
+    const uploadsBefore = uploads.length;
+    liveFiles = liveFileList([{ name: "picked.pdf", type: "application/pdf", size: 4, lastModified: 1 }]);
+    fileInput.dispatchEvent({ type: "change" });
+    for (let i = 0; i < 5; i += 1) await tick();
+    const pickedFileSurvivesInputReset = chips().join("|") === "picked.pdf"
+        && uploads.slice(uploadsBefore).join("|") === "picked.pdf";
+    if (!pickedFileSurvivesInputReset) {
+        throw new Error(`the picked file must upload: chips="${chips().join("|")}" uploads=${JSON.stringify(uploads.slice(uploadsBefore))}`);
+    }
+    liveFiles = liveFileList([]);
+    fileInput.dispatchEvent({ type: "change" });
+    for (let i = 0; i < 5; i += 1) await tick();
+    const emptyPickSaysSo = errorText() === "No file was attached." && chips().join("|") === "picked.pdf";
+    if (!emptyPickSaysSo) throw new Error(`an empty pick must say so: "${errorText()}"`);
+
+    // ─── pasteReadsItems / pasteTextIsPlain / pasteOfNothingSaysSo ───
+    // WebKitGTK hands a pasted screenshot over as an item, with `files`
+    // empty. The browser must never drop the image (or any markup) into the
+    // field itself, so every paste is prevented and routed by the composer.
+    const pasteWith = (clip) => {
+        const event = { type: "paste", clipboardData: clip, prevented: false, preventDefault() { this.prevented = true; } };
+        composerInput.dispatchEvent(event);
+        return event;
+    };
+    const shot = { name: "shot.png", type: "image/png", size: 3, lastModified: 2 };
+    const imagePaste = pasteWith({
+        items: [{ kind: "file", type: "image/png", getAsFile: () => shot }],
+        files: [],
+        getData: () => "",
+    });
+    for (let i = 0; i < 5; i += 1) await tick();
+    const pasteReadsItems = imagePaste.prevented && chips().join("|") === "picked.pdf|shot.png";
+    if (!pasteReadsItems) throw new Error(`an items-only image paste must upload: "${chips().join("|")}"`);
+
+    composerInput.value = "say ";
+    const textPaste = pasteWith({
+        items: [{ kind: "string", type: "text/html" }],
+        files: [],
+        getData: (type) => (type === "text/plain" ? "hello" : "<b>hello</b>"),
+    });
+    const pasteTextIsPlain = textPaste.prevented && composerInput.value === "say hello"
+        && Array.from(composerInput.childNodes || []).every((node) => node.nodeType === 3);
+    if (!pasteTextIsPlain) throw new Error(`a text paste must insert plain text: "${composerInput.value}"`);
+
+    // ─── pasteReplacesSelection ───
+    // A prevented paste gets no native replace, so the composer must delete
+    // the selected text itself. The selection here runs to the end of the
+    // draft, which is where the plain field shim (no caret) inserts.
+    composerInput.value = "say hello";
+    const draftText = composerInput.childNodes[0];
+    const realGetSelection = global.window.getSelection;
+    global.window.getSelection = () => ({
+        rangeCount: 1,
+        getRangeAt: () => ({
+            collapsed: false,
+            commonAncestorContainer: draftText,
+            deleteContents() { draftText.textContent = draftText.textContent.slice(0, 4); },
+        }),
+    });
+    pasteWith({ items: [], files: [], getData: (type) => (type === "text/plain" ? "bye" : "") });
+    global.window.getSelection = realGetSelection;
+    const pasteReplacesSelection = composerInput.value === "say bye";
+    if (!pasteReplacesSelection) throw new Error(`a paste must replace the selection: "${composerInput.value}"`);
+
+    const emptyPaste = pasteWith({ items: [], files: [], getData: () => "" });
+    const pasteOfNothingSaysSo = emptyPaste.prevented
+        && errorText() === "Could not read the pasted content. Use the 📎 button to attach files.";
+    if (!pasteOfNothingSaysSo) throw new Error(`an unreadable paste must say so: "${errorText()}"`);
+    composerInput.value = "";
+
+    // ─── desktopPasteReadsTheShellClipboard / desktopPasteRefusalShowsReason ───
+    // Inside the desktop shell, a paste with neither a file nor text (the
+    // WebKitGTK screenshot) is read natively and attached as a PNG. Outside
+    // it, pasteOfNothingSaysSo above is the browser's answer.
+    const invoked = [];
+    let clipboardRefusal = null;
+    global.__TAURI__ = {
+        core: {
+            async invoke(command) {
+                invoked.push(command);
+                if (clipboardRefusal) throw clipboardRefusal;
+                return new ArrayBuffer(8);
+            },
+        },
+    };
+    const desktopUploadsBefore = uploads.length;
+    const desktopPaste = pasteWith({ items: [], files: [], getData: () => "" });
+    for (let i = 0; i < 8; i += 1) await tick();
+    const pastedName = uploads.slice(desktopUploadsBefore).join("|");
+    const desktopPasteReadsTheShellClipboard = desktopPaste.prevented
+        && invoked.join("|") === "read_clipboard_image_png"
+        && /^pasted-image-\d{8}-\d{6}\.png$/.test(pastedName)
+        && chips().includes(pastedName);
+    if (!desktopPasteReadsTheShellClipboard) {
+        throw new Error(`a desktop paste must attach the shell's image: invoked=${JSON.stringify(invoked)} uploaded="${pastedName}" chips="${chips().join("|")}"`);
+    }
+    clipboardRefusal = "The clipboard holds no image: The clipboard contents were not available in the requested format";
+    pasteWith({ items: [], files: [], getData: () => "" });
+    for (let i = 0; i < 8; i += 1) await tick();
+    const desktopPasteRefusalShowsReason = errorText() === clipboardRefusal;
+    if (!desktopPasteRefusalShowsReason) throw new Error(`a refused desktop read must say why: "${errorText()}"`);
+    delete global.__TAURI__;
+
+    // ─── thumbnailUsesAuthenticatedBlob / thumbnailIsCached / failedThumbnailShowsChip ───
+    const shotAtt = { id: "att-1", file_name: "shot.png", file_size: 3, preview_tier: "image", company_path: "/lobby/.attachments/direct/a/u_shot.png" };
+    const renderAtts = (atts) => BossModMessage.renderMessage({
+        kind: "message", key: `k-${atts.map((a) => a.id).join("-")}`, author: "human", text: "", createdAt: "", attachments: atts,
+    });
+    const firstPaint = renderAtts([shotAtt]);
+    for (let i = 0; i < 5; i += 1) await tick();
+    const secondPaint = renderAtts([shotAtt]);
+    for (let i = 0; i < 5; i += 1) await tick();
+    const srcOf = (node) => node.querySelector(".msg-att-img").getAttribute("src");
+    const thumbnailUsesAuthenticatedBlob = srcOf(firstPaint) === "blob:/api/attachments/att-1/preview";
+    if (!thumbnailUsesAuthenticatedBlob) throw new Error(`thumbnail must load a blob URL: src=${srcOf(firstPaint)}`);
+    const thumbnailIsCached = srcOf(secondPaint) === srcOf(firstPaint)
+        && blobFetches.filter((url) => url.includes("att-1")).length === 1;
+    if (!thumbnailIsCached) throw new Error(`a repaint must reuse the URL: ${JSON.stringify(blobFetches)}`);
+    const brokenPaint = renderAtts([{ ...shotAtt, id: "broken", file_name: "gone.png" }]);
+    for (let i = 0; i < 5; i += 1) await tick();
+    const brokenChip = brokenPaint.querySelector(".file-chip");
+    const failedThumbnailShowsChip = Boolean(brokenChip)
+        && !brokenPaint.querySelector(".msg-att-img")
+        && brokenChip.getAttribute("aria-label") === "gone.png: preview failed"
+        && brokenChip.classList.contains("is-failed");
+    if (!failedThumbnailShowsChip) throw new Error("a failed thumbnail must become a labelled chip");
+
     // ─── structuredRefusalShowsItsError ───
     // A 422 with `{detail: {error, code, missing_ids}}` reads as its error
     // text on the composer, for a DM and a thread alike — never raw JSON.
@@ -900,6 +1056,17 @@ async function main() {
         attachmentsFollowTheirConversation,
         inFlightSendKeepsNewerChips,
         structuredRefusalShowsItsError,
+        pickedFileSurvivesInputReset,
+        emptyPickSaysSo,
+        pasteReadsItems,
+        pasteTextIsPlain,
+        pasteOfNothingSaysSo,
+        pasteReplacesSelection,
+        desktopPasteReadsTheShellClipboard,
+        desktopPasteRefusalShowsReason,
+        thumbnailUsesAuthenticatedBlob,
+        thumbnailIsCached,
+        failedThumbnailShowsChip,
         agentNameIsChromeOutside,
         quietAuthor,
         authorUsesAgentColor,

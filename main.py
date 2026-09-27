@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from api.auth import ensure_local_api_token, install_local_api_auth, install_settings_refresh
 from api.routes import router as api_router
+from core import config
 from core.agent_repository import agent_repository
 from core.runtime import runtime_services
 from db import init_db, close_connection
@@ -42,7 +43,6 @@ def _sweep_stale_pending_attachments() -> None:
     """
     from datetime import datetime, timedelta, timezone
 
-    from core import config
     from db import attachments as db_att
 
     ttl_hours = config.require_int("bossmod.attach.pending_ttl_hours")
@@ -64,6 +64,11 @@ def _sweep_stale_pending_attachments() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Importing this module already loaded the settings cache (the auth
+    # install reads config), before init_db seeded any new keys. Pick up those
+    # rows now so every startup reader below, the attachment sweep included,
+    # sees them.
+    config.refresh_if_changed()
     # Once per app start: after init_db (ledger seeding and identity backfill
     # know every live agent) and before the runtime worker starts. Not inside
     # init_db, which runs again on every runtime start.

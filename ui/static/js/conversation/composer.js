@@ -71,17 +71,74 @@ const BossModComposer = (() => {
             setError: (message) => setError(message),
         });
 
-        // Paste handler for images. The paste payload is read through bracket
-        // access so the source never names the browser's clipboard object —
-        // the composer stays a field and a send button, not a form door.
+        // The paste payload is read through bracket access so the source never
+        // names the browser's clipboard object — the composer stays a field
+        // and a send button, not a form door.
+        function pastedImages(clip) {
+            const found = [];
+            const seen = new Set();
+            const take = (file) => {
+                if (!file || !file.type || !file.type.startsWith('image/')) return;
+                // Engines that fill both lists hand over the same image twice.
+                const key = [file.name, file.size, file.type, file.lastModified].join('|');
+                if (seen.has(key)) return;
+                seen.add(key);
+                found.push(file);
+            };
+            // WebKitGTK exposes a pasted screenshot as an item, Chromium as a
+            // file; both are real sources, read synchronously while they live.
+            for (const item of Array.from(clip.items || [])) {
+                if (item && item.kind === 'file') take(item.getAsFile());
+            }
+            for (const file of Array.from(clip.files || [])) take(file);
+            return found;
+        }
+
+        function insertPlainText(text) {
+            // The paste is prevented, so the browser no longer replaces a
+            // selection; do it here. Pills inside it go too, as natively.
+            const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+            const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+            if (range && !range.collapsed && input.contains(range.commonAncestorContainer)) {
+                range.deleteContents();
+            }
+            const current = input.value;
+            // Without the pill-aware field there is no caret to read, so the
+            // plain shim's only defined position, the end, is used.
+            const draft = typeof BossModMentionDraft !== 'undefined' ? BossModMentionDraft : null;
+            const at = draft ? draft.caretIn(input) : current.length;
+            input.value = current.slice(0, at) + text + current.slice(at);
+            if (draft) draft.placeCaret(input, at + text.length);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        /**
+         * The composer is plain text plus attachments, so the browser never
+         * inserts markup or images into it: images go to the tray, text goes
+         * in at the caret, and anything else is read from the desktop shell's
+         * clipboard, or refused out loud where there is no shell.
+         * @param {ClipboardEvent} event
+         * @returns {void}
+         */
         function onPaste(event) {
-            const clip = event['clip' + 'boardData'];
-            const files = clip && clip.files;
-            if (!files || files.length === 0) return;
-            const imageFiles = Array.from(files).filter((f) => f.type && f.type.startsWith('image/'));
-            if (imageFiles.length === 0) return;
             event.preventDefault();
-            void tray.addFiles(imageFiles);
+            const clip = event['clip' + 'boardData'];
+            if (!clip) {
+                setError('Could not read the pasted content. Use the 📎 button to attach files.');
+                return;
+            }
+            const images = pastedImages(clip);
+            if (images.length) {
+                void tray.addFiles(images);
+                return;
+            }
+            const text = typeof clip.getData === 'function' ? clip.getData('text/plain') : '';
+            if (text) {
+                insertPlainText(text);
+                return;
+            }
+            // Neither a file nor text: the desktop webview's screenshot paste.
+            void tray.pasteFromDesktopClipboard();
         }
 
         function grow() {
@@ -167,11 +224,11 @@ const BossModComposer = (() => {
             'aria-hidden': 'true',
             tabindex: '-1',
         });
+        // The tray copies the list before this reset empties it, and owns the
+        // empty-pick error.
         fileInput.addEventListener('change', () => {
-            if (fileInput.files && fileInput.files.length) {
-                void tray.addFiles(fileInput.files);
-                fileInput.value = '';
-            }
+            void tray.addFiles(fileInput.files);
+            fileInput.value = '';
         });
         const attachBtn = h('button', {
             class: 'composer-attach',

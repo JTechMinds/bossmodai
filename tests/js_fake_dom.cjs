@@ -370,11 +370,17 @@ class FakeEl {
      * Input and change are how a paste commits. A click-only fake cannot see
      * that the value landed before Save read it.
      *
-     * @param {{ type?: string, target?: object }} event
+     * A real `Event` (what production code constructs) has a read-only
+     * `target` until a real DOM dispatches it, so it is carried as a plain
+     * object with the same type.
+     *
+     * @param {{ type?: string, target?: object }|Event} event
      * @returns {boolean}
      */
     dispatchEvent(event) {
-        const evt = event || {};
+        const evt = typeof Event === "function" && event instanceof Event
+            ? { type: event.type, bubbles: event.bubbles, preventDefault() {}, stopPropagation() {} }
+            : (event || {});
         const type = String(evt.type || "");
         if (!evt.target) evt.target = this;
         const handlers = [...(this.listeners[type] || [])];

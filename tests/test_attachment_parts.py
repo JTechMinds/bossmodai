@@ -97,8 +97,10 @@ def test_unflagged_model_gets_an_explicit_notice(tmp_path, caplog):
         notice = result[1]["content"][1]
         assert notice["type"] == "text"
         assert notice["text"] == (
-            "[Image pic.png attached: your model cannot view images. "
-            "It is saved at /projects/.attachments/direct/agent-1/u_pic.png.]"
+            "[Image pic.png attached, but your model cannot view images. "
+            "Don't try to open it with the CLI; tell the operator you can't see it. "
+            "It is saved at /projects/.attachments/direct/agent-1/u_pic.png "
+            "if you need to move or reference the file.]"
         )
     assert "not marked image-capable" in caplog.text
 
@@ -284,3 +286,25 @@ async def test_a_missing_attachment_fails_the_turn_without_retry(monkeypatch):
 
     assert recorded == ["Attachment gone no longer exists"]
     assert supervised == [False]
+
+
+# ─── attachment_route_line: what the thread router is told ───
+
+
+def test_attachment_route_line_names_files_and_tiers_without_paths(tmp_path):
+    from core.llm.attachment_parts import attachment_route_line
+
+    shot = _stored(tmp_path, "shot.png", _PNG, "image/png", "image")
+    spec = _stored(tmp_path, "spec.pdf", b"%PDF", "application/pdf", "document")
+
+    line = attachment_route_line([shot, spec])
+
+    assert line == "Attachments: shot.png (image), spec.pdf (document)"
+    assert "/projects" not in line
+
+
+def test_attachment_route_line_unknown_id_raises():
+    from core.llm.attachment_parts import attachment_route_line
+
+    with pytest.raises(AttachmentUnavailableError):
+        attachment_route_line(["no-such-id"])

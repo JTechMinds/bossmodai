@@ -59,10 +59,103 @@ const BossModMessage = (() => {
     }
 
     /**
+     * Thumbnail object URLs by attachment id. `<img src>` carries no API
+     * token, so previews come through the authenticated fetch as blob URLs.
+     * A transcript repaints often; caching means one fetch and one URL per
+     * attachment instead of one per paint. The URLs live for the page
+     * session, bounded by the attachments actually shown. A failed load is
+     * dropped so a later paint can try again.
+     * @type {Map<string, Promise<string>>}
+     */
+    const previewUrls = new Map();
+
+    function previewUrl(id) {
+        if (!previewUrls.has(id)) {
+            const pending = BossModApi.fetchBlobUrl(`/api/attachments/${encodeURIComponent(id)}/preview`);
+            pending.catch(() => previewUrls.delete(id));
+            previewUrls.set(id, pending);
+        }
+        return previewUrls.get(id);
+    }
+
+    /**
+     * Open an attachment in the Files viewer, by its company path.
+     * @param {object} att
+     * @param {HTMLElement} control  Marked failed, with the reason, on error.
+     * @returns {Promise<void>}
+     */
+    async function openAttachment(att, control) {
+        control.classList.remove('is-failed');
+        try {
+            if (typeof BossModFileViewer === 'undefined') throw new Error('The file viewer is not loaded.');
+            await BossModFileViewer.open(att.company_path, { api: BossModApi.fetch });
+        } catch (err) {
+            console.error('[message] could not open attachment', att.id, err);
+            control.classList.add('is-failed');
+            control.setAttribute('title', (err && err.message) || 'Could not open the file');
+        }
+    }
+
+    /**
+     * A file chip that opens the attachment. A file stored before attachments
+     * lived under the floors has no company path, and says so, disabled.
+     * @param {object} att
+     * @param {string} [failure]  Why an image preview is showing as a chip.
+     * @returns {HTMLElement}
+     */
+    function fileChip(att, failure) {
+        const name = att.file_name || 'file';
+        const tier = att.preview_tier || 'other';
+        const icon = { image: '🖼️', document: '📄', text: '📝' }[tier] || '📎';
+        const label = failure
+            ? `${name}: ${failure}`
+            : (att.company_path ? `Open ${name} (${humanSize(att.file_size || 0)})` : `${name} cannot be opened here`);
+        const chip = h('button', {
+            class: failure ? 'file-chip is-failed' : 'file-chip',
+            type: 'button',
+            'aria-label': label,
+            title: label,
+            disabled: !att.company_path,
+            onclick: () => { void openAttachment(att, chip); },
+        },
+            h('span', { class: 'file-chip-icon', 'aria-hidden': 'true' }, icon),
+            h('span', { class: 'file-chip-name' }, name),
+            h('span', { class: 'file-chip-size' }, humanSize(att.file_size || 0)));
+        return chip;
+    }
+
+    /**
+     * An image thumbnail loaded through the authenticated fetch. On failure
+     * it becomes the file chip, labelled with the failure, and logs it.
+     * @param {object} att
+     * @returns {HTMLElement}
+     */
+    function imageThumb(att) {
+        const name = att.file_name || 'file';
+        const img = h('img', { class: 'msg-att-img', alt: name, loading: 'lazy' });
+        const link = h('button', {
+            class: 'msg-att-img-link',
+            type: 'button',
+            'aria-label': `Open ${name}`,
+            disabled: !att.company_path,
+            onclick: () => { void openAttachment(att, link); },
+        }, img);
+        previewUrl(att.id).then(
+            (url) => img.setAttribute('src', url),
+            (err) => {
+                console.error('[message] attachment preview failed', att.id, err);
+                const parent = link.parentNode;
+                if (parent) parent.replaceChild(fileChip(att, 'preview failed'), link);
+            },
+        );
+        return link;
+    }
+
+    /**
      * Render the attachment row for a message.
      *
-     * T1 (image): thumbnail img, click opens full-size download.
-     * T2/T3/T4:   file chip (name + size), click triggers download.
+     * T1 (image): thumbnail, click opens it in the Files viewer.
+     * T2/T3/T4:   file chip (name + size), click opens it in the Files viewer.
      *
      * @param {Array<object>} attachments  Normalised attachment metadata.
      * @returns {HTMLElement}
@@ -70,35 +163,7 @@ const BossModMessage = (() => {
     function renderAttachments(attachments) {
         const row = h('div', { class: 'msg-attachments' });
         for (const att of attachments) {
-            const id = att.id;
-            const name = att.file_name || 'file';
-            const size = att.file_size || 0;
-            const tier = att.preview_tier || 'other';
-            if (tier === 'image') {
-                const img = h('img', {
-                    class: 'msg-att-img',
-                    src: `/api/attachments/${id}/preview`,
-                    alt: name,
-                    loading: 'lazy',
-                });
-                const link = h('a', {
-                    class: 'msg-att-img-link',
-                    href: `/api/attachments/${id}`,
-                    'aria-label': `Open ${name}`,
-                }, img);
-                row.append(link);
-            } else {
-                const icon = tier === 'document' ? '📄' : tier === 'text' ? '📝' : '📎';
-                const chip = h('a', {
-                    class: 'file-chip',
-                    href: `/api/attachments/${id}`,
-                    'aria-label': `Download ${name} (${humanSize(size)})`,
-                },
-                    h('span', { class: 'file-chip-icon', 'aria-hidden': 'true' }, icon),
-                    h('span', { class: 'file-chip-name' }, name),
-                    h('span', { class: 'file-chip-size' }, humanSize(size)));
-                row.append(chip);
-            }
+            row.append((att.preview_tier || 'other') === 'image' ? imageThumb(att) : fileChip(att));
         }
         return row;
     }

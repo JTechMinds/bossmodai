@@ -48,6 +48,7 @@ from core.agent_loop.channel_host import (
     talk_closed,
 )
 from core.agent_loop.channel_router import RoundPlan, plan_channel_route
+from core.llm.attachment_parts import attachment_route_line
 from core.agent_loop.channel_work_bind import (
     live_work_bind_ids,
     live_work_binds,
@@ -190,7 +191,11 @@ def start_channel_peer_round(
         mode=mode,
         members=members,
         fallback_order=ordered_ids,
-        latest_message=content,
+        # The router reads text only; without this line a file-only post
+        # looks empty. First, so the router's length clip cannot cut it.
+        latest_message=(
+            f"{attachment_route_line(attachment_ids)}\n{content}" if attachment_ids else content
+        ),
         required_ids=pins,
         handoff=handoff,
         agent_line=author_type == "agent",

@@ -468,3 +468,34 @@ def test_a_stored_host_root_overlapping_the_company_is_ignored_and_logged(
     finance = create_floor("Finance")
     with pytest.raises(PathOutsideRootsError):
         resolve_cli_path(agent.storage_key, "/me", str(floor_root(finance.id)))
+
+
+# ─── /projects/.attachments: the floor's upload folder, kept verbatim ───
+
+
+def test_attachments_folder_is_not_slugified_like_a_project() -> None:
+    finance, ada, _bob, _secret = _two_floors()
+    virtual = f"/projects/.attachments/direct/{ada.id}/u_shot.png"
+
+    resolved = resolve_cli_path(ada.storage_key, "/me", virtual)
+
+    assert resolved.real_path == floor_root(finance.id) / ".attachments" / "direct" / ada.id / "u_shot.png"
+    # An ordinary first segment is still a project name, slugified.
+    project = resolve_cli_path(ada.storage_key, "/me", "/projects/My Books/plan.md")
+    assert project.real_path == floor_root(finance.id) / "My-Books" / "plan.md"
+
+
+def test_an_approved_command_finds_a_real_attachment_file() -> None:
+    finance, ada, _bob, _secret = _two_floors()
+    stored = floor_root(finance.id) / ".attachments" / "direct" / ada.id / "u_note.txt"
+    stored.parent.mkdir(parents=True)
+    stored.write_text("attached-ok\n", encoding="utf-8")
+    state = db.get_agent_state(ada.id)
+    assert state is not None
+    command = f"cat /projects/.attachments/direct/{ada.id}/u_note.txt"
+    request = db.create_cli_approval_request(agent_id=ada.id, command=command, cwd="/me")
+
+    result = execute_approved_command(ada, state, command, approval_request_id=request.id)
+
+    assert result.ok is True, result.detail
+    assert "attached-ok" in (result.prompt_content or "")

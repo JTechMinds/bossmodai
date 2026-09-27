@@ -41,6 +41,8 @@ from core.tasking.transitions import transition_task
 from core.world.seating import place_agent_at_desk
 from core.world.tilemap import first_unoccupied_chair, get_room_at
 import db
+from core.attachments import company_path
+from core.bm_cli.floor_roots import company_root
 from db.attachments import AttachmentLinkError, get_attachments_for_messages
 
 
@@ -972,13 +974,18 @@ def _serialize_meeting_session_message(item) -> dict[str, object]:
 
 
 def _serialize_attachment(att) -> dict[str, object]:
-    """The client-facing fields of one linked attachment (never its disk path)."""
+    """The client-facing fields of one linked attachment (never its disk path).
+
+    ``company_path`` is the Files-browser path the chat opens the file with;
+    None for a file stored outside the company root.
+    """
     return {
         "id": att.id,
         "file_name": att.file_name,
         "file_size": att.file_size,
         "mime_type": att.mime_type,
         "preview_tier": att.preview_tier,
+        "company_path": company_path(att.storage_path, company_root()),
     }
 
 

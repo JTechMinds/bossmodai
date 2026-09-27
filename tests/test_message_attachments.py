@@ -83,6 +83,9 @@ async def test_dm_links_attachments_and_carries_ids_on_the_trigger() -> None:
     linked = db_att.get_attachments_for_message(result["message_id"])
     assert {a.id for a in linked} == {a1, a2}
     assert [a["id"] for a in rec.broadcasts[0]["attachments"]] == [a1, a2]
+    # Stored outside the company root (a test path), so there is nothing the
+    # Files viewer could open: said as None, not guessed.
+    assert [a["company_path"] for a in rec.broadcasts[0]["attachments"]] == [None, None]
     assert rec.triggers[0]["payload"]["attachment_ids"] == [a1, a2]
 
 

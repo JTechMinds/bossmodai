@@ -39,6 +39,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome-menu.js",
     CONVERSATION / "chrome.js",
+    JS / "core" / "desktop-clipboard.js",
     CONVERSATION / "composer-attachments.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
@@ -301,6 +302,26 @@ def test_conversation_harness() -> None:
         "inFlightSendKeepsNewerChips": True,
         # A 422 attachment refusal shows its `detail.error`, not raw JSON.
         "structuredRefusalShowsItsError": True,
+        # The 📎 pick is copied before the input reset empties its live
+        # FileList; an empty pick says so instead of doing nothing.
+        "pickedFileSurvivesInputReset": True,
+        "emptyPickSaysSo": True,
+        # Every paste is prevented: an items-only image (WebKitGTK) uploads,
+        # text goes in plain, and anything else is refused out loud.
+        "pasteReadsItems": True,
+        "pasteTextIsPlain": True,
+        "pasteOfNothingSaysSo": True,
+        # The prevented paste still replaces a selection, as a native one did.
+        "pasteReplacesSelection": True,
+        # In the desktop shell, a paste with neither file nor text is read
+        # from the native clipboard; a refused read says why.
+        "desktopPasteReadsTheShellClipboard": True,
+        "desktopPasteRefusalShowsReason": True,
+        # `<img src>` carries no API token: thumbnails load as authenticated
+        # blob URLs, cached per attachment, and a failed one says so.
+        "thumbnailUsesAuthenticatedBlob": True,
+        "thumbnailIsCached": True,
+        "failedThumbnailShowsChip": True,
         "agentNameIsChromeOutside": True,
         "quietAuthor": True,
         "authorUsesAgentColor": True,

@@ -35,6 +35,7 @@ const BossModComposerAttachments = (() => {
      *   The operator-set limits, read once per tray.
      * @param {(message: string) => void} deps.setError  The composer's error line.
      * @returns {{ element: HTMLElement, addFiles: (files: FileList|File[]) => Promise<void>,
+     *             pasteFromDesktopClipboard: () => Promise<void>,
      *             list: () => object[], ids: () => string[],
      *             replace: (metas: object[]|null) => void,
      *             removeSent: (ids: string[]) => void, clear: () => void }}
@@ -89,18 +90,26 @@ const BossModComposerAttachments = (() => {
         /**
          * Upload picked or pasted files for the open conversation.
          *
-         * Over the cap is refused before anything is uploaded. Any failure is
-         * shown on the error line, never thrown.
+         * The list is copied before anything else, synchronously: a file
+         * input's FileList empties when the input is reset right after this
+         * call, and a paste's DataTransfer does not outlive its event. An
+         * empty pick is an error, not a silent no-op. Over the cap is refused
+         * before anything is uploaded. Any failure is shown on the error
+         * line, never thrown.
          *
          * @param {FileList|File[]} files
          * @returns {Promise<void>}
          */
         async function addFiles(files) {
+            const picked = Array.from(files || []);
+            if (picked.length === 0) {
+                setError('No file was attached.');
+                return;
+            }
             const started = generation;
             try {
                 const ctx = getContext();
                 const cap = await attachmentCap();
-                const picked = Array.from(files);
                 if (pending.length + picked.length > cap) {
                     setError('Maximum ' + cap + ' attachments per message.');
                     return;
@@ -139,9 +148,35 @@ const BossModComposerAttachments = (() => {
             render();
         }
 
+        /**
+         * Attach the image on the system clipboard, read by the desktop shell.
+         *
+         * The last resort of a paste that carried neither a file nor text: the
+         * desktop webview hands a screenshot over in neither form. In a plain
+         * browser there is no shell to ask, and the paste is refused out loud.
+         * Any failure is shown on the error line, never thrown.
+         *
+         * @returns {Promise<void>}
+         */
+        async function pasteFromDesktopClipboard() {
+            if (!BossModDesktopClipboard.available()) {
+                setError('Could not read the pasted content. Use the 📎 button to attach files.');
+                return;
+            }
+            let file;
+            try {
+                file = await BossModDesktopClipboard.readImageFile();
+            } catch (err) {
+                setError((err && err.message) || 'Could not read the clipboard image.');
+                return;
+            }
+            await addFiles([file]);
+        }
+
         return {
             element,
             addFiles,
+            pasteFromDesktopClipboard,
             /** @returns {object[]} A copy of the pending uploads' metadata. */
             list: () => pending.slice(),
             /** @returns {string[]} The pending upload ids, in attach order. */

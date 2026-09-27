@@ -22,7 +22,8 @@ What each attachment becomes:
 - image in any other format (SVG, TIFF, BMP) → a text reference line with
   its path, whatever the model;
 - image, and the model is not flagged → an explicit text notice that the
-  model cannot view it, with its path (and a warning log);
+  model cannot view it and should not try the CLI (which cannot show it
+  an image either), with its path (and a warning log);
 - text at or under ``bossmod.attach.inline_text_max_chars`` → a fenced text
   part labelled with the file name;
 - longer text, non-UTF-8 text, documents and anything else → a text
@@ -147,6 +148,30 @@ def history_manifests(history: list[dict[str, Any]]) -> dict[str, str]:
     return {message_id: format_attachment_manifest(atts) for message_id, atts in by_message.items() if atts}
 
 
+def attachment_route_line(attachment_ids: list[str]) -> str:
+    """One line telling the thread router that files came with the message.
+
+    Names and tiers only, no paths: the router decides who speaks, and only
+    needs to know a message is not empty just because its text is.
+
+    Args:
+        attachment_ids: The source message's attachment ids, in send order.
+
+    Returns:
+        e.g. ``Attachments: shot.png (image), spec.pdf (document)``.
+
+    Raises:
+        AttachmentUnavailableError: An id names no attachment row.
+    """
+    names = []
+    for attachment_id in attachment_ids:
+        att = db_att.get_attachment_by_id(attachment_id)
+        if att is None:
+            raise AttachmentUnavailableError(f"Attachment {attachment_id} no longer exists")
+        names.append(f"{att.file_name} ({att.preview_tier})")
+    return "Attachments: " + ", ".join(names)
+
+
 def format_attachment_manifest(atts: list[Attachment]) -> str:
     """One text line naming each attachment, its tier, size and CLI path.
 
@@ -191,8 +216,9 @@ def _attachment_part(att: Attachment, *, model: str, vision: bool, cap: int) -> 
         return {
             "type": "text",
             "text": (
-                f"[Image {att.file_name} attached: your model cannot view images. "
-                f"It is saved at {_path(att)}.]"
+                f"[Image {att.file_name} attached, but your model cannot view images. "
+                "Don't try to open it with the CLI; tell the operator you can't see it. "
+                f"It is saved at {_path(att)} if you need to move or reference the file.]"
             ),
         }
     if att.preview_tier == "text":

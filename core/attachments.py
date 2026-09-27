@@ -128,6 +128,27 @@ def virtual_path(context_type: ContextType, context_id: str, disk_name: str) -> 
     return f"/projects/{ATTACHMENTS_DIRNAME}/{context_type}/{context_id}/{disk_name}"
 
 
+def company_path(storage_path: str, company_root: Path) -> str | None:
+    """Return a stored file's Files-browser path, ``/<floor_id>/.attachments/...``.
+
+    The Files viewer opens company-relative paths, so this is what the chat
+    hands it to open an attachment.
+
+    Args:
+        storage_path: The attachment's absolute stored path.
+        company_root: ``floor_roots.company_root()``.
+
+    Returns:
+        The company-relative path with a leading slash, or None when the file
+        is not under the company root (an upload stored before attachments
+        moved under the floors), which the Files viewer cannot open.
+    """
+    path = Path(storage_path)
+    if not path.is_relative_to(company_root):
+        return None
+    return "/" + path.relative_to(company_root).as_posix()
+
+
 def sanitize_file_name(name: str) -> str:
     """Strip path separators, null bytes, colons, and truncate to 255 chars.
 

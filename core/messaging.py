@@ -12,6 +12,8 @@ from typing import Any
 
 import db
 from core import config
+from core.attachments import company_path
+from core.bm_cli.floor_roots import company_root
 from core.floors import AgentOnVacation, agent_id_on_vacation
 from core.agent_loop.channel_host import prepare_human_channel_message
 from core.agent_loop.channel_rounds import start_channel_peer_round
@@ -58,9 +60,11 @@ def _link_attachments(
         context_type=context_type,
         context_id=context_id,
     )
+    root = company_root()
     return [
         {"id": a.id, "file_name": a.file_name, "file_size": a.file_size,
-         "mime_type": a.mime_type, "preview_tier": a.preview_tier}
+         "mime_type": a.mime_type, "preview_tier": a.preview_tier,
+         "company_path": company_path(a.storage_path, root)}
         for a in linked
     ]
 

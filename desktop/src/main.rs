@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+mod clipboard_image;
 mod external_open;
 mod needs_attention;
 mod needs_map;
@@ -333,9 +334,12 @@ fn main() {
                 .build(),
         )
         .manage(backend_state)
+        // Native clipboard reads for the composer's paste; see clipboard_image.rs.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             needs_attention::sync_needs_attention,
             open_external_url,
+            clipboard_image::read_clipboard_image_png,
         ])
         .setup(|app| {
             install_quit_signals();

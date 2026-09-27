@@ -1083,3 +1083,40 @@ async def test_the_app_lifespan_purges_once_after_init_and_before_the_runtime(
     async with main.lifespan(main.app):
         assert events == ["init_db", "purge", "runtime_start"]
     assert events.count("purge") == 1
+
+
+async def test_the_app_lifespan_sees_settings_that_init_db_just_seeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup readers must see keys ``init_db`` seeds on an upgraded database.
+
+    Importing ``main`` loads the settings cache (``install_local_api_auth``)
+    before ``lifespan`` runs ``init_db``. A key that ``init_db`` then seeds is
+    missing from that cache unless ``lifespan`` refreshes it, and the stale
+    pending-attachment sweep reads such a key with ``require_int``.
+    """
+    import main
+    from integrations import telegram
+
+    async def _no_telegram(**_kwargs: object) -> None:
+        return None
+
+    async def _no_telegram_stop() -> None:
+        return None
+
+    key = "bossmod.attach.pending_ttl_hours"
+    config.reload()
+    # The database as it was before the upgrade: the key was never seeded.
+    db.execute("DELETE FROM settings WHERE key = $1", [key])
+    config.reload()
+    assert config.get(key) is None
+
+    events: list[str] = []
+    monkeypatch.setattr(main, "runtime_services", _LifespanServices(events))
+    monkeypatch.setattr(agent_repository, "purge_orphans", lambda: {})
+    monkeypatch.setattr(telegram, "start", _no_telegram)
+    monkeypatch.setattr(telegram, "stop", _no_telegram_stop)
+
+    async with main.lifespan(main.app):
+        assert config.get(key) == db.get_seed_setting_default(key)[0]
+        assert events == ["runtime_start"]

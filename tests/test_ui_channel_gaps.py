@@ -55,6 +55,7 @@ CONVERSATION_STACK = [
     JS / "conversation" / "title-rename.js",
     JS / "conversation" / "chrome-menu.js",
     JS / "conversation" / "chrome.js",
+    JS / "core" / "desktop-clipboard.js",
     JS / "conversation" / "composer-attachments.js",
     JS / "conversation" / "composer.js",
     JS / "conversation" / "system-receipts.js",

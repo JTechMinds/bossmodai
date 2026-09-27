@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.attachments import ATTACHMENTS_DIRNAME
 from core.bm_cli.filesystem import (
     agent_artifact_dir,
     resolve_relative_path,
@@ -104,7 +105,12 @@ def resolve_cli_path(agent_storage_key: str, cwd: str, raw_path: str | None = No
         if len(parts) == 1:
             candidate = projects_root
         else:
-            root = projects_root / slugify_name(parts[1])
+            # `.attachments` is the floor's reserved upload folder, not a
+            # project: slugifying strips its dot and points at a folder that
+            # does not exist. A project slug never starts with a dot, so no
+            # project can collide with it.
+            segment = parts[1] if parts[1] == ATTACHMENTS_DIRNAME else slugify_name(parts[1])
+            root = projects_root / segment
             relative = "/".join(parts[2:])
             candidate = root if not relative else resolve_relative_path(root, relative)
         return _resolved(virtual_path, candidate, mount)
