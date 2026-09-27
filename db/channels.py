@@ -429,19 +429,42 @@ def list_queue_visibility_channel_messages(agent_id: str) -> list[ChannelMessage
     )
 
 
-def list_channel_messages(channel_id: str, *, limit: int = 80) -> list[ChannelMessage]:
-    """Return recent channel transcript entries, oldest first."""
-    rows = fetch_all(
-        f"""
-        SELECT {_MESSAGE_COLUMNS}
-        FROM channel_messages
-        WHERE channel_id = $1
-        ORDER BY created_at DESC, id DESC
-        LIMIT $2
-        """,
-        [channel_id, limit],
-        ChannelMessage,
-    )
+def list_channel_messages(
+    channel_id: str,
+    *,
+    limit: int = 80,
+    exclude_notification_kind: str | None = None,
+) -> list[ChannelMessage]:
+    """Return recent channel transcript entries, oldest first.
+
+    When ``exclude_notification_kind`` is set, rows with that notification
+    kind are left out in SQL, so ``limit`` counts only the rows kept.
+    """
+    if exclude_notification_kind is None:
+        rows = fetch_all(
+            f"""
+            SELECT {_MESSAGE_COLUMNS}
+            FROM channel_messages
+            WHERE channel_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            """,
+            [channel_id, limit],
+            ChannelMessage,
+        )
+    else:
+        rows = fetch_all(
+            f"""
+            SELECT {_MESSAGE_COLUMNS}
+            FROM channel_messages
+            WHERE channel_id = $1
+              AND (notification_kind IS NULL OR notification_kind != $3)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            """,
+            [channel_id, limit, exclude_notification_kind],
+            ChannelMessage,
+        )
     rows.reverse()
     return rows
 

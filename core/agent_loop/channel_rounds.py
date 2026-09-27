@@ -198,7 +198,7 @@ def start_channel_peer_round(
             f"{attachment_route_line(attachment_ids)}\n{content}" if attachment_ids else content
         ),
         latest_author=_author_label(channel_id, from_agent, from_name),
-        transcript=_router_transcript(channel_id, before_message_id=message_id),
+        transcript=_router_transcript(channel_id, exclude_message_id=message_id),
         required_ids=pins,
         handoff=handoff,
         agent_line=author_type == "agent",
@@ -699,8 +699,9 @@ def _redecide_remaining(
     set still leaves them out. @ ids stored from the speak wait for the
     next round and are not pulled ahead here.
 
-    ``opening_message`` is only the latest-line fallback when the speak
-    text is empty. ``speaker_id`` labels that latest line for the route.
+    ``speaker_id`` labels a non-empty speak. An empty speak routes on the
+    newest transcript line; ``opening_message`` is used only when there is
+    none. See :func:`_route_latest`.
     """
     remaining_ids = [candidate.agent_id for candidate in pending]
     remaining_set = set(remaining_ids)
@@ -718,7 +719,14 @@ def _redecide_remaining(
     eligible_ids = remaining_ids + observed_ids
     eligible_set = set(eligible_ids)
     forced = [agent_id for agent_id in pinned_ids if agent_id in eligible_set]
-    latest = (latest_message or "").strip() or opening_message
+    latest, latest_author, _is_agent_line, exclude_id = _route_latest(
+        channel_id,
+        spoken=latest_message,
+        speaker_id=speaker_id,
+        fallback_text=opening_message,
+        fallback_agent_id="",
+        fallback_name="",
+    )
     source_id = _round_source_id(round_id)
     spoke_ids = snapshot_spoke_ids(channel_id, source_id)
     bind_ids = live_work_bind_ids(channel_id)
@@ -726,8 +734,8 @@ def _redecide_remaining(
         members=_members_in_order(channel_id, eligible_ids),
         fallback_order=eligible_ids,
         latest_message=latest,
-        latest_author=_author_label(channel_id, speaker_id, ""),
-        transcript=_router_transcript(channel_id, before_message_id=None),
+        latest_author=latest_author,
+        transcript=_router_transcript(channel_id, exclude_message_id=exclude_id),
         pending_mention_ids=forced,
         forced_ids=forced,
         agent_line=True,
@@ -787,11 +795,11 @@ def _members_in_order(channel_id: str, agent_ids: list[str]) -> list[dict[str, s
     return [by_id[agent_id] for agent_id in agent_ids if agent_id in by_id]
 
 
-def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str, str]:
+def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str, str, str]:
     """Newest transcript line, skipping round-boundary markers.
 
-    Returns ``(text, author_type, author_agent_id, author_name)``. With no
-    such line, returns ``fallback`` and empty author fields.
+    Returns ``(text, author_type, author_agent_id, author_name, message_id)``.
+    With no such line, returns ``fallback`` and empty author and id fields.
     """
     for row in reversed(db.list_channel_messages(channel_id, limit=12)):
         if row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND:
@@ -803,28 +811,62 @@ def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str,
                 str(row.author_type or ""),
                 str(row.author_agent_id or ""),
                 str(row.author_name or ""),
+                str(row.id or ""),
             )
-    return fallback, "", "", ""
+    return fallback, "", "", "", ""
 
 
-def _router_transcript(channel_id: str, *, before_message_id: str | None) -> list[RouterLine]:
-    """Prior thread lines for the System AI route, oldest first.
+def _route_latest(
+    channel_id: str,
+    *,
+    spoken: str,
+    speaker_id: str,
+    fallback_text: str,
+    fallback_agent_id: str,
+    fallback_name: str,
+) -> tuple[str, str, bool, str | None]:
+    """Which line a route treats as latest, who wrote it, and which row to leave out.
 
-    Reads ``router_transcript_limit() + 1`` rows and skips round markers.
-    The latest line is not part of the transcript: the row whose id is
-    ``before_message_id`` is dropped, or, when that is ``None``, the newest
-    remaining row. A system row is a status card. No id reaches the lines.
+    Returns ``(latest_text, latest_author, is_agent_line, exclude_message_id)``.
+    A non-empty ``spoken`` is an in-round reply that is not persisted yet,
+    so no row is excluded. Otherwise the newest transcript line is latest
+    and its row is excluded from Recent thread. With no transcript line,
+    the fallback text is latest and nothing is excluded.
+    """
+    text = " ".join((spoken or "").split())
+    if text:
+        return text, _author_label(channel_id, speaker_id, ""), True, None
+    latest, author_type, author_agent_id, author_name, message_id = _latest_channel_line(
+        channel_id, fallback_text
+    )
+    if message_id:
+        return (
+            latest,
+            _author_label(channel_id, author_agent_id, author_name),
+            author_type == "agent",
+            message_id,
+        )
+    return fallback_text, _author_label(channel_id, fallback_agent_id, fallback_name), False, None
+
+
+def _router_transcript(channel_id: str, *, exclude_message_id: str | None) -> list[RouterLine]:
+    """The newest ``router_transcript_limit()`` thread lines, oldest first.
+
+    Round markers are left out in SQL. Only the row whose id is
+    ``exclude_message_id`` (the persisted latest line) is dropped; ``None``
+    drops nothing, because the latest line is then unpersisted speech or
+    trigger content. A system row is a status card. No id reaches the lines.
     """
     limit = router_transcript_limit()
     rows = [
         row
-        for row in db.list_channel_messages(channel_id, limit=limit + 1)
-        if not (row.author_type == "system" and (row.notification_kind or "") == ROUND_MARKER_KIND)
+        for row in db.list_channel_messages(
+            channel_id,
+            limit=limit + 1,
+            exclude_notification_kind=ROUND_MARKER_KIND,
+        )
+        if row.id != exclude_message_id
     ]
-    if before_message_id is None:
-        rows = rows[:-1]
-    else:
-        rows = [row for row in rows if row.id != before_message_id]
     kept = rows[-limit:] if limit > 0 else []
     return [
         RouterLine(
@@ -1082,25 +1124,14 @@ def _open_follow_up_round(
             operator_pins.append(agent_id)
     peer_mentions = [agent_id for agent_id in mention_ids if agent_id not in set(operator_pins)]
     fallback_required = _merge_ids(operator_pins, peer_mentions, allowed=set(ordered))
-    agent_text = " ".join((agent_speak or "").split())
-    if agent_text:
-        latest = agent_text
-        agent_line = True
-        latest_author = _author_label(channel_id, speaker_id or str(trigger.get("from_agent") or ""), "")
-    else:
-        latest, author, author_agent_id, author_name = _latest_channel_line(
-            channel_id, str(trigger.get("content") or "")
-        )
-        agent_line = author == "agent"
-        if author:
-            latest_author = _author_label(channel_id, author_agent_id, author_name)
-        else:
-            # No transcript line: the latest is the trigger's own content.
-            latest_author = _author_label(
-                channel_id,
-                str(trigger.get("from_agent") or ""),
-                str(trigger.get("from_name") or ""),
-            )
+    latest, latest_author, agent_line, exclude_id = _route_latest(
+        channel_id,
+        spoken=agent_speak,
+        speaker_id=speaker_id or str(trigger.get("from_agent") or ""),
+        fallback_text=str(trigger.get("content") or ""),
+        fallback_agent_id=str(trigger.get("from_agent") or ""),
+        fallback_name=str(trigger.get("from_name") or ""),
+    )
     # Peer @ is context for an agent line. It is not a hard pin. Fallback
     # with no system route still wakes the @ ids it already required.
     route_required = operator_pins if agent_line else fallback_required
@@ -1122,7 +1153,7 @@ def _open_follow_up_round(
         fallback_order=ordered,
         latest_message=latest,
         latest_author=latest_author,
-        transcript=_router_transcript(channel_id, before_message_id=None),
+        transcript=_router_transcript(channel_id, exclude_message_id=exclude_id),
         required_ids=route_required,
         agent_line=agent_line,
         sticky_note=sticky,
