@@ -274,6 +274,10 @@ def test_conversation_harness() -> None:
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "ok": True,
+        # Leaving Chat destroys the controller; the draft, text and pending
+        # upload, is back on the next one, and both deps are required.
+        "draftSurvivesDestroy": True,
+        "requiresDraftsAndCache": True,
         "staleLoadDropped": True,
         "cacheSkipsLoading": True,
         "composerSurvivesSwitch": True,
@@ -517,6 +521,8 @@ def test_done_link_harness() -> None:
             {"place": "tasks", "params": {"taskId": "task-1"}},
             {"place": "tasks", "params": {"taskId": "task-1"}},
         ],
+        "failedLinkClass": "note-link is-failed",
+        "failedLinkTitle": "Path not found",
     }
 
 

@@ -424,7 +424,7 @@ def _resolve_company_or_named_path(root: Path, raw_path: str) -> Path:
             roots,
             deny_company_backup_suffix=True,
         )
-    if token.startswith("/") and Path(token).is_absolute() and token not in {"/", "/projects"} and not token.startswith("/projects/"):
+    if token.startswith("/") and Path(token).is_absolute() and token != "/":
         try:
             existing = Path(token).resolve()
         except OSError:

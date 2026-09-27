@@ -16,6 +16,7 @@ from api.routes._desk import _build_agent_desk_payload
 from core import config
 from core.bm_cli import filesystem
 from core.bm_cli.filesystem import agent_artifact_dir
+from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.virtual_fs import (
     NOTES_FOLDER_PATH,
     is_notes_folder_path,
@@ -188,3 +189,27 @@ def test_desk_get_notes_lists_existing_files() -> None:
     assert names == ["todo.md"]
     assert payload["entries"][0]["path"] == "/me/notes/todo.md"
     assert payload["entries"][0]["category"] == "note"
+
+
+def test_desk_payload_carries_company_path_for_projects_only() -> None:
+    """`/projects` files map onto the floor folder; `/me` files have no company path."""
+    agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+    floor_id = agent.floor_id
+    project_dir = floor_root(floor_id) / "game"
+    project_dir.mkdir(parents=True)
+    (project_dir / "design.md").write_text("plan\n", encoding="utf-8")
+    me_dir = agent_artifact_dir(agent.storage_key)
+    me_dir.mkdir(parents=True, exist_ok=True)
+    (me_dir / "scratch.md").write_text("mine\n", encoding="utf-8")
+
+    project_file = _build_agent_desk_payload(agent, "/projects/game/design.md")
+    assert project_file["kind"] == "file"
+    assert project_file["company_path"] == f"/{floor_id}/game/design.md"
+
+    project_folder = _build_agent_desk_payload(agent, "/projects/game")
+    assert project_folder["kind"] == "directory"
+    assert project_folder["company_path"] == f"/{floor_id}/game"
+
+    me_file = _build_agent_desk_payload(agent, "/me/scratch.md")
+    assert me_file["kind"] == "file"
+    assert me_file["company_path"] is None

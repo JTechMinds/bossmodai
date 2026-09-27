@@ -82,16 +82,16 @@ def is_denied_company_file(path: Path) -> bool:
 def normalize_company_relative_path(relative_path: str) -> str:
     """Normalize a company-browser path relative to the company root.
 
-    Historical UI/API paths were rooted at ``artifacts/`` and therefore
-    prefixed with ``/projects``. Strip a single leading ``projects``
-    component so those paths keep working after the remount.
+    Company-browser paths are floor-rooted (``/<floor_id>/<project>/...``).
+    A leading ``projects`` segment is kept as-is: ``/projects`` is an
+    agent-virtual mount, not a company folder, so such a path resolves to
+    a missing ``<company>/projects/...`` and fails explicitly rather than
+    mapping onto the wrong folder.
     """
     cleaned = relative_path.replace("\\", "/").strip().lstrip("/")
     if not cleaned or cleaned == ".":
         return "."
     parts = [part for part in cleaned.split("/") if part not in {"", "."}]
-    if parts and parts[0] == "projects":
-        parts = parts[1:]
     return "/".join(parts) if parts else "."
 
 

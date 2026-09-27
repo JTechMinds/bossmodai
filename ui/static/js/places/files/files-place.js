@@ -13,6 +13,11 @@
  * Every fetch passes through one load generation, so a response for a folder
  * the operator has already left is dropped rather than painted, and no failure
  * is console-only: the error banner is the operator's copy of it.
+ *
+ * The place opens on the active floor's folder and follows the floor when it
+ * changes, because the floor is global. The folder and scroll position the
+ * operator left are remembered across unmounts (in memory only), so a trip to
+ * another place comes back to the same spot on the same floor.
  */
 const BossModFilesPlace = (() => {
     const { clear } = BossModDom;
@@ -29,6 +34,8 @@ const BossModFilesPlace = (() => {
     let toolbar = null;
     let rowMenu = null;
     let frame = null;
+    // Survives unmount so a return to Files lands where the operator left.
+    let lastView = null; // {floorId, path, scrollTop}
 
     /** Delegates to the frame, which owns the banner. @param {string} message */
     function setError(message) { frame.setError(message); }
@@ -77,13 +84,45 @@ const BossModFilesPlace = (() => {
         paint();
     }
 
+    // ─── Start path ───
+
+    /**
+     * A floor's folder in the company browser: the company root's children are
+     * floor-id folders.
+     *
+     * @param {string} floorId
+     * @returns {string}
+     */
+    function floorRootPath(floorId) {
+        return `/${floorId}`;
+    }
+
+    /**
+     * Where a mount opens. A deep link wins; then the folder the operator left
+     * on this same floor; then the floor's own folder.
+     *
+     * @param {object} params  The place params; `params.path` is a deep link.
+     * @param {string} floorId  The floor the operator is on.
+     * @param {?{floorId: string, path: string}} remembered  The last view.
+     * @returns {string}
+     */
+    function startPath(params, floorId, remembered) {
+        if (params && params.path) return params.path;
+        if (remembered && remembered.floorId === floorId) return remembered.path;
+        return floorRootPath(floorId);
+    }
+
     // ─── Loading ───
 
     /**
      * Load `state.path`. Never rejects; a failure becomes the error state.
+     *
+     * @param {?{path: string, scrollTop: number}} [restore]  A remembered
+     *   scroll position, applied only when the listing that lands is that
+     *   same folder, so a different folder never opens part-way down.
      * @returns {Promise<void>}
      */
-    async function refresh() {
+    async function refresh(restore) {
         const loadId = load.next();
         const requested = state.path;
         syncCreate();
@@ -107,6 +146,7 @@ const BossModFilesPlace = (() => {
         }
         setError('');
         applyListing(DATA.toListing(payload, requested));
+        if (restore && state.path === restore.path) frame.body.scrollTop = restore.scrollTop;
     }
 
     async function navigateTo(path) {
@@ -258,8 +298,11 @@ const BossModFilesPlace = (() => {
         mount(el, ctx) {
             ctxRef = ctx;
             load = BossModGates.createLoadGeneration();
-            Object.assign(state, EMPTY_STATE,
-                { path: ctx.store.getState().placeParams.path || '/' });
+            const current = ctx.store.getState();
+            const floorId = BossModFloorScope.visibleFloorId(current);
+            const path = startPath(current.placeParams, floorId, lastView);
+            Object.assign(state, EMPTY_STATE, { path });
+            const restore = lastView && lastView.path === path ? lastView : null;
             toolbar = buildToolbar(ctx);
             frame = GRID.createFrame(toolbar.element);
 
@@ -267,7 +310,11 @@ const BossModFilesPlace = (() => {
             el.append(frame.element);
 
             disposers.push(ctx.bus.subscribe('resync', () => BossModFilesPlace.resync()));
-            void refresh();
+            disposers.push(ctx.store.subscribe(
+                (s) => s.currentFloorId,
+                () => { void navigateTo(floorRootPath(BossModFloorScope.visibleFloorId(ctx.store.getState()))); },
+            ));
+            void refresh(restore);
         },
 
         /**
@@ -285,6 +332,13 @@ const BossModFilesPlace = (() => {
          * @returns {void}
          */
         unmount() {
+            if (ctxRef && frame) {
+                lastView = {
+                    floorId: BossModFloorScope.visibleFloorId(ctxRef.store.getState()),
+                    path: state.path,
+                    scrollTop: frame.body.scrollTop,
+                };
+            }
             disposers.splice(0).forEach((off) => off());
             if (load) load.next();
             if (rowMenu) rowMenu.close();

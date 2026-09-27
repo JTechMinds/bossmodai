@@ -63,3 +63,82 @@ def test_register_allows_phases_to_replace_stubs() -> None:
     assert "function register(" in source, (
         "Phases 2-3 replace stubs via register(); without it they would edit this file"
     )
+
+
+# Mounts the real Office with its canvas, org chart, ticker, and agent doors
+# stubbed (none of them decide the tab), picks Org, remounts, and reports what
+# the second mount shows. js_places_harness.cjs only mounts the registry's
+# stubs on a bare element, so the real place needs the fuller fake DOM.
+_OFFICE_TAB_SCRIPT = r"""
+const fs = require("fs");
+const { installDom } = require(process.argv[1]);
+const documentStub = installDom();
+global.window.dispatchEvent = () => true;
+const NAMES = ["BossModDom", "BossModTabs", "BossModPlaces", "BossModFloorScope", "BossModOfficePlace"];
+NAMES.forEach((name, index) => {
+    eval(`${fs.readFileSync(process.argv[index + 2], "utf8")}\n;global.${name} = ${name};\n`);
+});
+const inert = { destroy() {} };
+global.BossModTicker = { createTicker: () => Object.assign({ element: document.createElement("div") }, inert) };
+global.BossModOfficeCanvas = {
+    createOfficeCanvas: () => Object.assign({
+        // Never settles: the map load is not what this checks, and settling
+        // it after the synchronous unmount below would paint torn-down nodes.
+        init: () => new Promise(() => {}), updateAgents() {}, resize() {},
+    }, inert),
+};
+global.BossModOrgView = {
+    createOrgView: () => Object.assign({
+        element: document.createElement("div"), refresh: () => Promise.resolve(),
+    }, inert),
+};
+global.BossModOfficeAgentActions = {};
+global.BossModAgentRoutes = {};
+
+const store = {
+    getState: () => ({ roster: [], threads: [], floors: [], currentFloorId: "lobby", runtimePaused: false }),
+    subscribe: () => () => {},
+};
+const ctx = { store, bus: { subscribe: () => () => {} }, api() {}, navigate() {} };
+const place = global.BossModOfficePlace;
+
+const first = documentStub.createElement("div");
+documentStub.body.append(first);
+place.mount(first, ctx);
+first.querySelector("#office-tab-org").click();
+place.unmount();
+first.remove();
+
+const second = documentStub.createElement("div");
+documentStub.body.append(second);
+place.mount(second, ctx);
+const report = {
+    orgTabSelected: second.querySelector("#office-tab-org").getAttribute("aria-selected") === "true",
+    orgPaneShown: second.querySelector("#office-pane-org").hidden === false,
+    mapPaneHidden: second.querySelector("#office-pane-map").hidden === true,
+};
+place.unmount();
+process.stdout.write(`${JSON.stringify(report)}\n`);
+"""
+
+
+def test_office_tab_survives_a_remount() -> None:
+    """Org picked, away and back: the Office still shows Org, not Map."""
+    tests = Path(__file__).resolve().parent
+    result = subprocess.run(
+        [
+            "node", "-e", _OFFICE_TAB_SCRIPT,
+            str(tests / "js_fake_dom.cjs"),
+            str(JS / "core" / "dom.js"),
+            str(JS / "core" / "tabs.js"),
+            str(JS / "shell" / "places.js"),
+            str(JS / "shell" / "floor-scope.js"),
+            str(JS / "places" / "office" / "office-place.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {"orgTabSelected": True, "orgPaneShown": True, "mapPaneHidden": True}

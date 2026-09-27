@@ -188,13 +188,15 @@ def test_follow_never_yanks_a_reading_operator() -> None:
 def test_log_reads_agent_and_diagnostic_deep_links() -> None:
     """A Metrics token bar and an error need both land here, pre-filtered.
 
-    The filter bar takes the agent id from placeParams; the place opens the
-    named diagnostic once the first page is in. A link to a turn older than that
+    The filter bar takes the agent id from placeParams, over the remembered
+    view; the place opens the named diagnostic once the first page is in. A link to a turn older than that
     window says so rather than opening nothing.
     """
     place = _read("log-place.js")
     assert "const params = ctx.store.getState().placeParams;" in place
-    assert "agentId: params.agentId || ''" in place
+    # The deep-linked agent is laid over the remembered view, so it wins.
+    assert "if (params.agentId) initial.agentId = params.agentId;" in place
+    assert "initial," in place.split("BossModLogFilters.createFilters({", 1)[1]
     assert "if (params.diagnosticId) expandDeepLink(String(params.diagnosticId));" in place
     assert "const key = `diagnostic:${diagnosticId}`;" in place
     assert "setError('That diagnostic is not in the most recent turns.');" in place
@@ -218,7 +220,7 @@ def test_log_reads_agent_and_diagnostic_deep_links() -> None:
     assert "loading = !quiet;" in place
 
     filters = _read("log-filters.js")
-    assert "let chosen = { id: agentId || '', name: '' };" in filters
+    assert "let chosen = { id: initial.agentId || '', name: '' };" in filters
     # Both feeds identify agents differently, so the filter carries both and
     # matches on either — an id-only filter would hide every activity row,
     # because the unified feed has no agent id at all.

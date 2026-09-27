@@ -8,6 +8,8 @@ than concatenated into a string, and the note on each says so.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,12 +32,84 @@ def test_deliverable_cards_keep_original_path_and_agent_id() -> None:
     source = (TASKS / "task-deliverables.js").read_text(encoding="utf-8")
     assert "function openDeliverablePath(api, path, agentId)" in source
     assert "'data-agent-id': agentId" in source
-    assert "isAgentDeskPath(target)" in source
+    assert "isAgentVirtualPath(target)" in source
     assert "/api/agents/${encodeURIComponent(agentId)}/desk?path=" in source
     assert "/api/company/files?path=" in source
     assert "/api/company/files/open-folder" in source
     assert "payload.kind === 'file'" in source
     assert "BossModFileViewer.open" in source
+
+
+# Loads the real module against a recording api and viewer, and reports what
+# each open asked for. Paths are argv so the script stays a literal.
+_OPEN_SCRIPT = r"""
+const fs = require("fs");
+const { installDom } = require(process.argv[1]);
+installDom();
+eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
+eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModTaskDeliverables = BossModTaskDeliverables;\n`);
+
+const requests = [];
+const viewed = [];
+global.BossModFileViewer = {
+    open: async (path, opts) => { viewed.push({ path, apiUrl: opts.apiUrl || null }); },
+};
+const DESK = {
+    "/projects/x.md": { kind: "file", path: "/projects/x.md", company_path: "/floor-1/x.md" },
+    "/me/x.md": { kind: "file", path: "/me/x.md", company_path: null },
+};
+async function api(url, init) {
+    requests.push({ url, method: (init && init.method) || "GET" });
+    const path = decodeURIComponent(String(url).split("path=")[1] || "");
+    return { ok: true, async json() { return DESK[path]; }, async text() { return ""; } };
+}
+
+(async () => {
+    const { openDeliverablePath } = global.BossModTaskDeliverables;
+    await openDeliverablePath(api, "/projects/x.md", "a1");
+    await openDeliverablePath(api, "/me/x.md", "a1");
+    let noAgentError = null;
+    try {
+        await openDeliverablePath(api, "/projects/x.md", "");
+    } catch (err) {
+        noAgentError = err.message;
+    }
+    process.stdout.write(`${JSON.stringify({ requests, viewed, noAgentError })}\n`);
+})().catch((err) => { console.error(err); process.exit(1); });
+"""
+
+
+def test_deliverable_open_resolves_agent_virtual_paths_through_the_desk() -> None:
+    """`/projects` and `/me` resolve in the agent's namespace, never the company root.
+
+    A `/projects` file opens at the company path the desk returns, so the
+    viewer's image preview and Save use company endpoints. A `/me` file has no
+    company path and opens through the desk endpoint. With no agent recorded,
+    the open rejects instead of guessing whose namespace it is.
+    """
+    tests = Path(__file__).resolve().parent
+    result = subprocess.run(
+        [
+            "node", "-e", _OPEN_SCRIPT,
+            str(tests / "js_fake_dom.cjs"),
+            str(JS / "core" / "dom.js"),
+            str(TASKS / "task-deliverables.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["requests"] == [
+        {"url": "/api/agents/a1/desk?path=%2Fprojects%2Fx.md", "method": "GET"},
+        {"url": "/api/agents/a1/desk?path=%2Fme%2Fx.md", "method": "GET"},
+    ]
+    assert payload["viewed"] == [
+        {"path": "/floor-1/x.md", "apiUrl": None},
+        {"path": "/me/x.md", "apiUrl": "/api/agents/a1/desk?path=%2Fme%2Fx.md"},
+    ]
+    assert payload["noAgentError"] == "That path belongs to an agent, but no agent is recorded for it."
 
 
 def test_deliverable_open_does_not_remap_host_paths_through_me() -> None:

@@ -22,9 +22,10 @@ const BossModTasksPlace = (() => {
     let tasks = [];
     let progress = new Map();
     let selected = new Set();
-    // Toolbar state, like the filters: reset on every mount, never persisted.
     let windowDays = DATA.DEFAULT_WINDOW_DAYS;
     let sortDirection = 'desc';
+    // Survives unmount (in memory only): a trip away comes back to the same view.
+    let lastView = null; // {windowDays, sortDirection, filters}
     /** The finished tasks the last paint put past the window: Archive's list. */
     let lastOlder = [];
     let summaryLine = null;
@@ -285,9 +286,13 @@ const BossModTasksPlace = (() => {
             tasks = [];
             selected = new Set();
             progress = new Map();
-            windowDays = DATA.DEFAULT_WINDOW_DAYS;
-            sortDirection = 'desc';
+            windowDays = lastView ? lastView.windowDays : DATA.DEFAULT_WINDOW_DAYS;
+            sortDirection = lastView ? lastView.sortDirection : 'desc';
             lastOlder = [];
+            const initialFilters = Object.assign({}, lastView ? lastView.filters : {});
+            // The Desk's "See all" (a place param) wins over the remembered assignee.
+            const agentFilter = ctx.store.getState().placeParams.agentFilter;
+            if (agentFilter) initialFilters.agentId = agentFilter;
 
             menu = BossModTasksMenu.create({
                 getContainer: () => headerEl,
@@ -301,8 +306,7 @@ const BossModTasksPlace = (() => {
                 onRefresh: () => { void refresh(); },
             });
             toolbar = BossModTasksToolbar.createToolbar({
-                // The Desk's "See all" arrives as a place param, not as a click.
-                agentId: ctx.store.getState().placeParams.agentFilter || null,
+                initial: initialFilters,
                 menuButton: menu.button,
                 rosterAgent,
                 onChange: paint,
@@ -369,6 +373,7 @@ const BossModTasksPlace = (() => {
          * @returns {void}
          */
         unmount() {
+            if (toolbar) lastView = { windowDays, sortDirection, filters: toolbar.filters() };
             disposers.splice(0).forEach((off) => off());
             clearTimeout(refreshTimer);
             if (load) load.next();

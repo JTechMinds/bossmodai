@@ -30,6 +30,8 @@ const BossModOfficePlace = (() => {
     let countsLine = null;
     /** Map | Org — core/tabs.js, which owns the tabs; the panes are this file's. */
     let tabs = null;
+    // Survives unmount, so a trip to another place comes back to the same tab.
+    let lastTab = 'map';
     const disposers = [];
 
     /**
@@ -61,6 +63,7 @@ const BossModOfficePlace = (() => {
      * @returns {void}
      */
     function showPane(id) {
+        lastTab = id;
         mapPane.hidden = id !== 'map';
         orgPane.hidden = id !== 'org';
         // A canvas sized while hidden is a canvas sized to zero.
@@ -164,7 +167,7 @@ const BossModOfficePlace = (() => {
                 label: 'Office view',
                 idPrefix: 'office-tab',
                 tabs: TABS.map((tab) => ({ ...tab, panelId: `office-pane-${tab.id}` })),
-                selected: 'map',
+                selected: lastTab,
                 onSelect: showPane,
             });
 
@@ -202,7 +205,7 @@ const BossModOfficePlace = (() => {
                 countsLine.textContent = countsText(state);
             }
 
-            showPane('map');
+            showPane(lastTab);
             paintRuntimeState(ctx.store.getState().runtimePaused);
             paintFloor();
 

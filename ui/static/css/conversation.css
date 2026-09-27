@@ -482,6 +482,12 @@
    links use on their tint, and it clears AA here. */
 .note.note-ok .note-link { color: var(--blue-ink); }
 
+/* A Done link that could not open says so (its title carries the reason),
+   matching a failed Tasks deliverable card's --alert. On the green tint the
+   ink variant is used: --alert measures 4.36 on --ok-bg, under AA. */
+.note-link.is-failed { color: var(--alert); }
+.note.note-ok .note-link.is-failed { color: var(--alert-ink); }
+
 /* ─── Host-path consent ─── */
 
 .host-path-consent-card {

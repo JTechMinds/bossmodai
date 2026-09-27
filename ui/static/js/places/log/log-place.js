@@ -30,6 +30,9 @@ const BossModLogPlace = (() => {
     let details = new Map();
     let loading = true;
     let agentSignature = '';
+    // The filters and Follow survive unmount (in memory only), so a trip to
+    // another place comes back to the same view.
+    let lastView = null; // {agentId, type, search, following}
     const disposers = [];
 
     function setError(message) {
@@ -180,8 +183,12 @@ const BossModLogPlace = (() => {
 
             source = BossModLogSource.createLogSource({ api: ctx.api, bus: ctx.bus });
             detail = BossModDiagnosticDetail.createDetail({ api: ctx.api });
+            const initial = Object.assign({}, lastView);
+            // A deep link (a Metrics token bar, an error need) wins over the
+            // remembered agent.
+            if (params.agentId) initial.agentId = params.agentId;
             filters = BossModLogFilters.createFilters({
-                agentId: params.agentId || '',
+                initial,
                 onChange: () => { void reload(true); },
                 // Turning Follow back on catches the operator up immediately;
                 // leaving them mid-list would make the toggle look inert.
@@ -240,6 +247,10 @@ const BossModLogPlace = (() => {
          * @returns {void}
          */
         unmount() {
+            if (filters) {
+                const { agentId, type, search } = filters.filters();
+                lastView = { agentId, type, search, following: filters.following() };
+            }
             disposers.splice(0).forEach((off) => off());
             if (filters) filters.destroy();
             if (source) source.destroy();

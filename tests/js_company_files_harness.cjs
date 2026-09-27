@@ -3,6 +3,8 @@
  * not a dotted-name heuristic, and a denied path stays visible. The company
  * top level shows floors by name with the `layers` glyph, and New is held
  * shut there (still focusable, with its reason) until a floor is open.
+ * The place opens on the active floor's folder, follows a floor switch, and
+ * comes back to the folder (and scroll) it left; a deep link wins over both.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -32,7 +34,7 @@ global.window.BossModApi = {
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModPlaces",
-    "BossModFileContent", "BossModFileForm",
+    "BossModFloorScope", "BossModFileContent", "BossModFileForm",
     "BossModFileOps", "BossModFileViewer", "BossModFilesData", "BossModHostRoots",
     "BossModDeskOpener", "BossModFolderOpener", "BossModFileGrid",
     "BossModFileActions", "BossModFilesToolbar", "BossModFilesPlace",
@@ -116,7 +118,8 @@ function newToggle(root) {
 }
 
 async function main() {
-    const store = BossModStore.createStore({ placeParams: {} });
+    // A deep link to the company top level: the floors themselves.
+    const store = BossModStore.createStore({ placeParams: { path: "/" } });
     const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
     const root = documentStub.createElement("div");
     documentStub.body.append(root);
@@ -229,6 +232,56 @@ async function main() {
 
     BossModFilesPlace.unmount();
 
+    // ─── Start path, floor follow, and the remembered view ───
+    const requested = [];
+    fetchImpl = (input) => {
+        const url = decodeURIComponent(String(input));
+        const path = url.split("path=")[1] || "";
+        requested.push(path);
+        if (path === "/f1") {
+            return Promise.resolve(ok({
+                kind: "directory",
+                path: "/f1",
+                entries: [{ name: "books", path: "/f1/books", is_dir: true, floor_name: null }],
+                breadcrumbs: [{ path: "/", label: "Company" }, { path: "/f1", label: "Finance" }],
+                workspace_note: "",
+                host_roots: [],
+            }));
+        }
+        return Promise.resolve(directory(path));
+    };
+    const floorStore = BossModStore.createStore({ placeParams: {}, currentFloorId: "f1" });
+    const floorCtx = { store: floorStore, bus, api: (...args) => fetchImpl(...args), navigate() {} };
+    const lastRequest = () => requested[requested.length - 1];
+
+    // The last view was on another floor, so this floor's folder wins.
+    BossModFilesPlace.mount(root, floorCtx);
+    await drain();
+    const opensOnFloor = lastRequest() === "/f1";
+
+    const books = root.querySelectorAll(".file-entry")
+        .find((button) => button.getAttribute("data-path") === "/f1/books");
+    await books.dispatchClick();
+    await drain();
+    root.querySelector(".files-body").scrollTop = 120;
+    BossModFilesPlace.unmount();
+
+    BossModFilesPlace.mount(root, floorCtx);
+    await drain();
+    const returnsToFolder = lastRequest() === "/f1/books";
+    const returnsToScroll = root.querySelector(".files-body").scrollTop === 120;
+    BossModFilesPlace.unmount();
+
+    floorStore.setState({ placeParams: { path: "/f1" } });
+    BossModFilesPlace.mount(root, floorCtx);
+    await drain();
+    const deepLinkWins = lastRequest() === "/f1";
+
+    floorStore.setState({ currentFloorId: "lobby" });
+    await drain();
+    const floorSwitchFollows = lastRequest() === "/lobby";
+    BossModFilesPlace.unmount();
+
     process.stdout.write(JSON.stringify({
         ok: true,
         floorRowsShowNames,
@@ -246,6 +299,11 @@ async function main() {
         fileOpenedViewer,
         deniedPathErrorVisible: Boolean(deniedPathError),
         deniedPathError,
+        opensOnFloor,
+        returnsToFolder,
+        returnsToScroll,
+        deepLinkWins,
+        floorSwitchFollows,
     }));
 }
 

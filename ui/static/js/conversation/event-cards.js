@@ -186,17 +186,26 @@ const BossModEventCards = (() => {
                 const at = text.lastIndexOf(filePath);
                 const prefix = at >= 0 ? text.slice(0, at) : '';
                 const label = at >= 0 ? filePath : text;
+                const fileLink = originLink(label, async () => {
+                    if (typeof ctx.openDeliverable !== 'function') {
+                        ctx.openDesk(filePath);
+                        return;
+                    }
+                    fileLink.classList.remove('is-failed');
+                    fileLink.removeAttribute('title');
+                    try {
+                        await ctx.openDeliverable(filePath, agentId);
+                    } catch (err) {
+                        // Same treatment as a Tasks deliverable card: a link
+                        // that fails must say so, not silently do nothing.
+                        fileLink.classList.add('is-failed');
+                        fileLink.setAttribute('title', (err && err.message) || 'Could not open that path');
+                        console.error('[event-cards] could not open', filePath, err);
+                    }
+                });
                 note.append(
                     originGlyph('file'),
-                    h('p', { class: 'note-text' },
-                        prefix || null,
-                        originLink(label, () => {
-                            if (typeof ctx.openDeliverable === 'function') {
-                                void ctx.openDeliverable(filePath, agentId);
-                                return;
-                            }
-                            ctx.openDesk(filePath);
-                        })),
+                    h('p', { class: 'note-text' }, prefix || null, fileLink),
                 );
             } else {
                 note.append(h('p', { class: 'note-text' }, text));

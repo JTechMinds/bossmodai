@@ -4,21 +4,20 @@ const BossModConversation = (() => {
 
     const NO_CONVERSATION_REASON = 'Pick someone from the roster to start talking.';
 
-    /** @param {object} deps store, bus, api, navigate, needs; optional openDesk */
+    /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
+     *   cache); optional openDesk. drafts/cache are the caller's so a draft outlives destroy(). */
     function createConversation(deps) {
-        const { store, bus, api, navigate, needs, openDesk } = deps || {};
+        const { store, bus, api, navigate, needs, openDesk, drafts, cache } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
         if (!bus) throw new Error('[conversation] deps.bus is required');
         if (typeof api !== 'function') throw new Error('[conversation] deps.api is required');
         if (typeof navigate !== 'function') throw new Error('[conversation] deps.navigate is required');
         if (!needs) throw new Error('[conversation] deps.needs is required');
+        if (!(drafts instanceof Map)) throw new Error('[conversation] deps.drafts (a Map) is required');
+        if (!cache || typeof cache.recall !== 'function') throw new Error('[conversation] deps.cache is required');
 
         const generation = BossModGates.createLoadGeneration();
         const presence = BossModGates.createChannelPresenceController();
-        const cache = BossModTranscriptCache.createCache();
-        // One unsent draft per conversation: switching away must not throw away
-        // what the operator had half-typed.
-        const drafts = new Map();
         const disposers = [];
         const cardCtx = { api, navigate, openDesk };
 
@@ -386,6 +385,7 @@ const BossModConversation = (() => {
             element,
             open,
             destroy() {
+                if (currentId) drafts.set(currentId, composer.readDraft()); // outlives us
                 disposeSource();
                 composer.destroy();
                 chrome.destroy();

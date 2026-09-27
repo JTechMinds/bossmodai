@@ -2,6 +2,7 @@
  * Node harness: origin one-liner chrome.
  * Quiet chrome: glyph on the left, blue-link text. No Open pill.
  * Done opens a real file (path only). Created/Accepted open the bound task in Tasks.
+ * A Done link whose open rejects marks itself failed and carries the reason.
  * Invoked by tests/test_ui_conversation.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -114,6 +115,16 @@ const writing = global.BossModEventCards.renderEventCard(
     ctx,
 );
 
+const failing = global.BossModEventCards.renderEventCard(
+    note("Jimothy Done — /projects/gone.md", "/projects/gone.md"),
+    {
+        api: ctx.api,
+        openDeliverable: async () => { throw new Error("Path not found"); },
+    },
+);
+const failingLink = link(failing);
+if (failingLink) failingLink.click();
+
 const createdLink = link(created);
 if (createdLink) createdLink.click();
 const acceptedLink = link(accepted);
@@ -125,57 +136,62 @@ if (createdPathNoTaskLink) createdPathNoTaskLink.click();
 const writingLink = link(writing);
 if (writingLink) writingLink.click();
 
-const payload = {
-    ok: true,
-    openableHasTint: String(openable.className || "").includes("note-ok"),
-    openableTone: openable.getAttribute("data-tone"),
-    openablePath: openable.getAttribute("data-desk-path"),
-    openableKind: openable.getAttribute("data-open-kind"),
-    openableGlyph: glyph(openable),
-    openableGlyphOnLeft: glyphOnLeft(openable),
-    openableHasOpenPill: hasOpenPill(openable),
-    openableLink: openLink ? String(openLink.textContent || "") : "",
-    openableLinkClass: openLink ? String(openLink.className || "") : "",
-    openableText: textOf(openable),
-    opened,
-    proseHasTint: String(prose.className || "").includes("note-ok"),
-    proseHasLink: Boolean(link(prose)),
-    proseHasGlyph: Boolean(glyph(prose)),
-    proseHasOpenPill: hasOpenPill(prose),
-    prosePath: prose.getAttribute("data-desk-path"),
-    noOpenerHasLink: Boolean(link(noOpener)),
-    noOpenerHasGlyph: Boolean(glyph(noOpener)),
-    noOpenerKeepsPath: noOpener.getAttribute("data-desk-path") === "/projects/review.md",
-    createdHasTint: String(created.className || "").includes("note-ok"),
-    createdKind: created.getAttribute("data-open-kind"),
-    createdGlyph: glyph(created),
-    createdGlyphOnLeft: glyphOnLeft(created),
-    createdHasOpenPill: hasOpenPill(created),
-    createdLink: createdLink ? String(createdLink.textContent || "") : "",
-    createdTaskId: created.getAttribute("data-task-id"),
-    createdPath: created.getAttribute("data-desk-path"),
-    acceptedHasTint: String(accepted.className || "").includes("note-ok"),
-    acceptedKind: accepted.getAttribute("data-open-kind"),
-    acceptedGlyph: glyph(accepted),
-    acceptedHasOpenPill: hasOpenPill(accepted),
-    acceptedLink: acceptedLink ? String(acceptedLink.textContent || "") : "",
-    acceptedTaskId: accepted.getAttribute("data-task-id"),
-    createdNoTaskHasLink: Boolean(link(createdNoTask)),
-    createdNoTaskHasGlyph: Boolean(glyph(createdNoTask)),
-    createdFakeDocHasTint: String(createdFakeDoc.className || "").includes("note-ok"),
-    createdFakeDocKind: createdFakeDoc.getAttribute("data-open-kind"),
-    createdFakeDocGlyph: glyph(createdFakeDoc),
-    createdFakeDocOpensFile: opened.some((item) => item.path === "/invented.md"),
-    createdPathNoTaskHasLink: Boolean(createdPathNoTaskLink),
-    createdPathNoTaskHasGlyph: Boolean(glyph(createdPathNoTask)),
-    createdPathNoTaskKind: createdPathNoTask.getAttribute("data-open-kind") || "",
-    createdPathNoTaskOpensFile: opened.some((item) => item.path === "/invented.md"),
-    createdNoNavigateHasLink: Boolean(link(createdNoNavigate)),
-    writingHasLink: Boolean(writingLink),
-    writingHasGlyph: Boolean(glyph(writing)),
-    writingKind: writing.getAttribute("data-open-kind") || "",
-    writingOpensFile: opened.some((item) => item.path === "/tmp/out.md"),
-    navigated,
-};
+// The failing open settles on the microtask queue; read it after that drains.
+setTimeout(() => {
+    const payload = {
+        ok: true,
+        openableHasTint: String(openable.className || "").includes("note-ok"),
+        openableTone: openable.getAttribute("data-tone"),
+        openablePath: openable.getAttribute("data-desk-path"),
+        openableKind: openable.getAttribute("data-open-kind"),
+        openableGlyph: glyph(openable),
+        openableGlyphOnLeft: glyphOnLeft(openable),
+        openableHasOpenPill: hasOpenPill(openable),
+        openableLink: openLink ? String(openLink.textContent || "") : "",
+        openableLinkClass: openLink ? String(openLink.className || "") : "",
+        openableText: textOf(openable),
+        opened,
+        proseHasTint: String(prose.className || "").includes("note-ok"),
+        proseHasLink: Boolean(link(prose)),
+        proseHasGlyph: Boolean(glyph(prose)),
+        proseHasOpenPill: hasOpenPill(prose),
+        prosePath: prose.getAttribute("data-desk-path"),
+        noOpenerHasLink: Boolean(link(noOpener)),
+        noOpenerHasGlyph: Boolean(glyph(noOpener)),
+        noOpenerKeepsPath: noOpener.getAttribute("data-desk-path") === "/projects/review.md",
+        createdHasTint: String(created.className || "").includes("note-ok"),
+        createdKind: created.getAttribute("data-open-kind"),
+        createdGlyph: glyph(created),
+        createdGlyphOnLeft: glyphOnLeft(created),
+        createdHasOpenPill: hasOpenPill(created),
+        createdLink: createdLink ? String(createdLink.textContent || "") : "",
+        createdTaskId: created.getAttribute("data-task-id"),
+        createdPath: created.getAttribute("data-desk-path"),
+        acceptedHasTint: String(accepted.className || "").includes("note-ok"),
+        acceptedKind: accepted.getAttribute("data-open-kind"),
+        acceptedGlyph: glyph(accepted),
+        acceptedHasOpenPill: hasOpenPill(accepted),
+        acceptedLink: acceptedLink ? String(acceptedLink.textContent || "") : "",
+        acceptedTaskId: accepted.getAttribute("data-task-id"),
+        createdNoTaskHasLink: Boolean(link(createdNoTask)),
+        createdNoTaskHasGlyph: Boolean(glyph(createdNoTask)),
+        createdFakeDocHasTint: String(createdFakeDoc.className || "").includes("note-ok"),
+        createdFakeDocKind: createdFakeDoc.getAttribute("data-open-kind"),
+        createdFakeDocGlyph: glyph(createdFakeDoc),
+        createdFakeDocOpensFile: opened.some((item) => item.path === "/invented.md"),
+        createdPathNoTaskHasLink: Boolean(createdPathNoTaskLink),
+        createdPathNoTaskHasGlyph: Boolean(glyph(createdPathNoTask)),
+        createdPathNoTaskKind: createdPathNoTask.getAttribute("data-open-kind") || "",
+        createdPathNoTaskOpensFile: opened.some((item) => item.path === "/invented.md"),
+        createdNoNavigateHasLink: Boolean(link(createdNoNavigate)),
+        writingHasLink: Boolean(writingLink),
+        writingHasGlyph: Boolean(glyph(writing)),
+        writingKind: writing.getAttribute("data-open-kind") || "",
+        writingOpensFile: opened.some((item) => item.path === "/tmp/out.md"),
+        navigated,
+        failedLinkClass: failingLink ? String(failingLink.className || "") : "",
+        failedLinkTitle: failingLink ? failingLink.getAttribute("title") : null,
+    };
 
-process.stdout.write(`${JSON.stringify(payload)}\n`);
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+}, 0);

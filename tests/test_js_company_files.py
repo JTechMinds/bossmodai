@@ -27,6 +27,7 @@ FILES_MODULES = [
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "shell" / "places.js",
+    JS / "shell" / "floor-scope.js",
     FILES / "file-content.js",
     FILES / "file-form.js",
     FILES / "file-ops.js",
@@ -177,3 +178,10 @@ def test_company_files_named_path_harness() -> None:
     assert payload["fileOpenedViewer"] is True
     assert payload["deniedPathErrorVisible"] is True
     assert "outside" in payload["deniedPathError"].lower()
+    # Files opens on the active floor, follows a floor switch, and comes back
+    # to the folder and scroll it left; a deep link wins over the memory.
+    assert payload["opensOnFloor"] is True
+    assert payload["returnsToFolder"] is True
+    assert payload["returnsToScroll"] is True
+    assert payload["deepLinkWins"] is True
+    assert payload["floorSwitchFollows"] is True

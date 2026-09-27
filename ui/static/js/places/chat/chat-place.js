@@ -25,6 +25,9 @@ const BossModChatPlace = (() => {
     // own subscriber; without this the pair would open — and re-fetch — twice.
     let openedKey = null;
     const disposers = [];
+    // Page-lifetime: each mount builds a new controller; drafts must survive.
+    const drafts = new Map();
+    const transcriptCache = BossModTranscriptCache.createCache();
 
     function renderEmpty() {
         showingConversation = false;
@@ -94,6 +97,7 @@ const BossModChatPlace = (() => {
                 api: ctx.api,
                 navigate: ctx.navigate,
                 needs: ctx.needs,
+                drafts, cache: transcriptCache,
                 // A desk path from a note, or an agent id from the chrome.
                 openDesk: (target) => BossModContextColumn.openDeskFrom(ctx.store, target),
             });

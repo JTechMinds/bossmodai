@@ -169,8 +169,11 @@ const needsStub = {
 };
 
 const openedDesks = [];
+// Owned by the caller so they outlive one controller, as chat-place.js does.
+const drafts = new Map();
+const transcriptCache = global.BossModTranscriptCache.createCache();
 const conversation = BossModConversation.createConversation({
-    store, bus, api, navigate() {}, needs: needsStub,
+    store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
     // Injected so the chrome has an action to carry a glyph on.
     openDesk: (id) => openedDesks.push(id),
 });
@@ -1020,6 +1023,13 @@ async function main() {
         throw new Error(`a structured refusal must show its error: ${JSON.stringify(refusedErrors)}`);
     }
 
+    // ─── draftSurvivesDestroy ───
+    // Leaving Chat destroys the controller; the draft (text and pending
+    // upload) must be on the next controller built with the same drafts.
+    await conversation.open("a", "agent");
+    composerInput.value = "left mid-thought";
+    await paste("z.png");
+    const chipsBeforeDestroy = chips().join("|");
     // Destroying drains everything the controller ever subscribed.
     conversation.destroy();
     offOperatorInvalidate();
@@ -1029,11 +1039,45 @@ async function main() {
     if (store.subscriberCount() !== 0) {
         throw new Error(`destroy left ${store.subscriberCount()} store subscribers`);
     }
+    const rebuilt = BossModConversation.createConversation({
+        store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
+    });
+    await rebuilt.open("a", "agent");
+    const rebuiltInput = rebuilt.element.querySelector(".composer-input");
+    const rebuiltChips = rebuilt.element
+        .querySelectorAll(".composer-attach-chip-name").map((node) => node.textContent);
+    const draftSurvivesDestroy = rebuiltInput.value === "left mid-thought"
+        && chipsBeforeDestroy.includes("z.png")
+        && rebuiltChips.join("|") === chipsBeforeDestroy;
+    if (!draftSurvivesDestroy) {
+        throw new Error(`draft lost across destroy: "${rebuiltInput.value}" chips=${rebuiltChips.join("|")}`);
+    }
+    rebuilt.destroy();
+    if (bus.subscriberCount() !== 0 || store.subscriberCount() !== 0) {
+        throw new Error("the rebuilt controller must drain on destroy too");
+    }
+
+    // ─── requiresDraftsAndCache ───
+    const refusal = (extra) => {
+        try {
+            BossModConversation.createConversation(Object.assign({
+                store, bus, api, navigate() {}, needs: needsStub,
+            }, extra));
+        } catch (err) {
+            return err.message;
+        }
+        return "";
+    };
+    const requiresDraftsAndCache = refusal({ cache: transcriptCache }).includes("deps.drafts")
+        && refusal({ drafts: new Map() }).includes("deps.cache");
+    if (!requiresDraftsAndCache) throw new Error("createConversation must refuse without drafts/cache");
     if (!listing) throw new Error("the conversation must mount a transcript");
     if (!documentStub) throw new Error("the harness needs a document");
 
     process.stdout.write(JSON.stringify({
         ok: true,
+        draftSurvivesDestroy,
+        requiresDraftsAndCache,
         staleLoadDropped,
         cacheSkipsLoading,
         composerSurvivesSwitch,

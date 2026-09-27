@@ -162,13 +162,14 @@ def test_company_files_can_open_and_edit_project_file(tmp_path, monkeypatch) -> 
     assert opened.json()["kind"] == "file"
     assert opened.json()["content"] == PROJECT_TEXT
 
-    historical = client.get(
+    # `/projects` is an agent-virtual mount, not a company folder: the
+    # company browser refuses it instead of mapping it onto a floor.
+    agent_virtual = client.get(
         "/api/company/files",
         params={"path": "/projects/lobby/alpha/notes.md"},
         headers=headers,
     )
-    assert historical.status_code == 200
-    assert historical.json()["content"] == PROJECT_TEXT
+    assert agent_virtual.status_code == 404
 
     saved = client.put(
         "/api/company/files",
@@ -183,10 +184,10 @@ def test_company_files_can_open_and_edit_project_file(tmp_path, monkeypatch) -> 
     assert denied.status_code in {400, 404}
 
 
-def test_normalize_company_relative_path_strips_projects_prefix() -> None:
+def test_normalize_company_relative_path_keeps_projects_segment() -> None:
     assert normalize_company_relative_path("/") == "."
-    assert normalize_company_relative_path("/projects") == "."
-    assert normalize_company_relative_path("/projects/alpha/notes.md") == "alpha/notes.md"
+    assert normalize_company_relative_path("/projects") == "projects"
+    assert normalize_company_relative_path("/projects/alpha/notes.md") == "projects/alpha/notes.md"
     assert normalize_company_relative_path("alpha/notes.md") == "alpha/notes.md"
 
 

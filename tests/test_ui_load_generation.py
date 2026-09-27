@@ -103,7 +103,7 @@ def test_files_place_guards_navigate_and_search() -> None:
     place = _read("places/files/files-place.js")
     assert "load = BossModGates.createLoadGeneration()" in place
 
-    fetch = place.split("async function refresh() {", 1)[1].split(
+    fetch = place.split("async function refresh(restore) {", 1)[1].split(
         "async function navigateTo(", 1
     )[0]
     assert "const loadId = load.next()" in fetch

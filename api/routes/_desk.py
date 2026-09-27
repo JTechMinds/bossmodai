@@ -11,6 +11,7 @@ from api.routes._shared import (
     _child_virtual_path,
     _read_desk_file_preview,
 )
+from core.bm_cli.floor_roots import company_root
 from core.bm_cli.virtual_fs import (
     is_soft_empty_virtual_directory,
     resolve_cli_path,
@@ -49,6 +50,7 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
             "size_bytes": stat.st_size,
             "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "binary": binary,
+            "company_path": _company_path_for(resolved.real_path),
         }
 
     entries = _list_virtual_root_entries(agent) if resolved.virtual_path == "/" else _list_desk_entries(agent, resolved)
@@ -58,7 +60,31 @@ def _build_agent_desk_payload(agent: Agent, path: str) -> dict[str, object]:
         "name": _desk_display_name(resolved.virtual_path),
         "breadcrumbs": _desk_breadcrumbs(resolved.virtual_path),
         "entries": entries,
+        "company_path": _company_path_for(resolved.real_path),
     }
+
+
+def _company_path_for(real_path: Path | None) -> str | None:
+    """Return the Files-browser path of a Desk entry, or None when it has none.
+
+    An agent's ``/projects`` is its floor's folder under the company root, so
+    a ``/projects/...`` entry is also reachable in the company browser at
+    ``/<floor_id>/...``. The UI opens that path so image preview and Save go
+    through the company endpoints instead of the agent-virtual one.
+
+    Args:
+        real_path: The resolved on-disk path, or None for the virtual root.
+
+    Returns:
+        The company-relative path with a leading slash, or None when the path
+        is not under the company root (``/me``, a host root, the root).
+    """
+    if real_path is None:
+        return None
+    root = company_root()
+    if not real_path.is_relative_to(root):
+        return None
+    return "/" + real_path.relative_to(root).as_posix()
 
 
 def _list_virtual_root_entries(agent: Agent) -> list[dict[str, object]]:

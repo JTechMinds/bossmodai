@@ -24,25 +24,29 @@ const BossModLogFilters = (() => {
      * Build the bar.
      *
      * @param {object} deps
-     * @param {string} [deps.agentId]  From placeParams: a Metrics token bar and
-     *   an error need both deep-link into a Log filtered to one agent.
+     * @param {{agentId?: string, type?: string, search?: string, following?: boolean}} deps.initial
+     *   Where the bar starts: the view the operator left the Log on, with a
+     *   deep-linked agent (a Metrics token bar, an error need) already applied
+     *   over it by the place. Each key is optional; an absent one starts at
+     *   All agents, All types, an empty search, and Follow on.
      * @param {() => void} deps.onChange
      * @param {(on: boolean) => void} deps.onFollow
-     * @param {boolean} [deps.following=true]
      * @returns {{element: HTMLElement, filters: () => object,
      *            following: () => boolean, setAgents: (list: object[]) => void,
      *            destroy: () => void}}
-     * @throws {Error} When a callback is missing.
+     * @throws {Error} When `initial` or a callback is missing, or when
+     *   `initial.type` is not a known type.
      */
     function createFilters(deps) {
-        const { agentId, onChange, onFollow, following = true } = deps || {};
+        const { initial, onChange, onFollow } = deps || {};
+        if (!initial || typeof initial !== 'object') throw new Error('[log-filters] deps.initial is required');
         if (typeof onChange !== 'function') throw new Error('[log-filters] deps.onChange is required');
         if (typeof onFollow !== 'function') throw new Error('[log-filters] deps.onFollow is required');
 
         // The two feeds identify agents differently — diagnostics by id, the
         // activity feed by name alone — so the selection carries both.
-        let chosen = { id: agentId || '', name: '' };
-        let follow = following !== false;
+        let chosen = { id: initial.agentId || '', name: '' };
+        let follow = initial.following !== false;
         let searchTimer = null;
         let known = [];
 
@@ -63,6 +67,7 @@ const BossModLogFilters = (() => {
             label: 'Filter by type',
             options: [ALL_TYPES, ...BossModLogShape.TYPES.map((type) =>
                 ({ value: type, label: TYPE_LABELS[type] }))],
+            value: initial.type || '',
             onChange,
         });
 
@@ -74,6 +79,7 @@ const BossModLogFilters = (() => {
                 searchTimer = setTimeout(onChange, SEARCH_DELAY_MS);
             },
         });
+        search.input.value = initial.search || '';
 
         // Follow is a switch, not a button that rewrites its own label: on/off
         // is state, and the switch role announces it as state rather than as a

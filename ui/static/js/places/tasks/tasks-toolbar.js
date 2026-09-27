@@ -23,8 +23,11 @@ const BossModTasksToolbar = (() => {
      * Build the toolbar.
      *
      * @param {object} deps
-     * @param {string|null} [deps.agentId]  Preset by the Desk's "See all",
-     *   which arrives as a place param rather than as a click.
+     * @param {{agentId?: string|null, query?: string, showChildren?: boolean}} deps.initial
+     *   Where the filters start: the view the operator left Tasks on, with the
+     *   Desk's "See all" agent (a place param, not a click) already applied
+     *   over it by the place. Each key is optional; an absent one starts at
+     *   Everyone, an empty search, and subtasks hidden.
      * @param {HTMLElement} deps.menuButton  The `⋯` (BossModTasksMenu), placed
      *   between the subtask toggle and `+ New task`.
      * @param {(agentId: string) => ({name: string, color: string}|null)} deps.rosterAgent
@@ -36,12 +39,13 @@ const BossModTasksToolbar = (() => {
      * @returns {{element: HTMLElement, filters: () => object,
      *   setAgents: (agents: object[]) => void, setSelectedCount: (n: number) => void,
      *   destroy: () => void}}
-     * @throws {Error} When a callback or the menu button is missing.
+     * @throws {Error} When `initial`, a callback, or the menu button is missing.
      */
     function createToolbar(deps) {
         const {
-            agentId = null, menuButton, rosterAgent, onChange, onNewTask, onCancelSelected,
+            initial, menuButton, rosterAgent, onChange, onNewTask, onCancelSelected,
         } = deps || {};
+        if (!initial || typeof initial !== 'object') throw new Error('[tasks-toolbar] deps.initial is required');
         if (!menuButton) throw new Error('[tasks-toolbar] deps.menuButton is required');
         if (typeof rosterAgent !== 'function') throw new Error('[tasks-toolbar] deps.rosterAgent is required');
         if (typeof onChange !== 'function') throw new Error('[tasks-toolbar] deps.onChange is required');
@@ -50,8 +54,8 @@ const BossModTasksToolbar = (() => {
             throw new Error('[tasks-toolbar] deps.onCancelSelected is required');
         }
 
-        let currentAgent = agentId;
-        let showChildren = false;
+        let currentAgent = initial.agentId || null;
+        let showChildren = initial.showChildren === true;
         let searchTimer = null;
 
         const search = BossModSearchField.create({
@@ -63,12 +67,13 @@ const BossModTasksToolbar = (() => {
                 searchTimer = setTimeout(onChange, SEARCH_DELAY_MS);
             },
         });
+        search.input.value = initial.query || '';
 
         // "Everyone" is the first option and the way back from a filter, so
         // there is no separate clear-filter chip to keep in step with it. It
-        // starts on Everyone even when the Desk preset an agent: the name is
-        // not known until the tasks load, and setAgents() then shows the
-        // choice `currentAgent` already holds.
+        // starts on Everyone even when an agent is preset: the name is not
+        // known until the tasks load, and setAgents() then shows the choice
+        // `currentAgent` already holds.
         const agents = BossModMenuSelect.create({
             label: 'Filter by assignee',
             options: [EVERYONE],

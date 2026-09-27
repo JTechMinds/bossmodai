@@ -118,6 +118,7 @@ function actionLabels(root) {
     };
     const conversation = BossModConversation.createConversation({
         store, bus, api, navigate() {}, needs: needsStub,
+        drafts: new Map(), cache: BossModTranscriptCache.createCache(),
     });
     documentStub.body.append(conversation.element);
 
