@@ -808,7 +808,7 @@ async def test_work_bind_stays_out_across_later_talk_slices(monkeypatch: pytest.
     assert "Work-bound:" in prompts[1]
     assert "| Laura" in prompts[1].split("Work-bound:", 1)[1]
     assert laura.id not in prompts[1]
-    assert "If you are unsure whether an already-spoke member would add new substance" in prompts[1]
+    assert "if unsure whether they would add new substance, leave them out" in prompts[1]
     transition_task(
         audit.task.id,
         "blocked",

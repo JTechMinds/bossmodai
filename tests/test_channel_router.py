@@ -1252,9 +1252,9 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
     assert "Round:" not in blob
     assert _block(blob, "Already spoke:", "Work-bound:") == "1 | Jim"
     assert _block(blob, "Work-bound:", None) == "2 | Laura"
-    assert "If you are unsure whether an already-spoke member would add new substance" in blob
-    assert "Do not name someone because they might have something" in blob
-    assert "A member who has not spoken may still be named" in blob
+    assert "if unsure whether they would add new substance, leave them out" in blob
+    assert "do not wake an already-spoke member to restate what the thread already shows" in blob
+    assert "An empty speak array is the stop when nobody is addressed and nobody has new substance" in blob
     assert "Leave work-bound members out of speak" in blob
     plain, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
@@ -1265,8 +1265,28 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
         sticky="",
     )
     plain_blob = "\n".join(item["content"] for item in plain)
-    assert "If you are unsure whether an already-spoke member would add new substance" not in plain_blob
+    assert "if unsure whether they would add new substance, leave them out" not in plain_blob
     assert "Already spoke:" not in plain_blob
+
+
+def test_reroute_prompt_does_not_let_already_spoke_exclude_the_addressed() -> None:
+    messages, _numbers = build_router_messages(
+        members=[
+            {"id": "harley", "name": "Harley", "role": "Feature Planner"},
+            {"id": "charles", "name": "Charles", "role": "Engineer"},
+        ],
+        latest_message="Confirmed. @Charles you're clear to run the capture.",
+        latest_author="Harley (Feature Planner)",
+        transcript=[],
+        pending_mention_ids=[],
+        sticky="",
+        agent_line=True,
+        already_spoke_ids=["charles"],
+        work_bind_ids=[],
+    )
+    blob = "\n".join(item["content"] for item in messages)
+    assert _block(blob, "Already spoke:", "Work-bound:") == "2 | Charles"
+    assert "Already spoke never excludes a member the latest message addresses" in blob
 
 
 def _scripted_route(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> list[str]:
@@ -1339,7 +1359,7 @@ def test_reroute_after_speakers_stays_out_on_echo(monkeypatch: pytest.MonkeyPatc
             both.append(blob)
     assert both
     assert any(
-        "If you are unsure whether an already-spoke member would add new substance" in blob for blob in both
+        "if unsure whether they would add new substance, leave them out" in blob for blob in both
     )
 
 
@@ -1372,7 +1392,7 @@ def test_reroute_still_speaks_for_new_substance(monkeypatch: pytest.MonkeyPatch)
         spoken_text="The fixture failed. Who takes the fix?",
     )
     assert [item["agent_id"] for item in progress["trigger_requests"]] == [jim.id]
-    assert any("If you are unsure whether an already-spoke member would add new substance" in blob for blob in prompts)
+    assert any("if unsure whether they would add new substance, leave them out" in blob for blob in prompts)
 
 
 def test_system_completion_failure_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

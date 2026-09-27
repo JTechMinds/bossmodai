@@ -74,11 +74,12 @@ AGENT_LINE_ROUTE = (
 REROUTE_ECHO_ROUTE = (
     "Already spoke lists members who already took a turn on this operator message. "
     "Work-bound lists members on live work. "
-    "Do not put an already-spoke member in speak when that turn would only restate what the thread already shows. "
-    "If you are unsure whether an already-spoke member would add new substance, leave them out of speak. "
-    "An empty speak array is the stop when nobody has new substance. "
-    "Do not name someone because they might have something. "
-    "A member who has not spoken may still be named for new work, a question, or a handoff. "
+    "Already spoke never excludes a member the latest message addresses: if it hands them work, "
+    "answers their question, or gives them the go-ahead they asked for, wake them even though they "
+    "spoke before. "
+    "For members the latest message does not address, do not wake an already-spoke member to restate "
+    "what the thread already shows; if unsure whether they would add new substance, leave them out. "
+    "An empty speak array is the stop when nobody is addressed and nobody has new substance. "
     "Leave work-bound members out of speak."
 )
 
