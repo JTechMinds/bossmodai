@@ -205,6 +205,22 @@ def test_warm_section_soft_cap_keeps_the_store_and_points_at_pref_list() -> None
     assert [item.id for item in loaded] == [f"pref-{index:02d}" for index in range(13)]
 
 
+def test_a_section_at_the_minimum_renders_one_full_limit_pref_whole() -> None:
+    line = line_max_chars()
+    minimum = line + standing_prefs.WARM_PREFIX_MAX_CHARS + len(standing_prefs.WARM_SECTION_HEADER) + 1
+    _set_limit("standing_prefs_section_max_chars", minimum)
+    key = db.create_agent("Ada", role="Writer").storage_key
+    pref_id = "i" * standing_prefs.ID_MAX_CHARS
+    longest_kind = max(standing_prefs.PREF_KINDS, key=len)
+    text = "t" * line
+    _set(key, pref_id, kind=longest_kind, text=text)
+    section = render_warm_section(list_standing_prefs(key))
+    assert section == f"{standing_prefs.WARM_SECTION_HEADER}\n- {longest_kind} {pref_id} — {text}"
+    assert len(section) == minimum
+    assert "more:" not in section
+    assert "..." not in section
+
+
 def test_sources_drop_when_text_plus_suffix_is_over_the_limit_and_the_text_stays_whole() -> None:
     assert line_max_chars() == 400
     key = db.create_agent("Ada", role="Writer").storage_key
@@ -383,9 +399,56 @@ def test_store_cap_rejects_the_set_without_dropping_existing_prefs() -> None:
     key = db.create_agent("Ada", role="Writer").storage_key
     _set(key, "tone", text="short sentences")
     before = standing_prefs_file(key).read_text(encoding="utf-8")
-    with pytest.raises(ValueError, match=r"^standing prefs would hold 36 characters of text; the limit is 20\. "):
+    with pytest.raises(
+        ValueError,
+        match=r"^standing prefs would grow to 36 characters of text; the limit is 20\. Shorten or remove a pref first\.$",
+    ):
         _set(key, "extra", text="another standing rule")
     assert standing_prefs_file(key).read_text(encoding="utf-8") == before
+
+
+def _store_at_900_then_lower_section_to_500(key: str) -> None:
+    # Three 300-character prefs saved under the default cap, then the
+    # operator lowers the section limit below the stored total.
+    for pref_id in ("a", "b", "c"):
+        _set(key, pref_id, text=pref_id * 300)
+    assert sum(len(item.text) for item in list_standing_prefs(key)) == 900
+    _set_limit("standing_prefs_section_max_chars", 500)
+
+
+def test_a_lowered_section_still_saves_a_shortening_edit() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    _store_at_900_then_lower_section_to_500(key)
+    _set(key, "b", text="b" * 200)
+    assert [len(item.text) for item in list_standing_prefs(key)] == [300, 200, 300]
+
+
+def test_a_lowered_section_still_saves_an_equal_length_replacement() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    _store_at_900_then_lower_section_to_500(key)
+    _set(key, "b", text="z" * 300)
+    assert [item.text for item in list_standing_prefs(key)] == ["a" * 300, "z" * 300, "c" * 300]
+
+
+def test_a_lowered_section_rejects_a_new_pref_and_keeps_the_store() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    _store_at_900_then_lower_section_to_500(key)
+    before = standing_prefs_file(key).read_text(encoding="utf-8")
+    with pytest.raises(
+        ValueError,
+        match=r"^standing prefs would grow to 910 characters of text; the limit is 500\. Shorten or remove a pref first\.$",
+    ):
+        _set(key, "d", text="d" * 10)
+    assert standing_prefs_file(key).read_text(encoding="utf-8") == before
+
+
+def test_growth_within_the_section_limit_saves() -> None:
+    key = db.create_agent("Ada", role="Writer").storage_key
+    _set_limit("standing_prefs_section_max_chars", 500)
+    _set(key, "a", text="a" * 300)
+    _set(key, "a", text="a" * 400)
+    _set(key, "b", text="b" * 100)
+    assert sum(len(item.text) for item in list_standing_prefs(key)) == 500
 
 
 def test_corrupt_store_is_never_overwritten_or_injected() -> None:

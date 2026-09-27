@@ -412,6 +412,12 @@ def execute_shell_command(
     (default: *cwd* only). This check runs even for previously approved
     commands — approval is not a path-jail bypass.
 
+    Every command (not only ``git``) runs with ``GIT_CEILING_DIRECTORIES``
+    set to the parents of the jail roots, so git — including git spawned by
+    tools such as ``uv`` or ``npm`` — stops repository discovery at the top
+    of each root instead of walking up into the application repository.
+    The value overrides any ``GIT_CEILING_DIRECTORIES`` in *extra_env*.
+
     Parameters
     ----------
     command:
@@ -461,6 +467,11 @@ def execute_shell_command(
     sanitized_env = _sanitize_env(cwd)
     if extra_env:
         sanitized_env.update(extra_env)
+    # Git discovery must not climb out of a jail root into an enclosing repo
+    # (``/me`` sits inside the app checkout). Set last so no caller widens it.
+    sanitized_env["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(
+        sorted({str(Path(root).resolve().parent) for root in roots})
+    )
     if Path(args[0]).name.lower() in {"git", "git.exe"}:
         sanitized_env.setdefault("GIT_TERMINAL_PROMPT", "0")
         sanitized_env.setdefault("GCM_INTERACTIVE", "never")

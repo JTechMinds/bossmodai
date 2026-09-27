@@ -67,6 +67,15 @@ PrefKind = Literal["preference", "constraint", "style", "tool_bias"]
 PREF_KINDS: tuple[str, ...] = get_args(PrefKind)
 _ID_RE = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9._-]{{0,{ID_MAX_CHARS - 1}}}$")
 
+# The first line of the rendered warm section. ``render_warm_section`` uses
+# it, and Settings counts it (plus its newline) in the section minimum.
+WARM_SECTION_HEADER = "# Standing prefs (manage with pref)"
+# The longest ``- {kind} {id} — `` prefix a warm line can carry: the line
+# limit counts text only, so the section limit needs this much more room to
+# hold one full line. Computed from the kinds and the id limit, not written
+# as a number, so adding a longer kind or raising the id limit moves it too.
+WARM_PREFIX_MAX_CHARS = len("- ") + max(len(k) for k in PREF_KINDS) + len(" ") + ID_MAX_CHARS + len(" — ")
+
 
 class StandingPref(BaseModel):
     """One typed pref. ``sources`` are ids or paths, not note bodies.
@@ -285,8 +294,9 @@ def set_standing_pref(
 
     Raises:
         ValueError: One sentence naming the failed rule: a field limit, the
-            text limit, the ``section_max_chars()`` store cap, or a corrupt
-            current store (which is never overwritten). The store is unchanged.
+            text limit, growth past the ``section_max_chars()`` store cap, or a
+            corrupt current store (which is never overwritten). The store is
+            unchanged.
         config.ConfigError: A limit setting is missing or invalid.
         OSError: The atomic write failed. The previous store is intact.
     """
@@ -302,7 +312,7 @@ def set_standing_pref(
         raise ValueError(f"pref text is {len(pref.text)} characters; the limit is {limit} on one line")
     existing = _read_existing_for_write(storage_key)
     merged = _merge_prefs(existing, [pref])
-    _enforce_store_cap(merged)
+    _enforce_store_cap(existing, merged)
     _write_store(standing_prefs_file(storage_key), merged)
     return pref
 
@@ -381,7 +391,7 @@ def render_warm_section(prefs: list[StandingPref]) -> str | None:
         return None
     line_limit = line_max_chars()
     section_limit = section_max_chars()
-    header = "# Standing prefs (manage with pref)"
+    header = WARM_SECTION_HEADER
     lines = [_sticky_line(pref, line_limit) for pref in prefs]
     kept: list[str] = []
     for line in lines:
@@ -445,14 +455,19 @@ def _merge_prefs(existing: list[StandingPref], incoming: list[StandingPref]) -> 
     return [by_id[item_id] for item_id in order]
 
 
-def _enforce_store_cap(prefs: list[StandingPref]) -> None:
+def _enforce_store_cap(existing: list[StandingPref], merged: list[StandingPref]) -> None:
     # Characters, not bytes: the cap is the section cap, which counts characters.
     cap = section_max_chars()
-    total = sum(len(item.text) for item in prefs)
-    if total > cap:
+    old_total = sum(len(item.text) for item in existing)
+    new_total = sum(len(item.text) for item in merged)
+    # Only growth past the cap is refused. After the operator lowers the
+    # section limit below a store's total, a save that shrinks or keeps the
+    # total must still pass, or the agent could not tidy its prefs without
+    # removing some first.
+    if new_total > cap and new_total > old_total:
         raise ValueError(
-            f"standing prefs would hold {total} characters of text; the limit is {cap}. "
-            "Replace or remove a pref instead of adding past the limit."
+            f"standing prefs would grow to {new_total} characters of text; the limit is {cap}. "
+            "Shorten or remove a pref first."
         )
 
 

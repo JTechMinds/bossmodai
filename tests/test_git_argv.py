@@ -1,14 +1,18 @@
-"""Project workspaces stay outside the application git repository.
+"""Agent git is scoped by the path jail, not by a repository fence.
 
-New projects get their own ``.git``. Agent git that resolves to the
-application install, or that leaves the bound project via ``cd ..``,
-``-C``, or an absolute path, is refused with an explicit reason.
-Operator CLI Deny rows are not rewritten.
+New projects get their own ``.git`` outside the application install. Any
+repository the path jail lets an agent touch may be used with git: a clone
+from ``/projects`` into ``/me``, or a repo nested inside a project. Git never
+discovers the application repository by walking up, because every shell
+command runs with ``GIT_CEILING_DIRECTORIES`` set to the parents of the jail
+roots. ``git -C /projects/<slug>`` still matches the plain ``git <sub>`` seed
+rules, and operator CLI Deny rows are not rewritten.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,13 +20,14 @@ import pytest
 
 import db
 from core import config
-from core.bm_cli import install_layout
+from core.bm_cli import filesystem, install_layout
+from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.floor_roots import floor_root
+from core.bm_cli.locked_clone_outcome import PATH_JAIL_BLOCKED_WHY
 from core.bm_cli.policy_engine import policy_engine
-from core.bm_cli.parser import parse_cli_command
-from core.bm_cli.project_git_fence import project_git_fence_reason
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
-from core.bm_cli.session import get_cli_cwd, set_cli_cwd
+from core.bm_cli.session import get_cli_cwd
+from core.bm_cli.shell_executor import execute_shell_command
 from db.cli_policy_rules import reconcile_hardened_seed_rules
 from db.floors import LOBBY_ID
 
@@ -87,6 +92,26 @@ def _branches(path: Path) -> str:
     return listed.stdout
 
 
+def _approve_and_run(agent, state, command: str):
+    """Run *command*, which the default shell policy sends to approval, as approved."""
+    pending = execute_bm_cli(agent, state, command)
+    assert pending.approval_required is True, pending.detail
+    return execute_approved_command(
+        agent,
+        state,
+        command,
+        approval_request_id=pending.approval_request_id or "",
+    )
+
+
+def _assert_path_jail_block(result) -> None:
+    assert result.ok is False
+    assert result.approval_required is False
+    assert result.kind == "host_deny"
+    assert PATH_JAIL_BLOCKED_WHY in result.detail
+    assert "resolves outside the allowed workspace roots" in result.detail
+
+
 def test_create_project_gets_its_own_git_outside_the_install() -> None:
     agent, state = _agent_and_state()
     created = execute_bm_cli(agent, state, "mkdir /projects/poc-own")
@@ -130,146 +155,15 @@ def test_existing_in_tree_projects_are_not_rewritten(
     assert (legacy / "keep.txt").read_text(encoding="utf-8") == "operator data\n"
 
 
-def test_git_targeting_the_application_work_tree_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _enable_shell()
-    install = tmp_path / "app-checkout"
-    _init_app(install)
-    before = _branches(install)
-    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
-
-    agent, state = _agent_and_state()
-    set_cli_cwd(agent.id, str(install))
-
-    checkout = execute_bm_cli(agent, state, "git checkout -b poc-branch")
-    assert checkout.ok is False
-    assert checkout.kind == "project_git_fence"
-    assert "Blocked —" in checkout.detail
-    assert "application install" in checkout.detail
-    assert "application install" in checkout.prompt_content
-    assert _branches(install) == before
-
-    commit = execute_bm_cli(agent, state, 'git commit -m "poc"')
-    assert commit.ok is False
-    assert "application install" in commit.detail
-    assert _branches(install) == before
-
-    notes = db.list_notifications(agent_id=agent.id, limit=10)
-    assert any("application install" in (item.content or "") for item in notes)
-
-    approved = execute_approved_command(
-        agent,
-        state,
-        "git checkout -b poc-branch",
-        approval_request_id="already-approved",
-        cwd=str(install),
-    )
-    assert approved.ok is False
-    assert "application install" in approved.detail
-    assert _branches(install) == before
-
-
-def test_git_escape_via_parent_dash_c_and_absolute_path_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _enable_shell()
-    install = tmp_path / "app-checkout"
-    _init_app(install)
-    other = tmp_path / "other-repo"
-    _init_app(other)
-    before_install = _branches(install)
-    before_other = _branches(other)
-    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
-
-    agent, state = _agent_and_state()
-    created = execute_bm_cli(agent, state, "mkdir /projects/bound-poc")
-    assert created.ok is True, created.detail
-    entered = execute_bm_cli(agent, state, "cd /projects/bound-poc")
-    assert entered.ok is True, entered.detail
-    project = _lobby_projects() / "bound-poc"
-
-    parent = execute_bm_cli(agent, state, "cd ..")
-    assert parent.ok is True
-    from_parent = execute_bm_cli(agent, state, "git checkout -b escaped")
-    assert from_parent.ok is False
-    assert from_parent.kind == "project_git_fence"
-    assert "Blocked —" in from_parent.detail
-    assert "bound project" in from_parent.detail
-    assert _branches(install) == before_install
-
-    back = execute_bm_cli(agent, state, "cd /projects/bound-poc")
-    assert back.ok is True
-    dash_c = execute_bm_cli(agent, state, "git -C .. checkout -b escaped")
-    assert dash_c.ok is False
-    assert dash_c.kind == "project_git_fence"
-    assert "Blocked —" in dash_c.detail
-    assert _branches(install) == before_install
-    assert "escaped" not in _branches(project)
-
-    absolute = execute_bm_cli(
-        agent,
-        state,
-        f"git -C {install} checkout -b poc-branch",
-    )
-    assert absolute.ok is False
-    assert "application install" in absolute.detail
-    assert _branches(install) == before_install
-
-    other_repo = execute_bm_cli(
-        agent,
-        state,
-        f"git --git-dir {other / '.git'} --work-tree {other} checkout -b side",
-    )
-    assert other_repo.ok is False
-    assert other_repo.kind == "project_git_fence"
-    assert "Blocked —" in other_repo.detail
-    assert _branches(other) == before_other
-    assert _branches(install) == before_install
-
-
-def test_git_commit_inside_the_project_does_not_touch_the_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _enable_shell()
-    install = tmp_path / "app-checkout"
-    _init_app(install)
-    before = _branches(install)
-    head = _git(install, "rev-parse", "HEAD").stdout.strip()
-    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
-
-    agent, state = _agent_and_state()
-    written = execute_bm_cli(
-        agent,
-        state,
-        "write /projects/bound-poc/readme.txt",
-        content="project notes\n",
-    )
-    assert written.ok is True, written.detail
-    entered = execute_bm_cli(agent, state, "cd /projects/bound-poc")
-    assert entered.ok is True, entered.detail
-
-    added = execute_bm_cli(agent, state, "git add readme.txt")
-    assert added.ok is True, added.detail
-    committed = execute_bm_cli(agent, state, 'git commit -m "project note"')
-    assert committed.ok is True, committed.detail
-
-    project = _lobby_projects() / "bound-poc"
-    toplevel = _git(project, "rev-parse", "--show-toplevel")
-    assert Path(toplevel.stdout.strip()).resolve() == project.resolve()
-    assert _git(project, "log", "-1", "--pretty=%s").stdout.strip() == "project note"
-    assert _branches(install) == before
-    assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
-
-
 def test_git_dash_c_projects_path_is_that_project_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``git -C /projects/<slug>`` rewrites onto that project's real root.
 
     The command is issued from ``/me``. Status, commit, and checkout stay
-    inside the project. The projects mount, the application install, and a
-    real absolute path outside that project stay blocked.
+    inside the project. The application install and a real repository
+    outside every jail root are refused by the path jail, and the parent of
+    the projects mount is not a repository to git.
     """
     _enable_shell()
     install = tmp_path / "app-checkout"
@@ -296,11 +190,6 @@ def test_git_dash_c_projects_path_is_that_project_repo(
     assert status.ok is True, status.detail
     assert status.kind == "shell"
     assert "readme.txt" in (status.prompt_content or "")
-    assert project_git_fence_reason(
-        agent,
-        parse_cli_command("git -C /projects/diablo-poc status"),
-        "/me",
-    ) is None
 
     absolute = execute_bm_cli(agent, state, f"git -C {project} status --short")
     assert absolute.ok is True, absolute.detail
@@ -323,15 +212,8 @@ def test_git_dash_c_projects_path_is_that_project_repo(
         "git -C /projects/diablo-poc checkout -b poc-branch",
     )
     assert checkout.ok is False
-    assert checkout.kind != "project_git_fence"
     assert checkout.approval_required is True
     assert "Switch branches" in (checkout.detail or "")
-    assert "bound project" not in (checkout.detail or "")
-    assert project_git_fence_reason(
-        agent,
-        parse_cli_command("git -C /projects/diablo-poc checkout -b poc-branch"),
-        "/me",
-    ) is None
     approved = execute_approved_command(
         agent,
         state,
@@ -343,25 +225,151 @@ def test_git_dash_c_projects_path_is_that_project_repo(
     assert _branches(install) == before_install
     assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
 
-    parent = execute_bm_cli(agent, state, "git -C /projects/diablo-poc/.. status")
+    # The floor folder is a jail root with no repository; the ceiling at the
+    # company root stops discovery there.
+    parent = _approve_and_run(agent, state, "git -C /projects/diablo-poc/.. status")
     assert parent.ok is False
-    assert parent.kind == "project_git_fence"
-    assert "Blocked —" in parent.detail
-    assert "bound project" in parent.detail
-    assert "application install" not in parent.detail
+    assert "not a git repository" in (parent.prompt_content or "")
 
-    app = execute_bm_cli(agent, state, f"git -C {install} status")
-    assert app.ok is False
-    assert app.kind == "project_git_fence"
-    assert "application install" in app.detail
+    # Approval is not a jailbreak: the path jail refuses both at execution.
+    app = _approve_and_run(agent, state, f"git -C {install} status")
+    _assert_path_jail_block(app)
 
-    other_repo = execute_bm_cli(agent, state, f"git -C {other} status")
-    assert other_repo.ok is False
-    assert other_repo.kind == "project_git_fence"
-    assert "Blocked —" in other_repo.detail
-    assert "bound project" in other_repo.detail
+    other_repo = _approve_and_run(agent, state, f"git -C {other} status")
+    _assert_path_jail_block(other_repo)
     assert _branches(other) == before_other
     assert _branches(install) == before_install
+    assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_git_clone_between_projects_and_me_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clone from the projects mount into ``/me`` crosses two jail roots."""
+    _enable_shell()
+    install = tmp_path / "app-checkout"
+    _init_app(install)
+    before_install = _branches(install)
+    head = _git(install, "rev-parse", "HEAD").stdout.strip()
+    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
+
+    agent, state = _agent_and_state()
+    written = execute_bm_cli(
+        agent,
+        state,
+        "write /projects/src-poc/main.py",
+        content="print('src')\n",
+    )
+    assert written.ok is True, written.detail
+    added = execute_bm_cli(agent, state, "git -C /projects/src-poc add main.py")
+    assert added.ok is True, added.detail
+    committed = execute_bm_cli(
+        agent,
+        state,
+        'git -C /projects/src-poc commit -m "source"',
+    )
+    assert committed.ok is True, committed.detail
+
+    cloned = _approve_and_run(agent, state, "git clone /projects/src-poc /me/src-work")
+    assert cloned.ok is True, cloned.detail
+
+    work = agent_artifact_dir(agent.storage_key) / "src-work"
+    assert (work / ".git").is_dir()
+    assert (work / "main.py").read_text(encoding="utf-8") == "print('src')\n"
+    assert _git(work, "log", "-1", "--pretty=%s").stdout.strip() == "source"
+    assert _branches(install) == before_install
+    assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_git_in_nested_repo_under_project_runs() -> None:
+    """A repository one level inside a project is usable from its own cwd."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    written = execute_bm_cli(
+        agent,
+        state,
+        "write /projects/outer/source_code/app.py",
+        content="print('nested')\n",
+    )
+    assert written.ok is True, written.detail
+    nested = _lobby_projects() / "outer" / "source_code"
+    init = _git(nested, "init")
+    assert init.returncode == 0, init.stderr
+
+    entered = execute_bm_cli(agent, state, "cd /projects/outer/source_code")
+    assert entered.ok is True, entered.detail
+    added = execute_bm_cli(agent, state, "git add app.py")
+    assert added.ok is True, added.detail
+    committed = execute_bm_cli(agent, state, 'git commit -m "nested work"')
+    assert committed.ok is True, committed.detail
+
+    # Plain ``git status`` / ``git log`` are virtual git pinned to ``/me``;
+    # ``-C .`` sends them to shell git in the nested repository.
+    status = execute_bm_cli(agent, state, "git -C . status --short")
+    assert status.ok is True, status.detail
+    assert status.kind == "shell"
+    logged = execute_bm_cli(agent, state, "git -C . log --oneline")
+    assert logged.ok is True, logged.detail
+    assert "nested work" in (logged.prompt_content or "")
+
+    toplevel = _git(nested, "rev-parse", "--show-toplevel")
+    assert Path(toplevel.stdout.strip()).resolve() == nested.resolve()
+    assert _git(nested, "log", "-1", "--pretty=%s").stdout.strip() == "nested work"
+
+
+def test_git_never_discovers_the_application_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``/me`` lives inside the app checkout; git stops at the top of ``/me``."""
+    _enable_shell()
+    install = tmp_path / "app-checkout"
+    _init_app(install)
+    before_install = _branches(install)
+    head = _git(install, "rev-parse", "HEAD").stdout.strip()
+    monkeypatch.setattr(install_layout, "app_install_root", lambda: install)
+    monkeypatch.setattr(filesystem, "_AGENTS_ROOT", install / "artifacts" / "agents")
+
+    agent, state = _agent_and_state()
+    me = agent_artifact_dir(agent.storage_key)
+    assert install.resolve() in me.resolve().parents
+    shutil.rmtree(me / ".git", ignore_errors=True)
+    assert not (me / ".git").exists()
+    (me / "sub").mkdir(parents=True, exist_ok=True)
+    # Without a ceiling, git from here discovers the application checkout.
+    unceiled = _git(me / "sub", "rev-parse", "--show-toplevel")
+    assert Path(unceiled.stdout.strip()).resolve() == install.resolve()
+
+    status = _approve_and_run(agent, state, "git -C /me/sub status")
+    assert status.ok is False
+    assert "not a git repository" in (status.prompt_content or "")
+
+    toplevel = _approve_and_run(agent, state, "git -C /me/sub rev-parse --show-toplevel")
+    assert toplevel.ok is False
+    assert "not a git repository" in (toplevel.prompt_content or "")
+
+    assert _branches(install) == before_install
+    assert _git(install, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_every_shell_command_gets_a_git_ceiling_at_the_jail_roots(tmp_path: Path) -> None:
+    """The ceiling is set for any argv and cannot be widened by extra_env."""
+    first = tmp_path / "company" / "floor-a"
+    second = tmp_path / "agents" / "agent_0001"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+
+    result = execute_shell_command(
+        "env",
+        cwd=second,
+        allowed_roots=(first, second),
+        extra_env={"GIT_CEILING_DIRECTORIES": ""},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    expected = os.pathsep.join(
+        sorted({str(first.resolve().parent), str(second.resolve().parent)})
+    )
+    assert f"GIT_CEILING_DIRECTORIES={expected}" in result.stdout.splitlines()
 
 
 def test_operator_deny_picks_stay_untouched() -> None:
@@ -388,8 +396,6 @@ def test_operator_deny_picks_stay_untouched() -> None:
     assert entered.ok is True
     blocked = execute_bm_cli(agent, state, "git checkout -b feature")
     assert blocked.ok is False
-    assert blocked.kind != "project_git_fence"
-    assert "application install" not in (blocked.detail or "")
 
     dash_c_denied = execute_bm_cli(
         agent,
@@ -397,9 +403,6 @@ def test_operator_deny_picks_stay_untouched() -> None:
         "git -C /projects/deny-poc checkout -b feature",
     )
     assert dash_c_denied.ok is False
-    assert dash_c_denied.kind != "project_git_fence"
-    assert "application install" not in (dash_c_denied.detail or "")
-    assert "bound project" not in (dash_c_denied.detail or "")
 
     reconcile_hardened_seed_rules()
     policy_engine.reload()

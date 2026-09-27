@@ -15,6 +15,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
+from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
 from core.llm.system_completion import resolve_system_connection
 from db.settings import get_seed_setting_default, seed_defaults
 
@@ -243,29 +244,91 @@ def test_settings_put_rejects_a_bad_positive_int_for_every_key(
     assert config.get(key) == default
 
 
-def test_prefs_section_below_line_is_rejected_in_both_directions() -> None:
-    lowered_section = _put_setting("standing_prefs_section_max_chars", "399", "context")
+# Room one full pref line needs beyond the line limit: the longest label plus
+# the warm header and its newline.
+PREFS_SECTION_ROOM = WARM_PREFIX_MAX_CHARS + len(WARM_SECTION_HEADER) + 1
+
+
+def _pair_error(section: int, line: int) -> str:
+    return (
+        f"Standing Prefs Section Limit ({section}) must be at least {line + PREFS_SECTION_ROOM}: "
+        f"the line limit plus room for one pref's label (Standing Pref Line Limit is {line})."
+    )
+
+
+def test_prefs_section_below_the_minimum_is_rejected_in_both_directions() -> None:
+    lowered_section = _put_setting("standing_prefs_section_max_chars", str(400 + PREFS_SECTION_ROOM - 1), "context")
     assert lowered_section.status_code == 400
-    assert lowered_section.json()["detail"] == (
-        "Standing Prefs Section Limit (399) must be at least the Standing Pref Line Limit (400)."
-    )
-    raised_line = _put_setting("standing_prefs_line_max_chars", "4001", "context")
+    assert lowered_section.json()["detail"] == _pair_error(400 + PREFS_SECTION_ROOM - 1, 400)
+    raised_line = _put_setting("standing_prefs_line_max_chars", str(4000 - PREFS_SECTION_ROOM + 1), "context")
     assert raised_line.status_code == 400
-    assert raised_line.json()["detail"] == (
-        "Standing Prefs Section Limit (4000) must be at least the Standing Pref Line Limit (4001)."
-    )
+    assert raised_line.json()["detail"] == _pair_error(4000, 4000 - PREFS_SECTION_ROOM + 1)
     config.reload()
     assert config.require_int("standing_prefs_line_max_chars") == 400
     assert config.require_int("standing_prefs_section_max_chars") == 4000
 
 
-def test_prefs_limits_accept_section_equal_to_line() -> None:
-    res = _put_setting("standing_prefs_line_max_chars", "4000", "context")
+def test_prefs_limits_accept_section_at_exactly_the_minimum() -> None:
+    res = _put_setting("standing_prefs_section_max_chars", str(400 + PREFS_SECTION_ROOM), "context")
     assert res.status_code == 200, res.text
+    assert config.require_int("standing_prefs_section_max_chars") == 400 + PREFS_SECTION_ROOM
     res = _put_setting("standing_prefs_section_max_chars", "4000", "context")
     assert res.status_code == 200, res.text
-    assert config.require_int("standing_prefs_line_max_chars") == 4000
+    res = _put_setting("standing_prefs_line_max_chars", str(4000 - PREFS_SECTION_ROOM), "context")
+    assert res.status_code == 200, res.text
+    assert config.require_int("standing_prefs_line_max_chars") == 4000 - PREFS_SECTION_ROOM
+
+
+def test_the_default_prefs_limits_satisfy_the_pair_rule() -> None:
+    line = int(get_seed_setting_default("standing_prefs_line_max_chars")[0])
+    section = int(get_seed_setting_default("standing_prefs_section_max_chars")[0])
+    assert section >= line + PREFS_SECTION_ROOM
+    assert _put_setting("standing_prefs_line_max_chars", str(line), "context").status_code == 200
+    assert _put_setting("standing_prefs_section_max_chars", str(section), "context").status_code == 200
+
+
+def _reset_setting(key: str):
+    return _settings_client().post(
+        f"/api/settings/{key}/reset",
+        headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()},
+    )
+
+
+def test_reset_of_the_section_limit_is_rejected_when_the_raised_line_needs_more() -> None:
+    assert _put_setting("standing_prefs_section_max_chars", "6000", "context").status_code == 200
+    assert _put_setting("standing_prefs_line_max_chars", "5000", "context").status_code == 200
+    res = _reset_setting("standing_prefs_section_max_chars")
+    assert res.status_code == 400
+    assert res.json()["detail"] == _pair_error(4000, 5000)
+    config.reload()
+    assert config.require_int("standing_prefs_section_max_chars") == 6000
+    assert config.require_int("standing_prefs_line_max_chars") == 5000
+
+
+def test_reset_of_a_valid_prefs_pair_restores_the_defaults() -> None:
+    assert _put_setting("standing_prefs_section_max_chars", "6000", "context").status_code == 200
+    assert _put_setting("standing_prefs_line_max_chars", "1000", "context").status_code == 200
+    res = _reset_setting("standing_prefs_section_max_chars")
+    assert res.status_code == 200, res.text
+    assert res.json()["value"] == "4000"
+    res = _reset_setting("standing_prefs_line_max_chars")
+    assert res.status_code == 200, res.text
+    assert res.json()["value"] == "400"
+    config.reload()
     assert config.require_int("standing_prefs_section_max_chars") == 4000
+    assert config.require_int("standing_prefs_line_max_chars") == 400
+
+
+def test_reset_of_other_keys_is_unchanged() -> None:
+    assert _put_max_tokens("4096").status_code == 200
+    res = _reset_setting("system_ai_max_tokens")
+    assert res.status_code == 200, res.text
+    assert res.json()["value"] == "6144"
+    config.reload()
+    assert config.require_int("system_ai_max_tokens") == 6144
+    unseeded = _reset_setting("no_such_setting")
+    assert unseeded.status_code == 400
+    assert unseeded.json()["detail"] == "Setting 'no_such_setting' has no seeded default"
 
 
 def test_fresh_db_seeds_the_standing_prefs_limits() -> None:
@@ -301,7 +364,7 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
     assert section["label"] == "Standing Prefs Section Limit (chars)"
     assert section["value"] == "4000"
     assert section["category"] == "context"
-    assert "Must be at least the line limit." in section["paragraphs"][0]
+    assert "Must leave room for at least one full pref line." in section["paragraphs"][0]
     assert "Default 4000." in section["paragraphs"][0]
     for row in (line, section):
         assert "restart" not in row["paragraphs"][0].lower()

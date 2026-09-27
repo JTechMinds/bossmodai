@@ -123,18 +123,6 @@ def preview_bm_cli(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
 
-    from core.bm_cli.project_git_fence import project_git_block
-
-    fenced = project_git_block(
-        agent,
-        parsed,
-        cwd_before,
-        channel_id=None,
-        persist=False,
-    )
-    if fenced is not None:
-        return fenced
-
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
     from core.bm_cli.nest_git_consent import maybe_block_gh_cli
@@ -294,17 +282,6 @@ def _execute_bm_cli_inner(
             trigger_type=trigger_type,
         )
         return result
-
-    fenced = _maybe_project_git_fence(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if fenced is not None:
-        return fenced
 
     paused = _maybe_gh_cli_block(
         agent=agent,
@@ -492,26 +469,14 @@ def execute_approved_command(
 
     Command-tier policy is not re-evaluated (the operator already approved
     this argv), but the path jail still applies. Approval is not a jailbreak.
-    Agent git that resolves to the application install or another repository
-    is still refused. Host pip on a locked clone is also not an approval
-    bypass — rewrite to the clone uv/venv or deny.
+    Host pip on a locked clone is also not an approval bypass — rewrite to
+    the clone uv/venv or deny.
     """
     cwd_before = cwd or get_cli_cwd(agent.id)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
-
-    fenced = _maybe_project_git_fence(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if fenced is not None:
-        return fenced
 
     from core.agent_loop.activity_runtime import get_active_task_id
     from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
@@ -823,42 +788,6 @@ def _maybe_gh_cli_block(
     return blocked
 
 
-def _maybe_project_git_fence(
-    *,
-    agent: Agent,
-    parsed: ParsedCliCommand,
-    content: str | None,
-    cwd_before: str,
-    trigger_type: str | None,
-    channel_id: str | None,
-) -> BossModCliResult | None:
-    """Refuse agent git that resolves to the app install or another repository."""
-    from core.bm_cli.project_git_fence import project_git_block
-
-    blocked = project_git_block(
-        agent,
-        parsed,
-        cwd_before,
-        channel_id=channel_id,
-        persist=True,
-    )
-    if blocked is None:
-        return None
-    record_bm_cli_event(
-        agent_id=agent.id,
-        command=parsed.raw,
-        content=content,
-        executor=blocked.executor,
-        cwd_before=cwd_before,
-        cwd_after=blocked.cwd,
-        policy_tier="project_git_fence",
-        decision="denied",
-        result=blocked,
-        trigger_type=trigger_type,
-    )
-    return blocked
-
-
 def _deny_policy_never_allowed(
     *,
     agent: Agent,
@@ -1126,7 +1055,7 @@ def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
     subcommand = git_subcommand(parsed.args)
     if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
         return True
-    from core.bm_cli.project_git_fence import git_has_location_override
+    from core.bm_cli.git_argv import git_has_location_override
 
     # ``git -C /projects/<slug> status`` follows that project. Virtual git
     # only understands a bare subcommand and would ignore ``-C``.
@@ -1178,9 +1107,9 @@ def _shell_policy_for_command(
     )
     if raw.matched_rule_id:
         return raw
-    from core.bm_cli.project_git_fence import project_git_policy_subject
+    from core.bm_cli.git_argv import git_policy_subject
 
-    subject = project_git_policy_subject(agent, parsed, cwd)
+    subject = git_policy_subject(agent, parsed, cwd)
     if not subject or subject == parsed.raw:
         return raw
     scoped = policy_engine.evaluate(

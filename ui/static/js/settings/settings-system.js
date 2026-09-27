@@ -111,7 +111,7 @@ const SystemSection = (() => {
         standing_prefs_section_max_chars: {
             order: 40,
             label: 'Standing Prefs Section Limit (chars)',
-            description: 'Most characters of standing prefs injected into one agent turn, and the most total pref text one agent can store. Prefs past it are listed as \'more: N not shown\'. Must be at least the line limit. Default 4000.',
+            description: 'Most characters of standing prefs injected into one agent turn, and the most total pref text one agent can store. Prefs past it are listed as \'more: N not shown\'. Must leave room for at least one full pref line. Default 4000.',
         },
         default_max_tokens: {
             order: 10,

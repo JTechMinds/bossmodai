@@ -12,6 +12,7 @@ from api.routes._shared import (
 )
 from api.websocket import manager
 from core import config
+from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
@@ -93,7 +94,16 @@ async def reseed_application():
 
 @router.post("/settings/{key}/reset")
 async def reset_setting_to_default(key: str):
-    """Reset one seeded setting back to its default value."""
+    """Reset one seeded setting back to its default value.
+
+    The seed value is checked like a PUT first: a default is not valid on
+    its own for a paired limit (the prefs section default can sit below the
+    minimum when the line limit was raised). A key with no seed skips the
+    check; ``reset_setting_to_seed`` then refuses it with its own 400.
+    """
+    seeded = db.get_seed_setting_default(key)
+    if seeded is not None:
+        _validate_positive_int_setting(key, seeded[0])
     try:
         result = db.reset_setting_to_seed(key)
     except ValueError as exc:
@@ -155,8 +165,11 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     warm render (the two prefs limits). A bad value (``6k``, ``0``) would fail
     all of them, so it is rejected here, at the write boundary, instead.
 
-    For the prefs limits it also requires section ≥ line, reading the other
-    limit from ``config``, so a section can always hold one full pref text.
+    For the prefs limits it also requires section ≥ line +
+    ``WARM_PREFIX_MAX_CHARS`` + the warm header and its newline, reading the
+    other limit from ``config``. The line limit counts pref text only, but
+    the section counts whole rendered lines, so this is the least room that
+    always holds one full-limit pref with the longest kind and id.
 
     Args:
         key: Setting key being written. Other keys are not checked.
@@ -165,7 +178,8 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     Raises:
         HTTPException: 400 when the stripped value is not a base-10 integer
             of at least 1, naming the setting's label; or 400 naming both
-            prefs limits when the section limit would be below the line limit.
+            prefs limits and the required minimum when the section limit
+            could not hold one full pref line.
     """
     if key not in POSITIVE_INT_SETTINGS:
         return
@@ -180,11 +194,12 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
         line, section = config.require_int("standing_prefs_line_max_chars"), written
     else:
         return
-    if section < line:
+    minimum = line + WARM_PREFIX_MAX_CHARS + len(WARM_SECTION_HEADER) + 1
+    if section < minimum:
         raise HTTPException(
             400,
-            f"Standing Prefs Section Limit ({section}) must be at least the "
-            f"Standing Pref Line Limit ({line}).",
+            f"Standing Prefs Section Limit ({section}) must be at least {minimum}: "
+            f"the line limit plus room for one pref's label (Standing Pref Line Limit is {line}).",
         )
 
 

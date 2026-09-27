@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,17 @@ def _project_file(name: str = "demo") -> Path:
     path = root / "notes.txt"
     path.write_text("keep", encoding="utf-8")
     return path
+
+
+def _outside_repo(tmp_path: Path) -> Path:
+    """A real git repository outside every path-jail root."""
+    root = tmp_path / "outside-root"
+    root.mkdir()
+    init = subprocess.run(
+        ["git", "-C", str(root), "init"], capture_output=True, text=True, check=False
+    )
+    assert init.returncode == 0, init.stderr
+    return root
 
 
 def _allow(why: str = "deletes one project file"):
@@ -204,7 +216,9 @@ def test_bad_json_stays_on_the_approval_card(monkeypatch: pytest.MonkeyPatch) ->
     assert db.list_cli_approval_requests(status="approved", decision_by="system") == []
 
 
-def test_never_allow_fence_and_jail_stay_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_never_allow_fence_and_jail_stay_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _enable_shell()
     agent, state = _agent_and_state()
     channel = _thread(agent.id, enabled=True)
@@ -224,16 +238,11 @@ def test_never_allow_fence_and_jail_stay_blocked(monkeypatch: pytest.MonkeyPatch
     assert "Blocked" in blocked.detail
     assert calls == []
 
-    made = execute_bm_cli(agent, state, "mkdir /projects/bound-poc", channel_id=channel.id)
-    assert made.ok is True, made.detail
-    entered = execute_bm_cli(agent, state, "cd /projects/bound-poc", channel_id=channel.id)
-    assert entered.ok is True, entered.detail
-    parent = execute_bm_cli(agent, state, "cd ..", channel_id=channel.id)
-    assert parent.ok is True, parent.detail
-    fenced = execute_bm_cli(agent, state, "git checkout -b escaped", channel_id=channel.id)
+    outside = _outside_repo(tmp_path)
+    fenced = execute_bm_cli(agent, state, f"git -C {outside} status", channel_id=channel.id)
     assert fenced.ok is False
-    assert fenced.kind == "project_git_fence"
     assert fenced.approval_required is False
+    assert "Path jail" in fenced.detail
     assert calls == []
 
     set_cli_cwd(agent.id, "/projects/demo")
@@ -499,7 +508,9 @@ def test_manual_approve_is_advisory_for_a_similar_command(monkeypatch: pytest.Mo
     assert (root / "other.txt").read_text(encoding="utf-8") == "keep"
 
 
-def test_never_allow_and_fence_ignore_thread_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_never_allow_and_fence_ignore_thread_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A remembered Approve does not open a never-allow, a fence, or a jail."""
     _enable_shell()
     agent, state = _agent_and_state()
@@ -524,16 +535,11 @@ def test_never_allow_and_fence_ignore_thread_memory(monkeypatch: pytest.MonkeyPa
     assert blocked.approval_required is False
     assert "Blocked" in blocked.detail
 
-    made = execute_bm_cli(agent, state, "mkdir /projects/bound-poc", channel_id=channel.id)
-    assert made.ok is True, made.detail
-    entered = execute_bm_cli(agent, state, "cd /projects/bound-poc", channel_id=channel.id)
-    assert entered.ok is True, entered.detail
-    parent = execute_bm_cli(agent, state, "cd ..", channel_id=channel.id)
-    assert parent.ok is True, parent.detail
-    fenced = execute_bm_cli(agent, state, "git checkout -b escaped", channel_id=channel.id)
+    outside = _outside_repo(tmp_path)
+    fenced = execute_bm_cli(agent, state, f"git -C {outside} status", channel_id=channel.id)
     assert fenced.ok is False
-    assert fenced.kind == "project_git_fence"
     assert fenced.approval_required is False
+    assert "Path jail" in fenced.detail
 
     set_cli_cwd(agent.id, "/projects/demo")
     jailed = execute_bm_cli(agent, state, "rm /etc/passwd", channel_id=channel.id)

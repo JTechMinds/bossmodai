@@ -1,10 +1,10 @@
 """Company → floor file system.
 
 The company root holds one folder per floor. An agent's ``/projects`` is its
-own floor's folder: the virtual filesystem, the shell jail, and the git fence
-all refuse another floor's projects, and an agent on vacation has none. The
-Files place lists floors by name, refuses to create at the top level, and a
-deleted floor's folder is archived, never removed.
+own floor's folder: the virtual filesystem and the shell jail (which also
+scopes git) refuse another floor's projects, and an agent on vacation has
+none. The Files place lists floors by name, refuses to create at the top
+level, and a deleted floor's folder is archived, never removed.
 """
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ from core.bm_cli.host_roots import (
     normalize_host_root_setting,
 )
 from core.bm_cli.install_layout import RetiredProjectsRootSetting
-from core.bm_cli.parser import parse_cli_command
-from core.bm_cli.project_git_fence import PROJECT_GIT_ESCAPE_WHY, project_git_fence_reason
+from core.bm_cli.locked_clone_outcome import PATH_JAIL_BLOCKED_WHY
+from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.project_repo import project_directory_for
-from core.bm_cli.runtime import execute_bm_cli
+from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.shell_executor import allowed_shell_roots
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
 from core.floors import delete_floor, send_home
@@ -151,8 +151,11 @@ def test_shell_jail_holds_only_the_agents_floor() -> None:
     assert company_root().resolve() not in roots
 
 
-def test_git_fence_refuses_another_floors_project() -> None:
+def test_shell_jail_refuses_git_on_another_floors_project() -> None:
     _finance, ada, bob, _secret = _two_floors()
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    config.reload()
+    policy_engine.reload()
     ada_state = db.get_agent_state(ada.id)
     bob_state = db.get_agent_state(bob.id)
     assert ada_state is not None and bob_state is not None
@@ -161,10 +164,21 @@ def test_git_fence_refuses_another_floors_project() -> None:
     theirs = floor_root(LOBBY_ID) / "theirs"
     assert (theirs / ".git").is_dir()
 
-    own = parse_cli_command("git -C /projects/own status")
-    assert project_git_fence_reason(ada, own, "/me") is None
-    foreign = parse_cli_command(f"git -C {theirs} status")
-    assert project_git_fence_reason(ada, foreign, "/me") == PROJECT_GIT_ESCAPE_WHY
+    own = execute_bm_cli(ada, ada_state, "git -C /projects/own status")
+    assert own.ok is True, own.detail
+    command = f"git -C {theirs} status"
+    pending = execute_bm_cli(ada, ada_state, command)
+    assert pending.approval_required is True, pending.detail
+    foreign = execute_approved_command(
+        ada,
+        ada_state,
+        command,
+        approval_request_id=pending.approval_request_id or "",
+    )
+    assert foreign.ok is False
+    assert foreign.kind == "host_deny"
+    assert PATH_JAIL_BLOCKED_WHY in foreign.detail
+    assert "resolves outside the allowed workspace roots" in foreign.detail
     assert project_directory_for(ada.storage_key, theirs) is None
     assert project_directory_for(bob.storage_key, theirs) == theirs.resolve()
 
