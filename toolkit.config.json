@@ -1,0 +1,7 @@
+{
+  "extensions": {
+    "browser-vision": {
+      "enabled": false
+    }
+  }
+}

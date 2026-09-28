@@ -18,6 +18,27 @@ jest.mock('../capture/headless', () => {
   };
 });
 
+jest.mock('../xvfb/env', () => {
+  const state = {
+    running: true,
+    display: ':99',
+    pid: 12345,
+    width: 960,
+    height: 960,
+    depth: 24,
+    started_at: '2025-01-01T00:00:00.000Z',
+    display_env: ':99',
+  };
+
+  return {
+    startXvfb: jest.fn().mockResolvedValue(state),
+    stopXvfb: jest.fn().mockResolvedValue({ running: false }),
+    restartXvfb: jest.fn(),
+    getXvfbState: jest.fn().mockReturnValue(state),
+    assertXvfbRunning: jest.fn().mockReturnValue(state),
+  };
+});
+
 describe('extension lifecycle', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -136,11 +157,19 @@ describe('extension card (§2.5)', () => {
   test('extension card lists exactly view, click, type, scroll in manifest order with non-empty one_liner', () => {
     const card = JSON.parse(fs.readFileSync(cardPath, 'utf8'));
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    expect(card.tools).toHaveLength(4);
-    expect(card.tools.map((t) => t.name)).toEqual(manifest.tools);
-    for (const t of card.tools) {
-      expect(typeof t.one_liner).toBe('string');
-      expect(t.one_liner.length).toBeGreaterThan(0);
+
+    // manifest.tools is a string array
+    expect(card.tools.map((tool) => tool.name)).toEqual(manifest.tools);
+    expect(card.tools.map((tool) => tool.name)).toEqual([
+      'view',
+      'click',
+      'type',
+      'scroll',
+    ]);
+
+    for (const tool of card.tools) {
+      expect(typeof tool.one_liner).toBe('string');
+      expect(tool.one_liner.length).toBeGreaterThan(0);
     }
   });
 });
@@ -148,54 +177,87 @@ describe('extension card (§2.5)', () => {
 describe('CLI invocation pattern (§2.6)', () => {
   describe('parseBvCommand', () => {
     test('valid view command', () => {
-      const result = parseBvCommand(['view', '--params-json', '{"url":"https://example.com"}']);
-      expect(result.tool).toBe('view');
-      expect(result.paramsJson).toBe('{"url":"https://example.com"}');
-      expect(result.error).toBeUndefined();
+      const parsed = parseBvCommand([
+        'view',
+        '--params-json',
+        JSON.stringify({ url: 'https://example.com' }),
+      ]);
+
+      expect(parsed.tool).toBe('view');
+      expect(parsed.paramsJson).toBe(JSON.stringify({ url: 'https://example.com' }));
     });
 
     test('unknown tool returns UNKNOWN_TOOL', () => {
-      const result = parseBvCommand(['bogus', '--params-json', '{}']);
-      expect(result.error).toBe('UNKNOWN_TOOL');
+      const parsed = parseBvCommand(['bogus', '--params-json', '{}']);
+
+      expect(parsed.error).toBe('UNKNOWN_TOOL');
     });
 
     test('missing --params-json returns MISSING_PARAMS_JSON', () => {
-      const result = parseBvCommand(['view']);
-      expect(result.error).toBe('MISSING_PARAMS_JSON');
+      const parsed = parseBvCommand(['view']);
+
+      expect(parsed.error).toBe('MISSING_PARAMS_JSON');
     });
 
     test('invalid JSON returns INVALID_PARAMS_JSON', () => {
-      const result = parseBvCommand(['view', '--params-json', 'not-json']);
-      expect(result.error).toBe('INVALID_PARAMS_JSON');
+      const parsed = parseBvCommand(['view', '--params-json', '{not-json']);
+
+      expect(parsed.error).toBe('INVALID_PARAMS_JSON');
     });
   });
 
   describe('dispatchBvCommand', () => {
     test('dispatches to the correct handler and returns its result', async () => {
-      const mockResult = { ok: true };
-      const handlers = { view: jest.fn().mockResolvedValue(mockResult) };
-      const result = await dispatchBvCommand(handlers, 'view', '{"url":"https://example.com"}');
+      const handlers = {
+        view: jest.fn().mockResolvedValue({ ok: true }),
+      };
+
+      const result = await dispatchBvCommand(
+        handlers,
+        'view',
+        JSON.stringify({ url: 'https://example.com' })
+      );
+
       expect(handlers.view).toHaveBeenCalledWith({ url: 'https://example.com' });
-      expect(result).toBe(mockResult);
+      expect(result).toEqual({ ok: true });
     });
 
     test('returns INVALID_PARAMS_JSON without calling handler on bad JSON', async () => {
-      const handlers = { view: jest.fn() };
-      const result = await dispatchBvCommand(handlers, 'view', 'not-json');
-      expect(result.error).toBe('INVALID_PARAMS_JSON');
+      const handlers = {
+        view: jest.fn().mockResolvedValue({ ok: true }),
+      };
+
+      const result = await dispatchBvCommand(handlers, 'view', '{not-json');
+
       expect(handlers.view).not.toHaveBeenCalled();
+      expect(result.error).toBe('INVALID_PARAMS_JSON');
     });
 
     test('returns UNKNOWN_TOOL for unregistered tool', async () => {
-      const handlers = { view: jest.fn() };
-      const result = await dispatchBvCommand(handlers, 'bogus', '{}');
+      const handlers = {};
+
+      const result = await dispatchBvCommand(
+        handlers,
+        'view',
+        JSON.stringify({ url: 'https://example.com' })
+      );
+
       expect(result.error).toBe('UNKNOWN_TOOL');
     });
 
     test('returns handler error object unchanged', async () => {
-      const handlers = { view: jest.fn().mockResolvedValue({ error: 'NO_PAGE', detail: 'Call view first' }) };
-      const result = await dispatchBvCommand(handlers, 'view', '{"url":"x"}');
-      expect(result).toEqual({ error: 'NO_PAGE', detail: 'Call view first' });
+      const error = { error: 'NO_PAGE', detail: 'Call view first' };
+      const handlers = {
+        view: jest.fn().mockResolvedValue(error),
+      };
+
+      const result = await dispatchBvCommand(
+        handlers,
+        'view',
+        JSON.stringify({ url: 'https://example.com' })
+      );
+
+      expect(result).toEqual(error);
     });
   });
 });

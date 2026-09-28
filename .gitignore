@@ -57,3 +57,6 @@ evidence/
 
 # Docs (spec/verdict artifacts live outside repo)
 docs/
+
+# Test assets
+test_assets/
