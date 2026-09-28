@@ -20,8 +20,10 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
+from uuid import uuid4
 
 from playwright.async_api import (
     Browser,
@@ -78,6 +80,25 @@ class BrowserActionError(Exception):
 
 
 @dataclass(frozen=True)
+class SessionInfo:
+    """One agent's open browser session, as the host knows it.
+
+    Attributes:
+        session_id: Chosen when the session opens (``uuid4().hex``); kept
+            when a window change replaces the context, since that is the
+            same logical session.
+        opened_at: ISO-8601 UTC time the session opened.
+        url: The session page's current URL.
+        window: The window preset name (or ``WxH``) the context uses.
+    """
+
+    session_id: str
+    opened_at: str
+    url: str
+    window: str
+
+
+@dataclass(frozen=True)
 class Capture:
     """One viewport screenshot at CSS scale, with where it was taken."""
 
@@ -86,6 +107,8 @@ class Capture:
     title: str
     width: int
     height: int
+    # The session that took it: its screenshot files belong to that session.
+    session: SessionInfo
     # The page's visible controls at capture time, numbered (see marks.py).
     marks: tuple[Mark, ...] = ()
 
@@ -134,6 +157,8 @@ class WaitOutcome:
 
 @dataclass
 class _Session:
+    session_id: str
+    opened_at: str
     context: BrowserContext
     page: Page
     viewport: ViewportSpec
@@ -202,8 +227,20 @@ class BrowserHost:
             return False
         return self._run(lambda: self._has_session(agent_id))
 
+    def sessions(self) -> dict[str, SessionInfo]:
+        """Return every open session by agent id, without starting the browser.
+
+        Before the browser thread exists there is nothing open, so this
+        answers ``{}`` without creating it (like ``has_session``).
+        """
+        if self._loop is None:
+            return {}
+        return self._run(self._session_infos)
+
     def open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None:
         """Create the agent's context (starting the browser) when it has none.
+
+        A new session gets a fresh id and open time (see ``SessionInfo``).
 
         Raises:
             BrowserActionError: The browser failed to launch or the device
@@ -358,6 +395,9 @@ class BrowserHost:
     async def _has_session(self, agent_id: str) -> bool:
         return agent_id in self._sessions
 
+    async def _session_infos(self) -> dict[str, SessionInfo]:
+        return {agent_id: _info(session) for agent_id, session in self._sessions.items()}
+
     def _lock_for_loop(self) -> asyncio.Lock:
         """Return the start lock, creating it on the running (browser) loop."""
         if self._start_lock is None:
@@ -379,7 +419,13 @@ class BrowserHost:
         async with self._lock_for_loop():
             if agent_id in self._sessions:
                 return
-            self._sessions[agent_id] = await self._new_session(viewport, downloads_dir, storage_state=None)
+            self._sessions[agent_id] = await self._new_session(
+                viewport,
+                downloads_dir,
+                storage_state=None,
+                session_id=uuid4().hex,
+                opened_at=datetime.now(timezone.utc).isoformat(),
+            )
 
     async def _new_session(
         self,
@@ -387,6 +433,8 @@ class BrowserHost:
         downloads_dir: Path,
         *,
         storage_state: dict[str, Any] | None,
+        session_id: str,
+        opened_at: str,
     ) -> _Session:
         """Open a context and page; the caller holds the start lock."""
         browser = await self._ensure_browser()
@@ -405,6 +453,8 @@ class BrowserHost:
         context.set_default_navigation_timeout(self._nav_timeout_ms)
         page = await context.new_page()
         session = _Session(
+            session_id=session_id,
+            opened_at=opened_at,
             context=context,
             page=page,
             viewport=viewport,
@@ -549,7 +599,14 @@ class BrowserHost:
         async with self._lock_for_loop():
             await session.context.close()
             del self._sessions[agent_id]
-            replacement = await self._new_session(viewport, session.downloads_dir, storage_state=state)
+            # Same logical session: its id (and screenshot folder) carry over.
+            replacement = await self._new_session(
+                viewport,
+                session.downloads_dir,
+                storage_state=state,
+                session_id=session.session_id,
+                opened_at=session.opened_at,
+            )
             self._sessions[agent_id] = replacement
         if url and url != "about:blank":
             await replacement.page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
@@ -568,6 +625,7 @@ class BrowserHost:
             title=await session.page.title(),
             width=size["width"],
             height=size["height"],
+            session=_info(session),
             marks=marks,
         )
 
@@ -676,6 +734,15 @@ class BrowserHost:
             self._playwright = None
         # Bound to this loop, which shutdown is about to stop.
         self._start_lock = None
+
+
+def _info(session: _Session) -> SessionInfo:
+    return SessionInfo(
+        session_id=session.session_id,
+        opened_at=session.opened_at,
+        url=session.page.url,
+        window=session.viewport.name,
+    )
 
 
 def _unique_path(folder: Path, name: str) -> Path:

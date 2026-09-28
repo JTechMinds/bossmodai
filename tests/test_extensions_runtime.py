@@ -89,7 +89,36 @@ def test_the_block_sits_after_file_guidance_and_before_history() -> None:
     index = next(i for i, m in enumerate(messages) if m["content"].startswith(_MARKER))
     assert all(m["role"] == "system" for m in messages[:index])
     prompt = (get_discovery().get(_BV).root / "prompt.md").read_text(encoding="utf-8").strip()
-    assert messages[index]["content"] == prompt
+    # R30: the static text first, the live state line last (cache-stable prefix).
+    assert messages[index]["content"] == prompt + "\n\nYour browser right now: no page open."
+
+
+def test_asking_for_the_state_line_does_not_start_the_browser() -> None:
+    import threading
+
+    from core.extensions.loader import load_extension
+
+    db.set_supports_images("vision-model", True)
+    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
+    _mark_ready()
+    set_enabled(_BV, True)
+    block = next(m["content"] for m in _context(seer, "execution") if m["content"].startswith(_MARKER))
+    assert block.endswith("\n\nYour browser right now: no page open.")
+    instance = load_extension(get_discovery().get(_BV))
+    assert instance._host._thread is None and instance._host._loop is None
+    assert not any(thread.name == "browser-vision" for thread in threading.enumerate())
+
+
+def test_an_extension_without_prompt_state_adds_only_its_static_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.extensions import prompt_blocks
+
+    db.set_supports_images("vision-model", True)
+    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
+    _mark_ready()
+    set_enabled(_BV, True)
+    monkeypatch.setattr(prompt_blocks, "load_extension", lambda entry: object())
+    prompt = (get_discovery().get(_BV).root / "prompt.md").read_text(encoding="utf-8").strip()
+    assert prompt_blocks.render_extension_blocks(seer, {"type": "activity_resumed", "content": "Continue."}) == prompt
 
 
 @pytest.mark.asyncio

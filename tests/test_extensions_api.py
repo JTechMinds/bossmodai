@@ -215,8 +215,21 @@ def test_the_policy_ui_lists_extension_commands_under_their_category(client) -> 
 # ─── live view (R8) ───
 
 
-def _write_shot(agent_id: str, command: str, taken_at: str) -> Path:
-    folder = extension_data_dir(_BV) / "shots" / agent_id
+def _write_marker(agent_id: str, pid: int) -> None:
+    """A session marker for ``agent_id`` (R29): the live view lists only these."""
+    folder = extension_data_dir(_BV) / "sessions"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{agent_id}.json").write_text(json.dumps({
+        "session_id": f"session-{agent_id}", "pid": pid,
+        "opened_at": "2026-09-28T09:00:00+00:00", "url": "https://example.com",
+    }), encoding="utf-8")
+
+
+def _write_shot(agent_id: str, command: str, taken_at: str, *, marker: bool = True) -> Path:
+    """One screenshot in the agent's session folder, with a live marker (this process) unless told not to."""
+    if marker:
+        _write_marker(agent_id, os.getpid())
+    folder = extension_data_dir(_BV) / "shots" / agent_id / f"session-{agent_id}"
     folder.mkdir(parents=True, exist_ok=True)
     stamp = taken_at.replace(":", "").replace("-", "")[:15]
     png = folder / f"{stamp}.png"
@@ -233,9 +246,11 @@ def _write_shot(agent_id: str, command: str, taken_at: str) -> Path:
 def live_shots():
     import shutil
 
-    shutil.rmtree(extension_data_dir(_BV) / "shots", ignore_errors=True)
+    for name in ("shots", "sessions"):
+        shutil.rmtree(extension_data_dir(_BV) / name, ignore_errors=True)
     yield
-    shutil.rmtree(extension_data_dir(_BV) / "shots", ignore_errors=True)
+    for name in ("shots", "sessions"):
+        shutil.rmtree(extension_data_dir(_BV) / name, ignore_errors=True)
 
 
 def _enable_bv(client) -> None:
@@ -272,6 +287,29 @@ def test_a_deleted_agent_is_listed_as_missing(client, live_shots) -> None:
     _enable_bv(client)
     items = client.get(f"/api/extensions/{_BV}/live").json()["items"]
     assert items == [{**items[0], "agent_id": "agent-gone", "agent_name": "agent-gone", "agent_missing": True}]
+
+
+def test_live_lists_only_agents_whose_session_is_live(client, live_shots) -> None:
+    import subprocess
+    import sys
+
+    live = db.create_agent("Seer", role="Researcher")
+    unmarked = db.create_agent("Scout", role="Researcher")
+    dead = db.create_agent("Ghost", role="Researcher")
+    _write_shot(live.id, "bv open example.com", "2026-09-28T10:00:00+00:00")
+    _write_shot(unmarked.id, "bv open example.com", "2026-09-28T10:00:00+00:00", marker=False)
+    dead_shot = _write_shot(dead.id, "bv open example.com", "2026-09-28T10:00:00+00:00", marker=False)
+    finished = subprocess.Popen([sys.executable, "-c", "pass"])
+    finished.wait()
+    _write_marker(dead.id, finished.pid)
+    _enable_bv(client)
+
+    items = client.get(f"/api/extensions/{_BV}/live").json()["items"]
+
+    assert [item["agent_id"] for item in items] == [live.id]
+    for agent in (unmarked, dead):
+        assert client.get(f"/api/extensions/{_BV}/live/{agent.id}/image").status_code == 404
+    assert dead_shot.is_file()  # the app process never deletes
 
 
 def test_live_is_refused_while_disabled_and_unknown_is_404(client, live_shots) -> None:

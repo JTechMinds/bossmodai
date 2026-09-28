@@ -181,11 +181,11 @@ const verdict = {};
     verdict.viewerUpdatesOnANewShotAndRevokesTheOld = blobFetches.length === blobsBefore + 2
         && img().getAttribute("src") !== oldSrc && revoked.includes(oldSrc);
 
-    // Turned off while open.
-    liveReply = { kind: "disabled" };
+    // The session ended while open (bv close, restart): the item disappears.
+    liveReply = { kind: "ok", body: { items: [] } };
     await fireTimer();
     await drain();
-    verdict.viewerSaysTurnedOff = text().includes("Browser Vision was turned off.") && !img();
+    verdict.viewerSaysSessionEnded = text().includes("Iris’s browser session ended.") && !img();
 
     closeLayer(viewer);
     verdict.viewerStopsPollingOnClose = timers.size === 0;

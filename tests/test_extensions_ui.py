@@ -38,7 +38,7 @@ def test_status_poller_viewer_and_card() -> None:
         "pollingStopsWhenTheLastSubscriberLeaves", "toggleRefreshesTheStatus",
         "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsEveryCaptionLine",
         "viewerDoesNotRefetchAnUnchangedShot", "viewerUpdatesOnANewShotAndRevokesTheOld",
-        "viewerSaysTurnedOff", "viewerStopsPollingOnClose",
+        "viewerSaysSessionEnded", "viewerStopsPollingOnClose",
     ):
         assert payload.get(key) is True, (key, payload)
 

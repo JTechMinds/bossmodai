@@ -18,7 +18,7 @@ const BossModExtensionsLive = (() => {
         loading: 'Loading the latest screenshot…',
         failed: 'Couldn’t load the screenshot.',
         retry: 'Try again',
-        off: 'Browser Vision was turned off.',
+        ended: (agentName) => `${agentName}’s browser session ended.`,
     });
 
     /**
@@ -30,7 +30,7 @@ const BossModExtensionsLive = (() => {
      */
     function openForAgent(agentId, agentName) {
         const host = h('div', { class: 'ext-scroll' });
-        // status: loading | ready | failed | off
+        // status: loading | ready | failed | ended
         const state = { status: 'loading', item: null, src: null, error: '', shownAt: null };
         let everSeen = false;
         let closed = false;
@@ -56,11 +56,12 @@ const BossModExtensionsLive = (() => {
             if (closed) return;
             const item = BossModBrowserVisionStatus.latest(agentId);
             if (!item) {
-                // Once seen, a vanished view means the extension went off; before
-                // that it is simply the first poll still on its way.
+                // Once seen, a vanished view means the session ended (bv close,
+                // the extension turned off, the app restarted); before that it
+                // is simply the first poll still on its way.
                 if (everSeen) {
                     replaceSrc(null);
-                    state.status = 'off';
+                    state.status = 'ended';
                     render();
                 }
                 return;
@@ -101,8 +102,8 @@ const BossModExtensionsLive = (() => {
             if (state.status === 'loading') {
                 return h('p', { class: 'market-status', role: 'status' }, COPY.loading);
             }
-            if (state.status === 'off') {
-                return h('p', { class: 'market-status', role: 'status' }, COPY.off);
+            if (state.status === 'ended') {
+                return h('p', { class: 'market-status', role: 'status' }, COPY.ended(agentName));
             }
             if (state.status === 'failed') {
                 return [

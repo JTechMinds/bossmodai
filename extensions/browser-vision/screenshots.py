@@ -1,4 +1,8 @@
-"""Browser Vision — where screenshots are kept, per agent, with pruning.
+"""Browser Vision — where screenshots are kept, per browser session, with pruning.
+
+Screenshots belong to the browser session that took them and are deleted
+when it ends, so nothing (the model's context, the operator's live view)
+can show an old page as if the browser were still on it.
 
 Each PNG has a JSON sidecar with the same stem describing what produced it
 (the command, page, view line, image size and mark count). The live view reads these
@@ -9,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,14 +47,16 @@ class ShotMeta:
 
 
 class ScreenshotStore:
-    """Writes screenshots to ``<root>/<agent_id>/<utc-ts>.png`` and keeps the newest few.
+    """Writes screenshots to ``<root>/<agent_id>/<session_id>/<utc-ts>.png``.
 
-    Only the newest screenshot in a model's context is ever sent as an image;
-    older files are kept so a resumed turn can still resolve its latest one.
+    Pruning keeps the newest few inside one session's folder. Only the
+    newest screenshot in a model's context is ever sent as an image; older
+    files are kept so a resumed turn can still resolve its latest one while
+    the session lives.
 
     Args:
         root: The shots folder (inside the extension data dir).
-        keep: How many screenshots to keep per agent (at least 1).
+        keep: How many screenshots to keep per session (at least 1).
 
     Raises:
         ValueError: ``keep`` is below 1 — the file just stored would be pruned.
@@ -66,8 +73,12 @@ class ScreenshotStore:
         """The shots folder."""
         return self._root
 
-    def store(self, agent_id: str, png: bytes, meta: ShotMeta) -> Path:
-        """Write one screenshot and its sidecar, prune the agent's folder, return the PNG.
+    def session_dir(self, agent_id: str, session_id: str) -> Path:
+        """The folder one session's screenshots live in (not created here)."""
+        return self._root / agent_id / session_id
+
+    def store(self, agent_id: str, session_id: str, png: bytes, meta: ShotMeta) -> Path:
+        """Write one screenshot and its sidecar, prune the session's folder, return the PNG.
 
         The sidecar is written first, so a PNG that exists always has one
         unless something outside this store removed it.
@@ -75,7 +86,7 @@ class ScreenshotStore:
         Raises:
             OSError: A file cannot be written.
         """
-        folder = self._root / agent_id
+        folder = self.session_dir(agent_id, session_id)
         folder.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         path = folder / f"{stamp}.png"
@@ -85,12 +96,12 @@ class ScreenshotStore:
             suffix += 1
         path.with_suffix(".json").write_text(json.dumps(asdict(meta)), encoding="utf-8")
         path.write_bytes(png)
-        self.prune(agent_id)
+        self.prune(agent_id, session_id)
         return path
 
-    def prune(self, agent_id: str) -> None:
-        """Delete all but the newest ``keep`` screenshots of one agent, with their sidecars."""
-        folder = self._root / agent_id
+    def prune(self, agent_id: str, session_id: str) -> None:
+        """Delete all but the newest ``keep`` screenshots of one session, with their sidecars."""
+        folder = self.session_dir(agent_id, session_id)
         if not folder.is_dir():
             return
         shots = sorted(folder.glob("*.png"), key=lambda item: item.name)
@@ -98,17 +109,17 @@ class ScreenshotStore:
             old.unlink(missing_ok=True)
             old.with_suffix(".json").unlink(missing_ok=True)
 
-    def latest(self, agent_id: str) -> tuple[Path, ShotMeta] | None:
-        """Return the agent's newest screenshot that has a readable sidecar.
+    def latest(self, agent_id: str, session_id: str) -> tuple[Path, ShotMeta] | None:
+        """Return the session's newest screenshot that has a readable sidecar.
 
         A PNG whose sidecar is missing or corrupt is skipped with a warning
         rather than raised, so one bad file cannot blank the live view; the
         next older screenshot is returned instead.
 
         Returns:
-            ``(png path, meta)``, or ``None`` when the agent has none.
+            ``(png path, meta)``, or ``None`` when the session has none.
         """
-        folder = self._root / agent_id
+        folder = self.session_dir(agent_id, session_id)
         if not folder.is_dir():
             return None
         for png in sorted(folder.glob("*.png"), key=lambda item: item.name, reverse=True):
@@ -121,8 +132,27 @@ class ScreenshotStore:
             return png, meta
         return None
 
-    def agents(self) -> list[str]:
-        """Return the ids of agents that have a screenshot folder."""
+    def delete_session(self, agent_id: str, session_id: str) -> None:
+        """Delete one ended session's folder, and the agent's folder once it is empty.
+
+        Raises:
+            OSError: A file cannot be removed.
+        """
+        folder = self.session_dir(agent_id, session_id)
+        if folder.is_dir():
+            shutil.rmtree(folder)
+        agent_dir = self._root / agent_id
+        if agent_dir.is_dir() and not any(agent_dir.iterdir()):
+            agent_dir.rmdir()
+
+    def clear(self) -> None:
+        """Delete every agent's session folders (no session outlives its worker).
+
+        Raises:
+            OSError: A file cannot be removed.
+        """
         if not self._root.is_dir():
-            return []
-        return sorted(item.name for item in self._root.iterdir() if item.is_dir())
+            return
+        for agent_dir in self._root.iterdir():
+            if agent_dir.is_dir():
+                shutil.rmtree(agent_dir)

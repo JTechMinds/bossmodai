@@ -23,6 +23,7 @@ from core.extensions.manifest import ExtensionManifest
 
 if TYPE_CHECKING:
     from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
+    from core.models import Agent
 
 READY_FILE = "ready.json"
 SETUP_LOCK_FILE = "setup.lock"
@@ -51,10 +52,15 @@ class ExtensionContext:
         manifest: The validated manifest.
         data_dir: The extension's private data dir. Not created by the host;
             the extension creates it on demand.
+        runtime_worker: This process is the runtime worker, the one that
+            runs agents' commands. Only there may an extension treat state
+            left by an earlier process as dead (the app process shares the
+            data dir with a live worker).
     """
 
     manifest: ExtensionManifest
     data_dir: Path
+    runtime_worker: bool = False
 
 
 class Extension(Protocol):
@@ -114,4 +120,17 @@ class SupportsLiveView(Protocol):
 
     def live_view(self) -> list[LiveViewItem]:
         """Return each agent's latest item, newest first."""
+        ...
+
+
+@runtime_checkable
+class SupportsPromptState(Protocol):
+    """Optional: an extension that tells the agent its current state every turn."""
+
+    def prompt_state(self, agent: Agent) -> str | None:
+        """Return one line of the agent's live state, or ``None`` for nothing.
+
+        Called while the working prompt is built, in the runtime worker.
+        It must not start anything (a browser, a thread) just to answer.
+        """
         ...

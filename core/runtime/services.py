@@ -30,6 +30,11 @@ _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "s
 _WORKER_ENV = "BOSSMOD_RUNTIME_WORKER"
 
 
+def is_runtime_worker() -> bool:
+    """Return whether this process is the runtime worker (not the app process)."""
+    return os.environ.get(_WORKER_ENV) == "1"
+
+
 class EventSink(Protocol):
     """App-process broadcast surface. Wired in ``main.py`` lifespan."""
 

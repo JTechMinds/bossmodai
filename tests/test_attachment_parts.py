@@ -397,7 +397,11 @@ def test_a_missing_newest_screenshot_gets_the_unavailable_notice_and_a_warning(t
 
     assert out[0]["content"][1] == {
         "type": "text",
-        "text": '[screenshot unavailable: the file is gone; run "bv view"]',
+        "text": (
+            "[screenshot unavailable: the browser session that took it has ended (the app restarted "
+            'or the browser was closed); run "bv status" to see whether a page is open, '
+            'and "bv open <url>" to start again]'
+        ),
     }
     assert "is missing" in caplog.text
 
@@ -518,3 +522,42 @@ def test_a_frozen_transcript_keeps_the_summary(tmp_path):
     assert "full first result" not in out[2]["content"][0]["text"]
     assert out[2]["content"][1]["text"] == SCREENSHOT_SUPERSEDED_TEXT
     assert "full second result" in out[4]["content"][0]["text"]
+
+
+def test_a_resumed_transcript_whose_session_ended_gets_the_session_ended_notice(tmp_path):
+    """R28: the restart deleted the session's screenshots, so the resumed turn is told, not shown the old page."""
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
+    from core.llm.attachment_parts import SCREENSHOT_SESSION_ENDED_TEXT, SCREENSHOT_SUPERSEDED_TEXT
+    from core.models.message import HUMAN_SENDER_ID
+    from core.tasking import create_or_bind_task
+
+    set_supports_images("vision-model", True)
+    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    task = create_or_bind_task(
+        title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
+        work_contract=None, source_channel=None, notification_policy=None, notification_channel_id=None,
+        audit_author_name="Human Operator", audit_author_type="human",
+    ).task
+    activity = activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    older, newest = _shot(tmp_path, "a.png"), _shot(tmp_path, "b.png")
+    steps = [
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"bv open example.com"}}'},
+        _bv_result("full first result", older, "bv open example.com → example.com"),
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"bv view"}}'},
+        _bv_result("full second result", newest, "bv view → example.com"),
+    ]
+    freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
+    )
+    # The session ended (app restart): its screenshot folder is gone.
+    Path(older).unlink()
+    Path(newest).unlink()
+
+    restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
+    out = expand_attachment_messages(restored, model="vision-model")
+
+    assert out[4]["content"][1] == {"type": "text", "text": SCREENSHOT_SESSION_ENDED_TEXT}
+    assert not any(part.get("type") == "image_url" for m in out if isinstance(m["content"], list) for part in m["content"])
+    assert out[2]["content"][1]["text"] == SCREENSHOT_SUPERSEDED_TEXT

@@ -26,6 +26,7 @@ _marks_module = importlib.import_module(f"{_PACKAGE.__name__}.marks")
 ActionOutcome = _host_module.ActionOutcome
 Capture = _host_module.Capture
 DownloadResult = _host_module.DownloadResult
+SessionInfo = _host_module.SessionInfo
 WaitOutcome = _host_module.WaitOutcome
 Mark = _marks_module.Mark
 
@@ -62,7 +63,10 @@ class FakeHost:
     """Records every call; screenshots are blank pages of the current size."""
 
     def __init__(self) -> None:
-        self.sessions: set[str] = set()
+        # Open sessions: agent id → session id.
+        self.open: dict[str, str] = {}
+        self.opened = 0
+        self.window = "desktop"
         self.calls: list[tuple] = []
         self.size = (1280, 800)
         self.url = "about:blank"
@@ -83,11 +87,21 @@ class FakeHost:
         return outcome
 
     def has_session(self, agent_id):
-        return agent_id in self.sessions
+        return agent_id in self.open
+
+    def sessions(self):
+        return {
+            agent_id: SessionInfo(session_id=session_id, opened_at="2026-09-28T12:00:00+00:00",
+                                  url=self.url, window=self.window)
+            for agent_id, session_id in self.open.items()
+        }
 
     def open_session(self, agent_id, viewport, downloads_dir):
         self.calls.append(("open_session", viewport.name, downloads_dir))
-        self.sessions.add(agent_id)
+        if agent_id not in self.open:
+            self.opened += 1
+            self.open[agent_id] = f"session{self.opened}"
+            self.window = viewport.name
 
     def goto(self, agent_id, url):
         self.calls.append(("goto", url))
@@ -139,6 +153,7 @@ class FakeHost:
 
     def set_viewport(self, agent_id, viewport):
         self.calls.append(("set_viewport", viewport))
+        self.window = viewport.name
         if viewport.width is not None:
             self.size = (viewport.width, viewport.height)
         else:
@@ -147,16 +162,15 @@ class FakeHost:
     def capture(self, agent_id):
         width, height = self.size
         return Capture(png=_png(width, height), url=self.url, title="Fixture", width=width, height=height,
-                       marks=self.marks)
+                       session=self.sessions()[agent_id], marks=self.marks)
 
     def close(self, agent_id):
         self.calls.append(("close",))
-        existed = agent_id in self.sessions
-        self.sessions.discard(agent_id)
-        return existed
+        return self.open.pop(agent_id, None) is not None
 
     def shutdown(self):
         self.calls.append(("shutdown",))
+        self.open.clear()
 
 
 @pytest.fixture()
@@ -182,7 +196,8 @@ def env(tmp_path: Path):
         tokens = shlex.split(raw)
         return extension.handle(ctx, ParsedCliCommand(raw=raw, name=tokens[0], args=tuple(tokens[1:])), body)
 
-    return {"run": run, "host": host, "install": install_dir, "vision": vision, "tmp": tmp_path}
+    return {"run": run, "host": host, "install": install_dir, "vision": vision, "tmp": tmp_path,
+            "extension": extension, "agent": agent}
 
 
 def _error(result) -> str:
@@ -880,3 +895,165 @@ def test_a_region_click_works_at_full_page_with_the_grid_off_and_says_so(env) ->
     env["run"]("bv view --grid off")
     env["run"]("bv zoom 5")
     assert "grid is hidden" not in env["run"]("bv click 5").prompt_content
+
+
+# ─── R28–R30: screenshots, the monitor and the prompt follow the live session ───
+
+
+def _shots_dir(env) -> Path:
+    return env["tmp"] / "data" / "shots" / env["agent"].id
+
+
+def _marker_path(env) -> Path:
+    return env["tmp"] / "data" / "sessions" / f"{env['agent'].id}.json"
+
+
+def test_screenshots_are_stored_under_the_session_id(env) -> None:
+    result = env["run"]("bv open example.com")
+    assert Path(result.image_paths[0]).parent == _shots_dir(env) / "session1"
+
+
+def test_close_deletes_the_sessions_screenshots_and_marker(env) -> None:
+    opened = env["run"]("bv open example.com")
+    assert Path(opened.image_paths[0]).is_file() and _marker_path(env).is_file()
+    env["run"]("bv close")
+    assert not Path(opened.image_paths[0]).exists()
+    assert not _shots_dir(env).exists()
+    assert not _marker_path(env).exists()
+
+
+def test_a_window_swap_keeps_the_session_folder(env) -> None:
+    opened = env["run"]("bv open example.com")
+    swapped = env["run"]("bv window phone")
+    assert Path(opened.image_paths[0]).is_file()
+    assert Path(swapped.image_paths[0]).parent == Path(opened.image_paths[0]).parent
+
+
+def test_shutdown_deletes_every_session_this_process_has_open(env) -> None:
+    opened = env["run"]("bv open example.com")
+    env["extension"].shutdown()
+    assert ("shutdown",) in env["host"].calls
+    assert not Path(opened.image_paths[0]).exists() and not _marker_path(env).exists()
+
+
+def _leftovers(data_dir: Path) -> tuple[Path, Path]:
+    shot = data_dir / "shots" / "agent-old" / "dead-session" / "20260928T100000000000Z.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(b"old")
+    marker = data_dir / "sessions" / "agent-old.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
+    return shot, marker
+
+
+@pytest.mark.parametrize("worker", [True, False])
+def test_only_the_runtime_worker_clears_what_an_earlier_worker_left(tmp_path: Path, worker: bool) -> None:
+    shot, marker = _leftovers(tmp_path / "data")
+    _PACKAGE.BrowserVisionExtension(
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", runtime_worker=worker),
+        host=FakeHost(),
+        install_dir=tmp_path,
+    )
+    assert shot.exists() is not worker and marker.exists() is not worker
+    assert (tmp_path / "data" / "shots").is_dir()  # the shots root itself stays
+
+
+def test_the_loader_passes_the_worker_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.extensions import loader
+
+    seen: list[bool] = []
+
+    class _Instance:
+        def live_view(self):
+            return []
+
+    class _Module:
+        @staticmethod
+        def create(ctx):
+            seen.append(ctx.runtime_worker)
+            return _Instance()
+
+    monkeypatch.setattr(loader, "import_package", lambda entry: _Module)
+    for flag, expected in (("1", True), (None, False)):
+        monkeypatch.setattr(loader, "_loaded", {})
+        monkeypatch.setattr(loader, "_contract_failures", {})
+        if flag is None:
+            monkeypatch.delenv("BOSSMOD_RUNTIME_WORKER", raising=False)
+        else:
+            monkeypatch.setenv("BOSSMOD_RUNTIME_WORKER", flag)
+        loader.load_extension(_ENTRY)
+        assert seen[-1] is expected
+
+
+def test_the_marker_follows_the_session(env) -> None:
+    env["run"]("bv open example.com")
+    marker = json.loads(_marker_path(env).read_text(encoding="utf-8"))
+    assert marker == {
+        "session_id": "session1", "pid": os.getpid(),
+        "opened_at": "2026-09-28T12:00:00+00:00", "url": "https://example.com",
+    }
+    env["host"].click_navigates_to = "https://example.com/next"
+    env["run"]("bv click @1")
+    assert json.loads(_marker_path(env).read_text(encoding="utf-8"))["url"] == "https://example.com/next"
+
+
+def test_live_view_lists_a_live_session_with_a_screenshot(env) -> None:
+    opened = env["run"]("bv open example.com")
+    items = env["extension"].live_view()
+    assert [(item.agent_id, item.image_path) for item in items] == [(env["agent"].id, Path(opened.image_paths[0]))]
+
+
+def test_live_view_skips_an_agent_without_a_marker(env) -> None:
+    env["run"]("bv open example.com")
+    _marker_path(env).unlink()
+    assert env["extension"].live_view() == []
+
+
+def test_live_view_skips_a_dead_process_and_warns_once(env, caplog) -> None:
+    import subprocess
+    import sys
+
+    env["run"]("bv open example.com")
+    finished = subprocess.Popen([sys.executable, "-c", "pass"])
+    finished.wait()
+    marker = json.loads(_marker_path(env).read_text(encoding="utf-8"))
+    _marker_path(env).write_text(json.dumps({**marker, "pid": finished.pid}), encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        assert env["extension"].live_view() == []
+        assert env["extension"].live_view() == []
+
+    stale = [r for r in caplog.records if "stale session marker" in r.getMessage()]
+    assert len(stale) == 1 and f"process {finished.pid} is gone" in stale[0].getMessage()
+    assert _marker_path(env).is_file()  # never deleted by the reader
+
+
+def test_live_view_skips_a_marker_whose_session_has_no_screenshot(env) -> None:
+    env["host"].goto_error = "net::ERR_NAME_NOT_RESOLVED"
+    assert not env["run"]("bv open nowhere.invalid").ok
+    assert _marker_path(env).is_file()  # the session is open, with no page shown
+    assert env["extension"].live_view() == []
+
+
+def test_the_prompt_state_follows_the_session(env) -> None:
+    agent = env["agent"]
+    assert env["extension"].prompt_state(agent) == "Your browser right now: no page open."
+    env["run"]("bv open example.com/path")
+    assert env["extension"].prompt_state(agent) == "Your browser right now: open at example.com/path (window desktop)."
+    env["run"]("bv window phone")
+    assert env["extension"].prompt_state(agent) == "Your browser right now: open at example.com/path (window phone)."
+    env["run"]("bv close")
+    assert env["extension"].prompt_state(agent) == "Your browser right now: no page open."
+
+
+def test_asking_the_prompt_state_does_not_start_the_browser(tmp_path: Path) -> None:
+    import threading
+
+    extension = _PACKAGE.BrowserVisionExtension(
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        install_dir=tmp_path,
+    )
+    agent = db.create_agent("Iris", role="Researcher")
+    assert extension.prompt_state(agent) == "Your browser right now: no page open."
+    assert extension._host._thread is None and extension._host._loop is None
+    assert not any(thread.name == "browser-vision" for thread in threading.enumerate())

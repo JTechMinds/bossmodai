@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
 import re
 import threading
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ from core.llm.routing import select_model_with_source
 from core.models import Agent
 from db.model_capabilities import supports_images
 
-from .browser_host import ActionOutcome, BrowserActionError, Capture, WaitOutcome
+from .browser_host import ActionOutcome, BrowserActionError, Capture, SessionInfo, WaitOutcome
 from .grid import (
     GridColor,
     GridStyle,
@@ -57,6 +58,7 @@ from .grid import (
 )
 from .marks import Mark, feedback_line, hover_line, legend_line
 from .screenshots import ScreenshotStore, ShotMeta
+from .sessions import SessionMarker, SessionMarkers
 from .viewports import ViewportSpec, WindowPreset, resolve_viewport
 
 DOWNLOADS_VIRTUAL_DIR = "/me/downloads"
@@ -132,6 +134,7 @@ class BrowserHostLike(Protocol):
     """What the commands need from the browser (``BrowserHost`` or a test fake)."""
 
     def has_session(self, agent_id: str) -> bool: ...
+    def sessions(self) -> dict[str, SessionInfo]: ...
     def open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None: ...
     def goto(self, agent_id: str, url: str) -> ActionOutcome: ...
     def click(self, agent_id: str, x: float, y: float) -> ActionOutcome: ...
@@ -221,6 +224,7 @@ class BrowserVisionCommands:
         defaults: Validated manifest defaults.
         host: The browser.
         shots: Where screenshots are written.
+        markers: Where each open session's marker is kept (for the live view).
         setup_status: Reads the setup state (must be ``ready`` to run).
         vision_model: Returns ``(model, image_capable)`` for an agent.
         downloads_dir: Returns the real folder behind an agent's ``/me/downloads``.
@@ -232,6 +236,7 @@ class BrowserVisionCommands:
         defaults: BrowserVisionDefaults,
         host: BrowserHostLike,
         shots: ScreenshotStore,
+        markers: SessionMarkers,
         setup_status: Callable[[], SetupStatus],
         vision_model: Callable[[Agent], tuple[str | None, bool]] = routed_vision_model,
         downloads_dir: Callable[[Agent], Path] = agent_downloads_dir,
@@ -239,16 +244,47 @@ class BrowserVisionCommands:
         self._defaults = defaults
         self._host = host
         self._shots = shots
+        self._markers = markers
         self._setup_status = setup_status
         self._vision_model = vision_model
         self._downloads_dir = downloads_dir
         self._views: dict[str, _AgentView] = {}
         self._lock = threading.Lock()
 
-    def reset(self) -> None:
-        """Forget every agent's sticky settings (the browser was shut down)."""
+    def shutdown(self) -> None:
+        """Close every browser session, delete their screenshots, forget view settings.
+
+        Only the sessions this process's host has open are ended: the app
+        process and the runtime worker share the data dir, so files another
+        process owns are not this one's to delete. The files are deleted even
+        when closing the browser fails, since its sessions end either way.
+
+        Raises:
+            BrowserActionError: The browser did not close cleanly.
+            OSError: A screenshot folder cannot be removed.
+        """
+        ended = self._host.sessions()
         with self._lock:
             self._views.clear()
+        try:
+            self._host.shutdown()
+        finally:
+            for agent_id, info in ended.items():
+                self._end_session(agent_id, info.session_id)
+
+    def state_line(self, agent_id: str) -> str:
+        """The agent's real browser state, for the start of its turn.
+
+        Read from the host's open sessions, which never starts the browser:
+        before the browser thread exists nothing is open.
+
+        Raises:
+            BrowserActionError: The browser thread exists but did not answer.
+        """
+        session = self._host.sessions().get(agent_id)
+        if session is None:
+            return "Your browser right now: no page open."
+        return f"Your browser right now: open at {short_url(session.url)} (window {session.window})."
 
     def handle(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
         """Run one ``bv`` command for ``ctx.agent``.
@@ -312,6 +348,10 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         view.pointer = None
         self._host.open_session(ctx.agent.id, view.window, self._downloads_dir(ctx.agent))
+        session = self._host.sessions().get(ctx.agent.id)
+        if session is None:
+            raise BrowserActionError("the browser session did not open")
+        self._record_session(ctx.agent.id, session)
         try:
             outcome = self._host.goto(ctx.agent.id, url)
         except BrowserActionError as exc:
@@ -550,9 +590,12 @@ class BrowserVisionCommands:
         )
 
     def _close(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
+        session = self._host.sessions().get(ctx.agent.id)
         closed = self._host.close(ctx.agent.id)
         with self._lock:
             self._views.pop(ctx.agent.id, None)
+        if session is not None:
+            self._end_session(ctx.agent.id, session.session_id)
         return success_result(
             command=parsed.raw,
             detail="Browser Vision: close",
@@ -563,6 +606,20 @@ class BrowserVisionCommands:
         )
 
     # ── helpers ────────────────────────────────────────────────────────────
+
+    def _record_session(self, agent_id: str, session: SessionInfo) -> None:
+        """Write the session's marker: this process holds it open, at its current URL."""
+        self._markers.write(agent_id, SessionMarker(
+            session_id=session.session_id,
+            pid=os.getpid(),
+            opened_at=session.opened_at,
+            url=session.url,
+        ))
+
+    def _end_session(self, agent_id: str, session_id: str) -> None:
+        """A session ended: its screenshots and marker go, so nothing shows its page as current."""
+        self._markers.remove(agent_id)
+        self._shots.delete_session(agent_id, session_id)
 
     def _view_for(self, agent_id: str) -> _AgentView:
         with self._lock:
@@ -671,6 +728,7 @@ class BrowserVisionCommands:
         view_line = _view_line(view)
         path = self._shots.store(
             ctx.agent.id,
+            capture.session.session_id,
             rendered.png,
             ShotMeta(
                 command=parsed.raw,
@@ -683,6 +741,7 @@ class BrowserVisionCommands:
                 taken_at=datetime.now(timezone.utc).isoformat(),
             ),
         )
+        self._record_session(ctx.agent.id, capture.session)
 
         lines = [
             f"url: {capture.url}",

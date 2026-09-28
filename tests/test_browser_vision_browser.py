@@ -184,8 +184,8 @@ def teardown_function() -> None:
 def browse(tmp_path, monkeypatch):
     """A real Browser Vision extension, a fixture site and a ``bv`` runner.
 
-    Yields ``(bv, base_url, downloads_dir)``; ``bv(raw, body)`` asserts the
-    command succeeded and returns its result.
+    Yields ``(bv, base_url, downloads_dir, extension)``; ``bv(raw, body)``
+    asserts the command succeeded and returns its result.
     """
     install_dir = _installed_browser_dir(monkeypatch)
     status = read_setup_status(install_dir, required=True)
@@ -216,7 +216,7 @@ def browse(tmp_path, monkeypatch):
         return result
 
     try:
-        yield bv, base, downloads
+        yield bv, base, downloads, extension
     finally:
         extension.shutdown()
         server.shutdown()
@@ -246,7 +246,7 @@ def _mark(result, kind: str, name: str) -> int:
 
 
 def test_an_agent_browses_with_marks_and_the_keypad(browse, tmp_path) -> None:
-    bv, base, downloads = browse
+    bv, base, downloads, _extension = browse
 
     opened = bv(f"bv open {base}/")
     assert "title: fixture" in opened.prompt_content
@@ -332,7 +332,7 @@ def test_an_agent_browses_with_marks_and_the_keypad(browse, tmp_path) -> None:
 
 
 def test_popup_rows_pointer_boxes_and_direct_pointing(browse) -> None:
-    bv, base, _downloads = browse
+    bv, base, _downloads, _extension = browse
 
     opened = bv(f"bv open {base}/places")
     legend = _legend(opened)
@@ -382,7 +382,7 @@ def test_popup_rows_pointer_boxes_and_direct_pointing(browse) -> None:
 
 
 def test_wait_watches_a_single_page_app_until_it_settles(browse) -> None:
-    bv, base, _downloads = browse
+    bv, base, _downloads, _extension = browse
 
     opened = bv(f"bv open {base}/spa")
     started = bv(f"bv click @{_mark(opened, 'button', 'Run report')}")
@@ -401,3 +401,22 @@ def test_wait_watches_a_single_page_app_until_it_settles(browse) -> None:
     still = bv("bv wait 1")
     assert "wait: no change after 1.0s" in still.prompt_content
     assert still.data["status_lines"] == []
+
+
+def test_close_ends_the_session_its_screenshots_and_its_live_view(browse, tmp_path) -> None:
+    """R28/R29: after bv close nothing shows the page as current."""
+    bv, base, _downloads, extension = browse
+
+    opened = bv(f"bv open {base}/")
+    shot = Path(opened.image_paths[0])
+    agent_dir = tmp_path / "data" / "shots" / extension.live_view()[0].agent_id
+    marker = tmp_path / "data" / "sessions" / f"{agent_dir.name}.json"
+    assert shot.is_file() and shot.parent.parent == agent_dir
+    assert marker.is_file()
+    assert [item.image_path for item in extension.live_view()] == [shot]
+
+    assert "browser session closed" in bv("bv close").prompt_content
+
+    assert not shot.parent.exists() and not agent_dir.exists()
+    assert not marker.exists()
+    assert extension.live_view() == []

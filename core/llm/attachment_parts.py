@@ -38,9 +38,11 @@ one image per browser action:
   ``image_url`` part;
 - newest screenshot, model not flagged → an explicit text notice that the
   model cannot view it (and a warning log);
-- newest screenshot, file missing (pruned or deleted) → a text notice that
-  it is unavailable and to run ``bv view`` (and a warning log) — the turn
-  stays resumable after pruning;
+- newest screenshot, file missing → :data:`SCREENSHOT_SESSION_ENDED_TEXT`
+  (and a warning log). Screenshots are deleted when the browser session
+  that took them ends (``bv close``, disable, app restart), so a resumed
+  transcript naming one learns the browser is gone instead of seeing the
+  old page as current;
 - any earlier carrier → a text line saying it was superseded, and when it
   has a one-line summary under the private :data:`SUMMARY_KEY`, its text is
   replaced by that summary (still inside the CLI result delimiters), so the
@@ -76,6 +78,11 @@ SCREENSHOT_PATHS_KEY = "bm_screenshot_paths"
 SUMMARY_KEY = "bm_cli_summary"
 SCREENSHOT_MIME_TYPE = "image/png"
 SCREENSHOT_SUPERSEDED_TEXT = "[screenshot not resent — superseded by a newer capture]"
+SCREENSHOT_SESSION_ENDED_TEXT = (
+    "[screenshot unavailable: the browser session that took it has ended (the app restarted "
+    'or the browser was closed); run "bv status" to see whether a page is open, '
+    'and "bv open <url>" to start again]'
+)
 _PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, SCREENSHOT_PATHS_KEY, SUMMARY_KEY})
 
 
@@ -294,8 +301,8 @@ def _screenshot_part(path: str, *, model: str, vision: bool) -> dict[str, Any]:
         }
     file = Path(path)
     if not file.is_file():
-        logger.warning("Screenshot %s is missing (pruned or deleted); sent as a notice", path)
-        return {"type": "text", "text": '[screenshot unavailable: the file is gone; run "bv view"]'}
+        logger.warning("Screenshot %s is missing (its browser session ended); sent as a notice", path)
+        return {"type": "text", "text": SCREENSHOT_SESSION_ENDED_TEXT}
     return _image_part(file, SCREENSHOT_MIME_TYPE)
 
 

@@ -106,7 +106,15 @@ def load_extension(entry: ExtensionEntry) -> Extension:
         manifest = entry.manifest
         if manifest is None:
             raise ExtensionLoadError(f"extension {entry.id} has no manifest")
-        ctx = ExtensionContext(manifest=manifest, data_dir=extension_data_dir(entry.id))
+        # Imported here: core.runtime.services imports db, which imports the
+        # CLI runtime, which imports this module (a top-level import cycles).
+        from core.runtime.services import is_runtime_worker
+
+        ctx = ExtensionContext(
+            manifest=manifest,
+            data_dir=extension_data_dir(entry.id),
+            runtime_worker=is_runtime_worker(),
+        )
         try:
             instance = create(ctx)
         except Exception as exc:
