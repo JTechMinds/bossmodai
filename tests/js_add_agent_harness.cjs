@@ -1247,7 +1247,8 @@ async function main() {
     await drain();
     const doors = railHost.querySelectorAll(".menu-door");
     const marks = doors.map((row) => row.querySelector("i"));
-    // Three doors since Add → Extensions: the two agent doors, then Extensions.
+    // Three doors, top to bottom: Extensions, then the two agent doors, the
+    // most-used last, nearest the row the panel opens from.
     verdict.bothMenuDoorsCarryALucideIcon = doors.length === 3
         && marks.every((mark) => Boolean(mark)
             // Decorative: the accessible name is the label beside it, so a
@@ -1263,17 +1264,17 @@ async function main() {
     // on the Office, and two doors in one shell wearing the same mark is a mark
     // that identifies neither of them.
     verdict.theMarketplaceDoorIsBlocksAndNotTheOfficesIcon =
-        doors[0].textContent === "Agent Marketplace"
-        && marks[0].getAttribute("data-lucide") === "blocks"
-        && marks[0].getAttribute("data-lucide") !== "building"
-        && doors[1].textContent === "Add Agent"
-        && marks[1].getAttribute("data-lucide") === "plus"
-        && doors[2].textContent === "Extensions"
-        && marks[2].getAttribute("data-lucide") === "puzzle";
+        doors[0].textContent === "Extensions"
+        && marks[0].getAttribute("data-lucide") === "puzzle"
+        && doors[1].textContent === "Agent Marketplace"
+        && marks[1].getAttribute("data-lucide") === "blocks"
+        && marks[1].getAttribute("data-lucide") !== "building"
+        && doors[2].textContent === "Add Agent"
+        && marks[2].getAttribute("data-lucide") === "plus";
     // And the door still opens what it names, with the panel away first: the
     // Agents takeover, on its Marketplace tab, the pane told it is on screen.
     const activatedBefore = marketActivations;
-    await doors[0].dispatchClick();
+    await doors[1].dispatchClick();
     await drain();
     verdict.theMarketplaceDoorStillOpensTheTakeover = dialogs().length === 1
         && dialog().getAttribute("data-size") === "takeover"
@@ -1287,7 +1288,7 @@ async function main() {
     // The other door opens the SAME dialog, on the other tab.
     addAgent.toggle();
     await drain();
-    await railHost.querySelectorAll(".menu-door")[1].dispatchClick();
+    await railHost.querySelectorAll(".menu-door")[2].dispatchClick();
     await drain();
     verdict.theAddAgentDoorOpensTheSameDialogOnItsTab = dialogs().length === 1
         && dialog().getAttribute("aria-label") === "Agents"
@@ -1301,8 +1302,8 @@ async function main() {
     verdict.eachTabWearsItsDoorsMark = Boolean(tabMark("add"))
         && Boolean(tabMark("marketplace"))
         && tabMark("marketplace").getAttribute("data-lucide")
-            === marks[0].getAttribute("data-lucide")
-        && tabMark("add").getAttribute("data-lucide") === marks[1].getAttribute("data-lucide")
+            === marks[1].getAttribute("data-lucide")
+        && tabMark("add").getAttribute("data-lucide") === marks[2].getAttribute("data-lucide")
         && ["add", "marketplace"].every((id) => tabMark(id).getAttribute("aria-hidden") === "true"
             && tabOf(id).children[0] === tabMark(id))
         && tabOf("add").textContent === "Add agent"

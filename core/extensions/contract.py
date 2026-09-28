@@ -13,8 +13,9 @@ and a restart mid-setup reads as "interrupted":
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -82,4 +83,35 @@ class Extension(Protocol):
 
     def shutdown(self) -> None:
         """Release everything the extension holds (browsers, threads)."""
+        ...
+
+
+class LiveViewItem(BaseModel):
+    """One agent's latest output, for the operator's read-only live view.
+
+    Attributes:
+        agent_id: The agent it belongs to.
+        image_path: The exact image the model was sent (inside the data dir).
+        taken_at: When it was captured (UTC).
+        command: The command that produced it.
+        url: Page URL.
+        title: Page title.
+        caption_lines: The result lines that describe the image.
+    """
+
+    agent_id: str
+    image_path: Path
+    taken_at: datetime
+    command: str
+    url: str
+    title: str
+    caption_lines: list[str]
+
+
+@runtime_checkable
+class SupportsLiveView(Protocol):
+    """Optional: an extension whose manifest sets ``live_view`` implements this."""
+
+    def live_view(self) -> list[LiveViewItem]:
+        """Return each agent's latest item, newest first."""
         ...

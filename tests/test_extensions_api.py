@@ -17,7 +17,7 @@ from api.routes import router
 from core import config
 from core.bm_cli.command_registry import CORE_COMMAND_NAMES
 from core.extensions.paths import extension_data_dir
-from core.extensions.registry import discover
+from core.extensions.registry import discover, get_discovery
 
 _BV = "browser-vision"
 
@@ -210,3 +210,123 @@ def test_the_policy_ui_lists_extension_commands_under_their_category(client) -> 
     assert bv["category"] == "extensions"
     assert bv["usage_syntax"].startswith("bv open <url>")
     assert {"name": "extensions", "description": "Commands added by enabled extensions"} in payload["categories"]
+
+
+# ─── live view (R8) ───
+
+
+def _write_shot(agent_id: str, command: str, taken_at: str) -> Path:
+    folder = extension_data_dir(_BV) / "shots" / agent_id
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = taken_at.replace(":", "").replace("-", "")[:15]
+    png = folder / f"{stamp}.png"
+    png.with_suffix(".json").write_text(json.dumps({
+        "command": command, "url": "https://example.com", "title": "Example",
+        "window": "desktop 1280x800", "grid": "grid: on, density 60", "image": "1280x800",
+        "focus": None, "taken_at": taken_at,
+    }), encoding="utf-8")
+    png.write_bytes(b"\x89PNG-fixture-" + agent_id.encode())
+    return png
+
+
+@pytest.fixture()
+def live_shots():
+    import shutil
+
+    shutil.rmtree(extension_data_dir(_BV) / "shots", ignore_errors=True)
+    yield
+    shutil.rmtree(extension_data_dir(_BV) / "shots", ignore_errors=True)
+
+
+def _enable_bv(client) -> None:
+    _mark_ready()
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+
+
+def test_the_list_item_says_whether_it_has_a_live_view(client) -> None:
+    assert _item(client)["live_view"] is True
+
+
+def test_live_lists_each_agents_latest_shot_newest_first(client, live_shots) -> None:
+    older = db.create_agent("Seer", role="Researcher")
+    newer = db.create_agent("Scout", role="Researcher")
+    _write_shot(older.id, "bv open example.com", "2026-09-28T10:00:00+00:00")
+    _write_shot(newer.id, "bv click 5", "2026-09-28T11:00:00+00:00")
+    _enable_bv(client)
+
+    response = client.get(f"/api/extensions/{_BV}/live")
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["agent_name"] for item in items] == ["Scout", "Seer"]
+    first = items[0]
+    stamp = 1790593200000  # 2026-09-28T11:00:00Z in epoch ms
+    assert first["image_url"] == f"/api/extensions/{_BV}/live/{newer.id}/image?t={stamp}"
+    assert first["command"] == "bv click 5"
+    assert first["caption_lines"] == ["window: desktop 1280x800", "grid: on, density 60", "image 1280x800"]
+    assert "agent_missing" not in first
+
+
+def test_a_deleted_agent_is_listed_as_missing(client, live_shots) -> None:
+    _write_shot("agent-gone", "bv open example.com", "2026-09-28T10:00:00+00:00")
+    _enable_bv(client)
+    items = client.get(f"/api/extensions/{_BV}/live").json()["items"]
+    assert items == [{**items[0], "agent_id": "agent-gone", "agent_name": "agent-gone", "agent_missing": True}]
+
+
+def test_live_is_refused_while_disabled_and_unknown_is_404(client, live_shots) -> None:
+    _mark_ready()
+    response = client.get(f"/api/extensions/{_BV}/live")
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "EXTENSION_DISABLED"
+    assert client.get("/api/extensions/nope/live").status_code == 404
+
+
+def test_live_image_is_served_uncached_and_refuses_anything_else(client, live_shots) -> None:
+    agent = db.create_agent("Seer", role="Researcher")
+    png = _write_shot(agent.id, "bv open example.com", "2026-09-28T10:00:00+00:00")
+    _enable_bv(client)
+
+    image = client.get(f"/api/extensions/{_BV}/live/{agent.id}/image")
+    assert image.status_code == 200
+    assert image.content == png.read_bytes()
+    assert image.headers["cache-control"] == "no-store"
+    assert image.headers["content-type"] == "image/png"
+
+    for bad in ("unknown-agent", "..", "..%2F..%2Fsetup.log", f"{agent.id}%2F..%2F.."):
+        assert client.get(f"/api/extensions/{_BV}/live/{bad}/image").status_code == 404, bad
+
+
+def test_the_app_process_can_load_browser_vision_without_starting_a_browser(client, live_shots) -> None:
+    import threading
+
+    from core.extensions.loader import load_extension
+
+    _enable_bv(client)
+    assert client.get(f"/api/extensions/{_BV}/live").status_code == 200
+    instance = load_extension(get_discovery().get(_BV))
+    assert instance._host._thread is None and instance._host._loop is None
+    assert not any(thread.name == "browser-vision" for thread in threading.enumerate())
+
+
+def test_an_extension_that_broke_its_live_view_contract_is_listed_invalid(client, monkeypatch, tmp_path) -> None:
+    folder = tmp_path / "liar"
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({
+        "id": "liar", "name": "Liar", "version": "1.0.0", "description": "d",
+        "command": {"name": "liar", "summary": "s", "usage": "u", "help": "h"},
+        "setup": {"required": False}, "live_view": True,
+    }), encoding="utf-8")
+    (folder / "__init__.py").write_text(
+        "class _Ext:\n    def shutdown(self):\n        pass\ndef create(ctx):\n    return _Ext()\n",
+        encoding="utf-8",
+    )
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    monkeypatch.setattr("api.routes.extensions.get_discovery", lambda: found)
+    assert client.put("/api/extensions/liar/enabled", json={"enabled": True}).status_code == 200
+
+    live = client.get("/api/extensions/liar/live")
+    assert live.status_code == 409 and live.json()["detail"]["error"] == "INVALID_EXTENSION"
+    item = _item(client, "liar")
+    assert item["valid"] is False and item["enabled"] is False
+    assert "no live_view() method" in item["invalid_reason"]

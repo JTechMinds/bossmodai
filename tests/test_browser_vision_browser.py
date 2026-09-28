@@ -141,20 +141,27 @@ def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tm
         assert "viewport: 1280x800" in opened.prompt_content
         assert size_of(opened) == (1280, 800)
 
-        # The button covers cell 0 at the default density 40.
-        assert "title: clicks:1" in bv("bv click 0").prompt_content
-
-        # Zoom on it and click a fine cell read from the zoomed grid.
-        focused = bv("bv view --density 10 --focus 0-1")
-        assert "focus: cells 0–1" in focused.prompt_content
+        # At the default density 160 a cell is bigger than every control, so,
+        # as the prompt tells agents, each click zooms first: --focus on the
+        # coarse cell holding the control, then click a fine cell read from
+        # the zoomed grid. Coarse cell 0 is x 0–160, y 0–160.
+        focused = bv("bv view --density 20 --focus 0-0")
+        assert "focus: cells 0–0" in focused.prompt_content
+        # 64 columns at density 20: fine cell 1*64+2 is (50, 30), on the button.
+        assert "title: clicks:1" in bv(f"bv click {1 * 64 + 2}").prompt_content
+        # The same at density 10 (128 columns): 1*128+2 is (25, 15).
+        bv("bv view --density 10 --focus 0-0")
         assert "title: clicks:2" in bv(f"bv click {1 * 128 + 2}").prompt_content
 
-        # The input is cell 96 (row 3 at density 40); typing goes into it.
-        bv("bv click 96")
+        # The input (y 120–160): fine cell 7*64+2 is (50, 150).
+        bv("bv view --density 20 --focus 0-0")
+        bv(f"bv click {7 * 64 + 2}")
         assert "title: typed:hello" in bv("bv type", body="hello").prompt_content
 
-        # The download link is cell 160; the file lands in /me/downloads.
-        downloaded = bv("bv click 160")
+        # The download link (y 200–240) is in coarse cell 8 (y 160–320);
+        # fine cell 10*64+2 is (50, 210). The file lands in /me/downloads.
+        bv("bv view --density 20 --focus 8-8")
+        downloaded = bv(f"bv click {10 * 64 + 2}")
         assert f"downloaded: /me/downloads/file.txt ({len(_FILE)} bytes)" in downloaded.prompt_content
         assert (downloads / "file.txt").read_bytes() == _FILE
 
@@ -177,10 +184,19 @@ def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tm
         assert "image 1568x882 (scale ×0.8167)" in wide.prompt_content
         assert size_of(wide) == (1568, 882)
         bv(f"bv open {base}/")
-        # 48 columns at density 40: cell 1 is the button, cell 144 the input.
-        assert "title: clicks:1" in bv("bv click 1").prompt_content
-        bv("bv click 144")
+        # 96 columns at density 20 over 1920 px: 1*96+2 is the button, 7*96+2 the input.
+        bv("bv view --density 20 --focus 0-0")
+        assert "title: clicks:1" in bv(f"bv click {1 * 96 + 2}").prompt_content
+        bv("bv view --density 20 --focus 0-0")
+        bv(f"bv click {7 * 96 + 2}")
         assert "title: typed:wide" in bv("bv type", body="wide").prompt_content
+
+        # Any scheme the browser can open (D8): the fixture as a local file.
+        page_file = tmp_path / "fixture.html"
+        page_file.write_bytes(_PAGE)
+        from_file = bv(f"bv open {page_file.as_uri()}")
+        assert f"url: {page_file.as_uri()}" in from_file.prompt_content
+        assert "title: fixture" in from_file.prompt_content
 
         assert "browser session closed" in bv("bv close").prompt_content
     finally:

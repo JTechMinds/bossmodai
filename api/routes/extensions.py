@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 import db
-from core.extensions.loader import ExtensionLoadError
+from core.extensions.contract import LiveViewItem, SupportsLiveView
+from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
+from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
 from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status, start_setup
 from core.llm.routing import select_model_with_source
@@ -77,24 +82,29 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "valid": False,
             "invalid_reason": entry.invalid_reason,
             "requires_image_model": False,
+            "live_view": False,
             "setup": None,
             "setup_label": None,
             "excluded_agents": [],
         }
     requires_image = manifest.requires.image_model
+    # A contract broken at load (see loader.contract_failure) makes it invalid.
+    broken = contract_failure(entry.id)
+    valid = entry.valid and broken is None
     return {
         "id": entry.id,
         "name": manifest.name,
         "version": manifest.version,
         "description": manifest.description,
         "command": {"name": manifest.command.name, "summary": manifest.command.summary},
-        "enabled": entry.valid and entry.id in enabled,
-        "valid": entry.valid,
-        "invalid_reason": entry.invalid_reason,
+        "enabled": valid and entry.id in enabled,
+        "valid": valid,
+        "invalid_reason": entry.invalid_reason or broken,
         "requires_image_model": requires_image,
+        "live_view": manifest.live_view,
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
-        "excluded_agents": _excluded_agents() if requires_image and entry.valid else [],
+        "excluded_agents": _excluded_agents() if requires_image and valid else [],
     }
 
 
@@ -145,3 +155,76 @@ async def start_extension_setup(ext_id: str, body: SetupBody) -> dict[str, Any]:
     except ExtensionLoadError as exc:
         raise HTTPException(500, str(exc)) from exc
     return _item(entry, enabled_ids())
+
+
+def _live_items(ext_id: str) -> list[LiveViewItem]:
+    """Load an enabled live-view extension and return its items.
+
+    Loading happens only here, for an enabled extension (D10); constructing
+    Browser Vision does not start its browser.
+
+    Raises:
+        HTTPException: 404 unknown; 409 ``LIVE_VIEW_UNSUPPORTED``; 409
+            ``EXTENSION_DISABLED``; 409 ``INVALID_EXTENSION`` when it cannot
+            load or breaks its declared contract.
+    """
+    entry = _entry(ext_id)
+    if not entry.valid:
+        raise _conflict("INVALID_EXTENSION", entry.invalid_reason or "This extension is invalid.")
+    if not entry.manifest.live_view:
+        raise _conflict("LIVE_VIEW_UNSUPPORTED", f"{entry.manifest.name} has no live view.")
+    if ext_id not in enabled_ids():
+        raise _conflict("EXTENSION_DISABLED", f"{entry.manifest.name} is off.")
+    try:
+        instance = load_extension(entry)
+    except ExtensionLoadError as exc:
+        raise _conflict("INVALID_EXTENSION", str(exc)) from exc
+    if not isinstance(instance, SupportsLiveView):
+        raise _conflict("INVALID_EXTENSION", "the extension has no live_view() method")
+    return instance.live_view()
+
+
+@router.get("/extensions/{ext_id}/live")
+async def extension_live_view(ext_id: str) -> dict[str, Any]:
+    """Each agent's latest output for the operator's read-only live view, newest first.
+
+    An agent that no longer exists is listed under its id with
+    ``agent_missing: true`` rather than dropped.
+    """
+    items = []
+    for item in _live_items(ext_id):
+        agent = db.get_agent(item.agent_id)
+        stamp = int(item.taken_at.timestamp() * 1000)
+        row: dict[str, Any] = {
+            "agent_id": item.agent_id,
+            "agent_name": agent.name if agent is not None else item.agent_id,
+            "taken_at": item.taken_at.isoformat(),
+            "command": item.command,
+            "url": item.url,
+            "title": item.title,
+            "caption_lines": item.caption_lines,
+            "image_url": f"/api/extensions/{ext_id}/live/{item.agent_id}/image?t={stamp}",
+        }
+        if agent is None:
+            row["agent_missing"] = True
+        items.append(row)
+    return {"items": items}
+
+
+@router.get("/extensions/{ext_id}/live/{agent_id}/image")
+async def extension_live_image(ext_id: str, agent_id: str) -> FileResponse:
+    """Serve one agent's latest live-view image, never cached.
+
+    Raises:
+        HTTPException: 404 when the agent has no screenshot, is not one the
+            extension lists, or the file resolves outside the extension's
+            data dir; the ``_live_items`` conflicts otherwise.
+    """
+    match = next((item for item in _live_items(ext_id) if item.agent_id == agent_id), None)
+    if match is None:
+        raise HTTPException(404, "No screenshot for that agent")
+    root = extension_data_dir(ext_id).resolve()
+    path = Path(match.image_path).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(404, "No screenshot for that agent")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})

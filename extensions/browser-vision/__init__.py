@@ -6,11 +6,12 @@ extension is enabled or being set up.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
-from core.extensions.contract import ExtensionContext, SetupStatus
+from core.extensions.contract import ExtensionContext, LiveViewItem, SetupStatus
 from core.models import Agent
 
 from . import install
@@ -71,10 +72,14 @@ class BrowserVisionExtension:
             download_timeout_ms=self._defaults.download_timeout_ms,
             settle_ms=self._defaults.settle_ms,
         )
+        # Nothing here starts the browser: BrowserHost creates its thread and
+        # loop on the first command, so the app process can construct this
+        # just to read the live view.
+        self._shots = ScreenshotStore(ctx.data_dir / _SHOTS_DIRNAME, self._defaults.screenshots_keep)
         self._commands = BrowserVisionCommands(
             defaults=self._defaults,
             host=self._host,
-            shots=ScreenshotStore(ctx.data_dir / _SHOTS_DIRNAME, self._defaults.screenshots_keep),
+            shots=self._shots,
             setup_status=self.setup_status,
             vision_model=vision_model,
             downloads_dir=downloads_dir,
@@ -95,6 +100,32 @@ class BrowserVisionExtension:
             core.extensions.contract.SetupError: Download or probe failed.
         """
         install.run_setup(self._install_dir, log_path, probe_timeout_ms=self._defaults.nav_timeout_ms)
+
+    def live_view(self) -> list[LiveViewItem]:
+        """Return each browsing agent's latest screenshot, newest first.
+
+        Read from the screenshot files and their sidecars only; an agent
+        folder with no readable screenshot is left out.
+        """
+        items: list[LiveViewItem] = []
+        for agent_id in self._shots.agents():
+            found = self._shots.latest(agent_id)
+            if found is None:
+                continue
+            path, meta = found
+            caption = [f"window: {meta.window}", meta.grid, f"image {meta.image}"]
+            if meta.focus is not None:
+                caption.append(meta.focus)
+            items.append(LiveViewItem(
+                agent_id=agent_id,
+                image_path=path,
+                taken_at=datetime.fromisoformat(meta.taken_at),
+                command=meta.command,
+                url=meta.url,
+                title=meta.title,
+                caption_lines=caption,
+            ))
+        return sorted(items, key=lambda item: item.taken_at, reverse=True)
 
     def shutdown(self) -> None:
         """Close every agent's browser session and forget their view settings."""

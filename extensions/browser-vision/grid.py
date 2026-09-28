@@ -30,11 +30,8 @@ _DARK: RGB = (17, 17, 17)
 _LIGHT: RGB = (240, 240, 240)
 # Mean luma above this is "light ground" (midpoint of 0–255).
 _LUMA_SPLIT = 128
-# Label height as a share of the rendered cell: four digits still fit across
-# a cell at the smallest labelled size.
-_LABEL_FONT_RATIO = 0.38
-# Gap between a cell's top-left corner and its label, in rendered px.
-_LABEL_PAD = 2
+# Space between a tag's edge and its digits, in rendered px.
+_TAG_PAD = 1
 
 _COLOR_RE = re.compile(r"^#([0-9a-fA-F]{6})$")
 _FOCUS_RE = re.compile(r"^(\d+)-(\d+)$")
@@ -122,6 +119,21 @@ class GridStyle:
 
     enabled: bool
     color: GridColor
+    opacity: float
+
+
+@dataclass(frozen=True)
+class LabelStyle:
+    """How cell numbers are drawn: small corner tags.
+
+    Attributes:
+        font_ratio: Digit height as a share of the rendered cell.
+        font_min_px: Smallest digit height, whatever the cell size.
+        opacity: Tag opacity 0–1, separate from the grid lines'.
+    """
+
+    font_ratio: float
+    font_min_px: int
     opacity: float
 
 
@@ -241,6 +253,7 @@ def render_grid(
     *,
     label_min_px: int,
     image_max_px: int,
+    label: LabelStyle,
 ) -> RenderedGrid:
     """Draw the numbered grid on a viewport screenshot, optionally zoomed.
 
@@ -254,7 +267,9 @@ def render_grid(
 
     Cells keep their GLOBAL numbers at ``spec.density``; grid maths and click
     points stay in CSS px, and ``s`` only maps CSS px to image px. Labels are
-    drawn when ``density * s >= label_min_px``; otherwise lines only.
+    drawn when ``density * s >= label_min_px``; otherwise lines only. Each
+    label is a small filled tag in its cell's top-left corner (see
+    :class:`LabelStyle`), so it covers as little page text as possible.
 
     Args:
         png: The viewport screenshot, exactly ``spec.viewport_w × viewport_h``.
@@ -263,6 +278,7 @@ def render_grid(
         focus: The zoom box, or ``None`` for a full view.
         label_min_px: Smallest rendered cell that gets a number.
         image_max_px: Longest edge of the returned image.
+        label: Tag size and opacity.
 
     Returns:
         The rendered image and whether it carries numbers.
@@ -304,7 +320,7 @@ def render_grid(
     region = (origin_x, origin_y, origin_x + image.size[0] / scale, origin_y + image.size[1] / scale)
     _draw_lines(draw, luma, spec, style, region, scale, alpha)
     if labelled:
-        _draw_labels(draw, luma, spec, style, region, scale, alpha)
+        _draw_labels(draw, luma, spec, style, label, region, scale)
     composed = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     return _encode(composed, labelled=labelled, scale=scale)
 
@@ -391,23 +407,64 @@ def _draw_labels(
     luma: Image.Image,
     spec: GridSpec,
     style: GridStyle,
+    label: LabelStyle,
     region: tuple[float, float, float, float],
     scale: float,
-    alpha: int,
 ) -> None:
-    """Write each cell's global number in its top-left corner."""
+    """Put each cell's global number on a small tag in its top-left corner.
+
+    The tag is a filled box just big enough for the digits. In ``auto`` it is
+    dark with light digits on light ground and light with dark digits on dark
+    ground; a fixed grid colour fills the tag, with contrasting digits.
+    """
     rx0, ry0, rx1, ry1 = region
-    font = _font(max(1, round(spec.density * scale * _LABEL_FONT_RATIO)))
+    cell_px = spec.density * scale
+    font = _font(label_font_size(cell_px, label))
+    alpha = round(label.opacity * 255)
     col_first, col_last = int(rx0 // spec.density), math.ceil(rx1 / spec.density)
     row_first, row_last = int(ry0 // spec.density), math.ceil(ry1 / spec.density)
     for row in range(row_first, min(row_last, spec.rows)):
         for col in range(col_first, min(col_last, spec.cols)):
             number = str(spec.cell_number(col, row))
-            x = round((col * spec.density - rx0) * scale) + _LABEL_PAD
-            y = round((row * spec.density - ry0) * scale) + _LABEL_PAD
-            box = draw.textbbox((x, y), number, font=font)
-            ink, halo = _inks(luma, box, style.color)
-            draw.text((x, y), number, font=font, fill=(*ink, alpha), stroke_width=1, stroke_fill=(*halo, alpha))
+            # One px in from the corner so the grid line itself stays visible.
+            x = round((col * spec.density - rx0) * scale) + 1
+            y = round((row * spec.density - ry0) * scale) + 1
+            tag = fit_inside(tag_box(draw, (x, y), number, font), luma.size)
+            fill, digits = _inks(luma, tag, style.color)
+            draw.rectangle(tag, fill=(*fill, alpha))
+            left, top, _right, _bottom = draw.textbbox((0, 0), number, font=font)
+            draw.text((tag[0] + _TAG_PAD - left, tag[1] + _TAG_PAD - top), number, font=font, fill=(*digits, alpha))
+
+
+def fit_inside(box: tuple[int, int, int, int], size: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Shift an inclusive box left/up just enough to lie inside an image of ``size``.
+
+    A partial last column or row can be narrower than its tag; the tag then
+    moves back over its own cell instead of being cut off at the edge. A box
+    already inside is returned unchanged.
+    """
+    x0, y0, x1, y1 = box
+    width, height = size
+    dx = min(0, (width - 1) - x1)
+    dy = min(0, (height - 1) - y1)
+    return max(0, x0 + dx), max(0, y0 + dy), x1 + dx, y1 + dy
+
+
+def label_font_size(cell_px: float, label: LabelStyle) -> int:
+    """Return the digit size for a rendered cell of ``cell_px``."""
+    return max(label.font_min_px, round(cell_px * label.font_ratio))
+
+
+def tag_box(
+    draw: ImageDraw.ImageDraw,
+    origin: tuple[int, int],
+    number: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> tuple[int, int, int, int]:
+    """Return the inclusive box of a tag at ``origin``: the digits plus padding."""
+    left, top, right, bottom = draw.textbbox((0, 0), number, font=font)
+    x, y = origin
+    return x, y, x + (right - left) + 2 * _TAG_PAD - 1, y + (bottom - top) + 2 * _TAG_PAD - 1
 
 
 @lru_cache(maxsize=32)

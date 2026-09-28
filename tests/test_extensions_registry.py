@@ -192,3 +192,21 @@ def test_help_hides_a_disabled_extensions_command_and_shows_it_once_enabled() ->
     assert "extensions — Commands added by enabled extensions (bv)" in categories
     assert "bv open <url>" in search
     assert "Command:   bv" in learn and "Category:  extensions" in learn
+
+
+def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tmp_path: Path) -> None:
+    from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
+
+    _write_ext(tmp_path, "no-live", _manifest(ext_id="no-live", command="nolive", live_view=True))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("no-live")
+    assert entry.valid and entry.manifest.live_view is True  # discovery does not import (D10)
+
+    with pytest.raises(ExtensionLoadError, match="declares live_view but the extension has no live_view"):
+        load_extension(entry)
+    assert contract_failure("no-live") == "manifest declares live_view but the extension has no live_view() method"
+    # It stays invalid for this process; the CLI bridge reports the load failure.
+    with pytest.raises(ExtensionLoadError):
+        load_extension(entry)
+    set_enabled("no-live", True)
+    result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive"](_ctx(), _parsed("nolive go"), None)
+    assert "EXTENSION_LOAD_FAILED: manifest declares live_view" in result.prompt_content

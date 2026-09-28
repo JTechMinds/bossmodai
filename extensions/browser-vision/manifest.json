@@ -7,9 +7,10 @@
     "name": "bv",
     "summary": "Browse websites by screenshot + grid.",
     "usage": "bv open <url> | bv view [--density N] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] [--focus <a>-<b>] | bv window phone|tablet|desktop|widescreen|<W>x<H> | bv click <n> | bv type [--enter] (text in body) | bv key <Key or combo> | bv scroll up|down | bv back | bv status | bv close",
-    "help": "Browse a website by looking at screenshots. Every screenshot is overlaid\nwith a grid, and every grid cell shows its number in its top-left corner.\nClick numbers always refer to the most recent screenshot.\n\nSubcommands:\n  bv open <url>             open a page (a bare host gets https://)\n  bv view [flags]           take a new screenshot\n      --density N           grid cell size in px (default 40; smaller = finer)\n      --grid on|off         show or hide the grid\n      --grid-color auto|#rrggbb   line colour (auto picks contrast per segment)\n      --grid-opacity 0-1    grid strength\n      --focus <a>-<b>       zoom into the box between cells a and b\n  bv window <preset|WxH>    phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv click <n>              click the centre of cell n\n  bv type [--enter]         type the body text into the focused field\n  bv key <Key or combo>     press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down         scroll most of a screen\n  bv back                   go back one page\n  bv status                 url, title, window, grid settings, downloads\n  bv close                  close your browser session\n\nExamples:\n  bv open example.com\n  bv click 247\n  bv view --density 10 --focus 245-290\n  bv type --enter           with body: search words\n  bv key Control+A\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI."
+    "help": "Browse a website by looking at screenshots. Every screenshot is overlaid\nwith a grid, and every grid cell shows its number in its top-left corner.\nClick numbers always refer to the most recent screenshot.\n\nSubcommands:\n  bv open <url>             open a page (a bare host gets https://)\n  bv view [flags]           take a new screenshot\n      --density N           grid cell size in px (default 160; smaller = finer)\n      --grid on|off         show or hide the grid\n      --grid-color auto|#rrggbb   line colour (auto picks contrast per segment)\n      --grid-opacity 0-1    grid strength\n      --focus <a>-<b>       zoom into the box between cells a and b\n  bv window <preset|WxH>    phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv click <n>              click the centre of cell n\n  bv type [--enter]         type the body text into the focused field\n  bv key <Key or combo>     press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down         scroll most of a screen\n  bv back                   go back one page\n  bv status                 url, title, window, grid settings, downloads\n  bv close                  close your browser session\n\nExamples:\n  bv open example.com\n  bv view --density 20 --focus 9-10\n  bv click 652\n  bv type --enter           with body: search words\n  bv key Control+A\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI."
   },
   "prompt": "prompt.md",
+  "live_view": true,
   "requires": {
     "image_model": true,
     "python_modules": ["playwright", "PIL"]
@@ -26,8 +27,11 @@
       "desktop": {"width": 1280, "height": 800},
       "widescreen": {"width": 1920, "height": 1080}
     },
-    "density_default": 40,
+    "density_default": 160,
     "label_min_px": 24,
+    "label_font_ratio": 0.2,
+    "label_font_min_px": 10,
+    "label_opacity": 0.8,
     "image_max_px": 1568,
     "grid_default": true,
     "grid_color_default": "auto",

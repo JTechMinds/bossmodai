@@ -12,8 +12,10 @@ active grid, and ``bv click <n>`` resolves against it.
 from __future__ import annotations
 
 import dataclasses
+import re
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
@@ -35,6 +37,7 @@ from .grid import (
     GridColor,
     GridSpec,
     GridStyle,
+    LabelStyle,
     focus_rect,
     parse_color,
     parse_density,
@@ -42,7 +45,7 @@ from .grid import (
     parse_opacity,
     render_grid,
 )
-from .screenshots import ScreenshotStore
+from .screenshots import ScreenshotStore, ShotMeta
 from .viewports import ViewportSpec, WindowPreset, resolve_viewport
 
 DOWNLOADS_VIRTUAL_DIR = "/me/downloads"
@@ -51,6 +54,10 @@ WINDOW_SWAP_NOTE = (
     "window changed: cookies and site storage were kept; "
     "form contents and scroll position were reset"
 )
+# An RFC 3986 scheme followed by ':'.
+_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# host:port, optionally with a path — looks like "scheme:" but is not one.
+_HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.-]+:\d+(?:/.*)?$")
 _VIEW_FLAGS = {"--density", "--grid", "--grid-color", "--grid-opacity", "--focus"}
 
 
@@ -63,6 +70,9 @@ class BrowserVisionDefaults(BaseModel):
     window_presets: dict[str, WindowPreset]
     density_default: int = Field(gt=0)
     label_min_px: int = Field(gt=0)
+    label_font_ratio: float = Field(gt=0)
+    label_font_min_px: int = Field(gt=0)
+    label_opacity: float = Field(ge=0, le=1)
     image_max_px: int = Field(gt=0)
     grid_default: bool
     grid_color_default: str
@@ -421,8 +431,28 @@ class BrowserVisionCommands:
             focus,
             label_min_px=self._defaults.label_min_px,
             image_max_px=self._defaults.image_max_px,
+            label=LabelStyle(
+                font_ratio=self._defaults.label_font_ratio,
+                font_min_px=self._defaults.label_font_min_px,
+                opacity=self._defaults.label_opacity,
+            ),
         )
-        path = self._shots.store(ctx.agent.id, rendered.png)
+        grid_line = _grid_line(spec, view.grid)
+        focus_line = f"focus: cells {focus.a}–{focus.b}" if focus is not None else None
+        path = self._shots.store(
+            ctx.agent.id,
+            rendered.png,
+            ShotMeta(
+                command=parsed.raw,
+                url=capture.url,
+                title=capture.title,
+                window=f"{view.window.name} {capture.width}x{capture.height}",
+                grid=grid_line,
+                image=f"{rendered.width}x{rendered.height}",
+                focus=focus_line,
+                taken_at=datetime.now(timezone.utc).isoformat(),
+            ),
+        )
         view.active = spec
 
         lines = [
@@ -430,12 +460,12 @@ class BrowserVisionCommands:
             f"title: {capture.title}",
             f"viewport: {capture.width}x{capture.height}",
             f"window: {view.window.name} {capture.width}x{capture.height}",
-            _grid_line(spec, view.grid),
+            grid_line,
         ]
         if rendered.scale != 1:
             lines.append(f"image {rendered.width}x{rendered.height} (scale ×{rendered.scale:.4g})")
-        if focus is not None:
-            lines.append(f"focus: cells {focus.a}–{focus.b}")
+        if focus_line is not None:
+            lines.append(focus_line)
         if view.grid.enabled and not rendered.labelled:
             lines.append(UNLABELLED_NOTICE)
         lines += notes
@@ -472,17 +502,27 @@ class BrowserVisionCommands:
 
 
 def normalize_url(raw: str) -> str:
-    """Return ``raw`` as an absolute URL; a bare host gets ``https://``.
+    """Return the URL to navigate to for ``bv open``.
 
-    Only the form is checked (D8: any host, including localhost and the LAN).
+    Only the form is checked (D8): the browser's own navigation error is the
+    authority on whether a URL loads.
+
+    - A value with an explicit scheme (``file:``, ``about:``, ``data:``,
+      ``http:`` …) is passed through unchanged.
+    - ``<name>:<digits>`` (optionally followed by ``/…``) is a host with a
+      port, not a scheme: ``localhost:3000`` is scheme-less.
+    - A scheme-less value gets ``https://`` and must then have a host.
 
     Raises:
-        CommandError: The text does not parse as a URL with a scheme and host.
+        CommandError: Empty input, or scheme-less input with no host.
     """
     text = raw.strip()
-    url = text if ("://" in text or text.lower().startswith("about:")) else f"https://{text}"
-    parts = urlsplit(url)
-    if not parts.scheme or (parts.scheme != "about" and not parts.netloc):
+    if not text:
+        raise CommandError("INVALID_URL: empty URL (e.g. https://example.com)")
+    if _SCHEME_RE.match(text) and not _HOST_PORT_RE.match(text):
+        return text
+    url = f"https://{text}"
+    if not urlsplit(url).hostname:
         raise CommandError(f"INVALID_URL: {raw!r} is not a URL (e.g. https://example.com)")
     return url
 

@@ -5,9 +5,9 @@ const BossModConversation = (() => {
     const NO_CONVERSATION_REASON = 'Pick someone from the roster to start talking.';
 
     /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
-     *   cache); optional openDesk. drafts/cache are the caller's so a draft outlives destroy(). */
+     *   cache); optional openDesk, browserView. drafts/cache are the caller's so a draft outlives destroy(). */
     function createConversation(deps) {
-        const { store, bus, api, navigate, needs, openDesk, drafts, cache } = deps || {};
+        const { store, bus, api, navigate, needs, openDesk, browserView, drafts, cache } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
         if (!bus) throw new Error('[conversation] deps.bus is required');
         if (typeof api !== 'function') throw new Error('[conversation] deps.api is required');
@@ -252,7 +252,7 @@ const BossModConversation = (() => {
         function buildSource(id, kind) {
             if (kind === 'agent') {
                 return BossModAgentSource.createAgentSource(id, {
-                    api, bus, store, presence, openDesk,
+                    api, bus, store, presence, openDesk, browserView,
                 });
             }
             if (kind === 'thread') {

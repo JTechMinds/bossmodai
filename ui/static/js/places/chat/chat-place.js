@@ -100,6 +100,8 @@ const BossModChatPlace = (() => {
                 drafts, cache: transcriptCache,
                 // A desk path from a note, or an agent id from the chrome.
                 openDesk: (target) => BossModContextColumn.openDeskFrom(ctx.store, target),
+                // The Browser Vision screen button in an agent's header.
+                browserView: BossModExtensionsLive.headerCapability(),
             });
 
             contextColumn = BossModContextColumn.createContextColumn({

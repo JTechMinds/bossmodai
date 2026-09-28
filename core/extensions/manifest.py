@@ -62,6 +62,8 @@ class ExtensionManifest(_Strict):
     prompt: str | None = None
     requires: RequiresSpec = RequiresSpec()
     setup: SetupSpec
+    # True when the instance implements contract.SupportsLiveView.
+    live_view: bool = False
     defaults: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("prompt")

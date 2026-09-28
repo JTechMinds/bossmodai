@@ -95,6 +95,9 @@ CONTEXT_MODULES = [
     CONTEXT / "agents-dialog.js",
     CONTEXT / "desk-panel.js",
     CONTEXT / "context-column.js",
+    JS / "extensions" / "extensions-api.js",
+    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "extensions-live.js",
     JS / "places" / "chat" / "chat-place.js",
 ]
 

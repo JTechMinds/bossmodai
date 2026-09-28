@@ -26,9 +26,12 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-def _render(png: bytes, spec, *, color="auto", opacity=1.0, focus=None, enabled=True):
+_LABELS = grid.LabelStyle(font_ratio=0.2, font_min_px=10, opacity=0.8)
+
+
+def _render(png: bytes, spec, *, color="auto", opacity=1.0, focus=None, enabled=True, label=_LABELS):
     style = grid.GridStyle(enabled=enabled, color=color, opacity=opacity)
-    return grid.render_grid(png, spec, style, focus, label_min_px=24, image_max_px=1568)
+    return grid.render_grid(png, spec, style, focus, label_min_px=24, image_max_px=1568, label=label)
 
 
 def test_cols_rows_and_bounds_count_partial_edge_cells() -> None:
@@ -219,3 +222,115 @@ def test_cell_centres_are_css_px_and_downscaling_only_maps_them() -> None:
         (round(cx * rendered.scale), round(cy * rendered.scale))
     )
     assert red > 200 and green < 60 and blue < 60
+
+
+# ─── labels are small corner tags (R6) ───
+
+
+def _tag(cell_px: float, number: str) -> tuple[int, int, int, int]:
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    font = grid._font(grid.label_font_size(cell_px, _LABELS))
+    return grid.tag_box(draw, (0, 0), number, font)
+
+
+def test_label_font_size_follows_the_ratio_with_a_floor() -> None:
+    assert grid.label_font_size(60, _LABELS) == 12
+    assert grid.label_font_size(24, _LABELS) == 10
+    assert grid.label_font_size(200, _LABELS) == 40
+
+
+def test_a_three_digit_tag_is_at_most_45_percent_of_a_density_60_cell() -> None:
+    x0, y0, x1, y1 = _tag(60, "307")
+    assert x1 - x0 + 1 <= 0.45 * 60
+
+
+def test_a_three_digit_tag_fits_inside_the_smallest_labelled_cell() -> None:
+    x0, y0, x1, y1 = _tag(24, "999")
+    # Drawn one px in from the corner.
+    assert 1 + (x1 - x0 + 1) <= 24 and 1 + (y1 - y0 + 1) <= 24
+
+
+def test_tags_are_dark_on_light_ground_and_light_on_dark_ground() -> None:
+    spec = grid.GridSpec(240, 240, 60)
+    on_white = Image.open(io.BytesIO(_render(_png(240, 240, (255, 255, 255)), spec).png)).convert("RGB")
+    on_black = Image.open(io.BytesIO(_render(_png(240, 240, (0, 0, 0)), spec).png)).convert("RGB")
+    # (1, 1) is cell 0's tag padding: tag fill, not a digit and not a line.
+    assert sum(on_white.getpixel((1, 1))) < 250
+    assert sum(on_black.getpixel((1, 1))) > 500
+
+
+def test_a_fixed_colour_fills_the_tag() -> None:
+    spec = grid.GridSpec(240, 240, 60)
+    rendered = _render(_png(240, 240, (255, 255, 255)), spec, color=(255, 0, 0))
+    red, green, blue = Image.open(io.BytesIO(rendered.png)).convert("RGB").getpixel((1, 1))
+    # Red at 0.8 over white.
+    assert red == 255 and green == blue == 51
+
+
+def test_label_opacity_is_separate_from_line_opacity() -> None:
+    spec = grid.GridSpec(240, 240, 60)
+    png = _png(240, 240, (255, 255, 255))
+    strong = Image.open(io.BytesIO(_render(png, spec, opacity=1.0).png)).convert("RGB")
+    faint = Image.open(io.BytesIO(_render(png, spec, opacity=0.2).png)).convert("RGB")
+    # The tag does not change with the line opacity...
+    assert strong.getpixel((1, 1)) == faint.getpixel((1, 1))
+    # ...but the line does (x=60 is a boundary; y=40 is below the tags).
+    assert strong.getpixel((60, 40)) != faint.getpixel((60, 40))
+    # And a lower label opacity lightens the tag on its own.
+    lighter = Image.open(io.BytesIO(_render(
+        png, spec, label=grid.LabelStyle(font_ratio=0.2, font_min_px=10, opacity=0.4),
+    ).png)).convert("RGB")
+    assert sum(lighter.getpixel((1, 1))) > sum(strong.getpixel((1, 1)))
+
+
+def _edge_tag(spec, n: int, size: tuple[int, int]):
+    from PIL import ImageDraw
+
+    cell = spec.cell_rect(n)
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    font = grid._font(grid.label_font_size(spec.density, _LABELS))
+    anchored = grid.tag_box(draw, (cell[0] + 1, cell[1] + 1), str(n), font)
+    return cell, anchored, grid.fit_inside(anchored, size)
+
+
+def _inside_and_over_its_cell(cell, anchored, fitted, size) -> None:
+    x0, y0, x1, y1 = fitted
+    assert 0 <= x0 and x1 <= size[0] - 1 and 0 <= y0 and y1 <= size[1] - 1
+    # Moved, not resized.
+    assert (x1 - x0, y1 - y0) == (anchored[2] - anchored[0], anchored[3] - anchored[1])
+    # Still over its own cell's rendered rect (inclusive box vs half-open rect).
+    assert x1 >= cell[0] and x0 < cell[2] and y1 >= cell[1] and y0 < cell[3]
+
+
+def test_cell_21s_tag_lies_inside_the_image_and_over_its_cell() -> None:
+    spec = grid.GridSpec(1280, 800, 60)  # the last column is 20 px wide
+    cell, anchored, fitted = _edge_tag(spec, 21, (1280, 800))
+    assert cell == (1260, 0, 1280, 60)
+    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 800))
+
+
+def test_a_three_digit_tag_in_the_narrow_last_column_is_shifted_left() -> None:
+    spec = grid.GridSpec(1280, 800, 60)
+    cell, anchored, fitted = _edge_tag(spec, 285, (1280, 800))
+    assert anchored[2] > 1279, "unshifted, the tag would overflow the right edge"
+    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 800))
+    assert fitted[2] == 1279
+    # The rendered image shows tag fill in the last pixel column of that row.
+    rendered = _render(_png(1280, 800, (255, 255, 255)), spec)
+    image = Image.open(io.BytesIO(rendered.png)).convert("RGB")
+    assert sum(image.getpixel((1279, fitted[1]))) < 250
+
+
+def test_a_tag_in_a_short_last_row_is_shifted_up() -> None:
+    spec = grid.GridSpec(1280, 790, 60)  # the last row is 10 px tall
+    n = spec.cell_number(0, spec.rows - 1)
+    cell, anchored, fitted = _edge_tag(spec, n, (1280, 790))
+    assert anchored[3] > 789, "unshifted, the tag would overflow the bottom edge"
+    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 790))
+    assert fitted[3] == 789
+
+
+def test_a_tag_inside_the_image_is_not_moved() -> None:
+    assert grid.fit_inside((61, 1, 80, 14), (1280, 800)) == (61, 1, 80, 14)

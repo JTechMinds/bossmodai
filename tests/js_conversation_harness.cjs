@@ -169,6 +169,17 @@ const needsStub = {
 };
 
 const openedDesks = [];
+// The Browser Vision capability, as chat-place.js injects it: which agents
+// have a view, change notifications, and the viewer.
+const browserViews = new Set();
+const viewListeners = new Set();
+const openedViews = [];
+const browserView = {
+    hasView: (id) => browserViews.has(id),
+    subscribe: (fn) => { viewListeners.add(fn); return () => viewListeners.delete(fn); },
+    open: (id, name) => openedViews.push([id, name]),
+};
+const announceViews = () => viewListeners.forEach((fn) => fn());
 // Owned by the caller so they outlive one controller, as chat-place.js does.
 const drafts = new Map();
 const transcriptCache = global.BossModTranscriptCache.createCache();
@@ -176,6 +187,7 @@ const conversation = BossModConversation.createConversation({
     store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
     // Injected so the chrome has an action to carry a glyph on.
     openDesk: (id) => openedDesks.push(id),
+    browserView,
 });
 const listing = conversation.element.querySelector("[data-transcript]");
 const composerInput = conversation.element.querySelector(".composer-input");
@@ -448,8 +460,32 @@ async function main() {
         );
     }
 
+    // The Browser Vision screen: absent until the status lists this agent,
+    // then a soft-green, icon-only "Browser view" beside Desk; gone again
+    // when the view goes (the extension was turned off).
+    const viewBtn = () => conversation.element.querySelector("#conversation-browser-view");
+    const browserViewAbsentWithoutAView = !viewBtn() && viewListeners.size === 1;
+    browserViews.add("a");
+    announceViews();
+    const shown = viewBtn();
+    const shownGlyph = shown && shown.querySelector("i");
+    const browserViewShowsWhenListed = Boolean(shown)
+        && shown.getAttribute("data-tone") === "live"
+        && shown.getAttribute("aria-label") === "Browser view"
+        && Boolean(shownGlyph) && shownGlyph.getAttribute("data-lucide") === "monitor"
+        // Right after Desk in the action row.
+        && shown.parentNode.children.indexOf(shown)
+            === shown.parentNode.children.indexOf(conversation.element.querySelector("#conversation-desk-toggle")) + 1;
+    await shown.click();
+    const browserViewOpensTheViewer = openedViews.length === 1 && openedViews[0][0] === "a";
+    browserViews.delete("a");
+    announceViews();
+    const browserViewGoesWhenTurnedOff = !viewBtn();
+
     // A thread has no one face, so it gets the group glyph rather than nothing.
     await conversation.open("t1", "thread");
+    // Leaving the agent's conversation drops its status subscription.
+    const browserViewUnsubscribesOnLeave = viewListeners.size === 0;
     const group = avatarSlot().querySelector(".avatar-group");
     const chromeGroupGlyphForThreads = Boolean(group)
         && avatarSlot().querySelectorAll(".avatar").length === 1;
@@ -1087,6 +1123,11 @@ async function main() {
         chromeShowsIdentityAvatar,
         chromeAvatarNodeIsStable,
         chromeActionCarriesItsIcon,
+        browserViewAbsentWithoutAView,
+        browserViewShowsWhenListed,
+        browserViewOpensTheViewer,
+        browserViewGoesWhenTurnedOff,
+        browserViewUnsubscribesOnLeave,
         chromeGroupGlyphForThreads,
         archiveLivesInTheMenu,
         subtitleIsWithTheActions: subtitleIsWithTheActions(),

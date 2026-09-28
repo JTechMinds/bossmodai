@@ -140,7 +140,10 @@ const NAMES = [
     "BossModAgentAddPane", "BossModAgentDialogSlot",
     "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
-    "BossModContextColumn", "BossModChatPlace",
+    "BossModContextColumn",
+    // The chat place hands agent conversations the Browser Vision screen.
+    "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
+    "BossModChatPlace",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

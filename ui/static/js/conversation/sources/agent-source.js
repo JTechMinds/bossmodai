@@ -20,6 +20,8 @@ const BossModAgentSource = (() => {
      * @param {object} ctx.bus  Topic bus.
      * @param {object} ctx.store  Read for the roster, which names the agent.
      * @param {object} ctx.presence  Shared presence controller.
+     * @param {object} [ctx.browserView]  Optional `{hasView, subscribe, open}`:
+     *   the Browser Vision screen button, shown while this agent has a view.
      * @returns {object} ConversationSource (spec 4.1).
      * @throws {Error} When any capability is missing.
      */
@@ -236,7 +238,13 @@ const BossModAgentSource = (() => {
                     }), { showAuthor: true }));
                 }
             }
-            return { dispose() {}, onLiveEvent };
+            // The screen button comes and goes with the agent's browser view;
+            // a change repaints through the same on.chrome path a rename uses.
+            const offView = ctx.browserView ? ctx.browserView.subscribe(() => on.chrome()) : null;
+            return {
+                dispose() { if (offView) offView(); },
+                onLiveEvent,
+            };
         }
 
         /**
@@ -268,6 +276,18 @@ const BossModAgentSource = (() => {
                     // the hover tooltip, so nothing is lost but the ink.
                     iconOnly: true,
                     onSelect: () => ctx.openDesk(agentId),
+                });
+            }
+            // Same optional-capability rule as Desk, and only while this agent
+            // has a latest screenshot: a screen with nothing on it is absent.
+            if (ctx.browserView && ctx.browserView.hasView(agentId)) {
+                actions.push({
+                    id: 'conversation-browser-view',
+                    label: 'Browser view',
+                    icon: 'monitor',
+                    iconOnly: true,
+                    tone: 'live',
+                    onSelect: () => ctx.browserView.open(agentId, who.name),
                 });
             }
             return {

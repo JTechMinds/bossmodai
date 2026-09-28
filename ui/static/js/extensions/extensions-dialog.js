@@ -17,6 +17,10 @@
  *   ready / not required  → the switch drives PUT enabled, rolled back on a
  *                           refusal with the server's message on the card;
  *   enabled + excluded    → which agents cannot use it, and why.
+ *
+ * A live view is not shown here: it is the screen button in each browsing
+ * agent's chat header. After a successful toggle this asks
+ * BossModBrowserVisionStatus to re-read, so those buttons follow at once.
  */
 const BossModExtensionsDialog = (() => {
     const { h, clear } = BossModDom;
@@ -107,6 +111,7 @@ const BossModExtensionsDialog = (() => {
             render();
             try {
                 replaceItem(await API.setEnabled(item.id, pressed));
+                void BossModBrowserVisionStatus.refresh();
             } catch (err) {
                 // Never show a state the server refused: the item is unchanged,
                 // so the re-render puts the switch back where it was.

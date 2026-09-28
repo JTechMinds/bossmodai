@@ -13,7 +13,7 @@ import sys
 import threading
 from types import ModuleType
 
-from core.extensions.contract import Extension, ExtensionContext
+from core.extensions.contract import Extension, ExtensionContext, SupportsLiveView
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry
 
@@ -27,6 +27,10 @@ class ExtensionLoadError(Exception):
 
 
 _loaded: dict[str, Extension] = {}
+# Extensions that loaded but broke the contract their manifest declares. They
+# are invalid for the rest of the process; the static discovery cannot see
+# this without importing, which D10 forbids.
+_contract_failures: dict[str, str] = {}
 _lock = threading.Lock()
 
 
@@ -84,12 +88,17 @@ def load_extension(entry: ExtensionEntry) -> Extension:
 
     Raises:
         ExtensionLoadError: The entry is invalid, the package failed to
-            import, it has no ``create``, or ``create`` raised.
+            import, it has no ``create``, ``create`` raised, or the instance
+            lacks a method its manifest declares (``live_view``) — that last
+            one also marks the extension invalid (see :func:`contract_failure`).
     """
     with _lock:
         existing = _loaded.get(entry.id)
         if existing is not None:
             return existing
+        failure = _contract_failures.get(entry.id)
+        if failure is not None:
+            raise ExtensionLoadError(failure)
         module = import_package(entry)
         create = getattr(module, "create", None)
         if not callable(create):
@@ -102,9 +111,19 @@ def load_extension(entry: ExtensionEntry) -> Extension:
             instance = create(ctx)
         except Exception as exc:
             raise ExtensionLoadError(f"extension {entry.id} failed to start: {exc}") from exc
+        if manifest.live_view and not isinstance(instance, SupportsLiveView):
+            reason = "manifest declares live_view but the extension has no live_view() method"
+            _contract_failures[entry.id] = reason
+            raise ExtensionLoadError(reason)
         _loaded[entry.id] = instance
         logger.info("Loaded extension %s", entry.id)
         return instance
+
+
+def contract_failure(ext_id: str) -> str | None:
+    """Return why a loaded extension broke its declared contract, else ``None``."""
+    with _lock:
+        return _contract_failures.get(ext_id)
 
 
 def loaded_extension(ext_id: str) -> Extension | None:

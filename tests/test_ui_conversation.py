@@ -309,6 +309,12 @@ def test_conversation_harness() -> None:
         "chromeShowsIdentityAvatar": True,
         "chromeAvatarNodeIsStable": True,
         "chromeActionCarriesItsIcon": True,
+        # Browser Vision's screen button beside Desk (R11).
+        "browserViewAbsentWithoutAView": True,
+        "browserViewShowsWhenListed": True,
+        "browserViewOpensTheViewer": True,
+        "browserViewGoesWhenTurnedOff": True,
+        "browserViewUnsubscribesOnLeave": True,
         "chromeGroupGlyphForThreads": True,
         # Archive is rare and reads as irreversible, so it moved off the header
         # row and behind the `⋯` — where the source puts it with `slot: 'menu'`

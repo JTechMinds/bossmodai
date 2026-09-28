@@ -167,13 +167,45 @@ def test_open_adds_https_to_a_bare_host_and_returns_a_screenshot(env) -> None:
     text = result.prompt_content
     assert "url: https://example.com" in text
     assert "window: desktop 1280x800" in text
-    assert "grid: on, density 40 → 32 cols × 20 rows, cells 0–639, colour auto, opacity 0.55" in text
+    assert "grid: on, density 160 → 8 cols × 5 rows, cells 0–39, colour auto, opacity 0.55" in text
+
+
+def test_each_screenshot_has_a_sidecar_describing_it(env) -> None:
+    env["run"]("bv open example.com")
+    result = env["run"]("bv view --density 10 --focus 0-0")
+    sidecar = json.loads(Path(result.image_paths[0]).with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["command"] == "bv view --density 10 --focus 0-0"
+    assert sidecar["url"] == "https://example.com"
+    assert sidecar["title"] == "Fixture"
+    assert sidecar["window"] == "desktop 1280x800"
+    assert sidecar["grid"] == "grid: on, density 10 → 128 cols × 80 rows, cells 0–10239, colour auto, opacity 0.55"
+    assert sidecar["image"] == "384x384"
+    assert sidecar["focus"] == "focus: cells 0–0"
+    assert sidecar["taken_at"].endswith("+00:00")
 
 
 def test_open_accepts_localhost_and_rejects_non_urls(env) -> None:
     assert env["run"]("bv open http://localhost:8000/x").ok
-    assert _error(env["run"]("bv open http://")).startswith("INVALID_URL:")
+    assert _error(env["run"]('bv open ""')).startswith("INVALID_URL: empty URL")
+    assert _error(env["run"]("bv open :::")).startswith("INVALID_URL:")
     assert _error(env["run"]("bv open")).startswith("USAGE: bv open <url>")
+
+
+@pytest.mark.parametrize(("typed", "opened"), [
+    # An explicit scheme passes through unchanged (D8): the browser decides.
+    ("file:///tmp/x.html", "file:///tmp/x.html"),
+    ("about:blank", "about:blank"),
+    ("data:text/html,hi", "data:text/html,hi"),
+    ("http://", "http://"),
+    # No scheme: https:// is added.
+    ("example.com", "https://example.com"),
+    # host:port looks like "scheme:" to urlsplit but is a host with a port.
+    ("localhost:3000/app", "https://localhost:3000/app"),
+    ("localhost:3000", "https://localhost:3000"),
+])
+def test_open_passes_any_scheme_and_adds_https_only_without_one(env, typed, opened) -> None:
+    assert env["run"](f"bv open {typed}").ok
+    assert [call for call in env["host"].calls if call[0] == "goto"][-1] == ("goto", opened)
 
 
 def test_unknown_subcommand_gives_usage(env) -> None:
@@ -187,27 +219,28 @@ def test_click_before_any_screenshot_is_no_view(env) -> None:
 
 def test_a_cell_off_the_grid_is_out_of_range_and_nothing_is_clicked(env) -> None:
     env["run"]("bv open example.com")
-    message = _error(env["run"]("bv click 640"))
-    assert message.startswith("CELL_OUT_OF_RANGE: cell 640")
-    assert "0–639" in message
+    message = _error(env["run"]("bv click 40"))
+    assert message.startswith("CELL_OUT_OF_RANGE: cell 40")
+    assert "0–39" in message
     assert not any(call[0] == "click" for call in env["host"].calls)
 
 
 def test_the_active_grid_follows_focus_then_click_then_full_view(env) -> None:
     env["run"]("bv open example.com")
-    focused = env["run"]("bv view --density 10 --focus 33-66")
+    # Cell 0 at the default density 160 is x 0–160, y 0–160.
+    focused = env["run"]("bv view --density 10 --focus 0-0")
     assert focused.ok, focused.prompt_content
     assert "grid: on, density 10 → 128 cols × 80 rows, cells 0–10239" in focused.prompt_content
-    assert "focus: cells 33–66" in focused.prompt_content
-    assert "image 192x192 (scale ×2.4)" in focused.prompt_content
-    # Cell (5, 10) at density 10 is number 10*128+5; its centre is (55, 105).
-    clicked = env["run"](f"bv click {10 * 128 + 5}")
+    assert "focus: cells 0–0" in focused.prompt_content
+    assert "image 384x384 (scale ×2.4)" in focused.prompt_content
+    # Cell (7, 9) at density 10 is number 9*128+7; its centre is (75, 95).
+    clicked = env["run"](f"bv click {9 * 128 + 7}")
     assert clicked.ok, clicked.prompt_content
-    assert ("click", 55.0, 105.0) in env["host"].calls
-    assert "clicked cell 1285 at (55, 105)" in clicked.prompt_content
+    assert ("click", 75.0, 95.0) in env["host"].calls
+    assert "clicked cell 1159 at (75, 95)" in clicked.prompt_content
     # The click returned a full view at the base density, now the active grid.
-    assert "density 40 → 32 cols × 20 rows" in clicked.prompt_content
-    assert _error(env["run"]("bv click 1285")).startswith("CELL_OUT_OF_RANGE")
+    assert "density 160 → 8 cols × 5 rows" in clicked.prompt_content
+    assert _error(env["run"]("bv click 1159")).startswith("CELL_OUT_OF_RANGE")
 
 
 def test_density_on_a_plain_view_is_sticky_but_not_with_focus(env) -> None:
@@ -228,7 +261,7 @@ def test_grid_settings_are_sticky_and_parse_errors_name_the_form(env) -> None:
     assert "positive whole number" in _error(env["run"]("bv view --density 0"))
     assert "--grid on|off" in _error(env["run"]("bv view --grid maybe"))
     off = env["run"]("bv view --grid off")
-    assert "grid: off (density 40" in off.prompt_content
+    assert "grid: off (density 160" in off.prompt_content
 
 
 def test_keys_and_combos_pass_through_verbatim(env) -> None:
@@ -277,9 +310,9 @@ def test_window_presets_and_custom_sizes(env) -> None:
     wide = env["run"]("bv window widescreen")
     assert "viewport: 1920x1080" in wide.prompt_content
     assert "image 1568x882 (scale ×0.8167)" in wide.prompt_content
-    # Clicks stay in CSS px: cell 0's centre is (20, 20) whatever the image size.
+    # Clicks stay in CSS px: cell 0's centre is (80, 80) whatever the image size.
     env["run"]("bv click 0")
-    assert [call for call in env["host"].calls if call[0] == "click"][-1] == ("click", 20.0, 20.0)
+    assert [call for call in env["host"].calls if call[0] == "click"][-1] == ("click", 80.0, 80.0)
 
 
 def test_downloads_are_listed_in_the_result_and_status(env) -> None:

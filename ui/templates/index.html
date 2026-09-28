@@ -60,6 +60,7 @@
          every .market-* rule lives inside .modal-panel[data-size="takeover"],
          so it must be able to override the overlay primitives it rides on. -->
     <link rel="stylesheet" href="{{ static_url('css/marketplace.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/extensions.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
 </head>
 <body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden" data-view="app">
@@ -334,6 +335,8 @@
          confirm strip; before shell/add-agent-menu.js, whose third door
          opens it. -->
     <script src="{{ static_url('js/extensions/extensions-api.js') }}"></script>
+    <script src="{{ static_url('js/extensions/browser-vision-status.js') }}"></script>
+    <script src="{{ static_url('js/extensions/extensions-live.js') }}"></script>
     <script src="{{ static_url('js/extensions/extensions-dialog.js') }}"></script>
 
     <script src="{{ static_url('js/context/agent-fields.js') }}"></script>

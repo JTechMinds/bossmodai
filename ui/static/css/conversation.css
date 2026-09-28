@@ -153,6 +153,11 @@
 .conversation-action { font-weight: 500; }
 .conversation-action svg { width: 14px; height: 14px; }
 
+/* An action marking something running now (the browser view). Icon-only, so
+   the glyph is the carrier and the non-text 3:1 floor applies (SC 1.4.11):
+   --ok-mark is 3.49:1 on this row. Hover and focus are the .btn states. */
+.conversation-action[data-tone="live"] svg { color: var(--ok-mark); }
+
 /* The rename pair, by the ids conversation/chrome.js gives them — the two are
    named controls, not a generic tone the row has any other use for. Both are
    icon-only, so the glyph is the only visual carrier and the 3:1 non-text

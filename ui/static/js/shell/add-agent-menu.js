@@ -8,10 +8,12 @@
  * start from" and "author one" are separate errands and the row must not
  * silently pick one — and extensions are a third errand again.
  *
- * Three doors: Agent Marketplace and Add Agent (the Agents dialog), and
- * Extensions, which opens extensions/extensions-dialog.js to switch app
- * add-ons (Browser Vision) on and off. Only the labels say "Add"; the module,
- * its global and `data-menu="add-agent"` keep their names.
+ * Three doors, top to bottom: Extensions, which opens
+ * extensions/extensions-dialog.js to switch app add-ons (Browser Vision) on
+ * and off; then Agent Marketplace and Add Agent (the Agents dialog). The
+ * most-used door is last, nearest the `+` row the panel opens from. Only the
+ * labels say "Add"; the module, its global and `data-menu="add-agent"` keep
+ * their names.
  *
  * The two agent doors lead into the SAME dialog — context/agents-dialog.js, with Add
  * agent and the Marketplace as two tabs of it — and each opens it on its own
@@ -100,15 +102,18 @@ const BossModAddAgentMenu = (() => {
             menu = BossModMenu.createMenu({
                 anchor,
                 label: 'Add',
+                // Least-used at the top, most-used at the bottom: the panel
+                // opens upward from the `+` row at the foot of the rail, so
+                // Add Agent sits nearest the row the pointer came from.
                 items: [
+                    // The Extensions dialog: switch app add-ons on and off.
+                    door('puzzle', 'Extensions', () => BossModExtensionsDialog.open()),
                     // The Agents dialog, on its Marketplace tab.
                     door(ICONS.marketplace, 'Agent Marketplace',
                         () => BossModAgentsDialog.open({ store, tab: 'marketplace' })),
                     // The same dialog, on its Add agent tab.
                     door(ICONS.add, 'Add Agent',
                         () => BossModAgentsDialog.open({ store, tab: 'add' })),
-                    // The Extensions dialog: switch app add-ons on and off.
-                    door('puzzle', 'Extensions', () => BossModExtensionsDialog.open()),
                 ],
                 container,
                 onClose: () => {

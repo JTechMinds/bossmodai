@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the three calls the Extensions dialog makes.
+ * BossMod AI — the calls the Extensions dialog and its live view make.
  *
  * The routes answer a refusal as `HTTPException(409, {error, message})`, so
  * the useful part is nested under `detail`; FastAPI's own validation errors
@@ -80,5 +80,19 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
-    return { listExtensions, setEnabled, startSetup };
+    /**
+     * Each agent's latest output for an extension's live view, newest first.
+     *
+     * @param {string} id
+     * @returns {Promise<{items: object[]}>}
+     * @throws {Error} `code` is `EXTENSION_DISABLED`, `LIVE_VIEW_UNSUPPORTED`
+     *   or `INVALID_EXTENSION` for the server's refusals.
+     */
+    async function liveView(id) {
+        const res = await apiFetch(`/api/extensions/${encodeURIComponent(id)}/live`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load the live view.');
+        return res.json();
+    }
+
+    return { listExtensions, setEnabled, startSetup, liveView };
 })();

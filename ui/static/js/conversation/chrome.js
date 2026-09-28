@@ -198,12 +198,15 @@ const BossModConversationChrome = (() => {
          * @param {{title: string, subtitle: string, avatar?: object,
          *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. Each action is `{id, label, icon?, iconOnly?, slot?,
+         *   shown. Each action is `{id, label, icon?, iconOnly?, slot?, tone?,
          *   onSelect}`, where `icon` is a Lucide glyph NAME — the source names
          *   it, this builds it — `iconOnly` shows the glyph alone with `label`
          *   as the button's accessible name instead of its text (SC 4.1.2) and
          *   as its tooltip, and `slot` is `'menu'` to put it behind the `⋯`,
          *   `'title'` to put it beside the name, or absent for the action row.
+         *   `tone` is `'live'` (the only tone so far) for an action that marks
+         *   something running now — the browser view — and sets
+         *   `data-tone="live"`, which the stylesheet colours soft green.
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
@@ -259,6 +262,8 @@ const BossModConversationChrome = (() => {
                 btn.className = menuAction
                     ? 'menu-action'
                     : 'btn btn-sm conversation-action';
+                if (action.tone) btn.setAttribute('data-tone', action.tone);
+                else btn.removeAttribute('data-tone');
                 clear(btn);
                 if (action.icon) {
                     btn.append(h('i', { 'data-lucide': action.icon, 'aria-hidden': 'true' }));

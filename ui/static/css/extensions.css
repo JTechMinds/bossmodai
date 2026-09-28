@@ -1,0 +1,28 @@
+/* ─── Extensions: the browser view ───
+
+   The Extensions dialog itself is built from marketplace.css's card classes;
+   this sheet adds only what those do not cover for the single-agent browser
+   viewer — a scroller for a panel body (panel bodies do not scroll themselves,
+   see overlays.css) and the full-size image. Linked after marketplace.css. */
+
+/* The part of a panel layer that scrolls, as a flex child of .modal-body. */
+.ext-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* The exact image the model was sent, never downscaled; the scroller pans. */
+.ext-live-full {
+  display: block;
+  max-width: none;
+  border: 1px solid var(--line);
+}
+
+.ext-live-caption {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
