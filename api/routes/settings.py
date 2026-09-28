@@ -269,8 +269,17 @@ def _validate_boolean_setting(key: str, value: str) -> None:
         raise HTTPException(400, f"{label} must be true or false.")
 
 
+# Settings with their own route, which validates what the generic PUT cannot
+# (enabling an extension needs its setup to be ready).
+_OWN_ROUTE_SETTINGS = {
+    "extensions_enabled": "Extensions are turned on and off in Add → Extensions (PUT /api/extensions/{id}/enabled).",
+}
+
+
 @router.put("/settings/{key}")
 async def set_setting(key: str, value: str, category: str = "general"):
+    if key in _OWN_ROUTE_SETTINGS:
+        raise HTTPException(400, _OWN_ROUTE_SETTINGS[key])
     if key == "system_prompt_template" or key in _RUNTIME_CONTRACT_KEYS.values():
         try:
             _validate_authored_prompt_template(value)

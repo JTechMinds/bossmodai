@@ -15,6 +15,8 @@ dependencies = [
     "pathfinding>=1.0.0",
     "python-telegram-bot>=22.7",
     "python-multipart>=0.0.32",
+    "playwright>=1.63.0",
+    "pillow>=12.3.0",
 ]
 
 [tool.uv]

@@ -7,7 +7,11 @@
  * "find an agent to start from" and "author one" are separate errands and the
  * row must not silently pick one.
  *
- * Both doors lead into the SAME dialog — context/agents-dialog.js, with Add
+ * A third door, Extensions, opens extensions/extensions-dialog.js: the
+ * app's add-ons (Browser Vision) are switched on from the same `+` the
+ * operator adds everything else from.
+ *
+ * The two agent doors lead into the SAME dialog — context/agents-dialog.js, with Add
  * agent and the Marketplace as two tabs of it — and each opens it on its own
  * tab. The operator can cross to the other errand from inside without coming
  * back here, which the two separate modals these doors used to open could not
@@ -101,6 +105,8 @@ const BossModAddAgentMenu = (() => {
                     // The same dialog, on its Add agent tab.
                     door(ICONS.add, 'Add Agent',
                         () => BossModAgentsDialog.open({ store, tab: 'add' })),
+                    // The Extensions dialog: switch app add-ons on and off.
+                    door('puzzle', 'Extensions', () => BossModExtensionsDialog.open()),
                 ],
                 container,
                 onClose: () => {

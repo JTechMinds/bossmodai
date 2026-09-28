@@ -122,6 +122,7 @@ def test_cli_result_helper_still_imported_from_loop() -> None:
         detail="read notes.md",
         prompt_content="BOSSMOD CLI RESULT\ncommand: cat notes.md\n\nSTDOUT:\nok",
         data={},
+        image_paths=(),
     )
     result = _cli_result_to_turn_result(SimpleNamespace(name="Ada"), cli_result)
     assert result["event"] == "bm_cli_result"

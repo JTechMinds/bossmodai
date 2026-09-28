@@ -826,13 +826,15 @@ def _step_messages(
     response_content: str,
     result: dict[str, Any],
     active_activity_kind: str | None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Return one step's working-transcript messages: the action, then its result."""
     if action_name == "bm_cli" and result.get("cli_prompt_content"):
         return cli_continuation_messages(
             assistant_content=response_content,
             cli_prompt_content=result["cli_prompt_content"],
             followup_content=load_default_prompt("internal_loop_execution_cli_followup"),
+            # Absent on results built without a CLI result (no screenshot).
+            image_paths=tuple(result.get("cli_image_paths", ())),
         )
     return [
         {"role": "assistant", "content": response_content},

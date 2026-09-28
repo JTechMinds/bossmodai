@@ -59,6 +59,7 @@ from core.bm_cli.state_commands import (
 )
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path
+from core.extensions.cli_bridge import extension_handlers
 from core.models import Agent, AgentState
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,10 @@ _HANDLERS: dict[str, CliHandler] = {
     "categories": handle_commands,
     "fsearch": handle_fsearch,
     "learn": handle_learn,
+    # One command per discovered extension; each checks at call time whether
+    # its extension is enabled. Discovery collisions with the names above
+    # make an extension invalid, so these never overwrite a core handler.
+    **extension_handlers(),
 }
 
 VIRTUAL_COMMANDS: frozenset[str] = frozenset(_HANDLERS.keys())

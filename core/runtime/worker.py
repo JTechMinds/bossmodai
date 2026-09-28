@@ -17,6 +17,7 @@ from core.agent_loop.channel_idle_check import channel_idle_watch
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
+from core.extensions.loader import shutdown_loaded_extensions
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
 from core.world.simulation import simulation
 
@@ -37,6 +38,8 @@ class RuntimeController:
 
     async def shutdown(self) -> None:
         await self._stop_services()
+        # Closes browsers and other resources extensions hold in this process.
+        await asyncio.to_thread(shutdown_loaded_extensions)
 
     async def pause(self) -> None:
         await self._stop_services()

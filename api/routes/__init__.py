@@ -14,6 +14,7 @@ from api.routes import (
     attachments,
     cli_policy,
     company_files,
+    extensions,
     floors,
     host_path_consent,
     needs,
@@ -40,3 +41,4 @@ router.include_router(nest_git.router)
 router.include_router(needs.router)
 router.include_router(settings.router)
 router.include_router(attachments.router)
+router.include_router(extensions.router)

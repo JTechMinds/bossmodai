@@ -26,6 +26,9 @@ class BossModCliResult:
     matched_rule_id: str | None = None
     approval_request_id: str | None = None
     consent_request_id: str | None = None
+    # Screenshot files to show the model with this result (see
+    # core.llm.attachment_parts.SCREENSHOT_PATHS_KEY). Paths, never bytes.
+    image_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

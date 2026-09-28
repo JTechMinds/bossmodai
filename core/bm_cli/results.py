@@ -274,11 +274,29 @@ def trim(text: str, *, limit: int = 240) -> str:
     return text[: limit - 3] + "..."
 
 
-def wrap_cli_tool_message(content: str, *, role: str = "user") -> dict[str, str]:
+def wrap_cli_tool_message(
+    content: str,
+    *,
+    role: str = "user",
+    image_paths: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Wrap CLI / tool output as a non-system chat message with hard delimiters.
 
     File contents and shell stdout must never inherit ``role=system``.
     Allowed roles are ``user`` (default) and ``tool``.
+
+    Args:
+        content: The CLI output text.
+        role: ``user`` or ``tool``.
+        image_paths: Screenshot files this result shows. When non-empty they
+            are named under ``SCREENSHOT_PATHS_KEY`` and expanded into image
+            parts (newest carrier only) at the completion seam.
+
+    Returns:
+        The message dict.
+
+    Raises:
+        ValueError: ``role`` is ``system`` or not an allowed tool role.
     """
     if role == "system":
         raise ValueError("CLI/tool output must not be elevated to role=system")
@@ -291,7 +309,14 @@ def wrap_cli_tool_message(content: str, *, role: str = "user") -> dict[str, str]
         f"{text.rstrip()}\n"
         f"{CLI_TOOL_RESULT_END}"
     )
-    return {"role": role, "content": wrapped}
+    message: dict[str, Any] = {"role": role, "content": wrapped}
+    if image_paths:
+        # Imported here: attachment_parts pulls in db and model routing, which
+        # this rendering module otherwise does not need.
+        from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY
+
+        message[SCREENSHOT_PATHS_KEY] = list(image_paths)
+    return message
 
 
 def cli_continuation_messages(
@@ -300,11 +325,16 @@ def cli_continuation_messages(
     cli_prompt_content: str,
     followup_content: str,
     followup_role: str = "user",
-) -> list[dict[str, str]]:
-    """Build the post-CLI continuation: assistant turn, tool result, follow-up."""
+    image_paths: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """Build the post-CLI continuation: assistant turn, tool result, follow-up.
+
+    ``image_paths`` rides on the tool-result message (see
+    :func:`wrap_cli_tool_message`).
+    """
     return [
         {"role": "assistant", "content": assistant_content},
-        wrap_cli_tool_message(cli_prompt_content),
+        wrap_cli_tool_message(cli_prompt_content, image_paths=image_paths),
         {"role": followup_role, "content": followup_content},
     ]
 

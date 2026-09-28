@@ -564,7 +564,7 @@ def test_every_module_stays_under_the_line_cap() -> None:
                    if "vendor" not in path.parts and len(path.relative_to(js).parts) > 1}
     assert directories == {
         "core", "shell", "conversation", "context", "needs", "places", "settings",
-        "marketplace",
+        "marketplace", "extensions",
     }, directories
 
 

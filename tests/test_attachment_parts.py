@@ -308,3 +308,123 @@ def test_attachment_route_line_unknown_id_raises():
 
     with pytest.raises(AttachmentUnavailableError):
         attachment_route_line(["no-such-id"])
+
+
+# ─── CLI screenshots (Browser Vision): only the newest is sent as an image ───
+
+
+def _shot(tmp_path, name: str) -> str:
+    path = tmp_path / name
+    path.write_bytes(_PNG)
+    return str(path)
+
+
+def _cli_result(text: str, *paths: str) -> dict:
+    from core.bm_cli.results import wrap_cli_tool_message
+
+    return wrap_cli_tool_message(text, image_paths=tuple(paths))
+
+
+def test_screenshot_png_is_a_model_image_type():
+    from core.attachments import MODEL_IMAGE_MIME_TYPES
+    from core.llm.attachment_parts import SCREENSHOT_MIME_TYPE
+
+    assert SCREENSHOT_MIME_TYPE in MODEL_IMAGE_MIME_TYPES
+
+
+def test_only_the_last_screenshot_carrier_is_expanded(tmp_path):
+    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SCREENSHOT_SUPERSEDED_TEXT
+
+    set_supports_images("vision-model", True)
+    old, new = _shot(tmp_path, "old.png"), _shot(tmp_path, "new.png")
+    messages = [
+        {"role": "system", "content": "sys"},
+        _cli_result("first view", old),
+        {"role": "assistant", "content": "click"},
+        _cli_result("second view", new),
+        {"role": "user", "content": "continue"},
+    ]
+    assert messages[1][SCREENSHOT_PATHS_KEY] == [old]
+
+    out = expand_attachment_messages(messages, model="vision-model")
+
+    earlier, newest = out[1]["content"], out[3]["content"]
+    assert earlier[0]["type"] == "text" and "first view" in earlier[0]["text"]
+    assert earlier[1:] == [{"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT}]
+    assert "second view" in newest[0]["text"]
+    assert newest[1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64," + base64.b64encode(_PNG).decode()},
+    }
+    assert sum(part["type"] == "image_url" for m in out if isinstance(m["content"], list) for part in m["content"]) == 1
+    assert out[4] == {"role": "user", "content": "continue"}
+
+
+def test_screenshot_key_is_never_sent_and_input_is_untouched(tmp_path):
+    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY
+
+    set_supports_images("vision-model", True)
+    path = _shot(tmp_path, "s.png")
+    messages = [_cli_result("view", path), _cli_result("again", path)]
+
+    out = expand_attachment_messages(messages, model="vision-model")
+
+    assert all(SCREENSHOT_PATHS_KEY not in message for message in out)
+    assert messages[0][SCREENSHOT_PATHS_KEY] == [path]
+    assert isinstance(messages[0]["content"], str)
+
+
+def test_non_vision_model_gets_the_cannot_view_notice_for_a_screenshot(tmp_path, caplog):
+    set_supports_images("text-model", False)
+    path = _shot(tmp_path, "s.png")
+
+    with caplog.at_level("WARNING"):
+        out = expand_attachment_messages([_cli_result("view", path)], model="text-model")
+
+    notice = out[0]["content"][1]
+    assert notice["type"] == "text"
+    assert "your model cannot view images" in notice["text"]
+    assert "not marked image-capable" in caplog.text
+
+
+def test_a_missing_newest_screenshot_gets_the_unavailable_notice_and_a_warning(tmp_path, caplog):
+    set_supports_images("vision-model", True)
+    path = _shot(tmp_path, "gone.png")
+    Path(path).unlink()
+
+    with caplog.at_level("WARNING"):
+        out = expand_attachment_messages([_cli_result("view", path)], model="vision-model")
+
+    assert out[0]["content"][1] == {
+        "type": "text",
+        "text": '[screenshot unavailable: the file is gone; run "bv view"]',
+    }
+    assert "is missing" in caplog.text
+
+
+def test_a_frozen_transcript_keeps_the_screenshot_paths(tmp_path):
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
+    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY
+    from core.models.message import HUMAN_SENDER_ID
+    from core.tasking import create_or_bind_task
+
+    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    task = create_or_bind_task(
+        title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
+        work_contract=None, source_channel=None, notification_policy=None, notification_channel_id=None,
+        audit_author_name="Human Operator", audit_author_type="human",
+    ).task
+    activity = activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    path = _shot(tmp_path, "s.png")
+    steps = [{"role": "assistant", "content": '{"act":"cli","data":{"cmd":"bv view"}}'}, _cli_result("view", path)]
+
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
+    )
+    assert snapshot.transcript[1][SCREENSHOT_PATHS_KEY] == [path]
+    stored = db.get_work_snapshot(activity.id)
+    assert stored.transcript[1][SCREENSHOT_PATHS_KEY] == [path]
+    restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
+    assert restored[2][SCREENSHOT_PATHS_KEY] == [path]

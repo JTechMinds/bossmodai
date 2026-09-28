@@ -60,10 +60,14 @@ class CliApprovalDecisionBody(BaseModel):
 
 @router.get("/cli-policy/virtual-commands")
 async def list_virtual_commands():
-    """Return the read-only virtual command registry for the UI."""
+    """Return the read-only virtual command registry for the UI.
+
+    Includes every discovered extension's command, enabled or not: this
+    lists what exists, and extension commands are always auto-allowed.
+    """
     from core.bm_cli.command_registry import (
-        VIRTUAL_COMMAND_REGISTRY,
         VIRTUAL_CATEGORIES,
+        all_command_meta,
     )
 
     commands = [
@@ -74,7 +78,7 @@ async def list_virtual_commands():
             "usage_syntax": cmd.usage_syntax,
             "help_text": cmd.help_text,
         }
-        for cmd in VIRTUAL_COMMAND_REGISTRY.values()
+        for cmd in all_command_meta().values()
     ]
 
     categories = [

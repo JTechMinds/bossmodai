@@ -84,6 +84,7 @@ def _cli_action_result(
         "detail": cli_result.detail,
         "agent_name": agent.name,
         "cli_prompt_content": cli_result.prompt_content,
+        "cli_image_paths": list(cli_result.image_paths),
         "counts_as_progress": cli_result_counts_as_progress(cli_result),
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": not (

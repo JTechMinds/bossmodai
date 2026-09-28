@@ -34,7 +34,9 @@ class WorkSnapshot(BaseModel):
     activity_id: str
     agent_id: str
     task_id: str | None = None
-    transcript: list[dict[str, str]] = Field(default_factory=list)
+    # {role, content} messages; a CLI result may also carry
+    # attachment_parts.SCREENSHOT_PATHS_KEY: a list of screenshot paths.
+    transcript: list[dict[str, str | list[str]]] = Field(default_factory=list)
     fingerprints: list[str] = Field(default_factory=list)
     interludes: list[WorkInterlude] = Field(default_factory=list)
     no_progress_checkpoints: int = 0

@@ -1247,7 +1247,8 @@ async function main() {
     await drain();
     const doors = railHost.querySelectorAll(".menu-door");
     const marks = doors.map((row) => row.querySelector("i"));
-    verdict.bothMenuDoorsCarryALucideIcon = doors.length === 2
+    // Three doors since Add → Extensions: the two agent doors, then Extensions.
+    verdict.bothMenuDoorsCarryALucideIcon = doors.length === 3
         && marks.every((mark) => Boolean(mark)
             // Decorative: the accessible name is the label beside it, so a
             // bundle that failed to load costs the row nothing it is named by.
@@ -1266,7 +1267,9 @@ async function main() {
         && marks[0].getAttribute("data-lucide") === "blocks"
         && marks[0].getAttribute("data-lucide") !== "building"
         && doors[1].textContent === "Add Agent"
-        && marks[1].getAttribute("data-lucide") === "plus";
+        && marks[1].getAttribute("data-lucide") === "plus"
+        && doors[2].textContent === "Extensions"
+        && marks[2].getAttribute("data-lucide") === "puzzle";
     // And the door still opens what it names, with the panel away first: the
     // Agents takeover, on its Marketplace tab, the pane told it is on screen.
     const activatedBefore = marketActivations;

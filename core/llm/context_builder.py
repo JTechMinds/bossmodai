@@ -21,6 +21,7 @@ from core.agent_loop.turn_context import _determine_mode
 from core.agent_loop.work_snapshot import paused_work_snapshot, render_paused_work_view
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
+from core.extensions.prompt_blocks import render_extension_blocks
 from core.models import Agent, AgentState
 from core.models.notification import Notification
 from core.llm.attachment_parts import history_manifests, mark_trigger_attachments
@@ -186,6 +187,8 @@ def build_context(
     file_guidance = _render_file_deliverable_guidance(turn, template_overrides)
     if file_guidance:
         messages.append({"role": "system", "content": file_guidance})
+    if extension_blocks := render_extension_blocks(turn.agent, turn.trigger):  # both contract kinds
+        messages.append({"role": "system", "content": extension_blocks})
     if turn.contract_kind == "decision":
         messages.append(
             {

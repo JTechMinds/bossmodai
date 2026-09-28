@@ -233,6 +233,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("bossmod.attach.inline_text_max_chars", "20000", "advanced"),
     # Uploads never sent within this window are swept at app start.
     ("bossmod.attach.pending_ttl_hours", "24", "advanced"),
+
+    # ── Extensions ──
+    # JSON array of enabled extension ids. Written only by the extensions API,
+    # which checks setup first; the generic settings PUT refuses it.
+    ("extensions_enabled", "[]", "extensions"),
 ]
 _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     key: (value, category) for key, value, category in _SEED_SETTINGS

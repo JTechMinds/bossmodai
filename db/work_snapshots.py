@@ -25,7 +25,7 @@ def save_work_snapshot(
     *,
     agent_id: str,
     task_id: str | None,
-    transcript: list[dict[str, str]],
+    transcript: list[dict[str, str | list[str]]],
     fingerprints: list[str],
     no_progress_checkpoints: int,
 ) -> WorkSnapshot:
@@ -38,7 +38,8 @@ def save_work_snapshot(
         activity_id: The work activity this transcript belongs to.
         agent_id: Owning agent.
         task_id: Bound task, if any.
-        transcript: Full working transcript as ``{role, content}`` messages.
+        transcript: Full working transcript as ``{role, content}`` messages
+            (a CLI result may also name its screenshot paths).
         fingerprints: Every command fingerprint seen on this activity.
         no_progress_checkpoints: Checkpoints spent since the last progress step.
 

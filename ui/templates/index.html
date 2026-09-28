@@ -329,6 +329,13 @@
     <script src="{{ static_url('js/marketplace/marketplace-view.js') }}"></script>
     <script src="{{ static_url('js/marketplace/marketplace.js') }}"></script>
 
+    <!-- Add → Extensions. After the marketplace: the dialog builds its cards
+         from the marketplace's classes and spends marketplace-detail.js's
+         confirm strip; before shell/add-agent-menu.js, whose third door
+         opens it. -->
+    <script src="{{ static_url('js/extensions/extensions-api.js') }}"></script>
+    <script src="{{ static_url('js/extensions/extensions-dialog.js') }}"></script>
+
     <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-advanced.js') }}"></script>

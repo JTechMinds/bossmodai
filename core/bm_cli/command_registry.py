@@ -3,6 +3,10 @@
 Provides the canonical command metadata consumed by the help system and the
 Virtual Commands UI tab.  All entries are frozen dataclasses; nothing here
 mutates runtime state.
+
+Extension commands (``core.extensions``) join the registry through
+:func:`all_command_meta` (every discovered extension) and
+:func:`visible_commands` (enabled extensions only, which is what help shows).
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ VIRTUAL_CATEGORIES: dict[str, str] = {
     "agent": "Agent state and work history",
     "world": "Environment and physical context",
     "help": "Command discovery and reference",
+    "extensions": "Commands added by enabled extensions",
 }
 
 # The pref forms, shared with the handler's usage errors so they cannot drift.
@@ -578,26 +583,60 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
 # Helper functions
 # ---------------------------------------------------------------------------
 
+def all_command_meta() -> dict[str, VirtualCommandMeta]:
+    """Return core commands plus every discovered extension's command.
+
+    For listings that show what exists (the policy UI), enabled or not.
+    """
+    from core.extensions.cli_bridge import extension_command_meta
+
+    return {**VIRTUAL_COMMAND_REGISTRY, **extension_command_meta()}
+
+
+def visible_commands() -> dict[str, VirtualCommandMeta]:
+    """Return the commands help may show: core plus ENABLED extensions' commands.
+
+    ``help``, ``categories``, ``fsearch`` and ``learn`` all read this, so a
+    disabled extension's command is never advertised to an agent.
+
+    Raises:
+        core.extensions.registry.ExtensionSettingError: The enabled setting
+            is unreadable.
+    """
+    from core.extensions.cli_bridge import enabled_extension_command_meta
+
+    return {**VIRTUAL_COMMAND_REGISTRY, **enabled_extension_command_meta()}
+
+
 def get_virtual_command(name: str) -> VirtualCommandMeta | None:
-    """Look up a virtual command by name. Returns None if not found."""
+    """Look up a visible virtual command by name. Returns None if not found."""
     canonical = resolve_virtual_command_name(name)
     if canonical is None:
         return None
-    return VIRTUAL_COMMAND_REGISTRY.get(canonical)
+    return visible_commands().get(canonical)
 
 
 def resolve_virtual_command_name(name: str) -> str | None:
-    """Resolve a canonical command name from either the name or an alias."""
+    """Resolve a canonical command name from either the name or an alias.
+
+    Extension commands resolve too (enabled or not): they are virtual
+    commands whose handler answers for a disabled extension itself.
+    """
     normalized = name.strip().lower()
     if not normalized:
         return None
     if normalized in VIRTUAL_COMMAND_REGISTRY:
         return normalized
-    return _VIRTUAL_COMMAND_ALIASES.get(normalized)
+    alias = _VIRTUAL_COMMAND_ALIASES.get(normalized)
+    if alias is not None:
+        return alias
+    from core.extensions.cli_bridge import extension_command_meta
+
+    return normalized if normalized in extension_command_meta() else None
 
 
 def search_virtual_commands(query: str) -> dict[str, list[VirtualCommandMeta]]:
-    """Search commands by category name, command name, or description.
+    """Search visible commands by category name, command name, or description.
 
     Matching is case-insensitive.  Results are grouped by category, with
     categories ordered according to :data:`VIRTUAL_CATEGORIES`.
@@ -605,7 +644,7 @@ def search_virtual_commands(query: str) -> dict[str, list[VirtualCommandMeta]]:
     q = query.lower()
     matches: dict[str, list[VirtualCommandMeta]] = {}
 
-    for cmd in VIRTUAL_COMMAND_REGISTRY.values():
+    for cmd in visible_commands().values():
         hit = (
             q in cmd.category.lower()
             or q in cmd.name.lower()
@@ -626,17 +665,20 @@ def search_virtual_commands(query: str) -> dict[str, list[VirtualCommandMeta]]:
 
 
 def list_virtual_categories() -> list[tuple[str, str, list[str]]]:
-    """Return (category, description, [command_names]) ordered by category.
+    """Return (category, description, [command_names]) for visible commands.
 
     The order follows :data:`VIRTUAL_CATEGORIES` key insertion order.
     """
     cat_commands: dict[str, list[str]] = {}
-    for cmd in VIRTUAL_COMMAND_REGISTRY.values():
+    for cmd in visible_commands().values():
         cat_commands.setdefault(cmd.category, []).append(cmd.name)
 
+    # A category with nothing visible (extensions, when none is enabled) is
+    # left out rather than listed empty.
     return [
-        (cat, desc, cat_commands.get(cat, []))
+        (cat, desc, cat_commands[cat])
         for cat, desc in VIRTUAL_CATEGORIES.items()
+        if cat in cat_commands
     ]
 
 
@@ -645,3 +687,6 @@ _VIRTUAL_COMMAND_ALIASES: dict[str, str] = {
     for meta in VIRTUAL_COMMAND_REGISTRY.values()
     for alias in meta.aliases
 }
+
+# Every token that already means a core command; an extension may not claim one.
+CORE_COMMAND_NAMES: frozenset[str] = frozenset(VIRTUAL_COMMAND_REGISTRY) | frozenset(_VIRTUAL_COMMAND_ALIASES)

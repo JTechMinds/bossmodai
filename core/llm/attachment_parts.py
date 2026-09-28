@@ -29,6 +29,20 @@ What each attachment becomes:
 - longer text, non-UTF-8 text, documents and anything else → a text
   reference line with the path.
 
+CLI screenshots (Browser Vision) travel the same way under the private
+:data:`SCREENSHOT_PATHS_KEY`, a list of PNG paths on a CLI result message.
+Only the LAST message carrying it is expanded, so context does not grow by
+one image per browser action:
+
+- newest screenshot, model flagged image-capable, file present → an
+  ``image_url`` part;
+- newest screenshot, model not flagged → an explicit text notice that the
+  model cannot view it (and a warning log);
+- newest screenshot, file missing (pruned or deleted) → a text notice that
+  it is unavailable and to run ``bv view`` (and a warning log) — the turn
+  stays resumable after pruning;
+- any earlier carrier → a text line saying it was superseded.
+
 Parts use the OpenAI chat content format, which litellm translates for each
 provider.
 """
@@ -50,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 # Private message key naming a message's attachment ids. Never sent to a model.
 ATTACHMENT_IDS_KEY = "bm_attachment_ids"
+# Private message key naming CLI screenshot files. Never sent to a model.
+SCREENSHOT_PATHS_KEY = "bm_screenshot_paths"
+SCREENSHOT_MIME_TYPE = "image/png"
+SCREENSHOT_SUPERSEDED_TEXT = "[screenshot not resent — superseded by a newer capture]"
+_PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, SCREENSHOT_PATHS_KEY})
 
 
 class AttachmentUnavailableError(Exception):
@@ -68,14 +87,16 @@ def expand_attachment_messages(
 ) -> list[dict[str, Any]]:
     """Return a copy of ``messages`` ready for the model.
 
-    Every message loses :data:`ATTACHMENT_IDS_KEY`. A message that carried
-    ids has its ``content`` replaced by content parts: its original text
-    first, then one part per attachment in the order the ids were given.
-    The input list and its dicts are not modified.
+    Every message loses :data:`ATTACHMENT_IDS_KEY` and
+    :data:`SCREENSHOT_PATHS_KEY`. A message that carried either has its
+    ``content`` replaced by content parts: its original text first, then one
+    part per attachment in the order the ids were given, then its screenshot
+    parts (see the module doc: only the last carrier gets images). The input
+    list and its dicts are not modified.
 
     Args:
         messages: Chat messages; ``content`` is text on every message that
-            carries attachment ids.
+            carries attachment ids or screenshot paths.
         model: The RAW model string (before any provider prefix), which is
             how image support is keyed in ``model_capabilities``.
 
@@ -90,17 +111,29 @@ def expand_attachment_messages(
     expanded: list[dict[str, Any]] = []
     inline_cap: int | None = None
     vision: bool | None = None
-    for message in messages:
-        copy = {key: value for key, value in message.items() if key != ATTACHMENT_IDS_KEY}
+    carriers = [index for index, message in enumerate(messages) if message.get(SCREENSHOT_PATHS_KEY)]
+    newest_shots = carriers[-1] if carriers else None
+    for index, message in enumerate(messages):
+        copy = {key: value for key, value in message.items() if key not in _PRIVATE_KEYS}
         ids = message.get(ATTACHMENT_IDS_KEY)
+        shots = message.get(SCREENSHOT_PATHS_KEY)
+        if not ids and not shots:
+            expanded.append(copy)
+            continue
+        if vision is None:
+            vision = supports_images(model)
+        parts: list[dict[str, Any]] = [{"type": "text", "text": str(copy.get("content", ""))}]
         if ids:
             if inline_cap is None:
                 inline_cap = config.require_int("bossmod.attach.inline_text_max_chars")
-                vision = supports_images(model)
-            parts: list[dict[str, Any]] = [{"type": "text", "text": str(copy.get("content", ""))}]
             for attachment_id in ids:
-                parts.append(_attachment_part(_load(attachment_id), model=model, vision=bool(vision), cap=inline_cap))
-            copy["content"] = parts
+                parts.append(_attachment_part(_load(attachment_id), model=model, vision=vision, cap=inline_cap))
+        if shots:
+            if index == newest_shots:
+                parts.extend(_screenshot_part(str(path), model=model, vision=vision) for path in shots)
+            else:
+                parts.append({"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT})
+        copy["content"] = parts
         expanded.append(copy)
     return expanded
 
@@ -209,7 +242,7 @@ def _attachment_part(att: Attachment, *, model: str, vision: bool, cap: int) -> 
         if att.mime_type not in MODEL_IMAGE_MIME_TYPES:
             return _reference_part(att, "its format is not one models accept as an image")
         if vision:
-            return _image_part(att)
+            return _image_part(Path(att.storage_path), att.mime_type)
         logger.warning(
             "Model %s is not marked image-capable; image %s sent as a notice", model, att.id,
         )
@@ -226,13 +259,31 @@ def _attachment_part(att: Attachment, *, model: str, vision: bool, cap: int) -> 
     return _reference_part(att, "it is not inlined")
 
 
-def _image_part(att: Attachment) -> dict[str, Any]:
+def _image_part(path: Path, mime_type: str) -> dict[str, Any]:
     """An ``image_url`` part carrying the file as a base64 data URL."""
-    encoded = base64.b64encode(Path(att.storage_path).read_bytes()).decode("ascii")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return {
         "type": "image_url",
-        "image_url": {"url": f"data:{att.mime_type};base64,{encoded}"},
+        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
     }
+
+
+def _screenshot_part(path: str, *, model: str, vision: bool) -> dict[str, Any]:
+    """The newest CLI screenshot as an image part, or the notice saying why not."""
+    if not vision:
+        logger.warning("Model %s is not marked image-capable; screenshot %s sent as a notice", model, path)
+        return {
+            "type": "text",
+            "text": (
+                "[A screenshot was captured, but your model cannot view images. "
+                "Tell the operator you can't see it.]"
+            ),
+        }
+    file = Path(path)
+    if not file.is_file():
+        logger.warning("Screenshot %s is missing (pruned or deleted); sent as a notice", path)
+        return {"type": "text", "text": '[screenshot unavailable: the file is gone; run "bv view"]'}
+    return _image_part(file, SCREENSHOT_MIME_TYPE)
 
 
 def _text_part(att: Attachment, cap: int) -> dict[str, Any]:
