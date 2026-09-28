@@ -5,11 +5,6 @@ const fs = require('fs');
 
 const ACTION_LOG = '/tmp/bv-action-log.jsonl';
 
-const VIEWPORT = Object.freeze({
-  width: 960,
-  height: 768
-});
-
 class HeadlessCapture {
   constructor() {
     this.browser = null;
@@ -19,7 +14,7 @@ class HeadlessCapture {
   async init() {
     this.browser = await chromium.launch({ headless: true });
     this.page = await this.browser.newPage();
-    await this.page.setViewportSize({ width: VIEWPORT.width, height: VIEWPORT.height });
+    await this.page.setViewportSize({ width: 960, height: 960 });
   }
 
   async navigate(url) {
@@ -73,21 +68,4 @@ class HeadlessCapture {
   }
 }
 
-// Module-level singleton for lifecycle functions
-const _instance = new HeadlessCapture();
-
-async function startBrowser() {
-  if (_instance.hasPage) return;
-  await _instance.init();
-}
-
-async function stopBrowser() {
-  if (!_instance.hasPage) return;
-  await _instance.close();
-}
-
-function healthCheck() {
-  return { healthy: _instance.hasPage };
-}
-
-module.exports = { HeadlessCapture, ACTION_LOG, VIEWPORT, startBrowser, stopBrowser, healthCheck, _instance };
+module.exports = { HeadlessCapture, ACTION_LOG };
