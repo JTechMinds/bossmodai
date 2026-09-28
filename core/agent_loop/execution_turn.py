@@ -39,6 +39,7 @@ from core.agent_loop.turn_helpers import (
     _render_loop_prompt,
     _serialize_trace_value,
     _summarize_action_chain,
+    post_cli_status_lines,
 )
 from core.agent_loop.turn_rules import (
     should_end_turn_after_action,
@@ -532,6 +533,14 @@ async def _run_execution_turn(
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = activity_runtime.get_active_task_id(agent.id)
+        if action_name == "bm_cli":
+            await post_cli_status_lines(
+                agent,
+                task_id=active_task_id,
+                channel_id=result.get("cli_channel_id"),
+                lines=result.get("cli_status_lines", []),
+                command=str(action.get("command") or ""),
+            )
         if result.get("trigger_requests"):
             scheduled_triggers.extend(result["trigger_requests"])
 

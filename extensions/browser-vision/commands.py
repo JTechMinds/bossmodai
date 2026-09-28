@@ -17,7 +17,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Literal, Protocol
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -58,6 +58,8 @@ WINDOW_SWAP_NOTE = (
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # host:port, optionally with a path — looks like "scheme:" but is not one.
 _HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.-]+:\d+(?:/.*)?$")
+# Operator status lines keep URLs and reasons to this many characters.
+_STATUS_MAX_CHARS = 80
 _VIEW_FLAGS = {"--density", "--grid", "--grid-color", "--grid-opacity", "--focus"}
 
 
@@ -72,6 +74,7 @@ class BrowserVisionDefaults(BaseModel):
     label_min_px: int = Field(gt=0)
     label_font_ratio: float = Field(gt=0)
     label_font_min_px: int = Field(gt=0)
+    label_font_max_px: int = Field(gt=0)
     label_opacity: float = Field(ge=0, le=1)
     image_max_px: int = Field(gt=0)
     grid_default: bool
@@ -89,6 +92,12 @@ class BrowserVisionDefaults(BaseModel):
     def _color_parses(cls, value: str) -> str:
         parse_color(value)
         return value
+
+    @model_validator(mode="after")
+    def _label_font_bounds_ordered(self) -> "BrowserVisionDefaults":
+        if self.label_font_min_px > self.label_font_max_px:
+            raise ValueError("label_font_min_px must not exceed label_font_max_px")
+        return self
 
     @model_validator(mode="after")
     def _default_window_exists(self) -> "BrowserVisionDefaults":
@@ -114,6 +123,10 @@ class BrowserHostLike(Protocol):
     def shutdown(self) -> None: ...
 
 
+# When a screenshot result says "Browsing <url>" to the operator.
+Announce = Literal["always", "navigation", "never"]
+
+
 @dataclass
 class _AgentView:
     """One agent's sticky settings for its browser session."""
@@ -123,6 +136,8 @@ class _AgentView:
     grid: GridStyle
     active: GridSpec | None = None
     downloads: list[str] = field(default_factory=list)
+    # The page URL of the latest screenshot, to tell when an action navigated.
+    last_url: str | None = None
 
 
 class CommandError(ValueError):
@@ -237,8 +252,13 @@ class BrowserVisionCommands:
         url = normalize_url(args[0])
         view = self._view_for(ctx.agent.id)
         self._host.open_session(ctx.agent.id, view.window, self._downloads_dir(ctx.agent))
-        outcome = self._host.goto(ctx.agent.id, url)
-        return self._full_view(ctx, parsed, view, outcome, notes=[])
+        try:
+            outcome = self._host.goto(ctx.agent.id, url)
+        except BrowserActionError as exc:
+            reason = _truncate(str(exc).strip().splitlines()[0] if str(exc).strip() else "navigation failed")
+            failed = self._error(ctx, parsed, f"BROWSER_ERROR: {exc}")
+            return _with_status_lines(failed, [f"Couldn't open {short_url(url)} — {reason}"])
+        return self._full_view(ctx, parsed, view, outcome, notes=[], announce="always")
 
     def _view(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         flags = _parse_flags(args, _VIEW_FLAGS, "bv view [--density N] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] [--focus <a>-<b>]")
@@ -282,7 +302,7 @@ class BrowserVisionCommands:
                 command=parsed.raw,
                 detail=f"Browser Vision: window {window.name}",
                 kind="browser",
-                data={"window": window.name},
+                data={"window": window.name, "status_lines": []},
                 sections=[("BROWSER", [f"window set to {window.name}; it applies when you run bv open"])],
                 cwd=ctx.cwd,
             )
@@ -300,7 +320,7 @@ class BrowserVisionCommands:
         number = int(args[0])
         x, y = view.active.cell_center(number)
         outcome = self._host.click(ctx.agent.id, x, y)
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"clicked cell {number} at ({x:g}, {y:g})"])
+        return self._full_view(ctx, parsed, view, outcome, notes=[f"clicked cell {number} at ({x:g}, {y:g})"], announce="navigation")
 
     def _type(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if any(arg != "--enter" for arg in args):
@@ -310,7 +330,7 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         outcome = self._host.type_text(ctx.agent.id, body, enter="--enter" in args)
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"typed {len(body)} characters"])
+        return self._full_view(ctx, parsed, view, outcome, notes=[f"typed {len(body)} characters"], announce="navigation")
 
     def _key(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1:
@@ -318,7 +338,7 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         outcome = self._host.press(ctx.agent.id, args[0])
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"pressed {args[0]}"])
+        return self._full_view(ctx, parsed, view, outcome, notes=[f"pressed {args[0]}"], announce="navigation")
 
     def _scroll(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1 or args[0].lower() not in {"up", "down"}:
@@ -338,7 +358,7 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         outcome = self._host.back(ctx.agent.id)
-        return self._full_view(ctx, parsed, view, outcome, notes=["went back"])
+        return self._full_view(ctx, parsed, view, outcome, notes=["went back"], announce="navigation")
 
     def _status(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         view = self._view_for(ctx.agent.id)
@@ -358,7 +378,7 @@ class BrowserVisionCommands:
             command=parsed.raw,
             detail="Browser Vision: status",
             kind="browser",
-            data={"window": view.window.name, "density": view.density, "grid": view.grid.enabled},
+            data={"window": view.window.name, "density": view.density, "grid": view.grid.enabled, "status_lines": []},
             sections=[("BROWSER", lines)],
             cwd=ctx.cwd,
         )
@@ -371,7 +391,7 @@ class BrowserVisionCommands:
             command=parsed.raw,
             detail="Browser Vision: close",
             kind="browser",
-            data={"closed": closed},
+            data={"closed": closed, "status_lines": ["Closed the browser"] if closed else []},
             sections=[("BROWSER", ["browser session closed" if closed else "no browser session was open"])],
             cwd=ctx.cwd,
         )
@@ -407,10 +427,11 @@ class BrowserVisionCommands:
         outcome: ActionOutcome,
         *,
         notes: list[str],
+        announce: Announce = "never",
     ) -> BossModCliResult:
         capture = self._host.capture(ctx.agent.id)
         spec = GridSpec(capture.width, capture.height, view.density)
-        return self._screenshot_result(ctx, parsed, view, capture, spec, None, outcome, notes=notes)
+        return self._screenshot_result(ctx, parsed, view, capture, spec, None, outcome, notes=notes, announce=announce)
 
     def _screenshot_result(
         self,
@@ -423,7 +444,17 @@ class BrowserVisionCommands:
         outcome: ActionOutcome,
         *,
         notes: list[str],
+        announce: Announce = "never",
     ) -> BossModCliResult:
+        """Render, store and describe one screenshot.
+
+        ``announce`` decides the operator status lines (``data["status_lines"]``,
+        posted by core like task lines): ``"always"`` says ``Browsing <url>``
+        (open), ``"navigation"`` says it only when the page URL differs from
+        the previous screenshot's, ``"never"`` says nothing (view, scroll,
+        window). Each saved download adds a ``Downloaded`` line either way.
+        """
+        previous_url = view.last_url
         rendered = render_grid(
             capture.png,
             spec,
@@ -434,6 +465,7 @@ class BrowserVisionCommands:
             label=LabelStyle(
                 font_ratio=self._defaults.label_font_ratio,
                 font_min_px=self._defaults.label_font_min_px,
+                font_max_px=self._defaults.label_font_max_px,
                 opacity=self._defaults.label_opacity,
             ),
         )
@@ -469,11 +501,16 @@ class BrowserVisionCommands:
         if view.grid.enabled and not rendered.labelled:
             lines.append(UNLABELLED_NOTICE)
         lines += notes
+        status_lines: list[str] = []
+        if announce == "always" or (announce == "navigation" and capture.url != previous_url):
+            status_lines.append(f"Browsing {short_url(capture.url)}")
+        view.last_url = capture.url
         for download in outcome.downloads:
             if download.error is None:
                 entry = f"{DOWNLOADS_VIRTUAL_DIR}/{download.file_name} ({download.size} bytes)"
                 view.downloads.append(entry)
                 lines.append(f"downloaded: {entry}")
+                status_lines.append(f"Downloaded {download.file_name} to {DOWNLOADS_VIRTUAL_DIR}")
             else:
                 lines.append(f"download failed: {download.error}")
 
@@ -488,6 +525,7 @@ class BrowserVisionCommands:
                 "cols": spec.cols,
                 "rows": spec.rows,
                 "screenshot": str(path),
+                "status_lines": status_lines,
             },
             sections=[("BROWSER", lines)],
             cwd=ctx.cwd,
@@ -499,6 +537,26 @@ class BrowserVisionCommands:
 
     def _error(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, message: str) -> BossModCliResult:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
+
+
+def short_url(url: str) -> str:
+    """Return ``url`` for an operator line: no ``scheme://``, no trailing ``/``, ≤ 80 chars.
+
+    A URL without ``://`` (``about:blank``, ``data:…``) keeps its scheme, which
+    is the only part that says what it is.
+    """
+    text = url.strip()
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    return _truncate(text.rstrip("/") or text)
+
+
+def _truncate(text: str) -> str:
+    return text if len(text) <= _STATUS_MAX_CHARS else text[: _STATUS_MAX_CHARS - 1] + "…"
+
+
+def _with_status_lines(result: BossModCliResult, lines: list[str]) -> BossModCliResult:
+    return dataclasses.replace(result, data={**(result.data or {}), "status_lines": lines})
 
 
 def normalize_url(raw: str) -> str:

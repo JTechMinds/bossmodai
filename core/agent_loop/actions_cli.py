@@ -36,7 +36,11 @@ async def _handle_bm_cli(
         trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
         channel_id=channel_id,
     )
-    return _cli_action_result(agent, cli_result, command=command, trigger=trigger)
+    result = _cli_action_result(agent, cli_result, command=command, trigger=trigger)
+    # The channel this command ran for, so the turn posts its status lines to
+    # the same place (see turn_helpers.post_cli_status_lines).
+    result["cli_channel_id"] = channel_id
+    return result
 
 
 async def _handle_request_host_access(
@@ -85,6 +89,8 @@ def _cli_action_result(
         "agent_name": agent.name,
         "cli_prompt_content": cli_result.prompt_content,
         "cli_image_paths": list(cli_result.image_paths),
+        # Operator one-liners a command asked for (validated where they are posted).
+        "cli_status_lines": (cli_result.data or {}).get("status_lines", []),
         "counts_as_progress": cli_result_counts_as_progress(cli_result),
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": not (

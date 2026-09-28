@@ -26,7 +26,7 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-_LABELS = grid.LabelStyle(font_ratio=0.2, font_min_px=10, opacity=0.8)
+_LABELS = grid.LabelStyle(font_ratio=0.2, font_min_px=10, font_max_px=14, opacity=0.8)
 
 
 def _render(png: bytes, spec, *, color="auto", opacity=1.0, focus=None, enabled=True, label=_LABELS):
@@ -235,10 +235,11 @@ def _tag(cell_px: float, number: str) -> tuple[int, int, int, int]:
     return grid.tag_box(draw, (0, 0), number, font)
 
 
-def test_label_font_size_follows_the_ratio_with_a_floor() -> None:
+def test_label_font_size_follows_the_ratio_between_a_floor_and_a_cap() -> None:
+    assert grid.label_font_size(160, _LABELS) == 14  # 32 by ratio, capped
     assert grid.label_font_size(60, _LABELS) == 12
     assert grid.label_font_size(24, _LABELS) == 10
-    assert grid.label_font_size(200, _LABELS) == 40
+    assert grid.label_font_size(200, _LABELS) == 14
 
 
 def test_a_three_digit_tag_is_at_most_45_percent_of_a_density_60_cell() -> None:
@@ -280,7 +281,7 @@ def test_label_opacity_is_separate_from_line_opacity() -> None:
     assert strong.getpixel((60, 40)) != faint.getpixel((60, 40))
     # And a lower label opacity lightens the tag on its own.
     lighter = Image.open(io.BytesIO(_render(
-        png, spec, label=grid.LabelStyle(font_ratio=0.2, font_min_px=10, opacity=0.4),
+        png, spec, label=grid.LabelStyle(font_ratio=0.2, font_min_px=10, font_max_px=14, opacity=0.4),
     ).png)).convert("RGB")
     assert sum(lighter.getpixel((1, 1))) > sum(strong.getpixel((1, 1)))
 

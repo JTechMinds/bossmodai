@@ -129,11 +129,14 @@ class LabelStyle:
     Attributes:
         font_ratio: Digit height as a share of the rendered cell.
         font_min_px: Smallest digit height, whatever the cell size.
+        font_max_px: Largest digit height: big cells keep small tags, so a
+            tag never covers more page text than it must.
         opacity: Tag opacity 0–1, separate from the grid lines'.
     """
 
     font_ratio: float
     font_min_px: int
+    font_max_px: int
     opacity: float
 
 
@@ -451,8 +454,8 @@ def fit_inside(box: tuple[int, int, int, int], size: tuple[int, int]) -> tuple[i
 
 
 def label_font_size(cell_px: float, label: LabelStyle) -> int:
-    """Return the digit size for a rendered cell of ``cell_px``."""
-    return max(label.font_min_px, round(cell_px * label.font_ratio))
+    """Return the digit size for a rendered cell of ``cell_px``, within min/max."""
+    return min(label.font_max_px, max(label.font_min_px, round(cell_px * label.font_ratio)))
 
 
 def tag_box(

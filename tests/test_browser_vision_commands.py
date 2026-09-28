@@ -57,6 +57,10 @@ class FakeHost:
         self.size = (1280, 800)
         self.url = "about:blank"
         self.next_outcome = ActionOutcome()
+        # Set to make the next click land on a new page.
+        self.click_navigates_to: str | None = None
+        # Set to make the next goto fail with this Playwright message.
+        self.goto_error: str | None = None
 
     def _outcome(self):
         outcome, self.next_outcome = self.next_outcome, ActionOutcome()
@@ -71,11 +75,16 @@ class FakeHost:
 
     def goto(self, agent_id, url):
         self.calls.append(("goto", url))
+        if self.goto_error is not None:
+            message, self.goto_error = self.goto_error, None
+            raise _host_module.BrowserActionError(message)
         self.url = url
         return self._outcome()
 
     def click(self, agent_id, x, y):
         self.calls.append(("click", x, y))
+        if self.click_navigates_to is not None:
+            self.url, self.click_navigates_to = self.click_navigates_to, None
         return self._outcome()
 
     def type_text(self, agent_id, text, *, enter):
@@ -342,3 +351,76 @@ def test_downloads_go_to_the_agents_own_me_folder() -> None:
 
     agent = db.create_agent("Iris", role="Researcher")
     assert _commands_module.agent_downloads_dir(agent) == agent_artifact_dir(agent.storage_key) / "downloads"
+
+
+def test_a_manifest_with_label_font_min_above_max_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    defaults = dict(_ENTRY.manifest.defaults)
+    assert _commands_module.BrowserVisionDefaults.model_validate(defaults).label_font_max_px == 14
+    defaults.update(label_font_min_px=16, label_font_max_px=14)
+    with pytest.raises(ValidationError, match="label_font_min_px must not exceed label_font_max_px"):
+        _commands_module.BrowserVisionDefaults.model_validate(defaults)
+
+
+
+# ─── operator status lines (R13) ───
+
+
+def _lines(result) -> list[str]:
+    return result.data["status_lines"]
+
+
+def test_open_says_browsing_the_short_url(env) -> None:
+    assert _lines(env["run"]("bv open https://example.com/a/")) == ["Browsing example.com/a"]
+
+
+def test_a_click_on_the_same_page_says_nothing_and_a_navigating_one_says_browsing(env) -> None:
+    env["run"]("bv open example.com")
+    assert _lines(env["run"]("bv click 3")) == []
+    env["host"].click_navigates_to = "https://example.com/next?q=1"
+    assert _lines(env["run"]("bv click 3")) == ["Browsing example.com/next?q=1"]
+    # Plain view, scroll and window say nothing.
+    for command in ("bv view", "bv scroll down", "bv window tablet"):
+        assert _lines(env["run"](command)) == [], command
+
+
+def test_a_download_says_where_it_went(env) -> None:
+    env["run"]("bv open example.com")
+    env["host"].next_outcome = ActionOutcome(downloads=(DownloadResult(file_name="x.pdf", size=3, error=None),))
+    assert _lines(env["run"]("bv click 1")) == ["Downloaded x.pdf to /me/downloads"]
+
+
+def test_a_navigation_and_a_download_in_one_action_give_two_lines(env) -> None:
+    env["run"]("bv open example.com")
+    env["host"].click_navigates_to = "https://example.com/files"
+    env["host"].next_outcome = ActionOutcome(downloads=(DownloadResult(file_name="x.pdf", size=3, error=None),))
+    assert _lines(env["run"]("bv click 1")) == ["Browsing example.com/files", "Downloaded x.pdf to /me/downloads"]
+
+
+def test_a_failed_open_says_it_could_not_open(env) -> None:
+    env["host"].goto_error = "net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/\nCall log: ..."
+    result = env["run"]("bv open nope.invalid")
+    assert not result.ok
+    assert _lines(result) == ["Couldn't open nope.invalid — net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/"]
+
+
+def test_close_says_closed_only_when_a_session_was_open(env) -> None:
+    env["run"]("bv open example.com")
+    assert _lines(env["run"]("bv close")) == ["Closed the browser"]
+    assert _lines(env["run"]("bv close")) == []
+
+
+def test_long_urls_and_reasons_are_truncated_to_80_characters(env) -> None:
+    long_path = "a" * 200
+    line = _lines(env["run"](f"bv open https://example.com/{long_path}"))[0]
+    assert line == "Browsing " + ("example.com/" + long_path)[:79] + "…"
+    env["host"].goto_error = "E" * 200
+    failed = _lines(env["run"]("bv open example.org"))[0]
+    assert failed == "Couldn't open example.org — " + "E" * 79 + "…"
+
+
+def test_short_url_keeps_a_scheme_without_slashes() -> None:
+    assert _commands_module.short_url("about:blank") == "about:blank"
+    assert _commands_module.short_url("file:///tmp/x.html") == "/tmp/x.html"
+    assert _commands_module.short_url("http://localhost:3000/") == "localhost:3000"

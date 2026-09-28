@@ -11,7 +11,12 @@ from typing import Any
 from core.agent_loop import activity_runtime
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.parse_steer import describe_decision_parse_failure
-from core.agent_loop.task_origin_mirrors import format_origin_status_line, persist_origin_status_line
+from core.agent_loop.task_origin_mirrors import (
+    format_origin_status_line,
+    named_origin_line,
+    persist_origin_status_line,
+    persist_unbound_status_line,
+)
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
@@ -398,29 +403,7 @@ def _build_managed_writer_progress_reporter(
                         content=line,
                         kind="progress",
                     )
-                    channel_message = posted.get("channel_message")
-                    if channel_message:
-                        await manager.broadcast_channel_message(
-                            channel_id=channel_message["channel_id"],
-                            content=channel_message["content"],
-                            author_type=channel_message["author_type"],
-                            author_name=channel_message["author_name"],
-                            message_id=channel_message.get("message_id"),
-                            created_at=channel_message.get("created_at"),
-                            notification_kind=channel_message.get("notification_kind"),
-                        )
-                    elif posted.get("chat_message"):
-                        chat_message = posted["chat_message"]
-                        await manager.broadcast_chat_message(
-                            agent_id=chat_message["agent_id"],
-                            content=chat_message["content"],
-                            from_type=chat_message["from_type"],
-                            from_name=chat_message["from_name"],
-                            message_type=chat_message.get("message_type"),
-                            message_id=chat_message.get("message_id"),
-                            created_at=chat_message.get("created_at"),
-                            notification_kind=chat_message.get("notification_kind"),
-                        )
+                    await _broadcast_origin_post(posted)
 
         if detail == last_detail:
             return
@@ -443,6 +426,75 @@ def _build_managed_writer_progress_reporter(
         )
 
     return _report
+
+
+async def _broadcast_origin_post(posted: dict[str, Any]) -> None:
+    """Broadcast what a ``persist_*_status_line`` call stored (thread or chat)."""
+    channel_message = posted.get("channel_message")
+    if channel_message:
+        await manager.broadcast_channel_message(
+            channel_id=channel_message["channel_id"],
+            content=channel_message["content"],
+            author_type=channel_message["author_type"],
+            author_name=channel_message["author_name"],
+            message_id=channel_message.get("message_id"),
+            created_at=channel_message.get("created_at"),
+            notification_kind=channel_message.get("notification_kind"),
+        )
+    elif posted.get("chat_message"):
+        chat_message = posted["chat_message"]
+        await manager.broadcast_chat_message(
+            agent_id=chat_message["agent_id"],
+            content=chat_message["content"],
+            from_type=chat_message["from_type"],
+            from_name=chat_message["from_name"],
+            message_type=chat_message.get("message_type"),
+            message_id=chat_message.get("message_id"),
+            created_at=chat_message.get("created_at"),
+            notification_kind=chat_message.get("notification_kind"),
+        )
+
+
+async def post_cli_status_lines(
+    agent: Agent,
+    *,
+    task_id: str | None,
+    channel_id: str | None,
+    lines: Any,
+    command: str,
+) -> None:
+    """Post a CLI result's operator status lines the way task lines are posted.
+
+    Generic: any CLI command may return ``data["status_lines"]`` (Browser
+    Vision's ``Browsing …`` is the first producer). Each line gets the agent's
+    name and goes to the bound task's origin (thread or DM); with no task it
+    goes to ``channel_id``'s thread, else the agent's chat. Identical recent
+    lines are deduped by the persist helpers. Whatever is stored is broadcast.
+
+    Args:
+        agent: The agent whose command produced the lines.
+        task_id: The turn's bound task, if any.
+        channel_id: The same trigger-derived channel the turn passed to
+            ``execute_bm_cli``.
+        lines: The result's ``status_lines``; must be a list of non-empty
+            strings.
+        command: The command that produced them, for the error log.
+
+    Invalid ``lines`` are a bug in the producing command: logged at error,
+    nothing posted, and the agent's turn continues.
+    """
+    if not isinstance(lines, list) or not all(isinstance(line, str) and line.strip() for line in lines):
+        logger.error("CLI command %r returned invalid status_lines %r; none posted", command, lines)
+        return
+    task = db.get_task(task_id) if task_id else None
+    for line in lines:
+        content = named_origin_line(agent, line)
+        if task is not None:
+            posted = persist_origin_status_line(task=task, agent=agent, content=content, kind="progress")
+        else:
+            posted = persist_unbound_status_line(agent=agent, content=content, kind="progress", channel_id=channel_id)
+        await _broadcast_origin_post(posted)
+
 
 async def _skip_turn(
     agent: Agent,
