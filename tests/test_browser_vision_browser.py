@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,18 +32,32 @@ _ENTRY = get_discovery().get("browser-vision")
 
 _PAGE = b"""<!doctype html>
 <html><head><title>fixture</title></head>
-<body style="margin:0">
-<button id="btn" style="position:absolute;left:0;top:0;width:200px;height:80px">Click</button>
-<input id="inp" style="position:absolute;left:0;top:120px;width:300px;height:40px">
-<a id="dl" href="/file.txt" download style="position:absolute;left:0;top:200px;width:200px;height:40px;display:block">Download</a>
+<body style="margin:0;font:16px sans-serif">
+<button id="btn" style="position:absolute;left:20px;top:20px;width:200px;height:60px">Click me</button>
+<label style="position:absolute;left:20px;top:110px">Your name <input id="inp" style="width:240px;height:30px"></label>
+<select id="sel" style="position:absolute;left:20px;top:170px;width:160px;height:30px">
+  <option>Apple</option><option>Banana</option><option>Cherry</option>
+</select>
+<a id="dl" href="/file.txt" download style="position:absolute;left:20px;top:230px;width:200px;height:30px;display:block">Download the file</a>
+<canvas id="cv" width="160" height="100" style="position:absolute;left:640px;top:400px;background:#ddd"></canvas>
+<iframe id="fr" src="/frame" style="position:absolute;left:900px;top:20px;width:300px;height:150px"></iframe>
 <div style="height:4000px"></div>
 <script>
 let clicks = 0;
+let canvasClicks = 0;
 document.getElementById('btn').addEventListener('click', () => { clicks += 1; document.title = 'clicks:' + clicks; });
 document.getElementById('inp').addEventListener('input', (e) => { document.title = 'typed:' + e.target.value; });
+document.getElementById('sel').addEventListener('change', (e) => { document.title = 'picked:' + e.target.value; });
+document.getElementById('cv').addEventListener('click', () => { canvasClicks += 1; document.title = 'canvas:' + canvasClicks; });
 window.addEventListener('scroll', () => { document.title = 'scrolled:' + Math.round(window.scrollY); });
 document.cookie = 'k=v; path=/';
 </script>
+</body></html>
+"""
+_FRAME_PAGE = b"""<!doctype html>
+<html><body style="margin:0">
+<button id="inner" style="margin:10px;width:140px;height:40px"
+        onclick="parent.document.title = 'frame:clicked'">Inside button</button>
 </body></html>
 """
 _COOKIE_PAGE = b"""<!doctype html>
@@ -57,6 +72,8 @@ class _Fixture(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 — http.server's hook name
         if self.path == "/":
             body, headers = _PAGE, {"Content-Type": "text/html"}
+        elif self.path == "/frame":
+            body, headers = _FRAME_PAGE, {"Content-Type": "text/html"}
         elif self.path == "/cookie":
             body, headers = _COOKIE_PAGE, {"Content-Type": "text/html"}
         elif self.path == "/file.txt":
@@ -103,7 +120,16 @@ def teardown_function() -> None:
     db.close_connection()
 
 
-def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tmp_path, monkeypatch) -> None:
+def _mark(result, kind: str, name: str) -> int:
+    """The number the legend gives a control, e.g. ``[3] button "Click me"`` → 3."""
+    for line in result.prompt_content.splitlines():
+        match = re.match(r'^\[(\d+)\] (\w+) "(.*)"', line.strip())
+        if match and match.group(2) == kind and match.group(3) == name:
+            return int(match.group(1))
+    raise AssertionError(f"no {kind} {name!r} in the legend:\n{result.prompt_content}")
+
+
+def test_an_agent_browses_with_marks_and_the_keypad(tmp_path, monkeypatch) -> None:
     install_dir = _installed_browser_dir(monkeypatch)
     status = read_setup_status(install_dir, required=True)
     if status.state != "ready":
@@ -139,29 +165,52 @@ def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tm
         opened = bv(f"bv open {base}/")
         assert "title: fixture" in opened.prompt_content
         assert "viewport: 1280x800" in opened.prompt_content
+        assert "view: full page" in opened.prompt_content
         assert size_of(opened) == (1280, 800)
+        assert "marks: 5" in opened.prompt_content
 
-        # At the default density 160 a cell is bigger than every control, so,
-        # as the prompt tells agents, each click zooms first: --focus on the
-        # coarse cell holding the control, then click a fine cell read from
-        # the zoomed grid. Coarse cell 0 is x 0–160, y 0–160.
-        focused = bv("bv view --density 20 --focus 0-0")
-        assert "focus: cells 0–0" in focused.prompt_content
-        # 64 columns at density 20: fine cell 1*64+2 is (50, 30), on the button.
-        assert "title: clicks:1" in bv(f"bv click {1 * 64 + 2}").prompt_content
-        # The same at density 10 (128 columns): 1*128+2 is (25, 15).
-        bv("bv view --density 10 --focus 0-0")
-        assert "title: clicks:2" in bv(f"bv click {1 * 128 + 2}").prompt_content
+        # A mark click on the button, with feedback naming what it hit.
+        button = _mark(opened, "button", "Click me")
+        clicked = bv(f"bv click @{button}")
+        assert "title: clicks:1" in clicked.prompt_content
+        assert 'clicked button "Click me"' in clicked.prompt_content
 
-        # The input (y 120–160): fine cell 7*64+2 is (50, 150).
-        bv("bv view --density 20 --focus 0-0")
-        bv(f"bv click {7 * 64 + 2}")
-        assert "title: typed:hello" in bv("bv type", body="hello").prompt_content
+        # Type into the input by its mark; its label names it, and it was empty.
+        field = _mark(clicked, "textbox", "Your name")
+        assert f'[{field}] textbox "Your name" (empty)' in clicked.prompt_content
+        typed = bv(f"bv type @{field}", body="hello")
+        assert "title: typed:hello" in typed.prompt_content
+        assert f'[{field}] textbox "Your name" (filled)' in typed.prompt_content
 
-        # The download link (y 200–240) is in coarse cell 8 (y 160–320);
-        # fine cell 10*64+2 is (50, 210). The file lands in /me/downloads.
-        bv("bv view --density 20 --focus 8-8")
-        downloaded = bv(f"bv click {10 * 64 + 2}")
+        # Choose a dropdown option by its text.
+        dropdown = _mark(typed, "select", "Apple")
+        picked = bv(f"bv select @{dropdown} Banana")
+        assert "title: picked:Banana" in picked.prompt_content
+        assert f'[{dropdown}] select "Banana"' in picked.prompt_content
+
+        # A mark inside a same-origin iframe, offset into page coordinates.
+        inner = _mark(picked, "button", "Inside button")
+        framed = bv(f"bv click @{inner}")
+        assert "title: frame:clicked" in framed.prompt_content
+        assert 'clicked button "Inside button"' in framed.prompt_content
+
+        # The canvas is not a control, so no mark: keypad zoom, then click.
+        # Region 5 of 1280×800, then its region 9: centre (782, 489), on the canvas.
+        zoomed = bv("bv zoom 5")
+        assert "view: zoom 5 — region 427×267 px at (427, 267)" in zoomed.prompt_content
+        assert size_of(zoomed) == (1568, 980)
+        on_canvas = bv("bv click 9")
+        assert "title: canvas:1" in on_canvas.prompt_content
+        assert "clicked canvas (not a control) at (782, 489)" in on_canvas.prompt_content
+        assert "view: full page" in on_canvas.prompt_content
+
+        # A chained zoom straight to the same spot, then a click.
+        assert "view: zoom 5 › 9" in bv("bv zoom 5 9").prompt_content
+        assert "title: canvas:2" in bv("bv click 5").prompt_content
+
+        # A download by its link mark; the file lands in /me/downloads.
+        link = _mark(on_canvas, "link", "Download the file")
+        downloaded = bv(f"bv click @{link}")
         assert f"downloaded: /me/downloads/file.txt ({len(_FILE)} bytes)" in downloaded.prompt_content
         assert (downloads / "file.txt").read_bytes() == _FILE
 
@@ -178,18 +227,13 @@ def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tm
         assert "viewport: 1280x800" in desktop.prompt_content
         assert size_of(desktop) == (1280, 800)
 
-        # Widescreen: the image shrinks to the 1568 cap, clicks stay in CSS px.
+        # Widescreen: the image shrinks to the 1568 cap, marks still click in CSS px.
         wide = bv("bv window widescreen")
         assert "viewport: 1920x1080" in wide.prompt_content
         assert "image 1568x882 (scale ×0.8167)" in wide.prompt_content
         assert size_of(wide) == (1568, 882)
-        bv(f"bv open {base}/")
-        # 96 columns at density 20 over 1920 px: 1*96+2 is the button, 7*96+2 the input.
-        bv("bv view --density 20 --focus 0-0")
-        assert "title: clicks:1" in bv(f"bv click {1 * 96 + 2}").prompt_content
-        bv("bv view --density 20 --focus 0-0")
-        bv(f"bv click {7 * 96 + 2}")
-        assert "title: typed:wide" in bv("bv type", body="wide").prompt_content
+        page = bv(f"bv open {base}/")
+        assert "title: clicks:1" in bv(f"bv click @{_mark(page, 'button', 'Click me')}").prompt_content
 
         # Any scheme the browser can open (D8): the fixture as a local file.
         page_file = tmp_path / "fixture.html"

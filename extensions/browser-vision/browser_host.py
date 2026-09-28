@@ -27,6 +27,7 @@ from playwright.async_api import (
     BrowserContext,
     Download,
     Error as PlaywrightError,
+    Frame,
     Page,
     Playwright,
     async_playwright,
@@ -34,9 +35,22 @@ from playwright.async_api import (
 
 from core.attachments import sanitize_file_name
 
+from .marks import Mark, RawMark, place, raw_from_js
 from .viewports import ViewportSpec
 
 logger = logging.getLogger(__name__)
+
+# The in-page inspection for element marks (one function; see the file).
+_MARKS_JS = (Path(__file__).with_name("page_marks.js")).read_text(encoding="utf-8")
+# An element's border + padding, left/top/right/bottom: a frame's content box.
+_CONTENT_INSET_JS = """(e) => {
+    const s = getComputedStyle(e);
+    const px = (v) => parseFloat(v) || 0;
+    return [
+        px(s.borderLeftWidth) + px(s.paddingLeft), px(s.borderTopWidth) + px(s.paddingTop),
+        px(s.borderRightWidth) + px(s.paddingRight), px(s.borderBottomWidth) + px(s.paddingBottom),
+    ];
+}"""
 
 T = TypeVar("T")
 
@@ -54,6 +68,8 @@ class Capture:
     title: str
     width: int
     height: int
+    # The page's visible controls at capture time, numbered (see marks.py).
+    marks: tuple[Mark, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -87,6 +103,8 @@ class _Session:
     touch: bool
     downloads_dir: Path
     pending: list[Download] = field(default_factory=list)
+    # Mark number → the frame it was found in, from the latest capture.
+    mark_frames: dict[int, Frame] = field(default_factory=dict)
 
 
 class BrowserHost:
@@ -187,8 +205,29 @@ class BrowserHost:
         self._run(lambda: self._set_viewport(agent_id, viewport))
 
     def capture(self, agent_id: str) -> Capture:
-        """Screenshot the agent's viewport at CSS scale."""
+        """Screenshot the agent's viewport at CSS scale, with its element marks."""
         return self._run(lambda: self._capture(agent_id))
+
+    def describe(self, agent_id: str, x: float, y: float) -> dict[str, Any] | None:
+        """Say what a click at page CSS ``(x, y)`` would land on, frames included.
+
+        Returns:
+            ``{"kind", "name"}`` for a control, ``{"tag"}`` for anything else,
+            ``None`` when nothing is there.
+        """
+        return self._run(lambda: self._describe(agent_id, x, y))
+
+    def select(self, agent_id: str, mark_n: int, x: float, y: float, label: str) -> ActionOutcome:
+        """Choose the option labelled ``label`` in the ``<select>`` of mark ``mark_n``.
+
+        Native dropdowns do not render in headless screenshots, so the option
+        is chosen through the frame's ``select_option``, not by clicking.
+
+        Raises:
+            BrowserActionError: No ``<select>`` at the mark's point, or
+                Playwright's own error (e.g. no option with that label).
+        """
+        return self._run(lambda: self._act(agent_id, lambda s: self._select(s, mark_n, x, y, label)))
 
     def close(self, agent_id: str) -> bool:
         """Close the agent's context. Returns whether one was open."""
@@ -402,13 +441,97 @@ class BrowserHost:
         if size is None:
             raise BrowserActionError("the page has no viewport size")
         png = await session.page.screenshot(type="png", scale="css", timeout=self._action_timeout_ms)
+        marks = await self._collect_marks(session, size["width"], size["height"])
         return Capture(
             png=png,
             url=session.page.url,
             title=await session.page.title(),
             width=size["width"],
             height=size["height"],
+            marks=marks,
         )
+
+    async def _frame_offsets(self, session: _Session) -> list[tuple[Frame, float, float, float, float]]:
+        """Every frame with its content box in page CSS px: ``(frame, x, y, w, h)``.
+
+        A child frame's box comes from its element's ``bounding_box()`` (page
+        coordinates, for nested frames too) plus the element's border and
+        padding, since the frame's own coordinates start at its content box.
+        A frame whose element has no box (hidden, detached) is skipped.
+        """
+        size = session.page.viewport_size or {"width": 0, "height": 0}
+        frames: list[tuple[Frame, float, float, float, float]] = [
+            (session.page.main_frame, 0.0, 0.0, float(size["width"]), float(size["height"]))
+        ]
+        for frame in session.page.frames:
+            if frame is session.page.main_frame:
+                continue
+            element = await frame.frame_element()
+            box = await element.bounding_box()
+            if box is None:
+                continue
+            inset = await element.evaluate(_CONTENT_INSET_JS)
+            frames.append((
+                frame,
+                box["x"] + inset[0],
+                box["y"] + inset[1],
+                box["width"] - inset[0] - inset[2],
+                box["height"] - inset[1] - inset[3],
+            ))
+        return frames
+
+    async def _collect_marks(self, session: _Session, width: int, height: int) -> tuple[Mark, ...]:
+        """Run the page inspection in every frame and number the visible controls.
+
+        A frame that navigates or detaches mid-inspection is skipped with a
+        warning (its marks come back on the next screenshot); the page's own
+        frame failing is an error.
+        """
+        raw: list[tuple[RawMark, float, float, Frame]] = []
+        for frame, dx, dy, _w, _h in await self._frame_offsets(session):
+            try:
+                items = await frame.evaluate(_MARKS_JS, {"mode": "collect"})
+            except PlaywrightError as exc:
+                if frame is session.page.main_frame:
+                    raise
+                logger.warning("Browser Vision: skipped marks in frame %s (%s)", frame.url, exc.message)
+                continue
+            raw.extend((raw_from_js(item), dx, dy, frame) for item in items)
+        placed = place(raw, width, height)
+        session.mark_frames = {mark.n: frame for mark, frame in placed}
+        return tuple(mark for mark, _frame in placed)
+
+    async def _frame_at(self, session: _Session, x: float, y: float) -> tuple[Frame, float, float]:
+        """The innermost frame whose content box holds page point ``(x, y)``."""
+        best = (session.page.main_frame, 0.0, 0.0, float("inf"))
+        for frame, fx, fy, fw, fh in await self._frame_offsets(session):
+            if frame is session.page.main_frame:
+                continue
+            if fx <= x < fx + fw and fy <= y < fy + fh and fw * fh < best[3]:
+                best = (frame, fx, fy, fw * fh)
+        return best[0], best[1], best[2]
+
+    async def _describe(self, agent_id: str, x: float, y: float) -> dict[str, Any] | None:
+        session = self._session(agent_id)
+        hit = await session.page.main_frame.evaluate(_MARKS_JS, {"mode": "describe", "x": x, "y": y})
+        if hit and hit.get("frame"):
+            frame, fx, fy = await self._frame_at(session, x, y)
+            hit = await frame.evaluate(_MARKS_JS, {"mode": "describe", "x": x - fx, "y": y - fy})
+        return hit
+
+    async def _select(self, session: _Session, mark_n: int, x: float, y: float, label: str) -> None:
+        frame = session.mark_frames.get(mark_n)
+        if frame is None:
+            raise BrowserActionError(f"mark @{mark_n} is not on the latest screenshot")
+        offsets = {f: (fx, fy) for f, fx, fy, _w, _h in await self._frame_offsets(session)}
+        if frame not in offsets:
+            raise BrowserActionError(f"the frame of mark @{mark_n} is gone")
+        fx, fy = offsets[frame]
+        handle = await frame.evaluate_handle(_MARKS_JS, {"mode": "element", "x": x - fx, "y": y - fy})
+        element = handle.as_element()
+        if element is None:
+            raise BrowserActionError(f"NOT_A_SELECT: there is no <select> at mark @{mark_n}")
+        await element.select_option(label=label, timeout=self._action_timeout_ms)
 
     async def _close(self, agent_id: str) -> bool:
         session = self._sessions.pop(agent_id, None)

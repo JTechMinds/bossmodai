@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import os
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,9 @@ from core.agent_loop.decision_peek import (
 )
 from core.agent_loop.liveness import command_fingerprint
 from core.agent_loop.loop import run_turn
+from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN
 from core.bm_cli.types import BossModCliResult
+from core.default_prompts import load_default_prompt
 from core.llm.client import LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
@@ -157,6 +161,10 @@ def test_peek_budget_soft_ten_and_identical_triple() -> None:
     assert exhausted.allowed is False
     assert exhausted.reason == "soft_budget"
     assert exhausted.steer == SOFT_PEEK_STEER
+    # The first refusal steers; a repeat stops.
+    assert exhausted.stop is False and budget.steered is True
+    again = budget.consider("ls /me/other2")
+    assert again.allowed is False and again.reason == "soft_budget" and again.stop is True
 
     loop = DecisionPeekBudget()
     assert loop.consider("ls a").allowed is True
@@ -165,6 +173,9 @@ def test_peek_budget_soft_ten_and_identical_triple() -> None:
     assert third.allowed is False
     assert third.reason == "identical_loop"
     assert third.steer == IDENTICAL_PEEK_STEER
+    assert third.stop is False
+    fourth = loop.consider("ls a")
+    assert fourth.allowed is False and fourth.reason == "identical_loop" and fourth.stop is True
 
 
 def test_peek_budget_counts_total_peeks_not_recyclable_identities() -> None:
@@ -222,15 +233,80 @@ async def test_ten_total_peeks_then_decide_is_allowed(
     assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET
 
 
+def _step_result(step: dict[str, Any]) -> dict[str, Any]:
+    # Step traces hold their result serialized as JSON text.
+    raw = step.get("result") or {}
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+def _steer_steps(outcome) -> list[dict[str, Any]]:
+    return [_step_result(step) for step in outcome.steps if _step_result(step).get("event") == "peek_budget_steer"]
+
+
+def _script_capturing(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[list[dict[str, Any]]]:
+    """Like _script_completions, also recording the messages each call saw."""
+    queue = list(contents)
+    prompts: list[list[dict[str, Any]]] = []
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        if not queue:
+            raise AssertionError("unexpected extra LLM completion")
+        prompts.append([dict(item) for item in kwargs.get("messages") or []])
+        return _llm(queue.pop(0))
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+    return prompts
+
+
 @pytest.mark.asyncio
-async def test_eleventh_peek_fails_soft_budget(
+async def test_eleventh_peek_is_steered_not_executed_and_the_turn_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    sink = _install_activity_sink()
+    executed: list[str] = []
+    real_execute = __import__("core.bm_cli.runtime", fromlist=["execute_bm_cli"]).execute_bm_cli
+
+    def _count_execute(agent_obj, state_obj, command, content=None, **kwargs):
+        executed.append(command)
+        return real_execute(agent_obj, state_obj, command, content, **kwargs)
+
+    monkeypatch.setattr("core.agent_loop.decision_turn.execute_bm_cli", _count_execute)
+    prompts = _script_capturing(
+        monkeypatch,
+        [_cli(f"ls /me/p{index}") for index in range(SOFT_PEEK_BUDGET + 1)] + [_reply("Here is what I found.")],
+    )
+    outcome = await run_turn(agent, state, _human_chat_trigger())
+
+    # The reply after the steer ends the turn normally: no error card.
+    assert outcome.trigger_status == "completed"
+    assert outcome.result.get("event") != "agent_error"
+    assert [item for item in sink.calls if item.get("event") == "agent_error"] == []
+    # The 11th command did not run; it was answered with the steer.
+    assert executed == [f"ls /me/p{index}" for index in range(SOFT_PEEK_BUDGET)]
+    steers = _steer_steps(outcome)
+    assert len(steers) == 1 and steers[0]["peek_budget"] == "soft_budget"
+    # The model saw the steer as that command's result, then the normal follow-up.
+    last_prompt = prompts[-1]
+    steer_message = last_prompt[-2]
+    assert steer_message["role"] == "user"
+    assert CLI_TOOL_RESULT_BEGIN in steer_message["content"]
+    assert (
+        f"{SOFT_PEEK_STEER}. You have used this reply's quick-look budget. "
+        "Reply now, or accept this as work to continue it."
+    ) in steer_message["content"]
+    assert last_prompt[-1] == {"role": "system", "content": load_default_prompt("internal_loop_decision_cli_followup")}
+
+
+@pytest.mark.asyncio
+async def test_a_peek_after_the_steer_fails_soft_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
     sink = _install_activity_sink()
     _script_completions(
         monkeypatch,
-        [_cli(f"ls /me/p{index}") for index in range(SOFT_PEEK_BUDGET + 1)],
+        [_cli(f"ls /me/p{index}") for index in range(SOFT_PEEK_BUDGET + 2)],
     )
     outcome = await run_turn(agent, state, _human_chat_trigger())
     assert outcome.trigger_status == "failed"
@@ -238,6 +314,7 @@ async def test_eleventh_peek_fails_soft_budget(
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
     assert SOFT_PEEK_STEER in str(outcome.result.get("detail") or "")
+    assert len(_steer_steps(outcome)) == 1
     errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
     assert (errors[0].get("extra") or {}).get("peek_budget") == "soft_budget"
@@ -249,21 +326,23 @@ async def test_alternating_known_peeks_still_hit_soft_budget(
 ) -> None:
     agent, state = _agent_and_state()
     sink = _install_activity_sink()
-    peeks = [_cli("ls a" if index % 2 == 0 else "ls b") for index in range(SOFT_PEEK_BUDGET + 1)]
+    peeks = [_cli("ls a" if index % 2 == 0 else "ls b") for index in range(SOFT_PEEK_BUDGET + 2)]
     _script_completions(monkeypatch, peeks)
     outcome = await run_turn(agent, state, _human_chat_trigger())
     assert outcome.trigger_status == "failed"
     assert outcome.result.get("event") == "agent_error"
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
-    assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET
+    # Ten executed peeks plus the one steered (not executed) step.
+    assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET + 1
+    assert len(_steer_steps(outcome)) == 1
     errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
     assert (errors[0].get("extra") or {}).get("peek_budget") == "soft_budget"
 
 
 @pytest.mark.asyncio
-async def test_identical_triple_hard_stops_before_third_execute(
+async def test_identical_triple_steers_then_hard_stops_on_the_next_repeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent, state = _agent_and_state()
@@ -276,16 +355,32 @@ async def test_identical_triple_hard_stops_before_third_execute(
 
     monkeypatch.setattr("core.agent_loop.decision_turn.execute_bm_cli", _count_execute)
     sink = _install_activity_sink()
-    _script_completions(monkeypatch, [_cli("ls a"), _cli("ls a/"), _cli("ls ./a")])
+    _script_completions(monkeypatch, [_cli("ls a"), _cli("ls a/"), _cli("ls ./a"), _cli("ls a")])
     outcome = await run_turn(agent, state, _human_chat_trigger())
     assert outcome.trigger_status == "failed"
     assert outcome.result.get("peek_budget") == "identical_loop"
     assert IDENTICAL_PEEK_STEER in (outcome.diagnostic_error or "")
     assert IDENTICAL_PEEK_STEER in str(outcome.result.get("detail") or "")
     assert executed == ["ls a", "ls a/"]
+    steers = _steer_steps(outcome)
+    assert len(steers) == 1 and steers[0]["peek_budget"] == "identical_loop"
     errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1
     assert (errors[0].get("extra") or {}).get("peek_budget") == "identical_loop"
+
+
+@pytest.mark.asyncio
+async def test_identical_triple_steer_then_reply_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent_and_state()
+    sink = _install_activity_sink()
+    _script_completions(monkeypatch, [_cli("ls a"), _cli("ls a/"), _cli("ls ./a"), _reply("Stopping here.")])
+    outcome = await run_turn(agent, state, _human_chat_trigger())
+    assert outcome.trigger_status == "completed"
+    assert outcome.result.get("event") != "agent_error"
+    assert [item for item in sink.calls if item.get("event") == "agent_error"] == []
+    assert len(_steer_steps(outcome)) == 1
 
 
 @pytest.mark.asyncio

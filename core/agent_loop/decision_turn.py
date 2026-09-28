@@ -348,6 +348,41 @@ async def _run_decision_turn(
                 )
             executed_actions.append("bm_cli")
             peek_verdict = peek_budget.consider(cli_call.command, cli_call.content)
+            if not peek_verdict.allowed and not peek_verdict.stop:
+                # First refusal this turn: the command does not run; the model
+                # gets the steer as that command's result, with the follow-up
+                # every CLI step here gets, and can still reply or accept work.
+                steer_result = {
+                    "event": "peek_budget_steer",
+                    "detail": f"{agent.name} {peek_verdict.steer}",
+                    "agent_name": agent.name,
+                    "peek_budget": peek_verdict.reason,
+                }
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=len(step_traces) + 1,
+                        context_snapshot=next_context_snapshot,
+                        raw_response=response.content,
+                        action=cli_call.model_dump(),
+                        result=steer_result,
+                        prompt_tokens=step_prompt_tokens,
+                        completion_tokens=step_completion_tokens,
+                        total_tokens=step_total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                    )
+                )
+                continuation_messages = cli_continuation_messages(
+                    assistant_content=response.content,
+                    cli_prompt_content=(
+                        f"{peek_verdict.steer}. You have used this reply's quick-look budget. "
+                        "Reply now, or accept this as work to continue it."
+                    ),
+                    followup_content=load_default_prompt("internal_loop_decision_cli_followup"),
+                    followup_role="system",
+                )
+                current_context.extend(continuation_messages)
+                next_context_snapshot = _serialize_trace_value(continuation_messages)
+                continue
             if not peek_verdict.allowed:
                 result = {
                     "event": "agent_error",

@@ -113,9 +113,7 @@ class BrowserVisionExtension:
             if found is None:
                 continue
             path, meta = found
-            caption = [f"window: {meta.window}", meta.grid, f"image {meta.image}"]
-            if meta.focus is not None:
-                caption.append(meta.focus)
+            caption = [f"window: {meta.window}", meta.view, f"image {meta.image}", f"marks: {meta.marks}"]
             items.append(LiveViewItem(
                 agent_id=agent_id,
                 image_path=path,

@@ -6,14 +6,17 @@
   "command": {
     "name": "bv",
     "summary": "Browse websites by screenshot + grid.",
-    "usage": "bv open <url> | bv view [--density N] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] [--focus <a>-<b>] | bv window phone|tablet|desktop|widescreen|<W>x<H> | bv click <n> | bv type [--enter] (text in body) | bv key <Key or combo> | bv scroll up|down | bv back | bv status | bv close",
-    "help": "Browse a website by looking at screenshots. Every screenshot is overlaid\nwith a grid, and every grid cell shows its number in its top-left corner.\nClick numbers always refer to the most recent screenshot.\n\nSubcommands:\n  bv open <url>             open a page (a bare host gets https://)\n  bv view [flags]           take a new screenshot\n      --density N           grid cell size in px (default 160; smaller = finer)\n      --grid on|off         show or hide the grid\n      --grid-color auto|#rrggbb   line colour (auto picks contrast per segment)\n      --grid-opacity 0-1    grid strength\n      --focus <a>-<b>       zoom into the box between cells a and b\n  bv window <preset|WxH>    phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv click <n>              click the centre of cell n\n  bv type [--enter]         type the body text into the focused field\n  bv key <Key or combo>     press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down         scroll most of a screen\n  bv back                   go back one page\n  bv status                 url, title, window, grid settings, downloads\n  bv close                  close your browser session\n\nExamples:\n  bv open example.com\n  bv view --density 20 --focus 9-10\n  bv click 652\n  bv type --enter           with body: search words\n  bv key Control+A\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI."
+    "usage": "bv open <url> | bv click @<n>|<1-9> | bv type [@<n>] [--enter] (text in body) | bv select @<n> <option text> | bv zoom <1-9> [<1-9> …]|out|reset | bv view [--marks on|off] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] | bv window phone|tablet|desktop|widescreen|<W>x<H> | bv key <Key or combo> | bv scroll up|down | bv back | bv status | bv close",
+    "help": "Browse a website by looking at screenshots.\n\nEvery screenshot numbers the page's controls (links, buttons, fields, …) with\noutlined marks, and the result lists them: [7] button \"Sign in\". Act on a\nmark with @n. Marks and keypad regions always refer to the most recent\nscreenshot.\n\nWhen what you need has no mark, use the keypad: the view splits 3×3,\nnumbered like a phone keypad (1 2 3 / 4 5 6 / 7 8 9). bv zoom <d> narrows\nthe view to that region (chain them: bv zoom 5 3); bv click <d> clicks the\ncentre of region d of the current view.\n\nEvery click reports what it hit, e.g. clicked button \"Sign in\".\n\nSubcommands:\n  bv open <url>               open a page (a bare host gets https://)\n  bv click @<n>               click mark n\n  bv click <1-9>              click the centre of keypad region d\n  bv type @<n> [--enter]      click mark n, then type the body text\n  bv type [--enter]           type the body text into whatever is focused\n  bv select @<n> <option>     choose an option of a dropdown mark by its text\n  bv zoom <1-9> [<1-9> …]     zoom into keypad regions, one level each\n  bv zoom out | bv zoom reset back up one level | back to the full page\n  bv view [flags]             take a new screenshot (keeps the zoom)\n      --marks on|off          draw the element marks\n      --grid on|off           draw the keypad lines and digits\n      --grid-color auto|#rrggbb   keypad/mark colour (auto picks contrast)\n      --grid-opacity 0-1      keypad line strength\n  bv window <preset|WxH>      phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv key <Key or combo>       press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down           scroll most of a screen\n  bv back                     go back one page\n  bv status                   url, title, window, view, settings, downloads\n  bv close                    close your browser session\n\nAny action (open, click, type, select, key, scroll, back, window) returns\nthe full page again; view keeps the current zoom.\n\nExamples:\n  bv open example.com\n  bv click @7\n  bv type @12 --enter         with body: search words\n  bv select @4 Canada\n  bv zoom 5 3\n  bv click 6\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI."
   },
   "prompt": "prompt.md",
   "live_view": true,
   "requires": {
     "image_model": true,
-    "python_modules": ["playwright", "PIL"]
+    "python_modules": [
+      "playwright",
+      "PIL"
+    ]
   },
   "setup": {
     "required": true,
@@ -22,17 +25,27 @@
   "defaults": {
     "window_default": "desktop",
     "window_presets": {
-      "phone": {"device": "iPhone 14"},
-      "tablet": {"device": "iPad (gen 7)"},
-      "desktop": {"width": 1280, "height": 800},
-      "widescreen": {"width": 1920, "height": 1080}
+      "phone": {
+        "device": "iPhone 14"
+      },
+      "tablet": {
+        "device": "iPad (gen 7)"
+      },
+      "desktop": {
+        "width": 1280,
+        "height": 800
+      },
+      "widescreen": {
+        "width": 1920,
+        "height": 1080
+      }
     },
-    "density_default": 160,
-    "label_min_px": 24,
     "label_font_ratio": 0.2,
     "label_font_min_px": 10,
     "label_font_max_px": 14,
     "label_opacity": 0.8,
+    "keypad_font_px": 28,
+    "marks_default": true,
     "image_max_px": 1568,
     "grid_default": true,
     "grid_color_default": "auto",

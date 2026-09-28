@@ -1,4 +1,4 @@
-"""Browser Vision grid: numbering, click points, focus, rendering, contrast."""
+"""Browser Vision view rendering: keypad regions, zoom, scaling, marks, tags, contrast."""
 
 from __future__ import annotations
 
@@ -6,18 +6,17 @@ import importlib
 import io
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 
+_PACKAGE = import_package(get_discovery().get("browser-vision"))
+grid = importlib.import_module(f"{_PACKAGE.__name__}.grid")
+marks = importlib.import_module(f"{_PACKAGE.__name__}.marks")
 
-def _grid_module():
-    package = import_package(get_discovery().get("browser-vision"))
-    return importlib.import_module(f"{package.__name__}.grid")
-
-
-grid = _grid_module()
+_LABELS = grid.LabelStyle(font_ratio=0.2, font_min_px=10, font_max_px=14, opacity=0.8)
+_FULL = (0.0, 0.0, 1280.0, 800.0)
 
 
 def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
@@ -26,85 +25,51 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-_LABELS = grid.LabelStyle(font_ratio=0.2, font_min_px=10, font_max_px=14, opacity=0.8)
+def _mark(n: int, rect, kind: str = "button") -> object:
+    x0, y0, x1, y1 = rect
+    return marks.Mark(n=n, kind=kind, name=f"m{n}", rect=rect, point=((x0 + x1) / 2, (y0 + y1) / 2), state=None)
 
 
-def _render(png: bytes, spec, *, color="auto", opacity=1.0, focus=None, enabled=True, label=_LABELS):
+def _render(png: bytes, viewport, *, rect=None, color="auto", opacity=1.0, enabled=True,
+            mark_list=(), show_marks=True, label=_LABELS, image_max_px=1568):
     style = grid.GridStyle(enabled=enabled, color=color, opacity=opacity)
-    return grid.render_grid(png, spec, style, focus, label_min_px=24, image_max_px=1568, label=label)
+    return grid.render_view(png, viewport, rect, style, list(mark_list), show_marks=show_marks,
+                            image_max_px=image_max_px, label=label, keypad_font_px=28)
 
 
-def test_cols_rows_and_bounds_count_partial_edge_cells() -> None:
-    spec = grid.GridSpec(1280, 800, 40)
-    assert (spec.cols, spec.rows, spec.cell_count) == (32, 20, 640)
-    odd = grid.GridSpec(1000, 610, 40)
-    assert (odd.cols, odd.rows) == (25, 16)
-    with pytest.raises(ValueError):
-        grid.GridSpec(1280, 800, 0)
+def _image(rendered) -> Image.Image:
+    return Image.open(io.BytesIO(rendered.png)).convert("RGB")
 
 
-def test_numbering_round_trips() -> None:
-    spec = grid.GridSpec(1000, 610, 40)
-    for n in range(spec.cell_count):
-        col, row = spec.cell_of(n)
-        assert spec.cell_number(col, row) == n
-    assert spec.cell_of(0) == (0, 0)
-    assert spec.cell_of(25) == (0, 1)
+# ─── keypad maths ───
 
 
-def test_out_of_range_cells_raise_with_the_valid_range_and_are_never_clamped() -> None:
-    spec = grid.GridSpec(1280, 800, 40)
-    with pytest.raises(grid.CellOutOfRange, match="CELL_OUT_OF_RANGE: cell 640 .* valid cells are 0–639"):
-        spec.cell_center(640)
-    with pytest.raises(grid.CellOutOfRange):
-        spec.cell_of(-1)
+def test_keypad_regions_are_numbered_like_a_phone() -> None:
+    assert grid.keypad_region(_FULL, 1) == pytest.approx((0, 0, 1280 / 3, 800 / 3))
+    assert grid.keypad_region(_FULL, 5) == pytest.approx((1280 / 3, 800 / 3, 2560 / 3, 1600 / 3))
+    assert grid.keypad_region(_FULL, 9) == pytest.approx((2560 / 3, 1600 / 3, 1280, 800))
+    assert grid.keypad_region(_FULL, 3)[0] == pytest.approx(2560 / 3)  # top row, right column
+    assert grid.keypad_region(_FULL, 7)[1] == pytest.approx(1600 / 3)  # bottom row, left column
+    assert grid.region_center(_FULL, 5) == pytest.approx((640, 400))
 
 
-def test_cell_centres_and_the_geometric_clamp_on_partial_edge_cells() -> None:
-    spec = grid.GridSpec(1280, 800, 40)
-    assert spec.cell_center(0) == (20, 20)
-    assert spec.cell_center(33) == (60, 60)
-    edge = grid.GridSpec(1010, 800, 40)  # last column is 10 px wide
-    assert edge.cell_center(edge.cols - 1) == (1009, 20)
+def test_zoom_chains_and_stops_below_one_pixel() -> None:
+    rect = _FULL
+    for _ in range(6):
+        rect = grid.zoom_into(rect, 5)
+    assert rect[2] - rect[0] == pytest.approx(1280 / 729)
+    with pytest.raises(grid.ZoomLimit, match="ZOOM_LIMIT: region 5"):
+        grid.zoom_into(rect, 5)
 
 
-def test_the_same_number_is_the_same_point_in_full_and_focused_views() -> None:
-    """A cell read off a zoomed view clicks the spot the zoom showed it at."""
-    full = grid.GridSpec(1280, 800, 10)
-    n = full.cell_number(10, 9)
-    cx, cy = full.cell_center(n)
-    source = Image.new("RGB", (1280, 800), (255, 255, 255))
-    source.paste((255, 0, 0), (int(cx) - 2, int(cy) - 2, int(cx) + 3, int(cy) + 3))
-    buffer = io.BytesIO()
-    source.save(buffer, format="PNG")
-    rect = grid.focus_rect(grid.GridSpec(1280, 800, 40), 33, 66, 10)
-    rendered = _render(buffer.getvalue(), full, focus=grid.FocusSpec(33, 66, rect), enabled=False)
-    zoomed = Image.open(io.BytesIO(rendered.png)).convert("RGB")
-    at = (round((cx - rect[0]) * rendered.scale), round((cy - rect[1]) * rendered.scale))
-    red, green, blue = zoomed.getpixel(at)
-    # LANCZOS rings a little at the marker's edge; the point is still the marker.
-    assert red > 200 and green < 60 and blue < 60
+def test_parse_keypad_digit_accepts_1_to_9_only() -> None:
+    assert [grid.parse_keypad_digit(str(d)) for d in range(1, 10)] == list(range(1, 10))
+    for bad in ("0", "10", "a", "", "@3"):
+        with pytest.raises(ValueError, match="one digit 1–9"):
+            grid.parse_keypad_digit(bad)
 
 
-def test_focus_snaps_outward_to_the_focus_density() -> None:
-    base = grid.GridSpec(1280, 800, 40)
-    # Cells 33 (x 40–80, y 40–80) and 66 (x 80–120, y 80–120) at density 40.
-    assert grid.focus_rect(base, 33, 66, 10) == (40, 40, 120, 120)
-    assert grid.focus_rect(base, 66, 33, 10) == (40, 40, 120, 120)
-    # A focus density that does not divide the box widens it to whole cells.
-    assert grid.focus_rect(base, 33, 66, 30) == (30, 30, 120, 120)
-    # Never past the viewport.
-    edge = grid.GridSpec(1010, 800, 40)
-    assert grid.focus_rect(edge, edge.cols - 1, edge.cols - 1, 30)[2] == 1010
-    with pytest.raises(grid.CellOutOfRange):
-        grid.focus_rect(base, 33, 640, 10)
-
-
-def test_parsers_accept_their_forms_and_name_them_on_error() -> None:
-    assert grid.parse_density("7") == 7
-    for bad in ("0", "-3", "4.5", "x"):
-        with pytest.raises(ValueError, match="positive whole number"):
-            grid.parse_density(bad)
+def test_parsers_for_colour_and_opacity_name_their_forms() -> None:
     assert grid.parse_color("auto") == "auto"
     assert grid.parse_color("#FF0080") == (255, 0, 128)
     with pytest.raises(ValueError, match="auto or #rrggbb"):
@@ -113,126 +78,154 @@ def test_parsers_accept_their_forms_and_name_them_on_error() -> None:
     for bad in ("1.5", "-0.1", "half"):
         with pytest.raises(ValueError, match="from 0 to 1"):
             grid.parse_opacity(bad)
-    assert grid.parse_focus("245-290") == (245, 290)
-    with pytest.raises(ValueError, match="like 245-290"):
-        grid.parse_focus("245")
 
 
-def test_a_full_view_keeps_the_viewport_size_and_is_labelled_at_the_default_density() -> None:
-    spec = grid.GridSpec(1280, 800, 40)
-    rendered = _render(_png(1280, 800, (255, 255, 255)), spec)
-    assert (rendered.width, rendered.height) == (1280, 800)
-    assert Image.open(io.BytesIO(rendered.png)).size == (1280, 800)
-    assert rendered.labelled is True
-    assert rendered.scale == 1.0
-
-
-def test_a_mismatched_screenshot_is_refused() -> None:
-    with pytest.raises(ValueError, match="screenshot is 960×768 but the grid is for 960×960"):
-        _render(_png(960, 768, (255, 255, 255)), grid.GridSpec(960, 960, 40))
-
-
-def test_label_step_small_cells_draw_lines_without_labels() -> None:
-    spec = grid.GridSpec(400, 300, 10)
-    rendered = _render(_png(400, 300, (255, 255, 255)), spec)
-    assert rendered.labelled is False
-    image = Image.open(io.BytesIO(rendered.png)).convert("RGB")
-    assert image.getpixel((10, 5)) != (255, 255, 255)  # a line is drawn at x=10
-
-
-def test_a_focused_view_scales_up_so_fine_cells_can_be_labelled() -> None:
-    base = grid.GridSpec(1280, 800, 40)
-    rect = grid.focus_rect(base, 33, 66, 10)
-    spec = grid.GridSpec(1280, 800, 10)
-    rendered = _render(_png(1280, 800, (255, 255, 255)), spec, focus=grid.FocusSpec(33, 66, rect))
-    assert rendered.scale == pytest.approx(2.4)
-    assert (rendered.width, rendered.height) == (192, 192)
-    assert rendered.labelled is True
-
-
-def test_a_focus_too_large_to_scale_is_unlabelled() -> None:
-    base = grid.GridSpec(1280, 800, 40)
-    rect = grid.focus_rect(base, 0, base.cell_count - 1, 5)  # the whole page at 4.8x
-    spec = grid.GridSpec(1280, 800, 5)
-    rendered = _render(_png(1280, 800, (255, 255, 255)), spec, focus=grid.FocusSpec(0, base.cell_count - 1, rect))
-    assert rendered.labelled is False
-    # Capped: 4.8x would be 6144 px wide; it stops at the long-edge cap.
-    assert (rendered.width, rendered.height) == (1568, 980)
-
-
-def test_auto_contrast_draws_dark_lines_on_white_and_light_lines_on_black() -> None:
-    spec = grid.GridSpec(200, 200, 40)
-    on_white = Image.open(io.BytesIO(_render(_png(200, 200, (255, 255, 255)), spec).png)).convert("RGB")
-    on_black = Image.open(io.BytesIO(_render(_png(200, 200, (0, 0, 0)), spec).png)).convert("RGB")
-    # x=40 is a vertical boundary; y=20 is mid-cell, away from labels.
-    assert sum(on_white.getpixel((40, 20))) < 100
-    assert sum(on_black.getpixel((40, 20))) > 600
-
-
-def test_a_fixed_colour_is_honoured() -> None:
-    spec = grid.GridSpec(200, 200, 40)
-    rendered = _render(_png(200, 200, (255, 255, 255)), spec, color=(255, 0, 0))
-    assert Image.open(io.BytesIO(rendered.png)).convert("RGB").getpixel((40, 20)) == (255, 0, 0)
-
-
-def test_grid_off_draws_nothing() -> None:
-    spec = grid.GridSpec(200, 200, 40)
-    rendered = _render(_png(200, 200, (255, 255, 255)), spec, enabled=False)
-    image = Image.open(io.BytesIO(rendered.png)).convert("RGB")
-    assert image.getpixel((40, 20)) == (255, 255, 255)
-    assert rendered.labelled is False
-
-
-def test_a_widescreen_full_view_shrinks_to_the_cap_and_stays_labelled() -> None:
-    spec = grid.GridSpec(1920, 1080, 40)
-    rendered = _render(_png(1920, 1080, (255, 255, 255)), spec)
-    assert (rendered.width, rendered.height) == (1568, 882)
-    assert Image.open(io.BytesIO(rendered.png)).size == (1568, 882)
-    assert rendered.scale == pytest.approx(1568 / 1920)
-    assert rendered.labelled is True  # 40 x 0.8167 = 32.7 >= 24
+# ─── scaling ───
 
 
 def test_a_desktop_full_view_is_not_resized() -> None:
-    rendered = _render(_png(1280, 800, (255, 255, 255)), grid.GridSpec(1280, 800, 40))
+    rendered = _render(_png(1280, 800, (255, 255, 255)), (1280, 800))
     assert (rendered.width, rendered.height, rendered.scale) == (1280, 800, 1.0)
 
 
-def test_a_focus_crop_that_would_upscale_past_the_cap_is_capped() -> None:
-    spec = grid.GridSpec(1920, 1080, 10)
-    rect = (0, 0, 1000, 500)  # 2.4x would be 2400 px wide
-    rendered = _render(_png(1920, 1080, (255, 255, 255)), spec, focus=grid.FocusSpec(0, 1, rect))
-    assert max(rendered.width, rendered.height) == 1568
-    assert rendered.scale == pytest.approx(1.568)
-    assert rendered.labelled is False  # 10 x 1.568 < 24
+def test_a_widescreen_full_view_only_shrinks_to_the_cap() -> None:
+    rendered = _render(_png(1920, 1080, (255, 255, 255)), (1920, 1080))
+    assert (rendered.width, rendered.height) == (1568, 882)
+    assert _image(rendered).size == (1568, 882)
+    assert rendered.scale == pytest.approx(1568 / 1920)
 
 
-def test_cell_centres_are_css_px_and_downscaling_only_maps_them() -> None:
-    """The click point for n does not change; the drawn cell is at centre * s."""
-    spec = grid.GridSpec(1920, 1080, 40)
-    n = spec.cell_number(30, 15)
-    cx, cy = spec.cell_center(n)
-    assert (cx, cy) == (1220, 620)
-    source = Image.new("RGB", (1920, 1080), (255, 255, 255))
-    source.paste((255, 0, 0), (int(cx) - 6, int(cy) - 6, int(cx) + 7, int(cy) + 7))
+def test_a_zoomed_view_is_scaled_to_the_cap_and_never_past_it() -> None:
+    region = grid.keypad_region(_FULL, 5)
+    rendered = _render(_png(1280, 800, (255, 255, 255)), (1280, 800), rect=region)
+    assert (rendered.width, rendered.height) == (1568, 980)
+    assert rendered.scale == pytest.approx(1568 / (1280 / 3))
+
+
+def test_a_mismatched_screenshot_is_refused() -> None:
+    with pytest.raises(ValueError, match="screenshot is 960×768 but the viewport is 960×960"):
+        _render(_png(960, 768, (255, 255, 255)), (960, 960))
+
+
+def test_a_zoom_shows_its_region_with_click_points_in_css_px() -> None:
+    """A spot on the page appears where (css - origin) * s puts it in the zoom."""
+    source = Image.new("RGB", (1280, 800), (255, 255, 255))
+    cx, cy = grid.region_center(grid.zoom_into(_FULL, 5), 9)  # (782.2, 488.9)
+    source.paste((255, 0, 0), (int(cx) - 3, int(cy) - 3, int(cx) + 4, int(cy) + 4))
     buffer = io.BytesIO()
     source.save(buffer, format="PNG")
-    rendered = _render(buffer.getvalue(), spec, enabled=False)
-    assert spec.cell_center(n) == (cx, cy)
-    red, green, blue = Image.open(io.BytesIO(rendered.png)).convert("RGB").getpixel(
-        (round(cx * rendered.scale), round(cy * rendered.scale))
-    )
+    region = grid.zoom_into(_FULL, 5)
+    rendered = _render(buffer.getvalue(), (1280, 800), rect=region, enabled=False)
+    at = (round((cx - region[0]) * rendered.scale), round((cy - region[1]) * rendered.scale))
+    red, green, blue = _image(rendered).getpixel(at)
     assert red > 200 and green < 60 and blue < 60
 
 
-# ─── labels are small corner tags (R6) ───
+# ─── keypad drawing ───
 
 
-def _tag(cell_px: float, number: str) -> tuple[int, int, int, int]:
-    from PIL import ImageDraw
+def test_keypad_lines_are_dark_on_white_and_light_on_black() -> None:
+    on_white = _image(_render(_png(300, 300, (255, 255, 255)), (300, 300)))
+    on_black = _image(_render(_png(300, 300, (0, 0, 0)), (300, 300)))
+    # x=100 is the first vertical line; y=20 is away from the digits.
+    assert sum(on_white.getpixel((100, 20))) < 100
+    assert sum(on_black.getpixel((100, 20))) > 600
 
+
+def test_a_fixed_colour_is_honoured() -> None:
+    rendered = _render(_png(300, 300, (255, 255, 255)), (300, 300), color=(255, 0, 0))
+    assert _image(rendered).getpixel((100, 20)) == (255, 0, 0)
+
+
+def test_grid_off_draws_no_keypad() -> None:
+    image = _image(_render(_png(300, 300, (255, 255, 255)), (300, 300), enabled=False))
+    assert image.getpixel((100, 20)) == (255, 255, 255)
+    assert image.getpixel((150, 150)) == (255, 255, 255)  # no digit 5 either
+
+
+def test_keypad_digits_sit_at_region_centres() -> None:
+    image = _image(_render(_png(300, 300, (255, 255, 255)), (300, 300)))
+    # Region 5's centre carries its tag (dark fill on white).
+    assert sum(image.getpixel((150, 150))) < 400
+
+
+# ─── marks ───
+
+
+def test_a_mark_gets_an_outline_and_a_tag() -> None:
+    mark = _mark(1, (100.0, 100.0, 300.0, 160.0))
+    image = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), enabled=False, mark_list=[mark]))
+    assert sum(image.getpixel((200, 100))) < 250  # top outline
+    assert sum(image.getpixel((200, 130))) == 765  # inside is untouched
+    assert sum(image.getpixel((103, 103))) < 250  # tag inside the top-left corner
+
+
+def test_a_short_marks_tag_goes_just_above_it() -> None:
+    mark = _mark(3, (100.0, 100.0, 300.0, 108.0))  # 8 px tall: no room inside
+    image = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), enabled=False, mark_list=[mark]))
+    assert sum(image.getpixel((101, 95))) < 250
+
+
+def test_marks_off_draws_none_and_marks_outside_a_zoom_are_not_drawn() -> None:
+    mark = _mark(1, (100.0, 100.0, 300.0, 160.0))
+    hidden = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), enabled=False,
+                            mark_list=[mark], show_marks=False))
+    assert sum(hidden.getpixel((200, 100))) == 765
+    # Zoom into region 9 (bottom right): the mark is elsewhere, so nothing is drawn.
+    region = grid.keypad_region((0.0, 0.0, 400.0, 400.0), 9)
+    zoomed = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), rect=region, enabled=False,
+                            mark_list=[mark]))
+    assert zoomed.getextrema() == ((255, 255), (255, 255), (255, 255))
+
+
+def test_a_mark_partly_inside_a_zoom_is_drawn_clipped() -> None:
+    mark = _mark(1, (100.0, 100.0, 300.0, 160.0))
+    region = (200.0, 0.0, 400.0, 200.0)
+    rendered = _render(_png(400, 400, (255, 255, 255)), (400, 400), rect=region, enabled=False, mark_list=[mark])
+    image = _image(rendered)
+    # Its right edge (x=300) is inside the zoom at (300-200)*s.
+    assert sum(image.getpixel((round(100 * rendered.scale) - 1, round(130 * rendered.scale)))) < 250
+
+
+def test_marks_are_numbered_in_reading_order_and_clipped_to_the_viewport() -> None:
+    raw = [
+        (marks.RawMark("link", "b", (500, 10, 600, 30), (550, 20), None), 0.0, 0.0, "main"),
+        (marks.RawMark("link", "a", (10, 12, 100, 30), (50, 20), None), 0.0, 0.0, "main"),
+        (marks.RawMark("button", "c", (10, 50, 100, 70), (50, 60), None), 0.0, 0.0, "main"),
+        # Inside a frame at (900, 20): offset into page coordinates.
+        (marks.RawMark("button", "in frame", (10, 10, 150, 50), (80, 30), None), 900.0, 20.0, "frame"),
+        # Off the viewport after the offset: dropped.
+        (marks.RawMark("button", "gone", (10, 10, 50, 50), (30, 30), None), 1275.0, 0.0, "frame"),
+    ]
+    placed = marks.place(raw, 1280, 800)
+    assert [(m.n, m.name, key) for m, key in placed] == [
+        (1, "a", "main"), (2, "b", "main"), (3, "in frame", "frame"), (4, "c", "main"),
+    ]
+    in_frame = placed[2][0]
+    assert in_frame.rect == (910.0, 30.0, 1050.0, 70.0) and in_frame.point == (980.0, 50.0)
+
+
+def test_legend_and_feedback_lines() -> None:
+    mark = marks.Mark(n=12, kind="textbox", name="Enter your address", rect=(0, 0, 10, 10), point=(5, 5), state="empty")
+    assert marks.legend_line(mark) == '[12] textbox "Enter your address" (empty)'
+    assert marks.feedback_line({"kind": "button", "name": "Go"}) == 'clicked button "Go"'
+    assert marks.feedback_line({"tag": "CANVAS"}) == "clicked canvas (not a control)"
+    assert marks.feedback_line(None) == "clicked nothing"
+    try:
+        marks.raw_from_js({"kind": "robot", "rect": [0, 0, 1, 1], "point": [0, 0]})
+    except ValueError as exc:
+        assert "unexpected mark" in str(exc)
+    else:
+        raise AssertionError("an unknown kind must be refused")
+
+
+# ─── tags (R6/R9/R14 rules carried over to marks and keypad digits) ───
+
+
+def _tag(rendered_px: float, text: str) -> tuple[int, int, int, int]:
     draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    font = grid._font(grid.label_font_size(cell_px, _LABELS))
-    return grid.tag_box(draw, (0, 0), number, font)
+    font = grid._font(grid.label_font_size(rendered_px, _LABELS))
+    return grid.tag_box(draw, (0, 0), text, font)
 
 
 def test_label_font_size_follows_the_ratio_between_a_floor_and_a_cap() -> None:
@@ -242,96 +235,35 @@ def test_label_font_size_follows_the_ratio_between_a_floor_and_a_cap() -> None:
     assert grid.label_font_size(200, _LABELS) == 14
 
 
-def test_a_three_digit_tag_is_at_most_45_percent_of_a_density_60_cell() -> None:
+def test_a_three_digit_tag_is_small() -> None:
     x0, y0, x1, y1 = _tag(60, "307")
     assert x1 - x0 + 1 <= 0.45 * 60
 
 
-def test_a_three_digit_tag_fits_inside_the_smallest_labelled_cell() -> None:
-    x0, y0, x1, y1 = _tag(24, "999")
-    # Drawn one px in from the corner.
-    assert 1 + (x1 - x0 + 1) <= 24 and 1 + (y1 - y0 + 1) <= 24
-
-
 def test_tags_are_dark_on_light_ground_and_light_on_dark_ground() -> None:
-    spec = grid.GridSpec(240, 240, 60)
-    on_white = Image.open(io.BytesIO(_render(_png(240, 240, (255, 255, 255)), spec).png)).convert("RGB")
-    on_black = Image.open(io.BytesIO(_render(_png(240, 240, (0, 0, 0)), spec).png)).convert("RGB")
-    # (1, 1) is cell 0's tag padding: tag fill, not a digit and not a line.
-    assert sum(on_white.getpixel((1, 1))) < 250
-    assert sum(on_black.getpixel((1, 1))) > 500
-
-
-def test_a_fixed_colour_fills_the_tag() -> None:
-    spec = grid.GridSpec(240, 240, 60)
-    rendered = _render(_png(240, 240, (255, 255, 255)), spec, color=(255, 0, 0))
-    red, green, blue = Image.open(io.BytesIO(rendered.png)).convert("RGB").getpixel((1, 1))
-    # Red at 0.8 over white.
-    assert red == 255 and green == blue == 51
+    mark = _mark(1, (20.0, 20.0, 220.0, 80.0))
+    on_white = _image(_render(_png(300, 300, (255, 255, 255)), (300, 300), enabled=False, mark_list=[mark]))
+    on_black = _image(_render(_png(300, 300, (0, 0, 0)), (300, 300), enabled=False, mark_list=[mark]))
+    # (22, 22) is the tag's padding: fill, not a digit.
+    assert sum(on_white.getpixel((22, 22))) < 250
+    assert sum(on_black.getpixel((22, 22))) > 500
 
 
 def test_label_opacity_is_separate_from_line_opacity() -> None:
-    spec = grid.GridSpec(240, 240, 60)
-    png = _png(240, 240, (255, 255, 255))
-    strong = Image.open(io.BytesIO(_render(png, spec, opacity=1.0).png)).convert("RGB")
-    faint = Image.open(io.BytesIO(_render(png, spec, opacity=0.2).png)).convert("RGB")
-    # The tag does not change with the line opacity...
-    assert strong.getpixel((1, 1)) == faint.getpixel((1, 1))
-    # ...but the line does (x=60 is a boundary; y=40 is below the tags).
-    assert strong.getpixel((60, 40)) != faint.getpixel((60, 40))
-    # And a lower label opacity lightens the tag on its own.
-    lighter = Image.open(io.BytesIO(_render(
-        png, spec, label=grid.LabelStyle(font_ratio=0.2, font_min_px=10, font_max_px=14, opacity=0.4),
-    ).png)).convert("RGB")
-    assert sum(lighter.getpixel((1, 1))) > sum(strong.getpixel((1, 1)))
+    png = _png(300, 300, (255, 255, 255))
+    strong = _image(_render(png, (300, 300), opacity=1.0))
+    faint = _image(_render(png, (300, 300), opacity=0.2))
+    # Region 5's digit tag does not change with the line opacity…
+    assert strong.getpixel((150, 150)) == faint.getpixel((150, 150))
+    # …but the line does.
+    assert strong.getpixel((100, 20)) != faint.getpixel((100, 20))
+    lighter = _image(_render(png, (300, 300), label=grid.LabelStyle(0.2, 10, 14, 0.4)))
+    assert sum(lighter.getpixel((150, 150))) > sum(strong.getpixel((150, 150)))
 
 
-def _edge_tag(spec, n: int, size: tuple[int, int]):
-    from PIL import ImageDraw
-
-    cell = spec.cell_rect(n)
-    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    font = grid._font(grid.label_font_size(spec.density, _LABELS))
-    anchored = grid.tag_box(draw, (cell[0] + 1, cell[1] + 1), str(n), font)
-    return cell, anchored, grid.fit_inside(anchored, size)
-
-
-def _inside_and_over_its_cell(cell, anchored, fitted, size) -> None:
-    x0, y0, x1, y1 = fitted
-    assert 0 <= x0 and x1 <= size[0] - 1 and 0 <= y0 and y1 <= size[1] - 1
-    # Moved, not resized.
-    assert (x1 - x0, y1 - y0) == (anchored[2] - anchored[0], anchored[3] - anchored[1])
-    # Still over its own cell's rendered rect (inclusive box vs half-open rect).
-    assert x1 >= cell[0] and x0 < cell[2] and y1 >= cell[1] and y0 < cell[3]
-
-
-def test_cell_21s_tag_lies_inside_the_image_and_over_its_cell() -> None:
-    spec = grid.GridSpec(1280, 800, 60)  # the last column is 20 px wide
-    cell, anchored, fitted = _edge_tag(spec, 21, (1280, 800))
-    assert cell == (1260, 0, 1280, 60)
-    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 800))
-
-
-def test_a_three_digit_tag_in_the_narrow_last_column_is_shifted_left() -> None:
-    spec = grid.GridSpec(1280, 800, 60)
-    cell, anchored, fitted = _edge_tag(spec, 285, (1280, 800))
-    assert anchored[2] > 1279, "unshifted, the tag would overflow the right edge"
-    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 800))
-    assert fitted[2] == 1279
-    # The rendered image shows tag fill in the last pixel column of that row.
-    rendered = _render(_png(1280, 800, (255, 255, 255)), spec)
-    image = Image.open(io.BytesIO(rendered.png)).convert("RGB")
-    assert sum(image.getpixel((1279, fitted[1]))) < 250
-
-
-def test_a_tag_in_a_short_last_row_is_shifted_up() -> None:
-    spec = grid.GridSpec(1280, 790, 60)  # the last row is 10 px tall
-    n = spec.cell_number(0, spec.rows - 1)
-    cell, anchored, fitted = _edge_tag(spec, n, (1280, 790))
-    assert anchored[3] > 789, "unshifted, the tag would overflow the bottom edge"
-    _inside_and_over_its_cell(cell, anchored, fitted, (1280, 790))
-    assert fitted[3] == 789
-
-
-def test_a_tag_inside_the_image_is_not_moved() -> None:
+def test_a_tag_at_an_edge_is_moved_inside_the_image() -> None:
+    assert grid.fit_inside((1270, 1, 1290, 14), (1280, 800)) == (1259, 1, 1279, 14)
+    assert grid.fit_inside((1, 790, 20, 805), (1280, 800)) == (1, 784, 20, 799)
+    # A tag drawn just above a mark at the very top moves down into view.
+    assert grid.fit_inside((5, -12, 20, -1), (1280, 800)) == (5, 0, 20, 11)
     assert grid.fit_inside((61, 1, 80, 14), (1280, 800)) == (61, 1, 80, 14)

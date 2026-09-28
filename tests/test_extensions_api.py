@@ -222,8 +222,8 @@ def _write_shot(agent_id: str, command: str, taken_at: str) -> Path:
     png = folder / f"{stamp}.png"
     png.with_suffix(".json").write_text(json.dumps({
         "command": command, "url": "https://example.com", "title": "Example",
-        "window": "desktop 1280x800", "grid": "grid: on, density 60", "image": "1280x800",
-        "focus": None, "taken_at": taken_at,
+        "window": "desktop 1280x800", "view": "view: full page", "image": "1280x800",
+        "marks": 4, "taken_at": taken_at,
     }), encoding="utf-8")
     png.write_bytes(b"\x89PNG-fixture-" + agent_id.encode())
     return png
@@ -263,7 +263,7 @@ def test_live_lists_each_agents_latest_shot_newest_first(client, live_shots) -> 
     stamp = 1790593200000  # 2026-09-28T11:00:00Z in epoch ms
     assert first["image_url"] == f"/api/extensions/{_BV}/live/{newer.id}/image?t={stamp}"
     assert first["command"] == "bv click 5"
-    assert first["caption_lines"] == ["window: desktop 1280x800", "grid: on, density 60", "image 1280x800"]
+    assert first["caption_lines"] == ["window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 4"]
     assert "agent_missing" not in first
 
 

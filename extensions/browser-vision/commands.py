@@ -1,12 +1,17 @@
 """Browser Vision — the ``bv`` subcommands.
 
 Parses ``bv <sub> …``, keeps each agent's sticky view settings, drives the
-browser host, draws the grid and returns a CLI result that carries the
-screenshot path for the model.
+browser host, draws the keypad and marks, and returns a CLI result that
+carries the screenshot path for the model.
 
-Active grid rule: click numbers always refer to the most recent screenshot.
-Every screenshot registers its grid (density, cols, rows) as the agent's
-active grid, and ``bv click <n>`` resolves against it.
+Two ways to aim, both resolved against the MOST RECENT screenshot:
+
+- element marks: ``@n`` names a control from the result legend (primary);
+- the 3×3 keypad: ``zoom <d>`` narrows the view to region ``d`` (1–9, laid out
+  like a phone keypad), ``click <d>`` clicks a region's centre (fallback for
+  anything the page does not expose as a control).
+
+Any action resets the zoom and returns the full page; ``view`` keeps it.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -32,24 +37,23 @@ from db.model_capabilities import supports_images
 
 from .browser_host import ActionOutcome, BrowserActionError, Capture
 from .grid import (
-    CellOutOfRange,
-    FocusSpec,
     GridColor,
-    GridSpec,
     GridStyle,
     LabelStyle,
-    focus_rect,
+    Rect,
+    ZoomLimit,
     parse_color,
-    parse_density,
-    parse_focus,
+    parse_keypad_digit,
     parse_opacity,
-    render_grid,
+    region_center,
+    render_view,
+    zoom_into,
 )
+from .marks import Mark, feedback_line, legend_line
 from .screenshots import ScreenshotStore, ShotMeta
 from .viewports import ViewportSpec, WindowPreset, resolve_viewport
 
 DOWNLOADS_VIRTUAL_DIR = "/me/downloads"
-UNLABELLED_NOTICE = "cells too small to label at this size; add/narrow --focus"
 WINDOW_SWAP_NOTE = (
     "window changed: cookies and site storage were kept; "
     "form contents and scroll position were reset"
@@ -58,9 +62,14 @@ WINDOW_SWAP_NOTE = (
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # host:port, optionally with a path — looks like "scheme:" but is not one.
 _HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.-]+:\d+(?:/.*)?$")
+# @n: a mark from the latest screenshot's legend.
+_MARK_RE = re.compile(r"^@(\d+)$")
 # Operator status lines keep URLs and reasons to this many characters.
 _STATUS_MAX_CHARS = 80
-_VIEW_FLAGS = {"--density", "--grid", "--grid-color", "--grid-opacity", "--focus"}
+_VIEW_FLAGS = {"--marks", "--grid", "--grid-color", "--grid-opacity"}
+_USAGE = (
+    'USAGE: bv open|view|zoom|click|type|select|key|scroll|back|window|status|close — run "learn bv" for details'
+)
 
 
 class BrowserVisionDefaults(BaseModel):
@@ -70,12 +79,12 @@ class BrowserVisionDefaults(BaseModel):
 
     window_default: str
     window_presets: dict[str, WindowPreset]
-    density_default: int = Field(gt=0)
-    label_min_px: int = Field(gt=0)
     label_font_ratio: float = Field(gt=0)
     label_font_min_px: int = Field(gt=0)
     label_font_max_px: int = Field(gt=0)
     label_opacity: float = Field(ge=0, le=1)
+    keypad_font_px: int = Field(gt=0)
+    marks_default: bool
     image_max_px: int = Field(gt=0)
     grid_default: bool
     grid_color_default: str
@@ -114,6 +123,8 @@ class BrowserHostLike(Protocol):
     def goto(self, agent_id: str, url: str) -> ActionOutcome: ...
     def click(self, agent_id: str, x: float, y: float) -> ActionOutcome: ...
     def type_text(self, agent_id: str, text: str, *, enter: bool) -> ActionOutcome: ...
+    def select(self, agent_id: str, mark_n: int, x: float, y: float, label: str) -> ActionOutcome: ...
+    def describe(self, agent_id: str, x: float, y: float) -> dict[str, Any] | None: ...
     def press(self, agent_id: str, key: str) -> ActionOutcome: ...
     def scroll(self, agent_id: str, dy: float) -> ActionOutcome: ...
     def back(self, agent_id: str) -> ActionOutcome: ...
@@ -129,15 +140,32 @@ Announce = Literal["always", "navigation", "never"]
 
 @dataclass
 class _AgentView:
-    """One agent's sticky settings for its browser session."""
+    """One agent's sticky settings and latest screenshot facts."""
 
     window: ViewportSpec
-    density: int
     grid: GridStyle
-    active: GridSpec | None = None
+    show_marks: bool
+    # Zoom stack: each entry a region of the one before; empty = full page.
+    zoom: list[Rect] = field(default_factory=list)
+    zoom_path: list[int] = field(default_factory=list)
+    # From the most recent screenshot: its viewport size and marks.
+    viewport: tuple[int, int] | None = None
+    marks: tuple[Mark, ...] = ()
     downloads: list[str] = field(default_factory=list)
     # The page URL of the latest screenshot, to tell when an action navigated.
     last_url: str | None = None
+
+    def current_rect(self) -> Rect:
+        """The rect the keypad splits: the top of the zoom stack, or the viewport."""
+        if self.zoom:
+            return self.zoom[-1]
+        if self.viewport is None:
+            raise CommandError('NO_VIEW: run "bv view" first')
+        return 0.0, 0.0, float(self.viewport[0]), float(self.viewport[1])
+
+    def reset_zoom(self) -> None:
+        self.zoom.clear()
+        self.zoom_path.clear()
 
 
 class CommandError(ValueError):
@@ -207,9 +235,9 @@ class BrowserVisionCommands:
 
         Preconditions, each an explicit error: setup is ``ready``
         (``SETUP_REQUIRED``) and the agent's routed model is flagged
-        image-capable (``MODEL_CANNOT_SEE_IMAGES``). Usage errors, cells off
-        the grid and browser failures come back as error results the agent
-        can recover from; nothing is clamped or retried silently.
+        image-capable (``MODEL_CANNOT_SEE_IMAGES``). Usage errors, unknown
+        marks, zoom limits and browser failures come back as error results the
+        agent can recover from; nothing is clamped or retried silently.
         """
         status = self._setup_status()
         if status.state != "ready":
@@ -218,14 +246,16 @@ class BrowserVisionCommands:
         if not can_see:
             return self._error(ctx, parsed, f"MODEL_CANNOT_SEE_IMAGES: {model or 'no model configured'}")
         if not parsed.args:
-            return self._usage(ctx, parsed)
+            return self._error(ctx, parsed, _USAGE)
         sub, args = parsed.args[0].lower(), parsed.args[1:]
         runner = {
             "open": self._open,
             "view": self._view,
+            "zoom": self._zoom,
             "window": self._window,
             "click": self._click,
             "type": self._type,
+            "select": self._select,
             "key": self._key,
             "scroll": self._scroll,
             "back": self._back,
@@ -233,15 +263,15 @@ class BrowserVisionCommands:
             "close": self._close,
         }.get(sub)
         if runner is None:
-            return self._usage(ctx, parsed)
+            return self._error(ctx, parsed, _USAGE)
         try:
             return runner(ctx, parsed, args, body)
         except BrowserActionError as exc:
             return self._error(ctx, parsed, f"BROWSER_ERROR: {exc}")
-        except (CommandError, CellOutOfRange) as exc:
+        except (CommandError, ZoomLimit) as exc:
             return self._error(ctx, parsed, str(exc))
         except ValueError as exc:
-            # The grid/viewport parsers raise ValueError naming the accepted form.
+            # The keypad/colour/viewport parsers raise ValueError naming the accepted form.
             return self._error(ctx, parsed, f"INVALID_ARGUMENT: {exc}")
 
     # ── subcommands ────────────────────────────────────────────────────────
@@ -258,38 +288,49 @@ class BrowserVisionCommands:
             reason = _truncate(str(exc).strip().splitlines()[0] if str(exc).strip() else "navigation failed")
             failed = self._error(ctx, parsed, f"BROWSER_ERROR: {exc}")
             return _with_status_lines(failed, [f"Couldn't open {short_url(url)} — {reason}"])
-        return self._full_view(ctx, parsed, view, outcome, notes=[], announce="always")
+        return self._after_action(ctx, parsed, view, outcome, notes=[], announce="always")
 
     def _view(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
-        flags = _parse_flags(args, _VIEW_FLAGS, "bv view [--density N] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] [--focus <a>-<b>]")
+        flags = _parse_flags(args, _VIEW_FLAGS, "bv view [--marks on|off] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1]")
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
-        density = parse_density(flags["--density"]) if "--density" in flags else None
-        focus = parse_focus(flags["--focus"]) if "--focus" in flags else None
         grid = view.grid
         if "--grid" in flags:
-            grid = dataclasses.replace(grid, enabled=_parse_on_off(flags["--grid"]))
+            grid = dataclasses.replace(grid, enabled=_parse_on_off(flags["--grid"], "--grid"))
         if "--grid-color" in flags:
             grid = dataclasses.replace(grid, color=parse_color(flags["--grid-color"]))
         if "--grid-opacity" in flags:
             grid = dataclasses.replace(grid, opacity=parse_opacity(flags["--grid-opacity"]))
-        # Validate the focus against the grid the agent just saw BEFORE
-        # changing anything sticky, so a bad focus leaves the view untouched.
-        focus_density = density if density is not None else view.density
-        rect = None
-        if focus is not None:
-            if view.active is None:
-                raise CommandError('NO_VIEW: run "bv view" first')
-            rect = focus_rect(view.active, focus[0], focus[1], focus_density)
+        if "--marks" in flags:
+            view.show_marks = _parse_on_off(flags["--marks"], "--marks")
         view.grid = grid
-        if focus is None:
-            if density is not None:
-                view.density = density
-            return self._full_view(ctx, parsed, view, ActionOutcome(), notes=[])
-        capture = self._host.capture(ctx.agent.id)
-        spec = GridSpec(capture.width, capture.height, focus_density)
-        focus_spec = FocusSpec(a=focus[0], b=focus[1], rect=rect)
-        return self._screenshot_result(ctx, parsed, view, capture, spec, focus_spec, ActionOutcome(), notes=[])
+        # A view keeps the zoom: it re-captures the same rect.
+        return self._screenshot(ctx, parsed, view, ActionOutcome(), notes=[])
+
+    def _zoom(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
+        usage = "USAGE: bv zoom <1-9> [<1-9> …] | bv zoom out | bv zoom reset"
+        if not args:
+            raise CommandError(usage)
+        view = self._view_for(ctx.agent.id)
+        self._require_page(ctx.agent.id)
+        if len(args) == 1 and args[0].lower() == "reset":
+            view.reset_zoom()
+        elif len(args) == 1 and args[0].lower() == "out":
+            if not view.zoom:
+                raise CommandError("ZOOM_OUT: already showing the full page")
+            view.zoom.pop()
+            view.zoom_path.pop()
+        else:
+            digits = [parse_keypad_digit(arg) for arg in args]
+            # Validate the whole chain before changing the view.
+            rect = view.current_rect()
+            chain: list[Rect] = []
+            for digit in digits:
+                rect = zoom_into(rect, digit)
+                chain.append(rect)
+            view.zoom.extend(chain)
+            view.zoom_path.extend(digits)
+        return self._screenshot(ctx, parsed, view, ActionOutcome(), notes=[])
 
     def _window(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1:
@@ -307,30 +348,51 @@ class BrowserVisionCommands:
                 cwd=ctx.cwd,
             )
         self._host.set_viewport(ctx.agent.id, window)
-        return self._full_view(ctx, parsed, view, ActionOutcome(), notes=[WINDOW_SWAP_NOTE])
+        return self._after_action(ctx, parsed, view, ActionOutcome(), notes=[WINDOW_SWAP_NOTE])
 
     def _click(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
-        if len(args) != 1 or not (args[0].isascii() and args[0].isdigit()):
-            raise CommandError("USAGE: bv click <n> (n is a cell number from the most recent screenshot)")
+        if len(args) != 1:
+            raise CommandError("USAGE: bv click @<n> (a mark) | bv click <1-9> (a keypad region of the current view)")
         view = self._view_for(ctx.agent.id)
-        # Click numbers come from a screenshot; without one there is nothing to resolve.
-        if view.active is None:
-            raise CommandError('NO_VIEW: run "bv view" first')
         self._require_page(ctx.agent.id)
-        number = int(args[0])
-        x, y = view.active.cell_center(number)
+        target = args[0]
+        if _MARK_RE.match(target):
+            x, y = self._mark(view, target).point
+        else:
+            x, y = region_center(view.current_rect(), parse_keypad_digit(target))
+        feedback = feedback_line(self._host.describe(ctx.agent.id, x, y))
         outcome = self._host.click(ctx.agent.id, x, y)
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"clicked cell {number} at ({x:g}, {y:g})"], announce="navigation")
+        return self._after_action(ctx, parsed, view, outcome, notes=[f"{feedback} at ({x:.0f}, {y:.0f})"], announce="navigation")
 
     def _type(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
-        if any(arg != "--enter" for arg in args):
-            raise CommandError("USAGE: bv type [--enter], with the text to type in the body")
+        usage = "USAGE: bv type [@<n>] [--enter], with the text to type in the body"
+        marks_args = [arg for arg in args if arg != "--enter"]
+        if len(marks_args) > 1 or (marks_args and not _MARK_RE.match(marks_args[0])):
+            raise CommandError(usage)
         if body is None or body == "":
             raise CommandError("USAGE: bv type needs the text to type in the body")
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
+        notes: list[str] = []
+        if marks_args:
+            x, y = self._mark(view, marks_args[0]).point
+            notes.append(f"{feedback_line(self._host.describe(ctx.agent.id, x, y))} at ({x:.0f}, {y:.0f})")
+            self._host.click(ctx.agent.id, x, y)
         outcome = self._host.type_text(ctx.agent.id, body, enter="--enter" in args)
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"typed {len(body)} characters"], announce="navigation")
+        notes.append(f"typed {len(body)} characters")
+        return self._after_action(ctx, parsed, view, outcome, notes=notes, announce="navigation")
+
+    def _select(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
+        if len(args) < 2 or not _MARK_RE.match(args[0]):
+            raise CommandError("USAGE: bv select @<n> <option text>")
+        view = self._view_for(ctx.agent.id)
+        self._require_page(ctx.agent.id)
+        mark = self._mark(view, args[0])
+        if mark.kind != "select":
+            raise CommandError(f"NOT_A_SELECT: @{mark.n} is a {mark.kind}; use bv click or bv type for it")
+        option = " ".join(args[1:])
+        outcome = self._host.select(ctx.agent.id, mark.n, mark.point[0], mark.point[1], option)
+        return self._after_action(ctx, parsed, view, outcome, notes=[f'selected "{option}" in @{mark.n}'], announce="navigation")
 
     def _key(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1:
@@ -338,19 +400,19 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         outcome = self._host.press(ctx.agent.id, args[0])
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"pressed {args[0]}"], announce="navigation")
+        return self._after_action(ctx, parsed, view, outcome, notes=[f"pressed {args[0]}"], announce="navigation")
 
     def _scroll(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1 or args[0].lower() not in {"up", "down"}:
             raise CommandError("USAGE: bv scroll up|down")
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
-        if view.active is None:
+        if view.viewport is None:
             raise CommandError('NO_VIEW: run "bv view" first')
-        distance = self._defaults.scroll_fraction * view.active.viewport_h
+        distance = self._defaults.scroll_fraction * view.viewport[1]
         dy = distance if args[0].lower() == "down" else -distance
         outcome = self._host.scroll(ctx.agent.id, dy)
-        return self._full_view(ctx, parsed, view, outcome, notes=[f"scrolled {args[0].lower()} {abs(dy):g}px"])
+        return self._after_action(ctx, parsed, view, outcome, notes=[f"scrolled {args[0].lower()} {abs(dy):g}px"])
 
     def _back(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if args:
@@ -358,7 +420,7 @@ class BrowserVisionCommands:
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         outcome = self._host.back(ctx.agent.id)
-        return self._full_view(ctx, parsed, view, outcome, notes=["went back"], announce="navigation")
+        return self._after_action(ctx, parsed, view, outcome, notes=["went back"], announce="navigation")
 
     def _status(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         view = self._view_for(ctx.agent.id)
@@ -370,7 +432,8 @@ class BrowserVisionCommands:
             lines.append('no page open; run "bv open <url>"')
         lines += [
             f"window: {view.window.name}",
-            f"density: {view.density}",
+            _view_line(view),
+            f"marks: {'on' if view.show_marks else 'off'}",
             f"grid: {'on' if view.grid.enabled else 'off'}, colour {_color_text(view.grid.color)}, opacity {view.grid.opacity:g}",
         ]
         lines += [f"downloaded: {item}" for item in view.downloads] or ["downloads this session: none"]
@@ -378,7 +441,7 @@ class BrowserVisionCommands:
             command=parsed.raw,
             detail="Browser Vision: status",
             kind="browser",
-            data={"window": view.window.name, "density": view.density, "grid": view.grid.enabled, "status_lines": []},
+            data={"window": view.window.name, "marks": view.show_marks, "grid": view.grid.enabled, "status_lines": []},
             sections=[("BROWSER", lines)],
             cwd=ctx.cwd,
         )
@@ -405,12 +468,12 @@ class BrowserVisionCommands:
                 defaults = self._defaults
                 view = _AgentView(
                     window=resolve_viewport(defaults.window_default, defaults.window_presets),
-                    density=defaults.density_default,
                     grid=GridStyle(
                         enabled=defaults.grid_default,
                         color=parse_color(defaults.grid_color_default),
                         opacity=defaults.grid_opacity_default,
                     ),
+                    show_marks=defaults.marks_default,
                 )
                 self._views[agent_id] = view
             return view
@@ -419,48 +482,66 @@ class BrowserVisionCommands:
         if not self._host.has_session(agent_id):
             raise CommandError('NO_PAGE: run "bv open <url>" first')
 
-    def _full_view(
-        self,
-        ctx: CliExecutionContext,
-        parsed: ParsedCliCommand,
-        view: _AgentView,
-        outcome: ActionOutcome,
-        *,
-        notes: list[str],
-        announce: Announce = "never",
-    ) -> BossModCliResult:
-        capture = self._host.capture(ctx.agent.id)
-        spec = GridSpec(capture.width, capture.height, view.density)
-        return self._screenshot_result(ctx, parsed, view, capture, spec, None, outcome, notes=notes, announce=announce)
+    def _mark(self, view: _AgentView, token: str) -> Mark:
+        """Resolve ``@n`` against the most recent screenshot's marks.
 
-    def _screenshot_result(
+        Raises:
+            CommandError: ``NO_VIEW`` before any screenshot, ``MARK_NOT_FOUND``
+                (with the valid range) for an unknown number.
+        """
+        if view.viewport is None:
+            raise CommandError('NO_VIEW: run "bv view" first')
+        match = _MARK_RE.match(token)
+        number = int(match.group(1)) if match else -1
+        found = next((mark for mark in view.marks if mark.n == number), None)
+        if found is None:
+            valid = f"@1–@{len(view.marks)}" if view.marks else "none (no marks on the latest screenshot)"
+            raise CommandError(f"MARK_NOT_FOUND: {token} is not on the latest screenshot; valid marks: {valid}")
+        return found
+
+    def _after_action(
         self,
         ctx: CliExecutionContext,
         parsed: ParsedCliCommand,
         view: _AgentView,
-        capture: Capture,
-        spec: GridSpec,
-        focus: FocusSpec | None,
         outcome: ActionOutcome,
         *,
         notes: list[str],
         announce: Announce = "never",
     ) -> BossModCliResult:
-        """Render, store and describe one screenshot.
+        """An action changed the page: back to the full view, then screenshot."""
+        view.reset_zoom()
+        return self._screenshot(ctx, parsed, view, outcome, notes=notes, announce=announce)
+
+    def _screenshot(
+        self,
+        ctx: CliExecutionContext,
+        parsed: ParsedCliCommand,
+        view: _AgentView,
+        outcome: ActionOutcome,
+        *,
+        notes: list[str],
+        announce: Announce = "never",
+    ) -> BossModCliResult:
+        """Capture, render, store and describe the current view.
 
         ``announce`` decides the operator status lines (``data["status_lines"]``,
         posted by core like task lines): ``"always"`` says ``Browsing <url>``
         (open), ``"navigation"`` says it only when the page URL differs from
-        the previous screenshot's, ``"never"`` says nothing (view, scroll,
-        window). Each saved download adds a ``Downloaded`` line either way.
+        the previous screenshot's, ``"never"`` says nothing (view, zoom,
+        scroll, window). Each saved download adds a ``Downloaded`` line.
         """
+        capture = self._host.capture(ctx.agent.id)
         previous_url = view.last_url
-        rendered = render_grid(
+        view.viewport = (capture.width, capture.height)
+        view.marks = capture.marks
+        rendered = render_view(
             capture.png,
-            spec,
+            view.viewport,
+            view.zoom[-1] if view.zoom else None,
             view.grid,
-            focus,
-            label_min_px=self._defaults.label_min_px,
+            capture.marks,
+            show_marks=view.show_marks,
             image_max_px=self._defaults.image_max_px,
             label=LabelStyle(
                 font_ratio=self._defaults.label_font_ratio,
@@ -468,9 +549,9 @@ class BrowserVisionCommands:
                 font_max_px=self._defaults.label_font_max_px,
                 opacity=self._defaults.label_opacity,
             ),
+            keypad_font_px=self._defaults.keypad_font_px,
         )
-        grid_line = _grid_line(spec, view.grid)
-        focus_line = f"focus: cells {focus.a}–{focus.b}" if focus is not None else None
+        view_line = _view_line(view)
         path = self._shots.store(
             ctx.agent.id,
             rendered.png,
@@ -479,27 +560,24 @@ class BrowserVisionCommands:
                 url=capture.url,
                 title=capture.title,
                 window=f"{view.window.name} {capture.width}x{capture.height}",
-                grid=grid_line,
+                view=view_line,
                 image=f"{rendered.width}x{rendered.height}",
-                focus=focus_line,
+                marks=len(capture.marks),
                 taken_at=datetime.now(timezone.utc).isoformat(),
             ),
         )
-        view.active = spec
 
         lines = [
             f"url: {capture.url}",
             f"title: {capture.title}",
             f"viewport: {capture.width}x{capture.height}",
             f"window: {view.window.name} {capture.width}x{capture.height}",
-            grid_line,
+            view_line,
         ]
         if rendered.scale != 1:
             lines.append(f"image {rendered.width}x{rendered.height} (scale ×{rendered.scale:.4g})")
-        if focus_line is not None:
-            lines.append(focus_line)
-        if view.grid.enabled and not rendered.labelled:
-            lines.append(UNLABELLED_NOTICE)
+        lines.append(f"marks: {len(capture.marks)}" + ("" if view.show_marks else " (hidden on the image)"))
+        lines += [legend_line(mark) for mark in capture.marks]
         lines += notes
         status_lines: list[str] = []
         if announce == "always" or (announce == "navigation" and capture.url != previous_url):
@@ -521,9 +599,8 @@ class BrowserVisionCommands:
             data={
                 "url": capture.url,
                 "title": capture.title,
-                "density": spec.density,
-                "cols": spec.cols,
-                "rows": spec.rows,
+                "view": view_line,
+                "marks": len(capture.marks),
                 "screenshot": str(path),
                 "status_lines": status_lines,
             },
@@ -532,11 +609,17 @@ class BrowserVisionCommands:
         )
         return dataclasses.replace(result, image_paths=(str(path),))
 
-    def _usage(self, ctx: CliExecutionContext, parsed: ParsedCliCommand) -> BossModCliResult:
-        return self._error(ctx, parsed, 'USAGE: bv open|view|window|click|type|key|scroll|back|status|close — run "learn bv" for details')
-
     def _error(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, message: str) -> BossModCliResult:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
+
+
+def _view_line(view: _AgentView) -> str:
+    """``view: full page`` or ``view: zoom 5 › 3 — region W×H px at (x, y)``."""
+    if not view.zoom:
+        return "view: full page"
+    x0, y0, x1, y1 = view.zoom[-1]
+    path = " › ".join(str(digit) for digit in view.zoom_path)
+    return f"view: zoom {path} — region {x1 - x0:.0f}×{y1 - y0:.0f} px at ({x0:.0f}, {y0:.0f})"
 
 
 def short_url(url: str) -> str:
@@ -600,10 +683,10 @@ def _parse_flags(args: tuple[str, ...], allowed: set[str], usage: str) -> dict[s
     return flags
 
 
-def _parse_on_off(raw: str) -> bool:
+def _parse_on_off(raw: str, flag: str) -> bool:
     value = raw.strip().lower()
     if value not in {"on", "off"}:
-        raise CommandError(f"USAGE: --grid on|off, got {raw!r}")
+        raise CommandError(f"USAGE: {flag} on|off, got {raw!r}")
     return value == "on"
 
 
@@ -611,10 +694,3 @@ def _color_text(color: GridColor) -> str:
     if color == "auto":
         return "auto"
     return "#{:02x}{:02x}{:02x}".format(*color)
-
-
-def _grid_line(spec: GridSpec, style: GridStyle) -> str:
-    cells = f"density {spec.density} → {spec.cols} cols × {spec.rows} rows, cells 0–{spec.cell_count - 1}"
-    if style.enabled:
-        return f"grid: on, {cells}, colour {_color_text(style.color)}, opacity {style.opacity:g}"
-    return f"grid: off ({cells}; click numbers still refer to this grid)"

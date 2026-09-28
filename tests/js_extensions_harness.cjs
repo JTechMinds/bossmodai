@@ -70,7 +70,7 @@ const bv = {
 const liveItem = (takenAt) => ({
     agent_id: "a1", agent_name: "Iris", taken_at: takenAt, command: "bv open example.com",
     url: "https://example.com", title: "Example Domain",
-    caption_lines: ["window: desktop 1280x800", "grid: on", "image 1280x800"],
+    caption_lines: ["window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 3"],
     image_url: `/api/extensions/browser-vision/live/a1/image?t=${Date.parse(takenAt)}`,
 });
 let liveReply = { kind: "ok", body: { items: [] } };
@@ -165,7 +165,7 @@ const verdict = {};
         && img().getAttribute("alt") === "Latest screenshot from Iris: Example Domain"
         && img().getAttribute("src") === liveItem("2026-09-28T10:00:00Z").image_url.replace(/^/, "blob:");
     verdict.viewerShowsEveryCaptionLine = ["command: bv open example.com", "url: https://example.com",
-        "title: Example Domain", "window: desktop 1280x800", "grid: on", "image 1280x800", "taken: "]
+        "title: Example Domain", "window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 3", "taken: "]
         .every((line) => viewer.body.textContent.includes(line));
 
     // Same taken_at on the next poll: no refetch.

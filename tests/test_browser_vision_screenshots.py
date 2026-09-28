@@ -15,26 +15,27 @@ _PACKAGE = import_package(get_discovery().get("browser-vision"))
 shots = importlib.import_module(f"{_PACKAGE.__name__}.screenshots")
 
 
-def _meta(command: str = "bv open example.com", focus: str | None = None):
+def _meta(command: str = "bv open example.com", view: str = "view: full page"):
     return shots.ShotMeta(
         command=command,
         url="https://example.com",
         title="Example",
         window="desktop 1280x800",
-        grid="grid: on, density 60 → 22 cols × 14 rows, cells 0–307, colour auto, opacity 0.55",
+        view=view,
         image="1280x800",
-        focus=focus,
+        marks=5,
         taken_at="2026-09-28T12:00:00+00:00",
     )
 
 
 def test_store_writes_a_sidecar_with_every_field(tmp_path: Path) -> None:
     store = shots.ScreenshotStore(tmp_path, keep=5)
-    path = store.store("agent-1", b"png-bytes", _meta(focus="focus: cells 0–1"))
+    zoomed = "view: zoom 5 — region 427×267 px at (427, 267)"
+    path = store.store("agent-1", b"png-bytes", _meta(view=zoomed))
     assert path.read_bytes() == b"png-bytes"
     sidecar = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
-    assert sidecar == asdict(_meta(focus="focus: cells 0–1"))
-    assert set(sidecar) == {"command", "url", "title", "window", "grid", "image", "focus", "taken_at"}
+    assert sidecar == asdict(_meta(view=zoomed))
+    assert set(sidecar) == {"command", "url", "title", "window", "view", "image", "marks", "taken_at"}
 
 
 def test_prune_removes_png_and_json_together(tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
 """Browser Vision — where screenshots are kept, per agent, with pruning.
 
 Each PNG has a JSON sidecar with the same stem describing what produced it
-(the command, page, grid line and image size). The live view reads these
+(the command, page, view line, image size and mark count). The live view reads these
 files directly, so nothing about screenshots lives in memory or the DB.
 """
 
@@ -25,9 +25,9 @@ class ShotMeta:
         url: Page URL at capture time.
         title: Page title at capture time.
         window: The window line, e.g. ``desktop 1280x800``.
-        grid: The same text as the result's grid line.
+        view: The result's view line (``view: full page`` or the zoom path).
         image: The image size sent to the model, ``WxH``.
-        focus: The focus line when zoomed, else ``None``.
+        marks: How many element marks the screenshot has.
         taken_at: ISO-8601 UTC capture time.
     """
 
@@ -35,9 +35,9 @@ class ShotMeta:
     url: str
     title: str
     window: str
-    grid: str
+    view: str
     image: str
-    focus: str | None
+    marks: int
     taken_at: str
 
 
