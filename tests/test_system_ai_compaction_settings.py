@@ -130,6 +130,7 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
         "decision_repair_attempts",
         "max_concurrent_agent_turns",
         "system_ai_max_tokens",
+        "system_ai_timeout_seconds",
         "compaction_mode",
         "compaction_task_budget_headroom_percent",
         "compaction_chat_budget_headroom_percent",
@@ -213,6 +214,23 @@ def test_settings_put_rejects_a_bad_system_ai_max_tokens(bad: str) -> None:
     assert config.require_int("system_ai_max_tokens") == 6144
 
 
+@pytest.mark.parametrize("bad", ["0", "abc"])
+def test_settings_put_rejects_a_bad_system_ai_timeout(bad: str) -> None:
+    res = _put_setting("system_ai_timeout_seconds", bad, "llm")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "System AI timeout must be a whole number of at least 1."
+    config.reload()
+    assert config.require_int("system_ai_timeout_seconds") == 180
+
+
+def test_settings_put_accepts_a_whole_system_ai_timeout() -> None:
+    res = _put_setting("system_ai_timeout_seconds", "180", "llm")
+    assert res.status_code == 200, res.text
+    res = _put_setting("system_ai_timeout_seconds", "240", "llm")
+    assert res.status_code == 200, res.text
+    assert config.require_int("system_ai_timeout_seconds") == 240
+
+
 def test_settings_put_accepts_a_whole_system_ai_max_tokens() -> None:
     res = _put_max_tokens("4096")
     assert res.status_code == 200, res.text
@@ -230,6 +248,7 @@ def _put_setting(key: str, value: str, category: str):
 # (key, category, label named by the 400, seeded default)
 POSITIVE_INT_KEYS = (
     ("system_ai_max_tokens", "llm", "System AI max output tokens", "6144"),
+    ("system_ai_timeout_seconds", "llm", "System AI timeout", "180"),
     ("standing_prefs_line_max_chars", "context", "Standing Pref Line Limit", "400"),
     ("standing_prefs_section_max_chars", "context", "Standing Prefs Section Limit", "4000"),
 )
@@ -380,6 +399,7 @@ THREAD_KEYS = [
     "channel_idle_check_delay_seconds",
     "channel_idle_check_max_age_minutes",
     "channel_idle_check_max_wakes",
+    "channel_idle_check_max_attempts",
     "channel_idle_check_interval_seconds",
 ]
 
@@ -435,6 +455,7 @@ THREAD_POSITIVE_INT_KEYS = (
     ("channel_idle_check_interval_seconds", "Idle check scan interval", "10"),
     ("channel_idle_check_max_age_minutes", "Idle check max age", "15"),
     ("channel_idle_check_max_wakes", "Idle check max wakes", "1"),
+    ("channel_idle_check_max_attempts", "Idle check attempts", "5"),
 )
 
 

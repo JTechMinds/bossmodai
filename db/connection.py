@@ -212,6 +212,13 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         "INTEGER NOT NULL DEFAULT 0",
     )
     _add_column_if_missing(
+        con, "channel_idle_checks", "failed_message_id", "VARCHAR",
+    )
+    _add_column_if_missing(
+        con, "channel_idle_checks", "failed_attempts",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_column_if_missing(
         con, "tasks", "requester_id", "VARCHAR",
     )
     _add_column_if_missing(

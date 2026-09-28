@@ -34,10 +34,7 @@ from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.standing_prefs import standing_prefs_file
 from core.bm_cli import filesystem
-from core.llm.system_completion import (
-    SYSTEM_COMPLETION_TIMEOUT_SECONDS,
-    complete_text,
-)
+from core.llm.system_completion import complete_text
 from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 from tests._router_fakes import route_reply, router_numbers, speak_reply
@@ -110,7 +107,7 @@ def _ordered(round_id: str) -> list[str]:
 
 def test_speak_cap_and_stall_defaults_stay_put() -> None:
     assert ROUTER_SPEAK_CAP == 2
-    assert SYSTEM_COMPLETION_TIMEOUT_SECONDS == 20
+    assert config.get("system_ai_timeout_seconds") == "180"
     assert config.get("system_ai_max_tokens") == "6144"
     assert config.get("max_concurrent_agent_turns") == "2"
     assert config.get("llm_stall_timeout_seconds") == "120"
@@ -1139,10 +1136,15 @@ def test_system_completion_uses_the_connection_model_not_an_identity_model(
     assert seen["model"] == "openai/mock-small"
     assert seen["temperature"] == 0
     assert seen["max_tokens"] == 6144
-    assert seen["timeout"] == SYSTEM_COMPLETION_TIMEOUT_SECONDS
+    assert seen["timeout"] == 180
     assert seen["stream"] is False
     assert seen["api_key"] == "secret"
     assert "identity-big" not in str(seen["model"])
+    # The timeout is the setting, not a constant: a changed value is used.
+    db.set_setting("system_ai_timeout_seconds", "300", "llm")
+    config.reload()
+    assert complete_text([{"role": "user", "content": "hi"}]) == '{"ok":true}'
+    assert seen["timeout"] == 300
 
 
 def test_system_completion_cap_follows_the_setting_and_explicit_caps_win(

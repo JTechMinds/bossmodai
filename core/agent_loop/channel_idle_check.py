@@ -3,9 +3,17 @@
 Routing answers "who responds to this line". It cannot answer "does anyone
 in this thread owe work they are not doing". This check runs once per
 quiet period. A thread is due when its newest line is older than the
-delay, it has no active round, it is not paused or held by work, and that
-newest line was not already checked. Any new line re-arms it; there are no
-timers to cancel. A thread quiet longer than the max age is dormant and is not judged.
+delay, nothing is in flight for it (no active round, no queued or claimed
+trigger aimed at it, no live work on a task that reports to it), it is not
+paused or held by work, and that newest line was not already checked. Any
+new line re-arms it; there are no timers to cancel. A thread quiet longer
+than the max age is dormant and is not judged.
+
+A quiet period is recorded as checked only on a definitive result: no
+candidate, System AI unset, or a parsed judge payload. No completion or a
+rejected payload is a failed attempt, retried on a later scan up to the
+attempts setting. A full model-call budget is not an attempt. After a
+slow judge call the thread is re-read before anyone is woken.
 
 Deterministic gates run before the model: only members who spoke in the
 transcript window, have no task being worked on (accepted/active, or a live
@@ -45,6 +53,7 @@ from core.agent_loop.channel_router import (
     unwrap_json,
 )
 from core.agent_loop.dispatcher import dispatcher
+from core.llm.call_budget import budget, max_concurrent_model_calls
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from core.time import ensure_utc
 from db import channel_idle_checks as idle_db
@@ -57,6 +66,7 @@ IDLE_CHECK_DELAY_SECONDS_FALLBACK = 45
 IDLE_CHECK_INTERVAL_SECONDS_FALLBACK = 5.0
 IDLE_CHECK_MAX_WAKES_FALLBACK = 2
 IDLE_CHECK_MAX_AGE_MINUTES_FALLBACK = 30
+IDLE_CHECK_MAX_ATTEMPTS_FALLBACK = 3
 
 IDLE_CHECK_KEYS = frozenset({"wake"})
 _WAKE_ITEM_KEYS = frozenset({"member", "quote"})
@@ -103,6 +113,14 @@ def idle_check_max_age_minutes() -> int:
     value = config.get_int("channel_idle_check_max_age_minutes")
     if value is None or value < 1:
         return IDLE_CHECK_MAX_AGE_MINUTES_FALLBACK
+    return value
+
+
+def idle_check_max_attempts() -> int:
+    """Return failed judge attempts allowed per quiet period. Missing or below 1 uses the seed (3)."""
+    value = config.get_int("channel_idle_check_max_attempts")
+    if value is None or value < 1:
+        return IDLE_CHECK_MAX_ATTEMPTS_FALLBACK
     return value
 
 
@@ -228,22 +246,32 @@ def parse_idle_check_payload(
 def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     """Judge one quiet thread and return the private wake triggers to enqueue.
 
-    Returns ``[]`` when the thread is not due (no line, closed to Talk, an
-    active round, delay not elapsed, dormant past the max age, newest line
-    already checked), when no
+    Returns ``[]`` with nothing written when the thread is not due: no line,
+    closed to Talk, something in flight for it (see :func:`_thread_in_flight`),
+    delay not elapsed, dormant past the max age, newest line already checked,
+    or no free model-call lane.
+
+    The newest line is recorded as checked on a definitive result: no
     member is an idle candidate (spoke in the window, not already woken, no
     task being worked on (accepted/active, or a live work activity), no open
-    trigger, not mid-turn), when System AI is unset or fails, when the
-    payload is rejected or empty, or when the round cannot open. Once the
-    gates up to the checked-line test pass, the newest line is recorded as
-    checked so one quiet period is judged once.
+    trigger, not mid-turn), System AI is unset, or the judge's payload
+    parsed. No completion or a rejected payload is a failed attempt; after
+    ``idle_check_max_attempts()`` of them on the same newest line it is
+    recorded as checked with one warning.
+
+    After the judge returns wakes the thread is re-read. A newer line or
+    new in-flight work returns ``[]`` without recording, so the new state is
+    judged on its own. A woken member who started working, got a trigger, or
+    is mid-turn is dropped.
     """
     latest = db.get_latest_channel_message(channel_id)
     if latest is None:
         return []
     if talk_closed(channel_id):
         return []
-    if db.list_channel_response_rounds(channel_id, status="active"):
+    members = ordered_channel_members(channel_id, set())
+    member_ids = [member["id"] for member in members]
+    if _thread_in_flight(channel_id, member_ids):
         return []
     if now - ensure_utc(latest.created_at) < timedelta(seconds=idle_check_delay_seconds()):
         return []
@@ -262,7 +290,6 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
         state["human_message_id"] = human_id
     transcript = router_transcript(channel_id, exclude_message_id=None)
     spoke = {line.author_agent_id for line in transcript if not line.status and line.author_agent_id}
-    members = ordered_channel_members(channel_id, set())
     woken = set(state["woken_agent_ids"])
     candidates = [
         member
@@ -273,11 +300,11 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
         and not db.has_open_trigger(member["id"])
         and not dispatcher.is_active(member["id"])
     ]
-    state["checked_message_id"] = latest.id
-    idle_db.save_channel_idle_check(state)
     if not candidates:
+        _record_checked(state, latest.id)
         return []
     if not system_ai_is_configured():
+        _record_checked(state, latest.id)
         logger.warning("channel idle check skipped: System AI is not configured")
         return []
     candidate_ids = {member["id"] for member in candidates}
@@ -293,17 +320,32 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
         busy=busy,
         max_wakes=max_wakes,
     )
-    raw = complete_text(messages)
-    if raw is None:
-        logger.warning("channel idle check fell back: no_completion")
+    # No free lane is not an attempt: the thread is re-evaluated next scan.
+    if budget.inflight() >= max_concurrent_model_calls():
         return []
-    wakes = parse_idle_check_payload(raw, number_map, format_transcript(transcript))
+    raw = complete_text(messages)
+    wakes = None if raw is None else parse_idle_check_payload(raw, number_map, format_transcript(transcript))
     if wakes is None:
-        logger.warning("channel idle check rejected payload")
+        _record_failed_attempt(state, latest.id, "no_completion" if raw is None else "rejected payload")
         return []
     if not wakes:
+        _record_checked(state, latest.id)
         return []
     wakes = wakes[:max_wakes]
+    # The judge call can be slow. Act on the thread as it is now.
+    current = db.get_latest_channel_message(channel_id)
+    if current is None or current.id != latest.id or _thread_in_flight(channel_id, member_ids):
+        return []
+    wakes = [
+        wake
+        for wake in wakes
+        if not _is_working(wake.agent_id)
+        and not db.has_open_trigger(wake.agent_id)
+        and not dispatcher.is_active(wake.agent_id)
+    ]
+    if not wakes:
+        _record_checked(state, latest.id)
+        return []
     names = {member["id"]: member["name"] for member in candidates}
     note = (
         "Thread check: "
@@ -318,8 +360,8 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     )
     if triggers:
         state["woken_agent_ids"] = list(state["woken_agent_ids"]) + [wake.agent_id for wake in wakes]
-        idle_db.save_channel_idle_check(state)
         logger.info("channel idle check woke %s in %s", [wake.agent_id for wake in wakes], channel_id)
+    _record_checked(state, latest.id)
     return triggers
 
 
@@ -385,6 +427,53 @@ class ChannelIdleWatch:
             except Exception:
                 logger.exception("Channel idle watch loop error")
             await asyncio.sleep(idle_check_interval_seconds())
+
+
+def _thread_in_flight(channel_id: str, member_ids: list[str]) -> bool:
+    """Whether anything is still in flight for this thread.
+
+    True when the thread has an active response round, any queued or
+    claimed trigger aimed at it, or a member with a live work activity on a
+    task that reports to it (that work will post its outcome here). Work on
+    other threads' tasks does not count.
+    """
+    if db.list_channel_response_rounds(channel_id, status="active"):
+        return True
+    if db.channel_has_open_trigger(channel_id):
+        return True
+    for agent_id in member_ids:
+        activity = activity_runtime.get_active_work_activity(agent_id)
+        if activity is None or not activity.task_id:
+            continue
+        task = db.get_task(activity.task_id)
+        if task is not None and task.notification_channel_id == channel_id:
+            return True
+    return False
+
+
+def _record_checked(state: dict[str, Any], message_id: str) -> None:
+    """Mark ``message_id`` judged and clear any failed-attempt count."""
+    state["checked_message_id"] = message_id
+    state["failed_message_id"] = ""
+    state["failed_attempts"] = 0
+    idle_db.save_channel_idle_check(state)
+
+
+def _record_failed_attempt(state: dict[str, Any], message_id: str, reason: str) -> None:
+    """Count one failed judge attempt; give up (record checked) at the attempts limit."""
+    if state["failed_message_id"] == message_id:
+        attempts = int(state["failed_attempts"]) + 1
+    else:
+        attempts = 1
+    limit = idle_check_max_attempts()
+    if attempts >= limit:
+        _record_checked(state, message_id)
+        logger.warning("channel idle check gave up after %s attempts (%s)", attempts, reason)
+        return
+    state["failed_message_id"] = message_id
+    state["failed_attempts"] = attempts
+    idle_db.save_channel_idle_check(state)
+    logger.info("channel idle check attempt %s of %s failed (%s)", attempts, limit, reason)
 
 
 def _working_tasks(agent_id: str) -> list[Any]:

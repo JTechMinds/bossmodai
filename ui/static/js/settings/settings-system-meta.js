@@ -152,6 +152,11 @@ const BossModSystemSettingsMeta = (() => {
             label: 'System AI Max Output Tokens',
             description: 'Output cap for every System AI completion: channel routing, chat fade, sticky slots, and CLI auto-approve. Reasoning models spend hidden reasoning tokens against this cap, so a small value cuts the answer off. Default 6144.',
         },
+        system_ai_timeout_seconds: {
+            order: 37,
+            label: 'System AI Timeout (seconds)',
+            description: 'Longest one System AI call may take: thread routing, idle check, chat fade, sticky slots, and CLI auto-approve. A call that runs out falls back or is retried. Slow local models need more. Default 180.',
+        },
         compaction_mode: {
             order: 38,
             control: 'select',
@@ -228,6 +233,12 @@ const BossModSystemSettingsMeta = (() => {
             tab: 'threads',
             label: 'Idle Check Max Wakes',
             description: 'Most members one check may wake. Each member is woken at most once between operator messages. Default 2.',
+        },
+        channel_idle_check_max_attempts: {
+            order: 65,
+            tab: 'threads',
+            label: 'Idle Check Attempts',
+            description: 'How many times one quiet period is retried when the System AI gives no usable answer (busy, timed out, or malformed). Default 3.',
         },
         channel_idle_check_interval_seconds: {
             order: 70,

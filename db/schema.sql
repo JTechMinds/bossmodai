@@ -287,6 +287,8 @@ CREATE TABLE IF NOT EXISTS channel_idle_checks (
     checked_message_id  VARCHAR,
     human_message_id    VARCHAR,
     woken_agent_ids     TEXT NOT NULL DEFAULT '[]',
+    failed_message_id   VARCHAR,
+    failed_attempts     INTEGER NOT NULL DEFAULT 0,
     updated_at          TIMESTAMP DEFAULT current_timestamp
 );
 

@@ -23,11 +23,13 @@ def get_channel_idle_check(channel_id: str) -> dict[str, Any]:
     """Return idle-check state for one thread. A missing row returns empty values.
 
     Returns:
-        ``{channel_id, checked_message_id, human_message_id, woken_agent_ids}``
-        with string ids and a list of agent id strings.
+        ``{channel_id, checked_message_id, human_message_id, woken_agent_ids,
+        failed_message_id, failed_attempts}`` with string ids, a list of agent
+        id strings, and a non-negative attempt count.
 
     Raises:
-        ValueError: ``woken_agent_ids`` in the row is not a JSON list of strings.
+        ValueError: ``woken_agent_ids`` in the row is not a JSON list of
+            strings, or ``failed_attempts`` is not a non-negative integer.
     """
     token = (channel_id or "").strip()
     empty = _empty(token)
@@ -35,7 +37,8 @@ def get_channel_idle_check(channel_id: str) -> dict[str, Any]:
         return empty
     row = query_one(
         """
-        SELECT channel_id, checked_message_id, human_message_id, woken_agent_ids
+        SELECT channel_id, checked_message_id, human_message_id, woken_agent_ids,
+               failed_message_id, failed_attempts
         FROM channel_idle_checks
         WHERE channel_id = $1
         """,
@@ -48,6 +51,8 @@ def get_channel_idle_check(channel_id: str) -> dict[str, Any]:
         "checked_message_id": _text(row.get("checked_message_id")),
         "human_message_id": _text(row.get("human_message_id")),
         "woken_agent_ids": _ids(row.get("woken_agent_ids")),
+        "failed_message_id": _text(row.get("failed_message_id")),
+        "failed_attempts": _attempts(row.get("failed_attempts")),
     }
 
 
@@ -55,7 +60,8 @@ def save_channel_idle_check(state: dict[str, Any]) -> dict[str, Any]:
     """Insert or replace one thread's idle-check row and return the stored state.
 
     Raises:
-        ValueError: ``state`` has no ``channel_id``.
+        ValueError: ``state`` has no ``channel_id``, or ``failed_attempts`` is
+            not a non-negative integer.
     """
     channel_id = _text(state.get("channel_id"))
     if not channel_id:
@@ -63,6 +69,8 @@ def save_channel_idle_check(state: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     checked = _text(state.get("checked_message_id")) or None
     human = _text(state.get("human_message_id")) or None
+    failed_message = _text(state.get("failed_message_id")) or None
+    failed_attempts = _attempts(state.get("failed_attempts"))
     woken: list[str] = []
     for agent_id in state.get("woken_agent_ids") or []:
         token = _text(agent_id)
@@ -76,11 +84,12 @@ def save_channel_idle_check(state: dict[str, Any]) -> dict[str, Any]:
         execute(
             """
             INSERT INTO channel_idle_checks (
-                channel_id, checked_message_id, human_message_id, woken_agent_ids, updated_at
+                channel_id, checked_message_id, human_message_id, woken_agent_ids,
+                failed_message_id, failed_attempts, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
-            [channel_id, checked, human, json.dumps(woken), now],
+            [channel_id, checked, human, json.dumps(woken), failed_message, failed_attempts, now],
         )
     else:
         execute(
@@ -89,10 +98,12 @@ def save_channel_idle_check(state: dict[str, Any]) -> dict[str, Any]:
             SET checked_message_id = $2,
                 human_message_id = $3,
                 woken_agent_ids = $4,
-                updated_at = $5
+                failed_message_id = $5,
+                failed_attempts = $6,
+                updated_at = $7
             WHERE channel_id = $1
             """,
-            [channel_id, checked, human, json.dumps(woken), now],
+            [channel_id, checked, human, json.dumps(woken), failed_message, failed_attempts, now],
         )
     return get_channel_idle_check(channel_id)
 
@@ -103,6 +114,8 @@ def _empty(channel_id: str) -> dict[str, Any]:
         "checked_message_id": "",
         "human_message_id": "",
         "woken_agent_ids": [],
+        "failed_message_id": "",
+        "failed_attempts": 0,
     }
 
 
@@ -115,6 +128,16 @@ def _ids(raw: object) -> list[str]:
     if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
         raise ValueError(f"channel_idle_checks.woken_agent_ids is not a list of ids: {raw!r}")
     return [item for item in parsed if item.strip()]
+
+
+def _attempts(raw: object) -> int:
+    # A missing value is zero attempts. Anything that is not a whole
+    # non-negative count is corruption and is raised, not papered over.
+    if raw is None:
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError(f"channel_idle_checks.failed_attempts is not a non-negative count: {raw!r}")
+    return raw
 
 
 def _text(value: object) -> str:

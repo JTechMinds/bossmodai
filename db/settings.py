@@ -84,6 +84,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("channel_idle_check_max_wakes", "2", "llm"),
     # A thread quiet longer than this is dormant; the idle check leaves it alone.
     ("channel_idle_check_max_age_minutes", "30", "llm"),
+    # Failed judge attempts (no answer, or a malformed one) on one quiet period
+    # before it is recorded as checked.
+    ("channel_idle_check_max_attempts", "3", "llm"),
     # System AI + compaction pressure knobs. The System AI picker is the
     # first control under Settings → AI Connections. Compaction knobs stay
     # on Settings → System → AI Output.
@@ -103,6 +106,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Every System AI completion uses it: channel routes, chat fade, sticky
     # slots, CLI auto-approve.
     ("system_ai_max_tokens", "6144", "llm"),
+    # Wall-clock limit for one System AI completion (routing, idle check, fade,
+    # sticky slots, auto-approve). Slow local models need headroom.
+    ("system_ai_timeout_seconds", "180", "llm"),
     ("compaction_mode", "pressure_only", "llm"),
     ("compaction_task_budget_headroom_percent", "25", "llm"),
     ("compaction_chat_budget_headroom_percent", "35", "llm"),

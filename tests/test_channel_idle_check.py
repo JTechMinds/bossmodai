@@ -364,9 +364,11 @@ def test_candidate_with_an_open_trigger_is_not_idle(monkeypatch: pytest.MonkeyPa
         agent_id=charles.id,
         trigger_type="channel_message",
         source_channel="channel",
-        payload={"channel_id": channel.id},
+        # Not aimed at this thread: the member gate, not the in-flight gate, is under test.
+        payload={},
     )
     assert db.has_open_trigger(charles.id)
+    assert not db.channel_has_open_trigger(channel.id)
     assert check_channel(channel.id, now=_later()) == []
     assert calls["n"] == 0
 
@@ -403,6 +405,135 @@ def test_already_woken_member_is_skipped_until_a_new_human_line(monkeypatch: pyt
     assert state["woken_agent_ids"] == []
     assert state["human_message_id"] == newer.id
     assert state["checked_message_id"] == newer.id
+
+
+# ── Nothing in flight, retries, and re-check before waking ──────────────
+
+
+def _idle_row(channel_id: str) -> dict[str, Any] | None:
+    return db.query_one("SELECT * FROM channel_idle_checks WHERE channel_id = $1", [channel_id])
+
+
+def test_open_trigger_for_the_thread_blocks_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, brian, channel = _team()
+    _enable_system_ai()
+    _charles_case(channel, harley, charles)
+    # Brian never spoke; his queued wake for this thread is still in flight.
+    db.create_agent_trigger(
+        agent_id=brian.id,
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload={"channel_id": channel.id},
+    )
+    calls = _no_judge(monkeypatch)
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 0
+    assert _idle_row(channel.id) is None
+
+
+def test_live_work_on_a_thread_task_blocks_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, brian, channel = _team()
+    _enable_system_ai()
+    task = _channel_task(assignee_id=brian.id, channel_id=channel.id, title="M2.2 TDD")
+    assert activity_runtime.activate_work_activity(brian.id, task) is not None
+    _charles_case(channel, harley, charles)
+    calls = _no_judge(monkeypatch)
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 0
+    assert _idle_row(channel.id) is None
+
+
+def test_live_work_on_another_threads_task_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, brian, channel = _team()
+    _enable_system_ai()
+    other = db.create_channel(name="Elsewhere", member_agent_ids=[brian.id], created_by=brian.id)
+    task = _channel_task(assignee_id=brian.id, channel_id=other.id, title="Other thread work")
+    assert activity_runtime.activate_work_activity(brian.id, task) is not None
+    latest = _charles_case(channel, harley, charles)
+    calls = _judge(monkeypatch, lambda _messages: '{"wake": []}')
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 1
+    assert idle_db.get_channel_idle_check(channel.id)["checked_message_id"] == latest.id
+
+
+def test_full_budget_skips_without_counting(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    _charles_case(channel, harley, charles)
+    limit = channel_idle_check.max_concurrent_model_calls()
+    monkeypatch.setattr(channel_idle_check.budget, "inflight", lambda: limit)
+    calls = _no_judge(monkeypatch)
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 0
+    state = idle_db.get_channel_idle_check(channel.id)
+    assert state["failed_attempts"] == 0
+    assert state["checked_message_id"] == ""
+
+
+def test_no_completion_retries_then_gives_up(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    latest = _charles_case(channel, harley, charles)
+    calls = _judge(monkeypatch, lambda _messages: None)
+    with caplog.at_level(logging.INFO, logger="core.agent_loop.channel_idle_check"):
+        for attempt in (1, 2):
+            assert check_channel(channel.id, now=_later()) == []
+            state = idle_db.get_channel_idle_check(channel.id)
+            assert state["checked_message_id"] == ""
+            assert state["failed_message_id"] == latest.id
+            assert state["failed_attempts"] == attempt
+        assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 3
+    state = idle_db.get_channel_idle_check(channel.id)
+    assert state["checked_message_id"] == latest.id
+    assert state["failed_attempts"] == 0
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "channel idle check gave up after 3 attempts" in warnings[0].getMessage()
+    # Recorded as checked: a fourth scan does not call the judge.
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 3
+
+
+def test_new_message_during_judge_drops_the_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    latest = _charles_case(channel, harley, charles)
+
+    def _reply(messages: list[dict[str, str]]) -> str:
+        _human(channel.id, "Never mind, I ran it myself.")
+        return _wake_charles(messages)
+
+    calls = _judge(monkeypatch, _reply)
+    rounds_before = len(db.list_channel_response_rounds(channel.id))
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 1
+    assert idle_db.get_channel_idle_check(channel.id)["checked_message_id"] != latest.id
+    assert len(db.list_channel_response_rounds(channel.id)) == rounds_before
+
+
+def test_member_who_started_work_during_judge_is_not_woken(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    other = db.create_channel(name="Elsewhere", member_agent_ids=[charles.id], created_by=charles.id)
+    latest = _charles_case(channel, harley, charles)
+
+    def _reply(messages: list[dict[str, str]]) -> str:
+        # Charles accepts work elsewhere while the judge is thinking.
+        _task_in("accepted", assignee_id=charles.id, channel_id=other.id, title="Smoke capture")
+        return _wake_charles(messages)
+
+    calls = _judge(monkeypatch, _reply)
+    rounds_before = len(db.list_channel_response_rounds(channel.id))
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 1
+    assert len(db.list_channel_response_rounds(channel.id)) == rounds_before
+    state = idle_db.get_channel_idle_check(channel.id)
+    assert state["checked_message_id"] == latest.id
+    assert state["woken_agent_ids"] == []
 
 
 # ── End to end ───────────────────────────────────────────────────────────
@@ -564,3 +695,5 @@ def test_idle_check_settings_are_seeded() -> None:
     assert config.get("channel_idle_check_interval_seconds") == "5"
     assert config.get("channel_idle_check_max_wakes") == "2"
     assert config.get("channel_idle_check_max_age_minutes") == "30"
+    assert config.get("channel_idle_check_max_attempts") == "3"
+    assert config.get("system_ai_timeout_seconds") == "180"

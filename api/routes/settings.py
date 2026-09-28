@@ -149,6 +149,7 @@ def _validate_telegram_settings(key: str, value: str) -> None:
 # 400 names, matching the Settings UI.
 POSITIVE_INT_SETTINGS = frozenset({
     "system_ai_max_tokens",
+    "system_ai_timeout_seconds",
     "standing_prefs_line_max_chars",
     "standing_prefs_section_max_chars",
     "channel_response_round_cap",
@@ -156,9 +157,11 @@ POSITIVE_INT_SETTINGS = frozenset({
     "channel_idle_check_interval_seconds",
     "channel_idle_check_max_age_minutes",
     "channel_idle_check_max_wakes",
+    "channel_idle_check_max_attempts",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
+    "system_ai_timeout_seconds": "System AI timeout",
     "standing_prefs_line_max_chars": "Standing Pref Line Limit",
     "standing_prefs_section_max_chars": "Standing Prefs Section Limit",
     "channel_response_round_cap": "Round cap per message",
@@ -166,6 +169,7 @@ _POSITIVE_INT_SETTING_LABELS = {
     "channel_idle_check_interval_seconds": "Idle check scan interval",
     "channel_idle_check_max_age_minutes": "Idle check max age",
     "channel_idle_check_max_wakes": "Idle check max wakes",
+    "channel_idle_check_max_attempts": "Idle check attempts",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",
@@ -178,7 +182,8 @@ _BOOLEAN_SETTING_LABELS = {
 def _validate_positive_int_setting(key: str, value: str) -> None:
     """Reject a value for a ``POSITIVE_INT_SETTINGS`` key that is not a whole number ≥ 1.
 
-    ``system_ai_max_tokens`` and the two standing-prefs limits are read with
+    ``system_ai_max_tokens``, ``system_ai_timeout_seconds`` and the two
+    standing-prefs limits are read with
     ``config.require_int``: System AI completions, and every standing-prefs
     save and warm render. A bad value (``6k``, ``0``) would fail all of them,
     so it is rejected here, at the write boundary, instead. The thread keys

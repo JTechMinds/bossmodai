@@ -206,6 +206,7 @@ async function main() {
         setting("max_concurrent_agent_turns", "2", "llm"),
         setting("system_ai_connection", "", "llm"),
         setting("system_ai_max_tokens", "6144", "llm"),
+        setting("system_ai_timeout_seconds", "180", "llm"),
         setting("compaction_mode", "pressure_only", "llm"),
         setting("compaction_task_budget_headroom_percent", "25", "llm"),
         setting("compaction_chat_budget_headroom_percent", "35", "llm"),
@@ -223,6 +224,7 @@ async function main() {
         setting("channel_idle_check_interval_seconds", "5", "llm"),
         setting("channel_idle_check_max_age_minutes", "30", "llm"),
         setting("channel_idle_check_max_wakes", "2", "llm"),
+        setting("channel_idle_check_max_attempts", "3", "llm"),
     ];
     const root = new FakeEl("div");
     await SystemSection.render(root);

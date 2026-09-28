@@ -188,6 +188,22 @@ def channel_peer_snapshot_is_drafting(channel_id: str) -> bool:
     return False
 
 
+def channel_has_open_trigger(channel_id: str) -> bool:
+    """Return whether any queued or claimed trigger's payload targets this thread.
+
+    Any trigger type counts: a wake, a follow-up, or work bound to the
+    thread all mean something is still in flight for it.
+    """
+    token = (channel_id or "").strip()
+    if not token:
+        return False
+    for row in query("SELECT payload FROM agent_triggers WHERE status IN ('queued', 'claimed')"):
+        payload = _trigger_payload(row.get("payload"))
+        if str(payload.get("channel_id") or "").strip() == token:
+            return True
+    return False
+
+
 def list_claimed_agent_ids_for_round(round_id: str) -> set[str]:
     """Return agents with a claimed trigger still bound to one response round."""
     token = (round_id or "").strip()
