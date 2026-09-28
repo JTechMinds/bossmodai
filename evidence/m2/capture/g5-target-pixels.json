@@ -1,0 +1,44 @@
+[
+  {
+    "name": "red",
+    "expected_center": {
+      "x": 72,
+      "y": 72
+    },
+    "sampled_center": {
+      "x": 72,
+      "y": 72
+    },
+    "expected_color": "#FF0000",
+    "actual_color": "#FF0000",
+    "pass": true
+  },
+  {
+    "name": "green",
+    "expected_center": {
+      "x": 504,
+      "y": 408
+    },
+    "sampled_center": {
+      "x": 504,
+      "y": 408
+    },
+    "expected_color": "#00FF00",
+    "actual_color": "#00FF00",
+    "pass": true
+  },
+  {
+    "name": "blue",
+    "expected_center": {
+      "x": 936,
+      "y": 744
+    },
+    "sampled_center": {
+      "x": 936,
+      "y": 744
+    },
+    "expected_color": "#0000FF",
+    "actual_color": "#0000FF",
+    "pass": true
+  }
+]

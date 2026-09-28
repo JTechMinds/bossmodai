@@ -1,4 +1,20 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
 const { setPrecision, validateCoordinate, cellCenter, gridMetadata } = require('../grid/protocol');
+
+const CONFIG_PATH = path.resolve(__dirname, '../../toolkit.config.json');
+
+function isExtensionEnabled() {
+  try {
+    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
+    const config = JSON.parse(raw);
+    return config.extensions && config.extensions['browser-vision'] && config.extensions['browser-vision'].enabled === true;
+  } catch (e) {
+    return false;
+  }
+}
 
 module.exports = {
   name: 'click',
@@ -9,6 +25,10 @@ module.exports = {
     precision: { type: 'integer', required: true, description: 'Grid spacing in px (cell size). Must be a positive integer 1-960.' },
   },
   async handler(params, getCapture) {
+    if (!isExtensionEnabled()) {
+      return { error: 'EXTENSION_DISABLED', detail: 'browser-vision extension is disabled; enable it in toolkit settings' };
+    }
+
     const N = params.precision;
 
     // Step 1: Validate precision
@@ -49,20 +69,6 @@ module.exports = {
     await cap.click(center.x, center.y);
     cap.logAction({ tool: 'click', step: 'execute', at: { x: center.x, y: center.y } });
 
-    // Step 6: Wait 300 ms for page to settle
-    await cap.waitForMs(300);
-
-    // Step 7: Capture post-click screenshot
-    const postShot = await cap.screenshot('postclick');
-    cap.logAction({ tool: 'click', step: 'post_click_screenshot', screenshot: postShot });
-
-    // Step 8: Return structured result
-    return {
-      clicked_at: center,
-      pre_click_screenshot_path: preShot,
-      post_click_screenshot_path: postShot,
-      grid: gridMetadata(N),
-      timestamp: new Date().toISOString(),
-    };
-  },
+    return { ok: true, x: center.x, y: center.y, grid: gridMetadata(N) };
+  }
 };
