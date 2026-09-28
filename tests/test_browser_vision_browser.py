@@ -171,6 +171,17 @@ def test_an_agent_browses_clicks_types_scrolls_downloads_and_switches_windows(tm
         assert "viewport: 1280x800" in desktop.prompt_content
         assert size_of(desktop) == (1280, 800)
 
+        # Widescreen: the image shrinks to the 1568 cap, clicks stay in CSS px.
+        wide = bv("bv window widescreen")
+        assert "viewport: 1920x1080" in wide.prompt_content
+        assert "image 1568x882 (scale ×0.8167)" in wide.prompt_content
+        assert size_of(wide) == (1568, 882)
+        bv(f"bv open {base}/")
+        # 48 columns at density 40: cell 1 is the button, cell 144 the input.
+        assert "title: clicks:1" in bv("bv click 1").prompt_content
+        bv("bv click 144")
+        assert "title: typed:wide" in bv("bv type", body="wide").prompt_content
+
         assert "browser session closed" in bv("bv close").prompt_content
     finally:
         extension.shutdown()

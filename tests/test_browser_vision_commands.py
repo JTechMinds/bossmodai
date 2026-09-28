@@ -198,7 +198,8 @@ def test_the_active_grid_follows_focus_then_click_then_full_view(env) -> None:
     focused = env["run"]("bv view --density 10 --focus 33-66")
     assert focused.ok, focused.prompt_content
     assert "grid: on, density 10 → 128 cols × 80 rows, cells 0–10239" in focused.prompt_content
-    assert "focus: cells 33–66 (zoom ×2.4)" in focused.prompt_content
+    assert "focus: cells 33–66" in focused.prompt_content
+    assert "image 192x192 (scale ×2.4)" in focused.prompt_content
     # Cell (5, 10) at density 10 is number 10*128+5; its centre is (55, 105).
     clicked = env["run"](f"bv click {10 * 128 + 5}")
     assert clicked.ok, clicked.prompt_content
@@ -272,6 +273,13 @@ def test_window_presets_and_custom_sizes(env) -> None:
     assert viewport.device == "iPhone 14"
     assert "window: phone 390x664" in phone.prompt_content
     assert "phone|tablet|desktop|widescreen" in _error(env["run"]("bv window huge"))
+
+    wide = env["run"]("bv window widescreen")
+    assert "viewport: 1920x1080" in wide.prompt_content
+    assert "image 1568x882 (scale ×0.8167)" in wide.prompt_content
+    # Clicks stay in CSS px: cell 0's centre is (20, 20) whatever the image size.
+    env["run"]("bv click 0")
+    assert [call for call in env["host"].calls if call[0] == "click"][-1] == ("click", 20.0, 20.0)
 
 
 def test_downloads_are_listed_in_the_result_and_status(env) -> None:

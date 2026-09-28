@@ -1,15 +1,17 @@
 /**
- * BossMod AI — the rail's Add agent menu.
+ * BossMod AI — the rail's universal Add menu.
  *
- * The `+ Add agent` row used to open the create dialog. It opens two doors
- * now, because the dialog stopped being the only one: templates are installed
- * from the marketplace and only then offered by the create form's picker, so
- * "find an agent to start from" and "author one" are separate errands and the
- * row must not silently pick one.
+ * The roster's `+ Add…` row is where the operator adds anything: an agent,
+ * or an extension. It used to open the create dialog directly; it opens a
+ * menu of doors now, because templates are installed from the marketplace
+ * and only then offered by the create form's picker, so "find an agent to
+ * start from" and "author one" are separate errands and the row must not
+ * silently pick one — and extensions are a third errand again.
  *
- * A third door, Extensions, opens extensions/extensions-dialog.js: the
- * app's add-ons (Browser Vision) are switched on from the same `+` the
- * operator adds everything else from.
+ * Three doors: Agent Marketplace and Add Agent (the Agents dialog), and
+ * Extensions, which opens extensions/extensions-dialog.js to switch app
+ * add-ons (Browser Vision) on and off. Only the labels say "Add"; the module,
+ * its global and `data-menu="add-agent"` keep their names.
  *
  * The two agent doors lead into the SAME dialog — context/agents-dialog.js, with Add
  * agent and the Marketplace as two tabs of it — and each opens it on its own
@@ -22,7 +24,7 @@
  * itself is core/menu.js's — one focus trap, Esc, and focus returned to
  * the row — rather than a second popover implementation.
  *
- * Both doors read the same way: a lucide icon, then what it opens. The pair
+ * Every door reads the same way: a lucide icon, then what it opens. The pair
  * used to be `Browse Marketplace →` and `+ Add Agent` — one trailing glyph,
  * one leading one, two different ideas of where a mark goes and neither of
  * them the shell's own icon system.
@@ -31,7 +33,7 @@ const BossModAddAgentMenu = (() => {
     const { h } = BossModDom;
 
     /**
-     * Bind the roster's Add agent row to its menu.
+     * Bind the roster's Add… row to its menu.
      *
      * Marks the row as a menu button at bind time rather than on first use: an
      * anchor that grows `aria-haspopup` when it is first clicked has already
@@ -62,7 +64,7 @@ const BossModAddAgentMenu = (() => {
         /**
          * One door: put the panel away, then open what it names.
          *
-         * An icon in front and a label after it, the same shape `+ Add agent`
+         * An icon in front and a label after it, the same shape `+ Add…`
          * has on the row this hangs off. The icon is a lucide placeholder that
          * `BossModIcons.paint` swaps for an SVG once the panel is in the
          * document — the shell's one icon mechanism, not a glyph typed into
@@ -97,7 +99,7 @@ const BossModAddAgentMenu = (() => {
             const ICONS = BossModAgentsDialog.ICONS;
             menu = BossModMenu.createMenu({
                 anchor,
-                label: 'Add agent',
+                label: 'Add',
                 items: [
                     // The Agents dialog, on its Marketplace tab.
                     door(ICONS.marketplace, 'Agent Marketplace',

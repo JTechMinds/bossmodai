@@ -90,11 +90,11 @@ const BossModRoster = (() => {
         const hire = h('button', {
             class: 'roster-hire',
             type: 'button',
-            'aria-label': 'Add agent',
+            'aria-label': 'Add…',
             onclick: () => onHire(),
         },
             h('span', { class: 'avatar avatar-md avatar-empty', 'aria-hidden': 'true' }, '+'),
-            h('span', {}, 'Add agent'));
+            h('span', {}, 'Add…'));
 
         el.append(searchRow,
             h('div', { class: 'roster-body' }, people.element, threads.element, errorEl),

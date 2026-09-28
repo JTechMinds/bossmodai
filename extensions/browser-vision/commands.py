@@ -63,7 +63,7 @@ class BrowserVisionDefaults(BaseModel):
     window_presets: dict[str, WindowPreset]
     density_default: int = Field(gt=0)
     label_min_px: int = Field(gt=0)
-    render_max_px: int = Field(gt=0)
+    image_max_px: int = Field(gt=0)
     grid_default: bool
     grid_color_default: str
     grid_opacity_default: float = Field(ge=0, le=1)
@@ -420,7 +420,7 @@ class BrowserVisionCommands:
             view.grid,
             focus,
             label_min_px=self._defaults.label_min_px,
-            render_max_px=self._defaults.render_max_px,
+            image_max_px=self._defaults.image_max_px,
         )
         path = self._shots.store(ctx.agent.id, rendered.png)
         view.active = spec
@@ -432,8 +432,10 @@ class BrowserVisionCommands:
             f"window: {view.window.name} {capture.width}x{capture.height}",
             _grid_line(spec, view.grid),
         ]
+        if rendered.scale != 1:
+            lines.append(f"image {rendered.width}x{rendered.height} (scale ×{rendered.scale:.4g})")
         if focus is not None:
-            lines.append(f"focus: cells {focus.a}–{focus.b} (zoom ×{rendered.scale:g})")
+            lines.append(f"focus: cells {focus.a}–{focus.b}")
         if view.grid.enabled and not rendered.labelled:
             lines.append(UNLABELLED_NOTICE)
         lines += notes

@@ -240,16 +240,21 @@ def render_grid(
     focus: FocusSpec | None,
     *,
     label_min_px: int,
-    render_max_px: int,
+    image_max_px: int,
 ) -> RenderedGrid:
     """Draw the numbered grid on a viewport screenshot, optionally zoomed.
 
-    A full view keeps the screenshot's size. A focused view crops
-    ``focus.rect`` and scales it up by ``label_min_px / density`` (never
-    below 1, LANCZOS) so each cell is big enough to label; cells keep their
-    GLOBAL numbers at ``spec.density``. Labels are omitted — lines are still
-    drawn — when a rendered cell is smaller than ``label_min_px``, or when a
-    scaled-up crop would be longer than ``render_max_px`` on its long edge.
+    The image is scaled by ``s`` BEFORE the grid is drawn, so lines and
+    labels are crisp at the final size, and is never upscaled just to fit:
+
+    - full view: ``s = min(1, image_max_px / long edge)`` — only shrinks;
+    - focus view: the crop of ``focus.rect`` is scaled by
+      ``min(max(1, label_min_px / density), image_max_px / crop long edge)``
+      so its cells are big enough to label, never past the cap.
+
+    Cells keep their GLOBAL numbers at ``spec.density``; grid maths and click
+    points stay in CSS px, and ``s`` only maps CSS px to image px. Labels are
+    drawn when ``density * s >= label_min_px``; otherwise lines only.
 
     Args:
         png: The viewport screenshot, exactly ``spec.viewport_w × viewport_h``.
@@ -257,7 +262,7 @@ def render_grid(
         style: On/off, colour and opacity.
         focus: The zoom box, or ``None`` for a full view.
         label_min_px: Smallest rendered cell that gets a number.
-        render_max_px: Longest scaled-up crop that still gets numbers.
+        image_max_px: Longest edge of the returned image.
 
     Returns:
         The rendered image and whether it carries numbers.
@@ -274,21 +279,20 @@ def render_grid(
         )
     if focus is None:
         origin_x, origin_y = 0, 0
-        image = source
-        scale = 1.0
-        labelled = spec.density >= label_min_px
+        region_image = source
+        scale = min(1.0, image_max_px / max(source.size))
     else:
         x0, y0, x1, y1 = focus.rect
         origin_x, origin_y = x0, y0
-        scale = max(1.0, label_min_px / spec.density)
-        crop = source.crop((x0, y0, x1, y1))
-        if scale > 1.0:
-            size = (max(1, round((x1 - x0) * scale)), max(1, round((y1 - y0) * scale)))
-            image = crop.resize(size, Image.Resampling.LANCZOS)
-            labelled = spec.density * scale >= label_min_px and max(size) <= render_max_px
-        else:
-            image = crop
-            labelled = spec.density >= label_min_px
+        region_image = source.crop((x0, y0, x1, y1))
+        scale = min(max(1.0, label_min_px / spec.density), image_max_px / max(x1 - x0, y1 - y0))
+    if scale == 1.0:
+        image = region_image
+    else:
+        width, height = region_image.size
+        size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        image = region_image.resize(size, Image.Resampling.LANCZOS)
+    labelled = spec.density * scale >= label_min_px
 
     if not style.enabled:
         return _encode(image, labelled=False, scale=scale)

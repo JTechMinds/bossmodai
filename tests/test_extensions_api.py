@@ -72,7 +72,7 @@ def test_list_shows_browser_vision_with_setup_state_and_excluded_agents(client) 
     assert item["command"] == {"name": "bv", "summary": "Browse websites by screenshot + grid."}
     assert item["requires_image_model"] is True
     assert item["setup"] == {"state": "missing", "detail": None}
-    assert item["setup_label"] == "Download browser (~170 MB)"
+    assert item["setup_label"] == "Download browser (~120 MB)"
     assert item["excluded_agents"] == [{"id": blind.id, "name": "Scribe", "model": "text-model"}]
 
 

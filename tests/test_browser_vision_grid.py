@@ -28,7 +28,7 @@ def _png(width: int, height: int, color: tuple[int, int, int]) -> bytes:
 
 def _render(png: bytes, spec, *, color="auto", opacity=1.0, focus=None, enabled=True):
     style = grid.GridStyle(enabled=enabled, color=color, opacity=opacity)
-    return grid.render_grid(png, spec, style, focus, label_min_px=24, render_max_px=1600)
+    return grid.render_grid(png, spec, style, focus, label_min_px=24, image_max_px=1568)
 
 
 def test_cols_rows_and_bounds_count_partial_edge_cells() -> None:
@@ -153,6 +153,8 @@ def test_a_focus_too_large_to_scale_is_unlabelled() -> None:
     spec = grid.GridSpec(1280, 800, 5)
     rendered = _render(_png(1280, 800, (255, 255, 255)), spec, focus=grid.FocusSpec(0, base.cell_count - 1, rect))
     assert rendered.labelled is False
+    # Capped: 4.8x would be 6144 px wide; it stops at the long-edge cap.
+    assert (rendered.width, rendered.height) == (1568, 980)
 
 
 def test_auto_contrast_draws_dark_lines_on_white_and_light_lines_on_black() -> None:
@@ -176,3 +178,44 @@ def test_grid_off_draws_nothing() -> None:
     image = Image.open(io.BytesIO(rendered.png)).convert("RGB")
     assert image.getpixel((40, 20)) == (255, 255, 255)
     assert rendered.labelled is False
+
+
+def test_a_widescreen_full_view_shrinks_to_the_cap_and_stays_labelled() -> None:
+    spec = grid.GridSpec(1920, 1080, 40)
+    rendered = _render(_png(1920, 1080, (255, 255, 255)), spec)
+    assert (rendered.width, rendered.height) == (1568, 882)
+    assert Image.open(io.BytesIO(rendered.png)).size == (1568, 882)
+    assert rendered.scale == pytest.approx(1568 / 1920)
+    assert rendered.labelled is True  # 40 x 0.8167 = 32.7 >= 24
+
+
+def test_a_desktop_full_view_is_not_resized() -> None:
+    rendered = _render(_png(1280, 800, (255, 255, 255)), grid.GridSpec(1280, 800, 40))
+    assert (rendered.width, rendered.height, rendered.scale) == (1280, 800, 1.0)
+
+
+def test_a_focus_crop_that_would_upscale_past_the_cap_is_capped() -> None:
+    spec = grid.GridSpec(1920, 1080, 10)
+    rect = (0, 0, 1000, 500)  # 2.4x would be 2400 px wide
+    rendered = _render(_png(1920, 1080, (255, 255, 255)), spec, focus=grid.FocusSpec(0, 1, rect))
+    assert max(rendered.width, rendered.height) == 1568
+    assert rendered.scale == pytest.approx(1.568)
+    assert rendered.labelled is False  # 10 x 1.568 < 24
+
+
+def test_cell_centres_are_css_px_and_downscaling_only_maps_them() -> None:
+    """The click point for n does not change; the drawn cell is at centre * s."""
+    spec = grid.GridSpec(1920, 1080, 40)
+    n = spec.cell_number(30, 15)
+    cx, cy = spec.cell_center(n)
+    assert (cx, cy) == (1220, 620)
+    source = Image.new("RGB", (1920, 1080), (255, 255, 255))
+    source.paste((255, 0, 0), (int(cx) - 6, int(cy) - 6, int(cx) + 7, int(cy) + 7))
+    buffer = io.BytesIO()
+    source.save(buffer, format="PNG")
+    rendered = _render(buffer.getvalue(), spec, enabled=False)
+    assert spec.cell_center(n) == (cx, cy)
+    red, green, blue = Image.open(io.BytesIO(rendered.png)).convert("RGB").getpixel(
+        (round(cx * rendered.scale), round(cy * rendered.scale))
+    )
+    assert red > 200 and green < 60 and blue < 60

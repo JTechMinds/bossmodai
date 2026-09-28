@@ -1237,7 +1237,7 @@ async function main() {
     // where a mark goes — one glyph hung off the end of a label, one typed into
     // the front of it, and neither of them the shell's own icon system. Both
     // rows are a lucide icon followed by the text that names them now.
-    const hireRow = h("button", { class: "roster-hire", type: "button" }, "Add agent");
+    const hireRow = h("button", { class: "roster-hire", type: "button" }, "Add…");
     const railHost = h("div", { class: "roster" }, hireRow);
     documentStub.body.append(railHost);
     const addAgent = global.BossModAddAgentMenu.createAddAgentMenu({

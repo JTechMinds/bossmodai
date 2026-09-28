@@ -16,7 +16,7 @@
   },
   "setup": {
     "required": true,
-    "label": "Download browser (~170 MB)"
+    "label": "Download browser (~120 MB)"
   },
   "defaults": {
     "window_default": "desktop",
@@ -28,7 +28,7 @@
     },
     "density_default": 40,
     "label_min_px": 24,
-    "render_max_px": 1600,
+    "image_max_px": 1568,
     "grid_default": true,
     "grid_color_default": "auto",
     "grid_opacity_default": 0.55,

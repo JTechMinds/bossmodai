@@ -125,6 +125,12 @@ class BrowserHost:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._sessions: dict[str, _Session] = {}
+        # Serialises browser start and session creation. Coroutines from two
+        # agents interleave on the loop, so an unguarded check-then-start
+        # would launch Playwright twice and leak one. Created lazily ON the
+        # browser thread (an asyncio.Lock belongs to the loop it is first
+        # used on) and dropped at teardown, since shutdown ends that loop.
+        self._start_lock: asyncio.Lock | None = None
 
     # ── public, synchronous ────────────────────────────────────────────────
 
@@ -237,7 +243,14 @@ class BrowserHost:
     async def _has_session(self, agent_id: str) -> bool:
         return agent_id in self._sessions
 
+    def _lock_for_loop(self) -> asyncio.Lock:
+        """Return the start lock, creating it on the running (browser) loop."""
+        if self._start_lock is None:
+            self._start_lock = asyncio.Lock()
+        return self._start_lock
+
     async def _ensure_browser(self) -> Browser:
+        """Start Playwright and Chromium once; callers hold the start lock."""
         if self._browser is not None and self._browser.is_connected():
             return self._browser
         if self._playwright is None:
@@ -248,9 +261,10 @@ class BrowserHost:
         return self._browser
 
     async def _open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None:
-        if agent_id in self._sessions:
-            return
-        self._sessions[agent_id] = await self._new_session(viewport, downloads_dir, storage_state=None)
+        async with self._lock_for_loop():
+            if agent_id in self._sessions:
+                return
+            self._sessions[agent_id] = await self._new_session(viewport, downloads_dir, storage_state=None)
 
     async def _new_session(
         self,
@@ -259,6 +273,7 @@ class BrowserHost:
         *,
         storage_state: dict[str, Any] | None,
     ) -> _Session:
+        """Open a context and page; the caller holds the start lock."""
         browser = await self._ensure_browser()
         options: dict[str, Any] = {"accept_downloads": True}
         if viewport.device is not None:
@@ -371,10 +386,12 @@ class BrowserHost:
         session = self._session(agent_id)
         state = await session.context.storage_state()
         url = session.page.url
-        await session.context.close()
-        del self._sessions[agent_id]
-        replacement = await self._new_session(viewport, session.downloads_dir, storage_state=state)
-        self._sessions[agent_id] = replacement
+        # Replacing the context may (re)start the browser: same lock as open.
+        async with self._lock_for_loop():
+            await session.context.close()
+            del self._sessions[agent_id]
+            replacement = await self._new_session(viewport, session.downloads_dir, storage_state=state)
+            self._sessions[agent_id] = replacement
         if url and url != "about:blank":
             await replacement.page.goto(url, wait_until="domcontentloaded", timeout=self._nav_timeout_ms)
             await asyncio.sleep(self._settle_s)
@@ -414,6 +431,8 @@ class BrowserHost:
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        # Bound to this loop, which shutdown is about to stop.
+        self._start_lock = None
 
 
 def _unique_path(folder: Path, name: str) -> Path:
